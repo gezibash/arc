@@ -1,0 +1,1139 @@
+defmodule Arc.CLI.Tools do
+  @moduledoc """
+  Durable ARC tool installation and invocation commands.
+  """
+
+  alias Arc.CLI.TrustStore
+  alias Arc.CLI.ToolRegistry
+  alias Arc.Data.Agent
+  alias Arc.Data.CapabilityDiscovery
+  alias Arc.Data.CapabilityInvocation
+  alias Arc.Data.CapabilityPackage
+  alias Arc.Identity
+  alias Arc.Identity.KeyStore
+
+  def run(args) do
+    {command_name, args} = pop_opt(args, "--as")
+    {relay_pubkey, args} = pop_opt(args, "--relay-pubkey")
+    {relay_addr, clean_args} = pop_opt(args, "--relay")
+    opts = [command: command_name, relay: relay_addr, relay_pubkey: relay_pubkey]
+    dispatch(clean_args, opts)
+  end
+
+  def maybe_run_installed(command, args) when is_binary(command) do
+    {relay_pubkey, args} = pop_opt(args, "--relay-pubkey")
+    {relay_addr, clean_args} = pop_opt(args, "--relay")
+    opts = [relay: relay_addr, relay_pubkey: relay_pubkey]
+
+    case active_identity() do
+      {:ok, id} ->
+        if ToolRegistry.installed?(id, command) do
+          invoke_command(command, clean_args, opts)
+          true
+        else
+          false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp dispatch(["install", peer, capability_id | _], opts) do
+    with_agent(
+      fn agent, id ->
+        case CapabilityDiscovery.fetch_detail(agent, peer, capability_id) do
+          {:ok, detail} ->
+            with {:ok, verified} <- CapabilityPackage.verify(detail),
+                 {:ok, trust_state} <- ensure_trusted(id, verified),
+                 {:ok, install} <-
+                   ToolRegistry.install(
+                     id,
+                     verified,
+                     command: opts[:command],
+                     trust_state_at_install: trust_state
+                   ) do
+              print_install(install)
+            else
+              {:error, :reserved_command} ->
+                error("install failed: '#{opts[:command]}' is reserved by the built-in CLI")
+
+              {:error, :invalid_command} ->
+                error("install failed: invalid command name")
+
+              {:error, :not_installable} ->
+                error("install failed: capability does not publish an installable interface")
+
+              {:error, :command_conflict} ->
+                error("install failed: command already installed")
+
+              {:error, :signer_conflict} ->
+                error("install failed: command is already bound to a different signer")
+
+              {:error, :signer_denied} ->
+                error("install failed: signer is denied by local trust policy")
+
+              {:error, :trust_declined} ->
+                error("install cancelled")
+
+              {:error, reason} ->
+                error("install failed: #{inspect(reason)}")
+            end
+
+          {:error, {:remote, code, message}} ->
+            error("install failed: #{code}: #{message}")
+
+          {:error, reason} ->
+            error("install failed: #{inspect(reason)}")
+        end
+      end,
+      opts
+    )
+  end
+
+  defp dispatch(["tool", "ls" | _], _opts) do
+    with_identity(fn id ->
+      case ToolRegistry.list(id) do
+        {:ok, tools} -> print_tools(id, tools)
+        {:error, reason} -> error("tool ls failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["tool", "info", command | _], _opts) do
+    with_identity(fn id ->
+      case ToolRegistry.get(id, command) do
+        {:ok, tool} -> print_tool_info(tool)
+        {:error, :not_found} -> error("tool info failed: '#{command}' is not installed")
+        {:error, reason} -> error("tool info failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["tool", "verify", command | _], _opts) do
+    with_identity(fn id ->
+      case ToolRegistry.get(id, command) do
+        {:ok, tool} ->
+          case CapabilityPackage.verify(ToolRegistry.to_signed_package(tool)) do
+            {:ok, _verified} ->
+              IO.puts("Verified #{command}")
+              IO.puts("  Signer: #{tool["signer_public_key"]}")
+              IO.puts("  Hash: #{tool["package_hash"]}")
+
+            {:error, reason} ->
+              error("tool verify failed: #{inspect(reason)}")
+          end
+
+        {:error, :not_found} ->
+          error("tool verify failed: '#{command}' is not installed")
+
+        {:error, reason} ->
+          error("tool verify failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["tool", "diff", command | _], opts) do
+    with_agent(
+      fn agent, id ->
+        with {:ok, tool} <- ToolRegistry.get(id, command),
+             {:ok, remote} <- fetch_remote_package(agent, tool),
+             :ok <- ensure_same_signer(tool, remote) do
+          print_diff(tool, remote)
+        else
+          {:error, :not_found} ->
+            error("tool diff failed: '#{command}' is not installed")
+
+          {:error, :signer_changed} ->
+            error("tool diff failed: remote signer changed")
+
+          {:error, {:remote, code, message}} ->
+            error("tool diff failed: #{code}: #{message}")
+
+          {:error, reason} ->
+            error("tool diff failed: #{inspect(reason)}")
+        end
+      end,
+      opts
+    )
+  end
+
+  defp dispatch(["tool", "update", command | _], opts) do
+    with_agent(
+      fn agent, id ->
+        with {:ok, tool} <- ToolRegistry.get(id, command),
+             :ok <- ensure_not_pinned(tool),
+             {:ok, remote} <- fetch_remote_package(agent, tool),
+             :ok <- ensure_same_signer(tool, remote) do
+          if tool["package_hash"] == remote["package_hash"] do
+            IO.puts("#{command} is already up to date")
+          else
+            print_diff(tool, remote)
+
+            case ToolRegistry.install(
+                   id,
+                   remote,
+                   command: tool["command"],
+                   trust_state_at_install: tool["trust_state_at_install"] || "allowed",
+                   pinned: false
+                 ) do
+              {:ok, install} ->
+                IO.puts("")
+                print_install(install)
+
+              {:error, reason} ->
+                error("tool update failed: #{inspect(reason)}")
+            end
+          end
+        else
+          {:error, :not_found} ->
+            error("tool update failed: '#{command}' is not installed")
+
+          {:error, :pinned} ->
+            error(
+              "tool update failed: '#{command}' is pinned; run 'arc tool unpin #{command}' first"
+            )
+
+          {:error, :signer_changed} ->
+            error("tool update failed: remote signer changed")
+
+          {:error, {:remote, code, message}} ->
+            error("tool update failed: #{code}: #{message}")
+
+          {:error, reason} ->
+            error("tool update failed: #{inspect(reason)}")
+        end
+      end,
+      opts
+    )
+  end
+
+  defp dispatch(["tool", "call", command | input_parts], opts) do
+    invoke_command(command, input_parts, opts)
+  end
+
+  defp dispatch(["tool", "pin", command | _], _opts) do
+    with_identity(fn id ->
+      case ToolRegistry.set_pinned(id, command, true) do
+        {:ok, _tool} -> IO.puts("Pinned #{command}")
+        {:error, :not_found} -> error("tool pin failed: '#{command}' is not installed")
+        {:error, reason} -> error("tool pin failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["tool", "unpin", command | _], _opts) do
+    with_identity(fn id ->
+      case ToolRegistry.set_pinned(id, command, false) do
+        {:ok, _tool} -> IO.puts("Unpinned #{command}")
+        {:error, :not_found} -> error("tool unpin failed: '#{command}' is not installed")
+        {:error, reason} -> error("tool unpin failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["tool", "rm", command | _], _opts) do
+    with_identity(fn id ->
+      case ToolRegistry.uninstall(id, command) do
+        :ok ->
+          IO.puts("Removed tool #{command}")
+
+        {:error, reason} ->
+          error("tool rm failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["trust", "ls" | _], _opts) do
+    with_identity(fn id ->
+      case TrustStore.list(id) do
+        {:ok, signers} -> print_trust(id, signers)
+        {:error, reason} -> error("trust ls failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["trust", "allow", signer | _], _opts) do
+    with_identity(fn id ->
+      case TrustStore.allow(id, signer) do
+        {:ok, _record} -> IO.puts("Allowed signer #{String.downcase(signer)}")
+        {:error, reason} -> error("trust allow failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(["trust", "deny", signer | _], _opts) do
+    with_identity(fn id ->
+      case TrustStore.deny(id, signer) do
+        {:ok, _record} -> IO.puts("Denied signer #{String.downcase(signer)}")
+        {:error, reason} -> error("trust deny failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch(_, _opts) do
+    IO.puts("""
+    arc tool commands
+
+    Commands:
+      install <peer> <id> [--as NAME]
+      tool ls
+      tool info <name>
+      tool verify <name>
+      tool diff <name>
+      tool update <name>
+      tool call <name> [subcommand] [args]
+      tool pin <name>
+      tool unpin <name>
+      tool rm <name>
+      trust ls
+      trust allow <signer-public-key>
+      trust deny <signer-public-key>
+
+    Options:
+      --as NAME               Local command namespace for the installed capability
+      --relay host:port       Connect through a relay node
+      --relay-pubkey <key>    Pin relay identity pubkey (hex/base64)
+    """)
+  end
+
+  defp invoke_command(command, input_parts, opts) do
+    with_agent(
+      fn agent, id ->
+        case ToolRegistry.get(id, command) do
+          {:ok, install} ->
+            {help?, clean_args} = extract_help(input_parts)
+
+            if help? do
+              print_usage(command, install, clean_args)
+            else
+              case build_invocation(install, clean_args) do
+                {:ok, invocation} ->
+                  invoke_built_command(agent, install, invocation)
+
+                {:error, {:invalid_arguments, message}} ->
+                  error("tool call failed: #{message}")
+              end
+            end
+
+          {:error, :not_found} ->
+            error("tool call failed: '#{command}' is not installed for #{Identity.name(id)}")
+
+          {:error, reason} ->
+            error("tool call failed: #{inspect(reason)}")
+        end
+      end,
+      opts
+    )
+  end
+
+  defp print_install(install) do
+    provider = install["provider"] || %{}
+    capability = install["capability"] || %{}
+    provider_name = provider["name"] || provider["short_name"] || "unknown"
+    capability_id = capability["id"] || "unknown"
+    kind = capability["kind"] || "capability"
+    scheme = capability["scheme"] || "unknown"
+    command = install["command"] || "tool"
+    usage = install["usage"] || ToolRegistry.usage_from_capability(command, capability)
+
+    IO.puts("Installed #{command} from #{provider_name}/#{capability_id} [#{kind}/#{scheme}]")
+    IO.puts("Version: #{install["release_version"]} (#{install["channel"]})")
+    IO.puts("Signer: #{short_key(install["signer_public_key"])}")
+    IO.puts("Hash: #{short_hash(install["package_hash"])}")
+    IO.puts("Run: #{usage}")
+  end
+
+  defp print_tools(owner, tools) do
+    IO.puts("Owner: #{Identity.name(owner)}")
+    IO.puts("Installed: #{length(tools)}")
+
+    Enum.each(tools, fn tool ->
+      provider = tool["provider"] || %{}
+      capability = tool["capability"] || %{}
+      invocation = capability["invocation"] || %{}
+      provider_name = provider["name"] || provider["short_name"] || "unknown"
+      capability_id = capability["id"] || "unknown"
+      kind = capability["kind"] || "capability"
+      scheme = capability["scheme"] || "unknown"
+      usage = tool["usage"] || ToolRegistry.usage_from_capability(tool["command"], capability)
+      summary = ToolRegistry.command_summary(tool["command"], capability)
+
+      IO.puts("")
+      IO.puts("#{tool["command"]} -> #{provider_name}/#{capability_id} [#{kind}/#{scheme}]")
+      IO.puts("  Usage: #{usage}")
+
+      if summary != "" do
+        IO.puts("  Summary: #{summary}")
+      end
+
+      if ToolRegistry.namespace_required?(capability) do
+        labels =
+          capability
+          |> ToolRegistry.subcommands()
+          |> Enum.map(&ToolRegistry.command_label/1)
+          |> Enum.join(", ")
+
+        IO.puts("  Commands: #{labels}")
+      end
+
+      IO.puts("  Invocation: #{invocation["method"] || "RAW"} #{invocation["path"] || "/"}")
+      IO.puts("  Release: #{tool["release_version"]} (#{tool["channel"]})")
+      IO.puts("  Signer: #{short_key(tool["signer_public_key"])}")
+      IO.puts("  Hash: #{short_hash(tool["package_hash"])}")
+      IO.puts("  Pinned: #{if(tool["pinned"], do: "yes", else: "no")}")
+      IO.puts("  Mode: #{invocation["mode"] || "request_reply"}")
+    end)
+  end
+
+  defp print_tool_info(tool) do
+    provider = tool["provider"] || %{}
+    capability = tool["capability"] || %{}
+    provider_name = provider["name"] || provider["short_name"] || "unknown"
+
+    IO.puts("Command: #{tool["command"]}")
+    IO.puts("Provider: #{provider_name}")
+    IO.puts("Capability: #{tool["capability_id"]}")
+    IO.puts("Type: #{capability["kind"]}/#{capability["scheme"]}")
+    IO.puts("Version: #{tool["release_version"]}")
+    IO.puts("Channel: #{tool["channel"]}")
+    IO.puts("Pinned: #{if(tool["pinned"], do: "yes", else: "no")}")
+    IO.puts("Mode: #{get_in(capability, ["invocation", "mode"]) || "request_reply"}")
+    IO.puts("Signer: #{tool["signer_public_key"]}")
+    IO.puts("Hash: #{tool["package_hash"]}")
+
+    if is_binary(tool["published_at"]) do
+      IO.puts("Published: #{tool["published_at"]}")
+    end
+
+    IO.puts("Installed at: #{tool["installed_at"]}")
+    IO.puts("Trust at install: #{tool["trust_state_at_install"]}")
+    IO.puts("Usage: #{tool["usage"]}")
+  end
+
+  defp print_trust(owner, signers) do
+    IO.puts("Owner: #{Identity.name(owner)}")
+    IO.puts("Trusted signers: #{length(signers)}")
+
+    Enum.each(signers, fn signer ->
+      IO.puts("")
+      IO.puts("#{signer["signer_public_key"]}")
+      IO.puts("  State: #{signer["state"]}")
+      IO.puts("  Scope: #{signer["scope"] || "global"}")
+      IO.puts("  First trusted at: #{signer["first_trusted_at"]}")
+    end)
+  end
+
+  defp print_diff(tool, remote) do
+    local = ToolRegistry.to_signed_package(tool)
+    changes = CapabilityPackage.diff(local, remote)
+
+    if changes == [] do
+      IO.puts("No changes.")
+    else
+      IO.puts("Changes:")
+      Enum.each(changes, fn change -> IO.puts("  #{change}") end)
+    end
+  end
+
+  defp print_reply(reply) do
+    case reply[:kind] do
+      :response -> IO.puts(reply.text || "")
+      :error -> IO.puts(reply.text || "")
+      _ -> IO.puts(reply.text || "")
+    end
+  end
+
+  defp print_usage(command, install, argv) do
+    capability = install["capability"] || %{}
+
+    case select_help_command(capability, argv) do
+      {:ok, cli_command} ->
+        print_command_usage(command, capability, cli_command)
+
+      :overview ->
+        print_namespace_usage(command, capability)
+    end
+  end
+
+  defp print_namespace_usage(command, capability) do
+    summary = ToolRegistry.command_summary(command, capability)
+    usage = ToolRegistry.usage_from_capability(command, capability)
+    root = ToolRegistry.root_command(capability)
+    subcommands = ToolRegistry.subcommands(capability)
+
+    if summary != "" do
+      IO.puts(summary)
+      IO.puts("")
+    end
+
+    IO.puts("Usage: #{usage}")
+
+    if root && subcommands != [] do
+      IO.puts("")
+      IO.puts("Default:")
+      IO.puts("  #{ToolRegistry.command_usage(command, root)}")
+    end
+
+    if subcommands != [] do
+      IO.puts("")
+      IO.puts("Commands:")
+
+      Enum.each(subcommands, fn cli_command ->
+        label = ToolRegistry.command_label(cli_command)
+        summary = cli_command["summary"] || ""
+        IO.puts("  #{label}  #{summary}")
+      end)
+    end
+
+    if root && subcommands == [] do
+      print_argument_sections(root)
+      print_examples(command, capability, root)
+    end
+  end
+
+  defp print_command_usage(namespace, capability, cli_command) do
+    summary = cli_command["summary"] || ToolRegistry.command_summary(namespace, capability)
+    usage = ToolRegistry.command_usage(namespace, cli_command)
+
+    if summary != "" do
+      IO.puts(summary)
+      IO.puts("")
+    end
+
+    IO.puts("Usage: #{usage}")
+    print_argument_sections(cli_command)
+    print_examples(namespace, capability, cli_command)
+  end
+
+  defp print_argument_sections(cli_command) do
+    args = Map.get(cli_command, "args", [])
+
+    case Enum.filter(args, &(&1["kind"] == "positional")) do
+      [] ->
+        :ok
+
+      positional ->
+        IO.puts("")
+        IO.puts("Arguments:")
+
+        Enum.each(positional, fn arg ->
+          IO.puts("  #{usage_label(arg)}  #{arg["description"] || ""}")
+        end)
+    end
+
+    case Enum.filter(args, &(&1["kind"] == "option")) do
+      [] ->
+        :ok
+
+      options ->
+        IO.puts("")
+        IO.puts("Options:")
+
+        Enum.each(options, fn arg ->
+          IO.puts("  #{usage_label(arg)}  #{arg["description"] || ""}")
+        end)
+    end
+  end
+
+  defp print_examples(namespace, capability, cli_command) do
+    examples =
+      case Map.get(cli_command, "examples") do
+        list when is_list(list) and list != [] -> list
+        _ -> capability["examples"] || []
+      end
+
+    if is_list(examples) and examples != [] do
+      IO.puts("")
+      IO.puts("Examples:")
+
+      Enum.each(examples, fn example ->
+        prefix =
+          case Map.get(cli_command, "path", []) do
+            [] -> "arc " <> namespace
+            path -> "arc " <> namespace <> " " <> Enum.join(path, " ")
+          end
+
+        IO.puts("  #{prefix} #{example}" |> String.trim())
+      end)
+    end
+  end
+
+  defp build_invocation(install, argv) do
+    capability = install["capability"] || %{}
+    commands = ToolRegistry.cli_commands(capability)
+    base_invocation = capability["invocation"] || %{}
+
+    if commands == [] do
+      {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
+    else
+      case resolve_command(capability, argv) do
+        {:ok, cli_command, remaining_argv} ->
+          args = Map.get(cli_command, "args", [])
+
+          with {:ok, values} <- parse_cli_args(args, remaining_argv),
+               {:ok, input} <- render_input(cli_command, args, values) do
+            invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
+            {:ok, %{input: input, invocation: invocation, command: cli_command}}
+          end
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
+  defp invoke_built_command(agent, install, %{input: input, invocation: invocation}) do
+    case invocation["mode"] || "request_reply" do
+      "stream" ->
+        invoke_stream_command(agent, install, input, invocation)
+
+      _ ->
+        case CapabilityInvocation.invoke(agent, install, input, invocation_override: invocation) do
+          {:ok, reply} ->
+            print_reply(reply)
+
+          {:error, {:remote, code, message}} ->
+            error("tool call failed: #{code}: #{message}")
+
+          {:error, reason} ->
+            error("tool call failed: #{inspect(reason)}")
+        end
+    end
+  end
+
+  defp invoke_stream_command(agent, install, input, invocation) do
+    input_device = stream_input_device()
+
+    with {:ok, stream} <-
+           CapabilityInvocation.open_stream(agent, install, input,
+             invocation_override: invocation
+           ) do
+      maybe_send_initial_resize(agent, stream, invocation, input_device)
+      stdin_task = maybe_start_stream_input(agent, stream, input_device)
+
+      try do
+        stream_loop(agent, stream)
+      after
+        shutdown_input_task(stdin_task)
+      end
+    else
+      {:error, reason} ->
+        error("tool call failed: #{inspect(reason)}")
+    end
+  end
+
+  defp maybe_start_stream_input(agent, stream, input_device) do
+    if interactive_stdin?(input_device) do
+      Task.async(fn ->
+        pump_stream_input(agent, stream, input_device)
+      end)
+    else
+      push_buffered_stream_input(agent, stream, input_device)
+      nil
+    end
+  end
+
+  defp shutdown_input_task(%Task{} = task), do: Task.shutdown(task, :brutal_kill)
+  defp shutdown_input_task(_task), do: :ok
+
+  defp pump_stream_input(agent, stream, input_device) do
+    Enum.each(IO.stream(input_device, :line), fn line ->
+      _ = CapabilityInvocation.send_stream_data(agent, stream, line)
+    end)
+
+    _ = CapabilityInvocation.close_stream(agent, stream)
+    :ok
+  end
+
+  defp push_buffered_stream_input(agent, stream, input_device) do
+    drain_buffered_stream_input(agent, stream, input_device)
+
+    _ = CapabilityInvocation.close_stream(agent, stream)
+    :ok
+  end
+
+  defp drain_buffered_stream_input(agent, stream, input_device) do
+    case IO.read(input_device, :line) do
+      data when is_binary(data) ->
+        _ = CapabilityInvocation.send_stream_data(agent, stream, data)
+        drain_buffered_stream_input(agent, stream, input_device)
+
+      :eof ->
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp stream_loop(agent, stream) do
+    case CapabilityInvocation.recv_stream(agent, stream, timeout_ms: 30_000) do
+      {:ok, %{kind: :stream_data} = message} ->
+        IO.write(message.text || "")
+        stream_loop(agent, stream)
+
+      {:ok, %{kind: :stream_exit, meta: meta} = message} ->
+        if is_binary(message.text) and String.trim(message.text) != "" do
+          IO.puts(message.text)
+        end
+
+        case meta["status"] do
+          status when is_integer(status) and status != 0 ->
+            error("tool call failed: remote exit status #{status}")
+
+          _ ->
+            :ok
+        end
+
+      {:ok, %{kind: :stream_error, error_message: message}} ->
+        error("tool call failed: #{message || "stream error"}")
+
+      {:ok, %{kind: :error, error_code: code, error_message: message}} ->
+        error("tool call failed: #{code}: #{message}")
+
+      {:ok, %{kind: :response} = reply} ->
+        print_reply(reply)
+
+      {:error, :timeout} ->
+        error("tool call failed: stream timeout")
+
+      {:error, reason} ->
+        error("tool call failed: #{inspect(reason)}")
+    end
+  end
+
+  defp maybe_send_initial_resize(agent, stream, invocation, input_device) do
+    if get_in(invocation, ["stream", "tty"]) and interactive_stdin?(input_device) do
+      case terminal_size() do
+        {:ok, cols, rows} -> CapabilityInvocation.resize_stream(agent, stream, cols, rows)
+        _ -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp terminal_size do
+    with {:ok, cols} <- :io.columns(),
+         {:ok, rows} <- :io.rows() do
+      {:ok, cols, rows}
+    else
+      _ -> :error
+    end
+  end
+
+  defp interactive_stdin?(input_device) do
+    input_device == :stdio and Process.group_leader() == Process.whereis(:user) and
+      match?({:ok, _}, :io.columns()) and
+      match?({:ok, _}, :io.rows())
+  end
+
+  defp stream_input_device do
+    Application.get_env(:arc_cli, :stream_input_device, :stdio)
+  end
+
+  defp resolve_command(capability, argv) do
+    commands = ToolRegistry.cli_commands(capability)
+    root = ToolRegistry.root_command(capability)
+
+    case longest_path_match(commands, argv) do
+      nil when commands == [] ->
+        {:ok, %{"path" => [], "args" => []}, argv}
+
+      nil when root != nil ->
+        {:ok, root, argv}
+
+      nil when argv == [] ->
+        {:error, {:invalid_arguments, "missing required subcommand"}}
+
+      nil ->
+        {:error, {:invalid_arguments, "unknown subcommand #{hd(argv)}"}}
+
+      cli_command ->
+        path = Map.get(cli_command, "path", [])
+        {:ok, cli_command, Enum.drop(argv, length(path))}
+    end
+  end
+
+  defp longest_path_match(commands, argv) do
+    commands
+    |> Enum.filter(fn cli_command ->
+      path = Map.get(cli_command, "path", [])
+      path != [] and prefix_match?(argv, path)
+    end)
+    |> Enum.sort_by(&length(Map.get(&1, "path", [])), :desc)
+    |> List.first()
+  end
+
+  defp select_help_command(capability, argv) do
+    case longest_path_match(ToolRegistry.cli_commands(capability), argv) do
+      nil ->
+        root = ToolRegistry.root_command(capability)
+        subcommands = ToolRegistry.subcommands(capability)
+
+        if root != nil and argv == [] and subcommands == [] do
+          {:ok, root}
+        else
+          :overview
+        end
+
+      cli_command ->
+        {:ok, cli_command}
+    end
+  end
+
+  defp prefix_match?(argv, path) when length(argv) < length(path), do: false
+  defp prefix_match?(argv, path), do: Enum.take(argv, length(path)) == path
+
+  defp parse_cli_args(args, argv) do
+    option_specs =
+      args
+      |> Enum.filter(&(&1["kind"] == "option"))
+      |> Map.new(fn arg -> {arg["flag"], arg} end)
+
+    positional_specs = Enum.filter(args, &(&1["kind"] == "positional"))
+
+    with {:ok, values, positional_tokens} <- collect_option_args(argv, option_specs, %{}, []),
+         {:ok, values} <- assign_positionals(positional_specs, positional_tokens, values) do
+      {:ok, values}
+    end
+  end
+
+  defp collect_option_args([], _option_specs, values, positional_tokens) do
+    {:ok, values, Enum.reverse(positional_tokens)}
+  end
+
+  defp collect_option_args([token | rest], option_specs, values, positional_tokens) do
+    cond do
+      String.starts_with?(token, "--") and Map.has_key?(option_specs, token) ->
+        spec = Map.fetch!(option_specs, token)
+
+        case spec["type"] do
+          "boolean" ->
+            collect_option_args(
+              rest,
+              option_specs,
+              Map.put(values, spec["name"], true),
+              positional_tokens
+            )
+
+          _ ->
+            case rest do
+              [value | tail] ->
+                collect_option_args(
+                  tail,
+                  option_specs,
+                  Map.put(values, spec["name"], value),
+                  positional_tokens
+                )
+
+              [] ->
+                {:error, {:invalid_arguments, "missing value for #{token}"}}
+            end
+        end
+
+      String.starts_with?(token, "--") ->
+        {:error, {:invalid_arguments, "unknown option #{token}"}}
+
+      true ->
+        collect_option_args(rest, option_specs, values, [token | positional_tokens])
+    end
+  end
+
+  defp assign_positionals([], [], values), do: {:ok, values}
+
+  defp assign_positionals([], _tokens, _values) do
+    {:error, {:invalid_arguments, "too many positional arguments"}}
+  end
+
+  defp assign_positionals([spec | rest], tokens, values) do
+    cond do
+      spec["variadic"] == true ->
+        case tokens do
+          [] ->
+            if spec["required"] do
+              {:error, {:invalid_arguments, "missing required argument #{spec["name"]}"}}
+            else
+              {:ok, values}
+            end
+
+          _ ->
+            {:ok, Map.put(values, spec["name"], tokens)}
+        end
+
+      tokens == [] and spec["required"] ->
+        {:error, {:invalid_arguments, "missing required argument #{spec["name"]}"}}
+
+      tokens == [] ->
+        assign_positionals(rest, [], values)
+
+      true ->
+        [token | tail] = tokens
+        assign_positionals(rest, tail, Map.put(values, spec["name"], token))
+    end
+  end
+
+  defp render_input(cli_command, args, values) do
+    case Map.get(cli_command, "input") do
+      %{"source" => "arg", "name" => name} = input_spec ->
+        case Map.fetch(values, name) do
+          {:ok, value} -> {:ok, render_value(value, input_spec["join_with"] || " ")}
+          :error -> {:error, {:invalid_arguments, "missing required argument #{name}"}}
+        end
+
+      %{"source" => "template", "template" => template} ->
+        rendered =
+          Regex.replace(~r/\{\{([a-zA-Z0-9_-]+)\}\}/, template, fn _, key ->
+            render_value(Map.get(values, key, ""), " ")
+          end)
+          |> String.trim()
+
+        {:ok, rendered}
+
+      _ ->
+        case args do
+          [%{"name" => name}] ->
+            case Map.fetch(values, name) do
+              {:ok, value} -> {:ok, render_value(value, " ")}
+              :error -> {:error, {:invalid_arguments, "missing required argument #{name}"}}
+            end
+
+          _ ->
+            {:ok, ""}
+        end
+    end
+  end
+
+  defp render_value(value, join_with) when is_list(value), do: Enum.join(value, join_with)
+  defp render_value(true, _join_with), do: "true"
+  defp render_value(false, _join_with), do: "false"
+  defp render_value(nil, _join_with), do: ""
+  defp render_value(value, _join_with), do: to_string(value)
+
+  defp merge_invocation(base, override) when is_map(override) do
+    Map.merge(base, override)
+  end
+
+  defp merge_invocation(base, _override), do: base
+
+  defp extract_help(argv) do
+    case Enum.reverse(argv) do
+      ["--help" | rest] -> {true, Enum.reverse(rest)}
+      _ -> {false, argv}
+    end
+  end
+
+  defp usage_label(%{"kind" => "option", "flag" => flag, "type" => "boolean"}) do
+    flag
+  end
+
+  defp usage_label(%{"name" => name, "kind" => "option", "flag" => flag}) do
+    flag <> " <" <> name <> ">"
+  end
+
+  defp usage_label(%{"name" => name, "variadic" => true}) do
+    "<" <> name <> "...>"
+  end
+
+  defp usage_label(%{"name" => name}) do
+    "<" <> name <> ">"
+  end
+
+  defp fetch_remote_package(agent, install) do
+    peer = get_in(install, ["provider", "name"]) || get_in(install, ["provider", "short_name"])
+    capability_id = install["capability_id"] || get_in(install, ["capability", "id"])
+
+    with true <- (is_binary(peer) and peer != "") or {:error, :invalid_install},
+         true <- (is_binary(capability_id) and capability_id != "") or {:error, :invalid_install},
+         {:ok, detail} <- CapabilityDiscovery.fetch_detail(agent, peer, capability_id),
+         {:ok, verified} <- CapabilityPackage.verify(detail) do
+      {:ok, verified}
+    else
+      false -> {:error, :invalid_install}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_same_signer(tool, remote) do
+    if tool["signer_public_key"] == get_in(remote, ["signature", "signer_public_key"]) do
+      :ok
+    else
+      {:error, :signer_changed}
+    end
+  end
+
+  defp ensure_not_pinned(%{"pinned" => true}), do: {:error, :pinned}
+  defp ensure_not_pinned(_tool), do: :ok
+
+  defp ensure_trusted(owner, verified) do
+    signer_public_key = get_in(verified, ["signature", "signer_public_key"])
+
+    case TrustStore.get(owner, signer_public_key) do
+      {:ok, %{"state" => "allowed"}} ->
+        {:ok, "allowed"}
+
+      {:ok, %{"state" => "denied"}} ->
+        {:error, :signer_denied}
+
+      {:error, :not_found} ->
+        prompt_trust(owner, verified)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp prompt_trust(owner, verified) do
+    provider = verified["provider"] || %{}
+    capability = verified["capability"] || %{}
+    signer_public_key = get_in(verified, ["signature", "signer_public_key"])
+
+    IO.puts("New signer for #{Identity.name(owner)}")
+    IO.puts("  Provider: #{provider["name"] || provider["short_name"] || "unknown"}")
+
+    IO.puts(
+      "  Capability: #{capability["id"] || "unknown"} [#{capability["kind"]}/#{capability["scheme"]}]"
+    )
+
+    IO.puts(
+      "  Version: #{get_in(verified, ["release", "version"])} (#{get_in(verified, ["release", "channel"])})"
+    )
+
+    IO.puts("  Signer: #{signer_public_key}")
+    IO.puts("  Hash: #{verified["package_hash"]}")
+
+    case IO.gets("Trust this signer? [y/N]: ") do
+      answer when is_binary(answer) ->
+        case String.trim(answer) |> String.downcase() do
+          "y" ->
+            with {:ok, _record} <- TrustStore.allow(owner, signer_public_key) do
+              {:ok, "allowed"}
+            end
+
+          "yes" ->
+            with {:ok, _record} <- TrustStore.allow(owner, signer_public_key) do
+              {:ok, "allowed"}
+            end
+
+          _ ->
+            {:ok, _record} = TrustStore.deny(owner, signer_public_key)
+            {:error, :trust_declined}
+        end
+
+      _ ->
+        {:ok, _record} = TrustStore.deny(owner, signer_public_key)
+        {:error, :trust_declined}
+    end
+  end
+
+  defp short_key(nil), do: "unknown"
+  defp short_key(value) when byte_size(value) <= 12, do: value
+
+  defp short_key(value),
+    do: binary_part(value, 0, 8) <> "…" <> binary_part(value, byte_size(value), -8)
+
+  defp short_hash(nil), do: "unknown"
+  defp short_hash(value) when byte_size(value) <= 12, do: value
+
+  defp short_hash(value),
+    do: binary_part(value, 0, 8) <> "…" <> binary_part(value, byte_size(value), -8)
+
+  defp active_identity do
+    KeyStore.resolve_active()
+  end
+
+  defp with_identity(fun) do
+    case active_identity() do
+      {:ok, id} ->
+        fun.(id)
+
+      {:error, :no_default} ->
+        error("No active key. Run 'arc keys gen' first.")
+
+      {:error, :not_found} ->
+        error("ARC_KEY='#{System.get_env("ARC_KEY")}' not found in key store.")
+
+      {:error, reason} ->
+        error(inspect(reason))
+    end
+  end
+
+  defp with_agent(fun, opts) do
+    with_identity(fn id ->
+      case Agent.start_link(id) do
+        {:ok, agent} ->
+          try do
+            :ok = Agent.publish(agent)
+            maybe_connect_relay(id, opts)
+            fun.(agent, id)
+          after
+            if Process.alive?(agent), do: GenServer.stop(agent, :normal)
+          end
+
+        {:error, reason} ->
+          error("failed to start agent: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp maybe_connect_relay(my_identity, opts) do
+    relay_addr =
+      case Keyword.get(opts, :relay) do
+        nil -> Arc.Net.relay_address()
+        addr -> Arc.Net.relay_address_from(addr)
+      end
+
+    relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
+
+    case relay_addr do
+      {host, port} ->
+        case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
+          :ok -> :ok
+          {:error, reason} -> IO.puts(:stderr, "relay connect failed: #{inspect(reason)}")
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp resolve_relay_pubkey_pin(opts) do
+    relay_pubkey_opt = Keyword.get(opts, :relay_pubkey)
+
+    relay_pubkey_pin =
+      case relay_pubkey_opt do
+        nil -> Arc.Net.relay_pubkey()
+        value -> Arc.Net.relay_pubkey_from(value)
+      end
+
+    cond do
+      relay_pubkey_opt != nil and relay_pubkey_pin == nil ->
+        error("invalid --relay-pubkey (expected 32-byte hex or base64)")
+
+      relay_pubkey_opt == nil and System.get_env("ARC_RELAY_PUBKEY") != nil and
+          relay_pubkey_pin == nil ->
+        error("invalid ARC_RELAY_PUBKEY (expected 32-byte hex or base64)")
+
+      true ->
+        relay_pubkey_pin
+    end
+  end
+
+  defp pop_opt(args, flag), do: pop_opt(args, flag, [])
+
+  defp pop_opt([flag, value | rest], flag, acc) do
+    {value, Enum.reverse(acc) ++ rest}
+  end
+
+  defp pop_opt([h | rest], flag, acc) do
+    pop_opt(rest, flag, [h | acc])
+  end
+
+  defp pop_opt([], _flag, acc), do: {nil, Enum.reverse(acc)}
+
+  defp error(msg) do
+    IO.puts(:stderr, "error: #{msg}")
+    System.halt(1)
+  end
+end

@@ -1,0 +1,383 @@
+defmodule Arc.Data.InterfaceManifest do
+  @moduledoc """
+  Normalization and loading for declarative capability interfaces.
+
+  Interface manifests are served on the wire as JSON under a capability's
+  `"interfaces"` field. Providers can author the same structure inline as
+  Elixir maps or in external JSON/TOML files.
+  """
+
+  @cli_version 1
+
+  @spec normalize(map() | nil) :: map() | nil
+  def normalize(interfaces) when is_map(interfaces) do
+    %{}
+    |> maybe_put("cli", normalize_cli(Map.get(interfaces, "cli")))
+    |> empty_map_to_nil()
+  end
+
+  def normalize(_interfaces), do: nil
+
+  @spec from_legacy_cli(map() | nil) :: map() | nil
+  def from_legacy_cli(cli) when is_map(cli) do
+    case normalize_cli(cli) do
+      nil -> nil
+      normalized -> %{"cli" => normalized}
+    end
+  end
+
+  def from_legacy_cli(_cli), do: nil
+
+  @spec cli(map()) :: map() | nil
+  def cli(%{"interfaces" => interfaces}) when is_map(interfaces) do
+    case normalize(interfaces) do
+      %{"cli" => cli} -> cli
+      _ -> nil
+    end
+  end
+
+  def cli(%{"cli" => cli}) when is_map(cli) do
+    case from_legacy_cli(cli) do
+      %{"cli" => normalized} -> normalized
+      _ -> nil
+    end
+  end
+
+  def cli(_capability), do: nil
+
+  @spec load_file(String.t()) :: {:ok, map()} | {:error, term()}
+  def load_file(path) when is_binary(path) and path != "" do
+    with {:ok, body} <- File.read(path),
+         {:ok, parsed} <- decode(path, body),
+         {:ok, interfaces} <- normalize_document(parsed) do
+      {:ok, interfaces}
+    end
+  end
+
+  def load_file(_path), do: {:error, :invalid_interface_manifest}
+
+  defp normalize_document(%{"interfaces" => interfaces}) when is_map(interfaces) do
+    case normalize(interfaces) do
+      %{} = normalized -> {:ok, normalized}
+      _ -> {:error, :invalid_interface_manifest}
+    end
+  end
+
+  defp normalize_document(%{"cli" => cli}) when is_map(cli) do
+    case normalize(%{"cli" => cli}) do
+      %{} = normalized -> {:ok, normalized}
+      _ -> {:error, :invalid_interface_manifest}
+    end
+  end
+
+  defp normalize_document(%{} = document) do
+    case normalize(%{"cli" => document}) do
+      %{} = normalized -> {:ok, normalized}
+      _ -> {:error, :invalid_interface_manifest}
+    end
+  end
+
+  defp normalize_document(_document), do: {:error, :invalid_interface_manifest}
+
+  defp decode(path, body) do
+    case Path.extname(path) do
+      ".json" ->
+        try do
+          {:ok, :json.decode(body)}
+        rescue
+          _ -> {:error, :invalid_json}
+        end
+
+      ".toml" ->
+        TomlElixir.decode(body)
+
+      _ ->
+        {:error, :unsupported_manifest_format}
+    end
+  end
+
+  defp normalize_cli(cli) when is_map(cli) do
+    namespace =
+      present_string(Map.get(cli, "namespace")) ||
+        present_string(Map.get(cli, "name")) ||
+        present_string(get_in(cli, ["command", "name"]))
+
+    summary =
+      present_string(Map.get(cli, "summary")) ||
+        present_string(get_in(cli, ["command", "summary"]))
+
+    commands = normalize_cli_commands(Map.get(cli, "commands"), cli, summary)
+
+    cond do
+      is_nil(namespace) ->
+        nil
+
+      commands == [] ->
+        nil
+
+      true ->
+        %{}
+        |> Map.put("version", normalize_version(Map.get(cli, "version")))
+        |> Map.put("namespace", namespace)
+        |> maybe_put("summary", summary)
+        |> Map.put("commands", commands)
+    end
+  end
+
+  defp normalize_cli(_cli), do: nil
+
+  defp normalize_cli_commands(commands, _cli, summary) when is_list(commands) do
+    commands
+    |> Enum.flat_map(&normalize_cli_command(&1, summary))
+    |> unique_commands()
+  end
+
+  defp normalize_cli_commands(_commands, cli, summary) when is_map(cli) do
+    case normalize_legacy_root_command(cli, summary) do
+      nil -> []
+      command -> [command]
+    end
+  end
+
+  defp normalize_cli_commands(_commands, _cli, _summary), do: []
+
+  defp normalize_legacy_root_command(cli, summary) do
+    args = normalize_cli_args(Map.get(cli, "args", []))
+    input = normalize_cli_input(Map.get(cli, "input"), args)
+    examples = normalize_examples(Map.get(cli, "examples", []))
+
+    if args == [] and is_nil(input) and examples == [] and is_nil(summary) do
+      nil
+    else
+      %{}
+      |> Map.put("path", [])
+      |> maybe_put("summary", summary)
+      |> maybe_put("args", if(args == [], do: nil, else: args))
+      |> maybe_put("input", input)
+      |> maybe_put("examples", if(examples == [], do: nil, else: examples))
+    end
+  end
+
+  defp normalize_cli_command(command, fallback_summary) when is_map(command) do
+    path = normalize_command_path(Map.get(command, "path") || Map.get(command, "name"))
+    args = normalize_cli_args(Map.get(command, "args", []))
+    input = normalize_cli_input(Map.get(command, "input"), args)
+    summary = present_string(Map.get(command, "summary")) || fallback_summary
+    examples = normalize_examples(Map.get(command, "examples", []))
+    invoke = normalize_cli_invoke(Map.get(command, "invoke"))
+
+    if is_nil(path) do
+      []
+    else
+      [
+        %{}
+        |> Map.put("path", path)
+        |> maybe_put("summary", summary)
+        |> maybe_put("args", if(args == [], do: nil, else: args))
+        |> maybe_put("input", input)
+        |> maybe_put("invoke", invoke)
+        |> maybe_put("examples", if(examples == [], do: nil, else: examples))
+      ]
+    end
+  end
+
+  defp normalize_cli_command(_command, _fallback_summary), do: []
+
+  defp normalize_command_path(nil), do: []
+
+  defp normalize_command_path(path) when is_binary(path) do
+    path
+    |> String.split(~r/\s+/, trim: true)
+    |> normalize_path_segments()
+  end
+
+  defp normalize_command_path(path) when is_list(path) do
+    path
+    |> Enum.map(&present_string/1)
+    |> Enum.reject(&is_nil/1)
+    |> normalize_path_segments()
+  end
+
+  defp normalize_command_path(_path), do: nil
+
+  defp normalize_path_segments([]), do: []
+
+  defp normalize_path_segments(segments) do
+    normalized =
+      segments
+      |> Enum.map(fn segment ->
+        segment
+        |> String.downcase()
+        |> String.replace(~r/[^a-z0-9-]+/u, "-")
+        |> String.replace(~r/-+/u, "-")
+        |> String.trim("-")
+      end)
+      |> Enum.reject(&(&1 == ""))
+
+    if normalized == [], do: nil, else: normalized
+  end
+
+  defp unique_commands(commands) do
+    commands
+    |> Enum.reduce([], fn command, acc ->
+      if Enum.any?(acc, &(Map.get(&1, "path", []) == Map.get(command, "path", []))) do
+        acc
+      else
+        acc ++ [command]
+      end
+    end)
+  end
+
+  defp normalize_cli_args(args) when is_list(args) do
+    args
+    |> Enum.flat_map(&normalize_cli_arg/1)
+    |> enforce_variadic_tail()
+  end
+
+  defp normalize_cli_args(_), do: []
+
+  defp normalize_cli_arg(arg) when is_map(arg) do
+    with name when is_binary(name) and name != "" <- Map.get(arg, "name") do
+      kind = normalize_cli_arg_kind(Map.get(arg, "kind"))
+      type = normalize_cli_arg_type(Map.get(arg, "type"))
+      required = truthy?(Map.get(arg, "required"), kind == "positional")
+      variadic = kind == "positional" and truthy?(Map.get(arg, "variadic"), false)
+
+      normalized =
+        %{
+          "name" => name,
+          "kind" => kind,
+          "type" => type,
+          "required" => required,
+          "variadic" => variadic
+        }
+        |> maybe_put("description", present_string(Map.get(arg, "description")))
+        |> maybe_put("flag", normalize_cli_flag(Map.get(arg, "flag"), name, kind))
+
+      [normalized]
+    else
+      _ -> []
+    end
+  end
+
+  defp normalize_cli_arg(_), do: []
+
+  defp normalize_cli_input(input, _args) when is_map(input) do
+    case Map.get(input, "source") do
+      "arg" ->
+        case Map.get(input, "name") do
+          name when is_binary(name) and name != "" ->
+            %{
+              "source" => "arg",
+              "name" => name,
+              "join_with" => Map.get(input, "join_with", " ")
+            }
+
+          _ ->
+            nil
+        end
+
+      "template" ->
+        case Map.get(input, "template") do
+          template when is_binary(template) and template != "" ->
+            %{"source" => "template", "template" => template}
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp normalize_cli_input(_, [%{"name" => name}]) when is_binary(name) do
+    %{"source" => "arg", "name" => name, "join_with" => " "}
+  end
+
+  defp normalize_cli_input(_, _args), do: nil
+
+  defp normalize_cli_invoke(invoke) when is_map(invoke) do
+    %{}
+    |> maybe_put("mode", normalize_cli_invoke_mode(Map.get(invoke, "mode")))
+    |> maybe_put("method", present_string(Map.get(invoke, "method")))
+    |> maybe_put("path", present_string(Map.get(invoke, "path")))
+    |> maybe_put("stream", normalize_cli_stream(Map.get(invoke, "stream")))
+    |> empty_map_to_nil()
+  end
+
+  defp normalize_cli_invoke(_invoke), do: nil
+
+  defp normalize_cli_stream(stream) when is_map(stream) do
+    operations =
+      case Map.get(stream, "operations") do
+        list when is_list(list) ->
+          list
+          |> Enum.filter(&is_binary/1)
+          |> Enum.map(&String.downcase/1)
+          |> Enum.uniq()
+
+        _ ->
+          nil
+      end
+
+    %{}
+    |> maybe_put("operations", operations)
+    |> maybe_put("tty", normalize_optional_boolean(Map.get(stream, "tty")))
+    |> maybe_put("encoding", present_string(Map.get(stream, "encoding")))
+    |> empty_map_to_nil()
+  end
+
+  defp normalize_cli_stream(_stream), do: nil
+
+  defp normalize_examples(examples) when is_list(examples) do
+    Enum.filter(examples, &is_binary/1)
+  end
+
+  defp normalize_examples(_), do: []
+
+  defp normalize_version(version) when is_integer(version) and version > 0, do: version
+  defp normalize_version(_version), do: @cli_version
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp empty_map_to_nil(map) when map_size(map) == 0, do: nil
+  defp empty_map_to_nil(map), do: map
+
+  defp present_string(value) when is_binary(value) and value != "", do: value
+  defp present_string(_value), do: nil
+
+  defp normalize_cli_arg_kind("option"), do: "option"
+  defp normalize_cli_arg_kind(_), do: "positional"
+
+  defp normalize_cli_arg_type("boolean"), do: "boolean"
+  defp normalize_cli_arg_type(_), do: "string"
+
+  defp normalize_cli_flag(_flag, _name, "positional"), do: nil
+
+  defp normalize_cli_flag(flag, _name, "option") when is_binary(flag) and flag != "" do
+    if String.starts_with?(flag, "--"), do: flag, else: "--" <> flag
+  end
+
+  defp normalize_cli_flag(_flag, name, "option"), do: "--" <> String.replace(name, "_", "-")
+
+  defp truthy?(nil, default), do: default
+  defp truthy?(value, _default) when value in [true, "true", 1, "1"], do: true
+  defp truthy?(_value, _default), do: false
+
+  defp normalize_cli_invoke_mode("stream"), do: "stream"
+  defp normalize_cli_invoke_mode("request_reply"), do: "request_reply"
+  defp normalize_cli_invoke_mode(_mode), do: nil
+
+  defp normalize_optional_boolean(value) when value in [true, false], do: value
+  defp normalize_optional_boolean(_value), do: nil
+
+  defp enforce_variadic_tail([]), do: []
+
+  defp enforce_variadic_tail(args) do
+    {prefix, last} = Enum.split(args, length(args) - 1)
+    prefix = Enum.map(prefix, &Map.put(&1, "variadic", false))
+    prefix ++ last
+  end
+end

@@ -1,0 +1,50 @@
+{
+  "published_at": "2026-03-06T00:00:00Z",
+  "release": {
+    "version": "1.0.0",
+    "channel": "stable"
+  },
+  "capability": {
+    "id": "primary",
+    "kind": "data",
+    "scheme": "sql",
+    "title": "SQLite Database",
+    "summary": "Execute SQLite-style statements through a provider-authored ARC exec runtime.",
+    "config": {
+      "database": "demo.sqlite3"
+    },
+    "invocation": {
+      "method": "RAW",
+      "path": "/"
+    },
+    "examples": [
+      "SELECT 1 AS n"
+    ]
+  },
+  "interfaces": {
+    "cli": {
+      "version": 1,
+      "namespace": "sqlite",
+      "summary": "Execute SQLite statements against the remote ARC database",
+      "commands": [
+        {
+          "path": [],
+          "summary": "Execute a SQL statement against the remote SQLite database",
+          "args": [
+            {
+              "name": "sql",
+              "kind": "positional",
+              "required": true,
+              "variadic": true,
+              "description": "SQL statement to execute against the remote SQLite database"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "{{sql}}"
+          }
+        }
+      ]
+    }
+  }
+}

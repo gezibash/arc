@@ -1,0 +1,18 @@
+{
+  "published_at": "2026-03-06T00:00:00Z",
+  "release": {
+    "version": "1.0.0",
+    "channel": "stable"
+  },
+  "capability": {
+    "id": "primary",
+    "kind": "service",
+    "scheme": "env",
+    "title": "Env Service",
+    "summary": "Echo injected ARC host environment for exec runtime tests.",
+    "invocation": {
+      "method": "RAW",
+      "path": "/"
+    }
+  }
+}

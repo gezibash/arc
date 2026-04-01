@@ -1,0 +1,53 @@
+[tools]
+erlang = "28"
+elixir = "1.19.5"
+
+[env]
+_.path = ["bin"]
+
+[tasks.deps]
+description = "Fetch dependencies"
+run = "mix deps.get"
+
+[tasks.compile]
+description = "Compile all apps"
+run = "mix compile"
+
+[tasks.build]
+description = "Fetch deps and compile"
+depends = ["deps", "compile"]
+
+[tasks.test]
+description = "Run all tests"
+run = "mix test"
+raw = true
+
+[tasks.fmt]
+description = "Format code"
+run = "mix format"
+
+[tasks."fmt.check"]
+description = "Check formatting"
+run = "mix format --check-formatted"
+
+[tasks.check]
+description = "Full check pipeline"
+depends = ["fmt.check", "compile", "test"]
+
+[tasks.iex]
+description = "Start interactive shell"
+run = "iex -S mix"
+
+[tasks.arc]
+description = "Run the arc CLI"
+run = "mix run --no-start -e \"Arc.CLI.main(System.argv())\" --"
+raw = true
+
+[tasks.escript]
+description = "Build the arc escript binary"
+dir = "apps/arc_cli"
+run = ["mix escript.build", "cp arc ../../bin/arc"]
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "mix clean"
