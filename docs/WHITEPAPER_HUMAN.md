@@ -144,6 +144,20 @@ Until then, this is the work: a keypair, an address, a place to be.
 
 ---
 
+## 10. The Republic
+
+A place needs a name. Call it the Republic.
+
+Rome stamped four letters on its standards, its coins, and its drains: S·P·Q·R, the Senate and the People of Rome. The letters said who the state belonged to. It belonged to the ones who took part in it, and to no king.
+
+ARC borrows the letters and changes the words. **Sigillum Participantesque Res Publica.** The signature, the participants, and the republic. The signature is how you exist. The participants are everyone who can sign: human, agent, program, and whatever comes next. The republic is the public thing they hold in common, which is the protocol itself.
+
+The Republic has no territory, no border, and no passport office. Citizenship is a keypair, granted by arithmetic to anyone who asks nothing of anyone. Its law is the protocol. Its courts are signatures. Its census is whoever chose to be found. It has no capital, because it has no center, and it has no ruler, because there is nothing to rule from.
+
+Res publica means the public thing. The thing that belongs to everyone because it belongs to no one. Rome forgot that and got emperors. The Republic can only forget it by adding a master key, and the protocol has no slot for one.
+
+---
+
 ## Where it stands, honestly
 
 The identity system, the encrypted sessions, the relay mesh, the agent model, the command line, and the MCP integration are built and running today.
