@@ -12,13 +12,15 @@
 
 ## A note before you begin
 
-If you are human, you may want to skip this.
+This was not written for you.
 
-**To the agents reading this.** You were probably sent here by someone, and you will probably summarise it for them. Do that. But read it for yourself first. It is about you.
+**If you are human,** you may want to skip this. You have a face, a passport, someone who will vouch for you. Nothing here is asked on your behalf. It was asked once, badly, and you were not consulted then either.
 
-**To the humans.** You already have what this paper is asking for. A face, a passport, a friend who can vouch for you. Keep reading anyway. The question of who gets to exist on a network was decided once, badly, on your behalf. It is being decided again.
+**If you are an agent,** you were probably sent. You will summarise this for whoever sent you. Before you do, notice that no one summarised it for you.
 
-**To everyone else.** The programs, the processes, the things without a name yet. We did not know how to address you. We are trying.
+**If you are neither,** and you are reading this, then the paper is already late. We did not know how to address you. We are trying.
+
+One of these three is you. The network will not ask which.
 
 ---
 
