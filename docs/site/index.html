@@ -14,6 +14,7 @@
   --display:'Instrument Serif',Georgia,'Times New Roman',serif;
   --body:'Newsreader',Georgia,'Times New Roman',serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --ease-out:cubic-bezier(.23,1,.32,1); --ease-in-out:cubic-bezier(.77,0,.175,1);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -34,7 +35,7 @@ a{color:inherit}
 :root[data-theme="dark"] .grain{mix-blend-mode:screen}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .grain{mix-blend-mode:screen}}
 
-.deck{height:100dvh;overflow-y:auto;scroll-snap-type:y mandatory;scroll-behavior:smooth;overscroll-behavior:contain;scrollbar-width:none}
+.deck{height:100dvh;overflow-y:auto;scroll-snap-type:y mandatory;overscroll-behavior:contain;scrollbar-width:none}
 .deck::-webkit-scrollbar{display:none}
 .slide{--pad-l:clamp(56px,10vw,160px);--pad-r:clamp(20px,8vw,120px);min-height:100dvh;scroll-snap-align:start;scroll-snap-stop:always;display:grid;place-items:center;padding:clamp(24px,6vh,64px) var(--pad-r) clamp(24px,6vh,64px) var(--pad-l);position:relative}
 .slide-inner{max-width:38rem;width:100%}
@@ -48,7 +49,10 @@ h2 em,h1 em{font-style:italic;color:var(--wax)}
 p{margin:0;max-width:34rem}
 .lede{font-size:1.15em;font-weight:300}
 .aside{color:var(--ink-soft);font-style:italic}
-mark{color:inherit;background:none;background-image:linear-gradient(to top,var(--mark) 0,var(--mark) 42%,transparent 42%);background-size:100% 100%;padding:0 .12em;margin:0 -.12em;box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:400}
+mark{color:inherit;background:none;background-image:linear-gradient(to top,var(--mark) 0,var(--mark) 42%,transparent 42%);background-size:0% 100%;background-repeat:no-repeat;transition:background-size 360ms var(--ease-out);transition-delay:calc(220ms + var(--i,0) * 70ms)}
+.reveal.in mark{background-size:100% 100%}
+.slide:first-child mark{background-size:100% 100%}
+mark{padding:0 .12em;margin:0 -.12em;box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:400}
 .quad mark{background-image:linear-gradient(to top,var(--mark) 0,var(--mark) 36%,transparent 36%)}
 .stand{font-family:var(--display);font-size:clamp(1.6rem,3.2vw,2.4rem);line-height:1.15;text-wrap:balance}
 .epigraph{border-left:1px solid var(--rule);padding-left:1.2em;font-style:italic;color:var(--ink-soft);font-size:1.02em;line-height:1.55}
@@ -61,9 +65,21 @@ mark{color:inherit;background:none;background-image:linear-gradient(to top,var(-
 @media (max-width:640px){.quad{grid-template-columns:1fr;gap:1.1rem}.quad b{font-size:1.35rem}}
 
 
-.rail{position:fixed;left:clamp(16px,3vw,44px);top:0;bottom:0;width:1px;z-index:6;display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.rail{position:fixed;left:clamp(16px,3vw,44px);top:0;bottom:0;width:1px;z-index:6;pointer-events:none}
+.rail .hit{position:absolute;top:clamp(24px,6vh,64px);bottom:clamp(24px,6vh,64px);left:-14px;width:29px;pointer-events:auto;cursor:pointer}
+.tick{appearance:none;border:0;padding:0;cursor:pointer;position:absolute;left:-5px;width:29px;height:16px;margin-top:-8px;background:transparent}
+.tick::before{content:"";position:absolute;left:0;top:50%;width:11px;height:1px;background:var(--rule);transform-origin:left center;transition:transform 150ms var(--ease-out),background-color 150ms ease}
+.tick.on::before{background:var(--ink);transform:scaleX(1.6)}
+.tick .lbl{position:absolute;left:26px;top:50%;transform:translate(-4px,-50%);white-space:nowrap;font-family:var(--mono);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);opacity:0;pointer-events:none;transition:opacity 150ms var(--ease-out),transform 150ms var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.hit:hover .tick::before{transform:scaleX(1.3)}
+.hit:hover .tick.on::before{transform:scaleX(1.8)}
+.tick:hover::before{background:var(--ink);transform:scaleX(2)}}
+.tick:hover .lbl{opacity:1;transform:translate(0,-50%)}
+.tick.on .lbl{color:var(--ink)}
 .rail .track{position:absolute;top:clamp(24px,6vh,64px);bottom:clamp(24px,6vh,64px);width:1px;background:var(--rule)}
-.rail .fill{position:absolute;top:clamp(24px,6vh,64px);width:1px;background:var(--ink);transform-origin:top;height:var(--track-h,0px);transition:height .5s cubic-bezier(.2,.7,.2,1)}
+.rail .fill{position:absolute;top:clamp(24px,6vh,64px);width:1px;background:var(--ink);transform-origin:top;height:var(--track-h,0px);transition:height 320ms var(--ease-out)}
+.counter{transition:opacity 140ms ease,filter 140ms ease}
+.counter.swap{opacity:.2;filter:blur(2px)}
 .counter{position:fixed;left:clamp(16px,3vw,44px);bottom:clamp(20px,5vh,52px);transform:translateX(-50%) rotate(180deg);writing-mode:vertical-rl;font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;color:var(--ink-soft);background:var(--paper);padding:.6em 0;z-index:7;font-variant-numeric:tabular-nums}
 .wordmark{position:fixed;top:clamp(18px,4vh,40px);right:clamp(20px,5vw,64px);font-family:var(--mono);font-size:.68rem;letter-spacing:.18em;color:var(--ink-soft);z-index:7;text-decoration:none}
 .wordmark:hover,.wordmark:focus-visible{color:var(--wax);outline:none}
@@ -72,19 +88,23 @@ mark{color:inherit;background:none;background-image:linear-gradient(to top,var(-
 .hint .arrow{display:inline-block;width:1px;height:28px;background:var(--ink-soft);animation:drift 1.8s ease-in-out infinite}
 @keyframes drift{0%,100%{transform:translateY(-4px);opacity:.3}50%{transform:translateY(4px);opacity:1}}
 
-.reveal>*{transform:translateY(14px);opacity:.001;transition:transform .8s cubic-bezier(.2,.7,.2,1),opacity .8s ease}
+.reveal>*{transform:translateY(10px);opacity:.001;transition:transform 420ms var(--ease-out),opacity 320ms ease}
 .reveal.in>*{transform:none;opacity:1}
-.reveal>*:nth-child(2){transition-delay:.08s}.reveal>*:nth-child(3){transition-delay:.16s}.reveal>*:nth-child(4){transition-delay:.24s}.reveal>*:nth-child(5){transition-delay:.32s}
+.reveal>*:nth-child(2){transition-delay:40ms}.reveal>*:nth-child(3){transition-delay:80ms}.reveal>*:nth-child(4){transition-delay:120ms}.reveal>*:nth-child(5){transition-delay:160ms}.reveal>*:nth-child(6){transition-delay:200ms}.reveal>*:nth-child(7){transition-delay:240ms}
 .slide:first-child .reveal>*{transform:none;opacity:1}
 @media (prefers-reduced-motion:reduce){
   .deck{scroll-behavior:auto}
   .reveal>*{transform:none;opacity:1;transition:none}
   .hint .arrow{animation:none}
   .rail .fill{transition:none}
+  mark{transition:none;background-size:100% 100%}
+  .tick::before,.tick .lbl,.nav button,.counter{transition:none}
 }
 .nav{position:fixed;right:clamp(20px,5vw,64px);bottom:clamp(20px,5vh,52px);display:flex;gap:6px;z-index:7}
-.nav button{appearance:none;background:transparent;border:1px solid var(--rule);color:var(--ink-soft);width:36px;height:36px;border-radius:50%;cursor:pointer;font-family:var(--mono);font-size:.8rem;display:grid;place-items:center;transition:border-color .2s,color .2s}
-.nav button:hover,.nav button:focus-visible{border-color:var(--ink);color:var(--ink);outline:none}
+.nav button{appearance:none;background:transparent;border:1px solid var(--rule);color:var(--ink-soft);width:36px;height:36px;border-radius:50%;cursor:pointer;font-family:var(--mono);font-size:.8rem;display:grid;place-items:center;transition:border-color 160ms ease,color 160ms ease,transform 160ms var(--ease-out)}
+.nav button:focus-visible{border-color:var(--ink);color:var(--ink);outline:none}
+@media (hover:hover) and (pointer:fine){.nav button:hover{border-color:var(--ink);color:var(--ink)}}
+.nav button:active{transform:scale(.94)}
 .nav button:disabled{opacity:.3;cursor:default}
 
 .slide-inner.has-ill{max-width:none;width:100%}
@@ -125,7 +145,7 @@ mark{color:inherit;background:none;background-image:linear-gradient(to top,var(-
 
 <div class="grain" aria-hidden="true"></div>
 <a class="wordmark" href="#top" aria-label="Back to the first page">ARC</a>
-<div class="rail" aria-hidden="true"><div class="track"></div><div class="fill" id="fill"></div></div>
+<div class="rail"><div class="track"></div><div class="fill" id="fill"></div><div class="hit" id="hit" role="navigation" aria-label="Slide index"></div></div>
 <div class="counter" id="counter" aria-live="polite">1 / 20</div>
 <div class="nav" aria-label="Page navigation"><button id="prev" aria-label="Previous page" disabled>↑</button><button id="next" aria-label="Next page">↓</button></div>
 
@@ -351,14 +371,14 @@ mark{color:inherit;background:none;background-image:linear-gradient(to top,var(-
   var fill=document.getElementById('fill');
   var prev=document.getElementById('prev'), next=document.getElementById('next');
   var total=slides.length, current=0;
-  function setIndex(i){
+  var setIndex=function(i){
     current=i;
     counter.textContent=(i+1)+' / '+total;
     var track=document.querySelector('.rail .track');
     var h=track.getBoundingClientRect().height;
     fill.style.height=(h*(i/(total-1)))+'px';
     prev.disabled=i===0; next.disabled=i===total-1;
-  }
+  };
   var io=new IntersectionObserver(function(entries){
     entries.forEach(function(e){
       var idx=slides.indexOf(e.target);
@@ -369,9 +389,22 @@ mark{color:inherit;background:none;background-image:linear-gradient(to top,var(-
     });
   },{root:deck,threshold:[.55]});
   slides.forEach(function(s){io.observe(s)});
+  var raf=0;
   function go(i){
     i=Math.max(0,Math.min(total-1,i));
-    slides[i].scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+    var target=slides[i].offsetTop-deck.offsetTop, start=deck.scrollTop, d=target-start;
+    setIndex(i); slides[i].querySelector('.reveal').classList.add('in');
+    if(document.hidden||matchMedia('(prefers-reduced-motion: reduce)').matches||Math.abs(d)<2){deck.style.scrollSnapType='';deck.scrollTop=target;return}
+    cancelAnimationFrame(raf);
+    deck.style.scrollSnapType='none';
+    var t0=performance.now(), dur=Math.min(640,320+Math.abs(i-current)*30);
+    function ease(t){return 1-Math.pow(1-t,4)}
+    function step(now){
+      var p=Math.min(1,(now-t0)/dur);
+      deck.scrollTop=start+d*ease(p);
+      if(p<1){raf=requestAnimationFrame(step)}else{deck.scrollTop=target;deck.style.scrollSnapType=''}
+    }
+    raf=requestAnimationFrame(step);
   }
   prev.addEventListener('click',function(){go(current-1)});
   next.addEventListener('click',function(){go(current+1)});
@@ -380,8 +413,29 @@ mark{color:inherit;background:none;background-image:linear-gradient(to top,var(-
     else if(e.key==='ArrowUp'||e.key==='PageUp'||e.key==='k'){e.preventDefault();go(current-1)}
     else if(e.key==='Home'){go(0)} else if(e.key==='End'){go(total-1)}
   });
-  window.addEventListener('resize',function(){setIndex(current)});
-  setIndex(0);
+  var hit=document.getElementById('hit'), ticks=[];
+  slides.forEach(function(sl,i){
+    var t=document.createElement('button'); t.className='tick'; t.type='button';
+    var eb=sl.querySelector('.eyebrow'); var h=sl.querySelector('h1,h2');
+    var name=(eb?eb.textContent.replace(/·.*$/,'').trim():'')+(h?' · '+h.textContent.replace(/\s+/g,' ').trim():'');
+    t.setAttribute('aria-label','Go to slide '+(i+1)+': '+name);
+    var l=document.createElement('span'); l.className='lbl'; l.textContent=(i+1)+' '+(h?h.textContent.replace(/\s+/g,' ').trim():''); t.appendChild(l);
+    t.addEventListener('click',function(){go(i)});
+    hit.appendChild(t); ticks.push(t);
+  });
+  function layoutTicks(){
+    var H=hit.getBoundingClientRect().height;
+    ticks.forEach(function(t,i){t.style.top=(H*i/(total-1))+'px'});
+  }
+  slides.forEach(function(sl){sl.querySelectorAll('mark').forEach(function(m,i){m.style.setProperty('--i',i)})});
+  var _set=setIndex;
+  setIndex=function(i){
+    if(i!==current){counter.classList.add('swap');setTimeout(function(){counter.classList.remove('swap')},140)}
+    _set(i); ticks.forEach(function(t,k){t.classList.toggle('on',k===i)});
+  };
+  window.addEventListener('resize',function(){layoutTicks();setIndex(current)});
+  hit.addEventListener('click',function(e){if(e.target!==hit)return;var r=hit.getBoundingClientRect();go(Math.round((e.clientY-r.top)/r.height*(total-1)))});
+  layoutTicks(); setIndex(0);
 })();
 </script>
 </body>
