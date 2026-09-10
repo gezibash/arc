@@ -86,10 +86,8 @@ mark{padding:0 .12em;margin:0 -.12em;box-decoration-break:clone;-webkit-box-deco
   .segs{left:16px;right:16px;top:auto;bottom:calc(10px + env(safe-area-inset-bottom));transform:none;height:44px;width:auto;flex-direction:row;gap:5px}
   .seg::before{left:0;right:0;top:20px;width:auto;height:3px}
   .seg .fill{left:0;right:0;top:20px;width:auto;height:3px;transform-origin:left top;transform:scaleX(0)}
-  .seg .lbl{left:50%;top:-8px;transform:translate(-50%,-100%) translateY(4px)}
-  .seg.on .lbl,.segs.scrubbing .seg.on .lbl{transform:translate(-50%,-100%)}
-  .seg:first-child .lbl{left:0;transform:translate(0,-100%)}
-  .seg:last-child .lbl{left:auto;right:0;transform:translate(0,-100%)}
+  .seg .lbl{position:fixed;left:16px;right:auto;top:auto;bottom:calc(58px + env(safe-area-inset-bottom));transform:translateY(4px);max-width:calc(100vw - 120px);overflow:hidden;text-overflow:ellipsis}
+  .seg.on .lbl,.segs.scrubbing .seg.on .lbl{transform:none}
   .counter{left:auto;right:16px;bottom:calc(60px + env(safe-area-inset-bottom));transform:none;writing-mode:horizontal-tb;padding:0;background:transparent}
   .seg.on .lbl{opacity:1}
   .nav{display:none!important}
