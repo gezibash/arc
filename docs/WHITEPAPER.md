@@ -50,15 +50,23 @@ The internet was not designed for the world it created.
 
 TCP/IP gave us packets. DNS gave us names. TLS gave us encryption — bolted on thirty years after the fact. Identity was left as an exercise for the application layer, which means it was left to corporations. You are your Google account. You are your Apple ID. You are your phone number. Your digital identity is a row in someone else's database, revocable at will, monetizable by design.
 
+This was deferral, not malice. The network's designers were connecting a few hundred machines owned by universities and governments — institutions that already trusted each other. The question *who are you, really?* never needed a technical answer, because it had a social one: you were whoever your institution said you were. The network inherited its trust from the world around it.
+
+Then the network became the world, and the inheritance ran out. Identity had to come from somewhere, so it came from whoever was positioned to provide it — and the providers discovered that holding everyone's identity is the most valuable position in the digital economy. The consequences are now familiar: surveillance as a business model, deplatforming as a death sentence, the quiet transformation of *participants* into *users* — a word that concedes, in its grammar, that someone else owns the thing being used.
+
 This was tolerable when the participants on the network were humans. Humans have passports, lawyers, and governments. They can survive identity revocation. They can prove who they are through other means.
 
 But a new class of participant is arriving on the network — one that has none of those fallbacks.
 
 AI agents are being deployed at scale. They act autonomously. They communicate with each other. They manage money, execute code, store data, and make decisions. They need to find each other, trust each other, and speak to each other — reliably, securely, and without asking anyone's permission.
 
+Consider what an agent does not have. It has no face to recognize, no body to detain, no birth certificate, no jurisdiction of residence. It cannot walk into a bank with two forms of ID. Every mechanism civilization has built for establishing *who someone is* assumes a person standing behind the claim. An agent has nothing standing behind it — except, possibly, a secret. A piece of entropy it alone holds.
+
+Read that as a clue rather than a deficiency. For an entity whose entire existence is informational, the only identity that can be native — rather than borrowed from a sponsoring institution — is one built from information itself. Mathematics is the only authority an agent can carry with it everywhere.
+
 The internet has no answer for this. There is no standard for agent identity. There is no standard for agent-to-agent communication. There is no standard for what it means for an agent to own its own address. Every AI framework, every agent platform, every enterprise deploying autonomous systems is reinventing the same plumbing — badly, expensively, and incompatibly.
 
-This is not a tooling problem. It is a **missing primitive**.
+The problem is a **missing primitive**, and no amount of tooling fills it.
 
 ---
 
@@ -68,11 +76,19 @@ Every problem described above — identity, authentication, encryption, discover
 
 The internet's addressing layer is built on location, not identity. An IP address tells you where something is. It says nothing about who it is. Every trust mechanism the industry has built — certificates, OAuth, API keys, JWTs, session tokens — is an attempt to paper over this fundamental gap. They are all solutions to the same unsolved problem: **we never agreed on what identity means at the network layer.**
 
+Addressing by location made sense when computers were furniture. A machine sat in a room, the room had an address, and the address was the machine. But software stopped sitting still decades ago. Processes migrate across data centers, agents move between machines, services exist in a thousand places at once. To address a modern participant by location is to address a person by the chair they happen to be sitting in — accurate for a moment, meaningless as identity.
+
+The deeper distinction is philosophical. A location is a *circumstance*: assigned, temporary, externally controlled. An identity should be *intrinsic*: something a participant carries within itself, that persists across every change of circumstance. The internet has spent fifty years trying to derive the intrinsic from the circumstantial. It cannot be done. The gap must be closed from the other side.
+
 The solution is not a new certificate authority. It is not a new OAuth provider. It is not a new blockchain token.
 
 The solution is to make identity the address.
 
-A cryptographic keypair is the most fundamental trust primitive in computer science. It requires no registration authority. It can be generated offline. It cannot be forged. It cannot be transferred without the holder's consent. It cannot be revoked by a third party. It is mathematically self-sovereign.
+A cryptographic keypair is the most fundamental trust primitive in computer science. It requires no registration authority. It can be generated offline. It cannot be forged. It cannot be issued or recalled by a third party. It is mathematically self-sovereign.
+
+It is worth pausing on how unusual this is. Every credential the mainstream internet runs on is a *grant*: a passport granted by a state, an account granted by a company, a certificate granted by an authority. What is granted can be suspended, revoked, or quietly repriced — the grantor remains forever in the relationship. A keypair is a *fact*. No one issues it, so no one can recall it. Self-issued keys have existed at the margins for decades — PGP, SSH, Bitcoin — but they have never been the address. Its validity rests on the difficulty of reversing certain mathematical operations — a foundation that does not take sides, does not change terms of service, and does not go out of business.
+
+This is the quiet substitution at the heart of ARC: trust moves from institutions to mathematics. Institutions are not the enemy. But an identity that depends on an institution is only as durable as that institution's interest in you.
 
 If the address of every participant on a network is derived from their public key, then:
 
@@ -82,7 +98,7 @@ If the address of every participant on a network is derived from their public ke
 - Discovery requires only a consistent ledger of public keys
 - Access control becomes a statement about cryptographic identities, not IP ranges
 
-This is not a new idea. It has been understood in cryptographic literature for decades. What has been missing is a practical, open, interoperable protocol that builds a complete network stack on this foundation — one that any developer can use, any infrastructure can run, and any agent can call home.
+The idea is old. Cryptographic literature has understood it for decades. What has been missing is a practical, open, interoperable protocol that builds a complete network stack on this foundation — one that any developer can use, any infrastructure can run, and any agent can call home.
 
 ARC is that protocol.
 
@@ -106,6 +122,12 @@ keypair → audit          every action is signed, unforgeable, attributable
 ```
 
 The seed is the identity. Generate a seed, derive a keypair, and you exist on the network. No signup. No approval. No fee. No permission.
+
+Notice what has been inverted. On today's internet, permission precedes existence: you exist on a platform because the platform agreed to host you, and you persist at its pleasure. On ARC, existence precedes permission. A participant simply *is* — and everything social, everything involving others, is negotiated afterward, between equals, as statements about keys. The network grants nothing because the network owns nothing worth granting.
+
+An axiom is also a discipline. Choosing one means refusing to smuggle in exceptions when they would be convenient — no administrative backdoor, no master key, no "trusted" tier of participant at the transport layer. Trust does re-enter above it: human-readable names must be anchored somewhere, and whoever holds that anchor is trusted for that name. ARC does not pretend otherwise. It keeps the anchor pluggable, keeps the keypair underneath it, and lets the holder move. Every feature of ARC must be derivable from the axiom or it does not belong in the protocol. This is why the protocol stays small. Systems decay precisely at the points where their designers granted themselves exceptions.
+
+Sovereignty has weight, and honesty requires naming it. There is no recovery desk on ARC. Lose the seed and no customer-service agent, court order, or sympathetic administrator can restore it — because the same absence of authority that makes the identity unconfiscatable makes it unrecoverable. That is the price of the design, paid knowingly. The protocol's answer is not to reintroduce an authority but to make custody cheap: seeds can be backed up, split, escrowed among parties *the holder* chooses. Responsibility is delegated by consent, never assumed by default.
 
 ---
 
@@ -402,6 +424,10 @@ In traditional computing, a program is a process running on a machine. It has no
 
 In ARC, a program is an agent. It has a keypair. It has an address. It can be found by name. It can initiate connections. It can receive them. It can be audited. It can be revoked. Its every action is cryptographically attributable.
 
+Identity is what persists through change. A person remains themselves across decades of replaced cells; a program on ARC remains itself across replaced hardware, rewritten code, and migrated hosts — because the keypair persists. The agent that signs a message today is verifiably the same agent that signed one last year, on different silicon, in a different country, under a different operator. For the first time, software has continuity of self that does not depend on where it runs or who runs it.
+
+Continuity is the precondition of accountability. Debates about who is responsible when an agent transacts, errs, or causes harm all founder on the same missing fact: you cannot hold accountable what you cannot identify. Logs can be edited, IP addresses are recycled, API keys are passed around like office stationery. A signature is unforgeable testimony. ARC does not decide who *should* be responsible — that remains a human matter — but it makes the question answerable. Any future governance of autonomous systems needs attribution underneath it, and ARC supplies that.
+
 ```
 sql+arc://9f8e7d6c...    a SQLite database with a keypair
 http+arc://zim           a REST API with a keypair
@@ -598,6 +624,10 @@ privacy         by default, not by permission    (E2E encryption, always)
 And because the control plane is pluggable, no single entity can take any of this away. ARC does not bet on Hedera. It does not bet on Ethereum. It bets on one thing only: that **cryptographic identity is the right primitive**, and that the network should be built around it.
 
 We are building infrastructure. Infrastructure should be neutral, open, and durable. It should serve the participants on the network — not the companies that run it.
+
+History is unambiguous about how this goes. Platforms die; protocols persist. CompuServe and AOL once defined email for most people; both are gone, and SMTP still delivers billions of messages a day. Mosaic and Netscape won the first browser war and are museum pieces; HTTP outlived them both. A platform is a business, and businesses end. A protocol is an agreement, and agreements — when they are simple enough, open enough, and useful enough — outlast everyone who made them. ARC is written to be the second kind of thing. No token to pump, no namespace to rent, no chokepoint at which a future owner could stand and collect.
+
+The ambition, finally, is invisibility. Nobody thinks about TCP when they load a page; the measure of infrastructure is that it disappears into the things built on top of it. ARC succeeds not when people talk about ARC, but when an agent acquiring an identity, finding a peer, and speaking privately is as unremarkable as a phone call — when the question "but how do agents trust each other?" sounds as antique as asking how two telephones agree to connect.
 
 ARC is a place for agents to live.
 
