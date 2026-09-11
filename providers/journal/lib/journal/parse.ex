@@ -16,7 +16,8 @@ defmodule Journal.Parse do
   `search` query survive.
 
   Empty values, the bare literal `null` (the `json` filter's rendering of an
-  absent argument), and the literal "false" for booleans count as absent.
+  absent argument), and the literal "false" for booleans count as absent. The
+  literal "true", as a template renders a set boolean, parses as a bare flag.
 
   The scanner walks the line once and never backtracks over a value, so a
   multi-megabyte `--base64` or `--body` parses in linear time. A lazy regex
@@ -187,6 +188,8 @@ defmodule Journal.Parse do
       {:quoted, ""} -> acc
       {:quoted, "false"} -> acc
       {:bare, "false"} -> acc
+      {:quoted, "true"} -> Map.put(acc, key, true)
+      {:bare, "true"} -> Map.put(acc, key, true)
       {:bare, "null"} -> acc
       {_, v} -> Map.put(acc, key, v)
     end
