@@ -106,7 +106,7 @@ defmodule Journal.Command do
           _ -> %Page{}
         end
 
-      addition = text |> Enum.join(" ") |> Parse.unescape_newlines()
+      addition = Enum.join(text, " ")
       body = String.trim_trailing(page.body, "\n") <> "\n\n" <> addition <> "\n"
 
       with {:ok, rev} <-
@@ -123,8 +123,8 @@ defmodule Journal.Command do
          :ok <- Store.authorize_write(ctx.root, hd(parts), ctx.from),
          :ok <- Store.check_rev(ctx.root, parts, opts["if_rev"]),
          {:ok, page, _} <- Store.read_page(ctx.root, parts) do
-      find = Parse.unescape_newlines(opts["find"])
-      replace = Parse.unescape_newlines(opts["replace"] || "")
+      find = opts["find"]
+      replace = opts["replace"] || ""
 
       if String.contains?(page.body, find) do
         body = String.replace(page.body, find, replace, global: false)
@@ -364,15 +364,14 @@ defmodule Journal.Command do
   end
 
   # The page body comes from `--body` on the command line or from the request
-  # body, the text after the first line of the message. A request body is
-  # stored as given. A `--body` value still turns a literal `\n` into a
-  # newline, since callers pass it on one line. Setting both is an error.
+  # body, the text after the first line of the message. Both are stored as
+  # given. Setting both is an error.
   defp write_body(nil, nil),
     do: {:error, "missing body: pass --body or send it after the first line"}
 
   defp write_body(nil, body), do: {:ok, trailing_newline(body)}
   defp write_body(opt, body) when not is_binary(opt), do: write_body(nil, body)
-  defp write_body(opt, nil), do: {:ok, opt |> Parse.unescape_newlines() |> trailing_newline()}
+  defp write_body(opt, nil), do: {:ok, trailing_newline(opt)}
   defp write_body(opt, ""), do: write_body(opt, nil)
   defp write_body(_opt, _body), do: {:error, "invalid_arguments --body and request body both set"}
 
