@@ -93,6 +93,7 @@ defmodule Arc.CLI do
       publish                     Publish current identity to the control plane
       resolve <query>             Resolve a name, petname, or public key prefix
       install <peer> <id>         Install a remote ARC capability as a local command
+                                 (--trust skips the signer prompt for scripts)
       apps init [path]            Scaffold a local ARC provider bundle (Arcfile + manifest.json)
       host <...>                  Run the local ARC host service and issue delegated SDK tokens
       tool <subcommand>           Manage installed ARC tools

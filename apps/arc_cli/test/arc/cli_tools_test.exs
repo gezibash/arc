@@ -85,6 +85,48 @@ defmodule Arc.CLIToolsTest do
     assert list_output =~ "Invocation: RAW /"
   end
 
+  test "arc install --trust records the signer and skips the prompt" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, manifest_path} = hello_provider_paths()
+
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+    end)
+
+    install_output =
+      ExUnit.CaptureIO.capture_io("", fn ->
+        Arc.CLI.main(["install", "--trust", Identity.name(server_id), "primary"])
+      end)
+
+    refute install_output =~ "Trust this signer?"
+    assert install_output =~ "Installed hello from #{Identity.name(server_id)}/primary"
+
+    assert {:ok, [%{"state" => "allowed"}]} = Arc.CLI.TrustStore.list(client_id)
+  end
+
+  test "trust prompt answers only deny on an explicit no" do
+    assert Arc.CLI.Tools.trust_answer("y\n") == :allow
+    assert Arc.CLI.Tools.trust_answer("YES\n") == :allow
+    assert Arc.CLI.Tools.trust_answer("n\n") == :deny
+    assert Arc.CLI.Tools.trust_answer("no\n") == :deny
+    assert Arc.CLI.Tools.trust_answer("\n") == :cancel
+    assert Arc.CLI.Tools.trust_answer("maybe\n") == :cancel
+    assert Arc.CLI.Tools.trust_answer(:eof) == :cancel
+    assert Arc.CLI.Tools.trust_answer({:error, :terminated}) == :cancel
+  end
+
   test "arc tool call invokes an installed capability" do
     client_id = persist_cli_identity()
     server_id = Identity.generate()

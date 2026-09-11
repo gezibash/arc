@@ -15,10 +15,36 @@ defmodule Arc.CLI.Tools do
   def run(args) do
     {command_name, args} = pop_opt(args, "--as")
     {relay_pubkey, args} = pop_opt(args, "--relay-pubkey")
-    {relay_addr, clean_args} = pop_opt(args, "--relay")
-    opts = [command: command_name, relay: relay_addr, relay_pubkey: relay_pubkey]
+    {relay_addr, args} = pop_opt(args, "--relay")
+    {trust, args} = pop_flag(args, "--trust")
+    {yes, clean_args} = pop_flag(args, "--yes")
+
+    opts = [
+      command: command_name,
+      relay: relay_addr,
+      relay_pubkey: relay_pubkey,
+      trust: trust or yes
+    ]
+
     dispatch(clean_args, opts)
   end
+
+  @doc """
+  Maps a trust prompt answer to a decision.
+
+  `:allow` for `y`/`yes`, `:deny` for `n`/`no`, `:cancel` for an empty answer,
+  any other text, or EOF. Only `:deny` records a trust decision.
+  """
+  @spec trust_answer(String.t() | :eof | {:error, term()}) :: :allow | :deny | :cancel
+  def trust_answer(answer) when is_binary(answer) do
+    case answer |> String.trim() |> String.downcase() do
+      a when a in ["y", "yes"] -> :allow
+      a when a in ["n", "no"] -> :deny
+      _ -> :cancel
+    end
+  end
+
+  def trust_answer(_eof_or_error), do: :cancel
 
   def maybe_run_installed(command, args) when is_binary(command) do
     {relay_pubkey, args} = pop_opt(args, "--relay-pubkey")
@@ -45,7 +71,7 @@ defmodule Arc.CLI.Tools do
         case CapabilityDiscovery.fetch_detail(agent, peer, capability_id) do
           {:ok, detail} ->
             with {:ok, verified} <- CapabilityPackage.verify(detail),
-                 {:ok, trust_state} <- ensure_trusted(id, verified),
+                 {:ok, trust_state} <- ensure_trusted(id, verified, opts),
                  {:ok, install} <-
                    ToolRegistry.install(
                      id,
@@ -70,11 +96,23 @@ defmodule Arc.CLI.Tools do
               {:error, :signer_conflict} ->
                 error("install failed: command is already bound to a different signer")
 
-              {:error, :signer_denied} ->
-                error("install failed: signer is denied by local trust policy")
+              {:error, {:signer_denied, signer}} ->
+                error(
+                  "install failed: signer is denied by local trust policy. " <>
+                    "To allow it, run: arc trust allow #{signer}"
+                )
+
+              {:error, {:trust_denied, signer}} ->
+                error(
+                  "install cancelled: signer denied. " <>
+                    "To undo, run: arc trust allow #{signer}"
+                )
 
               {:error, :trust_declined} ->
-                error("install cancelled")
+                error(
+                  "install cancelled: signer not trusted. " <>
+                    "Answer 'y' at the prompt or pass --trust to skip it"
+                )
 
               {:error, reason} ->
                 error("install failed: #{inspect(reason)}")
@@ -992,7 +1030,7 @@ defmodule Arc.CLI.Tools do
   defp ensure_not_pinned(%{"pinned" => true}), do: {:error, :pinned}
   defp ensure_not_pinned(_tool), do: :ok
 
-  defp ensure_trusted(owner, verified) do
+  defp ensure_trusted(owner, verified, opts) do
     signer_public_key = get_in(verified, ["signature", "signer_public_key"])
 
     case TrustStore.get(owner, signer_public_key) do
@@ -1000,10 +1038,14 @@ defmodule Arc.CLI.Tools do
         {:ok, "allowed"}
 
       {:ok, %{"state" => "denied"}} ->
-        {:error, :signer_denied}
+        {:error, {:signer_denied, signer_public_key}}
 
       {:error, :not_found} ->
-        prompt_trust(owner, verified)
+        if opts[:trust] do
+          allow_signer(owner, signer_public_key)
+        else
+          prompt_trust(owner, verified)
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -1029,27 +1071,23 @@ defmodule Arc.CLI.Tools do
     IO.puts("  Signer: #{signer_public_key}")
     IO.puts("  Hash: #{verified["package_hash"]}")
 
-    case IO.gets("Trust this signer? [y/N]: ") do
-      answer when is_binary(answer) ->
-        case String.trim(answer) |> String.downcase() do
-          "y" ->
-            with {:ok, _record} <- TrustStore.allow(owner, signer_public_key) do
-              {:ok, "allowed"}
-            end
+    case trust_answer(IO.gets("Trust this signer? [y/N]: ")) do
+      :allow ->
+        allow_signer(owner, signer_public_key)
 
-          "yes" ->
-            with {:ok, _record} <- TrustStore.allow(owner, signer_public_key) do
-              {:ok, "allowed"}
-            end
-
-          _ ->
-            {:ok, _record} = TrustStore.deny(owner, signer_public_key)
-            {:error, :trust_declined}
+      :deny ->
+        with {:ok, _record} <- TrustStore.deny(owner, signer_public_key) do
+          {:error, {:trust_denied, signer_public_key}}
         end
 
-      _ ->
-        {:ok, _record} = TrustStore.deny(owner, signer_public_key)
+      :cancel ->
         {:error, :trust_declined}
+    end
+  end
+
+  defp allow_signer(owner, signer_public_key) do
+    with {:ok, _record} <- TrustStore.allow(owner, signer_public_key) do
+      {:ok, "allowed"}
     end
   end
 
@@ -1157,6 +1195,10 @@ defmodule Arc.CLI.Tools do
   end
 
   defp pop_opt([], _flag, acc), do: {nil, Enum.reverse(acc)}
+
+  defp pop_flag(args, flag) do
+    {Enum.member?(args, flag), Enum.reject(args, &(&1 == flag))}
+  end
 
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
