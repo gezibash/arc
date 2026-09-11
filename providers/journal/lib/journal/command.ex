@@ -3,14 +3,20 @@ defmodule Journal.Command do
 
   alias Journal.{Store, Page, KPI, Parse, Index, Config}
 
+  @doc """
+  Runs one request. The first line of `message` is the command line. Any
+  text after the first newline is the request body, which `write` stores as
+  the page body when the command line carries no `--body`.
+  """
   @spec run(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def run(root, from, message) do
-    {args, opts} = Parse.parse(message)
+    {header, body} = Parse.split(message)
+    {args, opts} = Parse.parse(header)
 
     if from == "" do
       {:error, "forbidden no caller key"}
     else
-      dispatch(args, opts, %{root: root, from: from})
+      dispatch(args, opts, %{root: root, from: from, body: body})
     end
   end
 
@@ -68,10 +74,8 @@ defmodule Journal.Command do
   # -- write / append / edit -------------------------------------------------
 
   defp dispatch(["write", addr], opts, ctx) do
-    body = opts["body"]
-
     with {:ok, parts} <- Store.address(addr, 3),
-         true <- is_binary(body) or {:error, "missing --body"},
+         {:ok, body} <- write_body(opts["body"], ctx.body),
          :ok <- Store.authorize_write(ctx.root, hd(parts), ctx.from),
          :ok <- Store.check_rev(ctx.root, parts, opts["if_rev"]) do
       existing =
@@ -85,7 +89,7 @@ defmodule Journal.Command do
         |> maybe_put("title", opts["title"])
         |> maybe_put("tags", tags(opts["tags"]))
 
-      page = %Page{meta: meta, body: normalize_body(body)}
+      page = %Page{meta: meta, body: body}
 
       with {:ok, rev} <- Store.write_page(ctx.root, parts, page, ctx.from, "write #{addr}") do
         {:ok, "rev: #{rev}"}
@@ -295,7 +299,8 @@ defmodule Journal.Command do
     journal commands
       ls [project[/notebook]]
       read <p/n/page> [--lines a:b]
-      write <p/n/page> --body "..." [--title t] [--tags a,b] [--if-rev r]
+      write <p/n/page> [--title t] [--tags a,b] [--if-rev r] [--body "..."]
+        the text after the first line is the page body when --body is absent
       append <p/n/page> <text>
       edit <p/n/page> --if-rev r --find s --replace t
       attach <p/n/page> --name f --base64 b
@@ -358,10 +363,21 @@ defmodule Journal.Command do
     end
   end
 
-  defp normalize_body(body) do
-    body = Parse.unescape_newlines(body)
-    if String.ends_with?(body, "\n"), do: body, else: body <> "\n"
-  end
+  # The page body comes from `--body` on the command line or from the request
+  # body, the text after the first line of the message. A request body is
+  # stored as given. A `--body` value still turns a literal `\n` into a
+  # newline, since callers pass it on one line. Setting both is an error.
+  defp write_body(nil, nil),
+    do: {:error, "missing body: pass --body or send it after the first line"}
+
+  defp write_body(nil, body), do: {:ok, trailing_newline(body)}
+  defp write_body(opt, body) when not is_binary(opt), do: write_body(nil, body)
+  defp write_body(opt, nil), do: {:ok, opt |> Parse.unescape_newlines() |> trailing_newline()}
+  defp write_body(opt, ""), do: write_body(opt, nil)
+  defp write_body(_opt, _body), do: {:error, "invalid_arguments --body and request body both set"}
+
+  defp trailing_newline(""), do: ""
+  defp trailing_newline(body), do: if(String.ends_with?(body, "\n"), do: body, else: body <> "\n")
 
   defp tags(nil), do: nil
   defp tags(s), do: s |> String.split(",", trim: true) |> Enum.map(&String.trim/1)

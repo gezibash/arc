@@ -15,6 +15,7 @@ defmodule JournalTest do
 
   defp run(root, from, line), do: Command.run(root, from, line)
   defp encode_json(value), do: value |> :json.encode() |> IO.iodata_to_binary()
+  defp json(value), do: encode_json(value)
 
   test "parse handles quotes inside option values" do
     {args, opts} =
@@ -43,6 +44,19 @@ defmodule JournalTest do
   test "parse treats a bare null and an empty JSON string as absent" do
     {_, opts} = Parse.parse(~s(write hrs/ab/p1 --body "x" --title null --tags "" --note ""))
     assert opts == %{"body" => "x"}
+  end
+
+  test "parse decodes JSON string options and skips bare null" do
+    title = ~s(P "one" --not-a-flag\nline two)
+    header = "write hrs/nb/p --title #{json(title)} --tags null --if-rev null"
+
+    assert {["write", "hrs/nb/p"], %{"title" => ^title}} = Parse.parse(header)
+
+    assert {["read", "hrs/nb/p"], %{"lines" => "1:40"}} =
+             Parse.parse("read hrs/nb/p --lines 1:40")
+
+    assert {_, %{"body" => "a\\nb", "title" => "null"}} =
+             Parse.parse(~s(x --body "a\\\\nb" --title "null"))
   end
 
   test "parse bare flags and positional quotes" do
@@ -100,6 +114,41 @@ defmodule JournalTest do
     assert {:ok, out} = run(root, @alice, "read hrs/ab/p1")
     assert out =~ body
     assert {:ok, ~s(hrs/ab/p1\tP "one")} == run(root, @alice, "ls hrs/ab")
+  end
+
+  test "write takes a 2 MB body from the request body", %{root: root} do
+    line = ~s(x --tags y "q" \\n ) <> String.duplicate("a", 100) <> "\n"
+    body = String.duplicate(line, div(2 * 1024 * 1024, byte_size(line)) + 1)
+    assert byte_size(body) > 2 * 1024 * 1024
+
+    header = ~s(write hrs/ab/big --title "Big" --tags null --if-rev null)
+    assert {:ok, "rev: " <> rev} = run(root, @alice, header <> "\n" <> body)
+
+    {:ok, out} = run(root, @alice, "read hrs/ab/big")
+    assert String.starts_with?(out, "rev: #{rev}\n")
+    assert out =~ "title: Big\n"
+    refute out =~ "tags:"
+    assert String.ends_with?(out, "---\n" <> body)
+
+    assert {:ok, "rev: " <> _} = run(root, @alice, "write hrs/ab/big --if-rev #{rev}\nno newline")
+    {:ok, out} = run(root, @alice, "read hrs/ab/big")
+    assert String.ends_with?(out, "---\nno newline\n")
+
+    assert {:ok, _} = run(root, @alice, "write hrs/ab/big\n")
+    {:ok, out} = run(root, @alice, "read hrs/ab/big")
+    assert String.ends_with?(out, "---\n")
+  end
+
+  test "write needs exactly one body", %{root: root} do
+    assert {:error, "missing body" <> _} = run(root, @alice, ~s(write hrs/ab/p1 --title "T"))
+    assert {:error, "missing body" <> _} = run(root, @alice, "write hrs/ab/p1 --body")
+
+    assert {:error, "invalid_arguments" <> _} =
+             run(root, @alice, ~s(write hrs/ab/p1 --body "x"\ny))
+
+    assert {:ok, _} = run(root, @alice, ~s(write hrs/ab/p1 --body "x"\n))
+    {:ok, out} = run(root, @alice, "read hrs/ab/p1")
+    assert String.ends_with?(out, "---\nx\n")
   end
 
   test "acl: creator owns, others forbidden until added", %{root: root} do
@@ -233,12 +282,30 @@ defmodule JournalTest do
           root,
           ~s({"op":"request","message":"read hrs/ab/p1","from":"#{@bob}","request_id":"r2"})
         )
+
+        message =
+          ~s(write hrs/ab/p2 --title "T \\"two\\"" --tags null --if-rev null\n# Two\n\nbody\n)
+
+        Journal.Stdio.handle_line(
+          root,
+          json(%{"op" => "request", "message" => message, "from" => @alice, "request_id" => "r3"})
+        )
+
+        Journal.Stdio.handle_line(
+          root,
+          ~s({"op":"request","message":"read hrs/ab/p2","from":"#{@alice}","request_id":"r4"})
+        )
       end)
 
-    [l1, l2] = String.split(String.trim(out), "\n")
+    [l1, l2, l3, l4] = String.split(String.trim(out), "\n")
     assert %{"op" => "reply", "request_id" => "r1", "reply" => "rev: " <> _} = :json.decode(l1)
 
     assert %{"op" => "error", "request_id" => "r2", "error" => "forbidden"} =
              :json.decode(l2)
+
+    assert %{"op" => "reply", "request_id" => "r3", "reply" => "rev: " <> _} = :json.decode(l3)
+    assert %{"op" => "reply", "request_id" => "r4", "reply" => page} = :json.decode(l4)
+    assert page =~ ~s(title: "T \\"two\\"")
+    assert String.ends_with?(page, "---\n# Two\n\nbody\n")
   end
 end
