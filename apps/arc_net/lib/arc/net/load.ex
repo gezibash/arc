@@ -87,30 +87,40 @@ defmodule Arc.Net.Load do
       Enum.reduce(1..connections, {[], 0}, fn _, {clients, errors} ->
         id = Identity.generate()
 
-        case :gen_tcp.connect(host, port, [:binary, packet: :raw, active: false], timeout_ms) do
-          {:ok, socket} ->
-            case recv_relay_hello(socket, timeout_ms) do
-              {:ok, relay_pubkey, relay_challenge} ->
-                with {:ok, client_hello, _client_pubkey} <-
-                       Handshake.client_hello(id, relay_pubkey, relay_challenge),
-                     :ok <- :gen_tcp.send(socket, client_hello) do
-                  {[{socket, id} | clients], errors}
-                else
-                  _ ->
-                    :gen_tcp.close(socket)
-                    {clients, errors + 1}
-                end
-
-              {:error, _} ->
-                :gen_tcp.close(socket)
-                {clients, errors + 1}
-            end
-
-          {:error, _} ->
-            {clients, errors + 1}
+        case connect_client(host, port, id, timeout_ms) do
+          {:ok, socket} -> {[{socket, id} | clients], errors}
+          :error -> {clients, errors + 1}
         end
       end)
       |> then(fn {clients, errors} -> {Enum.reverse(clients), errors} end)
+    end
+  end
+
+  defp connect_client(host, port, id, timeout_ms) do
+    case :gen_tcp.connect(host, port, [:binary, packet: :raw, active: false], timeout_ms) do
+      {:ok, socket} ->
+        case handshake_client(socket, id, timeout_ms) do
+          :ok ->
+            {:ok, socket}
+
+          :error ->
+            :gen_tcp.close(socket)
+            :error
+        end
+
+      {:error, _} ->
+        :error
+    end
+  end
+
+  defp handshake_client(socket, id, timeout_ms) do
+    with {:ok, relay_pubkey, relay_challenge} <- recv_relay_hello(socket, timeout_ms),
+         {:ok, client_hello, _client_pubkey} <-
+           Handshake.client_hello(id, relay_pubkey, relay_challenge),
+         :ok <- :gen_tcp.send(socket, client_hello) do
+      :ok
+    else
+      _ -> :error
     end
   end
 

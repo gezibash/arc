@@ -5,70 +5,51 @@ defmodule Arc.CLI do
   Usage: arc <command> [subcommand] [options]
   """
 
+  # Subcommands whose module receives only the remaining args.
+  @bare_commands %{
+    "keys" => Arc.CLI.Keys,
+    "apps" => Arc.CLI.Apps,
+    "host" => Arc.CLI.Host,
+    "relay" => Arc.CLI.Relay,
+    "mcp" => Arc.CLI.MCP
+  }
+
+  # Subcommands whose module receives the command name as the first arg.
+  @prefixed_commands %{
+    "publish" => Arc.CLI.Control,
+    "resolve" => Arc.CLI.Control,
+    "install" => Arc.CLI.Tools,
+    "tool" => Arc.CLI.Tools,
+    "trust" => Arc.CLI.Tools,
+    "discover" => Arc.CLI.Agent,
+    "mount" => Arc.CLI.Agent,
+    "send" => Arc.CLI.Agent,
+    "info" => Arc.CLI.Agent,
+    "listen" => Arc.CLI.Agent,
+    "serve" => Arc.CLI.Agent
+  }
+
   def main(args \\ []) do
     ensure_started()
+    dispatch(args)
+  end
 
-    case args do
-      ["keys" | rest] ->
-        Arc.CLI.Keys.run(rest)
+  defp dispatch([]), do: help()
+  defp dispatch(["help"]), do: help()
 
-      ["publish" | rest] ->
-        Arc.CLI.Control.run(["publish" | rest])
+  defp dispatch([command | rest]) do
+    cond do
+      module = Map.get(@bare_commands, command) ->
+        module.run(rest)
 
-      ["resolve" | rest] ->
-        Arc.CLI.Control.run(["resolve" | rest])
+      module = Map.get(@prefixed_commands, command) ->
+        module.run([command | rest])
 
-      ["install" | rest] ->
-        Arc.CLI.Tools.run(["install" | rest])
+      Arc.CLI.Tools.maybe_run_installed(command, rest) ->
+        :ok
 
-      ["apps" | rest] ->
-        Arc.CLI.Apps.run(rest)
-
-      ["host" | rest] ->
-        Arc.CLI.Host.run(rest)
-
-      ["tool" | rest] ->
-        Arc.CLI.Tools.run(["tool" | rest])
-
-      ["trust" | rest] ->
-        Arc.CLI.Tools.run(["trust" | rest])
-
-      ["relay" | rest] ->
-        Arc.CLI.Relay.run(rest)
-
-      ["mcp" | rest] ->
-        Arc.CLI.MCP.run(rest)
-
-      ["discover" | rest] ->
-        Arc.CLI.Agent.run(["discover" | rest])
-
-      ["mount" | rest] ->
-        Arc.CLI.Agent.run(["mount" | rest])
-
-      ["send" | rest] ->
-        Arc.CLI.Agent.run(["send" | rest])
-
-      ["info" | rest] ->
-        Arc.CLI.Agent.run(["info" | rest])
-
-      ["listen" | rest] ->
-        Arc.CLI.Agent.run(["listen" | rest])
-
-      ["serve" | rest] ->
-        Arc.CLI.Agent.run(["serve" | rest])
-
-      ["help"] ->
-        help()
-
-      [] ->
-        help()
-
-      [command | rest] ->
-        if Arc.CLI.Tools.maybe_run_installed(command, rest) do
-          :ok
-        else
-          error("unknown command: #{Enum.join([command | rest], " ")}")
-        end
+      true ->
+        error("unknown command: #{Enum.join([command | rest], " ")}")
     end
   end
 
@@ -127,6 +108,7 @@ defmodule Arc.CLI do
     """)
   end
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     IO.puts(:stderr, "Run 'arc help' for usage.")

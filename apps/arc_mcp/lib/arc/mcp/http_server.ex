@@ -138,25 +138,23 @@ defmodule Arc.MCP.HTTPServer do
   end
 
   defp handle_socket(socket, server) do
-    try do
-      case read_request(socket) do
-        {:ok, request} ->
-          case GenServer.call(server, {:http_request, request, self()}, 30_000) do
-            {:response, status, headers, body} ->
-              send_response(socket, status, headers, body)
+    case read_request(socket) do
+      {:ok, request} ->
+        case GenServer.call(server, {:http_request, request, self()}, 30_000) do
+          {:response, status, headers, body} ->
+            send_response(socket, status, headers, body)
 
-            {:sse, headers, session_id} ->
-              send_sse_headers(socket, headers)
-              :ok = :gen_tcp.send(socket, ": connected\n\n")
-              sse_loop(socket, server, session_id)
-          end
+          {:sse, headers, session_id} ->
+            send_sse_headers(socket, headers)
+            :ok = :gen_tcp.send(socket, ": connected\n\n")
+            sse_loop(socket, server, session_id)
+        end
 
-        {:error, status, body} ->
-          send_response(socket, status, [{"content-type", "text/plain"}], body)
-      end
-    after
-      safe_close_socket(socket)
+      {:error, status, body} ->
+        send_response(socket, status, [{"content-type", "text/plain"}], body)
     end
+  after
+    safe_close_socket(socket)
   end
 
   defp sse_loop(socket, server, session_id) do
@@ -192,13 +190,14 @@ defmodule Arc.MCP.HTTPServer do
   end
 
   defp do_route_request(%{method: "POST"} = request, _connection_pid, state) do
-    with {:ok, json} <- decode_json_body(request.body) do
-      if initialize_request?(json) do
-        create_session_and_initialize(request, json, state)
-      else
-        handle_post_request(request, json, state)
-      end
-    else
+    case decode_json_body(request.body) do
+      {:ok, json} ->
+        if initialize_request?(json) do
+          create_session_and_initialize(request, json, state)
+        else
+          handle_post_request(request, json, state)
+        end
+
       {:error, :parse_error} ->
         {{:response, 400, [{"content-type", "application/json"}], encode_json(parse_error())},
          state}
@@ -418,21 +417,19 @@ defmodule Arc.MCP.HTTPServer do
   end
 
   defp decode_json_body(body) when is_binary(body) do
-    try do
-      case :json.decode(body) do
-        %{} = json -> {:ok, json}
-        _ -> {:error, :parse_error}
-      end
-    rescue
+    case :json.decode(body) do
+      %{} = json -> {:ok, json}
       _ -> {:error, :parse_error}
     end
+  rescue
+    _ -> {:error, :parse_error}
   end
 
   defp parse_error do
     %{
       "jsonrpc" => "2.0",
       "id" => nil,
-      "error" => %{"code" => -32700, "message" => "parse error"}
+      "error" => %{"code" => -32_700, "message" => "parse error"}
     }
   end
 

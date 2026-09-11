@@ -96,9 +96,8 @@ defmodule Arc.CLI.ProviderBundle do
 
     with true <- File.regular?(arcfile) or {:error, :arcfile_not_found},
          {:ok, body} <- File.read(arcfile),
-         {:ok, document} <- TomlElixir.decode(body),
-         {:ok, bundle} <- normalize_bundle(document, Path.dirname(arcfile), arcfile) do
-      {:ok, bundle}
+         {:ok, document} <- TomlElixir.decode(body) do
+      normalize_bundle(document, Path.dirname(arcfile), arcfile)
     end
   end
 
@@ -137,8 +136,6 @@ defmodule Arc.CLI.ProviderBundle do
       _ -> {:error, :invalid_arcfile}
     end
   end
-
-  defp normalize_bundle(_document, _root, _arcfile), do: {:error, :invalid_arcfile}
 
   defp runtime_cwd(root, nil), do: root
   defp runtime_cwd(root, ""), do: root
@@ -181,12 +178,7 @@ defmodule Arc.CLI.ProviderBundle do
     String.match?(target, ~r/^[a-z][a-z0-9+.-]*:\/\//i)
   end
 
-  defp expand_path(path) do
-    case Path.expand(path) do
-      expanded when is_binary(expanded) -> expanded
-      _ -> path
-    end
-  end
+  defp expand_path(path), do: Path.expand(path)
 
   defp ensure_absent(paths) do
     case Enum.find(paths, &File.exists?/1) do

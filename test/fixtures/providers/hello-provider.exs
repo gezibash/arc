@@ -12,12 +12,10 @@ defmodule HelloProvider do
       from = Map.get(request, "from", "")
 
       reply =
-        cond do
-          String.starts_with?(message, "POST /echo ") ->
-            String.replace_prefix(message, "POST /echo ", "")
-
-          true ->
-            "provider hello from " <> from <> ": " <> message
+        if String.starts_with?(message, "POST /echo ") do
+          String.replace_prefix(message, "POST /echo ", "")
+        else
+          "provider hello from " <> from <> ": " <> message
         end
 
       emit(%{"reply" => reply})

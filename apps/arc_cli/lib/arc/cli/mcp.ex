@@ -100,6 +100,7 @@ defmodule Arc.CLI.MCP do
 
   defp pop_opt([], _flag, acc), do: {nil, Enum.reverse(acc)}
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     System.halt(1)

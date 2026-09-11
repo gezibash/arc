@@ -85,11 +85,9 @@ defmodule Arc.Host.Client do
   defp decode_line("", _rest), do: {:error, :invalid_response}
 
   defp decode_line(line, _rest) do
-    try do
-      {:ok, :json.decode(line)}
-    rescue
-      _ -> {:error, :invalid_json}
-    end
+    {:ok, :json.decode(line)}
+  rescue
+    _ -> {:error, :invalid_json}
   end
 
   defp decode_response(%{"id" => id, "ok" => true, "result" => result}, id), do: {:ok, result}

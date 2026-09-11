@@ -104,7 +104,7 @@ defmodule Arc.Data.CapabilityInvocation do
     send_stream_frame(agent, stream, :stream_close, body, %{})
   end
 
-  @spec recv_stream(pid(), stream_handle(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec recv_stream(pid(), stream_handle(), keyword()) :: {:ok, map()} | {:error, :timeout}
   def recv_stream(agent, stream, opts \\ []) do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
     started_at = System.monotonic_time(:millisecond)

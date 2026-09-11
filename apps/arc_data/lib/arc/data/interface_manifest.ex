@@ -57,9 +57,8 @@ defmodule Arc.Data.InterfaceManifest do
   @spec load_file(String.t()) :: {:ok, map()} | {:error, term()}
   def load_file(path) when is_binary(path) and path != "" do
     with {:ok, body} <- File.read(path),
-         {:ok, parsed} <- decode(path, body),
-         {:ok, interfaces} <- normalize_document(parsed) do
-      {:ok, interfaces}
+         {:ok, parsed} <- decode(path, body) do
+      normalize_document(parsed)
     end
   end
 
@@ -147,8 +146,6 @@ defmodule Arc.Data.InterfaceManifest do
       command -> [command]
     end
   end
-
-  defp normalize_cli_commands(_commands, _cli, _summary), do: []
 
   defp normalize_legacy_root_command(cli, summary) do
     args = normalize_cli_args(Map.get(cli, "args", []))
@@ -246,26 +243,28 @@ defmodule Arc.Data.InterfaceManifest do
   defp normalize_cli_args(_), do: []
 
   defp normalize_cli_arg(arg) when is_map(arg) do
-    with name when is_binary(name) and name != "" <- Map.get(arg, "name") do
-      kind = normalize_cli_arg_kind(Map.get(arg, "kind"))
-      type = normalize_cli_arg_type(Map.get(arg, "type"))
-      required = truthy?(Map.get(arg, "required"), kind == "positional")
-      variadic = kind == "positional" and truthy?(Map.get(arg, "variadic"), false)
+    case Map.get(arg, "name") do
+      name when is_binary(name) and name != "" ->
+        kind = normalize_cli_arg_kind(Map.get(arg, "kind"))
+        type = normalize_cli_arg_type(Map.get(arg, "type"))
+        required = truthy?(Map.get(arg, "required"), kind == "positional")
+        variadic = kind == "positional" and truthy?(Map.get(arg, "variadic"), false)
 
-      normalized =
-        %{
-          "name" => name,
-          "kind" => kind,
-          "type" => type,
-          "required" => required,
-          "variadic" => variadic
-        }
-        |> maybe_put("description", present_string(Map.get(arg, "description")))
-        |> maybe_put("flag", normalize_cli_flag(Map.get(arg, "flag"), name, kind))
+        normalized =
+          %{
+            "name" => name,
+            "kind" => kind,
+            "type" => type,
+            "required" => required,
+            "variadic" => variadic
+          }
+          |> maybe_put("description", present_string(Map.get(arg, "description")))
+          |> maybe_put("flag", normalize_cli_flag(Map.get(arg, "flag"), name, kind))
 
-      [normalized]
-    else
-      _ -> []
+        [normalized]
+
+      _ ->
+        []
     end
   end
 

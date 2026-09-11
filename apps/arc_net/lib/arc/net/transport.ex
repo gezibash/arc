@@ -15,12 +15,12 @@ defmodule Arc.Net.Transport do
 
   use GenServer
 
+  alias Arc.Data.Mailbox
+  alias Arc.Data.Packet
   alias Arc.Identity
   alias Arc.Net.Connection
   alias Arc.Net.Handshake
   alias Arc.Net.Telemetry
-  alias Arc.Data.Mailbox
-  alias Arc.Data.Packet
 
   @ed25519_pubkey_bytes 32
   @relay_challenge_bytes 32

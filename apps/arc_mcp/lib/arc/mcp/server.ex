@@ -120,14 +120,14 @@ defmodule Arc.MCP.Server do
             {ok_response(request, %{"tools" => Enum.map(descriptors, & &1.tool)}), state}
 
           {:error, reason} ->
-            {error_response(request, -32000, "tool listing failed: #{inspect(reason)}"), state}
+            {error_response(request, -32_000, "tool listing failed: #{inspect(reason)}"), state}
         end
 
       {true, "tools/call"} ->
         {handle_tool_call(request, state), state}
 
       {true, _unknown} ->
-        {error_response(request, -32601, "method not found"), state}
+        {error_response(request, -32_601, "method not found"), state}
 
       {false, "notifications/initialized"} ->
         {nil, %{state | initialized?: true}}
@@ -138,7 +138,7 @@ defmodule Arc.MCP.Server do
   end
 
   defp handle_message(request, state) when is_map(request) do
-    {error_response(request, -32600, "invalid request"), state}
+    {error_response(request, -32_600, "invalid request"), state}
   end
 
   defp handle_tool_call(%{"params" => params} = request, state) when is_map(params) do
@@ -147,10 +147,10 @@ defmodule Arc.MCP.Server do
 
     cond do
       not is_binary(name) or name == "" ->
-        error_response(request, -32602, "tools/call requires params.name")
+        error_response(request, -32_602, "tools/call requires params.name")
 
       not is_map(arguments) ->
-        error_response(request, -32602, "tools/call requires params.arguments to be an object")
+        error_response(request, -32_602, "tools/call requires params.arguments to be an object")
 
       true ->
         result =
@@ -173,9 +173,6 @@ defmodule Arc.MCP.Server do
 
             {:error, {:tool_error, message}} ->
               ToolProjection.error_result(message)
-
-            {:error, reason} ->
-              ToolProjection.error_result(inspect(reason))
           end
 
         ok_response(request, result)
@@ -183,7 +180,7 @@ defmodule Arc.MCP.Server do
   end
 
   defp handle_tool_call(request, _state) do
-    error_response(request, -32602, "tools/call requires params")
+    error_response(request, -32_602, "tools/call requires params")
   end
 
   defp initialize_result(state) do

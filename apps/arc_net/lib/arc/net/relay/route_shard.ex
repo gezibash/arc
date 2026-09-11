@@ -158,19 +158,15 @@ defmodule Arc.Net.Relay.RouteShard do
   defp valid_pubkey?(_), do: false
 
   defp ets_insert(table, entry) do
-    try do
-      :ets.insert(table, entry)
-    catch
-      :error, :badarg -> false
-    end
+    :ets.insert(table, entry)
+  catch
+    :error, :badarg -> false
   end
 
   defp ets_delete(table, key) do
-    try do
-      :ets.delete(table, key)
-    catch
-      :error, :badarg -> false
-    end
+    :ets.delete(table, key)
+  catch
+    :error, :badarg -> false
   end
 
   defp emit(event_suffix, measurements, metadata) do

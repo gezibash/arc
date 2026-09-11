@@ -1,9 +1,9 @@
 defmodule Arc.Data.CapabilityInvocationTest do
   use ExUnit.Case, async: false
 
-  alias Arc.Identity
   alias Arc.Data.Agent
   alias Arc.Data.CapabilityInvocation
+  alias Arc.Identity
 
   setup do
     Arc.Control.Local.reset()

@@ -18,10 +18,10 @@ defmodule Arc.Net.Connection do
 
   use GenServer
 
+  alias Arc.Net.Handshake
   alias Arc.Net.Relay
   alias Arc.Net.Telemetry
   alias Arc.Net.Transport
-  alias Arc.Net.Handshake
 
   @default_max_frame_bytes 4 * 1024 * 1024
   @default_max_buffer_bytes 8 * 1024 * 1024

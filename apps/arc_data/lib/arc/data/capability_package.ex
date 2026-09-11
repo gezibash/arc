@@ -17,9 +17,8 @@ defmodule Arc.Data.CapabilityPackage do
   @spec load_file(String.t()) :: {:ok, map()} | {:error, term()}
   def load_file(path) when is_binary(path) and path != "" do
     with {:ok, body} <- File.read(path),
-         {:ok, parsed} <- decode(path, body),
-         {:ok, package} <- normalize_document(parsed) do
-      {:ok, package}
+         {:ok, parsed} <- decode(path, body) do
+      normalize_document(parsed)
     end
   end
 
@@ -109,7 +108,6 @@ defmodule Arc.Data.CapabilityPackage do
          true <- Identity.verify(provider_pk, payload, signature) or {:error, :invalid_signature} do
       {:ok, package}
     else
-      false -> {:error, :invalid_capability_package}
       {:error, _reason} = error -> error
     end
   end

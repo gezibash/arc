@@ -121,11 +121,9 @@ defmodule Arc.Data.Packet do
   end
 
   defp safe_decode_json(bytes) do
-    try do
-      {:ok, :json.decode(bytes)}
-    rescue
-      _ -> {:error, :malformed_packet}
-    end
+    {:ok, :json.decode(bytes)}
+  rescue
+    _ -> {:error, :malformed_packet}
   end
 
   defp safe_decode64(nil), do: {:error, :malformed_packet}

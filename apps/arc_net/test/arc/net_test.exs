@@ -1,8 +1,8 @@
 defmodule Arc.NetTest do
   use ExUnit.Case, async: false
 
-  alias Arc.Identity
   alias Arc.Data.Packet
+  alias Arc.Identity
   alias Arc.Net.Handshake
 
   # Build a valid signed Arc packet (ciphertext is dummy — relay never decrypts).

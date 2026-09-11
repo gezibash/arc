@@ -36,6 +36,8 @@ defmodule Arc.Data.Handler do
   @callback init(uri :: String.t()) :: {:ok, state()} | {:error, term()}
   @callback handle_message(message :: binary(), from_pk :: binary(), state()) ::
               {:reply, binary(), state()}
+              | {:noreply, state()}
+              | {:emit, [outbound_event()], state()}
   @callback handle_message(
               message :: binary(),
               from_pk :: binary(),
@@ -127,12 +129,10 @@ defmodule Arc.Data.Handler do
   end
 
   defp normalize_package(package) when is_map(package) do
-    cond do
-      Map.has_key?(package, "capability") ->
-        Arc.Data.CapabilityPackage.normalize_package(package)
-
-      true ->
-        Arc.Data.CapabilityPackage.wrap_capability(package)
+    if Map.has_key?(package, "capability") do
+      Arc.Data.CapabilityPackage.normalize_package(package)
+    else
+      Arc.Data.CapabilityPackage.wrap_capability(package)
     end
   end
 

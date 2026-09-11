@@ -1,11 +1,11 @@
 defmodule Arc.Data.AgentTest do
   use ExUnit.Case, async: false
 
-  alias Arc.Identity
   alias Arc.Data.Agent
   alias Arc.Data.Frame
   alias Arc.Data.Packet
   alias Arc.Data.Session
+  alias Arc.Identity
 
   setup do
     Arc.Control.Local.reset()

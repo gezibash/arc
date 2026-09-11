@@ -97,6 +97,8 @@ defmodule Arc.Host.AgentPool do
 
   defp maybe_connect_relay(identity, %{host: host, port: port, pubkey: pubkey}) do
     if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :connect_relay, 4) do
+      # Arc.Net is an optional runtime peer, not a compile-time dep.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(Arc.Net, :connect_relay, [host, port, identity, pubkey])
     else
       {:error, :relay_runtime_unavailable}
@@ -109,21 +111,19 @@ defmodule Arc.Host.AgentPool do
   defp do_resolve_identity(query) when is_binary(query) do
     query = String.trim(query)
 
-    cond do
-      query == "" ->
-        KeyStore.resolve_active()
+    if query == "" do
+      KeyStore.resolve_active()
+    else
+      case KeyStore.get(query) do
+        {:ok, identity} ->
+          {:ok, identity}
 
-      true ->
-        case KeyStore.get(query) do
-          {:ok, identity} ->
-            {:ok, identity}
+        {:error, :not_found} ->
+          resolve_by_public_key_prefix(query)
 
-          {:error, :not_found} ->
-            resolve_by_public_key_prefix(query)
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 

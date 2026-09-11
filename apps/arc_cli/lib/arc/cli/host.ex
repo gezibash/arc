@@ -215,6 +215,7 @@ defmodule Arc.CLI.Host do
   defp maybe_put(map, _key, []), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     System.halt(1)

@@ -112,11 +112,12 @@ defmodule Arc.Host.Connection do
   end
 
   defp handle_request(%{"id" => id, "op" => "shutdown", "params" => params}, state) do
-    with {:ok, _record} <- authenticate_admin_token(state, request_token(params)) do
-      send_ok(state.socket, id, %{"stopping" => true})
-      Service.shutdown(state.service)
-      state
-    else
+    case authenticate_admin_token(state, request_token(params)) do
+      {:ok, _record} ->
+        send_ok(state.socket, id, %{"stopping" => true})
+        Service.shutdown(state.service)
+        state
+
       {:error, reason} ->
         send_error(state.socket, id, auth_error_code(reason), auth_error_message(reason))
         state
@@ -369,19 +370,8 @@ defmodule Arc.Host.Connection do
         end
 
       case result do
-        {:ok, tool, %{input: input, invocation: invocation}} ->
-          case invocation["mode"] || "request_reply" do
-            "stream" ->
-              if allow_scope?(state, "stream") do
-                open_tool_stream(state, id, tool, input, invocation, app_session_id, params)
-              else
-                send_error(state.socket, id, "forbidden", "token does not allow stream")
-                state
-              end
-
-            _ ->
-              invoke_tool_request_reply(state, id, tool, input, invocation, timeout_ms)
-          end
+        {:ok, tool, built} ->
+          invoke_tool(state, id, tool, built, app_session_id, params, timeout_ms)
 
         {:error, :not_found} ->
           send_error(state.socket, id, "tool_not_found", "installed tool not found")
@@ -415,15 +405,13 @@ defmodule Arc.Host.Connection do
                is_nil(app_session_id) or not Map.has_key?(state.streams, app_session_id) or
                  {:error, {"stream_exists", "stream session already active"}},
              {:ok, detail} <-
-               CapabilityDiscovery.fetch_detail(state.binding.agent, peer, capability_id),
-             {:ok, handle} <-
-               CapabilityInvocation.open_stream(
-                 state.binding.agent,
-                 detail,
-                 input,
-                 maybe_app_session_opt(app_session_id)
-               ) do
-          {:ok, handle}
+               CapabilityDiscovery.fetch_detail(state.binding.agent, peer, capability_id) do
+          CapabilityInvocation.open_stream(
+            state.binding.agent,
+            detail,
+            input,
+            maybe_app_session_opt(app_session_id)
+          )
         end
 
       case result do
@@ -664,9 +652,8 @@ defmodule Arc.Host.Connection do
              request_id: request_id,
              meta: %{"method" => "GET", "path" => path}
            ) do
-      with {:ok, msg} <- wait_for_reply_message(agent, request_id, @default_timeout_ms),
-           {:ok, document} <- decode_document(msg) do
-        {:ok, document}
+      with {:ok, msg} <- wait_for_reply_message(agent, request_id, @default_timeout_ms) do
+        decode_document(msg)
       end
     else
       {:error, reason} ->
@@ -720,11 +707,9 @@ defmodule Arc.Host.Connection do
   end
 
   defp decode_document(%{kind: :response, text: text}) do
-    try do
-      {:ok, :json.decode(text)}
-    rescue
-      _ -> {:error, :invalid_json}
-    end
+    {:ok, :json.decode(text)}
+  rescue
+    _ -> {:error, :invalid_json}
   end
 
   defp decode_document(_msg), do: {:error, :unexpected_reply}
@@ -803,11 +788,9 @@ defmodule Arc.Host.Connection do
   end
 
   defp decode_request(line) do
-    try do
-      {:ok, :json.decode(line)}
-    rescue
-      error -> {:error, error}
-    end
+    {:ok, :json.decode(line)}
+  rescue
+    error -> {:error, error}
   end
 
   defp read_loop(socket, owner, buffer) do
@@ -883,14 +866,6 @@ defmodule Arc.Host.Connection do
 
       {:error, :timeout} ->
         pump_stream(owner, agent, handle)
-
-      {:error, reason} ->
-        send(
-          owner,
-          {:host_stream_event, handle.app_session_id, stream_error_event(handle, reason)}
-        )
-
-        :ok
     end
   end
 
@@ -909,20 +884,6 @@ defmodule Arc.Host.Connection do
     |> maybe_put("status", get_in(message, [:meta, "status"]))
     |> maybe_put("code", Map.get(message, :error_code))
     |> maybe_put("message", Map.get(message, :error_message))
-  end
-
-  defp stream_error_event(handle, reason) do
-    %{
-      "op" => "event",
-      "event" => "stream_error",
-      "from" => nil,
-      "text" => "",
-      "request_id" => encode_hex(handle.request_id),
-      "app_session_id" => handle.app_session_id,
-      "meta" => %{},
-      "code" => "stream_recv_failed",
-      "message" => format_reason(reason)
-    }
   end
 
   defp terminal_message?(%{kind: kind})
@@ -969,6 +930,29 @@ defmodule Arc.Host.Connection do
   end
 
   defp close_streams(_state), do: :ok
+
+  defp invoke_tool(
+         state,
+         id,
+         tool,
+         %{input: input, invocation: invocation},
+         app_session_id,
+         params,
+         timeout_ms
+       ) do
+    case invocation["mode"] || "request_reply" do
+      "stream" ->
+        if allow_scope?(state, "stream") do
+          open_tool_stream(state, id, tool, input, invocation, app_session_id, params)
+        else
+          send_error(state.socket, id, "forbidden", "token does not allow stream")
+          state
+        end
+
+      _ ->
+        invoke_tool_request_reply(state, id, tool, input, invocation, timeout_ms)
+    end
+  end
 
   defp invoke_tool_request_reply(state, id, tool, input, invocation, timeout_ms) do
     case CapabilityInvocation.invoke(state.binding.agent, tool, input,

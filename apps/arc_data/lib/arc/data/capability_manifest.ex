@@ -8,9 +8,9 @@ defmodule Arc.Data.CapabilityManifest do
   - `GET /info/capabilities/:id` expands one capability into detail
   """
 
-  alias Arc.Identity
   alias Arc.Data.CapabilityPackage
   alias Arc.Data.Handler
+  alias Arc.Identity
 
   @manifest_version 2
   @summary_path "/info"

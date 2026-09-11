@@ -3,18 +3,18 @@ defmodule Arc.CLI.Agent do
   CLI commands for agent messaging and serving.
   """
 
-  alias Arc.Identity
-  alias Arc.Identity.KeyStore
-  alias Arc.Data.Agent
-  alias Arc.Data.CapabilityDiscovery
-  alias Arc.Data.CapabilityPackage
-  alias Arc.Data.CapabilityInvocation
-  alias Arc.Data.Frame
   alias Arc.CLI.ProviderBundle
   alias Arc.CLI.ServeView
+  alias Arc.Data.Agent
+  alias Arc.Data.CapabilityDiscovery
+  alias Arc.Data.CapabilityInvocation
+  alias Arc.Data.CapabilityPackage
+  alias Arc.Data.Frame
   alias Arc.Host.Client
   alias Arc.Host.Service
   alias Arc.Host.Token
+  alias Arc.Identity
+  alias Arc.Identity.KeyStore
   alias Arc.MCP.DynamicToolRegistry
 
   def run(args) do
@@ -286,9 +286,8 @@ defmodule Arc.CLI.Agent do
            meta: %{"method" => "GET", "path" => path}
          ) do
       :ok ->
-        with {:ok, msg} <- wait_for_reply_message(agent, request_id),
-             {:ok, document} <- decode_document(msg) do
-          {:ok, document}
+        with {:ok, msg} <- wait_for_reply_message(agent, request_id) do
+          decode_document(msg)
         end
 
       {:error, reason} ->
@@ -297,15 +296,7 @@ defmodule Arc.CLI.Agent do
   end
 
   defp wait_for_reply(agent, request_id) do
-    wait_for_reply(agent, request_id, 0)
-  end
-
-  defp wait_for_reply(_agent, _request_id, elapsed) when elapsed > 10_000 do
-    :ok
-  end
-
-  defp wait_for_reply(agent, request_id, elapsed) do
-    case wait_for_reply_message(agent, request_id, elapsed) do
+    case wait_for_reply_message(agent, request_id) do
       {:ok, match} -> print_message(match)
       {:error, :timeout} -> :ok
     end
@@ -342,11 +333,9 @@ defmodule Arc.CLI.Agent do
   end
 
   defp decode_document(%{kind: :response, text: text}) do
-    try do
-      {:ok, :json.decode(text)}
-    rescue
-      _ -> {:error, :invalid_json}
-    end
+    {:ok, :json.decode(text)}
+  rescue
+    _ -> {:error, :invalid_json}
   end
 
   defp decode_document(_msg), do: {:error, :unexpected_reply}
@@ -437,6 +426,20 @@ defmodule Arc.CLI.Agent do
        when is_map(capability) do
     capability = attach_interfaces(capability, document)
 
+    print_detail_header(provider, capability, document, entry)
+    print_detail_invocation(capability["invocation"] || %{})
+    print_detail_hash(Map.get(document, "package_hash"))
+    print_detail_signer(get_in(document, ["signature", "signer_public_key"]))
+    print_detail_config(capability["config"])
+    print_detail_examples(capability["examples"] || [])
+    print_detail_install(provider["name"] || entry.name, capability)
+  end
+
+  defp print_detail(document, _entry) do
+    IO.puts(inspect(document, pretty: true, limit: :infinity))
+  end
+
+  defp print_detail_header(provider, capability, document, entry) do
     IO.puts("Provider: #{provider_label(provider)} (#{short_public_key(entry.public_key)})")
     IO.puts("Capability: #{capability["id"] || "unknown"}")
     IO.puts("Type: #{capability["kind"] || "capability"}/#{capability["scheme"] || "unknown"}")
@@ -450,66 +453,64 @@ defmodule Arc.CLI.Agent do
     if present?(capability["summary"]) do
       IO.puts("Summary: #{capability["summary"]}")
     end
+  end
 
-    invocation = capability["invocation"] || %{}
+  defp print_detail_invocation(invocation) do
     IO.puts("Invocation: #{invocation["method"] || "RAW"} #{invocation["path"] || "/"}")
+  end
 
-    case Map.get(document, "package_hash") do
-      hash when is_binary(hash) and hash != "" -> IO.puts("Hash: #{hash}")
-      _ -> :ok
-    end
+  defp print_detail_hash(hash) when is_binary(hash) and hash != "", do: IO.puts("Hash: #{hash}")
+  defp print_detail_hash(_hash), do: :ok
 
-    case get_in(document, ["signature", "signer_public_key"]) do
-      signer when is_binary(signer) and signer != "" -> IO.puts("Signer: #{signer}")
-      _ -> :ok
-    end
+  defp print_detail_signer(signer) when is_binary(signer) and signer != "" do
+    IO.puts("Signer: #{signer}")
+  end
 
-    if is_map(capability["config"]) and map_size(capability["config"]) > 0 do
-      IO.puts("Config:")
+  defp print_detail_signer(_signer), do: :ok
 
-      capability["config"]
-      |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
-      |> Enum.each(fn {key, value} ->
-        IO.puts("  #{key}: #{format_value(value)}")
-      end)
-    end
+  defp print_detail_config(config) when is_map(config) and map_size(config) > 0 do
+    IO.puts("Config:")
 
-    examples = capability["examples"] || []
+    config
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.each(fn {key, value} ->
+      IO.puts("  #{key}: #{format_value(value)}")
+    end)
+  end
 
-    if is_list(examples) and examples != [] do
-      IO.puts("Examples:")
-      Enum.each(examples, fn example -> IO.puts("  #{example}") end)
-    end
+  defp print_detail_config(_config), do: :ok
 
-    provider_name = provider["name"] || entry.name
+  defp print_detail_examples(examples) when is_list(examples) and examples != [] do
+    IO.puts("Examples:")
+    Enum.each(examples, fn example -> IO.puts("  #{example}") end)
+  end
+
+  defp print_detail_examples(_examples), do: :ok
+
+  defp print_detail_install(provider_name, capability) do
     capability_id = capability["id"] || "unknown"
 
     case Arc.CLI.ToolRegistry.cli_interface(capability) do
       %{"namespace" => name} = cli ->
         IO.puts("Install: arc install #{provider_name} #{capability_id}")
         IO.puts("Install alias: #{name}")
-
-        case Map.get(cli, "commands", []) do
-          [] ->
-            :ok
-
-          commands ->
-            IO.puts("Commands:")
-
-            Enum.each(commands, fn command ->
-              label = Arc.CLI.ToolRegistry.command_label(command)
-              summary = command["summary"] || ""
-              IO.puts("  #{label}#{if(summary == "", do: "", else: "  " <> summary)}")
-            end)
-        end
+        print_detail_commands(Map.get(cli, "commands", []))
 
       _ ->
         IO.puts("Install: not published")
     end
   end
 
-  defp print_detail(document, _entry) do
-    IO.puts(inspect(document, pretty: true, limit: :infinity))
+  defp print_detail_commands([]), do: :ok
+
+  defp print_detail_commands(commands) do
+    IO.puts("Commands:")
+
+    Enum.each(commands, fn command ->
+      label = Arc.CLI.ToolRegistry.command_label(command)
+      summary = command["summary"] || ""
+      IO.puts("  #{label}#{if(summary == "", do: "", else: "  " <> summary)}")
+    end)
   end
 
   defp print_discovery(%{query: query, total: total, truncated?: truncated?, matches: matches}) do
@@ -638,6 +639,8 @@ defmodule Arc.CLI.Agent do
     end)
   end
 
+  @spec with_serving_agent(String.t(), (pid(), Identity.t(), map() | nil -> term()), keyword()) ::
+          no_return()
   defp with_serving_agent(uri, fun, opts) do
     case KeyStore.resolve_active() do
       {:ok, id} ->
@@ -709,16 +712,10 @@ defmodule Arc.CLI.Agent do
 
   defp serve_meta(target, resolved, bundle) do
     manifest_path =
-      cond do
-        is_map(bundle) -> bundle.manifest.path
-        true -> manifest_path_from_uri(resolved)
-      end
+      if is_map(bundle), do: bundle.manifest.path, else: manifest_path_from_uri(resolved)
 
     runtime_path =
-      cond do
-        is_map(bundle) -> bundle.runtime.command
-        true -> runtime_path_from_uri(resolved)
-      end
+      if is_map(bundle), do: bundle.runtime.command, else: runtime_path_from_uri(resolved)
 
     package =
       case manifest_path do
@@ -767,8 +764,6 @@ defmodule Arc.CLI.Agent do
         uri
     end
   end
-
-  defp attach_host_runtime_env(uri, _identity), do: uri
 
   defp host_runtime_env(%Identity{} = identity) do
     socket_path = Service.default_socket_path()
@@ -877,6 +872,7 @@ defmodule Arc.CLI.Agent do
     {nil, Enum.reverse(acc)}
   end
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     System.halt(1)

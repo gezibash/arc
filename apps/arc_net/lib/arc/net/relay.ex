@@ -15,8 +15,8 @@ defmodule Arc.Net.Relay do
 
   alias Arc.Data.Packet
   alias Arc.Net.Connection
-  alias Arc.Net.Telemetry
   alias Arc.Net.Relay.RouteShard
+  alias Arc.Net.Telemetry
 
   @default_backlog 4096
   @default_acceptors max(2, System.schedulers_online())
@@ -180,29 +180,27 @@ defmodule Arc.Net.Relay do
 
   @impl GenServer
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
-    cond do
-      Map.get(state.acceptor_refs, pid) == ref ->
-        acceptor_refs =
-          restart_acceptor(
-            state.acceptor_refs,
-            pid,
-            state.listen_socket,
-            self(),
-            state.relay_public_key
-          )
+    if Map.get(state.acceptor_refs, pid) == ref do
+      acceptor_refs =
+        restart_acceptor(
+          state.acceptor_refs,
+          pid,
+          state.listen_socket,
+          self(),
+          state.relay_public_key
+        )
 
-        emit([:relay, :acceptor, :restarted], %{count: 1}, %{})
-        {:noreply, %{state | acceptor_refs: acceptor_refs}}
+      emit([:relay, :acceptor, :restarted], %{count: 1}, %{})
+      {:noreply, %{state | acceptor_refs: acceptor_refs}}
+    else
+      case Map.get(state.shard_refs, pid) do
+        %{idx: idx, ref: ^ref} ->
+          state = restart_shard(state, pid, idx)
+          {:noreply, state}
 
-      true ->
-        case Map.get(state.shard_refs, pid) do
-          %{idx: idx, ref: ^ref} ->
-            state = restart_shard(state, pid, idx)
-            {:noreply, state}
-
-          _ ->
-            {:noreply, state}
-        end
+        _ ->
+          {:noreply, state}
+      end
     end
   end
 
@@ -230,43 +228,32 @@ defmodule Arc.Net.Relay do
     case Packet.decode(packet) do
       {:ok, %{src: src_pk, dst: dst_pk}} ->
         if valid_sender_fast?(conn_pid, src_pk) do
-          case lookup_route(dst_pk) do
-            nil ->
-              emit([:relay, :packet, :dropped], %{count: 1, bytes: byte_size(packet)}, %{
-                reason: :no_route
-              })
-
-              :ok
-
-            dst_conn_pid ->
-              case Connection.forward_packet(dst_conn_pid, packet) do
-                :ok ->
-                  emit([:relay, :packet, :forwarded], %{count: 1, bytes: byte_size(packet)}, %{})
-                  :ok
-
-                {:error, :backpressure} ->
-                  emit([:relay, :packet, :dropped], %{count: 1, bytes: byte_size(packet)}, %{
-                    reason: :backpressure
-                  })
-
-                  :ok
-              end
-          end
+          forward_fast(lookup_route(dst_pk), packet)
         else
-          emit([:relay, :packet, :dropped], %{count: 1, bytes: byte_size(packet)}, %{
-            reason: :invalid_sender
-          })
-
-          :ok
+          drop_fast(packet, :invalid_sender)
         end
 
       {:error, _} ->
-        emit([:relay, :packet, :dropped], %{count: 1, bytes: byte_size(packet)}, %{
-          reason: :invalid_packet
-        })
-
-        :ok
+        drop_fast(packet, :invalid_packet)
     end
+  end
+
+  defp forward_fast(nil, packet), do: drop_fast(packet, :no_route)
+
+  defp forward_fast(dst_conn_pid, packet) do
+    case Connection.forward_packet(dst_conn_pid, packet) do
+      :ok ->
+        emit([:relay, :packet, :forwarded], %{count: 1, bytes: byte_size(packet)}, %{})
+        :ok
+
+      {:error, :backpressure} ->
+        drop_fast(packet, :backpressure)
+    end
+  end
+
+  defp drop_fast(packet, reason) do
+    emit([:relay, :packet, :dropped], %{count: 1, bytes: byte_size(packet)}, %{reason: reason})
+    :ok
   end
 
   defp valid_sender_fast?(conn_pid, src_pk) do
@@ -321,11 +308,9 @@ defmodule Arc.Net.Relay do
   end
 
   defp safe_shard_stats(shard_pid) do
-    try do
-      RouteShard.stats(shard_pid)
-    catch
-      :exit, _ -> %{routes: 0, conns: 0}
-    end
+    RouteShard.stats(shard_pid)
+  catch
+    :exit, _ -> %{routes: 0, conns: 0}
   end
 
   defp init_tables(partitions) do
@@ -347,11 +332,9 @@ defmodule Arc.Net.Relay do
   defp clear_table(nil), do: :ok
 
   defp clear_table(table) do
-    try do
-      :ets.delete_all_objects(table)
-    catch
-      :error, :badarg -> :ok
-    end
+    :ets.delete_all_objects(table)
+  catch
+    :error, :badarg -> :ok
   end
 
   defp delete_tables(tables) do
@@ -515,11 +498,9 @@ defmodule Arc.Net.Relay do
   defp valid_count?(_), do: false
 
   defp ets_lookup(table, key) do
-    try do
-      :ets.lookup(table, key)
-    catch
-      :error, :badarg -> []
-    end
+    :ets.lookup(table, key)
+  catch
+    :error, :badarg -> []
   end
 
   defp emit(event_suffix, measurements, metadata) do
