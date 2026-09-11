@@ -285,7 +285,11 @@ defmodule Arc.Data.Toolbox do
     end
   end
 
-  defp render_template(template, values) do
+  @doc """
+  Render one `{{key}}` template against parsed argument values.
+  """
+  @spec render_template(String.t(), map()) :: {:ok, String.t()} | {:error, term()}
+  def render_template(template, values) do
     unknown =
       @template_placeholder
       |> Regex.scan(template)

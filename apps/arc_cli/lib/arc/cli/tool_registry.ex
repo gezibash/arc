@@ -200,7 +200,7 @@ defmodule Arc.CLI.ToolRegistry do
         path -> "arc " <> namespace <> " " <> Enum.join(path, " ")
       end
 
-    base <> usage_suffix(args)
+    base <> usage_suffix(args) <> stdin_suffix(command)
   end
 
   def command_usage(namespace, command) when is_binary(namespace) do
@@ -295,6 +295,9 @@ defmodule Arc.CLI.ToolRegistry do
 
   defp usage_suffix([]), do: ""
   defp usage_suffix(args), do: " " <> Enum.map_join(args, " ", &usage_token/1)
+
+  defp stdin_suffix(%{"input" => %{"source" => "stdin"}}), do: " < body"
+  defp stdin_suffix(_command), do: ""
 
   defp normalize_command(value) when is_binary(value) do
     value

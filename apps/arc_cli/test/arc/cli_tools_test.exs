@@ -85,6 +85,48 @@ defmodule Arc.CLIToolsTest do
     assert list_output =~ "Invocation: RAW /"
   end
 
+  test "arc install --trust records the signer and skips the prompt" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, manifest_path} = hello_provider_paths()
+
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+    end)
+
+    install_output =
+      ExUnit.CaptureIO.capture_io("", fn ->
+        Arc.CLI.main(["install", "--trust", Identity.name(server_id), "primary"])
+      end)
+
+    refute install_output =~ "Trust this signer?"
+    assert install_output =~ "Installed hello from #{Identity.name(server_id)}/primary"
+
+    assert {:ok, [%{"state" => "allowed"}]} = Arc.CLI.TrustStore.list(client_id)
+  end
+
+  test "trust prompt answers only deny on an explicit no" do
+    assert Arc.CLI.Tools.trust_answer("y\n") == :allow
+    assert Arc.CLI.Tools.trust_answer("YES\n") == :allow
+    assert Arc.CLI.Tools.trust_answer("n\n") == :deny
+    assert Arc.CLI.Tools.trust_answer("no\n") == :deny
+    assert Arc.CLI.Tools.trust_answer("\n") == :cancel
+    assert Arc.CLI.Tools.trust_answer("maybe\n") == :cancel
+    assert Arc.CLI.Tools.trust_answer(:eof) == :cancel
+    assert Arc.CLI.Tools.trust_answer({:error, :terminated}) == :cancel
+  end
+
   test "arc tool call invokes an installed capability" do
     client_id = persist_cli_identity()
     server_id = Identity.generate()
@@ -115,6 +157,64 @@ defmodule Arc.CLIToolsTest do
       end)
 
     assert output =~ "provider hello"
+  end
+
+  test "stdin input source sends the piped body as the request payload" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _manifest_path} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(
+        System.tmp_dir!(),
+        "arc_stdin_manifest_#{System.unique_integer([:positive])}.json"
+      )
+
+    write_stdin_manifest(manifest_path)
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    {:ok, input_device} =
+      StringIO.open("# Title\n\nA long body with \"quotes\" and {{braces}}.\n")
+
+    old_input_device = Application.get_env(:arc_cli, :stream_input_device)
+    Application.put_env(:arc_cli, :stream_input_device, input_device)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+
+      if old_input_device do
+        Application.put_env(:arc_cli, :stream_input_device, old_input_device)
+      else
+        Application.delete_env(:arc_cli, :stream_input_device)
+      end
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    help_output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["pages", "write", "--help"])
+      end)
+
+    output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["pages", "write", "hrs/nb/page"])
+      end)
+
+    assert help_output =~ "Usage: arc pages write <path> < body"
+    assert output =~ "/pages/hrs/nb/page\n# Title\n\nA long body with \"quotes\" and {{braces}}."
   end
 
   test "installed tools can be invoked as top-level arc subcommands" do
@@ -601,6 +701,44 @@ defmodule Arc.CLIToolsTest do
     runtime = Path.expand("../../../../test/fixtures/providers/sandbox-provider.exs", __DIR__)
     manifest = Path.expand("../../../../test/fixtures/providers/sandbox-provider.json", __DIR__)
     {runtime, manifest}
+  end
+
+  defp write_stdin_manifest(path) do
+    manifest = %{
+      "published_at" => "2026-03-06T00:00:00Z",
+      "release" => %{"version" => "1.0.0", "channel" => "stable"},
+      "capability" => %{
+        "id" => "primary",
+        "kind" => "service",
+        "scheme" => "pages",
+        "title" => "Pages",
+        "summary" => "Write pages through the hello echo runtime.",
+        "invocation" => %{"method" => "RAW", "path" => "/"}
+      },
+      "interfaces" => %{
+        "cli" => %{
+          "version" => 1,
+          "namespace" => "pages",
+          "commands" => [
+            %{
+              "path" => ["write"],
+              "summary" => "Write a page body from stdin",
+              "args" => [
+                %{
+                  "name" => "path",
+                  "kind" => "positional",
+                  "type" => "string",
+                  "required" => true
+                }
+              ],
+              "input" => %{"source" => "stdin", "template" => "POST /echo /pages/{{path}}"}
+            }
+          ]
+        }
+      }
+    }
+
+    File.write!(path, manifest |> :json.encode() |> IO.iodata_to_binary())
   end
 
   defp write_hello_manifest(path, version, title) do
