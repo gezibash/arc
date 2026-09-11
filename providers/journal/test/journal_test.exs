@@ -75,6 +75,14 @@ defmodule JournalTest do
     assert opts == %{"project" => "hrs", "deep" => true}
   end
 
+  test "parse treats a template-rendered boolean like a bare flag" do
+    line = ~s(search "learning rate" --project "" --notebook "" --deep "true")
+    assert {["search", "learning rate"], %{"deep" => true}} = Parse.parse(line)
+
+    assert {["a"], %{"x" => true}} = Parse.parse("a --x true")
+    assert {["a"], %{}} = Parse.parse(~s(a --x "false"))
+  end
+
   test "parse keeps a multi-megabyte quoted value and the flags after it" do
     big = String.duplicate("A", 8 * 1024 * 1024)
     {args, opts} = Parse.parse(~s(attach hrs/ab/p1 --base64 "#{big}" --name big.bin --deep))
