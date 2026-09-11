@@ -2,10 +2,16 @@ defmodule Journal.Parse do
   @moduledoc """
   Parses a command line into positionals and options.
 
-  Options are `--flag value`, `--flag "value with spaces"`, or a bare `--flag`.
-  A quoted option value runs to the last quote before the next ` --flag` or
-  the end of input, so quotes inside a `--body` survive. Empty quoted values
-  and the literal "false" for booleans count as absent.
+  Options are `--flag value`, `--flag "value"`, or a bare `--flag`.
+
+  A quoted value that is a JSON string literal, as the `{{key|json}}`
+  template filter renders, is decoded. That keeps quotes, newlines, and
+  ` --words` inside a `--body` intact. A quoted value that is not a JSON
+  string literal runs to the last quote before the next ` --flag` or the end
+  of input, so hand-typed quotes inside a value still survive.
+
+  Empty values, the bare literal `null` (the `json` filter's rendering of an
+  absent argument), and the literal "false" for booleans count as absent.
 
   The scanner walks the line once and never backtracks over a value, so a
   multi-megabyte `--base64` or `--body` parses in linear time. A lazy regex
@@ -41,9 +47,11 @@ defmodule Journal.Parse do
     end
   end
 
-  # The value follows at least one whitespace character. A quoted value ends
-  # at the first quote that a ` --flag` or the end of input follows. Anything
-  # else that does not start with `--` is one bare token.
+  # The value follows at least one whitespace character. A quoted value that
+  # is a JSON string literal ending where a ` --flag` or the end of input
+  # follows is decoded. Any other quoted value ends at the first quote that a
+  # ` --flag` or the end of input follows. Anything else that does not start
+  # with `--` is one bare token.
   defp take_value(rest) do
     case Regex.run(~r/^\s+/, rest, return: :index) do
       [{0, ws}] -> take_value(after_offset(rest, ws), rest)
@@ -55,9 +63,18 @@ defmodule Journal.Parse do
   defp take_value("--" <> _, rest), do: {nil, rest}
 
   defp take_value(<<?", _::binary>> = text, rest) do
-    case close_quote(text) do
-      {:ok, close} -> {{:quoted, binary_part(text, 1, close - 1)}, after_offset(text, close + 1)}
-      :error -> bare(text, rest)
+    case json_string(text) do
+      {:ok, value, after_literal} ->
+        {{:quoted, value}, after_literal}
+
+      :error ->
+        case close_quote(text) do
+          {:ok, close} ->
+            {{:quoted, binary_part(text, 1, close - 1)}, after_offset(text, close + 1)}
+
+          :error ->
+            bare(text, rest)
+        end
     end
   end
 
@@ -68,6 +85,35 @@ defmodule Journal.Parse do
       [{0, len}] -> {{:bare, binary_part(text, 0, len)}, after_offset(text, len)}
       nil -> {nil, rest}
     end
+  end
+
+  defp json_string(text) do
+    with {:ok, len} <- json_string_length(text),
+         after_literal = after_offset(text, len),
+         true <- Regex.match?(@after_quote_re, after_literal),
+         {:ok, value} <- decode_json_string(binary_part(text, 0, len)) do
+      {:ok, value, after_literal}
+    else
+      _ -> :error
+    end
+  end
+
+  # Byte length of the JSON string literal at the start of the binary,
+  # quotes included. Escapes and quotes are ASCII, so scanning bytes is safe.
+  defp json_string_length(<<?", rest::binary>>), do: json_string_end(rest, 1)
+
+  defp json_string_end(<<?\\, _, rest::binary>>, n), do: json_string_end(rest, n + 2)
+  defp json_string_end(<<?", _::binary>>, n), do: {:ok, n + 1}
+  defp json_string_end(<<_, rest::binary>>, n), do: json_string_end(rest, n + 1)
+  defp json_string_end(<<>>, _n), do: :error
+
+  defp decode_json_string(literal) do
+    case :json.decode(literal) do
+      value when is_binary(value) -> {:ok, value}
+      _ -> :error
+    end
+  rescue
+    _ -> :error
   end
 
   defp close_quote(text) do
@@ -89,6 +135,7 @@ defmodule Journal.Parse do
       {:quoted, ""} -> acc
       {:quoted, "false"} -> acc
       {:bare, "false"} -> acc
+      {:bare, "null"} -> acc
       {_, v} -> Map.put(acc, key, v)
     end
   end
