@@ -46,7 +46,7 @@ raw = true
 [tasks.escript]
 description = "Build the arc escript binary"
 dir = "apps/arc_cli"
-run = ["mix escript.build", "cp arc ../../bin/arc"]
+run = "mix escript.build"
 
 [tasks.clean]
 description = "Clean build artifacts"
