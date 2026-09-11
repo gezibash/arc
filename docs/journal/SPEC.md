@@ -116,9 +116,14 @@ One line per record:
 
 - `attach` sends the file body as base64 in `--base64`. The journal hashes
   the body, stores it in `blobs/`, and adds an entry to the page frontmatter.
-- v1 caps attachments at 512 KiB. If the body is larger, the journal rejects
-  the request with `error: too_large`. The cap follows the 1 MB line limit on
-  provider replies in the ARC exec port, with room for base64 overhead.
+- v1 caps attachments at 16 MiB. If the body is larger, the journal rejects
+  the request with `error: too_large`. The cap is a storage budget: blobs
+  live outside git and v1 does not back them up. It is not a transport limit.
+  The ARC exec port reads provider reply lines up to 64 MiB, so a `fetch` of
+  the largest blob, 21.4 MiB as base64, fits on one line.
+- A `fetch` reply that crosses a relay is one frame. The relay frame cap,
+  `max_frame_bytes` in `arc_net`, is 4 MiB by default. Raise it on both ends
+  to fetch blobs over 3 MiB through a relay.
 - `fetch` returns the blob body as base64 by hash.
 
 ### Links
@@ -227,13 +232,15 @@ object per line on stdout:
 - Two hosts that serve one journal.
 - Public read access.
 - Rich text or a web UI.
-- Attachments larger than 8 MiB.
+- Attachments larger than 16 MiB.
 - Deleting pages. Use `write` with an empty body and a `deleted: true` tag.
 
 ## 15. Resolved questions
 
-- Provider reply lines cap at 1 MB in the ARC exec port. The attachment cap
-  is 512 KiB to fit base64 output in a `fetch` reply.
+- The ARC exec port once cut provider reply lines at 1 MB, which set the
+  attachment cap at 512 KiB so a base64 `fetch` reply would fit. The exec
+  port now joins stdout chunks up to 64 MiB per line. The attachment cap is
+  16 MiB and follows the storage budget, see section 8.
 - CLI interfaces support only `arg` and `template` inputs, with no stdin and
   no escaping. Bodies travel as `--body <text>`, and the journal's own parser
   tolerates quotes inside the value.

@@ -31,6 +31,28 @@ defmodule JournalTest do
     assert opts == %{"project" => "hrs", "deep" => true}
   end
 
+  test "parse keeps a multi-megabyte quoted value and the flags after it" do
+    big = String.duplicate("A", 8 * 1024 * 1024)
+    {args, opts} = Parse.parse(~s(attach hrs/ab/p1 --base64 "#{big}" --name big.bin --deep))
+    assert args == ["attach", "hrs/ab/p1"]
+    assert opts["base64"] == big
+    assert opts["name"] == "big.bin"
+    assert opts["deep"] == true
+  end
+
+  test "parse edge cases match the documented rules" do
+    assert {["a"], %{"x" => true, "y" => "1"}} = Parse.parse("a --x --y 1")
+    assert {["a"], %{"x" => "1"}} = Parse.parse("a --x 1 junk --y false")
+    assert {["a"], %{"x" => ~s("q")}} = Parse.parse(~s(a --x "q" tail))
+    assert {["a"], %{"x" => "no close"}} = Parse.parse(~s(a --x "no close"))
+
+    assert {["a"], %{"x" => ~s("unterminated), "y" => "2"}} =
+             Parse.parse(~s(a --x "unterminated --y 2))
+
+    assert {["a"], %{"body" => "l1\nl2", "t" => "T"}} = Parse.parse("a --body \"l1\nl2\" --t T")
+    assert {["a"], %{"if_rev" => "r"}} = Parse.parse("a --if-rev r")
+  end
+
   test "write, read, ls, rev and conflict", %{root: root} do
     assert {:ok, "rev: " <> rev} =
              run(root, @alice, ~s(write hrs/ab/p1 --title "P one" --body "# Hello\\n\\nworld"))
@@ -120,6 +142,39 @@ defmodule JournalTest do
 
     assert {:error, "too_large" <> _} =
              run(root, @alice, ~s(attach hrs/ab/p1 --name big --base64 "#{big}"))
+  end
+
+  test "attach and fetch a 2 MiB blob on one reply line", %{root: root} do
+    import ExUnit.CaptureIO
+
+    {:ok, _} = run(root, @alice, ~s(write hrs/ab/p1 --body "x"))
+    bytes = :crypto.strong_rand_bytes(2 * 1024 * 1024)
+    b64 = Base.encode64(bytes)
+
+    {:ok, out} = run(root, @alice, ~s(attach hrs/ab/p1 --name big.bin --base64 "#{b64}"))
+    [_, "sha256: " <> sha] = String.split(out, "\n")
+    assert sha == Base.encode16(:crypto.hash(:sha256, bytes), case: :lower)
+    assert {:ok, ^b64} = run(root, @alice, "fetch #{sha}")
+
+    {:ok, page} = run(root, @alice, "read hrs/ab/p1")
+    assert page =~ "name: big.bin"
+    assert page =~ "bytes: #{byte_size(bytes)}"
+
+    # The reply is a single stdout line larger than the 1 MB cap the ARC exec
+    # port used to have. Nothing between the journal and the port splits it.
+    out =
+      capture_io(fn ->
+        Journal.Stdio.handle_line(
+          root,
+          ~s({"op":"request","message":"fetch #{sha}","from":"#{@alice}","request_id":"r1"})
+        )
+      end)
+
+    assert byte_size(out) > 1_000_000
+    assert String.ends_with?(out, "\n")
+    line = String.trim_trailing(out, "\n")
+    refute line =~ "\n"
+    assert %{"op" => "reply", "request_id" => "r1", "reply" => ^b64} = :json.decode(line)
   end
 
   test "read with line range", %{root: root} do
