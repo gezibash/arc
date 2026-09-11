@@ -59,7 +59,7 @@
             { "name": "addr", "kind": "positional", "required": true, "description": "<project>/<notebook>/<page>" },
             { "name": "text", "kind": "positional", "required": true, "variadic": true, "description": "Text to append" }
           ],
-          "input": { "source": "template", "template": "append {{addr}} {{text}}" },
+          "input": { "source": "template", "template": "append {{addr}} {{text|json}}" },
           "examples": ["hrs/ablations/lr-sweep \"tried lr=3e-4, worse\""]
         },
         {
@@ -142,7 +142,7 @@
             { "name": "notebook", "kind": "option", "flag": "--notebook", "type": "string", "required": false, "description": "Limit to <project>/<notebook>" },
             { "name": "deep", "kind": "option", "flag": "--deep", "type": "boolean", "required": false, "description": "Hybrid search" }
           ],
-          "input": { "source": "template", "template": "search \"{{query}}\" --project \"{{project}}\" --notebook \"{{notebook}}\" --deep \"{{deep}}\"" },
+          "input": { "source": "template", "template": "search {{query|json}} --project \"{{project}}\" --notebook \"{{notebook}}\" --deep \"{{deep}}\"" },
           "examples": ["\"learning rate\" --project hrs"]
         },
         {

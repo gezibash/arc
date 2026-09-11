@@ -10,6 +10,11 @@ defmodule Journal.Parse do
   string literal runs to the last quote before the next ` --flag` or the end
   of input, so hand-typed quotes inside a value still survive.
 
+  Positionals end at the first `--flag` that stands at a token boundary. A
+  positional that is a JSON string literal, as `{{key|json}}` renders, is
+  decoded first, so ` --words` and newlines inside an `append` text or a
+  `search` query survive.
+
   Empty values, the bare literal `null` (the `json` filter's rendering of an
   absent argument), and the literal "false" for booleans count as absent.
 
@@ -19,8 +24,9 @@ defmodule Journal.Parse do
   """
 
   @flag_re ~r/(?:^|\s)--([a-z][a-z0-9-]*)/
-  @first_flag_re ~r/(?:^|\s)--[a-z][a-z0-9-]*(?:\s|$)/
   @after_quote_re ~r/^(?:\s+--[a-z][a-z0-9-]*(?:\s|$)|\s*$)/
+  @after_token_re ~r/^(?:\s|$)/
+  @token_re ~r/^(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))/s
 
   @doc """
   Splits a request message into the command line and the request body.
@@ -38,15 +44,47 @@ defmodule Journal.Parse do
 
   @spec parse(String.t()) :: {[String.t()], %{String.t() => String.t() | true}}
   def parse(line) when is_binary(line) do
-    line = String.trim(line)
+    {args, rest} = positionals(String.trim(line), [])
+    {Enum.reverse(args), scan_opts(rest, %{})}
+  end
 
-    head =
-      case Regex.run(@first_flag_re, line, return: :index) do
-        [{start, _}] -> binary_part(line, 0, start)
-        nil -> line
+  # Positionals run from the start of the line to the first `--flag` that
+  # stands at a token boundary. A positional that is a JSON string literal is
+  # decoded, so a ` --word` inside it cannot end the positionals. Other
+  # positionals follow shell quoting.
+  defp positionals(text, acc) do
+    text = String.trim_leading(text)
+
+    case text do
+      "" ->
+        {acc, ""}
+
+      <<"--", c, _::binary>> when c in ?a..?z ->
+        {acc, text}
+
+      <<?", _::binary>> ->
+        case json_string(text, @after_token_re) do
+          {:ok, value, rest} -> positionals(rest, [value | acc])
+          :error -> shell_token(text, acc)
+        end
+
+      _ ->
+        shell_token(text, acc)
+    end
+  end
+
+  defp shell_token(text, acc) do
+    [matched | groups] = Regex.run(@token_re, text)
+
+    value =
+      case groups do
+        [dq | _] when dq != "" -> unescape(dq)
+        [_, sq | _] when sq != "" -> sq
+        [_, _, bare] -> bare
+        _ -> ""
       end
 
-    {tokens(head), scan_opts(line, %{})}
+    positionals(after_offset(text, byte_size(matched)), [value | acc])
   end
 
   defp scan_opts(text, acc) do
@@ -77,7 +115,7 @@ defmodule Journal.Parse do
   defp take_value("--" <> _, rest), do: {nil, rest}
 
   defp take_value(<<?", _::binary>> = text, rest) do
-    case json_string(text) do
+    case json_string(text, @after_quote_re) do
       {:ok, value, after_literal} ->
         {{:quoted, value}, after_literal}
 
@@ -101,10 +139,10 @@ defmodule Journal.Parse do
     end
   end
 
-  defp json_string(text) do
+  defp json_string(text, boundary_re) do
     with {:ok, len} <- json_string_length(text),
          after_literal = after_offset(text, len),
-         true <- Regex.match?(@after_quote_re, after_literal),
+         true <- Regex.match?(boundary_re, after_literal),
          {:ok, value} <- decode_json_string(binary_part(text, 0, len)) do
       {:ok, value, after_literal}
     else
@@ -152,18 +190,6 @@ defmodule Journal.Parse do
       {:bare, "null"} -> acc
       {_, v} -> Map.put(acc, key, v)
     end
-  end
-
-  @doc "Shell-like split of the positional prefix, honoring double and single quotes."
-  def tokens(text) do
-    ~r/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/s
-    |> Regex.scan(text)
-    |> Enum.map(fn
-      [_, dq | _] when dq != "" -> unescape(dq)
-      [_, _, sq | _] when sq != "" -> sq
-      [_, _, _, bare] -> bare
-      _ -> ""
-    end)
   end
 
   defp unescape(s), do: String.replace(s, ~r/\\(.)/, "\\1")

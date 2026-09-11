@@ -323,6 +323,7 @@ defmodule Arc.Data.Toolbox do
   defp render_value(value, _join_with), do: to_string(value)
 
   defp encode_json(nil), do: "null"
+  defp encode_json(values) when is_list(values), do: encode_json(Enum.join(values, " "))
   defp encode_json(value), do: value |> :json.encode() |> IO.iodata_to_binary()
 
   defp shell_quote(values) when is_list(values), do: Enum.map_join(values, " ", &shell_quote/1)
