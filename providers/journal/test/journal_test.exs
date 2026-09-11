@@ -282,6 +282,26 @@ defmodule JournalTest do
     assert %{"op" => "reply", "request_id" => "r1", "reply" => ^b64} = :json.decode(line)
   end
 
+  test "stores a literal backslash-n unchanged", %{root: root} do
+    body = ~S(path C:\new\table)
+    {:ok, "rev: " <> rev} = run(root, @alice, "write hrs/ab/p2 --body #{:json.encode(body)}")
+    {:ok, out} = run(root, @alice, "read hrs/ab/p2")
+    assert out =~ body
+    refute out =~ "C:\new"
+
+    edit =
+      "edit hrs/ab/p2 --if-rev #{rev} --find #{:json.encode(~S(\new))} " <>
+        "--replace #{:json.encode(~S(\old))}"
+
+    {:ok, _} = run(root, @alice, edit)
+    {:ok, out} = run(root, @alice, "read hrs/ab/p2")
+    assert out =~ ~S(path C:\old\table)
+
+    {:ok, _} = run(root, @alice, "append hrs/ab/p2 #{:json.encode(~S(re \d+\n))}")
+    {:ok, out} = run(root, @alice, "read hrs/ab/p2")
+    assert out =~ ~S(re \d+\n)
+  end
+
   test "read with line range", %{root: root} do
     {:ok, _} = run(root, @alice, ~s(write hrs/ab/p1 --body "a\\nb\\nc\\nd"))
     {:ok, out} = run(root, @alice, "read hrs/ab/p1 --lines 6:7")

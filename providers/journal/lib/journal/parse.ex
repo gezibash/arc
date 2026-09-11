@@ -196,7 +196,4 @@ defmodule Journal.Parse do
   end
 
   defp unescape(s), do: String.replace(s, ~r/\\(.)/, "\\1")
-
-  @doc "Turn a literal backslash-n sequence into a newline. Agents pass bodies on one line."
-  def unescape_newlines(s), do: String.replace(s, "\\n", "\n")
 end

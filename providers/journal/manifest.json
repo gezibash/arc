@@ -10,7 +10,7 @@
     "invocation": { "method": "RAW", "path": "/" },
     "examples": [
       "ls",
-      "write hrs/ablations/lr-sweep --title \"LR sweep\" --body \"# LR sweep\\n\\nTried 3e-4.\"",
+      "write hrs/ablations/lr-sweep --title \"LR sweep\" --body \"# LR sweep\n\nTried 3e-4.\"",
       "kpi set hrs/ablations auc 0.871 --ref df62851",
       "search \"learning rate\" --project hrs"
     ]

@@ -209,9 +209,9 @@ Quotes, newlines, and ` --words` inside a value survive unchanged. An absent
 option renders as the bare word `null`, which the journal treats as not
 given. Positionals end at the first `--flag` that stands at a token
 boundary. Other quoted values run to the last quote before the next
-` --flag` or the end of input. The literal two characters `\n` in a `--body`
-value or in append text become a newline. The journal replies with one JSON
-object per line on stdout:
+` --flag` or the end of input. The journal stores every value exactly as
+decoded: a literal backslash followed by `n` stays two characters. The
+journal replies with one JSON object per line on stdout:
 
 ```json
 {"op":"reply","request_id":"...","reply":"<text>"}
