@@ -21,16 +21,28 @@ defmodule Arc.NetTest do
     <<len::32-big, body::binary>>
   end
 
-  defp relay_connect(port, identity) do
-    {:ok, sock} = :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false])
+  defp relay_connect(port, identity, sock_opts \\ []) do
+    {:ok, sock} =
+      :gen_tcp.connect(
+        ~c"localhost",
+        port,
+        [:binary, packet: :raw, active: false] ++ sock_opts
+      )
+
     {:ok, relay_hello} = :gen_tcp.recv(sock, 64, 2000)
     {:ok, relay_pubkey, relay_challenge} = Handshake.decode_relay_hello(relay_hello)
+    {:ok, _cap} = recv_relay_info(sock)
 
     {:ok, client_hello, _client_pubkey} =
       Handshake.client_hello(identity, relay_pubkey, relay_challenge)
 
     :ok = :gen_tcp.send(sock, client_hello)
     sock
+  end
+
+  defp recv_relay_info(sock) do
+    <<_len::32-big, body::binary>> = recv_framed(sock)
+    Handshake.decode_relay_info(body)
   end
 
   defp put_env(key, value) do
@@ -214,6 +226,84 @@ defmodule Arc.NetTest do
       assert {:error, :closed} = :gen_tcp.recv(sock_a, 1, 500)
     end
 
+    test "advertises the frame cap in the relay info frame", %{port: port} do
+      put_env(:max_frame_bytes, 4096)
+
+      {:ok, sock} = :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false])
+      {:ok, _relay_hello} = :gen_tcp.recv(sock, 64, 2000)
+      assert recv_relay_info(sock) == {:ok, 4096}
+      :gen_tcp.close(sock)
+    end
+
+    test "advertises unbounded when no cap is set", %{port: port} do
+      Application.delete_env(:arc_net, :max_frame_bytes)
+
+      {:ok, sock} = :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false])
+      {:ok, _relay_hello} = :gen_tcp.recv(sock, 64, 2000)
+      assert recv_relay_info(sock) == {:ok, :unbounded}
+      :gen_tcp.close(sock)
+    end
+
+    test "client refuses a send over the advertised cap without dropping the connection", %{
+      port: port
+    } do
+      put_env(:max_frame_bytes, 256)
+
+      alice = Identity.generate()
+      bob = Identity.generate()
+
+      {:ok, sock} = :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false])
+      {:ok, relay_hello} = :gen_tcp.recv(sock, 64, 2000)
+      {:ok, relay_pubkey, relay_challenge} = Handshake.decode_relay_hello(relay_hello)
+      {:ok, client_hello, _} = Handshake.client_hello(alice, relay_pubkey, relay_challenge)
+      :ok = :gen_tcp.send(sock, client_hello)
+
+      {:ok, conn} =
+        Arc.Net.Connection.start_link(socket: sock, role: :client, transport_pid: self())
+
+      :ok = :gen_tcp.controlling_process(sock, conn)
+      Arc.Net.Connection.activate(conn)
+
+      assert wait_until(fn -> Arc.Net.Connection.peer_max_frame_bytes(conn) == 256 end)
+
+      big = make_packet(alice, bob.public_key)
+      assert byte_size(big) > 256
+      assert Arc.Net.Connection.send_packet(conn, big) == {:error, :frame_too_large}
+      assert Process.alive?(conn)
+
+      # The info frame never reaches the transport as a packet.
+      refute_received {:packet_received, _}
+
+      Arc.Net.Connection.close(conn)
+    end
+
+    test "relays a 20 MiB frame end to end with no cap set", %{port: port} do
+      Application.delete_env(:arc_net, :max_frame_bytes)
+
+      alice = Identity.generate()
+      bob = Identity.generate()
+
+      sock_a = relay_connect(port, alice)
+      sock_b = relay_connect(port, bob, buffer: 1_048_576)
+      Process.sleep(100)
+
+      ciphertext = :crypto.strong_rand_bytes(20 * 1024 * 1024)
+      session_id = :crypto.strong_rand_bytes(16)
+      nonce = :crypto.strong_rand_bytes(12)
+      packet = Packet.encode(alice, bob.public_key, session_id, 0, nonce, ciphertext)
+      assert byte_size(packet) > 20 * 1024 * 1024
+
+      :ok = :gen_tcp.send(sock_a, frame(packet))
+
+      {:ok, <<len::32-big>>} = :gen_tcp.recv(sock_b, 4, 10_000)
+      assert len == byte_size(packet)
+      {:ok, body} = :gen_tcp.recv(sock_b, len, 30_000)
+      assert body == packet
+
+      :gen_tcp.close(sock_a)
+      :gen_tcp.close(sock_b)
+    end
+
     test "closes connection when hello is not completed before timeout", %{port: port} do
       put_env(:hello_timeout_ms, 100)
 
@@ -221,6 +311,8 @@ defmodule Arc.NetTest do
 
       {:ok, <<_relay_pubkey::binary-size(32), _relay_challenge::binary-size(32)>>} =
         :gen_tcp.recv(sock, 64, 2000)
+
+      {:ok, _cap} = recv_relay_info(sock)
 
       # Send less than full signed hello and wait for timeout.
       :ok = :gen_tcp.send(sock, <<1, 2, 3, 4>>)
@@ -235,6 +327,8 @@ defmodule Arc.NetTest do
 
       {:ok, <<_relay_pubkey::binary-size(32), _relay_challenge::binary-size(32)>>} =
         :gen_tcp.recv(sock, 64, 2000)
+
+      {:ok, _cap} = recv_relay_info(sock)
 
       bad_hello = <<bad_id.public_key::binary, :crypto.strong_rand_bytes(64)::binary>>
       :ok = :gen_tcp.send(sock, bad_hello)
@@ -402,6 +496,39 @@ defmodule Arc.NetTest do
 
     test "relay_address_from/1 parses host:port string" do
       assert Arc.Net.relay_address_from("localhost:7331") == {~c"localhost", 7331}
+    end
+
+    test "parse_frame_cap/1 accepts a byte count, 0, or unbounded" do
+      assert Arc.Net.parse_frame_cap("4194304") == {:ok, 4_194_304}
+      assert Arc.Net.parse_frame_cap(" 0 ") == {:ok, :unbounded}
+      assert Arc.Net.parse_frame_cap("unbounded") == {:ok, :unbounded}
+      assert Arc.Net.parse_frame_cap("4294967295") == {:ok, 4_294_967_295}
+    end
+
+    test "parse_frame_cap/1 rejects negative, non-numeric, and over-header values" do
+      assert Arc.Net.parse_frame_cap("-1") == :error
+      assert Arc.Net.parse_frame_cap("4MiB") == :error
+      assert Arc.Net.parse_frame_cap("") == :error
+      assert Arc.Net.parse_frame_cap("4294967296") == :error
+      assert Arc.Net.parse_frame_cap(nil) == :error
+    end
+
+    test "configure_frame_cap/1 prefers the flag over ARC_RELAY_MAX_FRAME_BYTES" do
+      put_env(:max_frame_bytes, nil)
+      System.put_env("ARC_RELAY_MAX_FRAME_BYTES", "1024")
+
+      assert Arc.Net.configure_frame_cap("2048") == :ok
+      assert Application.get_env(:arc_net, :max_frame_bytes) == 2048
+
+      assert Arc.Net.configure_frame_cap(nil) == :ok
+      assert Application.get_env(:arc_net, :max_frame_bytes) == 1024
+
+      assert Arc.Net.configure_frame_cap("bogus") == {:error, :invalid}
+
+      System.delete_env("ARC_RELAY_MAX_FRAME_BYTES")
+      assert Arc.Net.configure_frame_cap(nil) == :unset
+    after
+      System.delete_env("ARC_RELAY_MAX_FRAME_BYTES")
     end
 
     test "relay_address_from/1 parses bracketed IPv6 host" do

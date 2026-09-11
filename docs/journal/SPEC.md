@@ -121,9 +121,11 @@ One line per record:
   live outside git and v1 does not back them up. It is not a transport limit.
   The ARC exec port reads provider reply lines up to 64 MiB, so a `fetch` of
   the largest blob, 21.4 MiB as base64, fits on one line.
-- A `fetch` reply that crosses a relay is one frame. The relay frame cap,
-  `max_frame_bytes` in `arc_net`, is 4 MiB by default. Raise it on both ends
-  to fetch blobs over 3 MiB through a relay.
+- A `fetch` reply that crosses a relay is one frame. The relay frame cap is
+  unbounded by default. If an operator lowers it with `--max-frame-bytes` or
+  `ARC_RELAY_MAX_FRAME_BYTES`, the relay advertises the cap at connect time
+  and the sending side fails a too-large `fetch` locally with
+  `frame_too_large`. The connection stays open.
 - `fetch` returns the blob body as base64 by hash.
 
 ### Links

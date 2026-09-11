@@ -31,7 +31,30 @@ defmodule Arc.CLI do
 
   def main(args \\ []) do
     ensure_started()
+    {max_frame_bytes, args} = pop_opt(args, "--max-frame-bytes")
+    configure_frame_cap(max_frame_bytes)
     dispatch(args)
+  end
+
+  defp pop_opt(args, flag), do: pop_opt(args, flag, [])
+
+  defp pop_opt([flag, value | rest], flag, acc), do: {value, Enum.reverse(acc) ++ rest}
+  defp pop_opt([h | rest], flag, acc), do: pop_opt(rest, flag, [h | acc])
+  defp pop_opt([], _flag, acc), do: {nil, Enum.reverse(acc)}
+
+  # Applies to every relay connection this process opens or accepts:
+  # `arc relay`, `arc host start`, `arc mcp`, and the agent commands.
+  defp configure_frame_cap(value) do
+    case Arc.Net.configure_frame_cap(value) do
+      {:error, :invalid} ->
+        error(
+          "invalid --max-frame-bytes / ARC_RELAY_MAX_FRAME_BYTES value: " <>
+            "use a byte count, 0, or unbounded"
+        )
+
+      _ ->
+        :ok
+    end
   end
 
   defp dispatch([]), do: help()
@@ -93,6 +116,8 @@ defmodule Arc.CLI do
       --relay host:port           Connect to a relay node (for send/listen/serve)
       --relay-pubkey <key>        Pin relay pubkey (hex/base64) for send/listen/serve
       --key <name>                Relay identity key for `arc relay` (or ARC_RELAY_KEY)
+      --max-frame-bytes <n>       Largest relay frame this node accepts, in bytes
+                                 (0 or unbounded = no cap; default: unbounded)
 
     Environment:
       ARC_KEY=<name>              Override active key for this terminal
@@ -100,6 +125,8 @@ defmodule Arc.CLI do
       ARC_RELAY_PUBKEY=<key>      Relay pubkey pin (hex/base64) for relay connections
       ARC_RELAY_PORT=PORT         Port for arc relay (default: 7331)
       ARC_RELAY_KEY=<name>        Relay identity key for `arc relay`
+      ARC_RELAY_MAX_FRAME_BYTES=<n>
+                                 Default for --max-frame-bytes
 
     Notes:
       Installed tools dispatch as native subcommands: `arc <tool-name> ...`
