@@ -50,6 +50,9 @@ defmodule Arc.Net.RelayHandlerTest do
     {:ok, sock} = :gen_tcp.connect(~c"localhost", port, [:binary, packet: :raw, active: false])
     {:ok, relay_hello} = :gen_tcp.recv(sock, 64, 2_000)
     {:ok, relay_pubkey, relay_challenge} = Handshake.decode_relay_hello(relay_hello)
+    # Relay info frame: consume it so later reads see only routed packets.
+    {:ok, <<len::32-big>>} = :gen_tcp.recv(sock, 4, 2_000)
+    {:ok, _info} = :gen_tcp.recv(sock, len, 2_000)
 
     {:ok, client_hello, _client_pubkey} =
       Handshake.client_hello(identity, relay_pubkey, relay_challenge)

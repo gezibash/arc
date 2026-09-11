@@ -10,6 +10,15 @@ defmodule Arc.Net.Handshake do
   The client signature proves possession of the Ed25519 secret key:
 
     signature = Sign(client_sk, "ARC_RELAY_AUTH_V1" <> relay_pubkey <> challenge <> client_pubkey)
+
+  Relay info: right after the hello, the relay sends one framed control
+  message that advertises its frame cap:
+
+    relay -> client: frame(<<"ARC_RELAY_INFO_V1", max_frame_bytes::32>>)
+
+  `max_frame_bytes` is `0` when the relay accepts frames of any size. A client
+  that predates this message drops it as an invalid packet, so the hello
+  stays compatible in both directions.
   """
 
   alias Arc.Identity
@@ -20,6 +29,20 @@ defmodule Arc.Net.Handshake do
   @signature_bytes 64
   @client_hello_bytes @client_pubkey_bytes + @signature_bytes
   @proof_context "ARC_RELAY_AUTH_V1"
+  @info_magic "ARC_RELAY_INFO_V1"
+
+  @doc "Encode the relay info control message. `:unbounded` encodes as 0."
+  @spec relay_info(:unbounded | pos_integer()) :: binary()
+  def relay_info(:unbounded), do: <<@info_magic, 0::32-big>>
+
+  def relay_info(max_frame_bytes) when is_integer(max_frame_bytes) and max_frame_bytes > 0,
+    do: <<@info_magic, max_frame_bytes::32-big>>
+
+  @doc "Decode a relay info control message into the advertised frame cap."
+  @spec decode_relay_info(binary()) :: {:ok, :unbounded | pos_integer()} | :error
+  def decode_relay_info(<<@info_magic, 0::32-big>>), do: {:ok, :unbounded}
+  def decode_relay_info(<<@info_magic, max_frame_bytes::32-big>>), do: {:ok, max_frame_bytes}
+  def decode_relay_info(_), do: :error
 
   @spec relay_hello(binary(), binary()) :: {:ok, binary()} | {:error, :invalid_relay_hello}
   def relay_hello(relay_pubkey, challenge)

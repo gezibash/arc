@@ -91,6 +91,56 @@ defmodule Arc.Net do
   def relay_pubkey_from(value) when is_binary(value), do: parse_pubkey(value)
   def relay_pubkey_from(_), do: nil
 
+  @max_frame_header_bytes 0xFFFF_FFFF
+
+  @doc """
+  Parse a frame cap string into `:unbounded` or a positive byte count.
+
+  Accepts a decimal integer, `0`, or `unbounded`. `0` means no cap. The value
+  cannot exceed the 32-bit frame header. Returns `:error` on any other input.
+  """
+  @spec parse_frame_cap(String.t() | nil) :: {:ok, :unbounded | pos_integer()} | :error
+  def parse_frame_cap(nil), do: :error
+
+  def parse_frame_cap(value) when is_binary(value) do
+    case String.trim(value) do
+      "unbounded" ->
+        {:ok, :unbounded}
+
+      "0" ->
+        {:ok, :unbounded}
+
+      text ->
+        case Integer.parse(text) do
+          {n, ""} when n > 0 and n <= @max_frame_header_bytes -> {:ok, n}
+          _ -> :error
+        end
+    end
+  end
+
+  @doc """
+  Set the frame cap for every connection this node opens or accepts.
+  Reads `ARC_RELAY_MAX_FRAME_BYTES` when `value` is nil.
+  Returns `:ok`, `{:error, :invalid}` on bad input, or `:unset` when nothing was given.
+  """
+  @spec configure_frame_cap(String.t() | nil) :: :ok | :unset | {:error, :invalid}
+  def configure_frame_cap(value) do
+    case value || System.get_env("ARC_RELAY_MAX_FRAME_BYTES") do
+      nil ->
+        :unset
+
+      text ->
+        case parse_frame_cap(text) do
+          {:ok, cap} ->
+            Application.put_env(:arc_net, :max_frame_bytes, cap)
+            :ok
+
+          :error ->
+            {:error, :invalid}
+        end
+    end
+  end
+
   defp parse_host_port(addr) do
     case URI.parse("//" <> addr) do
       %URI{host: host, port: port}

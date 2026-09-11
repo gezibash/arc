@@ -14,6 +14,17 @@ defmodule Arc.Net.Connection do
 
   The socket starts passive ({active: false}). The caller must transfer
   controlling process ownership and then call activate/1 to begin receiving.
+
+  Frame cap: `Application.get_env(:arc_net, :max_frame_bytes)` bounds the
+  largest frame a connection accepts. It is `:unbounded` by default. The
+  32-bit length header is the hard ceiling. An operator lowers the cap with
+  `--max-frame-bytes` or `ARC_RELAY_MAX_FRAME_BYTES`. A frame whose header
+  advertises more than the cap closes the connection with `frame_too_large`.
+
+  A relay advertises its cap in a relay info frame right after the hello
+  (see `Arc.Net.Handshake`). A `:client` connection records it and refuses
+  `send_packet/2` for a packet over that cap with `{:error, :frame_too_large}`
+  instead of losing the connection.
   """
 
   use GenServer
@@ -23,8 +34,7 @@ defmodule Arc.Net.Connection do
   alias Arc.Net.Telemetry
   alias Arc.Net.Transport
 
-  @default_max_frame_bytes 4 * 1024 * 1024
-  @default_max_buffer_bytes 8 * 1024 * 1024
+  @default_max_frame_bytes :unbounded
   @default_hello_timeout_ms 5_000
   @default_max_mailbox_len 2_048
   @default_overflow_policy :disconnect
@@ -35,9 +45,18 @@ defmodule Arc.Net.Connection do
     GenServer.start_link(__MODULE__, opts)
   end
 
-  @doc "Frame and write a packet to the socket."
+  @doc """
+  Frame and write a packet to the socket.
+  Returns `{:error, :frame_too_large}` without sending when the relay
+  advertised a frame cap smaller than the packet.
+  """
   def send_packet(conn_pid, packet) when is_binary(packet) do
     GenServer.call(conn_pid, {:send_packet, packet})
+  end
+
+  @doc "The frame cap the relay advertised, or `:unbounded`. `nil` before the relay info arrives."
+  def peer_max_frame_bytes(conn_pid) do
+    GenServer.call(conn_pid, :peer_max_frame_bytes)
   end
 
   @doc "Best-effort packet forward path used by relay fanout."
@@ -74,8 +93,7 @@ defmodule Arc.Net.Connection do
   def init(opts) do
     socket = Keyword.fetch!(opts, :socket)
     role = Keyword.fetch!(opts, :role)
-    max_frame_bytes = Application.get_env(:arc_net, :max_frame_bytes, @default_max_frame_bytes)
-    max_buffer_bytes = Application.get_env(:arc_net, :max_buffer_bytes, @default_max_buffer_bytes)
+    max_frame_bytes = max_frame_bytes_setting()
     hello_timeout_ms = Application.get_env(:arc_net, :hello_timeout_ms, @default_hello_timeout_ms)
 
     parent =
@@ -102,7 +120,7 @@ defmodule Arc.Net.Connection do
       hello_done: role == :client,
       hello_timer_ref: hello_timer_ref,
       max_frame_bytes: max_frame_bytes,
-      max_buffer_bytes: max_buffer_bytes
+      peer_max_frame_bytes: nil
     }
 
     emit([:connection, :started], %{count: 1}, %{role: role})
@@ -128,10 +146,12 @@ defmodule Arc.Net.Connection do
       ) do
     case Handshake.relay_hello(relay_pubkey, relay_challenge) do
       {:ok, hello} ->
-        case :gen_tcp.send(state.socket, hello) do
-          :ok ->
-            {:noreply, state}
+        info = Handshake.relay_info(state.max_frame_bytes)
 
+        with :ok <- :gen_tcp.send(state.socket, hello),
+             :ok <- send_framed(state.socket, info) do
+          {:noreply, state}
+        else
           {:error, reason} ->
             emit([:connection, :closed], %{count: 1}, %{reason: {:relay_hello_failed, reason}})
             {:stop, :normal, state}
@@ -165,6 +185,16 @@ defmodule Arc.Net.Connection do
   end
 
   @impl GenServer
+  def handle_call({:send_packet, packet}, _from, %{peer_max_frame_bytes: cap} = state)
+      when is_integer(cap) and byte_size(packet) > cap do
+    emit([:connection, :send_error], %{count: 1, bytes: byte_size(packet)}, %{
+      reason: :frame_too_large,
+      peer_max_frame_bytes: cap
+    })
+
+    {:reply, {:error, :frame_too_large}, state}
+  end
+
   def handle_call({:send_packet, packet}, _from, state) do
     case send_framed(state.socket, packet) do
       :ok ->
@@ -174,6 +204,10 @@ defmodule Arc.Net.Connection do
         emit([:connection, :send_error], %{count: 1, bytes: byte_size(packet)}, %{reason: error})
         {:stop, :normal, error, state}
     end
+  end
+
+  def handle_call(:peer_max_frame_bytes, _from, state) do
+    {:reply, state.peer_max_frame_bytes, state}
   end
 
   def handle_call(_msg, _from, state) do
@@ -226,11 +260,6 @@ defmodule Arc.Net.Connection do
 
   # --- Private ---
 
-  defp process_buffer(%{recv_buffer: recv_buffer, max_buffer_bytes: max_buffer_bytes} = state)
-       when byte_size(recv_buffer) > max_buffer_bytes do
-    {:error, :buffer_overflow, state}
-  end
-
   defp process_buffer(%{hello_done: false} = state) do
     case Handshake.extract_client_hello(state.recv_buffer) do
       {:ok, pubkey, signature, rest} ->
@@ -260,7 +289,7 @@ defmodule Arc.Net.Connection do
   defp process_frames(state) do
     case drain_frames(state.recv_buffer, state.max_frame_bytes) do
       {:ok, frames, rest} ->
-        Enum.each(frames, &dispatch_frame(&1, state))
+        state = Enum.reduce(frames, state, &dispatch_frame/2)
         {:ok, %{state | recv_buffer: rest}}
 
       {:error, reason} ->
@@ -275,7 +304,7 @@ defmodule Arc.Net.Connection do
   end
 
   defp drain_frames(<<len::32-big, _::binary>>, max_frame_bytes, _acc)
-       when len > max_frame_bytes do
+       when is_integer(max_frame_bytes) and len > max_frame_bytes do
     {:error, :frame_too_large}
   end
 
@@ -288,12 +317,20 @@ defmodule Arc.Net.Connection do
     drain_frames(rest, max_frame_bytes, [packet | acc])
   end
 
-  defp dispatch_frame(packet, %{role: :client, parent: transport_pid}) do
-    Transport.packet_received(transport_pid, packet)
+  defp dispatch_frame(packet, %{role: :client, parent: transport_pid} = state) do
+    case Handshake.decode_relay_info(packet) do
+      {:ok, cap} ->
+        %{state | peer_max_frame_bytes: cap}
+
+      :error ->
+        Transport.packet_received(transport_pid, packet)
+        state
+    end
   end
 
-  defp dispatch_frame(packet, %{role: :relay_client, parent: relay_pid}) do
+  defp dispatch_frame(packet, %{role: :relay_client, parent: relay_pid} = state) do
     Relay.route_packet(relay_pid, self(), packet)
+    state
   end
 
   defp send_framed(socket, packet) do
@@ -310,6 +347,14 @@ defmodule Arc.Net.Connection do
 
   defp maybe_relay_challenge(:relay_client), do: :crypto.strong_rand_bytes(32)
   defp maybe_relay_challenge(_), do: nil
+
+  # `:unbounded`, `nil`, or `0` mean no cap. A positive integer is the cap in bytes.
+  defp max_frame_bytes_setting do
+    case Application.get_env(:arc_net, :max_frame_bytes, @default_max_frame_bytes) do
+      value when is_integer(value) and value > 0 -> value
+      _ -> :unbounded
+    end
+  end
 
   defp backpressure_settings do
     max_mailbox_len =

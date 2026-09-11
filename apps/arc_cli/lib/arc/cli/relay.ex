@@ -8,6 +8,8 @@ defmodule Arc.CLI.Relay do
 
   Port defaults to ARC_RELAY_PORT env var, then 7331.
   Relay key defaults to ARC_RELAY_KEY; if unset, an ephemeral key is generated.
+  The frame cap comes from the global `--max-frame-bytes` flag or
+  ARC_RELAY_MAX_FRAME_BYTES (see `Arc.CLI`). It is unbounded by default.
   """
 
   alias Arc.Identity
