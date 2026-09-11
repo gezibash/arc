@@ -5,6 +5,15 @@ defmodule Arc.Data.InterfaceManifest do
   Interface manifests are served on the wire as JSON under a capability's
   `"interfaces"` field. Providers can author the same structure inline as
   Elixir maps or in external JSON/TOML files.
+
+  A command's `input.source` selects how the CLI builds the request body:
+
+    * `"arg"` - the value of one parsed argument.
+    * `"template"` - a `{{name}}` template rendered from parsed arguments.
+    * `"stdin"` - the full standard input of the CLI process. If the command
+      also sets `template`, the CLI renders the template first and joins it to
+      the stdin body with `join_with` (default `"\n"`). Use this for large
+      bodies that must not pass through the command line.
   """
 
   @cli_version 1
@@ -285,6 +294,10 @@ defmodule Arc.Data.InterfaceManifest do
           _ ->
             nil
         end
+
+      "stdin" ->
+        %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
+        |> maybe_put("template", present_string(Map.get(input, "template")))
 
       _ ->
         nil

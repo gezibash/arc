@@ -63,7 +63,9 @@ defmodule Arc.CLI.ToolRegistry do
          :ok <- validate_install_target(document, verified, command, opts) do
       install = normalize_install(owner_document, verified, command, opts)
       tools = upsert_tool(Map.get(document, "tools", []), install)
-      document = owner_document |> Map.put("version", @registry_version) |> Map.put("tools", tools)
+
+      document =
+        owner_document |> Map.put("version", @registry_version) |> Map.put("tools", tools)
 
       with :ok <- persist_document(owner, document, opts) do
         {:ok, install}
@@ -81,7 +83,8 @@ defmodule Arc.CLI.ToolRegistry do
     end
   end
 
-  @spec set_pinned(owner_scope(), String.t(), boolean(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec set_pinned(owner_scope(), String.t(), boolean(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def set_pinned(owner, command, pinned?, opts \\ [])
       when is_binary(command) and is_boolean(pinned?) do
     command = normalize_command(command)
@@ -197,7 +200,7 @@ defmodule Arc.CLI.ToolRegistry do
         path -> "arc " <> namespace <> " " <> Enum.join(path, " ")
       end
 
-    base <> usage_suffix(args)
+    base <> usage_suffix(args) <> stdin_suffix(command)
   end
 
   def command_usage(namespace, command) when is_binary(namespace) do
@@ -263,7 +266,8 @@ defmodule Arc.CLI.ToolRegistry do
             {:error, :command_conflict}
 
           existing["signer_public_key"] != nil and
-              existing["signer_public_key"] != get_in(verified, ["signature", "signer_public_key"]) ->
+              existing["signer_public_key"] !=
+                get_in(verified, ["signature", "signer_public_key"]) ->
             {:error, :signer_conflict}
 
           true ->
@@ -291,6 +295,9 @@ defmodule Arc.CLI.ToolRegistry do
 
   defp usage_suffix([]), do: ""
   defp usage_suffix(args), do: " " <> Enum.map_join(args, " ", &usage_token/1)
+
+  defp stdin_suffix(%{"input" => %{"source" => "stdin"}}), do: " < body"
+  defp stdin_suffix(_command), do: ""
 
   defp normalize_command(value) when is_binary(value) do
     value

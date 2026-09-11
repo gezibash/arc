@@ -883,13 +883,19 @@ defmodule Arc.CLI.Tools do
         end
 
       %{"source" => "template", "template" => template} ->
-        rendered =
-          Regex.replace(~r/\{\{([a-zA-Z0-9_-]+)\}\}/, template, fn _, key ->
-            render_value(Map.get(values, key, ""), " ")
-          end)
-          |> String.trim()
+        {:ok, render_template(template, values)}
 
-        {:ok, rendered}
+      %{"source" => "stdin"} = input_spec ->
+        with {:ok, body} <- read_stdin_body() do
+          case input_spec["template"] do
+            template when is_binary(template) ->
+              header = render_template(template, values)
+              {:ok, header <> (input_spec["join_with"] || "\n") <> body}
+
+            _ ->
+              {:ok, body}
+          end
+        end
 
       _ ->
         case args do
@@ -902,6 +908,26 @@ defmodule Arc.CLI.Tools do
           _ ->
             {:ok, ""}
         end
+    end
+  end
+
+  defp render_template(template, values) do
+    Regex.replace(~r/\{\{([a-zA-Z0-9_-]+)\}\}/, template, fn _, key ->
+      render_value(Map.get(values, key, ""), " ")
+    end)
+    |> String.trim()
+  end
+
+  defp read_stdin_body do
+    case IO.read(stream_input_device(), :eof) do
+      :eof ->
+        {:ok, ""}
+
+      {:error, reason} ->
+        {:error, {:invalid_arguments, "failed to read stdin: #{inspect(reason)}"}}
+
+      body when is_binary(body) ->
+        {:ok, body}
     end
   end
 
