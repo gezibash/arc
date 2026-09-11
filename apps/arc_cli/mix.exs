@@ -17,7 +17,7 @@ defmodule Arc.CLI.MixProject do
   end
 
   defp escript do
-    [main_module: Arc.CLI]
+    [main_module: Arc.CLI, name: "arc", path: "../../bin/arc"]
   end
 
   # Run "mix help compile.app" to learn about applications.
