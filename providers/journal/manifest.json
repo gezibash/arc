@@ -76,7 +76,7 @@
         },
         {
           "path": ["attach"],
-          "summary": "Store a small file (base64, max 512 KiB) and link it from the page.",
+          "summary": "Store a file (base64, max 16 MiB) and link it from the page.",
           "args": [
             { "name": "addr", "kind": "positional", "required": true, "description": "<project>/<notebook>/<page>" },
             { "name": "name", "kind": "option", "flag": "--name", "type": "string", "required": true, "description": "File name" },
