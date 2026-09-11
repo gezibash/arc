@@ -200,11 +200,13 @@ appends the standard input after a newline, so the body never touches the
 shell's argument limit.
 
 The manifest renders every free-text option (`--body`, `--title`, `--tags`,
-`--if-rev`, `--find`, `--replace`, `--note`) with the `{{key|json}}` template
-filter, so the value arrives as a JSON string literal and the journal decodes
-it. Quotes, newlines, and ` --words` inside a value survive unchanged. An
-absent option renders as the bare word `null`, which the journal treats as
-not given. Other quoted values run to the last quote before the next
+`--if-rev`, `--find`, `--replace`, `--note`) and the free-text positionals
+(`append` text, `search` query) with the `{{key|json}}` template filter, so
+the value arrives as a JSON string literal and the journal decodes it.
+Quotes, newlines, and ` --words` inside a value survive unchanged. An absent
+option renders as the bare word `null`, which the journal treats as not
+given. Positionals end at the first `--flag` that stands at a token
+boundary. Other quoted values run to the last quote before the next
 ` --flag` or the end of input. The literal two characters `\n` in a `--body`
 value or in append text become a newline. The journal replies with one JSON
 object per line on stdout:

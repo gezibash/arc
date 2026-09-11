@@ -109,6 +109,21 @@ defmodule Arc.Data.InterfaceManifestTest do
              ~s(write hrs/ab/p1 --title "P \\"one\\" --not-a-flag" --tags null --if-rev null)
   end
 
+  test "journal append and search render positionals as json" do
+    path = Path.expand("../../../../../providers/journal/manifest.json", __DIR__)
+    assert {:ok, %{"cli" => cli}} = InterfaceManifest.load_file(path)
+
+    assert append = Enum.find(cli["commands"], &(&1["path"] == ["append"]))
+    values = %{"addr" => "hrs/ab/p1", "text" => ["tried", "--lr", "3e-4,", "worse"]}
+    assert {:ok, line} = Arc.Data.Toolbox.render_template(append["input"]["template"], values)
+    assert line == ~s(append hrs/ab/p1 "tried --lr 3e-4, worse")
+
+    assert search = Enum.find(cli["commands"], &(&1["path"] == ["search"]))
+    values = %{"query" => "loss --deep dive", "project" => "hrs"}
+    assert {:ok, line} = Arc.Data.Toolbox.render_template(search["input"]["template"], values)
+    assert line == ~s(search "loss --deep dive" --project "hrs" --notebook "" --deep "")
+  end
+
   test "loads a TOML interface manifest file" do
     path =
       Path.join(

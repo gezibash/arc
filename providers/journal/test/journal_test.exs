@@ -59,6 +59,16 @@ defmodule JournalTest do
              Parse.parse(~s(x --body "a\\\\nb" --title "null"))
   end
 
+  test "parse decodes JSON positionals and keeps a flag-like word inside them" do
+    text = ~s(tried --lr 3e-4, "worse"\nline two)
+    line = "append hrs/ab/p1 #{json(text)}"
+    assert {["append", "hrs/ab/p1", ^text], %{}} = Parse.parse(line)
+
+    query = "loss --deep dive"
+    line = "search #{json(query)} --project hrs --deep"
+    assert {["search", ^query], %{"project" => "hrs", "deep" => true}} = Parse.parse(line)
+  end
+
   test "parse bare flags and positional quotes" do
     {args, opts} = Parse.parse(~s(search "learning rate" --project hrs --deep))
     assert args == ["search", "learning rate"]
@@ -179,6 +189,14 @@ defmodule JournalTest do
     {:ok, hist} = run(root, @alice, "history hrs/ab/p1")
     assert length(String.split(hist, "\n")) == 3
     assert hist =~ String.slice(@alice, 0, 12)
+  end
+
+  test "append stores text with a flag-like word and a newline", %{root: root} do
+    {:ok, _} = run(root, @alice, ~s(write hrs/ab/p1 --body "base"))
+    text = "tried --lr 3e-4, worse\nsecond line"
+    {:ok, "rev: " <> _} = run(root, @alice, "append hrs/ab/p1 #{json(text)}")
+    {:ok, out} = run(root, @alice, "read hrs/ab/p1")
+    assert String.ends_with?(out, "---\nbase\n\n" <> text <> "\n")
   end
 
   test "kpi set, log, latest and page injection", %{root: root} do
