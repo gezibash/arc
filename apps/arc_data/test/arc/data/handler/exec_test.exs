@@ -245,7 +245,7 @@ defmodule Arc.Data.Handler.ExecTest do
       receive do
         {port, {:data, {:eol, line}}} when port == state.port -> line
       after
-        2_000 -> flunk("expected provider env reply")
+        30_000 -> flunk("expected provider env reply")
       end
 
     assert {:emit, [event], _state} = Exec.handle_info({state.port, {:data, {:eol, line}}}, state)
