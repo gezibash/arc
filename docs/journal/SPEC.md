@@ -186,11 +186,15 @@ The ARC exec runtime sends one JSON object per line on stdin:
 {"op":"request","message":"<command line>","from":"<hex pubkey>","meta":{},"request_id":"..."}
 ```
 
-The journal parses `message` as a command line. Option values in double
-quotes run to the last quote before the next ` --flag` or the end of input,
-so quotes inside a `--body` survive. The literal two characters `\n` in a
-body or append text become a newline. The journal replies with one JSON
-object per line on stdout:
+The journal parses `message` as a command line. The manifest renders every
+free-text option (`--body`, `--title`, `--find`, `--replace`, `--note`) with
+the `{{key|json}}` template filter, so the value arrives as a JSON string
+literal and the journal decodes it. Quotes, newlines, and ` --words` inside
+a body survive unchanged. An absent option renders as the bare word `null`,
+which the journal treats as not given. Other quoted values run to the last
+quote before the next ` --flag` or the end of input. The literal two
+characters `\n` in a body or append text become a newline. The journal
+replies with one JSON object per line on stdout:
 
 ```json
 {"op":"reply","request_id":"...","reply":"<text>"}
@@ -234,9 +238,9 @@ object per line on stdout:
 
 - Provider reply lines cap at 1 MB in the ARC exec port. The attachment cap
   is 512 KiB to fit base64 output in a `fetch` reply.
-- CLI interfaces support only `arg` and `template` inputs, with no stdin and
-  no escaping. Bodies travel as `--body <text>`, and the journal's own parser
-  tolerates quotes inside the value.
+- Template inputs escape values with the `{{key|json}}` filter. Bodies travel
+  as `--body <json string>`, so a body may contain quotes, newlines, and
+  ` --flag`-like words without being cut.
 
 ## 16. Verified
 

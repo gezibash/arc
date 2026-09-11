@@ -14,6 +14,7 @@ defmodule JournalTest do
   end
 
   defp run(root, from, line), do: Command.run(root, from, line)
+  defp encode_json(value), do: value |> :json.encode() |> IO.iodata_to_binary()
 
   test "parse handles quotes inside option values" do
     {args, opts} =
@@ -23,6 +24,25 @@ defmodule JournalTest do
     assert opts["body"] == ~s(He said "hi" today)
     assert opts["title"] == "T"
     refute Map.has_key?(opts, "if_rev")
+  end
+
+  test "parse decodes JSON string option values" do
+    line =
+      ~s(write hrs/ab/p1 --body "He said \\"hi\\" --not-a-flag\\nline two" ) <>
+        ~s(--title "P \\"one\\"" --tags "" --if-rev "")
+
+    {args, opts} = Parse.parse(line)
+
+    assert args == ["write", "hrs/ab/p1"]
+    assert opts["body"] == "He said \"hi\" --not-a-flag\nline two"
+    assert opts["title"] == ~s(P "one")
+    refute Map.has_key?(opts, "tags")
+    refute Map.has_key?(opts, "if_rev")
+  end
+
+  test "parse treats a bare null and an empty JSON string as absent" do
+    {_, opts} = Parse.parse(~s(write hrs/ab/p1 --body "x" --title null --tags "" --note ""))
+    assert opts == %{"body" => "x"}
   end
 
   test "parse bare flags and positional quotes" do
@@ -48,6 +68,16 @@ defmodule JournalTest do
              run(root, @alice, ~s(write hrs/ab/p1 --body "x" --if-rev deadbee))
 
     assert {:ok, _} = run(root, @alice, ~s(write hrs/ab/p1 --body "x" --if-rev #{rev}))
+  end
+
+  test "write stores a body with a flag-like word, quotes and a newline", %{root: root} do
+    body = "He said \"hi\" --not-a-flag\nline two"
+    line = ~s(write hrs/ab/p1 --title "P \\"one\\"" --body ) <> encode_json(body)
+
+    assert {:ok, "rev: " <> _} = run(root, @alice, line)
+    assert {:ok, out} = run(root, @alice, "read hrs/ab/p1")
+    assert out =~ body
+    assert {:ok, ~s(hrs/ab/p1\tP "one")} == run(root, @alice, "ls hrs/ab")
   end
 
   test "acl: creator owns, others forbidden until added", %{root: root} do
