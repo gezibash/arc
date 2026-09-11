@@ -3,8 +3,8 @@ defmodule Arc.Data.PacketTest do
 
   import Bitwise
 
-  alias Arc.Identity
   alias Arc.Data.{Packet, Session}
+  alias Arc.Identity
 
   setup do
     alice = Identity.generate()

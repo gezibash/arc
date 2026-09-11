@@ -27,7 +27,8 @@ defmodule Arc.Net.MixProject do
   defp deps do
     [
       {:arc_identity, in_umbrella: true},
-      {:arc_data, in_umbrella: true}
+      {:arc_data, in_umbrella: true},
+      {:telemetry, "~> 1.3"}
     ]
   end
 end

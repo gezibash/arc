@@ -98,18 +98,7 @@ defmodule Arc.MCP.ToolProjection do
     capability = mount["capability"] || %{}
     mount_id = mount["mount_id"] || mount_id(provider, capability)
     tool_name = tool_name(provider, capability)
-    request_body = get_in(capability, ["invocation", "request_body"]) || %{}
-    summary = capability["summary"] || ""
     title = capability["title"] || capability["id"] || tool_name
-    provider_name = provider["name"] || provider["short_name"] || "unknown"
-    capability_id = capability["id"] || "unknown"
-    kind = capability["kind"] || "capability"
-    scheme = capability["scheme"] || "unknown"
-
-    description =
-      [summary, "Mounted from #{provider_name}/#{capability_id} [#{kind}/#{scheme}]"]
-      |> Enum.reject(&(&1 in [nil, ""]))
-      |> Enum.join(" ")
 
     %{
       mount: mount,
@@ -117,25 +106,43 @@ defmodule Arc.MCP.ToolProjection do
       tool: %{
         "name" => tool_name,
         "title" => title,
-        "description" => description,
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "input" => %{
-              "type" => "string",
-              "description" =>
-                request_body["description"] || "Capability input payload to send over ARC"
-            },
-            "app_session_id" => %{
-              "type" => "string",
-              "description" =>
-                "Optional ARC app session id for capabilities that maintain per-session state"
-            }
-          },
-          "required" => ["input"],
-          "additionalProperties" => false
-        }
+        "description" => mount_description(provider, capability),
+        "inputSchema" => mount_input_schema(capability)
       }
+    }
+  end
+
+  defp mount_description(provider, capability) do
+    summary = capability["summary"] || ""
+    provider_name = provider["name"] || provider["short_name"] || "unknown"
+    capability_id = capability["id"] || "unknown"
+    kind = capability["kind"] || "capability"
+    scheme = capability["scheme"] || "unknown"
+
+    [summary, "Mounted from #{provider_name}/#{capability_id} [#{kind}/#{scheme}]"]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
+  end
+
+  defp mount_input_schema(capability) do
+    request_body = get_in(capability, ["invocation", "request_body"]) || %{}
+
+    %{
+      "type" => "object",
+      "properties" => %{
+        "input" => %{
+          "type" => "string",
+          "description" =>
+            request_body["description"] || "Capability input payload to send over ARC"
+        },
+        "app_session_id" => %{
+          "type" => "string",
+          "description" =>
+            "Optional ARC app session id for capabilities that maintain per-session state"
+        }
+      },
+      "required" => ["input"],
+      "additionalProperties" => false
     }
   end
 
@@ -187,14 +194,12 @@ defmodule Arc.MCP.ToolProjection do
   end
 
   defp decode_structured(text) do
-    try do
-      case :json.decode(text) do
-        structured when is_map(structured) or is_list(structured) -> {:ok, structured}
-        _ -> :error
-      end
-    rescue
+    case :json.decode(text) do
+      structured when is_map(structured) or is_list(structured) -> {:ok, structured}
       _ -> :error
     end
+  rescue
+    _ -> :error
   end
 
   defp extract_input(%{"input" => input}) when is_binary(input), do: {:ok, input}

@@ -1,8 +1,8 @@
 defmodule Arc.Data.SessionTest do
   use ExUnit.Case, async: true
 
-  alias Arc.Identity
   alias Arc.Data.Session
+  alias Arc.Identity
 
   describe "establish/3" do
     test "two identities derive the same session key" do

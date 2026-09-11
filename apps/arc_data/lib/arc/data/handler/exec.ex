@@ -76,7 +76,6 @@ defmodule Arc.Data.Handler.Exec do
          line_buffer_bytes: 0
        }}
     else
-      false -> {:error, {:not_found, executable}}
       {:error, _reason} = error -> error
     end
   end
@@ -152,6 +151,29 @@ defmodule Arc.Data.Handler.Exec do
     end
   end
 
+  def handle_info({port, {:exit_status, code}}, %{port: port} = state) do
+    events =
+      Enum.flat_map(state.stream_sessions, fn {app_session_id, session} ->
+        [
+          %{
+            to_pk: session.to_pk,
+            frame_type: :stream_error,
+            request_id: session.request_id,
+            meta: %{
+              "app_session_id" => app_session_id,
+              "code" => "provider_exit",
+              "message" => "provider exited with status #{code}"
+            },
+            body: ""
+          }
+        ]
+      end)
+
+    {:emit, events, %{state | stream_sessions: %{}, pending_requests: %{}, pending_order: []}}
+  end
+
+  def handle_info(_message, _state), do: :unhandled
+
   # A line that already overflowed is marked :discard; later chunks of that
   # line are dropped until the newline arrives.
   defp buffer_chunk(%{line_buffer: :discard} = state, _chunk), do: {:ok, state}
@@ -208,29 +230,6 @@ defmodule Arc.Data.Handler.Exec do
         :unhandled
     end
   end
-
-  def handle_info({port, {:exit_status, code}}, %{port: port} = state) do
-    events =
-      Enum.flat_map(state.stream_sessions, fn {app_session_id, session} ->
-        [
-          %{
-            to_pk: session.to_pk,
-            frame_type: :stream_error,
-            request_id: session.request_id,
-            meta: %{
-              "app_session_id" => app_session_id,
-              "code" => "provider_exit",
-              "message" => "provider exited with status #{code}"
-            },
-            body: ""
-          }
-        ]
-      end)
-
-    {:emit, events, %{state | stream_sessions: %{}, pending_requests: %{}, pending_order: []}}
-  end
-
-  def handle_info(_message, _state), do: :unhandled
 
   @impl true
   def capability(state) do
@@ -432,49 +431,42 @@ defmodule Arc.Data.Handler.Exec do
   end
 
   defp decode_provider_event(line) do
-    case :json.decode(line) do
-      %{"reply" => reply, "request_id" => correlation_id} ->
-        {:reply, maybe_string(correlation_id), reply}
-
-      %{"error" => error, "request_id" => correlation_id} ->
-        {:error, maybe_string(correlation_id), error}
-
-      %{"reply" => reply} ->
-        {:reply, nil, reply}
-
-      %{"error" => error} ->
-        {:error, nil, error}
-
-      %{"op" => "reply", "request_id" => correlation_id, "reply" => reply} ->
-        {:reply, maybe_string(correlation_id), reply}
-
-      %{"op" => "error", "request_id" => correlation_id, "error" => error} ->
-        {:error, maybe_string(correlation_id), error}
-
-      %{"op" => "stream_data", "app_session_id" => app_session_id} = event ->
-        {:stream_data, app_session_id, stream_meta(event),
-         normalize_text(event["data"] || event["body"] || "")}
-
-      %{"op" => "stream_exit", "app_session_id" => app_session_id} = event ->
-        meta = stream_meta(event) |> maybe_put("status", event["status"])
-
-        {:stream_exit, app_session_id, meta,
-         normalize_text(event["message"] || event["body"] || "")}
-
-      %{"op" => "stream_error", "app_session_id" => app_session_id} = event ->
-        meta =
-          stream_meta(event)
-          |> maybe_put("code", maybe_string(event["code"]) || "stream_error")
-          |> maybe_put("message", maybe_string(event["message"]) || "stream error")
-
-        {:stream_error, app_session_id, meta, normalize_text(event["body"] || "")}
-
-      _ ->
-        :ignore
-    end
+    line
+    |> :json.decode()
+    |> decode_provider_map()
   rescue
     _ -> :ignore
   end
+
+  defp decode_provider_map(%{"reply" => reply} = event) do
+    {:reply, maybe_string(event["request_id"]), reply}
+  end
+
+  defp decode_provider_map(%{"error" => error} = event) do
+    {:error, maybe_string(event["request_id"]), error}
+  end
+
+  defp decode_provider_map(%{"op" => "stream_data", "app_session_id" => app_session_id} = event) do
+    {:stream_data, app_session_id, stream_meta(event),
+     normalize_text(event["data"] || event["body"] || "")}
+  end
+
+  defp decode_provider_map(%{"op" => "stream_exit", "app_session_id" => app_session_id} = event) do
+    meta = stream_meta(event) |> maybe_put("status", event["status"])
+
+    {:stream_exit, app_session_id, meta, normalize_text(event["message"] || event["body"] || "")}
+  end
+
+  defp decode_provider_map(%{"op" => "stream_error", "app_session_id" => app_session_id} = event) do
+    meta =
+      stream_meta(event)
+      |> maybe_put("code", maybe_string(event["code"]) || "stream_error")
+      |> maybe_put("message", maybe_string(event["message"]) || "stream error")
+
+    {:stream_error, app_session_id, meta, normalize_text(event["body"] || "")}
+  end
+
+  defp decode_provider_map(_event), do: :ignore
 
   defp stream_meta(event) do
     %{}

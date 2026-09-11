@@ -1,9 +1,9 @@
 defmodule Arc.CLIToolsTest do
   use ExUnit.Case, async: false
 
+  alias Arc.CLI.ToolRegistry
   alias Arc.Data.Agent
   alias Arc.Data.CapabilityDiscovery
-  alias Arc.CLI.ToolRegistry
   alias Arc.Identity
   alias Arc.Identity.KeyStore
 

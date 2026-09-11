@@ -162,9 +162,6 @@ defmodule Arc.Host.Service do
     else
       {:error, reason} ->
         {:reply, {:error, reason}, state}
-
-      false ->
-        {:reply, {:error, :forbidden}, state}
     end
   end
 

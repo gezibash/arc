@@ -1,8 +1,8 @@
 defmodule Arc.ControlTest do
   use ExUnit.Case, async: false
 
-  alias Arc.Identity
   alias Arc.Control
+  alias Arc.Identity
 
   setup do
     Arc.Control.Local.reset()

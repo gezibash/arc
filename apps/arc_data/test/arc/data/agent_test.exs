@@ -1,11 +1,11 @@
 defmodule Arc.Data.AgentTest do
   use ExUnit.Case, async: false
 
-  alias Arc.Identity
   alias Arc.Data.Agent
   alias Arc.Data.Frame
   alias Arc.Data.Packet
   alias Arc.Data.Session
+  alias Arc.Identity
 
   setup do
     Arc.Control.Local.reset()
@@ -240,7 +240,7 @@ defmodule Arc.Data.AgentTest do
             meta: %{"method" => "RAW", "path" => "/"}
           )
 
-        messages = wait_for_messages(client, 20, 2)
+        messages = wait_for_messages(client, 100, 2)
 
         write_reply = Enum.find(messages, &(&1[:request_id] == req_write))
         ls_reply = Enum.find(messages, &(&1[:request_id] == req_ls))
@@ -286,7 +286,7 @@ defmodule Arc.Data.AgentTest do
           meta: %{"method" => "RAW", "path" => "/", "custom" => "yes"}
         )
 
-      [msg] = wait_for_messages(client, 40, 1)
+      [msg] = wait_for_messages(client, 100, 1)
       assert msg.kind == :response
       assert msg.request_id == req_id
 

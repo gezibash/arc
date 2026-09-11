@@ -81,9 +81,8 @@ defmodule Arc.Data.CapabilityDiscovery do
              request_id: request_id,
              meta: %{"method" => "GET", "path" => path}
            ),
-         {:ok, reply} <- wait_for_reply(agent, request_id, timeout_ms),
-         {:ok, document} <- decode_document(reply) do
-      {:ok, document}
+         {:ok, reply} <- wait_for_reply(agent, request_id, timeout_ms) do
+      decode_document(reply)
     end
   end
 
@@ -121,8 +120,7 @@ defmodule Arc.Data.CapabilityDiscovery do
         capability["title"],
         capability["summary"]
       ]
-      |> Enum.map(&normalize_fragment/1)
-      |> Enum.join(" ")
+      |> Enum.map_join(" ", &normalize_fragment/1)
 
     Enum.all?(tokens, &String.contains?(haystack, &1))
   end
@@ -172,11 +170,9 @@ defmodule Arc.Data.CapabilityDiscovery do
   end
 
   defp decode_document(%{kind: :response, text: text}) do
-    try do
-      {:ok, :json.decode(text)}
-    rescue
-      _ -> {:error, :invalid_json}
-    end
+    {:ok, :json.decode(text)}
+  rescue
+    _ -> {:error, :invalid_json}
   end
 
   defp decode_document(_reply), do: {:error, :unexpected_reply}

@@ -12,14 +12,14 @@ defmodule Arc.Data.Agent do
 
   use GenServer
 
-  alias Arc.Identity
   alias Arc.Control
-  alias Arc.Data.Session
-  alias Arc.Data.Mailbox
-  alias Arc.Data.Handler
-  alias Arc.Data.Packet
-  alias Arc.Data.Frame
   alias Arc.Data.CapabilityManifest
+  alias Arc.Data.Frame
+  alias Arc.Data.Handler
+  alias Arc.Data.Mailbox
+  alias Arc.Data.Packet
+  alias Arc.Data.Session
+  alias Arc.Identity
 
   @default_allowed_clock_skew_ms 120_000
 
@@ -240,39 +240,32 @@ defmodule Arc.Data.Agent do
   end
 
   defp receive_packet(packet, state) do
-    case Packet.decode(packet) do
-      {:ok, decoded} ->
-        if decoded.dst != state.identity.public_key do
-          state
-        else
-          with {:ok, state} <- enforce_replay_and_freshness(state, decoded) do
-            state = ensure_session(state, decoded.src)
-
-            case Map.get(state.sessions, decoded.src) do
-              %Session{} = session ->
-                case Session.decrypt(session, decoded.nonce, decoded.ciphertext) do
-                  {:ok, plaintext} ->
-                    if state.handler do
-                      handle_service_payload(plaintext, decoded, state)
-                    else
-                      append_inbox_message(plaintext, decoded.src, state)
-                    end
-
-                  {:error, _} ->
-                    state
-                end
-
-              nil ->
-                state
-            end
-          else
-            {:error, _} -> state
-          end
-        end
-
-      {:error, _} ->
-        state
+    with {:ok, decoded} <- Packet.decode(packet),
+         true <- decoded.dst == state.identity.public_key,
+         {:ok, state} <- enforce_replay_and_freshness(state, decoded) do
+      state
+      |> ensure_session(decoded.src)
+      |> decrypt_and_dispatch(decoded)
+    else
+      _ -> state
     end
+  end
+
+  defp decrypt_and_dispatch(state, decoded) do
+    with %Session{} = session <- Map.get(state.sessions, decoded.src),
+         {:ok, plaintext} <- Session.decrypt(session, decoded.nonce, decoded.ciphertext) do
+      dispatch_plaintext(plaintext, decoded, state)
+    else
+      _ -> state
+    end
+  end
+
+  defp dispatch_plaintext(plaintext, decoded, %{handler: nil} = state) do
+    append_inbox_message(plaintext, decoded.src, state)
+  end
+
+  defp dispatch_plaintext(plaintext, decoded, state) do
+    handle_service_payload(plaintext, decoded, state)
   end
 
   defp handle_service_payload(plaintext, decoded_packet, state) do
@@ -304,7 +297,7 @@ defmodule Arc.Data.Agent do
 
   defp dispatch_handler_frame(frame, from_pk, arc_session_id, framed?, state) do
     {mod, handler_state} = state.handler
-    meta = if is_map(frame.meta), do: frame.meta, else: %{}
+    meta = frame.meta
 
     context = %{
       from_pk: from_pk,
@@ -334,24 +327,10 @@ defmodule Arc.Data.Agent do
         send_reply(state, from_pk, payload)
 
       :none ->
-        if authorize_request(from_pk, mod, meta) do
-          result = invoke_handler(mod, frame.type, frame.body, from_pk, context, handler_state)
-          process_handler_result(result, state, from_pk, frame.request_id, framed?)
-        else
-          denied =
-            if framed? do
-              Frame.encode_error(frame.request_id, "unauthorized", "request denied by policy")
-            else
-              "error: unauthorized"
-            end
-
-          send_reply(state, from_pk, denied)
-        end
+        result = invoke_handler(mod, frame.type, frame.body, from_pk, context, handler_state)
+        process_handler_result(result, state, from_pk, frame.request_id, framed?)
     end
   end
-
-  # Policy seam for future per-caller capability checks.
-  defp authorize_request(_from_pk, _mod, _meta), do: true
 
   defp invoke_handler(mod, frame_type, message, from_pk, context, handler_state) do
     cond do
@@ -657,8 +636,6 @@ defmodule Arc.Data.Agent do
     |> String.starts_with?("error:")
   end
 
-  defp error_response?(_), do: false
-
   defp blank_to_default("", fallback), do: fallback
   defp blank_to_default(value, _fallback), do: value
 
@@ -669,6 +646,8 @@ defmodule Arc.Data.Agent do
 
       [] ->
         if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :deliver, 3) do
+          # Arc.Net is an optional runtime peer, not a compile-time dep.
+          # credo:disable-for-next-line Credo.Check.Refactor.Apply
           apply(Arc.Net, :deliver, [from_pk, to_pk, packet])
         else
           Mailbox.deliver(to_pk, packet)
@@ -689,7 +668,7 @@ defmodule Arc.Data.Agent do
 
     case frame.type do
       :stream_data ->
-        Map.put(base, :bytes, byte_size(frame.body || ""))
+        Map.put(base, :bytes, byte_size(frame.body))
 
       :stream_resize ->
         base

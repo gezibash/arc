@@ -10,9 +10,8 @@ defmodule Arc.Data.CapabilityFile do
   @spec load_file(String.t()) :: {:ok, map()} | {:error, term()}
   def load_file(path) when is_binary(path) and path != "" do
     with {:ok, body} <- File.read(path),
-         {:ok, parsed} <- decode(path, body),
-         {:ok, capability} <- extract_capability(parsed) do
-      {:ok, capability}
+         {:ok, parsed} <- decode(path, body) do
+      extract_capability(parsed)
     end
   end
 

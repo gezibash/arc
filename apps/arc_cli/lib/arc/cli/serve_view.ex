@@ -53,46 +53,51 @@ defmodule Arc.CLI.ServeView do
       |> Enum.reject(&(&1 in [nil, ""]))
       |> Enum.join(" ")
 
-    suffix =
-      case event[:type] do
-        :request ->
-          join_parts([
-            event[:method] || "RAW",
-            event[:path] || "/",
-            preview_label(event[:body])
-          ])
-
-        :stream_open ->
-          join_parts([
-            event[:method] || "RAW",
-            event[:path] || "/",
-            "session=" <> to_string(event[:app_session_id] || "-"),
-            preview_label(event[:body])
-          ])
-
-        :stream_data ->
-          join_parts([
-            "session=" <> to_string(event[:app_session_id] || "-"),
-            "#{event[:bytes] || 0}B",
-            preview_label(event[:body])
-          ])
-
-        :stream_resize ->
-          join_parts([
-            "session=" <> to_string(event[:app_session_id] || "-"),
-            "#{event[:cols] || "?"}x#{event[:rows] || "?"}"
-          ])
-
-        :stream_close ->
-          join_parts([
-            "session=" <> to_string(event[:app_session_id] || "-")
-          ])
-
-        _ ->
-          preview_label(event[:body])
-      end
+    suffix = event_suffix(event[:type], event)
 
     String.trim(prefix <> " " <> suffix)
+  end
+
+  defp event_suffix(:request, event) do
+    join_parts([
+      event[:method] || "RAW",
+      event[:path] || "/",
+      preview_label(event[:body])
+    ])
+  end
+
+  defp event_suffix(:stream_open, event) do
+    join_parts([
+      event[:method] || "RAW",
+      event[:path] || "/",
+      session_label(event),
+      preview_label(event[:body])
+    ])
+  end
+
+  defp event_suffix(:stream_data, event) do
+    join_parts([
+      session_label(event),
+      "#{event[:bytes] || 0}B",
+      preview_label(event[:body])
+    ])
+  end
+
+  defp event_suffix(:stream_resize, event) do
+    join_parts([
+      session_label(event),
+      "#{event[:cols] || "?"}x#{event[:rows] || "?"}"
+    ])
+  end
+
+  defp event_suffix(:stream_close, event) do
+    join_parts([session_label(event)])
+  end
+
+  defp event_suffix(_type, event), do: preview_label(event[:body])
+
+  defp session_label(event) do
+    "session=" <> to_string(event[:app_session_id] || "-")
   end
 
   def command_usages(capability) when is_map(capability) do

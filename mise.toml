@@ -30,9 +30,21 @@ run = "mix format"
 description = "Check formatting"
 run = "mix format --check-formatted"
 
+[tasks.lint]
+description = "Format check, warnings-as-errors compile, credo, xref"
+run = "mix lint"
+
+[tasks.audit]
+description = "Unused lock entries, retired packages, advisories"
+run = "mix audit"
+
+[tasks.dialyzer]
+description = "Dialyzer type analysis (PLT cached in _build/plts)"
+run = "mix dialyzer"
+
 [tasks.check]
-description = "Full check pipeline"
-depends = ["fmt.check", "compile", "test"]
+description = "Full check pipeline: lint, audit, dialyzer, test"
+run = "mix check"
 
 [tasks.iex]
 description = "Start interactive shell"

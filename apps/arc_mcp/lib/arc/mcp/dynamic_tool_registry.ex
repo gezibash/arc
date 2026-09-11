@@ -52,22 +52,20 @@ defmodule Arc.MCP.DynamicToolRegistry do
       remaining = Enum.reject(mounts, &(&1["mount_id"] == mount_id))
       limit = mount_limit(opts)
 
-      cond do
-        existing == nil and length(remaining) >= limit ->
-          {:error, {:mount_limit_exceeded, limit}}
+      if existing == nil and length(remaining) >= limit do
+        {:error, {:mount_limit_exceeded, limit}}
+      else
+        mounts = [mount | remaining] |> Enum.sort_by(& &1["mount_id"])
 
-        true ->
-          mounts = [mount | remaining] |> Enum.sort_by(& &1["mount_id"])
+        document =
+          owner_document
+          |> Map.put("version", 1)
+          |> Map.put("task", task)
+          |> Map.put("mounts", mounts)
 
-          document =
-            owner_document
-            |> Map.put("version", 1)
-            |> Map.put("task", task)
-            |> Map.put("mounts", mounts)
-
-          with :ok <- persist_document(owner, task, document, opts) do
-            {:ok, mount}
-          end
+        with :ok <- persist_document(owner, task, document, opts) do
+          {:ok, mount}
+        end
       end
     end
   end

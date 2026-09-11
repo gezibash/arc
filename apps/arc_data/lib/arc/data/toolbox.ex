@@ -161,9 +161,8 @@ defmodule Arc.Data.Toolbox do
 
     positional_specs = Enum.filter(args, &(&1["kind"] == "positional"))
 
-    with {:ok, values, positional_tokens} <- collect_option_args(argv, option_specs, %{}, []),
-         {:ok, values} <- assign_positionals(positional_specs, positional_tokens, values) do
-      {:ok, values}
+    with {:ok, values, positional_tokens} <- collect_option_args(argv, option_specs, %{}, []) do
+      assign_positionals(positional_specs, positional_tokens, values)
     end
   end
 

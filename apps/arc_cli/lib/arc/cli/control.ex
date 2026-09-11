@@ -3,9 +3,9 @@ defmodule Arc.CLI.Control do
   CLI commands for control plane operations.
   """
 
+  alias Arc.Control
   alias Arc.Identity
   alias Arc.Identity.KeyStore
-  alias Arc.Control
 
   def run(["publish" | _opts]) do
     with_identity(fn id ->

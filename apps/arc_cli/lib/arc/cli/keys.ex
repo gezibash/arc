@@ -82,9 +82,6 @@ defmodule Arc.CLI.Keys do
 
       {:error, :ambiguous} ->
         error("ARC_KEY='#{System.get_env("ARC_KEY")}' matches multiple keys")
-
-      {:error, reason} ->
-        error(inspect(reason))
     end
   end
 
@@ -146,6 +143,7 @@ defmodule Arc.CLI.Keys do
     end
   end
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     System.halt(1)

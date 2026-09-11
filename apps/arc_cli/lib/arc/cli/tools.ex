@@ -3,8 +3,8 @@ defmodule Arc.CLI.Tools do
   Durable ARC tool installation and invocation commands.
   """
 
-  alias Arc.CLI.TrustStore
   alias Arc.CLI.ToolRegistry
+  alias Arc.CLI.TrustStore
   alias Arc.Data.Agent
   alias Arc.Data.CapabilityDiscovery
   alias Arc.Data.CapabilityInvocation
@@ -207,22 +207,7 @@ defmodule Arc.CLI.Tools do
           if tool["package_hash"] == remote["package_hash"] do
             IO.puts("#{command} is already up to date")
           else
-            print_diff(tool, remote)
-
-            case ToolRegistry.install(
-                   id,
-                   remote,
-                   command: tool["command"],
-                   trust_state_at_install: tool["trust_state_at_install"] || "allowed",
-                   pinned: false
-                 ) do
-              {:ok, install} ->
-                IO.puts("")
-                print_install(install)
-
-              {:error, reason} ->
-                error("tool update failed: #{inspect(reason)}")
-            end
+            update_installed_tool(id, tool, remote)
           end
         else
           {:error, :not_found} ->
@@ -336,24 +321,31 @@ defmodule Arc.CLI.Tools do
     """)
   end
 
+  defp update_installed_tool(id, tool, remote) do
+    print_diff(tool, remote)
+
+    case ToolRegistry.install(
+           id,
+           remote,
+           command: tool["command"],
+           trust_state_at_install: tool["trust_state_at_install"] || "allowed",
+           pinned: false
+         ) do
+      {:ok, install} ->
+        IO.puts("")
+        print_install(install)
+
+      {:error, reason} ->
+        error("tool update failed: #{inspect(reason)}")
+    end
+  end
+
   defp invoke_command(command, input_parts, opts) do
     with_agent(
       fn agent, id ->
         case ToolRegistry.get(id, command) do
           {:ok, install} ->
-            {help?, clean_args} = extract_help(input_parts)
-
-            if help? do
-              print_usage(command, install, clean_args)
-            else
-              case build_invocation(install, clean_args) do
-                {:ok, invocation} ->
-                  invoke_built_command(agent, install, invocation)
-
-                {:error, {:invalid_arguments, message}} ->
-                  error("tool call failed: #{message}")
-              end
-            end
+            invoke_installed(agent, command, install, input_parts)
 
           {:error, :not_found} ->
             error("tool call failed: '#{command}' is not installed for #{Identity.name(id)}")
@@ -364,6 +356,22 @@ defmodule Arc.CLI.Tools do
       end,
       opts
     )
+  end
+
+  defp invoke_installed(agent, command, install, input_parts) do
+    {help?, clean_args} = extract_help(input_parts)
+
+    if help? do
+      print_usage(command, install, clean_args)
+    else
+      case build_invocation(install, clean_args) do
+        {:ok, invocation} ->
+          invoke_built_command(agent, install, invocation)
+
+        {:error, {:invalid_arguments, message}} ->
+          error("tool call failed: #{message}")
+      end
+    end
   end
 
   defp print_install(install) do
@@ -388,41 +396,50 @@ defmodule Arc.CLI.Tools do
     IO.puts("Installed: #{length(tools)}")
 
     Enum.each(tools, fn tool ->
-      provider = tool["provider"] || %{}
       capability = tool["capability"] || %{}
-      invocation = capability["invocation"] || %{}
-      provider_name = provider["name"] || provider["short_name"] || "unknown"
-      capability_id = capability["id"] || "unknown"
-      kind = capability["kind"] || "capability"
-      scheme = capability["scheme"] || "unknown"
-      usage = tool["usage"] || ToolRegistry.usage_from_capability(tool["command"], capability)
-      summary = ToolRegistry.command_summary(tool["command"], capability)
 
       IO.puts("")
-      IO.puts("#{tool["command"]} -> #{provider_name}/#{capability_id} [#{kind}/#{scheme}]")
-      IO.puts("  Usage: #{usage}")
-
-      if summary != "" do
-        IO.puts("  Summary: #{summary}")
-      end
-
-      if ToolRegistry.namespace_required?(capability) do
-        labels =
-          capability
-          |> ToolRegistry.subcommands()
-          |> Enum.map(&ToolRegistry.command_label/1)
-          |> Enum.join(", ")
-
-        IO.puts("  Commands: #{labels}")
-      end
-
-      IO.puts("  Invocation: #{invocation["method"] || "RAW"} #{invocation["path"] || "/"}")
-      IO.puts("  Release: #{tool["release_version"]} (#{tool["channel"]})")
-      IO.puts("  Signer: #{short_key(tool["signer_public_key"])}")
-      IO.puts("  Hash: #{short_hash(tool["package_hash"])}")
-      IO.puts("  Pinned: #{if(tool["pinned"], do: "yes", else: "no")}")
-      IO.puts("  Mode: #{invocation["mode"] || "request_reply"}")
+      print_tool_heading(tool, capability)
+      print_tool_commands(capability)
+      print_tool_meta(tool, capability["invocation"] || %{})
     end)
+  end
+
+  defp print_tool_heading(tool, capability) do
+    provider = tool["provider"] || %{}
+    provider_name = provider["name"] || provider["short_name"] || "unknown"
+    capability_id = capability["id"] || "unknown"
+    kind = capability["kind"] || "capability"
+    scheme = capability["scheme"] || "unknown"
+    usage = tool["usage"] || ToolRegistry.usage_from_capability(tool["command"], capability)
+    summary = ToolRegistry.command_summary(tool["command"], capability)
+
+    IO.puts("#{tool["command"]} -> #{provider_name}/#{capability_id} [#{kind}/#{scheme}]")
+    IO.puts("  Usage: #{usage}")
+
+    if summary != "" do
+      IO.puts("  Summary: #{summary}")
+    end
+  end
+
+  defp print_tool_commands(capability) do
+    if ToolRegistry.namespace_required?(capability) do
+      labels =
+        capability
+        |> ToolRegistry.subcommands()
+        |> Enum.map_join(", ", &ToolRegistry.command_label/1)
+
+      IO.puts("  Commands: #{labels}")
+    end
+  end
+
+  defp print_tool_meta(tool, invocation) do
+    IO.puts("  Invocation: #{invocation["method"] || "RAW"} #{invocation["path"] || "/"}")
+    IO.puts("  Release: #{tool["release_version"]} (#{tool["channel"]})")
+    IO.puts("  Signer: #{short_key(tool["signer_public_key"])}")
+    IO.puts("  Hash: #{short_hash(tool["package_hash"])}")
+    IO.puts("  Pinned: #{if(tool["pinned"], do: "yes", else: "no")}")
+    IO.puts("  Mode: #{invocation["mode"] || "request_reply"}")
   end
 
   defp print_tool_info(tool) do
@@ -644,19 +661,17 @@ defmodule Arc.CLI.Tools do
   defp invoke_stream_command(agent, install, input, invocation) do
     input_device = stream_input_device()
 
-    with {:ok, stream} <-
-           CapabilityInvocation.open_stream(agent, install, input,
-             invocation_override: invocation
-           ) do
-      maybe_send_initial_resize(agent, stream, invocation, input_device)
-      stdin_task = maybe_start_stream_input(agent, stream, input_device)
+    case CapabilityInvocation.open_stream(agent, install, input, invocation_override: invocation) do
+      {:ok, stream} ->
+        maybe_send_initial_resize(agent, stream, invocation, input_device)
+        stdin_task = maybe_start_stream_input(agent, stream, input_device)
 
-      try do
-        stream_loop(agent, stream)
-      after
-        shutdown_input_task(stdin_task)
-      end
-    else
+        try do
+          stream_loop(agent, stream)
+        after
+          shutdown_input_task(stdin_task)
+        end
+
       {:error, reason} ->
         error("tool call failed: #{inspect(reason)}")
     end
@@ -713,17 +728,7 @@ defmodule Arc.CLI.Tools do
         stream_loop(agent, stream)
 
       {:ok, %{kind: :stream_exit, meta: meta} = message} ->
-        if is_binary(message.text) and String.trim(message.text) != "" do
-          IO.puts(message.text)
-        end
-
-        case meta["status"] do
-          status when is_integer(status) and status != 0 ->
-            error("tool call failed: remote exit status #{status}")
-
-          _ ->
-            :ok
-        end
+        finish_stream_exit(message.text, meta["status"])
 
       {:ok, %{kind: :stream_error, error_message: message}} ->
         error("tool call failed: #{message || "stream error"}")
@@ -736,9 +741,20 @@ defmodule Arc.CLI.Tools do
 
       {:error, :timeout} ->
         error("tool call failed: stream timeout")
+    end
+  end
 
-      {:error, reason} ->
-        error("tool call failed: #{inspect(reason)}")
+  defp finish_stream_exit(text, status) do
+    if is_binary(text) and String.trim(text) != "" do
+      IO.puts(text)
+    end
+
+    case status do
+      status when is_integer(status) and status != 0 ->
+        error("tool call failed: remote exit status #{status}")
+
+      _ ->
+        :ok
     end
   end
 
@@ -833,9 +849,8 @@ defmodule Arc.CLI.Tools do
 
     positional_specs = Enum.filter(args, &(&1["kind"] == "positional"))
 
-    with {:ok, values, positional_tokens} <- collect_option_args(argv, option_specs, %{}, []),
-         {:ok, values} <- assign_positionals(positional_specs, positional_tokens, values) do
-      {:ok, values}
+    with {:ok, values, positional_tokens} <- collect_option_args(argv, option_specs, %{}, []) do
+      assign_positionals(positional_specs, positional_tokens, values)
     end
   end
 
@@ -983,7 +998,6 @@ defmodule Arc.CLI.Tools do
          {:ok, verified} <- CapabilityPackage.verify(detail) do
       {:ok, verified}
     else
-      false -> {:error, :invalid_install}
       {:error, _reason} = error -> error
     end
   end
@@ -1169,6 +1183,7 @@ defmodule Arc.CLI.Tools do
     {Enum.member?(args, flag), Enum.reject(args, &(&1 == flag))}
   end
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     System.halt(1)

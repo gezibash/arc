@@ -50,8 +50,6 @@ defmodule Arc.CLI.Relay do
     end
   end
 
-  defp parse_port_string(_), do: nil
-
   defp resolve_relay_identity(opts) do
     key_name =
       case Keyword.get(opts, :key) || System.get_env("ARC_RELAY_KEY") do
@@ -68,11 +66,11 @@ defmodule Arc.CLI.Relay do
           {:ok, id} -> {id, "keystore:#{Identity.name(id)}"}
           {:error, :not_found} -> error("relay key '#{key}' not found")
           {:error, :ambiguous} -> error("relay key '#{key}' is ambiguous")
-          {:error, reason} -> error("relay key load failed: #{inspect(reason)}")
         end
     end
   end
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     System.halt(1)

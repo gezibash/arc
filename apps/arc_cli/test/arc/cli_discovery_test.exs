@@ -1,9 +1,9 @@
 defmodule Arc.CLIDiscoveryTest do
   use ExUnit.Case, async: false
 
+  alias Arc.Data.Agent
   alias Arc.Identity
   alias Arc.Identity.KeyStore
-  alias Arc.Data.Agent
 
   setup do
     Arc.Control.Local.reset()

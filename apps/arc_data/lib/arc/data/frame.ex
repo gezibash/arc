@@ -179,7 +179,6 @@ defmodule Arc.Data.Frame do
        }}
     else
       false -> {:error, :malformed_frame}
-      :error -> {:error, :malformed_frame}
       {:error, _} = error -> error
       _ -> {:error, :malformed_frame}
     end
@@ -213,14 +212,12 @@ defmodule Arc.Data.Frame do
   defp type_code(:stream_error), do: @stream_error_type
 
   defp safe_decode_json(bytes) do
-    try do
-      case :json.decode(bytes) do
-        map when is_map(map) -> {:ok, map}
-        _ -> {:error, :malformed_frame}
-      end
-    rescue
+    case :json.decode(bytes) do
+      map when is_map(map) -> {:ok, map}
       _ -> {:error, :malformed_frame}
     end
+  rescue
+    _ -> {:error, :malformed_frame}
   end
 
   defp ensure_request_id(<<_::binary-size(@request_id_bytes)>> = request_id), do: request_id
