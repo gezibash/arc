@@ -41,6 +41,46 @@ defmodule Arc.Data.Handler.ExecTest do
     assert state.line_buffer == []
   end
 
+  test "a line over the cap fails the oldest pending request and is dropped" do
+    {path, manifest_path} = hello_provider_paths()
+    File.chmod!(path, 0o755)
+    {:ok, state} = Exec.init("exec://#{path}?manifest=#{URI.encode_www_form(manifest_path)}")
+
+    {:noreply, state} =
+      Exec.handle_message("big", @from_pk, %{request_id: <<8::128>>, framed?: true}, state)
+
+    chunk = String.duplicate("x", 1024 * 1024)
+
+    state =
+      Enum.reduce(1..64, state, fn _, state ->
+        {:noreply, state} = Exec.handle_info({state.port, {:data, {:noeol, chunk}}}, state)
+        state
+      end)
+
+    assert {:emit, [event], state} =
+             Exec.handle_info({state.port, {:data, {:noeol, "x"}}}, state)
+
+    assert event.frame_type == :error
+    assert event.meta["message"] =~ "exceeds"
+    assert state.line_buffer == :discard
+
+    {:noreply, state} = Exec.handle_info({state.port, {:data, {:noeol, "more"}}}, state)
+    {:noreply, state} = Exec.handle_info({state.port, {:data, {:eol, "tail"}}}, state)
+    assert state.line_buffer == []
+    assert state.line_buffer_bytes == 0
+    assert state.pending_requests == %{}
+
+    # The next line decodes cleanly.
+    {:noreply, state} =
+      Exec.handle_message("after", @from_pk, %{request_id: <<9::128>>, framed?: true}, state)
+
+    line =
+      ~s({"op":"reply","request_id":"#{Base.encode16(<<9::128>>, case: :lower)}","reply":"ok"})
+
+    assert {:emit, [event], _} = Exec.handle_info({state.port, {:data, {:eol, line}}}, state)
+    assert event.body == "ok"
+  end
+
   defp drain_until_event(state, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
 

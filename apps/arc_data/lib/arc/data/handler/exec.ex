@@ -7,9 +7,11 @@ defmodule Arc.Data.Handler.Exec do
   stream/session routing.
 
   The executable communicates via newline-delimited JSON on stdin/stdout.
-  A reply line has no size limit. ARC reads stdout in chunks and joins the
-  chunks until it sees the newline, so a provider can return a large one-shot
-  reply (for example a base64 attachment) on a single line.
+  ARC reads stdout in chunks and joins the chunks until it sees the newline,
+  so a provider can return a large one-shot reply (for example a base64
+  attachment) on a single line. A line is limited to 64 MiB. If a line exceeds
+  the limit, ARC drops the line, logs a warning, and fails the oldest pending
+  request with a `line_too_long` error.
 
   Incoming events from ARC:
 
@@ -42,6 +44,12 @@ defmodule Arc.Data.Handler.Exec do
 
   @behaviour Arc.Data.Handler
 
+  require Logger
+
+  # Hard ceiling on one provider stdout line. Protects the VM from a provider
+  # that never sends a newline.
+  @max_line_bytes 64 * 1024 * 1024
+
   # Chunk size for reading provider stdout. Lines longer than this arrive as
   # several `:noeol` chunks and are joined in `handle_info/2`. Not a cap.
   @line_chunk_bytes 65_536
@@ -64,7 +72,8 @@ defmodule Arc.Data.Handler.Exec do
          pending_requests: %{},
          pending_order: [],
          stream_sessions: %{},
-         line_buffer: []
+         line_buffer: [],
+         line_buffer_bytes: 0
        }}
     else
       false -> {:error, {:not_found, executable}}
@@ -118,14 +127,55 @@ defmodule Arc.Data.Handler.Exec do
 
   @impl true
   def handle_info({port, {:data, {:noeol, chunk}}}, %{port: port} = state) do
-    {:noreply, %{state | line_buffer: [state.line_buffer, chunk]}}
+    case buffer_chunk(state, chunk) do
+      {:ok, state} -> {:noreply, state}
+      {:overflow, state} -> fail_oversized_line(state)
+    end
   end
 
   def handle_info({port, {:data, {:eol, chunk}}}, %{port: port} = state) do
-    line = IO.iodata_to_binary([state.line_buffer, chunk])
-    state = %{state | line_buffer: []}
+    case buffer_chunk(state, chunk) do
+      {:ok, %{line_buffer: :discard} = state} ->
+        {:noreply, reset_line_buffer(state)}
 
-    case dispatch_provider_event(decode_provider_event(line), state) do
+      {:ok, state} ->
+        line = IO.iodata_to_binary(state.line_buffer)
+        state = reset_line_buffer(state)
+
+        case dispatch_provider_event(decode_provider_event(line), state) do
+          :unhandled -> {:noreply, state}
+          result -> result
+        end
+
+      {:overflow, state} ->
+        fail_oversized_line(reset_line_buffer(state))
+    end
+  end
+
+  # A line that already overflowed is marked :discard; later chunks of that
+  # line are dropped until the newline arrives.
+  defp buffer_chunk(%{line_buffer: :discard} = state, _chunk), do: {:ok, state}
+
+  defp buffer_chunk(state, chunk) do
+    bytes = state.line_buffer_bytes + byte_size(chunk)
+
+    if bytes > @max_line_bytes do
+      {:overflow, %{state | line_buffer: :discard, line_buffer_bytes: bytes}}
+    else
+      {:ok, %{state | line_buffer: [state.line_buffer, chunk], line_buffer_bytes: bytes}}
+    end
+  end
+
+  defp reset_line_buffer(state), do: %{state | line_buffer: [], line_buffer_bytes: 0}
+
+  defp fail_oversized_line(state) do
+    Logger.warning(
+      "provider #{state.executable} sent a stdout line over #{@max_line_bytes} bytes; dropped"
+    )
+
+    message = "provider reply line exceeds #{@max_line_bytes} bytes"
+
+    case emit_request_error(state, nil, message) do
       :unhandled -> {:noreply, state}
       result -> result
     end
