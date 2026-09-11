@@ -9,6 +9,7 @@ defmodule Arc.CLI.Tools do
   alias Arc.Data.CapabilityDiscovery
   alias Arc.Data.CapabilityInvocation
   alias Arc.Data.CapabilityPackage
+  alias Arc.Data.Toolbox
   alias Arc.Identity
   alias Arc.Identity.KeyStore
 
@@ -572,7 +573,7 @@ defmodule Arc.CLI.Tools do
           args = Map.get(cli_command, "args", [])
 
           with {:ok, values} <- parse_cli_args(args, remaining_argv),
-               {:ok, input} <- render_input(cli_command, args, values) do
+               {:ok, input} <- Toolbox.render_input(cli_command, args, values) do
             invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
             {:ok, %{input: input, invocation: invocation, command: cli_command}}
           end
@@ -873,43 +874,6 @@ defmodule Arc.CLI.Tools do
         assign_positionals(rest, tail, Map.put(values, spec["name"], token))
     end
   end
-
-  defp render_input(cli_command, args, values) do
-    case Map.get(cli_command, "input") do
-      %{"source" => "arg", "name" => name} = input_spec ->
-        case Map.fetch(values, name) do
-          {:ok, value} -> {:ok, render_value(value, input_spec["join_with"] || " ")}
-          :error -> {:error, {:invalid_arguments, "missing required argument #{name}"}}
-        end
-
-      %{"source" => "template", "template" => template} ->
-        rendered =
-          Regex.replace(~r/\{\{([a-zA-Z0-9_-]+)\}\}/, template, fn _, key ->
-            render_value(Map.get(values, key, ""), " ")
-          end)
-          |> String.trim()
-
-        {:ok, rendered}
-
-      _ ->
-        case args do
-          [%{"name" => name}] ->
-            case Map.fetch(values, name) do
-              {:ok, value} -> {:ok, render_value(value, " ")}
-              :error -> {:error, {:invalid_arguments, "missing required argument #{name}"}}
-            end
-
-          _ ->
-            {:ok, ""}
-        end
-    end
-  end
-
-  defp render_value(value, join_with) when is_list(value), do: Enum.join(value, join_with)
-  defp render_value(true, _join_with), do: "true"
-  defp render_value(false, _join_with), do: "false"
-  defp render_value(nil, _join_with), do: ""
-  defp render_value(value, _join_with), do: to_string(value)
 
   defp merge_invocation(base, override) when is_map(override) do
     Map.merge(base, override)

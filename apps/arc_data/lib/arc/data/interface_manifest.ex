@@ -286,6 +286,9 @@ defmodule Arc.Data.InterfaceManifest do
             nil
         end
 
+      "json" ->
+        %{"source" => "json"}
+
       _ ->
         nil
     end

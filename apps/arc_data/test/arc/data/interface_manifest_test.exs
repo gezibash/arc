@@ -31,9 +31,26 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert hd(hd(cli["commands"])["args"])["name"] == "sql"
   end
 
+  test "keeps a json input source" do
+    capability = %{
+      "cli" => %{
+        "version" => 1,
+        "namespace" => "journal",
+        "commands" => [%{"path" => ["write"], "input" => %{"source" => "json"}}]
+      }
+    }
+
+    cli = InterfaceManifest.cli(capability)
+
+    assert hd(cli["commands"])["input"] == %{"source" => "json"}
+  end
+
   test "loads a JSON interface manifest file" do
     path =
-      Path.join(System.tmp_dir!(), "arc_interface_manifest_#{System.unique_integer([:positive])}.json")
+      Path.join(
+        System.tmp_dir!(),
+        "arc_interface_manifest_#{System.unique_integer([:positive])}.json"
+      )
 
     File.write!(
       path,
@@ -49,7 +66,10 @@ defmodule Arc.Data.InterfaceManifestTest do
 
   test "loads a TOML interface manifest file" do
     path =
-      Path.join(System.tmp_dir!(), "arc_interface_manifest_#{System.unique_integer([:positive])}.toml")
+      Path.join(
+        System.tmp_dir!(),
+        "arc_interface_manifest_#{System.unique_integer([:positive])}.toml"
+      )
 
     File.write!(
       path,
