@@ -26,12 +26,16 @@ defmodule Arc.CLIServeViewTest do
     }
 
     output =
-      ServeView.render_banner(identity, %{capability: capability, manifest_path: "/tmp/manifest.json"}, %{
-        host: "relay.arc",
-        port: 7331,
-        connected?: true,
-        pubkey_pin: <<1::256>>
-      })
+      ServeView.render_banner(
+        identity,
+        %{capability: capability, manifest_path: "/tmp/manifest.json"},
+        %{
+          host: "relay.arc",
+          port: 7331,
+          connected?: true,
+          pubkey_pin: <<1::256>>
+        }
+      )
 
     assert output =~ "Serving SQLite Database [data/sqlite]"
     assert output =~ "Identity: #{Identity.name(identity)}"

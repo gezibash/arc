@@ -200,7 +200,9 @@ defmodule Arc.MCP.ToolProjection do
   defp extract_input(%{"input" => input}) when is_binary(input), do: {:ok, input}
   defp extract_input(_arguments), do: {:error, :missing_input}
 
-  defp extract_app_session_id(%{"app_session_id" => sid}) when is_binary(sid) and sid != "", do: sid
+  defp extract_app_session_id(%{"app_session_id" => sid}) when is_binary(sid) and sid != "",
+    do: sid
+
   defp extract_app_session_id(_arguments), do: nil
 
   defp call_send_tool(agent, arguments) do

@@ -40,12 +40,20 @@ defmodule Arc.CLI.MCP do
       )
 
     IO.puts("MCP listening on #{HTTPServer.url(server)} for task '#{task}'")
-    IO.puts("Authenticate initialize requests with x-arc-public-key, x-arc-timestamp, x-arc-nonce, and x-arc-signature headers.")
+
+    IO.puts(
+      "Authenticate initialize requests with x-arc-public-key, x-arc-timestamp, x-arc-nonce, and x-arc-signature headers."
+    )
+
     Process.sleep(:infinity)
   end
 
   defp dispatch(_, _opts) do
-    IO.puts(:stderr, "usage: arc mcp <task> [--host HOST] [--port PORT] [--relay host:port] [--relay-pubkey <key>]")
+    IO.puts(
+      :stderr,
+      "usage: arc mcp <task> [--host HOST] [--port PORT] [--relay host:port] [--relay-pubkey <key>]"
+    )
+
     System.halt(1)
   end
 
@@ -62,7 +70,8 @@ defmodule Arc.CLI.MCP do
       relay_pubkey_opt != nil and relay_pubkey_pin == nil ->
         error("invalid --relay-pubkey (expected 32-byte hex or base64)")
 
-      relay_pubkey_opt == nil and System.get_env("ARC_RELAY_PUBKEY") != nil and relay_pubkey_pin == nil ->
+      relay_pubkey_opt == nil and System.get_env("ARC_RELAY_PUBKEY") != nil and
+          relay_pubkey_pin == nil ->
         error("invalid ARC_RELAY_PUBKEY (expected 32-byte hex or base64)")
 
       true ->

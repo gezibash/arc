@@ -51,7 +51,8 @@ defmodule Arc.Data.AgentTest do
 
     test "cannot serve a handler without an explicit capability manifest" do
       runtime_path =
-        System.tmp_dir!() |> Path.join("arc_missing_manifest_#{System.unique_integer([:positive])}.exs")
+        System.tmp_dir!()
+        |> Path.join("arc_missing_manifest_#{System.unique_integer([:positive])}.exs")
 
       File.write!(runtime_path, """
       #!/usr/bin/env elixir
@@ -372,7 +373,10 @@ defmodule Arc.Data.AgentTest do
 
   defp context_provider_paths do
     runtime = Path.expand("../../../../../test/fixtures/providers/context-provider.exs", __DIR__)
-    manifest = Path.expand("../../../../../test/fixtures/providers/context-provider.json", __DIR__)
+
+    manifest =
+      Path.expand("../../../../../test/fixtures/providers/context-provider.json", __DIR__)
+
     {runtime, manifest}
   end
 

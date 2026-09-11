@@ -36,7 +36,12 @@ defmodule Arc.MCP.DynamicToolRegistry do
   end
 
   @spec mount(owner_scope(), String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-  def mount(owner, task, %{"provider" => provider, "capability" => capability} = detail, opts \\ [])
+  def mount(
+        owner,
+        task,
+        %{"provider" => provider, "capability" => capability} = detail,
+        opts \\ []
+      )
       when is_binary(task) and task != "" and is_map(provider) and is_map(capability) do
     with {:ok, document} <- load_document(owner, task, opts),
          {:ok, owner_document} <- owner_document(owner) do
@@ -53,6 +58,7 @@ defmodule Arc.MCP.DynamicToolRegistry do
 
         true ->
           mounts = [mount | remaining] |> Enum.sort_by(& &1["mount_id"])
+
           document =
             owner_document
             |> Map.put("version", 1)
