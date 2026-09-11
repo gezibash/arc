@@ -36,7 +36,8 @@ defmodule Arc.MCP.DynamicToolRegistryTest do
   test "get returns one mounted capability by provider and id", %{dir: dir} do
     owner = Identity.generate()
 
-    assert {:ok, _} = DynamicToolRegistry.mount(owner, "demo", detail_doc("alpha", "primary"), dir: dir)
+    assert {:ok, _} =
+             DynamicToolRegistry.mount(owner, "demo", detail_doc("alpha", "primary"), dir: dir)
 
     assert {:ok, mount} = DynamicToolRegistry.get(owner, "demo", "alpha", "primary", dir: dir)
     assert mount["mount_id"] == "alpha/primary"
@@ -46,19 +47,30 @@ defmodule Arc.MCP.DynamicToolRegistryTest do
     owner = Identity.generate()
 
     assert {:ok, _} =
-             DynamicToolRegistry.mount(owner, "demo", detail_doc("alpha", "one"), dir: dir, limit: 2)
+             DynamicToolRegistry.mount(owner, "demo", detail_doc("alpha", "one"),
+               dir: dir,
+               limit: 2
+             )
 
     assert {:ok, _} =
-             DynamicToolRegistry.mount(owner, "demo", detail_doc("beta", "two"), dir: dir, limit: 2)
+             DynamicToolRegistry.mount(owner, "demo", detail_doc("beta", "two"),
+               dir: dir,
+               limit: 2
+             )
 
     assert {:error, {:mount_limit_exceeded, 2}} =
-             DynamicToolRegistry.mount(owner, "demo", detail_doc("gamma", "three"), dir: dir, limit: 2)
+             DynamicToolRegistry.mount(owner, "demo", detail_doc("gamma", "three"),
+               dir: dir,
+               limit: 2
+             )
   end
 
   test "unmount removes a mounted capability", %{dir: dir} do
     owner = Identity.generate()
 
-    assert {:ok, _} = DynamicToolRegistry.mount(owner, "demo", detail_doc("alpha", "one"), dir: dir)
+    assert {:ok, _} =
+             DynamicToolRegistry.mount(owner, "demo", detail_doc("alpha", "one"), dir: dir)
+
     assert :ok = DynamicToolRegistry.unmount(owner, "demo", "alpha", "one", dir: dir)
     assert {:ok, []} = DynamicToolRegistry.list(owner, "demo", dir: dir)
   end

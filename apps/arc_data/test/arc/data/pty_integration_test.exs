@@ -98,7 +98,13 @@ defmodule Arc.Data.PTYIntegrationTest do
         if Enum.all?(needles, &String.contains?(combined, &1)) do
           {:ok, combined}
         else
-          recv_until_contains(client, stream, needles, remaining(timeout_ms, started_at), combined)
+          recv_until_contains(
+            client,
+            stream,
+            needles,
+            remaining(timeout_ms, started_at),
+            combined
+          )
         end
 
       {:ok, %{kind: :stream_exit} = msg} ->

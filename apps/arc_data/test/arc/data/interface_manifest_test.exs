@@ -31,6 +31,20 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert hd(hd(cli["commands"])["args"])["name"] == "sql"
   end
 
+  test "keeps a json input source" do
+    capability = %{
+      "cli" => %{
+        "version" => 1,
+        "namespace" => "journal",
+        "commands" => [%{"path" => ["write"], "input" => %{"source" => "json"}}]
+      }
+    }
+
+    cli = InterfaceManifest.cli(capability)
+
+    assert hd(cli["commands"])["input"] == %{"source" => "json"}
+  end
+
   test "normalizes a stdin input source with an optional header template" do
     cli =
       InterfaceManifest.cli(%{

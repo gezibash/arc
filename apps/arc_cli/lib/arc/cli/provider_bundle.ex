@@ -54,7 +54,8 @@ defmodule Arc.CLI.ProviderBundle do
 
   def init(_path), do: {:error, :invalid_path}
 
-  @spec resolve_serve_target(String.t()) :: {:ok, String.t(), bundle_spec() | nil} | {:error, term()}
+  @spec resolve_serve_target(String.t()) ::
+          {:ok, String.t(), bundle_spec() | nil} | {:error, term()}
   def resolve_serve_target(target) when is_binary(target) and target != "" do
     cond do
       uri_target?(target) ->
@@ -107,12 +108,14 @@ defmodule Arc.CLI.ProviderBundle do
     with 1 <- document["version"] || {:error, :unsupported_arcfile_version},
          %{} = runtime <- document["runtime"] || {:error, :missing_runtime},
          "exec" <- present_string(runtime["type"]) || {:error, :unsupported_runtime},
-         command when not is_nil(command) <- present_string(runtime["command"]) || {:error, :missing_command},
+         command when not is_nil(command) <-
+           present_string(runtime["command"]) || {:error, :missing_command},
          cwd <- runtime_cwd(root, runtime["cwd"]),
          command_path <- resolve_runtime_command(command, cwd),
          args <- normalize_args(runtime["args"]),
          %{} = manifest <- document["manifest"] || {:error, :missing_manifest},
-         manifest_path when not is_nil(manifest_path) <- present_string(manifest["path"]) || {:error, :missing_manifest_path},
+         manifest_path when not is_nil(manifest_path) <-
+           present_string(manifest["path"]) || {:error, :missing_manifest_path},
          manifest_abs <- resolve_path(root, manifest_path),
          true <- File.regular?(manifest_abs) or {:error, :manifest_not_found} do
       {:ok,

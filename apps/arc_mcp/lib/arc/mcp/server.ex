@@ -105,7 +105,9 @@ defmodule Arc.MCP.Server do
        when is_binary(method) do
     case {Map.has_key?(request, "id"), method} do
       {true, "initialize"} ->
-        protocol_version = negotiate_protocol(Map.get(request["params"] || %{}, "protocolVersion"))
+        protocol_version =
+          negotiate_protocol(Map.get(request["params"] || %{}, "protocolVersion"))
+
         state = %{state | protocol_version: protocol_version}
         {ok_response(request, initialize_result(state)), state}
 

@@ -9,6 +9,7 @@ defmodule Arc.CLI.Tools do
   alias Arc.Data.CapabilityDiscovery
   alias Arc.Data.CapabilityInvocation
   alias Arc.Data.CapabilityPackage
+  alias Arc.Data.Toolbox
   alias Arc.Identity
   alias Arc.Identity.KeyStore
 
@@ -912,48 +913,22 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp render_input(cli_command, args, values) do
-    case Map.get(cli_command, "input") do
-      %{"source" => "arg", "name" => name} = input_spec ->
-        case Map.fetch(values, name) do
-          {:ok, value} -> {:ok, render_value(value, input_spec["join_with"] || " ")}
-          :error -> {:error, {:invalid_arguments, "missing required argument #{name}"}}
-        end
-
-      %{"source" => "template", "template" => template} ->
-        {:ok, render_template(template, values)}
-
-      %{"source" => "stdin"} = input_spec ->
-        with {:ok, body} <- read_stdin_body() do
-          case input_spec["template"] do
-            template when is_binary(template) ->
-              header = render_template(template, values)
-              {:ok, header <> (input_spec["join_with"] || "\n") <> body}
-
-            _ ->
-              {:ok, body}
+  defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values) do
+    with {:ok, body} <- read_stdin_body() do
+      case input_spec["template"] do
+        template when is_binary(template) ->
+          with {:ok, header} <- Toolbox.render_template(template, values) do
+            {:ok, header <> (input_spec["join_with"] || "\n") <> body}
           end
-        end
 
-      _ ->
-        case args do
-          [%{"name" => name}] ->
-            case Map.fetch(values, name) do
-              {:ok, value} -> {:ok, render_value(value, " ")}
-              :error -> {:error, {:invalid_arguments, "missing required argument #{name}"}}
-            end
-
-          _ ->
-            {:ok, ""}
-        end
+        _ ->
+          {:ok, body}
+      end
     end
   end
 
-  defp render_template(template, values) do
-    Regex.replace(~r/\{\{([a-zA-Z0-9_-]+)\}\}/, template, fn _, key ->
-      render_value(Map.get(values, key, ""), " ")
-    end)
-    |> String.trim()
+  defp render_input(cli_command, args, values) do
+    Toolbox.render_input(cli_command, args, values)
   end
 
   defp read_stdin_body do
@@ -968,12 +943,6 @@ defmodule Arc.CLI.Tools do
         {:ok, body}
     end
   end
-
-  defp render_value(value, join_with) when is_list(value), do: Enum.join(value, join_with)
-  defp render_value(true, _join_with), do: "true"
-  defp render_value(false, _join_with), do: "false"
-  defp render_value(nil, _join_with), do: ""
-  defp render_value(value, _join_with), do: to_string(value)
 
   defp merge_invocation(base, override) when is_map(override) do
     Map.merge(base, override)

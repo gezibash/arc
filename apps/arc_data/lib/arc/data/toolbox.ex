@@ -241,7 +241,23 @@ defmodule Arc.Data.Toolbox do
     end
   end
 
-  defp render_input(cli_command, args, values) do
+  @template_placeholder ~r/\{\{([a-zA-Z0-9_-]+)(?:\|([a-zA-Z0-9_]+))?\}\}/
+  @template_filters ~w(json shell)
+
+  @doc """
+  Render the provider input for one resolved CLI command.
+
+  `input.source` selects the renderer:
+
+    * `"arg"` renders one named argument.
+    * `"template"` substitutes `{{key}}` placeholders. A `{{key|json}}`
+      placeholder renders the value as a JSON literal and `{{key|shell}}`
+      renders it single-quoted for a POSIX shell.
+    * `"json"` renders every parsed argument as one JSON object, so the
+      provider never parses a command line.
+  """
+  @spec render_input(map(), [map()], map()) :: {:ok, String.t()} | {:error, term()}
+  def render_input(cli_command, args, values) do
     case Map.get(cli_command, "input") do
       %{"source" => "arg", "name" => name} = input_spec ->
         case Map.fetch(values, name) do
@@ -250,13 +266,10 @@ defmodule Arc.Data.Toolbox do
         end
 
       %{"source" => "template", "template" => template} ->
-        rendered =
-          Regex.replace(~r/\{\{([a-zA-Z0-9_-]+)\}\}/, template, fn _, key ->
-            render_value(Map.get(values, key, ""), " ")
-          end)
-          |> String.trim()
+        render_template(template, values)
 
-        {:ok, rendered}
+      %{"source" => "json"} ->
+        {:ok, encode_json(values)}
 
       _ ->
         case args do
@@ -272,11 +285,55 @@ defmodule Arc.Data.Toolbox do
     end
   end
 
+  @doc """
+  Render one `{{key}}` template against parsed argument values.
+  """
+  @spec render_template(String.t(), map()) :: {:ok, String.t()} | {:error, term()}
+  def render_template(template, values) do
+    unknown =
+      @template_placeholder
+      |> Regex.scan(template)
+      |> Enum.map(fn
+        [_, _key, filter] -> filter
+        [_, _key] -> nil
+      end)
+      |> Enum.find(&(not is_nil(&1) and &1 not in @template_filters))
+
+    case unknown do
+      nil ->
+        rendered =
+          @template_placeholder
+          |> Regex.replace(template, fn
+            _, key, "" -> render_value(Map.get(values, key), " ")
+            _, key, "json" -> encode_json(Map.get(values, key))
+            _, key, "shell" -> shell_quote(Map.get(values, key))
+          end)
+          |> String.trim()
+
+        {:ok, rendered}
+
+      filter ->
+        {:error, {:invalid_template, "unknown filter #{filter}"}}
+    end
+  end
+
   defp render_value(value, join_with) when is_list(value), do: Enum.join(value, join_with)
   defp render_value(true, _join_with), do: "true"
   defp render_value(false, _join_with), do: "false"
   defp render_value(nil, _join_with), do: ""
   defp render_value(value, _join_with), do: to_string(value)
+
+  defp encode_json(nil), do: "null"
+  defp encode_json(value), do: value |> :json.encode() |> IO.iodata_to_binary()
+
+  defp shell_quote(values) when is_list(values), do: Enum.map_join(values, " ", &shell_quote/1)
+  defp shell_quote(nil), do: "''"
+  defp shell_quote(true), do: "true"
+  defp shell_quote(false), do: "false"
+
+  defp shell_quote(value) do
+    "'" <> String.replace(to_string(value), "'", "'\\''") <> "'"
+  end
 
   defp merge_invocation(base, override) when is_map(override), do: Map.merge(base, override)
   defp merge_invocation(base, _override), do: base

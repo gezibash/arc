@@ -38,7 +38,10 @@ defmodule Arc.CLI.ServeView do
       "Press Ctrl+C to stop."
     ]
 
-    Enum.join(lines ++ [""] ++ command_lines ++ if(command_lines == [], do: [], else: [""]) ++ log_lines, "\n")
+    Enum.join(
+      lines ++ [""] ++ command_lines ++ if(command_lines == [], do: [], else: [""]) ++ log_lines,
+      "\n"
+    )
   end
 
   def render_event(event) when is_map(event) do

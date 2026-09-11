@@ -295,6 +295,9 @@ defmodule Arc.Data.InterfaceManifest do
             nil
         end
 
+      "json" ->
+        %{"source" => "json"}
+
       "stdin" ->
         %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
         |> maybe_put("template", present_string(Map.get(input, "template")))
