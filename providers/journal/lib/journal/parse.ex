@@ -22,6 +22,20 @@ defmodule Journal.Parse do
   @first_flag_re ~r/(?:^|\s)--[a-z][a-z0-9-]*(?:\s|$)/
   @after_quote_re ~r/^(?:\s+--[a-z][a-z0-9-]*(?:\s|$)|\s*$)/
 
+  @doc """
+  Splits a request message into the command line and the request body.
+
+  The command line is the first line. The request body is everything after
+  the first newline, or `nil` when the message is a single line.
+  """
+  @spec split(String.t()) :: {String.t(), String.t() | nil}
+  def split(message) when is_binary(message) do
+    case String.split(message, "\n", parts: 2) do
+      [header, body] -> {header, body}
+      [header] -> {header, nil}
+    end
+  end
+
   @spec parse(String.t()) :: {[String.t()], %{String.t() => String.t() | true}}
   def parse(line) when is_binary(line) do
     line = String.trim(line)

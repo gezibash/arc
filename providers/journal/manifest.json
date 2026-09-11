@@ -42,16 +42,15 @@
         },
         {
           "path": ["write"],
-          "summary": "Replace a page body. Creates the page if absent. Pass --if-rev to guard against concurrent edits.",
+          "summary": "Replace a page body with the markdown read from stdin. Creates the page if absent. Pass --if-rev to guard against concurrent edits.",
           "args": [
             { "name": "addr", "kind": "positional", "required": true, "description": "<project>/<notebook>/<page>" },
-            { "name": "body", "kind": "option", "flag": "--body", "type": "string", "required": true, "description": "Markdown body" },
             { "name": "title", "kind": "option", "flag": "--title", "type": "string", "required": false, "description": "Page title" },
             { "name": "tags", "kind": "option", "flag": "--tags", "type": "string", "required": false, "description": "Comma separated tags" },
             { "name": "if_rev", "kind": "option", "flag": "--if-rev", "type": "string", "required": false, "description": "Expected current rev. Fails with error: conflict on mismatch." }
           ],
-          "input": { "source": "template", "template": "write {{addr}} --body {{body|json}} --title {{title|json}} --tags \"{{tags}}\" --if-rev \"{{if_rev}}\"" },
-          "examples": ["hrs/ablations/lr-sweep --title \"LR sweep\" --body \"# LR sweep\""]
+          "input": { "source": "stdin", "template": "write {{addr}} --title {{title|json}} --tags {{tags|json}} --if-rev {{if_rev|json}}" },
+          "examples": ["hrs/ablations/lr-sweep --title \"LR sweep\" < page.md"]
         },
         {
           "path": ["append"],

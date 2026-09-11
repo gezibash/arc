@@ -161,7 +161,7 @@ maps to one request line on the wire.
 |---|---|
 | `ls [<project>[/<notebook>]]` | List projects, notebooks, or pages. One line each. |
 | `read <addr> [--lines a:b]` | Return a page or a line range with `rev`. |
-| `write <addr> --body <text> [--title t] [--tags a,b] [--if-rev r]` | Replace the page body. Create if absent. |
+| `write <addr> [--title t] [--tags a,b] [--if-rev r] [--body <text>]` | Replace the page body with the request body, or with `--body`. Create if absent. |
 | `append <addr> <text>` | Add text to the end of the page. |
 | `edit <addr> --if-rev r --find s --replace t` | Replace one string in the body. |
 | `attach <addr> --name <n> --base64 <b>` | Store a blob and link it. |
@@ -191,15 +191,23 @@ The ARC exec runtime sends one JSON object per line on stdin:
 {"op":"request","message":"<command line>","from":"<hex pubkey>","meta":{},"request_id":"..."}
 ```
 
-The journal parses `message` as a command line. The manifest renders every
-free-text option (`--body`, `--title`, `--find`, `--replace`, `--note`) with
-the `{{key|json}}` template filter, so the value arrives as a JSON string
-literal and the journal decodes it. Quotes, newlines, and ` --words` inside
-a body survive unchanged. An absent option renders as the bare word `null`,
-which the journal treats as not given. Other quoted values run to the last
-quote before the next ` --flag` or the end of input. The literal two
-characters `\n` in a body or append text become a newline. The journal
-replies with one JSON object per line on stdout:
+The first line of `message` is the command line. Any text after the first
+newline is the request body. `write` stores it as the page body, byte for
+byte, when the command line has no `--body`. A request that sets both is
+rejected with `invalid_arguments`. The ARC CLI builds this shape from
+`input.source: "stdin"`: it renders the header from the parsed options and
+appends the standard input after a newline, so the body never touches the
+shell's argument limit.
+
+The manifest renders every free-text option (`--body`, `--title`, `--tags`,
+`--if-rev`, `--find`, `--replace`, `--note`) with the `{{key|json}}` template
+filter, so the value arrives as a JSON string literal and the journal decodes
+it. Quotes, newlines, and ` --words` inside a value survive unchanged. An
+absent option renders as the bare word `null`, which the journal treats as
+not given. Other quoted values run to the last quote before the next
+` --flag` or the end of input. The literal two characters `\n` in a `--body`
+value or in append text become a newline. The journal replies with one JSON
+object per line on stdout:
 
 ```json
 {"op":"reply","request_id":"...","reply":"<text>"}
@@ -245,9 +253,11 @@ replies with one JSON object per line on stdout:
   attachment cap at 512 KiB so a base64 `fetch` reply would fit. The exec
   port now joins stdout chunks up to 64 MiB per line. The attachment cap is
   16 MiB and follows the storage budget, see section 8.
-- Template inputs escape values with the `{{key|json}}` filter. Bodies travel
-  as `--body <json string>`, so a body may contain quotes, newlines, and
-  ` --flag`-like words without being cut.
+- Template inputs escape values with the `{{key|json}}` filter, so a value
+  may contain quotes, newlines, and ` --flag`-like words without being cut.
+  The `write` body travels as the request body after the header line
+  (`input.source: "stdin"`), so its size limit is the provider's, not the
+  shell's argument limit. Short bodies may still use `--body <json string>`.
 
 ## 16. Verified
 

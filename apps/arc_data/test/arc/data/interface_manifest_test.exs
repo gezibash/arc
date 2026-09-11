@@ -93,6 +93,22 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert hd(cli["commands"])["path"] == ["get"]
   end
 
+  test "journal write reads the body from stdin and renders a json header" do
+    path = Path.expand("../../../../../providers/journal/manifest.json", __DIR__)
+
+    assert {:ok, %{"cli" => cli}} = InterfaceManifest.load_file(path)
+    assert write = Enum.find(cli["commands"], &(&1["path"] == ["write"]))
+    assert %{"source" => "stdin", "join_with" => "\n", "template" => template} = write["input"]
+    refute Enum.any?(write["args"], &(&1["name"] == "body"))
+
+    values = %{"addr" => "hrs/ab/p1", "title" => ~s(P "one" --not-a-flag)}
+
+    assert {:ok, header} = Arc.Data.Toolbox.render_template(template, values)
+
+    assert header ==
+             ~s(write hrs/ab/p1 --title "P \\"one\\" --not-a-flag" --tags null --if-rev null)
+  end
+
   test "loads a TOML interface manifest file" do
     path =
       Path.join(
