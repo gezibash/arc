@@ -20,6 +20,44 @@ defmodule Arc.Data.Handler.ExecTest do
     assert event.body =~ "provider hello"
   end
 
+  test "reply lines larger than the read chunk are reassembled" do
+    {path, manifest_path} = hello_provider_paths()
+    File.chmod!(path, 0o755)
+    {:ok, state} = Exec.init("exec://#{path}?manifest=#{URI.encode_www_form(manifest_path)}")
+
+    body = String.duplicate("a", 3_000_000)
+
+    {:noreply, state} =
+      Exec.handle_message(
+        "POST /echo " <> body,
+        @from_pk,
+        %{request_id: <<7::128>>, framed?: true},
+        state
+      )
+
+    assert {:emit, [event], state} = drain_until_event(state, 30_000)
+    assert event.frame_type == :response
+    assert event.body == body
+    assert state.line_buffer == []
+  end
+
+  defp drain_until_event(state, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    receive do
+      {port, {:data, _}} = msg when port == state.port ->
+        case Exec.handle_info(msg, state) do
+          {:noreply, state} ->
+            drain_until_event(state, deadline - System.monotonic_time(:millisecond))
+
+          result ->
+            result
+        end
+    after
+      max(timeout, 0) -> flunk("expected provider reply before timeout")
+    end
+  end
+
   test "from_pk is passed as hex" do
     {path, manifest_path} = hello_provider_paths()
     File.chmod!(path, 0o755)

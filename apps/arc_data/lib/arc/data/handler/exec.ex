@@ -7,6 +7,9 @@ defmodule Arc.Data.Handler.Exec do
   stream/session routing.
 
   The executable communicates via newline-delimited JSON on stdin/stdout.
+  A reply line has no size limit. ARC reads stdout in chunks and joins the
+  chunks until it sees the newline, so a provider can return a large one-shot
+  reply (for example a base64 attachment) on a single line.
 
   Incoming events from ARC:
 
@@ -39,6 +42,10 @@ defmodule Arc.Data.Handler.Exec do
 
   @behaviour Arc.Data.Handler
 
+  # Chunk size for reading provider stdout. Lines longer than this arrive as
+  # several `:noeol` chunks and are joined in `handle_info/2`. Not a cap.
+  @line_chunk_bytes 65_536
+
   @impl true
   def init(uri) when is_binary(uri) do
     parsed = URI.parse(uri)
@@ -56,7 +63,8 @@ defmodule Arc.Data.Handler.Exec do
          package: package,
          pending_requests: %{},
          pending_order: [],
-         stream_sessions: %{}
+         stream_sessions: %{},
+         line_buffer: []
        }}
     else
       false -> {:error, {:not_found, executable}}
@@ -109,8 +117,22 @@ defmodule Arc.Data.Handler.Exec do
   end
 
   @impl true
-  def handle_info({port, {:data, {:eol, line}}}, %{port: port} = state) do
-    case decode_provider_event(line) do
+  def handle_info({port, {:data, {:noeol, chunk}}}, %{port: port} = state) do
+    {:noreply, %{state | line_buffer: [state.line_buffer, chunk]}}
+  end
+
+  def handle_info({port, {:data, {:eol, chunk}}}, %{port: port} = state) do
+    line = IO.iodata_to_binary([state.line_buffer, chunk])
+    state = %{state | line_buffer: []}
+
+    case dispatch_provider_event(decode_provider_event(line), state) do
+      :unhandled -> {:noreply, state}
+      result -> result
+    end
+  end
+
+  defp dispatch_provider_event(event, state) do
+    case event do
       {:reply, correlation_id, reply} ->
         emit_request_event(
           state,
@@ -432,7 +454,7 @@ defmodule Arc.Data.Handler.Exec do
       [
         :binary,
         :exit_status,
-        {:line, 1_000_000}
+        {:line, @line_chunk_bytes}
       ] ++
         if(args == [], do: [], else: [{:args, args}]) ++
         if(env == [], do: [], else: [{:env, env}])
