@@ -31,9 +31,41 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert hd(hd(cli["commands"])["args"])["name"] == "sql"
   end
 
+  test "normalizes a stdin input source with an optional header template" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "pages",
+            "commands" => [
+              %{
+                "path" => ["write"],
+                "args" => [%{"name" => "path", "kind" => "positional", "required" => true}],
+                "input" => %{"source" => "stdin", "template" => "POST /pages/{{path}}"}
+              },
+              %{"path" => ["raw"], "input" => %{"source" => "stdin"}}
+            ]
+          }
+        }
+      })
+
+    [write, raw] = cli["commands"]
+
+    assert write["input"] == %{
+             "source" => "stdin",
+             "template" => "POST /pages/{{path}}",
+             "join_with" => "\n"
+           }
+
+    assert raw["input"] == %{"source" => "stdin", "join_with" => "\n"}
+  end
+
   test "loads a JSON interface manifest file" do
     path =
-      Path.join(System.tmp_dir!(), "arc_interface_manifest_#{System.unique_integer([:positive])}.json")
+      Path.join(
+        System.tmp_dir!(),
+        "arc_interface_manifest_#{System.unique_integer([:positive])}.json"
+      )
 
     File.write!(
       path,
@@ -49,7 +81,10 @@ defmodule Arc.Data.InterfaceManifestTest do
 
   test "loads a TOML interface manifest file" do
     path =
-      Path.join(System.tmp_dir!(), "arc_interface_manifest_#{System.unique_integer([:positive])}.toml")
+      Path.join(
+        System.tmp_dir!(),
+        "arc_interface_manifest_#{System.unique_integer([:positive])}.toml"
+      )
 
     File.write!(
       path,
