@@ -10,6 +10,7 @@ defmodule Arc.CLI.Agent do
   alias Arc.Data.CapabilityInvocation
   alias Arc.Data.CapabilityPackage
   alias Arc.Data.Frame
+  alias Arc.Data.Toolbox
   alias Arc.Host.Client
   alias Arc.Host.Service
   alias Arc.Host.Token
@@ -215,7 +216,7 @@ defmodule Arc.CLI.Agent do
         pk_short = binary_part(pk_hex, 0, 4) <> "…" <> binary_part(pk_hex, byte_size(pk_hex), -4)
         IO.puts("Listening as #{Identity.name(id)} (#{pk_short}) [pid:#{System.pid()}]")
         IO.puts("Press Ctrl+C to stop.\n")
-        listen_loop(agent)
+        listen_loop(agent, id)
       end,
       opts
     )
@@ -243,7 +244,7 @@ defmodule Arc.CLI.Agent do
         serve_meta = serve_meta(target, resolved, bundle)
         IO.puts(ServeView.render_banner(id, serve_meta, relay_info))
         IO.puts("")
-        listen_loop(agent)
+        listen_loop(agent, id)
       end,
       opts
     )
@@ -340,7 +341,7 @@ defmodule Arc.CLI.Agent do
 
   defp decode_document(_msg), do: {:error, :unexpected_reply}
 
-  defp listen_loop(agent) do
+  defp listen_loop(agent, id) do
     receive do
       {:arc_serve_event, event} ->
         IO.puts(ServeView.render_event(event))
@@ -358,10 +359,10 @@ defmodule Arc.CLI.Agent do
         :ok
 
       messages ->
-        Enum.each(messages, &print_message/1)
+        Enum.each(messages, &print_message(&1, id))
     end
 
-    listen_loop(agent)
+    listen_loop(agent, id)
   end
 
   defp drain_serve_events do
@@ -374,12 +375,18 @@ defmodule Arc.CLI.Agent do
     end
   end
 
-  defp print_message(msg) do
+  defp print_message(msg), do: print_message(msg, nil)
+
+  defp print_message(msg, id) do
     kind = msg[:kind] || :raw
     text = msg[:text] || ""
     from = msg[:from] || "unknown"
 
     case kind do
+      :event ->
+        topic = get_in(msg, [:meta, "topic"]) || "event"
+        IO.puts("event #{topic} from #{from}: #{open_if_identity(text, id)}")
+
       :error ->
         IO.puts("[#{from}] #{text}")
 
@@ -390,6 +397,9 @@ defmodule Arc.CLI.Agent do
         IO.puts("[#{from}] #{text}")
     end
   end
+
+  defp open_if_identity(text, %Identity{} = id), do: Toolbox.open_tokens(text, id)
+  defp open_if_identity(text, _), do: text
 
   defp print_summary(%{"provider" => provider, "capabilities" => capabilities}, entry)
        when is_list(capabilities) do

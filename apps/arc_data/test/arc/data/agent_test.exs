@@ -166,6 +166,27 @@ defmodule Arc.Data.AgentTest do
       assert hd(alice_msgs).text == "hey alice"
     end
 
+    test "an event lands in the peer inbox with its topic" do
+      alice_id = Identity.generate()
+      bob_id = Identity.generate()
+
+      {:ok, alice} = Agent.start_link(alice_id)
+      {:ok, bob} = Agent.start_link(bob_id)
+      :ok = Agent.publish(alice)
+      :ok = Agent.publish(bob)
+
+      :ok = Agent.emit_event(alice, bob_id.public_key, "dm.new", "01J7Q0")
+      Process.sleep(25)
+      Agent.poll_mailbox(bob)
+      Process.sleep(10)
+
+      assert [msg] = Agent.read_inbox(bob)
+      assert msg.kind == :event
+      assert msg.meta["topic"] == "dm.new"
+      assert msg.text == "01J7Q0"
+      assert msg.from == Identity.name(alice_id)
+    end
+
     test "send without session returns error" do
       alice_id = Identity.generate()
       bob_id = Identity.generate()

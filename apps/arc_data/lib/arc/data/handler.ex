@@ -33,6 +33,16 @@ defmodule Arc.Data.Handler do
           optional(:body) => binary()
         }
 
+  @doc """
+  Build an outbound event for an `{:emit, [event], state}` return. The
+  agent sends it to `to_pk` as a type 10 frame with `meta.topic`.
+  """
+  @spec emit_event(binary(), String.t(), binary()) :: outbound_event()
+  def emit_event(<<to_pk::binary-size(32)>>, topic, body)
+      when is_binary(topic) and is_binary(body) do
+    %{to_pk: to_pk, payload: Arc.Data.Frame.encode_event(topic, body)}
+  end
+
   @callback init(uri :: String.t()) :: {:ok, state()} | {:error, term()}
   @callback handle_message(message :: binary(), from_pk :: binary(), state()) ::
               {:reply, binary(), state()}

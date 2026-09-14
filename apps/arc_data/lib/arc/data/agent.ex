@@ -44,6 +44,16 @@ defmodule Arc.Data.Agent do
     GenServer.start_link(__MODULE__, {identity, handler_uri, observer}, opts)
   end
 
+  @doc """
+  Send an event frame to a peer outside any request. The peer sees it in
+  its inbox with kind `:event` and `meta["topic"]`.
+  """
+  @spec emit_event(GenServer.server(), binary(), String.t(), binary()) :: :ok
+  def emit_event(agent, <<to_pk::binary-size(32)>>, topic, body)
+      when is_binary(topic) and is_binary(body) do
+    GenServer.call(agent, {:emit_event, to_pk, topic, body})
+  end
+
   def publish(agent) do
     GenServer.call(agent, :publish)
   end
@@ -138,6 +148,11 @@ defmodule Arc.Data.Agent do
       error ->
         {:reply, error, state}
     end
+  end
+
+  def handle_call({:emit_event, to_pk, topic, body}, _from, state) do
+    state = send_reply(state, to_pk, Frame.encode_event(topic, body))
+    {:reply, :ok, state}
   end
 
   def handle_call({:send, peer_query, message, opts}, _from, state) do

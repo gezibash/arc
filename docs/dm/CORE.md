@@ -296,3 +296,9 @@ through a test hook, and asserts the entry is gone.
 Each item is one pull request with its own tests. `mise run check` must
 pass on every one. CI runs `mix test --warnings-as-errors`, so a warning
 in test code fails the build.
+
+## Status
+
+All seven items landed on 2026-09-14 on branch `feat/sealed-box`, one
+commit each, with the DM provider between C3 and C4. The full suite and
+`mix lint` pass on every commit. `arc version` reports `0.2.0`.

@@ -71,6 +71,15 @@ defmodule Arc.Data.FrameTest do
     assert decoded.body == "bye"
   end
 
+  test "event frame roundtrip" do
+    encoded = Frame.encode_event("dm.new", "sealed-v1:abc", %{"n" => 1})
+    assert {:ok, decoded} = Frame.decode(encoded)
+    assert decoded.type == :event
+    assert decoded.meta == %{"topic" => "dm.new", "n" => 1}
+    assert decoded.body == "sealed-v1:abc"
+    assert byte_size(decoded.request_id) == 16
+  end
+
   test "decode rejects unknown version" do
     request_id = Frame.new_request_id()
     encoded = Frame.encode_request(request_id, %{}, "x")
