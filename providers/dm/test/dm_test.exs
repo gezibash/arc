@@ -179,6 +179,54 @@ defmodule DmTest do
     assert [_, "out", _, _, _, "delivered", _] = String.split(l1, "\t")
   end
 
+  test "react records the latest reaction per key in both mailboxes", %{root: root} do
+    id = send(root, @alice, @bob, "hi")
+
+    assert {:ok, "reacted 👍 " <> _} = Command.run(root, @bob, "react #{id} 👍")
+    assert {:ok, "reacted ❤️ " <> _} = Command.run(root, @bob, "react #{id} ❤️")
+    assert {:ok, "reacted 🎉 " <> _} = Command.run(root, @alice, "react #{id} 🎉")
+    assert {:error, "invalid_reaction" <> _} = Command.run(root, @bob, "react #{id} toolong")
+    assert {:error, "not_found"} = Command.run(root, @carol, "react #{id} 👍")
+
+    {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
+    [_, l] = String.split(out, "\n")
+    [_, _, _, _, _, flags, _] = String.split(l, "\t")
+    assert flags == "delivered;reaction=🎉:#{@alice},❤️:#{@bob}"
+
+    {:ok, out} = Command.run(root, @bob, "read #{id}")
+    assert out =~ "reactions: 🎉 #{@alice} ❤️ #{@bob}"
+
+    assert {:ok, "cleared " <> _} = Command.run(root, @bob, "react #{id} none")
+    {:ok, out} = Command.run(root, @bob, "read #{id}")
+    assert out =~ "reactions: 🎉 #{@alice}\n"
+  end
+
+  test "retract empties the recipient copy within the window", %{root: root} do
+    id = send(root, @alice, @bob, "oops")
+    assert {:error, "forbidden" <> _} = Command.run(root, @bob, "retract #{id}")
+    assert {:ok, "retracted " <> _} = Command.run(root, @alice, "retract #{id}")
+
+    {:ok, bob_copy} = Dm.Store.get_message(root, @bob, id)
+    {:ok, alice_copy} = Dm.Store.get_message(root, @alice, id)
+    assert bob_copy["body"] == ""
+    assert alice_copy["body"] == token("oops@self")
+
+    {:ok, out} = Command.run(root, @bob, "read #{id}")
+    assert String.ends_with?(out, "retracted: yes\nbody: ")
+
+    {:ok, out} = Command.run(root, @bob, "thread #{@alice} --bodies \"true\"")
+    [_, l] = String.split(out, "\n")
+    assert [_, "in", _, _, _, "retracted", ""] = String.split(l, "\t")
+  end
+
+  test "retract fails after the window", %{root: root} do
+    System.put_env("DM_RETRACT_WINDOW", "0")
+    on_exit(fn -> System.delete_env("DM_RETRACT_WINDOW") end)
+    id = send(root, @alice, @bob, "late")
+    Process.sleep(1_100)
+    assert {:error, "too_late"} = Command.run(root, @alice, "retract #{id}")
+  end
+
   test "thread filters by peer in both directions", %{root: root} do
     a = send(root, @alice, @bob, "1")
     b = send(root, @bob, @alice, "2")

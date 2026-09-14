@@ -57,11 +57,31 @@ defmodule Dm.Store do
 
   # -- receipts ---------------------------------------------------------------
 
-  def add_receipt(root, pk, id, event) do
+  def add_receipt(root, pk, id, event, extra \\ %{}) do
     File.mkdir_p!(mailbox(root, pk))
-    line = encode(%{"t" => timestamp(), "id" => id, "event" => event})
+    line = encode(Map.merge(extra, %{"t" => timestamp(), "id" => id, "event" => event}))
     File.write!(receipts_path(root, pk), line <> "\n", [:append])
     :ok
+  end
+
+  @doc """
+  Current reactions per message id: `%{id => [{by, value}]}`. The latest
+  reaction by one key wins, and an empty value clears it.
+  """
+  def reaction_index(root, pk) do
+    root
+    |> all_receipts(pk)
+    |> Enum.filter(&(&1["event"] == "reaction"))
+    |> Enum.group_by(& &1["id"])
+    |> Map.new(fn {id, rs} ->
+      current =
+        rs
+        |> Enum.reduce(%{}, fn r, acc -> Map.put(acc, r["by"], r["value"]) end)
+        |> Enum.reject(fn {_by, v} -> v == "" end)
+        |> Enum.sort()
+
+      {id, current}
+    end)
   end
 
   @doc "Receipts for one message id, in file order."

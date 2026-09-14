@@ -358,6 +358,55 @@
         },
         {
           "path": [
+            "react"
+          ],
+          "summary": "React to a message with an emoji, or none to clear. The reaction is plaintext metadata: the host sees who reacted with what.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            },
+            {
+              "name": "value",
+              "kind": "positional",
+              "required": true,
+              "description": "One to four characters, or none"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "react {{id}} {{value}}"
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 \ud83d\udc4d",
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 none"
+          ]
+        },
+        {
+          "path": [
+            "retract"
+          ],
+          "summary": "Unsend a message you sent, within the retract window (default 10 minutes). Recipients keep a retracted marker.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "retract {{id}}"
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
+        },
+        {
+          "path": [
             "block"
           ],
           "summary": "Refuse future messages from a peer.",

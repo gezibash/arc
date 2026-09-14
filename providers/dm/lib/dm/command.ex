@@ -124,20 +124,23 @@ defmodule Dm.Command do
   # of the CLI interface; the conversation renderer reads it.
   defp thread_with_bodies(msgs, peer, ctx) do
     index = Store.receipt_index(ctx.root, ctx.from)
+    reactions = Store.reaction_index(ctx.root, ctx.from)
     show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
     peer_index = if show_read, do: Store.receipt_index(ctx.root, peer), else: %{}
     unread = Enum.filter(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
 
     rows =
       Enum.map(msgs, fn msg ->
-        flags =
+        state =
           cond do
+            retracted?(msg, index) -> "retracted"
             outbound?(msg, ctx) and read?(msg, peer_index) -> "read"
             outbound?(msg, ctx) -> "delivered"
             read?(msg, index) -> "read"
             true -> "unread"
           end
 
+        flags = flags_field(state, Map.get(reactions, msg["id"], []))
         dir = if outbound?(msg, ctx), do: "out", else: "in"
 
         Enum.join(
@@ -161,7 +164,9 @@ defmodule Dm.Command do
         :ok = Store.add_receipt(ctx.root, ctx.from, id, "read")
       end
 
-      {:ok, render(msg)}
+      index = Store.receipt_index(ctx.root, ctx.from)
+      reactions = ctx.root |> Store.reaction_index(ctx.from) |> Map.get(id, [])
+      {:ok, render(msg, retracted?(msg, index), reactions)}
     end
   end
 
@@ -189,6 +194,41 @@ defmodule Dm.Command do
       |> Enum.filter(&(&1["event"] == "delivered" or (show_read and &1["event"] == "read")))
       |> Enum.map(&"#{&1["event"]} #{&1["t"]}")
       |> lines_or("no receipts")
+    end
+  end
+
+  # -- react / retract --------------------------------------------------------
+
+  defp dispatch(["react", id, value], _opts, ctx) do
+    with :ok <- valid_id(id),
+         :ok <- valid_reaction(value),
+         {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id) do
+      value = if value == "none", do: "", else: value
+      extra = %{"by" => ctx.from, "value" => value}
+
+      msg
+      |> holders()
+      |> Enum.each(&Store.add_receipt(ctx.root, &1, id, "reaction", extra))
+
+      {:ok, if(value == "", do: "cleared #{id}", else: "reacted #{value} #{id}")}
+    end
+  end
+
+  defp dispatch(["retract", id], _opts, ctx) do
+    with :ok <- valid_id(id),
+         {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id),
+         true <- outbound?(msg, ctx) or {:error, "forbidden not the sender"},
+         true <- within_retract_window?(msg) or {:error, "too_late"} do
+      msg
+      |> holders()
+      |> Enum.reject(&(&1 == ctx.from))
+      |> Enum.each(fn pk ->
+        {:ok, copy} = Store.get_message(ctx.root, pk, id)
+        :ok = Store.put_message(ctx.root, pk, Map.put(copy, "body", ""))
+      end)
+
+      msg |> holders() |> Enum.each(&Store.add_receipt(ctx.root, &1, id, "retracted"))
+      {:ok, "retracted #{id}"}
     end
   end
 
@@ -273,6 +313,8 @@ defmodule Dm.Command do
       ack <id>...
       status <id>
       archive <id>...
+      react <id> <emoji|none>
+      retract <id>                    sender only, within the retract window
       block <peer> | unblock <peer> | blocked
       mute <peer> | unmute <peer> | muted
       settings [receipts on|off]
@@ -324,6 +366,40 @@ defmodule Dm.Command do
     end)
   end
 
+  # The flags field is `<state>[;reaction=<value>:<by>[,<value>:<by>...]]`.
+  defp flags_field(state, []), do: state
+
+  defp flags_field(state, reactions) do
+    state <> ";reaction=" <> Enum.map_join(reactions, ",", fn {by, v} -> "#{v}:#{by}" end)
+  end
+
+  defp holders(msg), do: Enum.uniq([msg["from"], msg["to"]])
+
+  defp valid_reaction("none"), do: :ok
+
+  defp valid_reaction(value) do
+    n = length(String.graphemes(value))
+
+    if n in 1..4 and not String.contains?(value, [" ", "\t", "\n", ",", ";", ":"]) do
+      :ok
+    else
+      {:error, "invalid_reaction one to four characters, no separators"}
+    end
+  end
+
+  defp within_retract_window?(msg) do
+    case DateTime.from_iso8601(msg["t"]) do
+      {:ok, sent, _} ->
+        DateTime.diff(DateTime.utc_now(), sent, :second) <= Config.retract_window_seconds()
+
+      _ ->
+        false
+    end
+  end
+
+  defp retracted?(msg, index),
+    do: MapSet.member?(Map.get(index, msg["id"], MapSet.new()), "retracted")
+
   defp outbound?(msg, ctx), do: msg["from"] == ctx.from
   defp other(msg, ctx), do: if(outbound?(msg, ctx), do: msg["to"], else: msg["from"])
   defp read?(msg, index), do: MapSet.member?(Map.get(index, msg["id"], MapSet.new()), "read")
@@ -357,13 +433,17 @@ defmodule Dm.Command do
     "#{msg["id"]}\t#{dir}\t#{other(msg, ctx)}\t#{msg["t"]}\t#{byte_size(msg["body"])}"
   end
 
-  defp render(msg) do
+  defp render(msg, retracted, reactions) do
     [
       "id: #{msg["id"]}",
       "from: #{msg["from"]}",
       "to: #{msg["to"]}",
       "t: #{msg["t"]}",
       if(msg["reply_to"], do: "reply_to: #{msg["reply_to"]}"),
+      if(retracted, do: "retracted: yes"),
+      if(reactions != [],
+        do: "reactions: " <> Enum.map_join(reactions, " ", fn {by, v} -> "#{v} #{by}" end)
+      ),
       "body: #{msg["body"]}"
     ]
     |> Enum.reject(&is_nil/1)

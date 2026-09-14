@@ -181,7 +181,8 @@ defmodule Arc.Data.ToolboxTest do
             "jolly-volta · 2 messages, 1 unread",
             "01AAAAAAAAAAAAAAAAAAAAAAAA\tin\tjolly-volta\t2026-09-14T19:22:50Z\t-\tunread\tfirst line",
             "second line",
-            "01BBBBBBBBBBBBBBBBBBBBBBBB\tout\tjolly-volta\t2026-09-14T19:23:00Z\t01AAAAAAAAAAAAAAAAAAAAAAAA\tread\tyes"
+            "01BBBBBBBBBBBBBBBBBBBBBBBB\tout\tjolly-volta\t2026-09-14T19:23:00Z\t01AAAAAAAAAAAAAAAAAAAAAAAA\tread;reaction=👍:jolly-volta\tyes",
+            "01CCCCCCCCCCCCCCCCCCCCCCCC\tin\tjolly-volta\t2026-09-14T19:24:00Z\t-\tretracted\t"
           ],
           "\n"
         )
@@ -197,7 +198,11 @@ defmodule Arc.Data.ToolboxTest do
                    "",
                    "you  2026-09-14 19:23  BBBBBB  ↳ reply to AAAAAA",
                    "  yes",
-                   "  ✓ read"
+                   "  👍 jolly-volta",
+                   "  ✓ read",
+                   "",
+                   "jolly-volta  2026-09-14 19:24  CCCCCC",
+                   "  (retracted)"
                  ],
                  "\n"
                )

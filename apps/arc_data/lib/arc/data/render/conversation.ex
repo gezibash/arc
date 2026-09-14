@@ -42,13 +42,16 @@ defmodule Arc.Data.Render.Conversation do
       [id, dir, peer, t, reply_to, flags, body] ->
         who = if dir == "out", do: "you", else: peer
         reply = if reply_to == "-", do: "", else: "  ↳ reply to #{short_id(reply_to)}"
+        {state, reactions} = parse_flags(flags)
+        body = if state == "retracted", do: "(retracted)", else: body
         body_lines = body |> String.trim_trailing() |> String.split("\n")
 
         [
           "",
           "#{who}  #{time(t)}  #{short_id(id)}#{reply}",
           Enum.map(body_lines, &("  " <> &1)),
-          receipt(dir, flags)
+          reactions_line(reactions),
+          receipt(dir, state)
         ]
         |> List.flatten()
         |> Enum.reject(&is_nil/1)
@@ -57,6 +60,23 @@ defmodule Arc.Data.Render.Conversation do
       _ ->
         record
     end
+  end
+
+  # `<state>[;reaction=<value>:<by>[,...]]`
+  defp parse_flags(flags) do
+    case String.split(flags, ";reaction=", parts: 2) do
+      [state] ->
+        {state, []}
+
+      [state, rs] ->
+        {state, rs |> String.split(",") |> Enum.map(&String.split(&1, ":", parts: 2))}
+    end
+  end
+
+  defp reactions_line([]), do: nil
+
+  defp reactions_line(reactions) do
+    "  " <> Enum.map_join(reactions, "  ", fn [value, by] -> "#{value} #{by}" end)
   end
 
   defp receipt("out", "read"), do: "  ✓ read"
