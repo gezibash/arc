@@ -48,6 +48,7 @@ defmodule Arc.CLI do
   def version_string, do: "arc #{@version} (#{@git_sha})"
 
   def main(args \\ []) do
+    configure_stdio()
     ensure_started()
     {max_frame_bytes, args} = pop_opt(args, "--max-frame-bytes")
     configure_frame_cap(max_frame_bytes)
@@ -96,6 +97,16 @@ defmodule Arc.CLI do
       true ->
         error("unknown command: #{Enum.join([command | rest], " ")}")
     end
+  end
+
+  # An escript starts with latin1 stdio. `IO.read` on a latin1 device
+  # re-encodes every UTF-8 byte as a code point, and `IO.write` strips a
+  # layer on the way out, so a non-ASCII page body arrives at the provider
+  # double-encoded and prints back as mojibake. Unicode stdio passes valid
+  # UTF-8 through unchanged in both directions.
+  defp configure_stdio do
+    :io.setopts(:standard_io, encoding: :unicode)
+    :io.setopts(:standard_error, encoding: :unicode)
   end
 
   defp ensure_started do

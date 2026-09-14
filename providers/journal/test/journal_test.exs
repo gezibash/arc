@@ -354,4 +354,49 @@ defmodule JournalTest do
     assert page =~ ~s(title: "T \\"two\\"")
     assert String.ends_with?(page, "---\n# Two\n\nbody\n")
   end
+
+  test "non-ASCII text round-trips through the stdio loop unchanged", %{root: root} do
+    import ExUnit.CaptureIO
+
+    body = "# Übersicht\n\nrange #23–#27 日本\n"
+    title = "Tïtle – 日本"
+    appended = "später – 東京"
+
+    requests = [
+      %{
+        "op" => "request",
+        "request_id" => "w",
+        "from" => @alice,
+        "message" => ~s(write hrs/ab/u8 --title #{json(title)}\n) <> body
+      },
+      %{
+        "op" => "request",
+        "request_id" => "a",
+        "from" => @alice,
+        "message" => "append hrs/ab/u8 " <> json(appended)
+      },
+      %{"op" => "request", "request_id" => "r", "from" => @alice, "message" => "read hrs/ab/u8"}
+    ]
+
+    input = Path.join(root, "requests.jsonl")
+    File.write!(input, Enum.map(requests, &[encode_json(&1), "\n"]))
+
+    out =
+      capture_io([encoding: :latin1], fn ->
+        {:ok, device} = File.open(input, [:read, :binary])
+        Journal.Stdio.loop(root, device)
+        File.close(device)
+      end)
+
+    [_w, _a, read] = String.split(String.trim(out), "\n")
+    assert %{"op" => "reply", "request_id" => "r", "reply" => page} = :json.decode(read)
+    assert page =~ ~s(title: #{json(title)})
+    assert page =~ body
+    assert page =~ appended
+
+    stored = File.read!(Path.join([root, "repo", "projects", "hrs", "ab", "u8.md"]))
+    assert stored =~ "range #23–#27 日本"
+    assert stored =~ appended
+    refute stored =~ "Ã"
+  end
 end
