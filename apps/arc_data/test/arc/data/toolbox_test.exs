@@ -138,6 +138,39 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.open_tokens(token, bob) == "stdin body"
     end
 
+    test "petnames replaces hex public keys with petnames", %{bob: bob} do
+      hex = Arc.Identity.encode_public_key(bob)
+      name = Arc.Identity.name(bob)
+      assert Toolbox.petnames("id\t#{hex}\tx #{hex}.") == "id\t#{name}\tx #{name}."
+      assert Toolbox.petnames("abc") == "abc"
+    end
+
+    test "preview truncates the last tab field to one line" do
+      long = String.duplicate("word ", 30)
+      out = Toolbox.preview("id\tin\t#{long}\nno tabs here", 12)
+      [l1, l2] = String.split(out, "\n")
+      assert l1 == "id\tin\tword word w…"
+      assert l2 == "no tabs here"
+      assert Toolbox.preview("a\tb", 5) == "a\tb"
+    end
+
+    test "apply_output_filters chains in order", %{bob: bob, context: ctx} do
+      {:ok, token} =
+        Toolbox.render_template(
+          "{{body|seal:to}}",
+          %{"to" => Arc.Identity.name(bob), "body" => "hello there friend"},
+          ctx
+        )
+
+      hex = Arc.Identity.encode_public_key(bob)
+      text = "#{hex}\t#{token}"
+
+      assert Toolbox.apply_output_filters(text, ["open", "petnames", "preview:8"], bob) ==
+               "#{Arc.Identity.name(bob)}\thello t…"
+
+      assert Toolbox.apply_output_filters(text, ["open"], nil) == text
+    end
+
     test "render_template/2 still works without a context" do
       assert {:ok, ~s(a "b")} =
                Toolbox.render_template("{{x}} {{y|json}}", %{"x" => "a", "y" => "b"})

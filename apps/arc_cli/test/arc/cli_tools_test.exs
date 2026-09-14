@@ -265,9 +265,10 @@ defmodule Arc.CLIToolsTest do
     # carries the server's hex key. The first token is sealed to the server
     # and cannot be opened here. The second is sealed to the caller and
     # opens to the stdin body.
-    server_hex = Identity.encode_public_key(server_id)
-    assert output =~ "/dm/#{server_hex}\n[sealed: cannot open]\na private line\n"
+    # petnames turns the server's hex key into its name.
+    assert output =~ "/dm/#{Identity.name(server_id)}\n[sealed: cannot open]\na private line\n"
     refute output =~ "sealed-v1:"
+    refute output =~ Identity.encode_public_key(server_id)
   end
 
   test "installed tools can be invoked as top-level arc subcommands" do
@@ -822,7 +823,7 @@ defmodule Arc.CLIToolsTest do
                 "template" => "POST /echo /dm/{{to|pubkey}}",
                 "seal_to" => ["to", "me"]
               },
-              "output" => %{"filter" => "open"}
+              "output" => %{"filter" => ["open", "petnames"]}
             }
           ]
         }

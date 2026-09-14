@@ -492,17 +492,13 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp apply_output_filter(reply, %{"output" => %{"filter" => "open"}}) do
-    case filter_context() do
-      %{identity: %Identity{} = id} ->
-        Map.update(reply, :text, nil, fn
-          text when is_binary(text) -> Toolbox.open_tokens(text, id)
-          other -> other
-        end)
+  defp apply_output_filter(reply, %{"output" => %{"filters" => filters}}) when is_list(filters) do
+    %{identity: identity} = filter_context()
 
-      _ ->
-        reply
-    end
+    Map.update(reply, :text, nil, fn
+      text when is_binary(text) -> Toolbox.apply_output_filters(text, filters, identity)
+      other -> other
+    end)
   end
 
   defp apply_output_filter(reply, _command), do: reply

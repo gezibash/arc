@@ -326,8 +326,30 @@ defmodule Arc.Data.InterfaceManifest do
 
   defp normalize_seal_to(_), do: nil
 
-  defp normalize_cli_output(%{"filter" => "open"}), do: %{"filter" => "open"}
+  @output_filters ~w(open petnames)
+
+  # `output.filter` is one filter name or a list, applied in order. Known
+  # filters are `open`, `petnames`, and `preview:<n>`. Unknown entries are
+  # dropped. The normalized shape is always `%{"filters" => [..]}`.
+  defp normalize_cli_output(%{"filter" => filter}) when is_binary(filter),
+    do: normalize_cli_output(%{"filter" => [filter]})
+
+  # Already normalized. Normalization runs again on an installed record.
+  defp normalize_cli_output(%{"filters" => filters}) when is_list(filters),
+    do: normalize_cli_output(%{"filter" => filters})
+
+  defp normalize_cli_output(%{"filter" => filters}) when is_list(filters) do
+    case Enum.filter(filters, &valid_output_filter?/1) do
+      [] -> nil
+      list -> %{"filters" => list}
+    end
+  end
+
   defp normalize_cli_output(_), do: nil
+
+  defp valid_output_filter?(filter) when filter in @output_filters, do: true
+  defp valid_output_filter?("preview:" <> n), do: Regex.match?(~r/^[1-9][0-9]*$/, n)
+  defp valid_output_filter?(_), do: false
 
   defp normalize_cli_invoke(invoke) when is_map(invoke) do
     %{}

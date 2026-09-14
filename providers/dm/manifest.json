@@ -98,7 +98,12 @@
             "",
             "--unread",
             "--since 01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
-          ]
+          ],
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
         },
         {
           "path": [
@@ -135,7 +140,12 @@
           },
           "examples": [
             "jolly-volta"
-          ]
+          ],
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
         },
         {
           "path": [
@@ -155,7 +165,10 @@
             "template": "read {{id}}"
           },
           "output": {
-            "filter": "open"
+            "filter": [
+              "open",
+              "petnames"
+            ]
           },
           "examples": [
             "01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
@@ -196,6 +209,11 @@
           "input": {
             "source": "template",
             "template": "status {{id}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
           }
         },
         {
@@ -233,6 +251,11 @@
           "input": {
             "source": "template",
             "template": "block {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
           }
         },
         {
@@ -251,6 +274,11 @@
           "input": {
             "source": "template",
             "template": "unblock {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
           }
         },
         {
@@ -261,6 +289,11 @@
           "input": {
             "source": "template",
             "template": "blocked"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
           }
         },
         {
@@ -271,6 +304,11 @@
           "input": {
             "source": "template",
             "template": "whoami"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
           }
         }
       ]

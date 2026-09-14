@@ -95,18 +95,27 @@ defmodule Arc.Data.InterfaceManifestTest do
                 "input" => %{"source" => "stdin", "seal_to" => ["peer", "me"]}
               },
               %{"path" => ["read"], "output" => %{"filter" => "open"}},
-              %{"path" => ["ls"], "output" => %{"filter" => "bogus"}}
+              %{"path" => ["ls"], "output" => %{"filter" => "bogus"}},
+              %{
+                "path" => ["all"],
+                "output" => %{"filter" => ["open", "petnames", "preview:80", "nope"]}
+              }
             ]
           }
         }
       })
 
-    [send, send2, read, ls] = cli["commands"]
+    [send, send2, read, ls, all] = cli["commands"]
 
     assert send["input"]["seal_to"] == ["peer"]
     assert send2["input"]["seal_to"] == ["peer", "me"]
-    assert read["output"] == %{"filter" => "open"}
+    assert read["output"] == %{"filters" => ["open"]}
     refute Map.has_key?(ls, "output")
+    assert all["output"] == %{"filters" => ["open", "petnames", "preview:80"]}
+
+    # Normalizing an already normalized command is a no-op.
+    assert InterfaceManifest.cli(%{"interfaces" => %{"cli" => cli}})["commands"] ==
+             cli["commands"]
   end
 
   test "loads a JSON interface manifest file" do

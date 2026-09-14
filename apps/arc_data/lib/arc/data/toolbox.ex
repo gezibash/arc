@@ -403,6 +403,66 @@ defmodule Arc.Data.Toolbox do
     end)
   end
 
+  @hex_pubkey ~r/\b[a-f0-9]{64}\b/
+
+  @doc """
+  Replace every 64 hex public key in `text` with its petname. Petnames are
+  deterministic, so this needs no lookup.
+  """
+  @spec petnames(String.t()) :: String.t()
+  def petnames(text) when is_binary(text) do
+    Regex.replace(@hex_pubkey, text, fn hex ->
+      case Base.decode16(hex, case: :lower) do
+        {:ok, pk} -> Identity.name(pk)
+        :error -> hex
+      end
+    end)
+  end
+
+  @doc """
+  On each line, keep the text after the last tab to `n` characters, on one
+  line, ending in an ellipsis when cut. Lines without a tab are unchanged.
+  """
+  @spec preview(String.t(), pos_integer()) :: String.t()
+  def preview(text, n) when is_binary(text) and is_integer(n) and n > 0 do
+    text
+    |> String.split("\n")
+    |> Enum.map_join("\n", fn line ->
+      case String.split(line, "\t") do
+        [_] ->
+          line
+
+        parts ->
+          {head, [last]} = Enum.split(parts, -1)
+          Enum.join(head ++ [truncate(last, n)], "\t")
+      end
+    end)
+  end
+
+  defp truncate(text, n) do
+    one_line = text |> String.replace(~r/\s*\n\s*/, " ") |> String.trim()
+
+    if String.length(one_line) > n do
+      String.slice(one_line, 0, max(n - 1, 0)) <> "…"
+    else
+      one_line
+    end
+  end
+
+  @doc """
+  Apply a command's output filters, in order, to reply text. `identity` is
+  needed by `open`; without one, `open` leaves tokens as they are.
+  """
+  @spec apply_output_filters(String.t(), [String.t()], Identity.t() | nil) :: String.t()
+  def apply_output_filters(text, filters, identity) when is_binary(text) and is_list(filters) do
+    Enum.reduce(filters, text, fn
+      "open", acc -> if(match?(%Identity{}, identity), do: open_tokens(acc, identity), else: acc)
+      "petnames", acc -> petnames(acc)
+      "preview:" <> n, acc -> preview(acc, String.to_integer(n))
+      _other, acc -> acc
+    end)
+  end
+
   defp encode_sealed(sealed), do: @sealed_prefix <> Base.encode64(sealed)
 
   defp resolve_entry(value, %{resolve: resolve}) when is_function(resolve, 1) do
