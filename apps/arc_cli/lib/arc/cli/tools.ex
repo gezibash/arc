@@ -573,8 +573,18 @@ defmodule Arc.CLI.Tools do
     body = event[:text] || ""
     time = Calendar.strftime(DateTime.utc_now(), "%H:%M:%S")
 
+    # Meta fields other than the routing ones ride along as key=value, so an
+    # event with an empty body, such as a reaction, still says what happened.
+    extra =
+      meta
+      |> Map.drop(["topic", "from", "t"])
+      |> Enum.sort()
+      |> Enum.map_join(" ", fn {k, v} -> "#{k}=#{v}" end)
+
     text =
-      "#{time}  #{topic}  #{sender}  #{body}"
+      [time, topic, sender, body, extra]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("  ")
       |> apply_text_filters(command, opts)
 
     IO.puts(text)

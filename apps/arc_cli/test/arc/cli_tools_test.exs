@@ -390,7 +390,7 @@ defmodule Arc.CLIToolsTest do
     assert output =~ "watching. Ctrl+C to stop.\n"
 
     assert output =~
-             ~r/\d\d:\d\d:\d\d  test\.ping  #{Identity.encode_public_key(server_id)}  pong for #{Identity.encode_public_key(client_id)}\n/
+             ~r/\d\d:\d\d:\d\d  test\.ping  #{Identity.encode_public_key(server_id)}  pong for #{Identity.encode_public_key(client_id)}  n=1\n/
   end
 
   test "a tool that needs a newer interface version is refused with advice" do
