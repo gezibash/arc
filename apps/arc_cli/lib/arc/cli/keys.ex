@@ -146,6 +146,6 @@ defmodule Arc.CLI.Keys do
   @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

@@ -15,6 +15,14 @@ defmodule Arc.CLITest do
     assert output =~ "version"
   end
 
+  test "an unknown command prints an error and exits 1 without stopping the VM" do
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn -> Arc.CLI.main(["no-such-command"]) end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "unknown command: no-such-command"
+  end
+
   test "version prints the umbrella version and the build commit" do
     output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["version"]) end)
     assert output =~ ~r/^arc 0\.2\.0 \([0-9a-f]{7,}|unknown\)\n$/

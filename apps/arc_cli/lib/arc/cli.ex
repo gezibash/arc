@@ -52,6 +52,8 @@ defmodule Arc.CLI do
     {max_frame_bytes, args} = pop_opt(args, "--max-frame-bytes")
     configure_frame_cap(max_frame_bytes)
     dispatch(args)
+  rescue
+    e in Arc.CLI.Exit.Error -> Arc.CLI.Exit.finish(e.code)
   end
 
   defp pop_opt(args, flag), do: pop_opt(args, flag, [])
@@ -160,6 +162,6 @@ defmodule Arc.CLI do
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     IO.puts(:stderr, "Run 'arc help' for usage.")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

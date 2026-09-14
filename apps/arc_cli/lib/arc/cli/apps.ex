@@ -51,6 +51,6 @@ defmodule Arc.CLI.Apps do
   @spec error(String.t()) :: no_return()
   defp error(message) do
     IO.puts(:stderr, "error: #{message}")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

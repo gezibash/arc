@@ -21,7 +21,7 @@ defmodule Arc.CLI.Control do
       else
         {:error, reason} ->
           IO.puts(:stderr, "error: #{inspect(reason)}")
-          System.halt(1)
+          Arc.CLI.Exit.halt(1)
       end
     end)
   end
@@ -46,7 +46,7 @@ defmodule Arc.CLI.Control do
 
       {:error, reason} ->
         IO.puts(:stderr, "error: #{inspect(reason)}")
-        System.halt(1)
+        Arc.CLI.Exit.halt(1)
     end
   end
 
@@ -70,11 +70,11 @@ defmodule Arc.CLI.Control do
 
       {:error, :no_default} ->
         IO.puts(:stderr, "No active key. Run 'arc keys gen' first.")
-        System.halt(1)
+        Arc.CLI.Exit.halt(1)
 
       {:error, reason} ->
         IO.puts(:stderr, "error: #{inspect(reason)}")
-        System.halt(1)
+        Arc.CLI.Exit.halt(1)
     end
   end
 end

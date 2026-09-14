@@ -326,8 +326,15 @@ defmodule Arc.CLIToolsTest do
         Arc.CLI.main(["dm", "send", Identity.name(server_id), "--file", body_path])
       end)
 
+    {result, missing} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "--file", "/nope/none.md"])
+      end)
+
     assert from_arg =~ "[sealed: cannot open]\ntwo words\n"
     assert from_file =~ "[sealed: cannot open]\nfrom a file\n"
+    assert result == {:exit, 1}
+    assert missing =~ "cannot read /nope/none.md"
   end
 
   test "installed tools can be invoked as top-level arc subcommands" do
