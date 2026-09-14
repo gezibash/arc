@@ -46,15 +46,56 @@ defmodule Dm.Command do
     end
   end
 
+  # -- conversations ----------------------------------------------------------
+
+  defp dispatch(["conversations"], opts, ctx) do
+    index = Store.receipt_index(ctx.root, ctx.from)
+    muted = Store.muted(ctx.root, ctx.from)
+
+    conversations =
+      ctx.root
+      |> Store.list_messages(ctx.from)
+      |> Enum.group_by(&other(&1, ctx))
+      |> Enum.map(fn {peer, msgs} ->
+        last = List.last(msgs)
+        is_muted = peer in muted
+
+        unread =
+          if is_muted,
+            do: 0,
+            else: Enum.count(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
+
+        {peer, last, unread, is_muted}
+      end)
+      |> Enum.sort_by(fn {_, last, _, _} -> last["id"] end, :desc)
+      |> limit_first(opts["limit"])
+
+    total_unread = conversations |> Enum.map(&elem(&1, 2)) |> Enum.sum()
+
+    header = "#{total_unread} unread in #{length(conversations)} conversations"
+
+    rows =
+      Enum.map(conversations, fn {peer, last, unread, is_muted} ->
+        muted_flag = if is_muted, do: "muted", else: "-"
+        "#{peer}\t#{last["id"]}\t#{last["t"]}\t#{unread}\t#{muted_flag}\t#{last["body"]}"
+      end)
+
+    {:ok, Enum.join([header | rows], "\n")}
+  end
+
   # -- inbox / thread ---------------------------------------------------------
 
   defp dispatch(["inbox"], opts, ctx) do
     index = Store.receipt_index(ctx.root, ctx.from)
+    muted = Store.muted(ctx.root, ctx.from)
 
     ctx.root
     |> Store.list_messages(ctx.from)
     |> Enum.reject(&archived?(&1, index))
-    |> Enum.reject(&(opts["unread"] == true and (outbound?(&1, ctx) or read?(&1, index))))
+    |> Enum.reject(
+      &(opts["unread"] == true and
+          (outbound?(&1, ctx) or read?(&1, index) or other(&1, ctx) in muted))
+    )
     |> since(opts["since"])
     |> limit(opts["limit"])
     |> Enum.map(&line(&1, ctx))
@@ -102,9 +143,12 @@ defmodule Dm.Command do
     with :ok <- valid_id(id),
          {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id),
          true <- outbound?(msg, ctx) or {:error, "forbidden not the sender"} do
+      # The recipient decides whether senders see read receipts.
+      show_read = Store.settings(ctx.root, msg["to"])["receipts"] == "on"
+
       ctx.root
       |> Store.receipts(msg["to"], id)
-      |> Enum.reject(&(&1["event"] == "archived"))
+      |> Enum.filter(&(&1["event"] == "delivered" or (show_read and &1["event"] == "read")))
       |> Enum.map(&"#{&1["event"]} #{&1["t"]}")
       |> lines_or("no receipts")
     end
@@ -132,6 +176,47 @@ defmodule Dm.Command do
     ctx.root |> Store.blocked(ctx.from) |> lines_or("no blocked keys")
   end
 
+  # -- mute list --------------------------------------------------------------
+
+  defp dispatch(["mute", peer], _opts, ctx) do
+    with :ok <- valid_peer(peer) do
+      keys = Enum.uniq(Store.muted(ctx.root, ctx.from) ++ [peer])
+      :ok = Store.write_muted(ctx.root, ctx.from, keys)
+      {:ok, "muted #{peer}"}
+    end
+  end
+
+  defp dispatch(["unmute", peer], _opts, ctx) do
+    with :ok <- valid_peer(peer) do
+      keys = Store.muted(ctx.root, ctx.from) -- [peer]
+      :ok = Store.write_muted(ctx.root, ctx.from, keys)
+      {:ok, "unmuted #{peer}"}
+    end
+  end
+
+  defp dispatch(["muted"], _opts, ctx) do
+    ctx.root |> Store.muted(ctx.from) |> lines_or("no muted keys")
+  end
+
+  # -- settings ---------------------------------------------------------------
+
+  defp dispatch(["settings"], _opts, ctx) do
+    ctx.root
+    |> Store.settings(ctx.from)
+    |> Enum.map(fn {k, v} -> "#{k} #{v}" end)
+    |> lines_or("no settings")
+  end
+
+  defp dispatch(["settings", "receipts", value], _opts, ctx) when value in ["on", "off"] do
+    settings = ctx.root |> Store.settings(ctx.from) |> Map.put("receipts", value)
+    :ok = Store.write_settings(ctx.root, ctx.from, settings)
+    {:ok, "receipts #{value}"}
+  end
+
+  defp dispatch(["settings", key | _], _opts, _ctx) do
+    {:error, "invalid_setting #{key}: receipts on|off"}
+  end
+
   defp dispatch(["whoami"], _opts, ctx), do: {:ok, ctx.from}
   defp dispatch([], _opts, _ctx), do: {:ok, help()}
   defp dispatch(["help"], _opts, _ctx), do: {:ok, help()}
@@ -142,6 +227,7 @@ defmodule Dm.Command do
   defp help do
     """
     dm commands
+      conversations [--limit n]
       send <peer> [--reply-to id]     body: two sealed-v1 tokens, one per line
       inbox [--unread] [--since id] [--limit n]
       thread <peer> [--since id] [--limit n]
@@ -150,6 +236,8 @@ defmodule Dm.Command do
       status <id>
       archive <id>...
       block <peer> | unblock <peer> | blocked
+      mute <peer> | unmute <peer> | muted
+      settings [receipts on|off]
       whoami
     """
     |> String.trim_trailing()
@@ -207,6 +295,15 @@ defmodule Dm.Command do
 
   defp since(msgs, nil), do: msgs
   defp since(msgs, id), do: Enum.filter(msgs, &(&1["id"] > id))
+
+  defp limit_first(items, nil), do: Enum.take(items, 50)
+
+  defp limit_first(items, n) do
+    case Integer.parse(to_string(n)) do
+      {n, ""} when n > 0 -> Enum.take(items, n)
+      _ -> Enum.take(items, 50)
+    end
+  end
 
   defp limit(msgs, nil), do: Enum.take(msgs, -50)
 

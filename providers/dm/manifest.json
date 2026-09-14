@@ -26,6 +26,62 @@
       "namespace": "dm",
       "commands": [
         {
+          "path": [],
+          "summary": "Home: every conversation with unread count and the latest message.",
+          "args": [
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max conversations, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "conversations --limit {{limit|json}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames",
+              "preview:60"
+            ]
+          }
+        },
+        {
+          "path": [
+            "conversations"
+          ],
+          "summary": "List conversations: peer, last id, last time, unread, muted, latest message.",
+          "args": [
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max conversations, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "conversations --limit {{limit|json}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames",
+              "preview:60"
+            ]
+          },
+          "examples": [
+            "",
+            "--limit 10"
+          ]
+        },
+        {
           "path": [
             "send"
           ],
@@ -329,6 +385,95 @@
               "petnames"
             ]
           }
+        },
+        {
+          "path": [
+            "mute"
+          ],
+          "summary": "Stop counting a peer as unread. Messages still arrive.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Peer: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "mute {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "unmute"
+          ],
+          "summary": "Reverse mute.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Peer: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "unmute {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "muted"
+          ],
+          "summary": "List muted peers.",
+          "input": {
+            "source": "template",
+            "template": "muted"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "settings"
+          ],
+          "summary": "Show settings, or set one: settings receipts on|off. With receipts off, senders see delivered but not read.",
+          "args": [
+            {
+              "name": "key",
+              "kind": "positional",
+              "required": false,
+              "description": "receipts"
+            },
+            {
+              "name": "value",
+              "kind": "positional",
+              "required": false,
+              "description": "on or off"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "settings {{key}} {{value}}"
+          },
+          "examples": [
+            "",
+            "receipts off"
+          ]
         }
       ]
     }

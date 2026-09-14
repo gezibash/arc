@@ -89,12 +89,7 @@ defmodule Dm.Store do
 
   # -- block list -------------------------------------------------------------
 
-  def blocked(root, pk) do
-    case File.read(blocked_path(root, pk)) do
-      {:ok, text} -> String.split(text, "\n", trim: true)
-      _ -> []
-    end
-  end
+  def blocked(root, pk), do: read_lines(blocked_path(root, pk))
 
   def write_blocked(root, pk, keys) do
     File.mkdir_p!(mailbox(root, pk))
@@ -103,6 +98,40 @@ defmodule Dm.Store do
   end
 
   def blocked?(root, pk, sender), do: sender in blocked(root, pk)
+
+  # -- mute list --------------------------------------------------------------
+
+  def muted(root, pk), do: read_lines(Path.join(mailbox(root, pk), "muted"))
+
+  def write_muted(root, pk, keys) do
+    File.mkdir_p!(mailbox(root, pk))
+    File.write!(Path.join(mailbox(root, pk), "muted"), Enum.map_join(keys, "", &(&1 <> "\n")))
+    :ok
+  end
+
+  # -- settings ---------------------------------------------------------------
+
+  @default_settings %{"receipts" => "on"}
+
+  def settings(root, pk) do
+    case File.read(Path.join(mailbox(root, pk), "settings.json")) do
+      {:ok, json} -> Map.merge(@default_settings, :json.decode(json))
+      _ -> @default_settings
+    end
+  end
+
+  def write_settings(root, pk, settings) do
+    File.mkdir_p!(mailbox(root, pk))
+    File.write!(Path.join(mailbox(root, pk), "settings.json"), encode(settings))
+    :ok
+  end
+
+  defp read_lines(path) do
+    case File.read(path) do
+      {:ok, text} -> String.split(text, "\n", trim: true)
+      _ -> []
+    end
+  end
 
   defp encode(map), do: map |> :json.encode() |> IO.iodata_to_binary()
 end

@@ -171,6 +171,64 @@ defmodule DmTest do
     assert String.starts_with?(l, id)
   end
 
+  test "conversations lists peers newest first with unread counts and last body", %{root: root} do
+    a1 = send(root, @alice, @bob, "hi bob")
+    _c1 = send(root, @carol, @bob, "hi from carol")
+    _a2 = send(root, @alice, @bob, "again")
+
+    {:ok, out} = Command.run(root, @bob, "conversations")
+    [header, l1, l2] = String.split(out, "\n")
+
+    assert header == "3 unread in 2 conversations"
+    assert [@alice, _id, _t, "2", "-", body] = String.split(l1, "\t")
+    assert body == token("again@peer")
+    assert [@carol, _, _, "1", "-", _] = String.split(l2, "\t")
+
+    {:ok, _} = Command.run(root, @bob, "read #{a1}")
+    {:ok, out} = Command.run(root, @bob, "conversations --limit 1")
+    assert ["1 unread in 1 conversations", l1] = String.split(out, "\n")
+    assert [@alice, _, _, "1", "-", _] = String.split(l1, "\t")
+  end
+
+  test "conversations includes peers you only sent to", %{root: root} do
+    send(root, @alice, @bob, "hello")
+    {:ok, out} = Command.run(root, @alice, "conversations")
+    assert ["0 unread in 1 conversations", l] = String.split(out, "\n")
+    assert [@bob, _, _, "0", "-", body] = String.split(l, "\t")
+    assert body == token("hello@self")
+  end
+
+  test "mute stops unread counting but keeps delivery", %{root: root} do
+    assert {:ok, "muted " <> _} = Command.run(root, @bob, "mute #{@alice}")
+    assert {:ok, @alice} = Command.run(root, @bob, "muted")
+
+    id = send(root, @alice, @bob, "psst")
+    assert {:ok, "no messages"} = Command.run(root, @bob, "inbox --unread \"true\"")
+    assert [l] = lines(Command.run(root, @bob, "inbox"))
+    assert String.starts_with?(l, id)
+
+    {:ok, out} = Command.run(root, @bob, "conversations")
+    assert ["0 unread in 1 conversations", l] = String.split(out, "\n")
+    assert [@alice, _, _, "0", "muted", _] = String.split(l, "\t")
+
+    assert {:ok, "unmuted " <> _} = Command.run(root, @bob, "unmute #{@alice}")
+    assert {:ok, "no muted keys"} = Command.run(root, @bob, "muted")
+    assert [_] = lines(Command.run(root, @bob, "inbox --unread \"true\""))
+  end
+
+  test "receipts off hides read receipts from the sender", %{root: root} do
+    assert {:ok, "receipts on"} = Command.run(root, @bob, "settings")
+    assert {:ok, "receipts off"} = Command.run(root, @bob, "settings receipts off")
+    assert {:error, "invalid_setting" <> _} = Command.run(root, @bob, "settings colour blue")
+
+    id = send(root, @alice, @bob, "hello")
+    {:ok, _} = Command.run(root, @bob, "read #{id}")
+
+    assert ["delivered " <> _] = lines(Command.run(root, @alice, "status #{id}"))
+    assert {:ok, "receipts on"} = Command.run(root, @bob, "settings receipts on")
+    assert ["delivered " <> _, "read " <> _] = lines(Command.run(root, @alice, "status #{id}"))
+  end
+
   test "unknown command and help", %{root: root} do
     assert {:error, "unknown_command nope"} = Command.run(root, @alice, "nope")
     assert {:ok, "dm commands" <> _} = Command.run(root, @alice, "help")
