@@ -29,6 +29,17 @@ defmodule Arc.CLI do
     "serve" => Arc.CLI.Agent
   }
 
+  # The build embeds the umbrella version and the git commit it was built
+  # from. HEAD is an external resource so a new commit triggers a rebuild.
+  @external_resource Path.expand("../../../../.git/HEAD", __DIR__)
+  @version Mix.Project.config()[:version]
+  @git_sha (case System.cmd("git", ["rev-parse", "--short", "HEAD"], stderr_to_stdout: true) do
+              {sha, 0} -> String.trim(sha)
+              _ -> "unknown"
+            end)
+
+  def version_string, do: "arc #{@version} (#{@git_sha})"
+
   def main(args \\ []) do
     ensure_started()
     {max_frame_bytes, args} = pop_opt(args, "--max-frame-bytes")
@@ -59,6 +70,8 @@ defmodule Arc.CLI do
 
   defp dispatch([]), do: help()
   defp dispatch(["help"]), do: help()
+  defp dispatch(["version"]), do: IO.puts(version_string())
+  defp dispatch(["--version"]), do: IO.puts(version_string())
 
   defp dispatch([command | rest]) do
     cond do
@@ -111,6 +124,7 @@ defmodule Arc.CLI do
       serve <target>              Serve a provider bundle or runtime URI with live request logs
       relay [--port PORT] [--key NAME]
                                  Run a relay node (routes encrypted packets by pubkey)
+      version                     Print the arc version and build commit
 
     Options:
       --relay host:port           Connect to a relay node (for send/listen/serve)
