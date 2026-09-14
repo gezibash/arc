@@ -148,7 +148,7 @@ defmodule Dm.Command do
 
     Enum.each(unread, &Store.add_receipt(ctx.root, ctx.from, &1["id"], "read"))
 
-    header = "#{peer} · #{length(msgs)} messages, #{length(unread)} unread"
+    header = "#{peer} - #{length(msgs)} messages, #{length(unread)} unread"
     {:ok, Enum.join([header | rows], "\n")}
   end
 
