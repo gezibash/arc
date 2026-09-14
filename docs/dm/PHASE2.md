@@ -386,3 +386,24 @@ every one.
 - **Cache location.** `~/.arc/dm/cache` on the client is fine on a
   laptop. On a shared host every user must have their own `~`. Proposal:
   document it, do not solve it.
+
+## Part G. Status
+
+All nine steps landed on 2026-09-14 on branch `feat/sealed-box`, in the
+order of Part E, one commit each with tests. Every step was run live
+through a local relay with three persona keys before its commit.
+
+Deviations from the plan above:
+
+- The `conversation` and `markdown` renderers live in `Arc.Data.Render`,
+  not the CLI app, because the output filter pipeline runs in `arc_data`.
+- Attachments are capped at 4 MiB of plaintext, not 16 MiB, so a message
+  to several peers stays inside the 64 MiB request line.
+- `journal` is not a command. `arc dm read <id> | arc journal write <addr>`
+  does the job and needs no code.
+- The cache and search are generic: `arc cache on|off|clear|status|search
+  <tool>`, driven by a `cache` output filter any tool may declare.
+- Events carry a `topic` and a small meta map. `arc dm watch` prints meta
+  as `key=value`, so a reaction reads without a body.
+- Interface v2 is enforced: an older `arc` refuses a newer manifest with
+  advice to update.
