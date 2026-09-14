@@ -55,6 +55,22 @@ defmodule Dm.Store do
     end
   end
 
+  # -- attachments ------------------------------------------------------------
+
+  def put_blob(root, pk, id, name, token) do
+    dir = Path.join([mailbox(root, pk), "blobs", id])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, name), token)
+    :ok
+  end
+
+  def get_blob(root, pk, id, name) do
+    case File.read(Path.join([mailbox(root, pk), "blobs", id, name])) do
+      {:ok, token} -> {:ok, token}
+      _ -> {:error, "not_found"}
+    end
+  end
+
   # -- receipts ---------------------------------------------------------------
 
   def add_receipt(root, pk, id, event, extra \\ %{}) do

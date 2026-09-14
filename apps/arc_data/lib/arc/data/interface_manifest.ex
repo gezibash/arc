@@ -17,6 +17,10 @@ defmodule Arc.Data.InterfaceManifest do
   """
 
   @cli_version 1
+  @max_cli_version 2
+
+  @doc "The newest CLI interface version this build renders."
+  def max_cli_version, do: @max_cli_version
 
   @spec normalize(map() | nil) :: map() | nil
   def normalize(interfaces) when is_map(interfaces) do
@@ -305,6 +309,7 @@ defmodule Arc.Data.InterfaceManifest do
         |> maybe_put("seal_to", normalize_seal_to(Map.get(input, "seal_to")))
         |> maybe_put("body", present_string(Map.get(input, "body")))
         |> maybe_put("file", present_string(Map.get(input, "file")))
+        |> maybe_put("attach", present_string(Map.get(input, "attach")))
 
       _ ->
         nil

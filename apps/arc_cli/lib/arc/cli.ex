@@ -11,7 +11,8 @@ defmodule Arc.CLI do
     "apps" => Arc.CLI.Apps,
     "host" => Arc.CLI.Host,
     "relay" => Arc.CLI.Relay,
-    "mcp" => Arc.CLI.MCP
+    "mcp" => Arc.CLI.MCP,
+    "lists" => Arc.CLI.Lists
   }
 
   # Subcommands whose module receives the command name as the first arg.
@@ -144,6 +145,7 @@ defmodule Arc.CLI do
       serve <target>              Serve a provider bundle or runtime URI with live request logs
       relay [--port PORT] [--key NAME]
                                  Run a relay node (routes encrypted packets by pubkey)
+      lists add|rm|ls <tool> ...  Saved peer lists a tool's commands expand
       version                     Print the arc version and build commit
 
     Options:

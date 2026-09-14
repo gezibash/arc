@@ -340,10 +340,68 @@ defmodule Arc.CLIToolsTest do
         Arc.CLI.main(["dm", "send", Identity.name(server_id), "--file", "/nope/none.md"])
       end)
 
+    # A saved list expands to its members, and an attachment is sealed per reader.
+    ExUnit.CaptureIO.capture_io(fn ->
+      Arc.CLI.main(["lists", "add", "dm", "team", Identity.name(server_id)])
+    end)
+
+    with_attach =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", "team", "--attach", body_path, "see file"])
+      end)
+
     assert from_arg =~ "[sealed: cannot open]\ntwo words\n"
     assert from_file =~ "[sealed: cannot open]\nfrom a file\n"
     assert result == {:exit, 1}
     assert missing =~ "cannot read /nope/none.md"
+
+    attach_name = Path.basename(body_path)
+
+    assert with_attach =~
+             "[sealed: cannot open]\nsee file\nattach:#{attach_name}:[sealed: cannot open]\n" <>
+               "attach:#{attach_name}:from a file\n"
+  end
+
+  test "a tool that needs a newer interface version is refused with advice" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(System.tmp_dir!(), "arc_v9_manifest_#{System.unique_integer([:positive])}.json")
+
+    write_dm_manifest(manifest_path)
+    manifest = manifest_path |> File.read!() |> :json.decode()
+    manifest = put_in(manifest, ["interfaces", "cli", "version"], 9)
+    File.write!(manifest_path, manifest |> :json.encode() |> IO.iodata_to_binary())
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "hi"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "needs CLI interface v9"
+    assert stderr =~ "Update arc"
   end
 
   test "installed tools can be invoked as top-level arc subcommands" do
@@ -899,14 +957,21 @@ defmodule Arc.CLIToolsTest do
                   "required" => false,
                   "variadic" => true
                 },
-                %{"name" => "file", "kind" => "option", "flag" => "--file", "type" => "string"}
+                %{"name" => "file", "kind" => "option", "flag" => "--file", "type" => "string"},
+                %{
+                  "name" => "attach",
+                  "kind" => "option",
+                  "flag" => "--attach",
+                  "type" => "string"
+                }
               ],
               "input" => %{
                 "source" => "stdin",
                 "template" => "POST /echo /dm/{{to|pubkey}}",
                 "seal_to" => ["to", "me"],
                 "body" => "text",
-                "file" => "file"
+                "file" => "file",
+                "attach" => "attach"
               },
               "output" => %{"filter" => ["open", "petnames"]}
             }

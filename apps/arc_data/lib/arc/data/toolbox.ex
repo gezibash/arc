@@ -255,7 +255,8 @@ defmodule Arc.Data.Toolbox do
   """
   @type filter_context :: %{
           optional(:resolve) => (String.t() -> {:ok, [map()]} | {:error, term()}),
-          optional(:identity) => Identity.t() | nil
+          optional(:identity) => Identity.t() | nil,
+          optional(:lists) => (String.t() -> [String.t()] | nil)
         }
 
   @doc """
@@ -348,9 +349,11 @@ defmodule Arc.Data.Toolbox do
   defp render_placeholder("json", _arg, value, _values, _context), do: {:ok, encode_json(value)}
   defp render_placeholder("shell", _arg, value, _values, _context), do: {:ok, shell_quote(value)}
 
+  # A peer value may be a comma-separated set, and each item may name a
+  # saved list. The result is one hex key per peer, comma-separated.
   defp render_placeholder("pubkey", _arg, value, _values, context) do
-    with {:ok, entry} <- resolve_entry(render_value(value, " "), context) do
-      {:ok, Base.encode16(entry.public_key, case: :lower)}
+    with {:ok, entries} <- resolve_peers(render_value(value, " "), context) do
+      {:ok, Enum.map_join(entries, ",", &Base.encode16(&1.public_key, case: :lower))}
     end
   end
 
@@ -359,18 +362,22 @@ defmodule Arc.Data.Toolbox do
   end
 
   defp render_placeholder("seal", arg, value, values, context) do
-    seal_to(render_value(value, " "), arg, values, context)
+    with {:ok, tokens} <- seal_to(render_value(value, " "), arg, values, context) do
+      {:ok, Enum.join(tokens, ",")}
+    end
   end
 
   @doc """
-  Seal `body` to the peer named by argument `target`, or to the caller when
-  `target` is `"me"`. Returns a `sealed-v1:<base64>` token.
+  Seal `body` to every peer named by argument `target`, or to the caller
+  when `target` is `"me"`. The argument value may be a comma-separated set
+  of peers or saved lists. Returns one `sealed-v1:<base64>` token per peer,
+  in order.
   """
   @spec seal_to(binary(), String.t(), map(), filter_context()) ::
-          {:ok, String.t()} | {:error, term()}
+          {:ok, [String.t()]} | {:error, term()}
   def seal_to(body, "me", _values, %{identity: %Identity{} = id}) do
     {x_pub, _} = Identity.to_x25519(id)
-    {:ok, encode_sealed(SealedBox.seal(x_pub, body))}
+    {:ok, [encode_sealed(SealedBox.seal(x_pub, body))]}
   end
 
   def seal_to(_body, "me", _values, _context), do: {:error, {:no_identity, "me"}}
@@ -378,10 +385,56 @@ defmodule Arc.Data.Toolbox do
   def seal_to(body, target, values, context) do
     query = render_value(Map.get(values, target), " ")
 
-    with {:ok, entry} <- resolve_entry(query, context) do
-      case entry.x25519_public do
-        <<x_pub::binary-size(32)>> -> {:ok, encode_sealed(SealedBox.seal(x_pub, body))}
-        _ -> {:error, {:no_keyex, query}}
+    with {:ok, entries} <- resolve_peers(query, context) do
+      Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, acc} ->
+        case entry.x25519_public do
+          <<x_pub::binary-size(32)>> ->
+            {:cont, {:ok, [encode_sealed(SealedBox.seal(x_pub, body)) | acc]}}
+
+          _ ->
+            {:halt, {:error, {:no_keyex, entry.name}}}
+        end
+      end)
+      |> case do
+        {:ok, tokens} -> {:ok, Enum.reverse(tokens)}
+        error -> error
+      end
+    end
+  end
+
+  @doc """
+  Split a peer value on commas, expand saved lists through `context.lists`,
+  and resolve each peer to a control plane entry. Duplicates are dropped.
+  """
+  @spec resolve_peers(String.t(), filter_context()) :: {:ok, [map()]} | {:error, term()}
+  def resolve_peers(value, context) do
+    lists = Map.get(context, :lists)
+
+    peers =
+      value
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.flat_map(fn item ->
+        case is_function(lists, 1) && lists.(item) do
+          members when is_list(members) -> members
+          _ -> [item]
+        end
+      end)
+      |> Enum.uniq()
+
+    if peers == [] do
+      {:error, {:resolve, value, :empty}}
+    else
+      Enum.reduce_while(peers, {:ok, []}, fn peer, {:ok, acc} ->
+        case resolve_entry(peer, context) do
+          {:ok, entry} -> {:cont, {:ok, [entry | acc]}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, entries} -> {:ok, entries |> Enum.reverse() |> Enum.uniq_by(& &1.public_key)}
+        error -> error
       end
     end
   end

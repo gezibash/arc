@@ -13,6 +13,14 @@ defmodule Dm.Config do
     end
   end
 
+  @doc "Max bytes of one sealed attachment token. Default 6 MiB, which holds a 4 MiB file."
+  def max_attach_bytes do
+    case System.get_env("DM_MAX_ATTACH") do
+      nil -> 6 * 1024 * 1024
+      s -> String.to_integer(s)
+    end
+  end
+
   @doc "Max bytes of one sealed body token. Default 96 KiB."
   def max_body_bytes do
     case System.get_env("DM_MAX_BODY") do

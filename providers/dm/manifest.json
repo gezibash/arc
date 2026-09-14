@@ -22,7 +22,7 @@
   },
   "interfaces": {
     "cli": {
-      "version": 1,
+      "version": 2,
       "namespace": "dm",
       "commands": [
         {
@@ -85,13 +85,13 @@
           "path": [
             "send"
           ],
-          "summary": "Send a message to a peer. The body is the text argument, or --file, or stdin. It is sealed to the peer and to you before it leaves this machine.",
+          "summary": "Send a message to one or more peers. Body from the text argument, --file, or stdin. Everything is sealed to each reader and to you before it leaves this machine.",
           "args": [
             {
-              "name": "peer",
+              "name": "to",
               "kind": "positional",
               "required": true,
-              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+              "description": "Recipients: names, key prefixes, or hex, comma-separated. A saved list name (arc lists add dm <name> ...) expands."
             },
             {
               "name": "text",
@@ -115,23 +115,32 @@
               "type": "string",
               "required": false,
               "description": "Read the body from this file"
+            },
+            {
+              "name": "attach",
+              "kind": "option",
+              "flag": "--attach",
+              "type": "string",
+              "required": false,
+              "description": "Attach this file, up to 4 MiB, sealed to every reader"
             }
           ],
           "input": {
             "source": "stdin",
-            "template": "send {{peer|pubkey}} --reply-to {{reply_to|json}}",
+            "template": "send --to {{to|pubkey}} --reply-to {{reply_to|json}}",
             "seal_to": [
-              "peer",
+              "to",
               "me"
             ],
             "body": "text",
-            "file": "file"
+            "file": "file",
+            "attach": "attach"
           },
           "examples": [
-            "jolly-volta \"Looks right. One nit on section 3.\"",
-            "jolly-volta --file review.md",
-            "jolly-volta --reply-to 01J7Q0X5R8M4N6P2T9V1W3Y5Z7 \"Yes.\"",
-            "jolly-volta < note.md"
+            "jolly-volta \"Looks right.\"",
+            "jolly-volta,aqua-bohr \"Standup moved to 10.\"",
+            "devs --file notes.md",
+            "jolly-volta --attach acl-draft.md \"Draft attached.\""
           ]
         },
         {
@@ -293,6 +302,38 @@
           },
           "examples": [
             "01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
+        },
+        {
+          "path": [
+            "fetch"
+          ],
+          "summary": "Print an attachment, opened with your key. Redirect to a file.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            },
+            {
+              "name": "name",
+              "kind": "positional",
+              "required": true,
+              "description": "Attachment name"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "fetch {{id}} {{name}}"
+          },
+          "output": {
+            "filter": [
+              "open"
+            ]
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 acl-draft.md > acl-draft.md"
           ]
         },
         {

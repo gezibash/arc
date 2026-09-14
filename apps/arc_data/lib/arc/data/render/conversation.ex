@@ -42,7 +42,7 @@ defmodule Arc.Data.Render.Conversation do
       [id, dir, peer, t, reply_to, flags, body] ->
         who = if dir == "out", do: "you", else: peer
         reply = if reply_to == "-", do: "", else: "  ↳ reply to #{short_id(reply_to)}"
-        {state, reactions} = parse_flags(flags)
+        {state, reactions, attachments} = parse_flags(flags)
         body = if state == "retracted", do: "(retracted)", else: body
         body_lines = body |> String.trim_trailing() |> String.split("\n")
 
@@ -50,6 +50,7 @@ defmodule Arc.Data.Render.Conversation do
           "",
           "#{who}  #{time(t)}  #{short_id(id)}#{reply}",
           Enum.map(body_lines, &("  " <> &1)),
+          Enum.map(attachments, fn [name, bytes] -> "  📎 #{name} (#{bytes} bytes)" end),
           reactions_line(reactions),
           receipt(dir, state)
         ]
@@ -62,15 +63,22 @@ defmodule Arc.Data.Render.Conversation do
     end
   end
 
-  # `<state>[;reaction=<value>:<by>[,...]]`
+  # `<state>[;reaction=<value>:<by>,...][;attach=<name>:<bytes>,...]`
   defp parse_flags(flags) do
-    case String.split(flags, ";reaction=", parts: 2) do
-      [state] ->
-        {state, []}
+    [state | parts] = String.split(flags, ";")
 
-      [state, rs] ->
-        {state, rs |> String.split(",") |> Enum.map(&String.split(&1, ":", parts: 2))}
-    end
+    extras =
+      Map.new(parts, fn part ->
+        case String.split(part, "=", parts: 2) do
+          [key, list] ->
+            {key, list |> String.split(",") |> Enum.map(&String.split(&1, ":", parts: 2))}
+
+          [key] ->
+            {key, []}
+        end
+      end)
+
+    {state, Map.get(extras, "reaction", []), Map.get(extras, "attach", [])}
   end
 
   defp reactions_line([]), do: nil

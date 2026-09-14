@@ -74,6 +74,18 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert raw["input"] == %{"source" => "stdin", "join_with" => "\n"}
   end
 
+  test "keeps an explicit interface version and reports the max it renders" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{"namespace" => "dm", "version" => 2, "commands" => [%{"path" => ["x"]}]}
+        }
+      })
+
+    assert cli["version"] == 2
+    assert InterfaceManifest.max_cli_version() == 2
+  end
+
   test "the last positional stays variadic when options follow it" do
     cli =
       InterfaceManifest.cli(%{
@@ -123,7 +135,8 @@ defmodule Arc.Data.InterfaceManifestTest do
                   "source" => "stdin",
                   "seal_to" => ["peer", "me"],
                   "body" => "text",
-                  "file" => "file"
+                  "file" => "file",
+                  "attach" => "attach"
                 }
               },
               %{"path" => ["read"], "output" => %{"filter" => "open"}},
@@ -143,6 +156,7 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert send2["input"]["seal_to"] == ["peer", "me"]
     assert send2["input"]["body"] == "text"
     assert send2["input"]["file"] == "file"
+    assert send2["input"]["attach"] == "attach"
     assert read["output"] == %{"filters" => ["open"]}
     refute Map.has_key?(ls, "output")
     assert all["output"] == %{"filters" => ["open", "petnames", "preview:80"]}

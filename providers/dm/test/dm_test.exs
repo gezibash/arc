@@ -47,7 +47,7 @@ defmodule DmTest do
 
     assert bob_msg["body"] == token("hi@peer")
     assert alice_msg["body"] == token("hi@self")
-    assert bob_msg["from"] == @alice and bob_msg["to"] == @bob
+    assert bob_msg["from"] == @alice and bob_msg["to"] == [@bob]
     assert bob_msg["enc"] == "sealed-v1"
     assert [%{"event" => "delivered"}] = Dm.Store.receipts(root, @bob, id)
     assert [] = Dm.Store.receipts(root, @alice, id)
@@ -240,7 +240,7 @@ defmodule DmTest do
   test "block refuses sends and unblock restores them", %{root: root} do
     assert {:ok, _} = Command.run(root, @bob, "block #{@alice}")
     assert {:ok, @alice} = Command.run(root, @bob, "blocked")
-    assert {:error, "blocked"} = Command.run(root, @alice, "send #{@bob}\n" <> body("x"))
+    assert {:error, "blocked " <> @bob} = Command.run(root, @alice, "send #{@bob}\n" <> body("x"))
     assert {:ok, _} = Command.run(root, @bob, "unblock #{@alice}")
     assert {:ok, "no blocked keys"} = Command.run(root, @bob, "blocked")
     assert "id: " <> _ = elem(Command.run(root, @alice, "send #{@bob}\n" <> body("x")), 1)
@@ -308,6 +308,108 @@ defmodule DmTest do
     assert ["delivered " <> _] = lines(Command.run(root, @alice, "status #{id}"))
     assert {:ok, "receipts on"} = Command.run(root, @bob, "settings receipts on")
     assert ["delivered " <> _, "read " <> _] = lines(Command.run(root, @alice, "status #{id}"))
+  end
+
+  defp group_body(text, n) do
+    Enum.map_join(1..n, "\n", &token("#{text}@#{&1}")) <> "\n" <> token(text <> "@self") <> "\n"
+  end
+
+  test "send --to stores one copy per recipient plus the sender, tokens by position", %{
+    root: root
+  } do
+    {:ok, "id: " <> id} =
+      Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> group_body("hey", 2))
+
+    {:ok, bob} = Dm.Store.get_message(root, @bob, id)
+    {:ok, carol} = Dm.Store.get_message(root, @carol, id)
+    {:ok, alice} = Dm.Store.get_message(root, @alice, id)
+
+    assert bob["to"] == [@bob, @carol]
+    assert bob["body"] == token("hey@1")
+    assert carol["body"] == token("hey@2")
+    assert alice["body"] == token("hey@self")
+    assert [%{"event" => "delivered"}] = Dm.Store.receipts(root, @carol, id)
+
+    # Both recipients see it in a thread with the sender, and with each other.
+    assert [_] = lines(Command.run(root, @bob, "thread #{@alice}"))
+    assert [_] = lines(Command.run(root, @bob, "thread #{@carol}"))
+
+    # The conversation key names every other participant.
+    {:ok, out} = Command.run(root, @bob, "conversations")
+    [_, l] = String.split(out, "\n")
+    assert String.starts_with?(l, "#{@alice},#{@carol}\t")
+
+    # Status lists receipts per recipient.
+    {:ok, _} = Command.run(root, @carol, "read #{id}")
+    out = lines(Command.run(root, @alice, "status #{id}"))
+    assert ["delivered " <> _, "delivered " <> _, "read " <> _] = out
+    assert Enum.at(out, 2) =~ @carol
+  end
+
+  test "send --to needs one token per recipient plus one", %{root: root} do
+    assert {:error, "unsealed body needs 3" <> _} =
+             Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> body("x"))
+
+    assert {:error, "invalid_address" <> _} =
+             Command.run(root, @alice, "send --to nope\n" <> body("x"))
+  end
+
+  test "send to a group fails when any recipient blocks the sender", %{root: root} do
+    {:ok, _} = Command.run(root, @carol, "block #{@alice}")
+
+    assert {:error, "blocked " <> @carol} =
+             Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> group_body("x", 2))
+
+    assert {:error, "not_found"} = Command.run(root, @bob, "read nonsense")
+  end
+
+  test "attachments are stored per holder and fetched by name", %{root: root} do
+    lines =
+      [
+        token("hi@peer"),
+        token("hi@self"),
+        "attach:plan.md:" <> token("file@peer"),
+        "attach:plan.md:" <> token("file@self")
+      ]
+
+    {:ok, "id: " <> id} = Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
+
+    assert {:ok, tok} = Command.run(root, @bob, "fetch #{id} plan.md")
+    assert tok == token("file@peer")
+    assert {:ok, tok} = Command.run(root, @alice, "fetch #{id} plan.md")
+    assert tok == token("file@self")
+    assert {:error, "not_found"} = Command.run(root, @bob, "fetch #{id} other.md")
+    assert {:error, "not_found"} = Command.run(root, @carol, "fetch #{id} plan.md")
+
+    {:ok, out} = Command.run(root, @bob, "read #{id}")
+    assert out =~ "attachments: plan.md (#{byte_size(token("file@peer"))} bytes)"
+
+    {:ok, out} = Command.run(root, @bob, "thread #{@alice} --bodies \"true\"")
+    [_, l] = String.split(out, "\n")
+    [_, _, _, _, _, flags, _] = String.split(l, "\t")
+    assert flags == "read;attach=plan.md:#{byte_size(token("file@peer"))}"
+  end
+
+  test "attachment lines are validated", %{root: root} do
+    bad = [token("a@p"), token("a@s"), "attach:x.md:" <> token("f@p")]
+
+    assert {:error, "unsealed each attachment" <> _} =
+             Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(bad, "\n"))
+
+    mixed = [
+      token("a@p"),
+      token("a@s"),
+      "attach:x.md:" <> token("f@p"),
+      "attach:y.md:" <> token("f@s")
+    ]
+
+    assert {:error, "unsealed attachment group" <> _} =
+             Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(mixed, "\n"))
+
+    junk = [token("a@p"), token("a@s"), "plain"]
+
+    assert {:error, "unsealed attachment lines" <> _} =
+             Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(junk, "\n"))
   end
 
   test "unknown command and help", %{root: root} do

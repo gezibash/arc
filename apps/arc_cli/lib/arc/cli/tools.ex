@@ -9,6 +9,7 @@ defmodule Arc.CLI.Tools do
   alias Arc.Data.CapabilityDiscovery
   alias Arc.Data.CapabilityInvocation
   alias Arc.Data.CapabilityPackage
+  alias Arc.Data.InterfaceManifest
   alias Arc.Data.Toolbox
   alias Arc.Identity
   alias Arc.Identity.KeyStore
@@ -645,23 +646,37 @@ defmodule Arc.CLI.Tools do
     capability = install["capability"] || %{}
     commands = ToolRegistry.cli_commands(capability)
     base_invocation = capability["invocation"] || %{}
+    namespace = install["command"] || "tool"
 
-    if commands == [] do
-      {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
-    else
-      case resolve_command(capability, argv) do
-        {:ok, cli_command, remaining_argv} ->
-          args = Map.get(cli_command, "args", [])
+    cond do
+      commands == [] ->
+        {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
 
-          with {:ok, values} <- parse_cli_args(args, remaining_argv),
-               {:ok, input} <- render_input(cli_command, args, values) do
-            invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
-            {:ok, %{input: input, invocation: invocation, command: cli_command}}
-          end
+      interface_version(capability) > InterfaceManifest.max_cli_version() ->
+        {:error,
+         {:invalid_arguments,
+          "'#{namespace}' needs CLI interface v#{interface_version(capability)}; " <>
+            "this arc renders up to v#{InterfaceManifest.max_cli_version()}. Update arc."}}
 
-        {:error, _reason} = error ->
-          error
-      end
+      true ->
+        build_command_invocation(capability, base_invocation, namespace, argv)
+    end
+  end
+
+  defp interface_version(capability) do
+    case InterfaceManifest.cli(capability) do
+      %{"version" => v} when is_integer(v) -> v
+      _ -> 1
+    end
+  end
+
+  defp build_command_invocation(capability, base_invocation, namespace, argv) do
+    with {:ok, cli_command, remaining_argv} <- resolve_command(capability, argv),
+         args = Map.get(cli_command, "args", []),
+         {:ok, values} <- parse_cli_args(args, remaining_argv),
+         {:ok, input} <- render_input(cli_command, args, values, namespace) do
+      invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
+      {:ok, %{input: input, invocation: invocation, command: cli_command}}
     end
   end
 
@@ -956,11 +971,14 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values) do
-    context = filter_context()
+  defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values, namespace) do
+    context = filter_context(namespace)
 
     with {:ok, raw_body} <- read_body(input_spec, values),
-         {:ok, body} <- seal_stdin_body(raw_body, input_spec["seal_to"], values, context) do
+         {:ok, body} <- seal_stdin_body(raw_body, input_spec["seal_to"], values, context),
+         {:ok, attach_lines} <- attachment_lines(input_spec, values, context) do
+      body = Enum.join([body | attach_lines], "\n")
+
       case input_spec["template"] do
         template when is_binary(template) ->
           with {:ok, header} <- Toolbox.render_template(template, values, context) do
@@ -973,23 +991,64 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp render_input(cli_command, args, values) do
-    Toolbox.render_input(cli_command, args, values, filter_context())
+  defp render_input(cli_command, args, values, namespace) do
+    Toolbox.render_input(cli_command, args, values, filter_context(namespace))
   end
+
+  @max_attachment_bytes 4 * 1024 * 1024
+
+  # An attachment is sealed once per seal_to target and sent as one line per
+  # target: `attach:<name>:<token>`, after the body tokens. The plaintext is
+  # capped at 4 MiB so a message to several peers stays inside the 64 MiB
+  # request line.
+  defp attachment_lines(%{"attach" => arg, "seal_to" => targets}, values, context)
+       when is_binary(arg) and is_list(targets) do
+    case Map.get(values, arg) do
+      path when is_binary(path) and path != "" ->
+        full = Path.expand(path)
+        name = Path.basename(full)
+
+        with {:ok, bytes} <- File.read(full) |> attach_read_error(full),
+             true <-
+               byte_size(bytes) <= @max_attachment_bytes or
+                 {:error, {:invalid_arguments, "attachment #{name} is over 4 MiB"}},
+             true <-
+               Regex.match?(~r/^[A-Za-z0-9._-]+$/, name) or
+                 {:error,
+                  {:invalid_arguments, "attachment name #{name}: letters, digits, . _ - only"}},
+             {:ok, tokens} <- seal_stdin_tokens(bytes, targets, values, context) do
+          {:ok, Enum.map(tokens, &"attach:#{name}:#{&1}")}
+        end
+
+      _ ->
+        {:ok, []}
+    end
+  end
+
+  defp attachment_lines(_input_spec, _values, _context), do: {:ok, []}
+
+  defp attach_read_error({:ok, bytes}, _path), do: {:ok, bytes}
+
+  defp attach_read_error({:error, reason}, path),
+    do: {:error, {:invalid_arguments, "cannot read #{path}: #{reason}"}}
 
   defp seal_stdin_body(body, nil, _values, _context), do: {:ok, body}
 
   defp seal_stdin_body(body, targets, values, context) when is_list(targets) do
+    with {:ok, tokens} <- seal_stdin_tokens(body, targets, values, context) do
+      {:ok, Enum.join(tokens, "\n")}
+    end
+  end
+
+  # One token per peer, targets in order. A target may expand to several
+  # peers, so the token count can exceed the target count.
+  defp seal_stdin_tokens(body, targets, values, context) do
     Enum.reduce_while(targets, {:ok, []}, fn target, {:ok, acc} ->
       case Toolbox.seal_to(body, target, values, context) do
-        {:ok, token} -> {:cont, {:ok, [token | acc]}}
+        {:ok, tokens} -> {:cont, {:ok, acc ++ tokens}}
         {:error, reason} -> {:halt, {:error, {:invalid_arguments, seal_error(target, reason)}}}
       end
     end)
-    |> case do
-      {:ok, tokens} -> {:ok, tokens |> Enum.reverse() |> Enum.join("\n")}
-      error -> error
-    end
   end
 
   defp seal_error(target, {:resolve, value, reason}),
@@ -1002,14 +1061,17 @@ defmodule Arc.CLI.Tools do
 
   # Filters that resolve names or seal bodies need the control plane and
   # the caller's identity. Both are cheap to look up per invocation.
-  defp filter_context do
+  defp filter_context(namespace \\ nil) do
     identity =
       case KeyStore.resolve_active() do
         {:ok, id} -> id
         _ -> nil
       end
 
-    %{resolve: &Arc.Control.resolve/1, identity: identity}
+    lists =
+      if is_binary(namespace), do: &Arc.CLI.Lists.expand(namespace, &1), else: fn _ -> nil end
+
+    %{resolve: &Arc.Control.resolve/1, identity: identity, lists: lists}
   end
 
   # The body comes from a named argument, then from a file named by an

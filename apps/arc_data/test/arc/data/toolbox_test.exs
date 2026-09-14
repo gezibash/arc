@@ -118,7 +118,8 @@ defmodule Arc.Data.ToolboxTest do
     test "seal fails when the target has no keyex", %{nokey: nokey, context: ctx} do
       name = Arc.Identity.name(nokey)
 
-      assert {:error, {:no_keyex, ^name}} =
+      # The error names the resolved entry, "nokey" in the stub resolver.
+      assert {:error, {:no_keyex, "nokey"}} =
                Toolbox.render_template("{{body|seal:to}}", %{"to" => name, "body" => "x"}, ctx)
     end
 
@@ -127,10 +128,38 @@ defmodule Arc.Data.ToolboxTest do
                Toolbox.render_template("{{body|seal}}", %{"body" => "x"}, %{})
     end
 
-    test "seal_to/4 seals a body through the same path", %{bob: bob, context: ctx} do
+    test "seal_to/4 seals a body once per peer, expanding lists", %{
+      bob: bob,
+      me: me,
+      context: ctx
+    } do
       values = %{"to" => Arc.Identity.name(bob)}
-      assert {:ok, token} = Toolbox.seal_to("stdin body", "to", values, ctx)
+      assert {:ok, [token]} = Toolbox.seal_to("stdin body", "to", values, ctx)
       assert Toolbox.open_tokens(token, bob) == "stdin body"
+
+      carol = Arc.Identity.generate()
+      {carol_x, _} = Arc.Identity.to_x25519(carol)
+
+      resolve = fn
+        "carol" -> {:ok, [%{public_key: carol.public_key, x25519_public: carol_x, name: "carol"}]}
+        other -> ctx.resolve.(other)
+      end
+
+      lists = fn
+        "team" -> [Arc.Identity.name(bob), "carol"]
+        _ -> nil
+      end
+
+      ctx2 = %{resolve: resolve, identity: me, lists: lists}
+      values = %{"to" => "team,carol"}
+      assert {:ok, [t1, t2]} = Toolbox.seal_to("group", "to", values, ctx2)
+      assert Toolbox.open_tokens(t1, bob) == "group"
+      assert Toolbox.open_tokens(t2, carol) == "group"
+
+      assert {:ok, hexes} = Toolbox.render_template("{{to|pubkey}}", values, ctx2)
+
+      assert hexes ==
+               Arc.Identity.encode_public_key(bob) <> "," <> Arc.Identity.encode_public_key(carol)
     end
 
     test "petnames replaces hex public keys with petnames", %{bob: bob} do

@@ -19,30 +19,48 @@ defmodule Dm.Command do
 
   # -- send -------------------------------------------------------------------
 
-  defp dispatch(["send", peer], opts, ctx) do
-    with :ok <- valid_peer(peer),
-         {:ok, to_peer, to_self} <- sealed_pair(ctx.body),
-         false <- Store.blocked?(ctx.root, peer, ctx.from) && {:error, "blocked"} do
+  # v1 form: one positional recipient.
+  defp dispatch(["send", peer], opts, ctx), do: dispatch(["send"], Map.put(opts, "to", peer), ctx)
+
+  # v2 form: `send --to <hex,hex,...>`. The body is one sealed token per
+  # recipient in --to order, then one for the sender, then attachment lines
+  # `attach:<name>:<token>` in the same order, one group per attachment.
+  defp dispatch(["send"], opts, ctx) do
+    with {:ok, recipients} <- recipients(opts["to"]),
+         {:ok, tokens, attachments} <- parse_send_body(ctx.body, length(recipients) + 1),
+         :ok <- none_blocked(ctx, recipients) do
       id = ULID.generate()
+      holders = Enum.uniq(recipients ++ [ctx.from])
 
       base =
         %{
           "id" => id,
           "from" => ctx.from,
-          "to" => peer,
+          "to" => recipients,
           "t" => Store.timestamp(),
           "enc" => "sealed-v1"
         }
         |> maybe_put("reply_to", opts["reply_to"])
+        |> maybe_put("attachments", attachment_meta(attachments))
 
-      :ok = Store.put_message(ctx.root, peer, Map.put(base, "body", to_peer))
-      :ok = Store.add_receipt(ctx.root, peer, id, "delivered")
+      Enum.each(holders, fn pk ->
+        i = token_index(pk, recipients)
+        :ok = Store.put_message(ctx.root, pk, Map.put(base, "body", Enum.at(tokens, i)))
 
-      if peer != ctx.from do
-        :ok = Store.put_message(ctx.root, ctx.from, Map.put(base, "body", to_self))
-      end
+        Enum.each(attachments, fn {name, toks} ->
+          :ok = Store.put_blob(ctx.root, pk, id, name, Enum.at(toks, i))
+        end)
+      end)
 
+      Enum.each(recipients, &Store.add_receipt(ctx.root, &1, id, "delivered"))
       {:ok, "id: #{id}"}
+    end
+  end
+
+  defp dispatch(["fetch", id, name], _opts, ctx) do
+    with :ok <- valid_id(id),
+         {:ok, _msg} <- Store.get_message(ctx.root, ctx.from, id) do
+      Store.get_blob(ctx.root, ctx.from, id, name)
     end
   end
 
@@ -107,7 +125,7 @@ defmodule Dm.Command do
       msgs =
         ctx.root
         |> Store.list_messages(ctx.from)
-        |> Enum.filter(&(other(&1, ctx) == peer))
+        |> Enum.filter(&involves?(&1, peer))
         |> since(opts["since"])
         |> limit(opts["limit"])
 
@@ -117,42 +135,6 @@ defmodule Dm.Command do
         msgs |> Enum.map(&line(&1, ctx)) |> lines_or("no messages")
       end
     end
-  end
-
-  # Returns every message with its body and marks the inbound ones read.
-  # Line: id, dir, peer, t, reply_to or -, flags, body. This format is part
-  # of the CLI interface; the conversation renderer reads it.
-  defp thread_with_bodies(msgs, peer, ctx) do
-    index = Store.receipt_index(ctx.root, ctx.from)
-    reactions = Store.reaction_index(ctx.root, ctx.from)
-    show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
-    peer_index = if show_read, do: Store.receipt_index(ctx.root, peer), else: %{}
-    unread = Enum.filter(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
-
-    rows =
-      Enum.map(msgs, fn msg ->
-        state =
-          cond do
-            retracted?(msg, index) -> "retracted"
-            outbound?(msg, ctx) and read?(msg, peer_index) -> "read"
-            outbound?(msg, ctx) -> "delivered"
-            read?(msg, index) -> "read"
-            true -> "unread"
-          end
-
-        flags = flags_field(state, Map.get(reactions, msg["id"], []))
-        dir = if outbound?(msg, ctx), do: "out", else: "in"
-
-        Enum.join(
-          [msg["id"], dir, other(msg, ctx), msg["t"], msg["reply_to"] || "-", flags, msg["body"]],
-          "\t"
-        )
-      end)
-
-    Enum.each(unread, &Store.add_receipt(ctx.root, ctx.from, &1["id"], "read"))
-
-    header = "#{peer} · #{length(msgs)} messages, #{length(unread)} unread"
-    {:ok, Enum.join([header | rows], "\n")}
   end
 
   # -- read / ack / status / archive -----------------------------------------
@@ -186,13 +168,17 @@ defmodule Dm.Command do
     with :ok <- valid_id(id),
          {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id),
          true <- outbound?(msg, ctx) or {:error, "forbidden not the sender"} do
-      # The recipient decides whether senders see read receipts.
-      show_read = Store.settings(ctx.root, msg["to"])["receipts"] == "on"
+      # Each recipient decides whether senders see their read receipts.
+      msg["to"]
+      |> List.wrap()
+      |> Enum.flat_map(fn peer ->
+        show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
 
-      ctx.root
-      |> Store.receipts(msg["to"], id)
-      |> Enum.filter(&(&1["event"] == "delivered" or (show_read and &1["event"] == "read")))
-      |> Enum.map(&"#{&1["event"]} #{&1["t"]}")
+        ctx.root
+        |> Store.receipts(peer, id)
+        |> Enum.filter(&(&1["event"] == "delivered" or (show_read and &1["event"] == "read")))
+        |> Enum.map(&"#{&1["event"]} #{&1["t"]} #{peer}")
+      end)
       |> lines_or("no receipts")
     end
   end
@@ -302,11 +288,49 @@ defmodule Dm.Command do
 
   # -- helpers ----------------------------------------------------------------
 
+  # Returns every message with its body and marks the inbound ones read.
+  # Line: id, dir, peer, t, reply_to or -, flags, body. This format is part
+  # of the CLI interface; the conversation renderer reads it.
+  defp thread_with_bodies(msgs, peer, ctx) do
+    index = Store.receipt_index(ctx.root, ctx.from)
+    reactions = Store.reaction_index(ctx.root, ctx.from)
+    show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
+    peer_index = if show_read, do: Store.receipt_index(ctx.root, peer), else: %{}
+    unread = Enum.filter(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
+
+    rows =
+      Enum.map(msgs, fn msg ->
+        state =
+          cond do
+            retracted?(msg, index) -> "retracted"
+            outbound?(msg, ctx) and read?(msg, peer_index) -> "read"
+            outbound?(msg, ctx) -> "delivered"
+            read?(msg, index) -> "read"
+            true -> "unread"
+          end
+
+        flags = flags_field(state, Map.get(reactions, msg["id"], []), msg["attachments"] || [])
+        dir = if outbound?(msg, ctx), do: "out", else: "in"
+
+        Enum.join(
+          [msg["id"], dir, other(msg, ctx), msg["t"], msg["reply_to"] || "-", flags, msg["body"]],
+          "\t"
+        )
+      end)
+
+    Enum.each(unread, &Store.add_receipt(ctx.root, ctx.from, &1["id"], "read"))
+
+    header = "#{peer} · #{length(msgs)} messages, #{length(unread)} unread"
+    {:ok, Enum.join([header | rows], "\n")}
+  end
+
   defp help do
     """
     dm commands
       conversations [--limit n]
-      send <peer> [--reply-to id]     body: two sealed-v1 tokens, one per line
+      send --to <hex,...> [--reply-to id]   body: one token per recipient, then yours,
+                                            then attach:<name>:<token> lines
+      fetch <id> <name>               the sealed attachment token
       inbox [--unread] [--since id] [--limit n]
       thread <peer> [--since id] [--limit n] [--bodies]   --bodies marks inbound read
       read <id>
@@ -326,30 +350,99 @@ defmodule Dm.Command do
   defp valid_peer(peer), do: if(Store.pubkey?(peer), do: :ok, else: {:error, "invalid_address"})
   defp valid_id(id), do: if(ULID.valid?(id), do: :ok, else: {:error, "not_found"})
 
-  defp sealed_pair(nil), do: {:error, "unsealed missing body"}
+  defp recipients(nil), do: {:error, "invalid_address missing recipient"}
+  defp recipients(true), do: {:error, "invalid_address missing recipient"}
 
-  defp sealed_pair(body) do
-    case body |> String.trim() |> String.split("\n") |> Enum.map(&String.trim/1) do
-      [to_peer, to_self] ->
-        with :ok <- sealed_token(to_peer), :ok <- sealed_token(to_self) do
-          {:ok, to_peer, to_self}
-        end
+  defp recipients(to) do
+    peers = to |> String.split(",", trim: true) |> Enum.map(&String.trim/1) |> Enum.uniq()
 
-      _ ->
-        {:error, "unsealed body must be two sealed-v1 tokens, one per line"}
+    cond do
+      peers == [] -> {:error, "invalid_address missing recipient"}
+      Enum.all?(peers, &Store.pubkey?/1) -> {:ok, peers}
+      true -> {:error, "invalid_address"}
     end
   end
 
-  defp sealed_token(token) do
-    cond do
-      not Regex.match?(@token_re, token) ->
-        {:error, "unsealed"}
+  defp none_blocked(ctx, recipients) do
+    case Enum.find(recipients, &Store.blocked?(ctx.root, &1, ctx.from)) do
+      nil -> :ok
+      peer -> {:error, "blocked #{peer}"}
+    end
+  end
 
-      byte_size(token) > Config.max_body_bytes() ->
-        {:error, "too_large max #{Config.max_body_bytes()} bytes"}
+  # The sender's own token is last. A sender who is also a recipient keeps
+  # the recipient token; either one opens for them.
+  defp token_index(pk, recipients) do
+    Enum.find_index(recipients, &(&1 == pk)) || length(recipients)
+  end
+
+  defp attachment_meta([]), do: nil
+
+  defp attachment_meta(attachments) do
+    Enum.map(attachments, fn {name, toks} -> %{"name" => name, "bytes" => byte_size(hd(toks))} end)
+  end
+
+  @attach_re ~r/^attach:([A-Za-z0-9._-]+):(sealed-v1:[A-Za-z0-9+\/=]+)$/
+
+  defp parse_send_body(nil, _n), do: {:error, "unsealed missing body"}
+
+  defp parse_send_body(body, n) do
+    lines = body |> String.split("\n") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+    {tokens, rest} = Enum.split(lines, n)
+
+    with true <-
+           length(tokens) == n or
+             {:error, "unsealed body needs #{n} sealed-v1 tokens, one per line"},
+         :ok <- each_ok(tokens, &sealed_token(&1, Config.max_body_bytes())),
+         {:ok, attachments} <- parse_attachments(rest, n) do
+      {:ok, tokens, attachments}
+    end
+  end
+
+  defp parse_attachments([], _n), do: {:ok, []}
+
+  defp parse_attachments(lines, n) do
+    parsed = Enum.map(lines, &Regex.run(@attach_re, &1))
+
+    cond do
+      Enum.any?(parsed, &is_nil/1) ->
+        {:error, "unsealed attachment lines must be attach:<name>:<sealed-v1 token>"}
+
+      rem(length(parsed), n) != 0 ->
+        {:error, "unsealed each attachment needs #{n} tokens"}
 
       true ->
-        :ok
+        parsed |> Enum.chunk_every(n) |> Enum.reduce_while({:ok, []}, &attachment_group/2)
+    end
+  end
+
+  defp attachment_group(group, {:ok, acc}) do
+    names = group |> Enum.map(&Enum.at(&1, 1)) |> Enum.uniq()
+    toks = Enum.map(group, &Enum.at(&1, 2))
+
+    with [name] <- names,
+         :ok <- each_ok(toks, &sealed_token(&1, Config.max_attach_bytes())) do
+      {:cont, {:ok, acc ++ [{name, toks}]}}
+    else
+      {:error, _} = error -> {:halt, error}
+      _ -> {:halt, {:error, "unsealed attachment group mixes names"}}
+    end
+  end
+
+  defp each_ok(items, fun) do
+    Enum.find_value(items, :ok, fn item ->
+      case fun.(item) do
+        :ok -> nil
+        error -> error
+      end
+    end)
+  end
+
+  defp sealed_token(token, cap) do
+    cond do
+      not Regex.match?(@token_re, token) -> {:error, "unsealed"}
+      byte_size(token) > cap -> {:error, "too_large max #{cap} bytes"}
+      true -> :ok
     end
   end
 
@@ -366,14 +459,24 @@ defmodule Dm.Command do
     end)
   end
 
-  # The flags field is `<state>[;reaction=<value>:<by>[,<value>:<by>...]]`.
-  defp flags_field(state, []), do: state
+  # The flags field is `<state>[;reaction=<value>:<by>,...][;attach=<name>:<bytes>,...]`.
+  defp flags_field(state, reactions, attachments) do
+    reaction_part =
+      if reactions == [],
+        do: "",
+        else: ";reaction=" <> Enum.map_join(reactions, ",", fn {by, v} -> "#{v}:#{by}" end)
 
-  defp flags_field(state, reactions) do
-    state <> ";reaction=" <> Enum.map_join(reactions, ",", fn {by, v} -> "#{v}:#{by}" end)
+    attach_part =
+      if attachments == [],
+        do: "",
+        else: ";attach=" <> Enum.map_join(attachments, ",", &"#{&1["name"]}:#{&1["bytes"]}")
+
+    state <> reaction_part <> attach_part
   end
 
-  defp holders(msg), do: Enum.uniq([msg["from"], msg["to"]])
+  defp holders(msg), do: Enum.uniq(List.wrap(msg["to"]) ++ [msg["from"]])
+
+  defp participants(msg, ctx), do: (List.wrap(msg["to"]) ++ [msg["from"]]) -- [ctx.from]
 
   defp valid_reaction("none"), do: :ok
 
@@ -401,7 +504,16 @@ defmodule Dm.Command do
     do: MapSet.member?(Map.get(index, msg["id"], MapSet.new()), "retracted")
 
   defp outbound?(msg, ctx), do: msg["from"] == ctx.from
-  defp other(msg, ctx), do: if(outbound?(msg, ctx), do: msg["to"], else: msg["from"])
+  # The conversation key: every other participant, sorted, comma-joined.
+  # A message to yourself alone keys on yourself.
+  defp other(msg, ctx) do
+    case participants(msg, ctx) |> Enum.uniq() |> Enum.sort() do
+      [] -> ctx.from
+      others -> Enum.join(others, ",")
+    end
+  end
+
+  defp involves?(msg, peer), do: peer in holders(msg)
   defp read?(msg, index), do: MapSet.member?(Map.get(index, msg["id"], MapSet.new()), "read")
 
   defp archived?(msg, index),
@@ -437,10 +549,15 @@ defmodule Dm.Command do
     [
       "id: #{msg["id"]}",
       "from: #{msg["from"]}",
-      "to: #{msg["to"]}",
+      "to: #{msg["to"] |> List.wrap() |> Enum.join(", ")}",
       "t: #{msg["t"]}",
       if(msg["reply_to"], do: "reply_to: #{msg["reply_to"]}"),
       if(retracted, do: "retracted: yes"),
+      if(msg["attachments"],
+        do:
+          "attachments: " <>
+            Enum.map_join(msg["attachments"], ", ", &"#{&1["name"]} (#{&1["bytes"]} bytes)")
+      ),
       if(reactions != [],
         do: "reactions: " <> Enum.map_join(reactions, " ", fn {by, v} -> "#{v} #{by}" end)
       ),

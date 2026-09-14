@@ -23,6 +23,19 @@ defmodule Arc.CLITest do
     assert stderr =~ "unknown command: no-such-command"
   end
 
+  test "lists add, ls, and rm keep a peer list per tool" do
+    run = fn argv -> ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(argv) end) end
+
+    assert run.(["lists", "add", "dm", "devs", "alice", "bob"]) == "dm/devs: alice bob\n"
+    assert run.(["lists", "add", "dm", "devs", "bob", "carol"]) == "dm/devs: alice bob carol\n"
+    assert run.(["lists", "ls", "dm"]) == "dm/devs\n"
+    assert run.(["lists", "ls", "dm", "devs"]) == "alice\nbob\ncarol\n"
+    assert Arc.CLI.Lists.expand("dm", "devs") == ["alice", "bob", "carol"]
+    assert run.(["lists", "rm", "dm", "devs", "bob"]) == "dm/devs: alice carol\n"
+    assert run.(["lists", "rm", "dm", "devs"]) == "removed dm/devs\n"
+    assert is_nil(Arc.CLI.Lists.expand("dm", "devs"))
+  end
+
   test "version prints the umbrella version and the build commit" do
     output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["version"]) end)
     assert output =~ ~r/^arc 0\.2\.0 \([0-9a-f]{7,}|unknown\)\n$/

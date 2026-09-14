@@ -23,7 +23,7 @@ if config_env() == :test do
 
   # A CLI error returns {:exit, code} from Arc.CLI.main/1 instead of
   # halting the VM, so error paths are testable.
-  config :arc_cli, exit_mode: :return
+  config :arc_cli, exit_mode: :return, lists_dir: Path.join(test_root, "lists")
 end
 
 # Sample configuration:
