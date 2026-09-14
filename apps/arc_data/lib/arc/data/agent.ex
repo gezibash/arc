@@ -94,6 +94,7 @@ defmodule Arc.Data.Agent do
           Application.get_env(:arc_data, :allowed_clock_skew_ms, @default_allowed_clock_skew_ms)
       }
 
+      schedule_replay_sweep(state)
       {:ok, state}
     else
       {:error, {:already_registered, _pid}} ->
@@ -205,6 +206,12 @@ defmodule Arc.Data.Agent do
   @impl GenServer
   def handle_info({:arc_packet, packet}, state) do
     {:noreply, receive_packet(packet, state)}
+  end
+
+  def handle_info(:sweep_replay_guard, state) do
+    state = sweep_replay_guard(state, System.system_time(:millisecond))
+    schedule_replay_sweep(state)
+    {:noreply, state}
   end
 
   def handle_info(msg, %{handler: {mod, handler_state}} = state) do
@@ -528,6 +535,25 @@ defmodule Arc.Data.Agent do
       nil ->
         state
     end
+  end
+
+  # A guard entry protects against replay of packets in one session. A
+  # packet older than the skew window is rejected as stale before the guard
+  # is consulted, so an entry whose newest packet is older than twice the
+  # window can never be hit again and is dropped.
+  defp sweep_replay_guard(state, now_ms) do
+    horizon = now_ms - 2 * state.allowed_clock_skew_ms
+
+    guard =
+      state.replay_guard
+      |> Enum.reject(fn {_key, %{max_ts: max_ts}} -> max_ts < horizon end)
+      |> Map.new()
+
+    %{state | replay_guard: guard}
+  end
+
+  defp schedule_replay_sweep(state) do
+    Process.send_after(self(), :sweep_replay_guard, state.allowed_clock_skew_ms)
   end
 
   defp enforce_replay_and_freshness(state, decoded) do

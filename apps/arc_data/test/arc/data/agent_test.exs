@@ -365,6 +365,32 @@ defmodule Arc.Data.AgentTest do
       assert log =~ "v1 is deprecated"
     end
 
+    test "the replay guard evicts entries older than twice the skew window" do
+      alice_id = Identity.generate()
+      {:ok, alice} = Agent.start_link(alice_id)
+
+      now = System.system_time(:millisecond)
+      skew = :sys.get_state(alice).allowed_clock_skew_ms
+      old_key = {"old-src", "old-sid"}
+      fresh_key = {"fresh-src", "fresh-sid"}
+
+      :sys.replace_state(alice, fn state ->
+        %{
+          state
+          | replay_guard: %{
+              old_key => %{max_seq: 3, max_ts: now - 2 * skew - 1_000},
+              fresh_key => %{max_seq: 1, max_ts: now - skew}
+            }
+        }
+      end)
+
+      send(alice, :sweep_replay_guard)
+      guard = :sys.get_state(alice).replay_guard
+
+      refute Map.has_key?(guard, old_key)
+      assert Map.has_key?(guard, fresh_key)
+    end
+
     test "rejects stale packet outside clock skew window" do
       alice_id = Identity.generate()
       bob_id = Identity.generate()
