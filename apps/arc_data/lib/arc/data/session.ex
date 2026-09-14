@@ -13,6 +13,7 @@ defmodule Arc.Data.Session do
   """
 
   alias Arc.Identity
+  alias Arc.Identity.HKDF
 
   @hkdf_info "arc-session-v1"
   @nonce_bytes 12
@@ -41,10 +42,7 @@ defmodule Arc.Data.Session do
     {_my_x_pub, my_x_priv} = Identity.to_x25519(my_identity)
     shared_secret = :crypto.compute_key(:ecdh, peer_x25519_pub, my_x_priv, :x25519)
 
-    # HKDF-SHA256: extract then expand
-    prk = :crypto.mac(:hmac, :sha256, <<0::256>>, shared_secret)
-    session_key = :crypto.mac(:hmac, :sha256, prk, @hkdf_info <> <<1>>)
-    <<key::binary-size(32), _::binary>> = session_key
+    key = HKDF.derive(shared_secret, <<0::256>>, @hkdf_info, 32)
 
     %__MODULE__{
       peer_public_key: peer_ed_pub,
