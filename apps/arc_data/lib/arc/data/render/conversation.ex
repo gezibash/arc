@@ -40,7 +40,13 @@ defmodule Arc.Data.Render.Conversation do
   defp render_record(record) do
     case String.split(record, "\t", parts: 7) do
       [id, dir, peer, t, reply_to, flags, body] ->
-        who = if dir == "out", do: "you", else: peer
+        who =
+          cond do
+            dir == "out" and String.contains?(peer, ",") -> "you → " <> peer
+            dir == "out" -> "you"
+            true -> peer
+          end
+
         reply = if reply_to == "-", do: "", else: "  ↳ reply to #{short_id(reply_to)}"
         {state, reactions, attachments} = parse_flags(flags)
         body = if state == "retracted", do: "(retracted)", else: body

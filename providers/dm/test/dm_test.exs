@@ -346,6 +346,18 @@ defmodule DmTest do
     assert Enum.at(out, 2) =~ @carol
   end
 
+  test "a v1 message with a string recipient still lists and renders", %{root: root} do
+    id = send(root, @alice, @bob, "old")
+    {:ok, msg} = Dm.Store.get_message(root, @alice, id)
+    :ok = Dm.Store.put_message(root, @alice, Map.put(msg, "to", @bob))
+
+    {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
+    [_, l] = String.split(out, "\n")
+    assert [^id, "out", @bob, _, _, _, _] = String.split(l, "\t")
+    assert {:ok, _} = Command.run(root, @alice, "conversations")
+    assert {:ok, _} = Command.run(root, @alice, "status #{id}")
+  end
+
   test "send --to needs one token per recipient plus one", %{root: root} do
     assert {:error, "unsealed body needs 3" <> _} =
              Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> body("x"))

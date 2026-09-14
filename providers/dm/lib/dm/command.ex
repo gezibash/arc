@@ -312,8 +312,12 @@ defmodule Dm.Command do
         flags = flags_field(state, Map.get(reactions, msg["id"], []), msg["attachments"] || [])
         dir = if outbound?(msg, ctx), do: "out", else: "in"
 
+        # Inbound: the sender. Outbound: the recipients. A group shows as a
+        # comma-joined set on outbound lines only.
+        who = if outbound?(msg, ctx), do: Enum.join(List.wrap(msg["to"]), ","), else: msg["from"]
+
         Enum.join(
-          [msg["id"], dir, other(msg, ctx), msg["t"], msg["reply_to"] || "-", flags, msg["body"]],
+          [msg["id"], dir, who, msg["t"], msg["reply_to"] || "-", flags, msg["body"]],
           "\t"
         )
       end)

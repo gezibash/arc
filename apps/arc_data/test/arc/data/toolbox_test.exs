@@ -211,7 +211,8 @@ defmodule Arc.Data.ToolboxTest do
             "01AAAAAAAAAAAAAAAAAAAAAAAA\tin\tjolly-volta\t2026-09-14T19:22:50Z\t-\tunread\tfirst line",
             "second line",
             "01BBBBBBBBBBBBBBBBBBBBBBBB\tout\tjolly-volta\t2026-09-14T19:23:00Z\t01AAAAAAAAAAAAAAAAAAAAAAAA\tread;reaction=👍:jolly-volta\tyes",
-            "01CCCCCCCCCCCCCCCCCCCCCCCC\tin\tjolly-volta\t2026-09-14T19:24:00Z\t-\tretracted\t"
+            "01CCCCCCCCCCCCCCCCCCCCCCCC\tin\tjolly-volta\t2026-09-14T19:24:00Z\t-\tretracted\t",
+            "01DDDDDDDDDDDDDDDDDDDDDDDD\tout\tjolly-volta,aqua-bohr\t2026-09-14T19:25:00Z\t-\tdelivered;attach=plan.md:154\tsee file"
           ],
           "\n"
         )
@@ -231,7 +232,12 @@ defmodule Arc.Data.ToolboxTest do
                    "  ✓ read",
                    "",
                    "jolly-volta  2026-09-14 19:24  CCCCCC",
-                   "  (retracted)"
+                   "  (retracted)",
+                   "",
+                   "you → jolly-volta,aqua-bohr  2026-09-14 19:25  DDDDDD",
+                   "  see file",
+                   "  📎 plan.md (154 bytes)",
+                   "  ✓ delivered"
                  ],
                  "\n"
                )
