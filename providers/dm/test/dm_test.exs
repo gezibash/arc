@@ -433,6 +433,50 @@ defmodule DmTest do
              Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(junk, "\n"))
   end
 
+  test "quota reports usage and a send over budget fails for the full mailbox", %{root: root} do
+    assert {:ok, "used 0 of " <> _} = Command.run(root, @bob, "quota")
+    id = send(root, @alice, @bob, "hello")
+    {:ok, msg} = Dm.Store.get_message(root, @bob, id)
+    {:ok, "used " <> rest} = Command.run(root, @bob, "quota")
+    [used, _] = String.split(rest, " of ")
+    assert String.to_integer(used) == byte_size(:json.encode(msg) |> IO.iodata_to_binary())
+
+    System.put_env("DM_MAILBOX_BUDGET", "#{String.to_integer(used) + 10}")
+    on_exit(fn -> System.delete_env("DM_MAILBOX_BUDGET") end)
+
+    assert {:error, "too_large mailbox " <> rest} =
+             Command.run(root, @alice, "send #{@bob}\n" <> body("second"))
+
+    assert String.starts_with?(rest, @bob)
+    # Carol's mailbox is empty, so a send to her still fits... until alice's own copy does not.
+    assert {:error, "too_large mailbox " <> _} =
+             Command.run(root, @alice, "send #{@carol}\n" <> body("second"))
+  end
+
+  test "purge deletes only the caller's own older messages and blobs", %{root: root} do
+    lines = [
+      token("a@p"),
+      token("a@s"),
+      "attach:f.md:" <> token("x@p"),
+      "attach:f.md:" <> token("x@s")
+    ]
+
+    {:ok, "id: " <> old, _} =
+      Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
+
+    newer = send(root, @alice, @bob, "keep")
+
+    assert {:error, "missing --before" <> _} = Command.run(root, @bob, "purge")
+    assert {:ok, "purged 1"} = Command.run(root, @bob, "purge --before #{newer}")
+
+    assert {:error, "not_found"} = Command.run(root, @bob, "read #{old}")
+    assert {:error, "not_found"} = Command.run(root, @bob, "fetch #{old} f.md")
+    assert {:ok, _} = Command.run(root, @bob, "read #{newer}")
+    # Alice still holds her copy.
+    assert {:ok, _} = Command.run(root, @alice, "read #{old}")
+    assert {:ok, _} = Command.run(root, @alice, "fetch #{old} f.md")
+  end
+
   test "unknown command and help", %{root: root} do
     assert {:error, "unknown_command nope"} = Command.run(root, @alice, "nope")
     assert {:ok, "dm commands" <> _} = Command.run(root, @alice, "help")

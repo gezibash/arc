@@ -5,6 +5,14 @@ defmodule Dm.Config do
     (System.get_env("DM_ROOT") || "~/.arc/dm") |> Path.expand()
   end
 
+  @doc "Bytes one mailbox may hold, messages and blobs together. Default 512 MiB."
+  def mailbox_budget_bytes do
+    case System.get_env("DM_MAILBOX_BUDGET") do
+      nil -> 512 * 1024 * 1024
+      s -> String.to_integer(s)
+    end
+  end
+
   @doc "Seconds after sending during which the sender may retract. Default 600."
   def retract_window_seconds do
     case System.get_env("DM_RETRACT_WINDOW") do

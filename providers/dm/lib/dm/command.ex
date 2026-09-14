@@ -31,7 +31,8 @@ defmodule Dm.Command do
   defp dispatch(["send"], opts, ctx) do
     with {:ok, recipients} <- recipients(opts["to"]),
          {:ok, tokens, attachments} <- parse_send_body(ctx.body, length(recipients) + 1),
-         :ok <- none_blocked(ctx, recipients) do
+         :ok <- none_blocked(ctx, recipients),
+         :ok <- within_budget(ctx, recipients, tokens, attachments) do
       id = ULID.generate()
       holders = Enum.uniq(recipients ++ [ctx.from])
 
@@ -71,6 +72,22 @@ defmodule Dm.Command do
         end)
 
       {:ok, "id: #{id}", events}
+    end
+  end
+
+  # -- budget -----------------------------------------------------------------
+
+  defp dispatch(["quota"], _opts, ctx) do
+    used = Store.usage(ctx.root, ctx.from)
+    {:ok, "used #{used} of #{Config.mailbox_budget_bytes()} bytes"}
+  end
+
+  # Deletes the caller's own messages and blobs older than an id. The second
+  # and last delete in the provider, on the owner's request only.
+  defp dispatch(["purge"], opts, ctx) do
+    with before when is_binary(before) <- opts["before"] || {:error, "missing --before <id>"},
+         :ok <- valid_id(before) do
+      {:ok, "purged #{Store.purge(ctx.root, ctx.from, before)}"}
     end
   end
 
@@ -365,6 +382,8 @@ defmodule Dm.Command do
       send --to <hex,...> [--reply-to id]   body: one token per recipient, then yours,
                                             then attach:<name>:<token> lines
       fetch <id> <name>               the sealed attachment token
+      quota                           bytes used of the mailbox budget
+      purge --before <id>             delete your own messages older than id
       inbox [--unread] [--since id] [--limit n]
       thread <peer> [--since id] [--limit n] [--bodies]   --bodies marks inbound read
       read <id>
@@ -395,6 +414,29 @@ defmodule Dm.Command do
       Enum.all?(peers, &Store.pubkey?/1) -> {:ok, peers}
       true -> {:error, "invalid_address"}
     end
+  end
+
+  # A send must fit in every holder's mailbox. The cost to one holder is its
+  # body token plus its attachment tokens.
+  defp within_budget(ctx, recipients, tokens, attachments) do
+    budget = Config.mailbox_budget_bytes()
+
+    recipients
+    |> Kernel.++([ctx.from])
+    |> Enum.uniq()
+    |> Enum.find_value(:ok, fn pk ->
+      i = token_index(pk, recipients)
+      body = byte_size(Enum.at(tokens, i) || "")
+
+      blobs =
+        attachments
+        |> Enum.map(fn {_n, toks} -> byte_size(Enum.at(toks, i) || "") end)
+        |> Enum.sum()
+
+      if Store.usage(ctx.root, pk) + body + blobs > budget do
+        {:error, "too_large mailbox #{pk} full"}
+      end
+    end)
   end
 
   defp none_blocked(ctx, recipients) do

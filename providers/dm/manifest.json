@@ -636,6 +636,39 @@
             "",
             "receipts off"
           ]
+        },
+        {
+          "path": [
+            "quota"
+          ],
+          "summary": "Bytes used of your mailbox budget.",
+          "input": {
+            "source": "template",
+            "template": "quota"
+          }
+        },
+        {
+          "path": [
+            "purge"
+          ],
+          "summary": "Delete your own messages and attachments older than an id. This is the only delete. Other holders keep their copies.",
+          "args": [
+            {
+              "name": "before",
+              "kind": "option",
+              "flag": "--before",
+              "type": "string",
+              "required": true,
+              "description": "Delete messages with an id below this ULID"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "purge --before {{before|json}}"
+          },
+          "examples": [
+            "--before 01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
         }
       ]
     }

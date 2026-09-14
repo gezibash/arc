@@ -71,6 +71,37 @@ defmodule Dm.Store do
     end
   end
 
+  # -- budget -----------------------------------------------------------------
+
+  @doc "Bytes used by a mailbox: message files and blobs."
+  def usage(root, pk) do
+    [Path.join(msgs_dir(root, pk), "*.json"), Path.join([mailbox(root, pk), "blobs", "*", "*"])]
+    |> Enum.flat_map(&Path.wildcard/1)
+    |> Enum.map(fn path ->
+      case File.stat(path) do
+        {:ok, %{size: size}} -> size
+        _ -> 0
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  @doc "Delete messages and blobs with an id below `before` from one mailbox. Returns the count."
+  def purge(root, pk, before) do
+    ids =
+      root
+      |> list_messages(pk)
+      |> Enum.map(& &1["id"])
+      |> Enum.filter(&(&1 < before))
+
+    Enum.each(ids, fn id ->
+      File.rm(msg_path(root, pk, id))
+      File.rm_rf(Path.join([mailbox(root, pk), "blobs", id]))
+    end)
+
+    length(ids)
+  end
+
   # -- receipts ---------------------------------------------------------------
 
   def add_receipt(root, pk, id, event, extra \\ %{}) do
