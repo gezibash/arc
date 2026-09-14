@@ -7,10 +7,15 @@ defmodule Dm.Stdio do
        {"op":"error","request_id":"...","error":"..."}
   """
 
-  def loop(root) do
+  @doc """
+  Reads request lines from `device` until it closes. Lines are read as raw
+  bytes: the JSON is UTF-8 on the wire, and `IO.stream` on the escript's
+  latin1 stdio would re-encode every byte as a code point.
+  """
+  def loop(root, device \\ :stdio) do
     :io.setopts(:standard_io, encoding: :latin1)
 
-    IO.stream(:stdio, :line)
+    IO.binstream(device, :line)
     |> Stream.map(&String.trim_trailing(&1, "\n"))
     |> Stream.reject(&(&1 == ""))
     |> Enum.each(&handle_line(root, &1))

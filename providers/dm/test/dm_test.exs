@@ -153,7 +153,7 @@ defmodule DmTest do
     {:ok, out} = Command.run(root, @bob, "thread #{@alice} --bodies \"true\"")
     [header, l1, l2] = String.split(out, "\n")
 
-    assert header == "#{@alice} - 2 messages, 1 unread"
+    assert header == "#{@alice} · 2 messages, 1 unread"
     assert [^a, "in", @alice, _, "-", "unread", body1] = String.split(l1, "\t")
     assert body1 == token("q@peer")
     assert [^b, "out", @alice, _, ^a, "delivered", body2] = String.split(l2, "\t")
@@ -161,7 +161,7 @@ defmodule DmTest do
 
     # The first call marked a read. Alice sees that on her outbound copy.
     {:ok, out} = Command.run(root, @bob, "thread #{@alice} --bodies \"true\"")
-    assert ["#{@alice} - 2 messages, 0 unread", l1, _] = String.split(out, "\n")
+    assert ["#{@alice} · 2 messages, 0 unread", l1, _] = String.split(out, "\n")
     assert [_, "in", _, _, _, "read", _] = String.split(l1, "\t")
 
     {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
@@ -265,6 +265,24 @@ defmodule DmTest do
   test "unknown command and help", %{root: root} do
     assert {:error, "unknown_command nope"} = Command.run(root, @alice, "nope")
     assert {:ok, "dm commands" <> _} = Command.run(root, @alice, "help")
+  end
+
+  test "stdio loop passes non-ASCII through unchanged", %{root: root} do
+    text = "ü–日本·👍"
+
+    line =
+      :json.encode(%{
+        "op" => "request",
+        "message" => text,
+        "from" => @alice,
+        "request_id" => "r2"
+      })
+
+    {:ok, device} = StringIO.open(IO.iodata_to_binary(line) <> "\n")
+    out = ExUnit.CaptureIO.capture_io(fn -> Dm.Stdio.loop(root, device) end)
+
+    # The unknown command is echoed back byte for byte.
+    assert :json.decode(String.trim(out))["error"] == "unknown_command #{text}"
   end
 
   test "stdio loop replies to a request line", %{root: root} do

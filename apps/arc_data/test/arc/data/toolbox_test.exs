@@ -178,7 +178,7 @@ defmodule Arc.Data.ToolboxTest do
       text =
         Enum.join(
           [
-            "jolly-volta - 2 messages, 1 unread",
+            "jolly-volta · 2 messages, 1 unread",
             "01AAAAAAAAAAAAAAAAAAAAAAAA\tin\tjolly-volta\t2026-09-14T19:22:50Z\t-\tunread\tfirst line",
             "second line",
             "01BBBBBBBBBBBBBBBBBBBBBBBB\tout\tjolly-volta\t2026-09-14T19:23:00Z\t01AAAAAAAAAAAAAAAAAAAAAAAA\tread\tyes"
@@ -189,7 +189,7 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.apply_output_filters(text, ["conversation"], nil) ==
                Enum.join(
                  [
-                   "── jolly-volta - 2 messages, 1 unread ──",
+                   "── jolly-volta · 2 messages, 1 unread ──",
                    "",
                    "jolly-volta  2026-09-14 19:22  AAAAAA",
                    "  first line",
