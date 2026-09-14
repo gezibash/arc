@@ -271,6 +271,65 @@ defmodule Arc.CLIToolsTest do
     refute output =~ Identity.encode_public_key(server_id)
   end
 
+  test "a stdin command takes its body from an argument or a file before stdin" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _manifest_path} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(System.tmp_dir!(), "arc_dm_manifest_#{System.unique_integer([:positive])}.json")
+
+    body_path =
+      Path.join(System.tmp_dir!(), "arc_dm_body_#{System.unique_integer([:positive])}.md")
+
+    write_dm_manifest(manifest_path)
+    File.write!(body_path, "from a file\n")
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    # stdin holds a body that must not be used when an argument or file wins.
+    {:ok, input_device} = StringIO.open("from stdin\n")
+    old_input_device = Application.get_env(:arc_cli, :stream_input_device)
+    Application.put_env(:arc_cli, :stream_input_device, input_device)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+      File.rm(body_path)
+
+      if old_input_device do
+        Application.put_env(:arc_cli, :stream_input_device, old_input_device)
+      else
+        Application.delete_env(:arc_cli, :stream_input_device)
+      end
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    from_arg =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "two", "words"])
+      end)
+
+    from_file =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "--file", body_path])
+      end)
+
+    assert from_arg =~ "[sealed: cannot open]\ntwo words\n"
+    assert from_file =~ "[sealed: cannot open]\nfrom a file\n"
+  end
+
   test "installed tools can be invoked as top-level arc subcommands" do
     client_id = persist_cli_identity()
     server_id = Identity.generate()
@@ -816,12 +875,22 @@ defmodule Arc.CLIToolsTest do
               "path" => ["send"],
               "summary" => "Send a sealed body from stdin",
               "args" => [
-                %{"name" => "to", "kind" => "positional", "type" => "string", "required" => true}
+                %{"name" => "to", "kind" => "positional", "type" => "string", "required" => true},
+                %{
+                  "name" => "text",
+                  "kind" => "positional",
+                  "type" => "string",
+                  "required" => false,
+                  "variadic" => true
+                },
+                %{"name" => "file", "kind" => "option", "flag" => "--file", "type" => "string"}
               ],
               "input" => %{
                 "source" => "stdin",
                 "template" => "POST /echo /dm/{{to|pubkey}}",
-                "seal_to" => ["to", "me"]
+                "seal_to" => ["to", "me"],
+                "body" => "text",
+                "file" => "file"
               },
               "output" => %{"filter" => ["open", "petnames"]}
             }

@@ -303,6 +303,8 @@ defmodule Arc.Data.InterfaceManifest do
         %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
         |> maybe_put("template", present_string(Map.get(input, "template")))
         |> maybe_put("seal_to", normalize_seal_to(Map.get(input, "seal_to")))
+        |> maybe_put("body", present_string(Map.get(input, "body")))
+        |> maybe_put("file", present_string(Map.get(input, "file")))
 
       _ ->
         nil
@@ -427,11 +429,25 @@ defmodule Arc.Data.InterfaceManifest do
   defp normalize_optional_boolean(value) when value in [true, false], do: value
   defp normalize_optional_boolean(_value), do: nil
 
-  defp enforce_variadic_tail([]), do: []
-
+  # Only the last positional may be variadic. Options may follow it.
   defp enforce_variadic_tail(args) do
-    {prefix, last} = Enum.split(args, length(args) - 1)
-    prefix = Enum.map(prefix, &Map.put(&1, "variadic", false))
-    prefix ++ last
+    last_positional =
+      args
+      |> Enum.with_index()
+      |> Enum.filter(fn {arg, _} -> arg["kind"] == "positional" end)
+      |> List.last()
+
+    case last_positional do
+      nil ->
+        args
+
+      {_, last_index} ->
+        args
+        |> Enum.with_index()
+        |> Enum.map(fn
+          {arg, ^last_index} -> arg
+          {arg, _} -> Map.put(arg, "variadic", false)
+        end)
+    end
   end
 end

@@ -944,7 +944,7 @@ defmodule Arc.CLI.Tools do
   defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values) do
     context = filter_context()
 
-    with {:ok, raw_body} <- read_stdin_body(),
+    with {:ok, raw_body} <- read_body(input_spec, values),
          {:ok, body} <- seal_stdin_body(raw_body, input_spec["seal_to"], values, context) do
       case input_spec["template"] do
         template when is_binary(template) ->
@@ -996,6 +996,37 @@ defmodule Arc.CLI.Tools do
 
     %{resolve: &Arc.Control.resolve/1, identity: identity}
   end
+
+  # The body comes from a named argument, then from a file named by an
+  # option, then from stdin. Only the last blocks on a terminal.
+  defp read_body(input_spec, values) do
+    body_arg = input_spec["body"]
+    file_arg = input_spec["file"]
+
+    cond do
+      is_binary(body_arg) and present_value?(Map.get(values, body_arg)) ->
+        {:ok, values |> Map.get(body_arg) |> join_value()}
+
+      is_binary(file_arg) and is_binary(Map.get(values, file_arg)) ->
+        path = Path.expand(Map.get(values, file_arg))
+
+        case File.read(path) do
+          {:ok, body} -> {:ok, body}
+          {:error, reason} -> {:error, {:invalid_arguments, "cannot read #{path}: #{reason}"}}
+        end
+
+      true ->
+        read_stdin_body()
+    end
+  end
+
+  defp present_value?(nil), do: false
+  defp present_value?([]), do: false
+  defp present_value?(""), do: false
+  defp present_value?(_), do: true
+
+  defp join_value(values) when is_list(values), do: Enum.join(values, " ")
+  defp join_value(value), do: to_string(value)
 
   defp read_stdin_body do
     case IO.read(stream_input_device(), :eof) do

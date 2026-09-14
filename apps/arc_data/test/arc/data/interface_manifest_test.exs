@@ -74,6 +74,33 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert raw["input"] == %{"source" => "stdin", "join_with" => "\n"}
   end
 
+  test "the last positional stays variadic when options follow it" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "dm",
+            "commands" => [
+              %{
+                "path" => ["send"],
+                "args" => [
+                  %{"name" => "peer", "kind" => "positional", "required" => true},
+                  %{"name" => "text", "kind" => "positional", "variadic" => true},
+                  %{"name" => "file", "kind" => "option", "flag" => "--file"}
+                ]
+              }
+            ]
+          }
+        }
+      })
+
+    [send] = cli["commands"]
+    [peer, text, file] = send["args"]
+    assert peer["variadic"] == false
+    assert text["variadic"] == true
+    assert file["kind"] == "option"
+  end
+
   test "normalizes seal_to and an open output filter" do
     cli =
       InterfaceManifest.cli(%{
@@ -92,7 +119,12 @@ defmodule Arc.Data.InterfaceManifestTest do
               },
               %{
                 "path" => ["send2"],
-                "input" => %{"source" => "stdin", "seal_to" => ["peer", "me"]}
+                "input" => %{
+                  "source" => "stdin",
+                  "seal_to" => ["peer", "me"],
+                  "body" => "text",
+                  "file" => "file"
+                }
               },
               %{"path" => ["read"], "output" => %{"filter" => "open"}},
               %{"path" => ["ls"], "output" => %{"filter" => "bogus"}},
@@ -109,6 +141,8 @@ defmodule Arc.Data.InterfaceManifestTest do
 
     assert send["input"]["seal_to"] == ["peer"]
     assert send2["input"]["seal_to"] == ["peer", "me"]
+    assert send2["input"]["body"] == "text"
+    assert send2["input"]["file"] == "file"
     assert read["output"] == %{"filters" => ["open"]}
     refute Map.has_key?(ls, "output")
     assert all["output"] == %{"filters" => ["open", "petnames", "preview:80"]}

@@ -29,7 +29,7 @@
           "path": [
             "send"
           ],
-          "summary": "Send the text on stdin to a peer. The body is sealed to the peer and to you before it leaves this machine.",
+          "summary": "Send a message to a peer. The body is the text argument, or --file, or stdin. It is sealed to the peer and to you before it leaves this machine.",
           "args": [
             {
               "name": "peer",
@@ -38,12 +38,27 @@
               "description": "Recipient: petname, short name, key prefix, or 64 hex"
             },
             {
+              "name": "text",
+              "kind": "positional",
+              "required": false,
+              "variadic": true,
+              "description": "Message text. Omit to read --file or stdin."
+            },
+            {
               "name": "reply_to",
               "kind": "option",
               "flag": "--reply-to",
               "type": "string",
               "required": false,
               "description": "Id of the message this replies to"
+            },
+            {
+              "name": "file",
+              "kind": "option",
+              "flag": "--file",
+              "type": "string",
+              "required": false,
+              "description": "Read the body from this file"
             }
           ],
           "input": {
@@ -52,11 +67,15 @@
             "seal_to": [
               "peer",
               "me"
-            ]
+            ],
+            "body": "text",
+            "file": "file"
           },
           "examples": [
-            "jolly-volta < note.md",
-            "jolly-volta --reply-to 01J7Q0X5R8M4N6P2T9V1W3Y5Z7 < reply.md"
+            "jolly-volta \"Looks right. One nit on section 3.\"",
+            "jolly-volta --file review.md",
+            "jolly-volta --reply-to 01J7Q0X5R8M4N6P2T9V1W3Y5Z7 \"Yes.\"",
+            "jolly-volta < note.md"
           ]
         },
         {

@@ -83,11 +83,6 @@ defmodule Arc.Data.ToolboxTest do
       %{bob: bob, nokey: nokey, me: me, context: %{resolve: resolve, identity: me}}
     end
 
-    @dm_args [
-      %{"name" => "to", "kind" => "positional", "type" => "string", "required" => true},
-      %{"name" => "body", "kind" => "option", "flag" => "--body", "type" => "string"}
-    ]
-
     test "pubkey renders the resolved hex key", %{bob: bob, context: ctx} do
       values = %{"to" => Arc.Identity.name(bob)}
 
