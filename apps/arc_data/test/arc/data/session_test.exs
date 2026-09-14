@@ -5,17 +5,56 @@ defmodule Arc.Data.SessionTest do
   alias Arc.Identity
 
   describe "establish/3" do
-    test "two identities derive the same session key" do
+    test "the responder accepts the initiator's ephemeral key and derives the same session key" do
       alice = Identity.generate()
       bob = Identity.generate()
-
-      {alice_x_pub, _} = Identity.to_x25519(alice)
       {bob_x_pub, _} = Identity.to_x25519(bob)
 
       session_a = Session.establish(alice, bob.public_key, bob_x_pub)
-      session_b = Session.establish(bob, alice.public_key, alice_x_pub)
+      session_b = Session.accept(bob, alice.public_key, session_a.ek_pub, session_a.session_id)
 
       assert session_a.session_key == session_b.session_key
+      assert session_b.session_id == session_a.session_id
+      assert session_a.version == 2 and session_b.version == 2
+      assert byte_size(session_a.ek_pub) == 32
+    end
+
+    test "two sessions between the same peers have different keys" do
+      alice = Identity.generate()
+      bob = Identity.generate()
+      {bob_x_pub, _} = Identity.to_x25519(bob)
+
+      s1 = Session.establish(alice, bob.public_key, bob_x_pub)
+      s2 = Session.establish(alice, bob.public_key, bob_x_pub)
+
+      refute s1.session_key == s2.session_key
+      refute s1.ek_pub == s2.ek_pub
+    end
+
+    test "a wrong ephemeral key derives a different key" do
+      alice = Identity.generate()
+      bob = Identity.generate()
+      {bob_x_pub, _} = Identity.to_x25519(bob)
+      {other_ek, _} = :crypto.generate_key(:ecdh, :x25519)
+
+      session_a = Session.establish(alice, bob.public_key, bob_x_pub)
+      session_b = Session.accept(bob, alice.public_key, other_ek, session_a.session_id)
+
+      refute session_a.session_key == session_b.session_key
+    end
+
+    test "v1 sessions still derive one shared key from both static keys" do
+      alice = Identity.generate()
+      bob = Identity.generate()
+      {alice_x_pub, _} = Identity.to_x25519(alice)
+      {bob_x_pub, _} = Identity.to_x25519(bob)
+
+      session_a = Session.establish_v1(alice, bob.public_key, bob_x_pub)
+      session_b = Session.establish_v1(bob, alice.public_key, alice_x_pub)
+
+      assert session_a.session_key == session_b.session_key
+      assert session_a.version == 1
+      assert is_nil(session_a.ek_pub)
     end
 
     test "session key is 32 bytes" do
@@ -75,11 +114,10 @@ defmodule Arc.Data.SessionTest do
       alice = Identity.generate()
       bob = Identity.generate()
 
-      {alice_x_pub, _} = Identity.to_x25519(alice)
       {bob_x_pub, _} = Identity.to_x25519(bob)
 
       session_a = Session.establish(alice, bob.public_key, bob_x_pub)
-      session_b = Session.establish(bob, alice.public_key, alice_x_pub)
+      session_b = Session.accept(bob, alice.public_key, session_a.ek_pub, session_a.session_id)
 
       %{session_a: session_a, session_b: session_b}
     end

@@ -11,6 +11,7 @@ defmodule Arc.Data.Agent do
   """
 
   use GenServer
+  require Logger
 
   alias Arc.Control
   alias Arc.Data.CapabilityManifest
@@ -144,7 +145,12 @@ defmodule Arc.Data.Agent do
       payload = build_outgoing_payload(message, opts)
       {nonce, ciphertext, seq, session} = Session.encrypt(session, payload)
       state = %{state | sessions: Map.put(state.sessions, peer_pk, session)}
-      packet = Packet.encode(state.identity, peer_pk, session.session_id, seq, nonce, ciphertext)
+
+      packet =
+        Packet.encode(state.identity, peer_pk, session.session_id, seq, nonce, ciphertext,
+          ek: session.ek_pub
+        )
+
       deliver(state.identity.public_key, peer_pk, packet)
       {:reply, :ok, state}
     else
@@ -244,7 +250,7 @@ defmodule Arc.Data.Agent do
          true <- decoded.dst == state.identity.public_key,
          {:ok, state} <- enforce_replay_and_freshness(state, decoded) do
       state
-      |> ensure_session(decoded.src)
+      |> session_for_packet(decoded)
       |> decrypt_and_dispatch(decoded)
     else
       _ -> state
@@ -510,7 +516,12 @@ defmodule Arc.Data.Agent do
       %Session{} = session ->
         {nonce, ciphertext, seq, session} = Session.encrypt(session, message)
         state = %{state | sessions: Map.put(state.sessions, to_pk, session)}
-        packet = Packet.encode(state.identity, to_pk, session.session_id, seq, nonce, ciphertext)
+
+        packet =
+          Packet.encode(state.identity, to_pk, session.session_id, seq, nonce, ciphertext,
+            ek: session.ek_pub
+          )
+
         deliver(state.identity.public_key, to_pk, packet)
         state
 
@@ -543,7 +554,34 @@ defmodule Arc.Data.Agent do
     end
   end
 
-  defp ensure_session(state, peer_pk) do
+  # A v2 packet carries the initiator's ephemeral key, so the receiver can
+  # always derive the session key. A packet whose session id matches the
+  # session already held for that peer reuses it. Any other v2 packet
+  # starts a fresh accepted session, which replaces the one held.
+  defp session_for_packet(state, %{ek: <<_::binary-size(32)>> = ek} = decoded) do
+    case Map.get(state.sessions, decoded.src) do
+      %Session{session_id: sid} when sid == decoded.session_id ->
+        state
+
+      _ ->
+        session = Session.accept(state.identity, decoded.src, ek, decoded.session_id)
+        %{state | sessions: Map.put(state.sessions, decoded.src, session)}
+    end
+  end
+
+  # No ephemeral key: a v1 packet from a peer on the previous release.
+  defp session_for_packet(state, decoded) do
+    Logger.warning(
+      "session v1 packet from #{Identity.name(decoded.src)}; v1 is deprecated and will be removed"
+    )
+
+    case Map.get(state.sessions, decoded.src) do
+      %Session{version: 1} -> state
+      _ -> ensure_session(state, decoded.src, &Session.establish_v1/3)
+    end
+  end
+
+  defp ensure_session(state, peer_pk, establish \\ &Session.establish/3) do
     if Map.has_key?(state.sessions, peer_pk) do
       state
     else
@@ -551,7 +589,7 @@ defmodule Arc.Data.Agent do
 
       case Control.resolve(peer_name) do
         {:ok, [entry | _]} when entry.x25519_public != nil ->
-          session = Session.establish(state.identity, entry.public_key, entry.x25519_public)
+          session = establish.(state.identity, entry.public_key, entry.x25519_public)
           %{state | sessions: Map.put(state.sessions, entry.public_key, session)}
 
         _ ->

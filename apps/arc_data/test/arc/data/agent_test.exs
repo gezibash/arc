@@ -320,7 +320,8 @@ defmodule Arc.Data.AgentTest do
           session.session_id,
           seq,
           nonce,
-          ciphertext
+          ciphertext,
+          ek: session.ek_pub
         )
 
       send(bob, {:arc_packet, packet})
@@ -333,6 +334,35 @@ defmodule Arc.Data.AgentTest do
       messages = Agent.read_inbox(bob)
       assert length(messages) == 1
       assert hd(messages).text == "replay-test"
+    end
+
+    test "accepts a v1 packet from a peer on the previous release" do
+      alice_id = Identity.generate()
+      bob_id = Identity.generate()
+      {bob_x_pub, _} = Identity.to_x25519(bob_id)
+
+      {:ok, bob} = Agent.start_link(bob_id)
+      :ok = Agent.publish(bob)
+      :ok = Arc.Control.publish(alice_id)
+      {alice_x_pub, _} = Identity.to_x25519(alice_id)
+      :ok = Arc.Control.publish_keyex(alice_id.public_key, alice_x_pub)
+
+      session = Session.establish_v1(alice_id, bob_id.public_key, bob_x_pub)
+      {nonce, ciphertext, seq, _} = Session.encrypt(session, "from-v1")
+
+      packet =
+        Packet.encode(alice_id, bob_id.public_key, session.session_id, seq, nonce, ciphertext)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(bob, {:arc_packet, packet})
+          Process.sleep(25)
+          Agent.poll_mailbox(bob)
+          Process.sleep(10)
+        end)
+
+      assert [%{text: "from-v1"}] = Agent.read_inbox(bob)
+      assert log =~ "v1 is deprecated"
     end
 
     test "rejects stale packet outside clock skew window" do
@@ -358,6 +388,7 @@ defmodule Arc.Data.AgentTest do
           seq,
           nonce,
           ciphertext,
+          ek: session.ek_pub,
           ts: stale_ts
         )
 

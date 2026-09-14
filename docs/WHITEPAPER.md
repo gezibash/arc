@@ -508,7 +508,7 @@ ARC assumes:
 ARC guarantees:
 - **Message confidentiality** — only sender and recipient can read messages, ever
 - **Identity authenticity** — a packet's claimed sender is cryptographically proven
-- **Forward secrecy** — compromise of long-term keys does not expose past sessions
+- **Forward secrecy, initiator side** — every session starts from a fresh ephemeral key on the initiator, so compromise of the initiator's long-term key does not expose past sessions. Compromise of the responder's long-term key does. A responder ephemeral is planned for session v3.
 - **Replay resistance** — sequence numbers and timestamps prevent replay attacks
 - **Provider independence** — control plane downtime does not break active sessions
 - **No trust required** — relay nodes, control plane providers, and infrastructure operators are all untrusted by design
