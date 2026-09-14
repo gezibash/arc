@@ -1,0 +1,279 @@
+{
+  "published_at": "2026-09-14T00:00:00Z",
+  "release": {
+    "version": "0.1.0",
+    "channel": "stable"
+  },
+  "capability": {
+    "id": "primary",
+    "kind": "data",
+    "scheme": "dm",
+    "title": "Direct Messages",
+    "summary": "Sealed direct messages with a persistent inbox. Bodies are sealed to the reader before they leave the sender. The host stores ciphertext only.",
+    "invocation": {
+      "method": "RAW",
+      "path": "/"
+    },
+    "examples": [
+      "inbox --unread",
+      "read 01J7Q0X5R8M4N6P2T9V1W3Y5Z7",
+      "whoami"
+    ]
+  },
+  "interfaces": {
+    "cli": {
+      "version": 1,
+      "namespace": "dm",
+      "commands": [
+        {
+          "path": [
+            "send"
+          ],
+          "summary": "Send the text on stdin to a peer. The body is sealed to the peer and to you before it leaves this machine.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            },
+            {
+              "name": "reply_to",
+              "kind": "option",
+              "flag": "--reply-to",
+              "type": "string",
+              "required": false,
+              "description": "Id of the message this replies to"
+            }
+          ],
+          "input": {
+            "source": "stdin",
+            "template": "send {{peer|pubkey}} --reply-to {{reply_to|json}}",
+            "seal_to": [
+              "peer",
+              "me"
+            ]
+          },
+          "examples": [
+            "jolly-volta < note.md",
+            "jolly-volta --reply-to 01J7Q0X5R8M4N6P2T9V1W3Y5Z7 < reply.md"
+          ]
+        },
+        {
+          "path": [
+            "inbox"
+          ],
+          "summary": "List messages in your mailbox: id, direction, peer, time, sealed bytes.",
+          "args": [
+            {
+              "name": "unread",
+              "kind": "option",
+              "flag": "--unread",
+              "type": "boolean",
+              "required": false,
+              "description": "Only unread inbound messages"
+            },
+            {
+              "name": "since",
+              "kind": "option",
+              "flag": "--since",
+              "type": "string",
+              "required": false,
+              "description": "Only ids greater than this ULID"
+            },
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max messages, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "inbox --unread \"{{unread}}\" --since {{since|json}} --limit {{limit|json}}"
+          },
+          "examples": [
+            "",
+            "--unread",
+            "--since 01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
+        },
+        {
+          "path": [
+            "thread"
+          ],
+          "summary": "List both directions of one thread in time order.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            },
+            {
+              "name": "since",
+              "kind": "option",
+              "flag": "--since",
+              "type": "string",
+              "required": false,
+              "description": "Only ids greater than this ULID"
+            },
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max messages, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "thread {{peer|pubkey}} --since {{since|json}} --limit {{limit|json}}"
+          },
+          "examples": [
+            "jolly-volta"
+          ]
+        },
+        {
+          "path": [
+            "read"
+          ],
+          "summary": "Read one message. Marks an inbound message as read.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "read {{id}}"
+          },
+          "output": {
+            "filter": "open"
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
+        },
+        {
+          "path": [
+            "ack"
+          ],
+          "summary": "Mark inbound messages as read without reading them.",
+          "args": [
+            {
+              "name": "ids",
+              "kind": "positional",
+              "required": true,
+              "description": "Message ids",
+              "variadic": true
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "ack {{ids}}"
+          }
+        },
+        {
+          "path": [
+            "status"
+          ],
+          "summary": "Show delivered and read receipts for a message you sent.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "status {{id}}"
+          }
+        },
+        {
+          "path": [
+            "archive"
+          ],
+          "summary": "Hide messages from inbox. They stay in thread.",
+          "args": [
+            {
+              "name": "ids",
+              "kind": "positional",
+              "required": true,
+              "description": "Message ids",
+              "variadic": true
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "archive {{ids}}"
+          }
+        },
+        {
+          "path": [
+            "block"
+          ],
+          "summary": "Refuse future messages from a peer.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "block {{peer|pubkey}}"
+          }
+        },
+        {
+          "path": [
+            "unblock"
+          ],
+          "summary": "Reverse block.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "unblock {{peer|pubkey}}"
+          }
+        },
+        {
+          "path": [
+            "blocked"
+          ],
+          "summary": "List blocked keys.",
+          "input": {
+            "source": "template",
+            "template": "blocked"
+          }
+        },
+        {
+          "path": [
+            "whoami"
+          ],
+          "summary": "Print your mailbox address.",
+          "input": {
+            "source": "template",
+            "template": "whoami"
+          }
+        }
+      ]
+    }
+  }
+}

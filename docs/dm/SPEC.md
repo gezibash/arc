@@ -287,3 +287,12 @@ secrecy for stored mail needs key rotation and is not in Phase 1.
 2. Per-mailbox byte budget. Core C4 session v2 lands in the same release.
 3. Push: core C5 event frame, `dm` events on `arc listen` when a message
    lands.
+
+## 17. Verified
+
+Run end to end on 2026-09-14 through a local relay with the provider under
+its own key and two persona keys: publish with keyex, install, send with a
+non-ASCII body, inbox with `--unread`, read as the recipient and as the
+sender, status with delivered and read receipts, reply with `--reply-to`,
+thread, block, blocked send, unblock. A grep of `DM_ROOT` for the message
+text found nothing. Every body on disk is a `sealed-v1:` token.
