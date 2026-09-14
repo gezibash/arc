@@ -9,6 +9,7 @@ defmodule Arc.Data.Toolbox do
 
   alias Arc.Data.InterfaceManifest
   alias Arc.Identity
+  alias Arc.Identity.SealedBox
 
   @default_dir Path.join(["~", ".config", "arc", "tools"])
 
@@ -240,8 +241,22 @@ defmodule Arc.Data.Toolbox do
     end
   end
 
-  @template_placeholder ~r/\{\{([a-zA-Z0-9_-]+)(?:\|([a-zA-Z0-9_]+))?\}\}/
-  @template_filters ~w(json shell)
+  @template_placeholder ~r/\{\{([a-zA-Z0-9_-]+)(?:\|([a-zA-Z0-9_]+)(?::([a-zA-Z0-9_-]+))?)?\}\}/
+  @template_filters ~w(json shell pubkey seal)
+  @sealed_prefix "sealed-v1:"
+  @sealed_token ~r/sealed-v1:([A-Za-z0-9+\/=]+)/
+
+  @typedoc """
+  Context for filters that need more than the parsed values.
+
+    * `:resolve` maps a name or key prefix to control plane entries, with
+      the shape of `Arc.Control.resolve/1`.
+    * `:identity` is the caller's identity, used by `seal:me` and `open`.
+  """
+  @type filter_context :: %{
+          optional(:resolve) => (String.t() -> {:ok, [map()]} | {:error, term()}),
+          optional(:identity) => Identity.t() | nil
+        }
 
   @doc """
   Render the provider input for one resolved CLI command.
@@ -251,12 +266,15 @@ defmodule Arc.Data.Toolbox do
     * `"arg"` renders one named argument.
     * `"template"` substitutes `{{key}}` placeholders. A `{{key|json}}`
       placeholder renders the value as a JSON literal and `{{key|shell}}`
-      renders it single-quoted for a POSIX shell.
+      renders it single-quoted for a POSIX shell. `{{key|pubkey}}` resolves
+      a name to a hex public key. `{{key|seal:to}}` seals the value to the
+      X25519 key of the peer named by argument `to`.
     * `"json"` renders every parsed argument as one JSON object, so the
       provider never parses a command line.
   """
-  @spec render_input(map(), [map()], map()) :: {:ok, String.t()} | {:error, term()}
-  def render_input(cli_command, args, values) do
+  @spec render_input(map(), [map()], map(), filter_context()) ::
+          {:ok, String.t()} | {:error, term()}
+  def render_input(cli_command, args, values, context \\ %{}) do
     case Map.get(cli_command, "input") do
       %{"source" => "arg", "name" => name} = input_spec ->
         case Map.fetch(values, name) do
@@ -265,7 +283,7 @@ defmodule Arc.Data.Toolbox do
         end
 
       %{"source" => "template", "template" => template} ->
-        render_template(template, values)
+        render_template(template, values, context)
 
       %{"source" => "json"} ->
         {:ok, encode_json(values)}
@@ -287,34 +305,127 @@ defmodule Arc.Data.Toolbox do
   @doc """
   Render one `{{key}}` template against parsed argument values.
   """
-  @spec render_template(String.t(), map()) :: {:ok, String.t()} | {:error, term()}
-  def render_template(template, values) do
-    unknown =
+  @spec render_template(String.t(), map(), filter_context()) ::
+          {:ok, String.t()} | {:error, term()}
+  def render_template(template, values, context \\ %{}) do
+    placeholders =
       @template_placeholder
       |> Regex.scan(template)
       |> Enum.map(fn
-        [_, _key, filter] -> filter
-        [_, _key] -> nil
+        [raw, key] -> {raw, key, "", nil}
+        [raw, key, filter] -> {raw, key, filter, nil}
+        [raw, key, filter, arg] -> {raw, key, filter, arg}
       end)
-      |> Enum.find(&(not is_nil(&1) and &1 not in @template_filters))
 
-    case unknown do
-      nil ->
-        rendered =
-          @template_placeholder
-          |> Regex.replace(template, fn
-            _, key, "" -> render_value(Map.get(values, key), " ")
-            _, key, "json" -> encode_json(Map.get(values, key))
-            _, key, "shell" -> shell_quote(Map.get(values, key))
-          end)
-          |> String.trim()
+    with :ok <- check_filters(placeholders),
+         {:ok, rendered} <- render_placeholders(placeholders, values, context) do
+      result =
+        Enum.reduce(rendered, template, fn {raw, text}, acc ->
+          String.replace(acc, raw, text)
+        end)
 
-        {:ok, rendered}
-
-      filter ->
-        {:error, {:invalid_template, "unknown filter #{filter}"}}
+      {:ok, String.trim(result)}
     end
   end
+
+  defp check_filters(placeholders) do
+    case Enum.find(placeholders, fn {_, _, f, _} -> f != "" and f not in @template_filters end) do
+      nil -> :ok
+      {_, _, filter, _} -> {:error, {:invalid_template, "unknown filter #{filter}"}}
+    end
+  end
+
+  defp render_placeholders(placeholders, values, context) do
+    Enum.reduce_while(placeholders, {:ok, []}, fn {raw, key, filter, arg}, {:ok, acc} ->
+      case render_placeholder(filter, arg, Map.get(values, key), values, context) do
+        {:ok, text} -> {:cont, {:ok, [{raw, text} | acc]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp render_placeholder("", _arg, value, _values, _context), do: {:ok, render_value(value, " ")}
+  defp render_placeholder("json", _arg, value, _values, _context), do: {:ok, encode_json(value)}
+  defp render_placeholder("shell", _arg, value, _values, _context), do: {:ok, shell_quote(value)}
+
+  defp render_placeholder("pubkey", _arg, value, _values, context) do
+    with {:ok, entry} <- resolve_entry(render_value(value, " "), context) do
+      {:ok, Base.encode16(entry.public_key, case: :lower)}
+    end
+  end
+
+  defp render_placeholder("seal", nil, _value, _values, _context) do
+    {:error, {:invalid_template, "seal needs a target argument, as in {{body|seal:to}}"}}
+  end
+
+  defp render_placeholder("seal", arg, value, values, context) do
+    seal_to(render_value(value, " "), arg, values, context)
+  end
+
+  @doc """
+  Seal `body` to the peer named by argument `target`, or to the caller when
+  `target` is `"me"`. Returns a `sealed-v1:<base64>` token.
+  """
+  @spec seal_to(binary(), String.t(), map(), filter_context()) ::
+          {:ok, String.t()} | {:error, term()}
+  def seal_to(body, "me", _values, %{identity: %Identity{} = id}) do
+    {x_pub, _} = Identity.to_x25519(id)
+    {:ok, encode_sealed(SealedBox.seal(x_pub, body))}
+  end
+
+  def seal_to(_body, "me", _values, _context), do: {:error, {:no_identity, "me"}}
+
+  def seal_to(body, target, values, context) do
+    query = render_value(Map.get(values, target), " ")
+
+    with {:ok, entry} <- resolve_entry(query, context) do
+      case entry.x25519_public do
+        <<x_pub::binary-size(32)>> -> {:ok, encode_sealed(SealedBox.seal(x_pub, body))}
+        _ -> {:error, {:no_keyex, query}}
+      end
+    end
+  end
+
+  @doc """
+  Replace every `sealed-v1:<base64>` token in `text` with its plaintext,
+  opened with `identity`. A token that does not open is replaced with
+  `[sealed: cannot open]`.
+  """
+  @spec open_tokens(String.t(), Identity.t()) :: String.t()
+  def open_tokens(text, %Identity{} = identity) when is_binary(text) do
+    Regex.replace(@sealed_token, text, fn _, b64 ->
+      with {:ok, sealed} <- Base.decode64(b64),
+           {:ok, plain} <- SealedBox.open(identity, sealed) do
+        plain
+      else
+        _ -> "[sealed: cannot open]"
+      end
+    end)
+  end
+
+  defp encode_sealed(sealed), do: @sealed_prefix <> Base.encode64(sealed)
+
+  defp resolve_entry(value, %{resolve: resolve}) when is_function(resolve, 1) do
+    case resolve.(value) do
+      {:ok, [entry]} -> {:ok, entry}
+      {:ok, []} -> bare_hex_entry(value, :not_found)
+      {:ok, _many} -> {:error, {:resolve, value, :ambiguous}}
+      {:error, reason} -> {:error, {:resolve, value, reason}}
+    end
+  end
+
+  defp resolve_entry(value, _context), do: bare_hex_entry(value, :no_resolver)
+
+  # A full hex public key stands on its own for `pubkey`. It carries no
+  # X25519 key, so `seal` still needs the control plane entry.
+  defp bare_hex_entry(<<hex::binary-size(64)>> = value, reason) do
+    case Base.decode16(hex, case: :mixed) do
+      {:ok, pk} -> {:ok, %{public_key: pk, x25519_public: nil, name: value}}
+      :error -> {:error, {:resolve, value, reason}}
+    end
+  end
+
+  defp bare_hex_entry(value, reason), do: {:error, {:resolve, value, reason}}
 
   defp render_value(value, join_with) when is_list(value), do: Enum.join(value, join_with)
   defp render_value(true, _join_with), do: "true"

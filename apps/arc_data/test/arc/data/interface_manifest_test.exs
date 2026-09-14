@@ -74,6 +74,41 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert raw["input"] == %{"source" => "stdin", "join_with" => "\n"}
   end
 
+  test "normalizes seal_to and an open output filter" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "dm",
+            "commands" => [
+              %{
+                "path" => ["send"],
+                "args" => [%{"name" => "peer", "kind" => "positional", "required" => true}],
+                "input" => %{
+                  "source" => "stdin",
+                  "template" => "send {{peer|pubkey}}",
+                  "seal_to" => "peer"
+                }
+              },
+              %{
+                "path" => ["send2"],
+                "input" => %{"source" => "stdin", "seal_to" => ["peer", "me"]}
+              },
+              %{"path" => ["read"], "output" => %{"filter" => "open"}},
+              %{"path" => ["ls"], "output" => %{"filter" => "bogus"}}
+            ]
+          }
+        }
+      })
+
+    [send, send2, read, ls] = cli["commands"]
+
+    assert send["input"]["seal_to"] == ["peer"]
+    assert send2["input"]["seal_to"] == ["peer", "me"]
+    assert read["output"] == %{"filter" => "open"}
+    refute Map.has_key?(ls, "output")
+  end
+
   test "loads a JSON interface manifest file" do
     path =
       Path.join(

@@ -63,6 +63,87 @@ defmodule Arc.Data.ToolboxTest do
              Toolbox.build_invocation(tool, ["write", "inbox"])
   end
 
+  describe "pubkey and seal filters" do
+    setup do
+      bob = Arc.Identity.generate()
+      {bob_x, _} = Arc.Identity.to_x25519(bob)
+      nokey = Arc.Identity.generate()
+      me = Arc.Identity.generate()
+
+      entries = %{
+        Arc.Identity.name(bob) => [
+          %{public_key: bob.public_key, x25519_public: bob_x, name: "bob"}
+        ],
+        Arc.Identity.name(nokey) => [
+          %{public_key: nokey.public_key, x25519_public: nil, name: "nokey"}
+        ]
+      }
+
+      resolve = fn query -> {:ok, Map.get(entries, query, [])} end
+      %{bob: bob, nokey: nokey, me: me, context: %{resolve: resolve, identity: me}}
+    end
+
+    @dm_args [
+      %{"name" => "to", "kind" => "positional", "type" => "string", "required" => true},
+      %{"name" => "body", "kind" => "option", "flag" => "--body", "type" => "string"}
+    ]
+
+    test "pubkey renders the resolved hex key", %{bob: bob, context: ctx} do
+      values = %{"to" => Arc.Identity.name(bob)}
+
+      assert {:ok, "send " <> hex} = Toolbox.render_template("send {{to|pubkey}}", values, ctx)
+      assert hex == Arc.Identity.encode_public_key(bob)
+    end
+
+    test "pubkey passes a full hex key through without a resolver", %{bob: bob} do
+      hex = Arc.Identity.encode_public_key(bob)
+      assert {:ok, ^hex} = Toolbox.render_template("{{to|pubkey}}", %{"to" => hex}, %{})
+    end
+
+    test "pubkey fails when the name does not resolve", %{context: ctx} do
+      assert {:error, {:resolve, "nobody", :not_found}} =
+               Toolbox.render_template("{{to|pubkey}}", %{"to" => "nobody"}, ctx)
+    end
+
+    test "seal:to produces a token only the target can open", %{bob: bob, me: me, context: ctx} do
+      values = %{"to" => Arc.Identity.name(bob), "body" => "hi bob"}
+
+      assert {:ok, "sealed-v1:" <> _ = token} =
+               Toolbox.render_template("{{body|seal:to}}", values, ctx)
+
+      assert Toolbox.open_tokens("x " <> token <> " y", bob) == "x hi bob y"
+      assert Toolbox.open_tokens(token, me) == "[sealed: cannot open]"
+    end
+
+    test "seal:me seals to the caller", %{me: me, context: ctx} do
+      assert {:ok, token} = Toolbox.render_template("{{body|seal:me}}", %{"body" => "note"}, ctx)
+      assert Toolbox.open_tokens(token, me) == "note"
+    end
+
+    test "seal fails when the target has no keyex", %{nokey: nokey, context: ctx} do
+      name = Arc.Identity.name(nokey)
+
+      assert {:error, {:no_keyex, ^name}} =
+               Toolbox.render_template("{{body|seal:to}}", %{"to" => name, "body" => "x"}, ctx)
+    end
+
+    test "seal without a target is a template error" do
+      assert {:error, {:invalid_template, _}} =
+               Toolbox.render_template("{{body|seal}}", %{"body" => "x"}, %{})
+    end
+
+    test "seal_to/4 seals a body through the same path", %{bob: bob, context: ctx} do
+      values = %{"to" => Arc.Identity.name(bob)}
+      assert {:ok, token} = Toolbox.seal_to("stdin body", "to", values, ctx)
+      assert Toolbox.open_tokens(token, bob) == "stdin body"
+    end
+
+    test "render_template/2 still works without a context" do
+      assert {:ok, ~s(a "b")} =
+               Toolbox.render_template("{{x}} {{y|json}}", %{"x" => "a", "y" => "b"})
+    end
+  end
+
   test "json source sends every parsed argument as one JSON object" do
     tool = tool(%{"source" => "json"}, @args)
 

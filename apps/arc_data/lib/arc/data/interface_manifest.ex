@@ -171,6 +171,7 @@ defmodule Arc.Data.InterfaceManifest do
     summary = present_string(Map.get(command, "summary")) || fallback_summary
     examples = normalize_examples(Map.get(command, "examples", []))
     invoke = normalize_cli_invoke(Map.get(command, "invoke"))
+    output = normalize_cli_output(Map.get(command, "output"))
 
     if is_nil(path) do
       []
@@ -182,6 +183,7 @@ defmodule Arc.Data.InterfaceManifest do
         |> maybe_put("args", if(args == [], do: nil, else: args))
         |> maybe_put("input", input)
         |> maybe_put("invoke", invoke)
+        |> maybe_put("output", output)
         |> maybe_put("examples", if(examples == [], do: nil, else: examples))
       ]
     end
@@ -300,6 +302,7 @@ defmodule Arc.Data.InterfaceManifest do
       "stdin" ->
         %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
         |> maybe_put("template", present_string(Map.get(input, "template")))
+        |> maybe_put("seal_to", normalize_seal_to(Map.get(input, "seal_to")))
 
       _ ->
         nil
@@ -311,6 +314,20 @@ defmodule Arc.Data.InterfaceManifest do
   end
 
   defp normalize_cli_input(_, _args), do: nil
+
+  defp normalize_seal_to(target) when is_binary(target), do: normalize_seal_to([target])
+
+  defp normalize_seal_to(targets) when is_list(targets) do
+    case targets |> Enum.map(&present_string/1) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      list -> list
+    end
+  end
+
+  defp normalize_seal_to(_), do: nil
+
+  defp normalize_cli_output(%{"filter" => "open"}), do: %{"filter" => "open"}
+  defp normalize_cli_output(_), do: nil
 
   defp normalize_cli_invoke(invoke) when is_map(invoke) do
     %{}

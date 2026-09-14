@@ -217,6 +217,59 @@ defmodule Arc.CLIToolsTest do
     assert output =~ "/pages/hrs/nb/page\n# Title\n\nA long body with \"quotes\" and {{braces}}."
   end
 
+  test "seal_to seals the stdin body per target and the open filter decodes the reply" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _manifest_path} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(System.tmp_dir!(), "arc_dm_manifest_#{System.unique_integer([:positive])}.json")
+
+    write_dm_manifest(manifest_path)
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    {:ok, input_device} = StringIO.open("a private line\n")
+    old_input_device = Application.get_env(:arc_cli, :stream_input_device)
+    Application.put_env(:arc_cli, :stream_input_device, input_device)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+
+      if old_input_device do
+        Application.put_env(:arc_cli, :stream_input_device, old_input_device)
+      else
+        Application.delete_env(:arc_cli, :stream_input_device)
+      end
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id)])
+      end)
+
+    # The echo provider returns the header and both tokens. The header
+    # carries the server's hex key. The first token is sealed to the server
+    # and cannot be opened here. The second is sealed to the caller and
+    # opens to the stdin body.
+    server_hex = Identity.encode_public_key(server_id)
+    assert output =~ "/dm/#{server_hex}\n[sealed: cannot open]\na private line\n"
+    refute output =~ "sealed-v1:"
+  end
+
   test "installed tools can be invoked as top-level arc subcommands" do
     client_id = persist_cli_identity()
     server_id = Identity.generate()
@@ -732,6 +785,44 @@ defmodule Arc.CLIToolsTest do
                 }
               ],
               "input" => %{"source" => "stdin", "template" => "POST /echo /pages/{{path}}"}
+            }
+          ]
+        }
+      }
+    }
+
+    File.write!(path, manifest |> :json.encode() |> IO.iodata_to_binary())
+  end
+
+  defp write_dm_manifest(path) do
+    manifest = %{
+      "published_at" => "2026-03-06T00:00:00Z",
+      "release" => %{"version" => "1.0.0", "channel" => "stable"},
+      "capability" => %{
+        "id" => "primary",
+        "kind" => "service",
+        "scheme" => "dm",
+        "title" => "DM",
+        "summary" => "Sealed messages through the hello echo runtime.",
+        "invocation" => %{"method" => "RAW", "path" => "/"}
+      },
+      "interfaces" => %{
+        "cli" => %{
+          "version" => 1,
+          "namespace" => "dm",
+          "commands" => [
+            %{
+              "path" => ["send"],
+              "summary" => "Send a sealed body from stdin",
+              "args" => [
+                %{"name" => "to", "kind" => "positional", "type" => "string", "required" => true}
+              ],
+              "input" => %{
+                "source" => "stdin",
+                "template" => "POST /echo /dm/{{to|pubkey}}",
+                "seal_to" => ["to", "me"]
+              },
+              "output" => %{"filter" => "open"}
             }
           ]
         }

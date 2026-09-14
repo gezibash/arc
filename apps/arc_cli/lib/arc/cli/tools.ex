@@ -492,6 +492,21 @@ defmodule Arc.CLI.Tools do
     end
   end
 
+  defp apply_output_filter(reply, %{"output" => %{"filter" => "open"}}) do
+    case filter_context() do
+      %{identity: %Identity{} = id} ->
+        Map.update(reply, :text, nil, fn
+          text when is_binary(text) -> Toolbox.open_tokens(text, id)
+          other -> other
+        end)
+
+      _ ->
+        reply
+    end
+  end
+
+  defp apply_output_filter(reply, _command), do: reply
+
   defp print_reply(reply) do
     case reply[:kind] do
       :response -> IO.puts(reply.text || "")
@@ -639,7 +654,7 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp invoke_built_command(agent, install, %{input: input, invocation: invocation}) do
+  defp invoke_built_command(agent, install, %{input: input, invocation: invocation} = built) do
     case invocation["mode"] || "request_reply" do
       "stream" ->
         invoke_stream_command(agent, install, input, invocation)
@@ -647,7 +662,9 @@ defmodule Arc.CLI.Tools do
       _ ->
         case CapabilityInvocation.invoke(agent, install, input, invocation_override: invocation) do
           {:ok, reply} ->
-            print_reply(reply)
+            reply
+            |> apply_output_filter(Map.get(built, :command))
+            |> print_reply()
 
           {:error, {:remote, code, message}} ->
             error("tool call failed: #{code}: #{message}")
@@ -929,10 +946,13 @@ defmodule Arc.CLI.Tools do
   end
 
   defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values) do
-    with {:ok, body} <- read_stdin_body() do
+    context = filter_context()
+
+    with {:ok, raw_body} <- read_stdin_body(),
+         {:ok, body} <- seal_stdin_body(raw_body, input_spec["seal_to"], values, context) do
       case input_spec["template"] do
         template when is_binary(template) ->
-          with {:ok, header} <- Toolbox.render_template(template, values) do
+          with {:ok, header} <- Toolbox.render_template(template, values, context) do
             {:ok, header <> (input_spec["join_with"] || "\n") <> body}
           end
 
@@ -943,7 +963,42 @@ defmodule Arc.CLI.Tools do
   end
 
   defp render_input(cli_command, args, values) do
-    Toolbox.render_input(cli_command, args, values)
+    Toolbox.render_input(cli_command, args, values, filter_context())
+  end
+
+  defp seal_stdin_body(body, nil, _values, _context), do: {:ok, body}
+
+  defp seal_stdin_body(body, targets, values, context) when is_list(targets) do
+    Enum.reduce_while(targets, {:ok, []}, fn target, {:ok, acc} ->
+      case Toolbox.seal_to(body, target, values, context) do
+        {:ok, token} -> {:cont, {:ok, [token | acc]}}
+        {:error, reason} -> {:halt, {:error, {:invalid_arguments, seal_error(target, reason)}}}
+      end
+    end)
+    |> case do
+      {:ok, tokens} -> {:ok, tokens |> Enum.reverse() |> Enum.join("\n")}
+      error -> error
+    end
+  end
+
+  defp seal_error(target, {:resolve, value, reason}),
+    do: "cannot seal to #{target}: #{value} #{reason}"
+
+  defp seal_error(target, {:no_keyex, value}),
+    do: "cannot seal to #{target}: #{value} has no published X25519 key"
+
+  defp seal_error(target, reason), do: "cannot seal to #{target}: #{inspect(reason)}"
+
+  # Filters that resolve names or seal bodies need the control plane and
+  # the caller's identity. Both are cheap to look up per invocation.
+  defp filter_context do
+    identity =
+      case KeyStore.resolve_active() do
+        {:ok, id} -> id
+        _ -> nil
+      end
+
+    %{resolve: &Arc.Control.resolve/1, identity: identity}
   end
 
   defp read_stdin_body do
