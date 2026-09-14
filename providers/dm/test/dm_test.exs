@@ -18,7 +18,7 @@ defmodule DmTest do
   defp body(text), do: token(text <> "@peer") <> "\n" <> token(text <> "@self") <> "\n"
 
   defp send(root, from, to, text, extra \\ "") do
-    {:ok, "id: " <> id} = Command.run(root, from, "send #{to} #{extra}\n" <> body(text))
+    {:ok, "id: " <> id, _events} = Command.run(root, from, "send #{to} #{extra}\n" <> body(text))
     id
   end
 
@@ -182,9 +182,12 @@ defmodule DmTest do
   test "react records the latest reaction per key in both mailboxes", %{root: root} do
     id = send(root, @alice, @bob, "hi")
 
-    assert {:ok, "reacted 👍 " <> _} = Command.run(root, @bob, "react #{id} 👍")
-    assert {:ok, "reacted ❤️ " <> _} = Command.run(root, @bob, "react #{id} ❤️")
-    assert {:ok, "reacted 🎉 " <> _} = Command.run(root, @alice, "react #{id} 🎉")
+    assert {:ok, "reacted 👍 " <> _, [%{to: @alice, topic: "dm.reaction"} = ev]} =
+             Command.run(root, @bob, "react #{id} 👍")
+
+    assert ev.meta == %{"id" => id, "from" => @bob, "value" => "👍"}
+    assert {:ok, "reacted ❤️ " <> _, _} = Command.run(root, @bob, "react #{id} ❤️")
+    assert {:ok, "reacted 🎉 " <> _, _} = Command.run(root, @alice, "react #{id} 🎉")
     assert {:error, "invalid_reaction" <> _} = Command.run(root, @bob, "react #{id} toolong")
     assert {:error, "not_found"} = Command.run(root, @carol, "react #{id} 👍")
 
@@ -196,7 +199,7 @@ defmodule DmTest do
     {:ok, out} = Command.run(root, @bob, "read #{id}")
     assert out =~ "reactions: 🎉 #{@alice} ❤️ #{@bob}"
 
-    assert {:ok, "cleared " <> _} = Command.run(root, @bob, "react #{id} none")
+    assert {:ok, "cleared " <> _, _} = Command.run(root, @bob, "react #{id} none")
     {:ok, out} = Command.run(root, @bob, "read #{id}")
     assert out =~ "reactions: 🎉 #{@alice}\n"
   end
@@ -243,7 +246,7 @@ defmodule DmTest do
     assert {:error, "blocked " <> @bob} = Command.run(root, @alice, "send #{@bob}\n" <> body("x"))
     assert {:ok, _} = Command.run(root, @bob, "unblock #{@alice}")
     assert {:ok, "no blocked keys"} = Command.run(root, @bob, "blocked")
-    assert "id: " <> _ = elem(Command.run(root, @alice, "send #{@bob}\n" <> body("x")), 1)
+    assert {:ok, "id: " <> _, _} = Command.run(root, @alice, "send #{@bob}\n" <> body("x"))
   end
 
   test "send to self stores one copy", %{root: root} do
@@ -317,8 +320,14 @@ defmodule DmTest do
   test "send --to stores one copy per recipient plus the sender, tokens by position", %{
     root: root
   } do
-    {:ok, "id: " <> id} =
+    {:ok, "id: " <> id, events} =
       Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> group_body("hey", 2))
+
+    assert [%{to: @bob, topic: "dm.new", body: b1}, %{to: @carol, topic: "dm.new", body: b2}] =
+             events
+
+    assert b1 == token("hey@1") and b2 == token("hey@2")
+    assert hd(events).meta["id"] == id and hd(events).meta["from"] == @alice
 
     {:ok, bob} = Dm.Store.get_message(root, @bob, id)
     {:ok, carol} = Dm.Store.get_message(root, @carol, id)
@@ -384,7 +393,7 @@ defmodule DmTest do
         "attach:plan.md:" <> token("file@self")
       ]
 
-    {:ok, "id: " <> id} = Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
+    {:ok, "id: " <> id, _} = Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
 
     assert {:ok, tok} = Command.run(root, @bob, "fetch #{id} plan.md")
     assert tok == token("file@peer")
@@ -445,6 +454,26 @@ defmodule DmTest do
 
     # The unknown command is echoed back byte for byte.
     assert :json.decode(String.trim(out))["error"] == "unknown_command #{text}"
+  end
+
+  test "stdio loop prints event lines before the reply", %{root: root} do
+    message = "send #{@bob}\n" <> body("ping")
+
+    line =
+      :json.encode(%{
+        "op" => "request",
+        "message" => message,
+        "from" => @alice,
+        "request_id" => "r9"
+      })
+
+    {:ok, device} = StringIO.open(IO.iodata_to_binary(line) <> "\n")
+    out = ExUnit.CaptureIO.capture_io(fn -> Dm.Stdio.loop(root, device) end)
+    [event, reply] = out |> String.trim() |> String.split("\n") |> Enum.map(&:json.decode/1)
+
+    assert event["op"] == "event" and event["to"] == @bob and event["topic"] == "dm.new"
+    assert event["body"] == token("ping@peer")
+    assert reply["op"] == "reply" and reply["request_id"] == "r9"
   end
 
   test "stdio loop replies to a request line", %{root: root} do

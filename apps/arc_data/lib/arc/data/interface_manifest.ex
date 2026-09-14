@@ -364,10 +364,23 @@ defmodule Arc.Data.InterfaceManifest do
     |> maybe_put("method", present_string(Map.get(invoke, "method")))
     |> maybe_put("path", present_string(Map.get(invoke, "path")))
     |> maybe_put("stream", normalize_cli_stream(Map.get(invoke, "stream")))
+    |> maybe_put("topics", normalize_topics(Map.get(invoke, "topics")))
     |> empty_map_to_nil()
   end
 
   defp normalize_cli_invoke(_invoke), do: nil
+
+  # Topic globs an events command listens for. `*` matches any run of
+  # characters. Absent means every topic.
+  defp normalize_topics(topics) when is_list(topics) do
+    case topics |> Enum.map(&present_string/1) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      list -> list
+    end
+  end
+
+  defp normalize_topics(topic) when is_binary(topic), do: normalize_topics([topic])
+  defp normalize_topics(_), do: nil
 
   defp normalize_cli_stream(stream) when is_map(stream) do
     operations =
@@ -428,6 +441,7 @@ defmodule Arc.Data.InterfaceManifest do
   defp truthy?(_value, _default), do: false
 
   defp normalize_cli_invoke_mode("stream"), do: "stream"
+  defp normalize_cli_invoke_mode("events"), do: "events"
   defp normalize_cli_invoke_mode("request_reply"), do: "request_reply"
   defp normalize_cli_invoke_mode(_mode), do: nil
 

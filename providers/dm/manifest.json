@@ -279,6 +279,32 @@
         },
         {
           "path": [
+            "watch"
+          ],
+          "summary": "Print each message and reaction as it lands, opened. --notify also posts a desktop notification. Ctrl+C to stop.",
+          "input": {
+            "source": "template",
+            "template": "whoami"
+          },
+          "invoke": {
+            "mode": "events",
+            "topics": [
+              "dm.*"
+            ]
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames"
+            ]
+          },
+          "examples": [
+            "",
+            "--notify"
+          ]
+        },
+        {
+          "path": [
             "read"
           ],
           "summary": "Read one message. Marks an inbound message as read.",

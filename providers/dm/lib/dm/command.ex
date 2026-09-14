@@ -5,7 +5,10 @@ defmodule Dm.Command do
 
   @token_re ~r/^sealed-v1:[A-Za-z0-9+\/=]+$/
 
-  @spec run(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  @type event :: %{to: String.t(), topic: String.t(), meta: map(), body: String.t()}
+
+  @spec run(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:ok, String.t(), [event()]} | {:error, String.t()}
   def run(root, from, message) do
     {header, body} = Parse.split(message)
     {args, opts} = Parse.parse(header)
@@ -53,7 +56,21 @@ defmodule Dm.Command do
       end)
 
       Enum.each(recipients, &Store.add_receipt(ctx.root, &1, id, "delivered"))
-      {:ok, "id: #{id}"}
+
+      # Each recipient gets a dm.new event carrying its own sealed token.
+      events =
+        recipients
+        |> Enum.reject(&(&1 == ctx.from))
+        |> Enum.map(fn pk ->
+          %{
+            to: pk,
+            topic: "dm.new",
+            meta: %{"id" => id, "from" => ctx.from, "t" => base["t"]},
+            body: Enum.at(tokens, token_index(pk, recipients))
+          }
+        end)
+
+      {:ok, "id: #{id}", events}
     end
   end
 
@@ -196,7 +213,20 @@ defmodule Dm.Command do
       |> holders()
       |> Enum.each(&Store.add_receipt(ctx.root, &1, id, "reaction", extra))
 
-      {:ok, if(value == "", do: "cleared #{id}", else: "reacted #{value} #{id}")}
+      events =
+        msg
+        |> holders()
+        |> Enum.reject(&(&1 == ctx.from))
+        |> Enum.map(fn pk ->
+          %{
+            to: pk,
+            topic: "dm.reaction",
+            meta: %{"id" => id, "from" => ctx.from, "value" => value},
+            body: ""
+          }
+        end)
+
+      {:ok, if(value == "", do: "cleared #{id}", else: "reacted #{value} #{id}"), events}
     end
   end
 

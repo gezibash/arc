@@ -362,6 +362,37 @@ defmodule Arc.CLIToolsTest do
                "attach:#{attach_name}:from a file\n"
   end
 
+  test "an events command prints matching events from the provider" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    runtime = Path.expand("../../../../test/fixtures/providers/events-provider.exs", __DIR__)
+    manifest = Path.expand("../../../../test/fixtures/providers/events-provider.json", __DIR__)
+    File.chmod!(runtime, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(server_id,
+        serve: "exec://#{runtime}?manifest=#{URI.encode_www_form(manifest)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["ev", "watch", "--once"]) end)
+
+    assert output =~ "watching. Ctrl+C to stop.\n"
+
+    assert output =~
+             ~r/\d\d:\d\d:\d\d  test\.ping  #{Identity.encode_public_key(server_id)}  pong for #{Identity.encode_public_key(client_id)}\n/
+  end
+
   test "a tool that needs a newer interface version is refused with advice" do
     client_id = persist_cli_identity()
     server_id = Identity.generate()

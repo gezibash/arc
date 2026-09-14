@@ -74,6 +74,25 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert raw["input"] == %{"source" => "stdin", "join_with" => "\n"}
   end
 
+  test "normalizes an events invoke mode with topic globs" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "dm",
+            "commands" => [
+              %{"path" => ["watch"], "invoke" => %{"mode" => "events", "topics" => ["dm.*", ""]}},
+              %{"path" => ["one"], "invoke" => %{"mode" => "events", "topics" => "x"}}
+            ]
+          }
+        }
+      })
+
+    [watch, one] = cli["commands"]
+    assert watch["invoke"] == %{"mode" => "events", "topics" => ["dm.*"]}
+    assert one["invoke"] == %{"mode" => "events", "topics" => ["x"]}
+  end
+
   test "keeps an explicit interface version and reports the max it renders" do
     cli =
       InterfaceManifest.cli(%{

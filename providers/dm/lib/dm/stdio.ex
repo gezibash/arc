@@ -55,6 +55,16 @@ defmodule Dm.Stdio do
     _ -> :error
   end
 
+  # A command may return events to push before its reply. Each becomes an
+  # `{"op":"event",...}` line, which the ARC exec runtime sends to `to`.
+  defp emit({:ok, reply, events}, request_id) when is_list(events) do
+    Enum.each(events, fn %{to: to, topic: topic, meta: meta, body: body} ->
+      emit_raw(%{"op" => "event", "to" => to, "topic" => topic, "meta" => meta, "body" => body})
+    end)
+
+    emit({:ok, reply}, request_id)
+  end
+
   defp emit({:ok, reply}, request_id),
     do: emit_raw(%{"op" => "reply", "request_id" => request_id, "reply" => reply})
 

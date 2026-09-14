@@ -515,9 +515,124 @@ defmodule Arc.CLI.Tools do
   defp apply_output_filter(reply, _command, _opts), do: reply
 
   defp extract_output_flags(argv) do
-    {flags, rest} = Enum.split_with(argv, &(&1 in ["--raw", "--hex"]))
-    {%{raw: "--raw" in flags, hex: "--hex" in flags}, rest}
+    {flags, rest} = Enum.split_with(argv, &(&1 in ["--raw", "--hex", "--notify", "--once"]))
+
+    {%{
+       raw: "--raw" in flags,
+       hex: "--hex" in flags,
+       notify: "--notify" in flags,
+       once: "--once" in flags
+     }, rest}
   end
+
+  # An events command sends its request once, as a hello, then prints every
+  # event the provider emits to this identity whose topic matches. It runs
+  # until Ctrl+C, or after the first event with --once.
+  defp invoke_events_command(agent, install, built) do
+    invocation = built.invocation
+    opts = Map.get(built, :output_opts, %{})
+    provider_pk = decode_provider_pk(install)
+    topics = invocation["topics"]
+
+    case CapabilityInvocation.invoke(agent, install, built.input, invocation_override: invocation) do
+      {:ok, _reply} -> :ok
+      {:error, {:remote, code, message}} -> error("tool call failed: #{code}: #{message}")
+      {:error, reason} -> error("tool call failed: #{inspect(reason)}")
+    end
+
+    IO.puts("watching. Ctrl+C to stop.")
+    events_loop(agent, provider_pk, topics, Map.get(built, :command), opts)
+  end
+
+  defp events_loop(agent, provider_pk, topics, command, opts) do
+    Agent.poll_mailbox(agent)
+
+    events =
+      agent
+      |> Agent.read_inbox()
+      |> Enum.filter(fn msg ->
+        msg[:kind] == :event and
+          (is_nil(provider_pk) or msg[:from_key] == provider_pk) and
+          topic_matches?(get_in(msg, [:meta, "topic"]), topics)
+      end)
+
+    Enum.each(events, &print_event(&1, command, opts))
+
+    if opts[:once] and events != [] do
+      :ok
+    else
+      Process.sleep(200)
+      events_loop(agent, provider_pk, topics, command, opts)
+    end
+  end
+
+  defp print_event(event, command, opts) do
+    meta = event[:meta] || %{}
+    topic = meta["topic"] || "event"
+    sender = meta["from"] || Identity.encode_public_key(event[:from_key])
+    body = event[:text] || ""
+    time = Calendar.strftime(DateTime.utc_now(), "%H:%M:%S")
+
+    text =
+      "#{time}  #{topic}  #{sender}  #{body}"
+      |> apply_text_filters(command, opts)
+
+    IO.puts(text)
+    if opts[:notify], do: desktop_notify(topic, text)
+  end
+
+  defp apply_text_filters(text, command, opts) do
+    %{text: text}
+    |> apply_output_filter(command, opts)
+    |> Map.get(:text)
+  end
+
+  defp topic_matches?(_topic, nil), do: true
+  defp topic_matches?(nil, _globs), do: false
+
+  defp topic_matches?(topic, globs) do
+    Enum.any?(globs, fn glob ->
+      pattern = "^" <> (glob |> Regex.escape() |> String.replace("\\*", ".*")) <> "$"
+      Regex.match?(Regex.compile!(pattern), topic)
+    end)
+  end
+
+  defp decode_provider_pk(install) do
+    case install["provider_public_key"] do
+      hex when is_binary(hex) ->
+        case Base.decode16(hex, case: :mixed) do
+          {:ok, <<pk::binary-size(32)>>} -> pk
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # The body is opened on this machine before it reaches the notifier, and
+  # only the first line goes. macOS and Linux only; elsewhere this is a no-op.
+  defp desktop_notify(topic, text) do
+    first = text |> String.split("\n") |> hd() |> String.slice(0, 200)
+
+    case :os.type() do
+      {:unix, :darwin} ->
+        script = ~s(display notification "#{escape_quotes(first)}" with title "arc #{topic}")
+        System.cmd("osascript", ["-e", script], stderr_to_stdout: true)
+
+      {:unix, _} ->
+        System.cmd("notify-send", ["arc #{topic}", first], stderr_to_stdout: true)
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp escape_quotes(text), do: String.replace(text, "\"", "\\\"")
 
   defp print_reply(reply) do
     case reply[:kind] do
@@ -684,6 +799,9 @@ defmodule Arc.CLI.Tools do
     case invocation["mode"] || "request_reply" do
       "stream" ->
         invoke_stream_command(agent, install, input, invocation)
+
+      "events" ->
+        invoke_events_command(agent, install, built)
 
       _ ->
         case CapabilityInvocation.invoke(agent, install, input, invocation_override: invocation) do
