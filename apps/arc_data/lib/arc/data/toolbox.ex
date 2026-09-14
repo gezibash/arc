@@ -420,22 +420,35 @@ defmodule Arc.Data.Toolbox do
   end
 
   @doc """
-  On each line, keep the text after the last tab to `n` characters, on one
-  line, ending in an ellipsis when cut. Lines without a tab are unchanged.
+  Cut the last tab field of each record to `n` characters on one line,
+  ending in an ellipsis when cut. A record is a line with tabs plus every
+  following line without tabs, since an opened body may span lines. Lines
+  before the first record, such as a header, are unchanged.
   """
   @spec preview(String.t(), pos_integer()) :: String.t()
   def preview(text, n) when is_binary(text) and is_integer(n) and n > 0 do
     text
     |> String.split("\n")
-    |> Enum.map_join("\n", fn line ->
-      case String.split(line, "\t") do
-        [_] ->
-          line
+    |> Enum.reduce([], fn line, acc ->
+      case {String.contains?(line, "\t"), acc} do
+        {false, [prev | rest]} when is_tuple(prev) ->
+          [{elem(prev, 0), elem(prev, 1) <> "\n" <> line} | rest]
 
-        parts ->
-          {head, [last]} = Enum.split(parts, -1)
-          Enum.join(head ++ [truncate(last, n)], "\t")
+        {false, _} ->
+          [line | acc]
+
+        {true, _} ->
+          [{line, ""} | acc]
       end
+    end)
+    |> Enum.reverse()
+    |> Enum.map_join("\n", fn
+      {line, tail} ->
+        {head, [last]} = line |> String.split("\t") |> Enum.split(-1)
+        Enum.join(head ++ [truncate(last <> tail, n)], "\t")
+
+      line ->
+        line
     end)
   end
 

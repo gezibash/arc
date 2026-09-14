@@ -142,11 +142,19 @@ defmodule Arc.Data.ToolboxTest do
 
     test "preview truncates the last tab field to one line" do
       long = String.duplicate("word ", 30)
-      out = Toolbox.preview("id\tin\t#{long}\nno tabs here", 12)
-      [l1, l2] = String.split(out, "\n")
-      assert l1 == "id\tin\tword word w…"
-      assert l2 == "no tabs here"
+      out = Toolbox.preview("header line\nid\tin\t#{long}", 12)
+      assert out == "header line\nid\tin\tword word w…"
       assert Toolbox.preview("a\tb", 5) == "a\tb"
+    end
+
+    test "preview folds an opened multi-line body into its record" do
+      out =
+        Toolbox.preview(
+          "3 unread\nid\tin\t# Review\n\nSection 3 needs a cap.\n\nid2\tin\tshort",
+          20
+        )
+
+      assert out == "3 unread\nid\tin\t# Review Section 3 …\nid2\tin\tshort"
     end
 
     test "apply_output_filters chains in order", %{bob: bob, context: ctx} do
