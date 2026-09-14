@@ -360,13 +360,14 @@ defmodule Arc.CLI.Tools do
 
   defp invoke_installed(agent, command, install, input_parts) do
     {help?, clean_args} = extract_help(input_parts)
+    {output_opts, clean_args} = extract_output_flags(clean_args)
 
     if help? do
       print_usage(command, install, clean_args)
     else
       case build_invocation(install, clean_args) do
         {:ok, invocation} ->
-          invoke_built_command(agent, install, invocation)
+          invoke_built_command(agent, install, Map.put(invocation, :output_opts, output_opts))
 
         {:error, {:invalid_arguments, message}} ->
           error("tool call failed: #{message}")
@@ -492,8 +493,17 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp apply_output_filter(reply, %{"output" => %{"filters" => filters}}) when is_list(filters) do
+  # `--raw` keeps only open and petnames, so tab-separated lines print as
+  # the provider sent them. `--hex` drops petnames.
+  defp apply_output_filter(reply, %{"output" => %{"filters" => filters}}, opts)
+       when is_list(filters) do
     %{identity: identity} = filter_context()
+
+    filters =
+      Enum.reject(filters, fn filter ->
+        (opts[:raw] and filter not in ["open", "petnames"]) or
+          (opts[:hex] and filter == "petnames")
+      end)
 
     Map.update(reply, :text, nil, fn
       text when is_binary(text) -> Toolbox.apply_output_filters(text, filters, identity)
@@ -501,7 +511,12 @@ defmodule Arc.CLI.Tools do
     end)
   end
 
-  defp apply_output_filter(reply, _command), do: reply
+  defp apply_output_filter(reply, _command, _opts), do: reply
+
+  defp extract_output_flags(argv) do
+    {flags, rest} = Enum.split_with(argv, &(&1 in ["--raw", "--hex"]))
+    {%{raw: "--raw" in flags, hex: "--hex" in flags}, rest}
+  end
 
   defp print_reply(reply) do
     case reply[:kind] do
@@ -659,7 +674,7 @@ defmodule Arc.CLI.Tools do
         case CapabilityInvocation.invoke(agent, install, input, invocation_override: invocation) do
           {:ok, reply} ->
             reply
-            |> apply_output_filter(Map.get(built, :command))
+            |> apply_output_filter(Map.get(built, :command), Map.get(built, :output_opts, %{}))
             |> print_reply()
 
           {:error, {:remote, code, message}} ->

@@ -472,6 +472,7 @@ defmodule Arc.Data.Toolbox do
       "open", acc -> if(match?(%Identity{}, identity), do: open_tokens(acc, identity), else: acc)
       "petnames", acc -> petnames(acc)
       "preview:" <> n, acc -> preview(acc, String.to_integer(n))
+      "conversation", acc -> Arc.Data.Render.Conversation.render(acc)
       _other, acc -> acc
     end)
   end

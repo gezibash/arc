@@ -146,6 +146,39 @@ defmodule DmTest do
     assert String.starts_with?(l, id)
   end
 
+  test "thread --bodies returns bodies with flags and marks inbound read", %{root: root} do
+    a = send(root, @alice, @bob, "q")
+    b = send(root, @bob, @alice, "a", "--reply-to \"#{a}\"")
+
+    {:ok, out} = Command.run(root, @bob, "thread #{@alice} --bodies \"true\"")
+    [header, l1, l2] = String.split(out, "\n")
+
+    assert header == "#{@alice} · 2 messages, 1 unread"
+    assert [^a, "in", @alice, _, "-", "unread", body1] = String.split(l1, "\t")
+    assert body1 == token("q@peer")
+    assert [^b, "out", @alice, _, ^a, "delivered", body2] = String.split(l2, "\t")
+    assert body2 == token("a@self")
+
+    # The first call marked a read. Alice sees that on her outbound copy.
+    {:ok, out} = Command.run(root, @bob, "thread #{@alice} --bodies \"true\"")
+    assert ["#{@alice} · 2 messages, 0 unread", l1, _] = String.split(out, "\n")
+    assert [_, "in", _, _, _, "read", _] = String.split(l1, "\t")
+
+    {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
+    [_, l1, _] = String.split(out, "\n")
+    assert [^a, "out", @bob, _, "-", "read", _] = String.split(l1, "\t")
+  end
+
+  test "thread --bodies hides read flags when the peer turned receipts off", %{root: root} do
+    a = send(root, @alice, @bob, "q")
+    {:ok, _} = Command.run(root, @bob, "settings receipts off")
+    {:ok, _} = Command.run(root, @bob, "read #{a}")
+
+    {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
+    [_, l1] = String.split(out, "\n")
+    assert [_, "out", _, _, _, "delivered", _] = String.split(l1, "\t")
+  end
+
   test "thread filters by peer in both directions", %{root: root} do
     a = send(root, @alice, @bob, "1")
     b = send(root, @bob, @alice, "2")

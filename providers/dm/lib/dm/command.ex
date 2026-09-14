@@ -104,14 +104,52 @@ defmodule Dm.Command do
 
   defp dispatch(["thread", peer], opts, ctx) do
     with :ok <- valid_peer(peer) do
-      ctx.root
-      |> Store.list_messages(ctx.from)
-      |> Enum.filter(&(other(&1, ctx) == peer))
-      |> since(opts["since"])
-      |> limit(opts["limit"])
-      |> Enum.map(&line(&1, ctx))
-      |> lines_or("no messages")
+      msgs =
+        ctx.root
+        |> Store.list_messages(ctx.from)
+        |> Enum.filter(&(other(&1, ctx) == peer))
+        |> since(opts["since"])
+        |> limit(opts["limit"])
+
+      if opts["bodies"] == true do
+        thread_with_bodies(msgs, peer, ctx)
+      else
+        msgs |> Enum.map(&line(&1, ctx)) |> lines_or("no messages")
+      end
     end
+  end
+
+  # Returns every message with its body and marks the inbound ones read.
+  # Line: id, dir, peer, t, reply_to or -, flags, body. This format is part
+  # of the CLI interface; the conversation renderer reads it.
+  defp thread_with_bodies(msgs, peer, ctx) do
+    index = Store.receipt_index(ctx.root, ctx.from)
+    show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
+    peer_index = if show_read, do: Store.receipt_index(ctx.root, peer), else: %{}
+    unread = Enum.filter(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
+
+    rows =
+      Enum.map(msgs, fn msg ->
+        flags =
+          cond do
+            outbound?(msg, ctx) and read?(msg, peer_index) -> "read"
+            outbound?(msg, ctx) -> "delivered"
+            read?(msg, index) -> "read"
+            true -> "unread"
+          end
+
+        dir = if outbound?(msg, ctx), do: "out", else: "in"
+
+        Enum.join(
+          [msg["id"], dir, other(msg, ctx), msg["t"], msg["reply_to"] || "-", flags, msg["body"]],
+          "\t"
+        )
+      end)
+
+    Enum.each(unread, &Store.add_receipt(ctx.root, ctx.from, &1["id"], "read"))
+
+    header = "#{peer} · #{length(msgs)} messages, #{length(unread)} unread"
+    {:ok, Enum.join([header | rows], "\n")}
   end
 
   # -- read / ack / status / archive -----------------------------------------
@@ -230,7 +268,7 @@ defmodule Dm.Command do
       conversations [--limit n]
       send <peer> [--reply-to id]     body: two sealed-v1 tokens, one per line
       inbox [--unread] [--since id] [--limit n]
-      thread <peer> [--since id] [--limit n]
+      thread <peer> [--since id] [--limit n] [--bodies]   --bodies marks inbound read
       read <id>
       ack <id>...
       status <id>

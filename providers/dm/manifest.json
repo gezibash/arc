@@ -224,6 +224,52 @@
         },
         {
           "path": [
+            "open"
+          ],
+          "summary": "Read a conversation. Marks its messages read. --raw prints tab-separated lines, --hex keeps public keys.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Peer: petname, short name, key prefix, or 64 hex"
+            },
+            {
+              "name": "since",
+              "kind": "option",
+              "flag": "--since",
+              "type": "string",
+              "required": false,
+              "description": "Only ids greater than this ULID"
+            },
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max messages, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "thread {{peer|pubkey}} --bodies \"true\" --since {{since|json}} --limit {{limit|json}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames",
+              "conversation"
+            ]
+          },
+          "examples": [
+            "jolly-volta",
+            "jolly-volta --limit 20",
+            "jolly-volta --raw"
+          ]
+        },
+        {
+          "path": [
             "read"
           ],
           "summary": "Read one message. Marks an inbound message as read.",

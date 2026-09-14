@@ -328,7 +328,7 @@ defmodule Arc.Data.InterfaceManifest do
 
   defp normalize_seal_to(_), do: nil
 
-  @output_filters ~w(open petnames)
+  @output_filters ~w(open petnames conversation)
 
   # `output.filter` is one filter name or a list, applied in order. Known
   # filters are `open`, `petnames`, and `preview:<n>`. Unknown entries are

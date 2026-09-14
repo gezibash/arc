@@ -269,6 +269,15 @@ defmodule Arc.CLIToolsTest do
     assert output =~ "/dm/#{Identity.name(server_id)}\n[sealed: cannot open]\na private line\n"
     refute output =~ "sealed-v1:"
     refute output =~ Identity.encode_public_key(server_id)
+
+    # --hex keeps the key. The stdin device is drained, so send a body inline.
+    hex_output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "--hex", "again"])
+      end)
+
+    assert hex_output =~
+             "/dm/#{Identity.encode_public_key(server_id)}\n[sealed: cannot open]\nagain\n"
   end
 
   test "a stdin command takes its body from an argument or a file before stdin" do
