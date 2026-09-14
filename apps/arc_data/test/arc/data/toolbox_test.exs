@@ -243,6 +243,29 @@ defmodule Arc.Data.ToolboxTest do
                )
     end
 
+    test "markdown renders a transcript and extra filters are applied by name" do
+      text =
+        Enum.join(
+          [
+            "jolly-volta · 1 messages, 0 unread",
+            "01AAAAAAAAAAAAAAAAAAAAAAAA\tin\tjolly-volta\t2026-09-14T19:22:50Z\t-\tread;attach=a.md:9\tline one",
+            "line two"
+          ],
+          "\n"
+        )
+
+      md = Toolbox.apply_output_filters(text, ["markdown"], nil)
+      assert md =~ "# jolly-volta · 1 messages, 0 unread\n"
+
+      assert md =~
+               "## jolly-volta — 2026-09-14T19:22:50Z\n\n<!-- id: 01AAAAAAAAAAAAAAAAAAAAAAAA -->\nline one\nline two\n\n- 📎 a.md (9 bytes)\n"
+
+      seen = self()
+      extra = %{"cache" => fn t -> send(seen, {:cached, t}) && t end}
+      assert Toolbox.apply_output_filters("x", ["cache", "nope"], nil, extra) == "x"
+      assert_received {:cached, "x"}
+    end
+
     test "render_template/2 still works without a context" do
       assert {:ok, ~s(a "b")} =
                Toolbox.render_template("{{x}} {{y|json}}", %{"x" => "a", "y" => "b"})

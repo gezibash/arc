@@ -362,6 +362,7 @@ defmodule Arc.CLI.Tools do
   defp invoke_installed(agent, command, install, input_parts) do
     {help?, clean_args} = extract_help(input_parts)
     {output_opts, clean_args} = extract_output_flags(clean_args)
+    output_opts = Map.put(output_opts, :namespace, install["command"] || command)
 
     if help? do
       print_usage(command, install, clean_args)
@@ -496,18 +497,30 @@ defmodule Arc.CLI.Tools do
 
   # `--raw` keeps only open and petnames, so tab-separated lines print as
   # the provider sent them. `--hex` drops petnames.
+  # `--raw` keeps only open and petnames. `--hex` drops petnames.
+  # `--format markdown` swaps the conversation renderer for markdown.
   defp apply_output_filter(reply, %{"output" => %{"filters" => filters}}, opts)
        when is_list(filters) do
     %{identity: identity} = filter_context()
+    namespace = opts[:namespace]
+
+    markdown? = opts[:format] == "markdown"
 
     filters =
-      Enum.reject(filters, fn filter ->
+      filters
+      |> Enum.map(fn
+        "conversation" when markdown? -> "markdown"
+        filter -> filter
+      end)
+      |> Enum.reject(fn filter ->
         (opts[:raw] and filter not in ["open", "petnames"]) or
           (opts[:hex] and filter == "petnames")
       end)
 
+    extra = %{"cache" => &Arc.CLI.Cache.store(namespace || "tool", identity, &1)}
+
     Map.update(reply, :text, nil, fn
-      text when is_binary(text) -> Toolbox.apply_output_filters(text, filters, identity)
+      text when is_binary(text) -> Toolbox.apply_output_filters(text, filters, identity, extra)
       other -> other
     end)
   end
@@ -515,14 +528,23 @@ defmodule Arc.CLI.Tools do
   defp apply_output_filter(reply, _command, _opts), do: reply
 
   defp extract_output_flags(argv) do
+    {format, argv} = pop_format(argv)
     {flags, rest} = Enum.split_with(argv, &(&1 in ["--raw", "--hex", "--notify", "--once"]))
 
     {%{
        raw: "--raw" in flags,
        hex: "--hex" in flags,
        notify: "--notify" in flags,
-       once: "--once" in flags
+       once: "--once" in flags,
+       format: format
      }, rest}
+  end
+
+  defp pop_format(argv) do
+    case Enum.split_while(argv, &(&1 != "--format")) do
+      {before, ["--format", format | rest]} -> {format, before ++ rest}
+      _ -> {nil, argv}
+    end
   end
 
   # An events command sends its request once, as a hello, then prints every

@@ -235,7 +235,7 @@
           "path": [
             "open"
           ],
-          "summary": "Read a conversation. Marks its messages read. --raw prints tab-separated lines, --hex keeps public keys.",
+          "summary": "Read a conversation. Marks its messages read. --format markdown exports a transcript, --raw prints tab-separated lines, --hex keeps public keys. With arc cache on dm, opened messages are cached sealed for arc cache search dm.",
           "args": [
             {
               "name": "peer",
@@ -267,6 +267,7 @@
           "output": {
             "filter": [
               "open",
+              "cache",
               "petnames",
               "conversation"
             ]
@@ -274,6 +275,7 @@
           "examples": [
             "jolly-volta",
             "jolly-volta --limit 20",
+            "jolly-volta --format markdown > jolly.md",
             "jolly-volta --raw"
           ]
         },
@@ -327,7 +329,8 @@
             ]
           },
           "examples": [
-            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7",
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 | arc journal write arc/decisions/2026-09-14-acl --title \"DM from jolly\""
           ]
         },
         {

@@ -24,8 +24,9 @@ defmodule Arc.Data.Render.Conversation do
 
   defp render_header(header), do: "── " <> header <> " ──"
 
-  # Fold continuation lines into the record they belong to.
-  defp records(lines) do
+  @doc "Fold continuation lines into the record they belong to."
+  @spec records([String.t()]) :: [String.t()]
+  def records(lines) do
     lines
     |> Enum.reduce([], fn line, acc ->
       case {String.contains?(line, "\t"), acc} do
@@ -37,9 +38,36 @@ defmodule Arc.Data.Render.Conversation do
     |> Enum.reverse()
   end
 
-  defp render_record(record) do
+  @doc """
+  Parse one record into its fields, or return the line unchanged when it
+  is not a record.
+  """
+  @spec parse_record(String.t()) :: map() | String.t()
+  def parse_record(record) do
     case String.split(record, "\t", parts: 7) do
       [id, dir, peer, t, reply_to, flags, body] ->
+        {state, reactions, attachments} = parse_flags(flags)
+
+        %{
+          id: id,
+          dir: dir,
+          peer: peer,
+          t: t,
+          reply_to: reply_to,
+          state: state,
+          reactions: reactions,
+          attachments: attachments,
+          body: body
+        }
+
+      _ ->
+        record
+    end
+  end
+
+  defp render_record(record) do
+    case parse_record(record) do
+      %{id: id, dir: dir, peer: peer, t: t, reply_to: reply_to, body: body} = r ->
         who =
           cond do
             dir == "out" and String.contains?(peer, ",") -> "you → " <> peer
@@ -48,24 +76,23 @@ defmodule Arc.Data.Render.Conversation do
           end
 
         reply = if reply_to == "-", do: "", else: "  ↳ reply to #{short_id(reply_to)}"
-        {state, reactions, attachments} = parse_flags(flags)
-        body = if state == "retracted", do: "(retracted)", else: body
+        body = if r.state == "retracted", do: "(retracted)", else: body
         body_lines = body |> String.trim_trailing() |> String.split("\n")
 
         [
           "",
           "#{who}  #{time(t)}  #{short_id(id)}#{reply}",
           Enum.map(body_lines, &("  " <> &1)),
-          Enum.map(attachments, fn [name, bytes] -> "  📎 #{name} (#{bytes} bytes)" end),
-          reactions_line(reactions),
-          receipt(dir, state)
+          Enum.map(r.attachments, fn [name, bytes] -> "  📎 #{name} (#{bytes} bytes)" end),
+          reactions_line(r.reactions),
+          receipt(dir, r.state)
         ]
         |> List.flatten()
         |> Enum.reject(&is_nil/1)
         |> Enum.join("\n")
 
-      _ ->
-        record
+      raw ->
+        raw
     end
   end
 

@@ -519,15 +519,28 @@ defmodule Arc.Data.Toolbox do
   Apply a command's output filters, in order, to reply text. `identity` is
   needed by `open`; without one, `open` leaves tokens as they are.
   """
-  @spec apply_output_filters(String.t(), [String.t()], Identity.t() | nil) :: String.t()
-  def apply_output_filters(text, filters, identity) when is_binary(text) and is_list(filters) do
+  @spec apply_output_filters(String.t(), [String.t()], Identity.t() | nil, %{
+          String.t() => (String.t() -> String.t())
+        }) :: String.t()
+  def apply_output_filters(text, filters, identity, extra \\ %{})
+      when is_binary(text) and is_list(filters) and is_map(extra) do
     Enum.reduce(filters, text, fn
       "open", acc -> if(match?(%Identity{}, identity), do: open_tokens(acc, identity), else: acc)
       "petnames", acc -> petnames(acc)
       "preview:" <> n, acc -> preview(acc, String.to_integer(n))
       "conversation", acc -> Arc.Data.Render.Conversation.render(acc)
-      _other, acc -> acc
+      "markdown", acc -> Arc.Data.Render.Markdown.render(acc)
+      other, acc -> apply_extra(extra, other, acc)
     end)
+  end
+
+  # Filters the caller supplies, such as the CLI's local cache. An unknown
+  # name with no supplied function is a no-op.
+  defp apply_extra(extra, name, text) do
+    case Map.get(extra, name) do
+      fun when is_function(fun, 1) -> fun.(text)
+      _ -> text
+    end
   end
 
   defp encode_sealed(sealed), do: @sealed_prefix <> Base.encode64(sealed)

@@ -12,7 +12,8 @@ defmodule Arc.CLI do
     "host" => Arc.CLI.Host,
     "relay" => Arc.CLI.Relay,
     "mcp" => Arc.CLI.MCP,
-    "lists" => Arc.CLI.Lists
+    "lists" => Arc.CLI.Lists,
+    "cache" => Arc.CLI.Cache
   }
 
   # Subcommands whose module receives the command name as the first arg.
@@ -146,6 +147,7 @@ defmodule Arc.CLI do
       relay [--port PORT] [--key NAME]
                                  Run a relay node (routes encrypted packets by pubkey)
       lists add|rm|ls <tool> ...  Saved peer lists a tool's commands expand
+      cache on|off|search <tool>  Local sealed cache of opened records, and search
       version                     Print the arc version and build commit
 
     Options:
