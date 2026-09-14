@@ -31,7 +31,14 @@ defmodule Arc.CLI do
 
   # The build embeds the umbrella version and the git commit it was built
   # from. HEAD is an external resource so a new commit triggers a rebuild.
-  @external_resource Path.expand("../../../../.git/HEAD", __DIR__)
+  @git_dir Path.expand("../../../../.git", __DIR__)
+  @external_resource Path.join(@git_dir, "HEAD")
+  # HEAD usually points at a branch ref. Track that file too, so a new
+  # commit on the branch triggers a rebuild.
+  @external_resource (case File.read(Path.join(@git_dir, "HEAD")) do
+                        {:ok, "ref: " <> ref} -> Path.join(@git_dir, String.trim(ref))
+                        _ -> Path.join(@git_dir, "HEAD")
+                      end)
   @version Mix.Project.config()[:version]
   @git_sha (case System.cmd("git", ["rev-parse", "--short", "HEAD"], stderr_to_stdout: true) do
               {sha, 0} -> String.trim(sha)
