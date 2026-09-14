@@ -184,8 +184,11 @@ defmodule Arc.Identity.KeyStore do
     end
   end
 
-  defp keys_dir, do: Path.expand(@keys_dir)
-  defp default_file, do: Path.expand(@default_file)
+  defp keys_dir, do: Path.expand(Application.get_env(:arc_identity, :keys_dir, @keys_dir))
+
+  defp default_file do
+    Path.expand(Application.get_env(:arc_identity, :default_file, @default_file))
+  end
 
   defp load_file(path) do
     with {:ok, content} <- File.read(path),

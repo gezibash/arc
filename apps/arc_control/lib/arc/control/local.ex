@@ -143,7 +143,9 @@ defmodule Arc.Control.Local do
 
   # --- Persistence ---
 
-  defp control_dir, do: Path.expand(@control_dir)
+  defp control_dir do
+    Path.expand(Application.get_env(:arc_control, :control_dir, @control_dir))
+  end
 
   defp persist_entry(entry) do
     dir = control_dir()

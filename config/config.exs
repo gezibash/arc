@@ -11,6 +11,17 @@ import Config
 
 config :arc_data, allowed_clock_skew_ms: 120_000
 
+# Tests must never touch the real ~/.config/arc. Every test run gets a
+# fresh directory under the system temp dir.
+if config_env() == :test do
+  test_root = Path.join(System.tmp_dir!(), "arc-test-#{System.pid()}")
+  config :arc_control, control_dir: Path.join(test_root, "control")
+
+  config :arc_identity,
+    keys_dir: Path.join(test_root, "keys"),
+    default_file: Path.join(test_root, "default_key")
+end
+
 # Sample configuration:
 #
 #     config :logger, :default_handler,
