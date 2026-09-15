@@ -16,6 +16,7 @@ config :arc_data, allowed_clock_skew_ms: 120_000
 if config_env() == :test do
   test_root = Path.join(System.tmp_dir!(), "arc-test-#{System.pid()}")
   config :arc_control, control_dir: Path.join(test_root, "control")
+  config :arc_data, mailbox_dir: Path.join(test_root, "mailbox")
 
   config :arc_identity,
     keys_dir: Path.join(test_root, "keys"),

@@ -1,0 +1,45 @@
+{
+  "published_at": "2026-09-15T00:00:00Z",
+  "release": {"version": "0.1.0", "channel": "stable"},
+  "capability": {
+    "id": "primary",
+    "kind": "data",
+    "scheme": "files",
+    "title": "Private Files",
+    "summary": "Stores signed sealed file envelopes. This provider retains ciphertext only.",
+    "invocation": {"method": "RAW", "path": "/"},
+    "examples": ["put report.pdf", "get <id> --output report.pdf", "list"]
+  },
+  "interfaces": {
+    "cli": {
+      "version": 3,
+      "namespace": "files",
+      "commands": [
+        {
+          "path": ["put"],
+          "summary": "Seal and store one private file.",
+          "args": [{"name": "path", "kind": "positional", "required": true, "description": "Local file to seal"}],
+          "input": {"source": "sealed_file", "file": "path"},
+          "output": {"private_file": {"operation": "put"}}
+        },
+        {
+          "path": ["get"],
+          "summary": "Retrieve and unseal one of your private files.",
+          "args": [
+            {"name": "id", "kind": "positional", "required": true, "description": "Private file id"},
+            {"name": "output", "kind": "option", "flag": "--output", "type": "string", "required": true, "description": "Destination path"}
+          ],
+          "input": {"source": "private_file", "operation": "get", "id": "id"},
+          "output": {"private_file": {"operation": "get", "id": "id", "path": "output"}}
+        },
+        {
+          "path": ["list"],
+          "summary": "List your private-file headers.",
+          "args": [{"name": "after", "kind": "option", "flag": "--after", "type": "string", "required": false, "description": "Continue after this id"}],
+          "input": {"source": "private_file", "operation": "list", "after": "after"},
+          "output": {"private_file": {"operation": "list"}}
+        }
+      ]
+    }
+  }
+}

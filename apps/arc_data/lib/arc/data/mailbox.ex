@@ -53,6 +53,7 @@ defmodule Arc.Data.Mailbox do
 
   defp mailbox_dir(public_key) do
     hex = Base.encode16(public_key, case: :lower)
-    Path.expand(Path.join(@mailbox_root, hex))
+    root = Application.get_env(:arc_data, :mailbox_dir, @mailbox_root)
+    Path.expand(Path.join(root, hex))
   end
 end

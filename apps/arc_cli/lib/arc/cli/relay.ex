@@ -1,10 +1,12 @@
 defmodule Arc.CLI.Relay do
   @moduledoc """
-  `arc relay [--port PORT] [--key NAME]` — start a relay node.
+  `arc relay [--port PORT] [--key NAME] [--peer KEY@HOST:PORT]... [--transit]` — start a relay node.
 
   Listens for inbound TCP connections from Arc agents and routes
   ciphertext packets by destination pubkey. The relay never sees
-  plaintext; sessions are E2E encrypted.
+  application plaintext; sessions are E2E encrypted. Approved federation peers
+  can discover and reach explicitly shared publishers on the same port. Onward
+  discovery and network-shared traffic require the operator's `--transit` opt-in.
 
   Port defaults to ARC_RELAY_PORT env var, then 7331.
   Relay key defaults to ARC_RELAY_KEY; if unset, an ephemeral key is generated.
@@ -16,12 +18,32 @@ defmodule Arc.CLI.Relay do
   alias Arc.Identity.KeyStore
 
   def run(args) do
-    {opts, _argv, _invalid} = OptionParser.parse(args, strict: [port: :integer, key: :string])
+    {opts, argv, invalid} =
+      OptionParser.parse(args,
+        strict: [port: :integer, key: :string, peer: :keep, transit: :boolean]
+      )
+
+    if argv != [] or invalid != [], do: error("invalid relay options")
     port = parse_port_opt(opts)
     {relay_id, key_source} = resolve_relay_identity(opts)
+    peers = parse_peers(Keyword.get_values(opts, :peer), relay_id.public_key)
+
+    if (peers != [] or opts[:transit]) and key_source == "ephemeral" do
+      error("federation requires a persistent relay identity: use --key or ARC_RELAY_KEY")
+    end
 
     Application.ensure_all_started(:arc_net)
-    {:ok, relay} = Arc.Net.Relay.start_link(port, relay_public_key: relay_id.public_key)
+
+    relay =
+      case Arc.Net.Relay.start_link(port,
+             relay_identity: relay_id,
+             federation_peers: peers,
+             federation_transit: Keyword.get(opts, :transit, false)
+           ) do
+        {:ok, relay} -> relay
+        {:error, reason} -> error("relay start failed: #{inspect(reason)}")
+      end
+
     actual_port = Arc.Net.Relay.get_port(relay)
 
     pk_hex = Identity.encode_public_key(relay_id)
@@ -30,7 +52,31 @@ defmodule Arc.CLI.Relay do
     IO.puts("arc relay listening on port #{actual_port}")
     IO.puts("relay identity: #{pk_short} (#{key_source})")
     IO.puts("relay pubkey: #{pk_hex}")
+    if peers != [], do: IO.puts("federation: #{length(peers)} approved direct peers")
+    if opts[:transit], do: IO.puts("federation transit: enabled for network-shared publishers")
     Process.sleep(:infinity)
+  end
+
+  defp parse_peers(values, own_key) do
+    if length(values) > 16, do: error("at most 16 federation peers are supported")
+
+    peers =
+      Enum.map(values, fn value ->
+        with [key, address] <- String.split(value, "@", parts: 2),
+             {:ok, <<public_key::binary-size(32)>>} <- Base.decode16(key, case: :mixed),
+             {host, port} <- Arc.Net.relay_address_from(address),
+             false <- public_key == own_key do
+          %{public_key: public_key, host: host, port: port}
+        else
+          _ -> error("invalid --peer (expected another relay's public-key-hex@host:port)")
+        end
+      end)
+
+    if MapSet.size(MapSet.new(peers, & &1.public_key)) != length(peers) do
+      error("duplicate federation peer identity")
+    end
+
+    peers
   end
 
   defp default_port do

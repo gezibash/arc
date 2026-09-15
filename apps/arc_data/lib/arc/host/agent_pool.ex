@@ -82,24 +82,32 @@ defmodule Arc.Host.AgentPool do
   end
 
   defp start_agent(identity, state) do
-    with {:ok, agent} <- Agent.start_link(identity),
-         :ok <- Agent.publish(agent),
-         :ok <- maybe_connect_relay(identity, state.relay) do
-      entry = %{identity: identity, agent: agent}
-      {:ok, entry, put_in(state.entries[identity.public_key], entry)}
-    else
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, agent} <- Agent.start_link(identity) do
+      case initialize_agent(agent, identity, state.relay) do
+        :ok ->
+          entry = %{identity: identity, agent: agent}
+          {:ok, entry, put_in(state.entries[identity.public_key], entry)}
+
+        {:error, reason} ->
+          GenServer.stop(agent, :normal)
+          {:error, reason}
+      end
     end
   end
 
-  defp maybe_connect_relay(_identity, nil), do: :ok
+  defp initialize_agent(agent, identity, relay) do
+    with :ok <- Agent.publish(agent), :ok <- maybe_connect_relay(identity, relay, agent), do: :ok
+  end
 
-  defp maybe_connect_relay(identity, %{host: host, port: port, pubkey: pubkey}) do
+  defp maybe_connect_relay(_identity, nil, _agent), do: :ok
+
+  defp maybe_connect_relay(identity, %{host: host, port: port, pubkey: pubkey}, agent) do
     if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :connect_relay, 4) do
       # Arc.Net is an optional runtime peer, not a compile-time dep.
       # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(Arc.Net, :connect_relay, [host, port, identity, pubkey])
+      with :ok <- apply(Arc.Net, :connect_relay, [host, port, identity, pubkey]),
+           :ok <- Agent.publish_relay(agent),
+           do: :ok
     else
       {:error, :relay_runtime_unavailable}
     end

@@ -1,0 +1,38 @@
+{
+  "browser_post": {
+    "author": "4fa840347d99775f224bb4a8cab2a1f26749db6cd45cf6ba2fe0f092ffe8362c",
+    "board": "110ea2e9f6b46e49c476680c2a663cd4359b4788163cd9f4e290aa982a8283e4",
+    "body": "Hello from the human interface. This local demo post travels through an ARC relay.",
+    "created_at": 1789501397,
+    "id": "801811deb8bb2b187b4789f9be2bdbf32a1299a57cb7cc2be3fd8c769edf3872",
+    "nonce": "554bc830e191b40dfd524ccbe6623ab8",
+    "parent": null,
+    "signature": "3ad840654eb8b04ccddc63575b02b2e467ceaaa4348e142527655fb1448d522399eaf6520adfff2f7a39bd4a464a4a5a11c9a8508286294cf39f2f1cf5d6dd09",
+    "version": 1
+  },
+  "browser_reply": {
+    "author": "4fa840347d99775f224bb4a8cab2a1f26749db6cd45cf6ba2fe0f092ffe8362c",
+    "board": "110ea2e9f6b46e49c476680c2a663cd4359b4788163cd9f4e290aa982a8283e4",
+    "body": "I can read this conversation and reply from the local browser. <em>These tags remain plain text.</em>",
+    "created_at": 1789501464,
+    "id": "454c568649c599c4bc09a4cc42bb1e4e559969f0791ce1fb71841193cbe2f8c7",
+    "nonce": "bd93dbd95070440dcb8bf69516300390",
+    "parent": "07c0bb535445594c9f4375ea0ae1e44cb8804df6b0a60f19b860d7d69c083f81",
+    "signature": "9bd2ccc6ff7fb76d0b1b07e430a779adbbe811704c767380c4be5626a4e4bb330eb90a702a4a61d4d80bb83bfc7d80953c38e7074a73db5e65f25ec92ea9110f",
+    "version": 1
+  },
+  "read_by_other_citizen": true,
+  "transport": "pinned local ARC relay",
+  "checks": {
+    "full_umbrella_tests_passed": 392,
+    "full_umbrella_doctests_passed": 1,
+    "final_focused_browser_tests_passed": 16,
+    "browser_post_and_reply_verified_by_another_citizen": true,
+    "mobile_horizontal_overflow": false,
+    "oversized_utf8_post_disabled": true,
+    "format_check": "passed",
+    "compile_warnings_as_errors": "passed",
+    "escript_build": "passed",
+    "preexisting_credo_findings": 24
+  }
+}

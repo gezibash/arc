@@ -1,0 +1,32 @@
+{
+  "service": "Higgsfield",
+  "model": "kling3_0",
+  "job_id": "f9ce42b9-2936-40d1-934b-98307c0242e5",
+  "status": "completed",
+  "source": "../../prometheus-engraving.png",
+  "estimated_credits": 7.5,
+  "params": {
+    "model": "kling3_0",
+    "duration": 5,
+    "mode": "std",
+    "sound": "off",
+    "count": 1,
+    "prompt": "A completely locked camera views this antique engraving. Only the oxblood engraved flame above the raised torch moves: its fine drawn strands gently flicker and undulate to the right in a light breeze, with very small movements. The flame remains a flat ink engraving in the original dark red color. The torch cup and handle stay perfectly fixed. Prometheus, his face, body, hand and cloak, the coastline, clouds, and every part of the parchment background remain absolutely motionless, identical to the input illustration. Preserve the fine crosshatching and exact composition throughout. Continuous quiet motion returning naturally to the supplied ending image for a seamless loop. Silent. No camera movement, zoom, cuts, added objects, photorealistic fire, glow, lettering, or changes in lighting.",
+    "medias": [
+      {
+        "role": "start_image",
+        "value": "57da3ec4-17c5-46fc-a623-281052f56a37"
+      },
+      {
+        "role": "end_image",
+        "value": "57da3ec4-17c5-46fc-a623-281052f56a37"
+      }
+    ]
+  },
+  "output": "torch-raw.mp4",
+  "credit_balance_before": 110,
+  "credit_balance_after": 102.5,
+  "observed_credit_decrease": 7.5,
+  "trial_credit_counter_before": 100,
+  "trial_credit_counter_after": 100
+}

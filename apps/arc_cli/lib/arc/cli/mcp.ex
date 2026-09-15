@@ -30,6 +30,10 @@ defmodule Arc.CLI.MCP do
 
     relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
 
+    if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
+      error("invalid relay address (expected host:port)")
+    end
+
     {:ok, server} =
       HTTPServer.start_link(
         task: task,

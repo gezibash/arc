@@ -134,26 +134,36 @@ defmodule Arc.CLI do
       install <peer> <id>         Install a remote ARC capability as a local command
                                  (--trust skips the signer prompt for scripts)
       apps init [path]            Scaffold a local ARC provider bundle (Arcfile + manifest.json)
+      apps open <command>        Open an installed Agora board in your local browser
       host <...>                  Run the local ARC host service and issue delegated SDK tokens
       tool <subcommand>           Manage installed ARC tools
       trust <subcommand>          Manage trusted remote signers
       discover [query]            Search remote capability summaries
+                                 (--limit N and --after CURSOR page relay results)
       mount <task> ...            Manage task-scoped mounted capabilities
       mcp <task>                  Serve mounted capabilities as MCP tools over local Streamable HTTP
       send <to> <message>         Send a message (waits for reply)
       info <peer> [capability]    Fetch remote capability summary or one detail view
       listen                      Listen for incoming messages
       serve <target>              Serve a provider bundle or runtime URI with live request logs
-      relay [--port PORT] [--key NAME]
+                                 (--federate shares this live announcement with direct relay partners)
+                                 (--federate-network permits onward relay federation)
+      relay [--port PORT] [--key NAME] [--peer PUBKEY@HOST:PORT]...
                                  Run a relay node (routes encrypted packets by pubkey)
       lists add|rm|ls <tool> ...  Saved peer lists a tool's commands expand
       cache on|off|search <tool>  Local sealed cache of opened records, and search
       version                     Print the arc version and build commit
 
     Options:
-      --relay host:port           Connect to a relay node (for send/listen/serve)
-      --relay-pubkey <key>        Pin relay pubkey (hex/base64) for send/listen/serve
+      --relay host:port           Use a relay for discovery and peer commands
+      --relay-pubkey <key>        Pin the relay public key (hex/base64)
+      --federate                  Permit `serve` or `listen` discovery through direct federation
+                                 (requires a configured relay and relay public-key pin)
+      --federate-network          Permit onward federation from `serve` or `listen`
+                                 (requires a configured relay and relay public-key pin)
       --key <name>                Relay identity key for `arc relay` (or ARC_RELAY_KEY)
+      --peer <key>@host:port      Approve a direct federation peer; repeat for each partner
+      --transit                   Allow this relay to forward approved federation traffic
       --max-frame-bytes <n>       Largest relay frame this node accepts, in bytes
                                  (0 or unbounded = no cap; default: unbounded)
 

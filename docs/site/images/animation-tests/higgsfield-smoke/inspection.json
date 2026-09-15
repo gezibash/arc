@@ -1,0 +1,10 @@
+{
+  "frames": 120,
+  "width": 1122,
+  "height": 1402,
+  "duration_seconds": 5,
+  "bytes": 932109,
+  "smoke_temporal_mean_absolute_change": 0.2759843170642853,
+  "lamp_temporal_mean_absolute_change": 0.002444177633151412,
+  "processing": "Add only frame-relative smoke-region changes to original engraving; feather boundaries."
+}

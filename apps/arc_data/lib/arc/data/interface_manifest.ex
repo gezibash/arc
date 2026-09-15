@@ -14,10 +14,17 @@ defmodule Arc.Data.InterfaceManifest do
       also sets `template`, the CLI renders the template first and joins it to
       the stdin body with `join_with` (default `"\n"`). Use this for large
       bodies that must not pass through the command line.
+    * `"sealed_file"` - a local file sealed by the trusted CLI before upload.
+    * `"private_file"` - a verified private-file get/list request. These file
+      sources require interface version 3 and the CLI's paired output handler;
+      the shared toolbox rejects them rather than sending unsealed arguments.
+    * `"agora"` - a public post, reply, or board query. Interface version 4
+      signs posts as the local citizen and requires verified responses across
+      the CLI, host toolbox, and mounted MCP tool.
   """
 
   @cli_version 1
-  @max_cli_version 2
+  @max_cli_version 4
 
   @doc "The newest CLI interface version this build renders."
   def max_cli_version, do: @max_cli_version
@@ -276,8 +283,22 @@ defmodule Arc.Data.InterfaceManifest do
 
   defp normalize_cli_arg(_), do: []
 
+  defp normalize_cli_input(%{"source" => "agora"} = input, _args),
+    do: %{"source" => "agora", "operation" => present_string(input["operation"])}
+
   defp normalize_cli_input(input, _args) when is_map(input) do
     case Map.get(input, "source") do
+      "sealed_file" ->
+        %{"source" => "sealed_file", "file" => present_string(input["file"])}
+
+      "private_file" ->
+        %{
+          "source" => "private_file",
+          "operation" => present_string(input["operation"]),
+          "id" => present_string(input["id"]),
+          "after" => present_string(input["after"])
+        }
+
       "arg" ->
         case Map.get(input, "name") do
           name when is_binary(name) and name != "" ->
@@ -334,6 +355,16 @@ defmodule Arc.Data.InterfaceManifest do
   defp normalize_seal_to(_), do: nil
 
   @output_filters ~w(open petnames conversation markdown cache)
+
+  defp normalize_cli_output(%{"private_file" => output}) when is_map(output) do
+    %{
+      "private_file" => %{
+        "operation" => present_string(output["operation"]),
+        "id" => present_string(output["id"]),
+        "path" => present_string(output["path"])
+      }
+    }
+  end
 
   # `output.filter` is one filter name or a list, applied in order. Known
   # filters are `open`, `petnames`, and `preview:<n>`. Unknown entries are

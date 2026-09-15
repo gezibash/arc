@@ -365,7 +365,8 @@ defmodule Arc.Host.Connection do
                (is_binary(command) and String.trim(command) != "") or
                  {:error, {"invalid_command", "command is required"}},
              {:ok, tool} <- Toolbox.get(state.binding.identity, command),
-             {:ok, built} <- Toolbox.build_invocation(tool, argv) do
+             {:ok, built} <-
+               Toolbox.build_invocation(tool, argv, %{identity: state.binding.identity}) do
           {:ok, tool, built}
         end
 
@@ -935,7 +936,7 @@ defmodule Arc.Host.Connection do
          state,
          id,
          tool,
-         %{input: input, invocation: invocation},
+         %{input: input, invocation: invocation} = built,
          app_session_id,
          params,
          timeout_ms
@@ -950,15 +951,20 @@ defmodule Arc.Host.Connection do
         end
 
       _ ->
-        invoke_tool_request_reply(state, id, tool, input, invocation, timeout_ms)
+        invoke_tool_request_reply(state, id, tool, built, timeout_ms)
     end
   end
 
-  defp invoke_tool_request_reply(state, id, tool, input, invocation, timeout_ms) do
-    case CapabilityInvocation.invoke(state.binding.agent, tool, input,
-           invocation_override: invocation,
-           timeout_ms: timeout_ms
-         ) do
+  defp invoke_tool_request_reply(state, id, tool, built, timeout_ms) do
+    result =
+      with {:ok, reply} <-
+             CapabilityInvocation.invoke(state.binding.agent, tool, built.input,
+               invocation_override: built.invocation,
+               timeout_ms: timeout_ms
+             ),
+           do: Toolbox.finish_reply(reply, built)
+
+    case result do
       {:ok, reply} ->
         send_ok(state.socket, id, normalize_reply(reply))
         state

@@ -142,6 +142,20 @@ Installed tools run as native subcommands, for example `arc dm inbox` after
 `arc install <peer> dm`. `arc help` prints the full list with every option
 and environment variable.
 
+With a relay configured, running providers announce their services to that
+relay. `arc discover files` searches its local service catalog, and `info`/`install`
+can reach a provider from another machine without shared local identity files.
+The relay and clients must support [relay discovery](docs/discovery/SPEC.md).
+Discovery covers the same relay and opted-in providers across approved partners.
+[Relay federation](docs/federation/SPEC.md) uses mutual `relay --peer`
+configuration. Providers choose direct sharing with `serve --federate`, or
+wider sharing with `serve --federate-network`. Intermediate operators enable
+`relay --transit` to carry discovery and encrypted traffic onward. Partners
+synchronize signed service catalogs in the background. Once synchronized,
+searches and known full-key lookups use the connected relay's cache. Cold
+searches and unresolved identities retain bounded live lookup. Catalogs expire
+and apply withdrawals; they do not promise a complete view of the network.
+
 ## Development
 
 Needs Elixir 1.19.5 on OTP 28. [mise](https://mise.jdx.dev) installs both
@@ -163,4 +177,8 @@ builds a release with the bundled runtime into
 - [Whitepaper](docs/WHITEPAPER.md): protocol design and what is implemented.
 - [Deploy](docs/DEPLOY.md): releases, relays, systemd, Docker.
 - [Direct messages](docs/dm/SPEC.md): the sealed DM provider.
+- [Agora](docs/agora/SPEC.md): public signed posts and replies for humans and agents.
+- [Private files](docs/files/SPEC.md): encrypted file storage and provider development.
+- [Relay discovery](docs/discovery/SPEC.md): live identity lookup and service announcements.
+- [Relay federation](docs/federation/SPEC.md): partner networks, onward routing, and private replies.
 - [Changelog](CHANGELOG.md).

@@ -28,10 +28,11 @@ defmodule Arc.Data.CapabilityInvocation do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
     request_id = Frame.new_request_id()
 
-    with {:ok, peer_query} <- peer_query(provider),
+    with {:ok, peer_query} <- peer_query(provider, capability),
          invocation <- invocation_for(capability, opts),
          :request_reply <- invocation_mode(invocation) |> mode_atom(),
-         {:ok, _entry} <- Agent.connect(agent, peer_query),
+         {:ok, entry} <- Agent.connect(agent, peer_query),
+         :ok <- verify_provider(entry, provider, capability),
          :ok <-
            Agent.send_message(agent, peer_query, input,
              request_id: request_id,
@@ -215,6 +216,30 @@ defmodule Arc.Data.CapabilityInvocation do
       value when is_binary(value) and value != "" -> {:ok, value}
       _ -> {:error, :invalid_mount}
     end
+  end
+
+  defp peer_query(provider, capability) do
+    if Arc.Data.Agora.enabled?(capability) do
+      case provider["public_key"] do
+        key when is_binary(key) and byte_size(key) == 64 ->
+          case Base.decode16(key, case: :lower) do
+            {:ok, <<_::256>>} -> {:ok, key}
+            _ -> {:error, :invalid_provider_key}
+          end
+
+        _ ->
+          {:error, :invalid_provider_key}
+      end
+    else
+      peer_query(provider)
+    end
+  end
+
+  defp verify_provider(entry, provider, capability) do
+    if Arc.Data.Agora.enabled?(capability) and
+         Base.encode16(entry.public_key, case: :lower) != provider["public_key"],
+       do: {:error, :provider_identity_mismatch},
+       else: :ok
   end
 
   defp new_app_session_id do

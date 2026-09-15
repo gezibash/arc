@@ -23,6 +23,34 @@ defmodule Arc.CLITest do
     assert stderr =~ "unknown command: no-such-command"
   end
 
+  test "federation opt-in flags are limited to live listeners and providers" do
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["discover", "files", "--federate"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "federation flags are only supported by `arc serve` and `arc listen`"
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["discover", "files", "--federate-network"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "federation flags are only supported by `arc serve` and `arc listen`"
+  end
+
+  test "direct and onward federation flags cannot be combined" do
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["listen", "--federate", "--federate-network"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "--federate and --federate-network cannot be combined"
+  end
+
   test "lists add, ls, and rm keep a peer list per tool" do
     run = fn argv -> ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(argv) end) end
 

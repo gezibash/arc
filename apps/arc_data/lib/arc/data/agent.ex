@@ -19,6 +19,7 @@ defmodule Arc.Data.Agent do
   alias Arc.Data.Handler
   alias Arc.Data.Mailbox
   alias Arc.Data.Packet
+  alias Arc.Data.RelayAnnouncement
   alias Arc.Data.Session
   alias Arc.Identity
 
@@ -58,8 +59,15 @@ defmodule Arc.Data.Agent do
     GenServer.call(agent, :publish)
   end
 
+  @doc "Announce this identity and its services through its connected relay."
+  def publish_relay(agent, opts \\ []) when is_list(opts) do
+    GenServer.call(agent, {:publish_relay, opts}, 5_000)
+  end
+
   def connect(agent, peer_query) when is_binary(peer_query) do
-    GenServer.call(agent, {:connect, peer_query})
+    # Relay directory lookup may traverse several bounded partner branches.
+    # Keep the caller alive through the transport's ten-second lookup deadline.
+    GenServer.call(agent, {:connect, peer_query}, 11_000)
   end
 
   def send_message(agent, peer_query, message) when is_binary(message) do
@@ -87,6 +95,11 @@ defmodule Arc.Data.Agent do
     GenServer.call(agent, :info)
   end
 
+  @doc "Sign a public Agora post as this local agent without exporting its key."
+  def sign_agora_post(agent, board, body, parent) do
+    GenServer.call(agent, {:sign_agora_post, board, body, parent})
+  end
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -99,6 +112,10 @@ defmodule Arc.Data.Agent do
         inbox: [],
         handler: handler,
         observer: observer,
+        relay_discovery: false,
+        relay_federation: :local,
+        announcement_timer: nil,
+        announcement_generation: nil,
         replay_guard: %{},
         allowed_clock_skew_ms:
           Application.get_env(:arc_data, :allowed_clock_skew_ms, @default_allowed_clock_skew_ms)
@@ -131,19 +148,36 @@ defmodule Arc.Data.Agent do
     end
   end
 
+  def handle_call({:publish_relay, opts}, _from, state) do
+    # Once chosen, relay mode stays selected even if announcement or transport
+    # fails. A discovery failure must not switch the caller to local records.
+    federation = Keyword.get(opts, :federation, :local)
+    state = %{state | relay_discovery: true, relay_federation: federation}
+    result = announce_relay(state)
+    {:reply, result, schedule_announcement(state)}
+  end
+
   def handle_call({:connect, peer_query}, _from, state) do
-    case Control.resolve(peer_query) do
-      {:ok, [entry | _]} ->
+    case resolve_entry(state, peer_query) do
+      {:ok, [entry]} ->
         if entry.x25519_public do
-          session = Session.establish(state.identity, entry.public_key, entry.x25519_public)
-          sessions = Map.put(state.sessions, entry.public_key, session)
-          {:reply, {:ok, entry}, %{state | sessions: sessions}}
+          case establish_session(state.identity, entry, &Session.establish/3) do
+            {:ok, session} ->
+              sessions = Map.put(state.sessions, entry.public_key, session)
+              {:reply, {:ok, entry}, %{state | sessions: sessions}}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
         else
           {:reply, {:error, :no_keyex}, state}
         end
 
       {:ok, []} ->
         {:reply, {:error, :not_found}, state}
+
+      {:ok, [_ | _]} ->
+        {:reply, {:error, :ambiguous}, state}
 
       error ->
         {:reply, error, state}
@@ -167,8 +201,8 @@ defmodule Arc.Data.Agent do
           ek: session.ek_pub
         )
 
-      deliver(state.identity.public_key, peer_pk, packet)
-      {:reply, :ok, state}
+      result = deliver(state, peer_pk, packet)
+      {:reply, result, state}
     else
       nil -> {:reply, {:error, :no_session}, state}
       error -> {:reply, error, state}
@@ -205,13 +239,22 @@ defmodule Arc.Data.Agent do
       short_name: Identity.short_name(state.identity),
       public_key: state.identity.public_key,
       sessions: Map.keys(state.sessions) |> length(),
-      serving: handler_scheme
+      serving: handler_scheme,
+      relay_discovery: state.relay_discovery,
+      relay_federation: state.relay_federation
     }
 
     {:reply, info, state}
   end
 
   @impl GenServer
+  def handle_call({:sign_agora_post, board, body, parent}, _from, state) do
+    {:reply, Arc.Data.Agora.sign(state.identity, board, body, parent), state}
+  end
+
+  @impl GenServer
+  def handle_cast(:poll_mailbox, %{relay_discovery: true} = state), do: {:noreply, state}
+
   def handle_cast(:poll_mailbox, state) do
     packets = Mailbox.read(state.identity.public_key)
     state = Enum.reduce(packets, state, &receive_packet/2)
@@ -228,6 +271,18 @@ defmodule Arc.Data.Agent do
     schedule_replay_sweep(state)
     {:noreply, state}
   end
+
+  def handle_info({:refresh_relay_announcement, generation}, state)
+      when generation == state.announcement_generation do
+    case announce_relay(state) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("relay announcement failed: #{inspect(reason)}")
+    end
+
+    {:noreply, schedule_announcement(%{state | announcement_timer: nil})}
+  end
+
+  def handle_info({:refresh_relay_announcement, _generation}, state), do: {:noreply, state}
 
   def handle_info(msg, %{handler: {mod, handler_state}} = state) do
     if function_exported?(mod, :handle_info, 2) do
@@ -544,7 +599,11 @@ defmodule Arc.Data.Agent do
             ek: session.ek_pub
           )
 
-        deliver(state.identity.public_key, to_pk, packet)
+        case deliver(state, to_pk, packet) do
+          :ok -> :ok
+          {:error, reason} -> Logger.warning("relay reply delivery failed: #{inspect(reason)}")
+        end
+
         state
 
       nil ->
@@ -628,15 +687,26 @@ defmodule Arc.Data.Agent do
     else
       peer_name = Identity.name(peer_pk)
 
-      case Control.resolve(peer_name) do
-        {:ok, [entry | _]} when entry.x25519_public != nil ->
-          session = establish.(state.identity, entry.public_key, entry.x25519_public)
-          %{state | sessions: Map.put(state.sessions, entry.public_key, session)}
+      case resolve_entry(state, peer_name) do
+        {:ok, [entry]} when entry.x25519_public != nil ->
+          case establish_session(state.identity, entry, establish) do
+            {:ok, session} ->
+              %{state | sessions: Map.put(state.sessions, entry.public_key, session)}
+
+            {:error, _} ->
+              state
+          end
 
         _ ->
           state
       end
     end
+  end
+
+  defp establish_session(identity, entry, establish) do
+    {:ok, establish.(identity, entry.public_key, entry.x25519_public)}
+  rescue
+    _ -> {:error, :invalid_peer_key}
   end
 
   defp resolve_peer_key(state, peer_query) do
@@ -718,10 +788,17 @@ defmodule Arc.Data.Agent do
   defp blank_to_default("", fallback), do: fallback
   defp blank_to_default(value, _fallback), do: value
 
-  defp deliver(from_pk, to_pk, packet) do
+  defp deliver(%{relay_discovery: true, identity: identity}, to_pk, packet) do
+    relay_call(:deliver_via_relay, [identity.public_key, to_pk, packet])
+  end
+
+  defp deliver(%{identity: identity}, to_pk, packet) do
+    from_pk = identity.public_key
+
     case Registry.lookup(Arc.Data.AgentRegistry, to_pk) do
       [{pid, _}] ->
         send(pid, {:arc_packet, packet})
+        :ok
 
       [] ->
         if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :deliver, 3) do
@@ -732,6 +809,67 @@ defmodule Arc.Data.Agent do
           Mailbox.deliver(to_pk, packet)
         end
     end
+  end
+
+  defp resolve_entry(%{relay_discovery: true, identity: identity}, query),
+    do: relay_call(:resolve_via_relay, [identity.public_key, query])
+
+  defp resolve_entry(_state, query) do
+    case Control.resolve(query) do
+      {:ok, [entry | _]} -> {:ok, [entry]}
+      result -> result
+    end
+  end
+
+  defp announce_relay(state) do
+    capabilities =
+      if state.handler do
+        CapabilityManifest.summary(state.identity, state.handler)["capabilities"]
+      else
+        []
+      end
+
+    with {:ok, announcement_opts} <- relay_announcement_opts(state) do
+      record = RelayAnnouncement.create(state.identity, capabilities, announcement_opts)
+      relay_call(:announce, [state.identity.public_key, record])
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_announcement}
+  end
+
+  defp relay_announcement_opts(%{relay_federation: :local}), do: {:ok, []}
+
+  defp relay_announcement_opts(%{relay_federation: federation, identity: identity})
+       when federation in [:direct, :network] do
+    with {:ok, relay_public_key} <- relay_call(:relay_public_key, [identity.public_key]),
+         true <- is_binary(relay_public_key) and byte_size(relay_public_key) == 32 do
+      {:ok, [federation: federation, relay_public_key: relay_public_key]}
+    else
+      false -> {:error, :invalid_relay_public_key}
+      {:error, _reason} = error -> error
+      _ -> {:error, :invalid_relay_public_key}
+    end
+  end
+
+  defp relay_announcement_opts(_), do: {:error, :invalid_federation}
+
+  defp schedule_announcement(state) do
+    if state.announcement_timer, do: Process.cancel_timer(state.announcement_timer)
+    generation = make_ref()
+    timer = Process.send_after(self(), {:refresh_relay_announcement, generation}, 60_000)
+    %{state | announcement_timer: timer, announcement_generation: generation}
+  end
+
+  defp relay_call(function, args) do
+    if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, function, length(args)) do
+      # Arc.Net depends on arc_data; keep the reverse runtime dependency optional.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(Arc.Net, function, args)
+    else
+      {:error, :relay_runtime_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
   end
 
   defp serve_event(frame, from_pk, context) do

@@ -25,6 +25,8 @@ defmodule Arc.Net.Transport do
   @ed25519_pubkey_bytes 32
   @relay_challenge_bytes 32
   @default_relay_hello_timeout_ms 2_000
+  @directory_timeout_ms 2_000
+  @max_directory_pending 32
 
   # --- Client API ---
 
@@ -45,15 +47,61 @@ defmodule Arc.Net.Transport do
     send(transport_pid, {:packet_received, packet})
   end
 
+  @doc false
+  def directory_received(transport_pid, payload) when is_binary(payload) do
+    send(transport_pid, {:directory_received, payload})
+  end
+
+  @doc false
+  def directory_request(transport_pid, operation, fields)
+      when is_atom(operation) and is_map(fields) do
+    GenServer.call(
+      transport_pid,
+      {:directory_request, operation, fields},
+      directory_timeout(operation) + 500
+    )
+  catch
+    :exit, _ -> {:error, :relay_discovery_unavailable}
+  end
+
+  @doc false
+  def deliver_strict(transport_pid, to_pk, packet) when is_binary(to_pk) and is_binary(packet) do
+    GenServer.call(transport_pid, {:deliver_strict, to_pk, packet})
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
+  end
+
   # --- GenServer Callbacks ---
+
+  @doc false
+  def relay_public_key(transport_pid) do
+    GenServer.call(transport_pid, :relay_public_key)
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
+  end
 
   @impl GenServer
   def init([]) do
     {:ok,
-     %{relay_conn: nil, relay_conn_ref: nil, my_pubkey: nil, relay_target: nil, relay_pubkey: nil}}
+     %{
+       relay_conn: nil,
+       relay_conn_ref: nil,
+       my_pubkey: nil,
+       relay_target: nil,
+       relay_pubkey: nil,
+       directory_pending: %{}
+     }}
   end
 
   @impl GenServer
+  def handle_call(:relay_public_key, _from, state) do
+    if is_pid(state.relay_conn) and Process.alive?(state.relay_conn) do
+      {:reply, {:ok, state.relay_pubkey}, state}
+    else
+      {:reply, {:error, :relay_not_connected}, state}
+    end
+  end
+
   def handle_call({:connect_relay, host, port, my_identity, expected_relay_pubkey}, _from, state) do
     cond do
       not valid_identity?(my_identity) ->
@@ -94,6 +142,36 @@ defmodule Arc.Net.Transport do
             emit([:transport, :connect, :failed], %{count: 1}, %{reason: :invalid_host})
             {:reply, {:error, :invalid_host}, state}
         end
+    end
+  end
+
+  def handle_call({:deliver_strict, _to_pk, packet}, _from, state) do
+    reply =
+      case Packet.decode(packet) do
+        {:ok, %{src: src}} when src == state.my_pubkey -> strict_send_packet(state, packet)
+        _ -> {:error, :invalid_source}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:directory_request, _operation, _fields}, _from, %{relay_conn: nil} = state) do
+    {:reply, {:error, :relay_not_connected}, state}
+  end
+
+  def handle_call({:directory_request, operation, fields}, from, state) do
+    cond do
+      not valid_directory_operation?(operation) ->
+        {:reply, {:error, :invalid_directory_request}, state}
+
+      map_size(state.directory_pending) >= @max_directory_pending ->
+        {:reply, {:error, :relay_discovery_busy}, state}
+
+      not is_pid(state.relay_conn) or not Process.alive?(state.relay_conn) ->
+        {:reply, {:error, :relay_not_connected}, state}
+
+      true ->
+        start_directory_request(state, operation, fields, from)
     end
   end
 
@@ -172,7 +250,7 @@ defmodule Arc.Net.Transport do
 
       conn ->
         if Process.alive?(conn) do
-          case Connection.send_packet(conn, packet) do
+          case safe_send_packet(conn, packet) do
             :ok ->
               {:noreply, state}
 
@@ -225,8 +303,25 @@ defmodule Arc.Net.Transport do
     {:noreply, state}
   end
 
+  def handle_info({:directory_received, payload}, state) do
+    state =
+      case decode_directory_reply(payload) do
+        {:ok, request_id, reply} -> complete_directory_request(state, request_id, {:ok, reply})
+        :error -> state
+      end
+
+    {:noreply, state}
+  end
+
+  def handle_info({:directory_timeout, request_id}, state) do
+    {:noreply,
+     complete_directory_request(state, request_id, {:error, :relay_discovery_unavailable})}
+  end
+
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{relay_conn_ref: ref} = state) do
     emit([:transport, :relay, :down], %{count: 1}, %{})
+
+    state = fail_directory_requests(state, :relay_discovery_unavailable)
 
     {:noreply,
      %{state | relay_conn: nil, relay_conn_ref: nil, relay_target: nil, relay_pubkey: nil}}
@@ -234,12 +329,64 @@ defmodule Arc.Net.Transport do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  defp strict_send_packet(state, packet) do
+    case state.relay_conn do
+      conn when is_pid(conn) ->
+        if Process.alive?(conn) do
+          case safe_send_packet(conn, packet) do
+            :ok -> :ok
+            {:error, reason} -> {:error, reason}
+          end
+        else
+          {:error, :relay_not_connected}
+        end
+
+      _ ->
+        {:error, :relay_not_connected}
+    end
+  end
+
+  defp start_directory_request(state, operation, fields, from) do
+    request_id = Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
+
+    request =
+      fields |> Map.put("type", Atom.to_string(operation)) |> Map.put("request_id", request_id)
+
+    case safe_send_control(state.relay_conn, request) do
+      :ok ->
+        timer =
+          Process.send_after(
+            self(),
+            {:directory_timeout, request_id},
+            directory_timeout(operation)
+          )
+
+        pending = Map.put(state.directory_pending, request_id, %{from: from, timer: timer})
+        {:noreply, %{state | directory_pending: pending}}
+
+      {:error, _reason} ->
+        {:reply, {:error, :relay_discovery_unavailable}, state}
+    end
+  end
+
   defp same_live_connection?(state, target, my_pubkey, expected_relay_pubkey) do
     state.relay_conn != nil and
       Process.alive?(state.relay_conn) and
       state.relay_target == target and
       state.my_pubkey == my_pubkey and
       relay_pin_matches?(state.relay_pubkey, expected_relay_pubkey)
+  end
+
+  defp safe_send_packet(conn, packet) do
+    Connection.send_packet(conn, packet)
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
+  end
+
+  defp safe_send_control(conn, request) do
+    Connection.send_control(conn, request)
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
   end
 
   defp disconnect_relay(state, reason) do
@@ -255,7 +402,47 @@ defmodule Arc.Net.Transport do
       emit([:transport, :relay, :disconnected], %{count: 1}, %{reason: reason})
     end
 
+    state = fail_directory_requests(state, :relay_discovery_unavailable)
     %{state | relay_conn: nil, relay_conn_ref: nil, relay_target: nil, relay_pubkey: nil}
+  end
+
+  defp valid_directory_operation?(operation), do: operation in [:announce, :search, :resolve]
+
+  defp directory_timeout(operation) when operation in [:search, :resolve], do: 10_000
+  defp directory_timeout(_), do: @directory_timeout_ms
+
+  defp decode_directory_reply(payload) do
+    case :json.decode(payload) do
+      %{"type" => "reply", "request_id" => request_id} = reply
+      when is_binary(request_id) and byte_size(request_id) == 32 ->
+        {:ok, request_id, reply}
+
+      _ ->
+        :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp complete_directory_request(state, request_id, result) do
+    case Map.pop(state.directory_pending, request_id) do
+      {nil, _} ->
+        state
+
+      {%{from: from, timer: timer}, pending} ->
+        Process.cancel_timer(timer, async: true, info: false)
+        GenServer.reply(from, result)
+        %{state | directory_pending: pending}
+    end
+  end
+
+  defp fail_directory_requests(state, reason) do
+    Enum.each(state.directory_pending, fn {_id, %{from: from, timer: timer}} ->
+      Process.cancel_timer(timer, async: true, info: false)
+      GenServer.reply(from, {:error, reason})
+    end)
+
+    %{state | directory_pending: %{}}
   end
 
   defp valid_pubkey?(pubkey) when is_binary(pubkey),

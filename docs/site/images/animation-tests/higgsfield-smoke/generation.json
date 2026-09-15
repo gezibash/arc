@@ -1,0 +1,30 @@
+{
+  "service": "Higgsfield",
+  "model": "kling3_0",
+  "source": "../../extinguished-engraving.png",
+  "status": "completed",
+  "job_id": "00a3cd5b-6b7d-43cb-8e0c-9adf0d830988",
+  "estimated_credits": 7.5,
+  "params": {
+    "model": "kling3_0",
+    "mode": "std",
+    "duration": 5,
+    "sound": "off",
+    "count": 1,
+    "prompt": "A locked-off view of the supplied antique copperplate engraving. Only the very thin pale smoke already rising from the extinguished oil lamp gently moves: delicate translucent wisps curl slowly upward from the fixed wick, drift slightly side to side, and fade into the air. Keep the smoke sparse and quiet, with the same fine engraved appearance and warm ivory color as the input. The wick remains a tiny ember and never ignites into flame. The lamp, stone ledge, monumental doorway, columns, foliage, paper grain, and every ink line of the surrounding architecture remain completely motionless and identical to the input. Preserve the original composition, linework, parchment color, and lighting. A continuous subtle motion that returns naturally to the supplied ending image for a seamless loop. No camera movement, zoom, cuts, photorealism, thick fog, added objects, or lettering. Silent.",
+    "medias": [
+      {
+        "role": "start_image",
+        "value": "607ad57d-c74e-485a-b7e5-e4d4c5db76b7"
+      },
+      {
+        "role": "end_image",
+        "value": "607ad57d-c74e-485a-b7e5-e4d4c5db76b7"
+      }
+    ]
+  },
+  "output": "../../extinguished-smoke.mp4",
+  "credit_balance_before": 102.5,
+  "credit_balance_after": 95,
+  "observed_credit_decrease": 7.5
+}
