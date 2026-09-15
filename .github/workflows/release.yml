@@ -124,10 +124,13 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+      # The file is named by the bare hex: upload-artifact refuses a colon
+      # in a path, and the manifest job adds the sha256: prefix back.
       - name: Export digest
         run: |
           mkdir -p digests
-          touch "digests/${{ steps.build.outputs.digest }}"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "digests/${digest#sha256:}"
       - uses: actions/upload-artifact@v4
         with:
           name: digest-${{ matrix.arch }}
