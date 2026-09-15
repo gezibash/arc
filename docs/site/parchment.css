@@ -1,0 +1,370 @@
+/* The README's engraved broadside, carried into a readable illustrated essay. */
+:root {
+  --paper: #f3e7cf;
+  --paper-deep: #e9d9bb;
+  --ink: #29231b;
+  --ink-soft: #72624e;
+  --rule: #c8b695;
+  --wax: #913c30;
+  --mark: #e5cda0;
+  --grain-opacity: .2;
+  color-scheme: light;
+}
+body { font-size: clamp(18px, 1.45vw, 22px); line-height: 1.55; }
+.grain { z-index: 8; }
+.deck { overflow-anchor: none; scroll-snap-type: none; scroll-behavior: auto; scrollbar-width: thin; scrollbar-color: var(--rule) var(--paper); }
+.deck::-webkit-scrollbar { display: block; width: 5px; }
+.deck::-webkit-scrollbar-thumb { background: var(--rule); }
+.slide {
+  --pad-l: clamp(90px, 12vw, 190px);
+  --pad-r: clamp(44px, 8vw, 128px);
+  padding-top: 112px;
+  padding-bottom: 96px;
+  height: auto;
+  overflow: visible;
+  scroll-snap-stop: normal;
+}
+.slide:focus { outline: none; }
+.slide-inner { max-width: 42rem; }
+.slide-inner > * + * { margin-top: 1.1em; }
+.slide-inner h2 { margin-top: .35em; margin-bottom: .45em; }
+h2 { font-size: clamp(2.8rem, 5.7vw, 5rem); line-height: 1.03; }
+p { max-width: 38rem; }
+.eyebrow {
+  display: block;
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--wax);
+  line-height: 1.6;
+  margin: 0 0 1.4rem;
+}
+.reveal > * { opacity: 1; transform: none; }
+mark { background-size: 100% 100%; }
+.masthead {
+  position: fixed;
+  z-index: 7;
+  top: 0;
+  left: clamp(28px, 5vw, 72px);
+  right: clamp(28px, 5vw, 72px);
+  height: 82px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.wordmark {
+  position: static;
+  font-family: var(--display);
+  font-size: 2.25rem;
+  letter-spacing: -.06em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.masthead-name {
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  border-left: 1px solid var(--rule);
+  padding-left: 22px;
+}
+.source-link { font-family: var(--mono); font-size: .7rem; text-decoration: none; }
+.source-link span { margin-left: .6em; color: var(--wax); }
+a:hover { color: var(--wax); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--wax); outline-offset: 6px; }
+.wordmark:focus-visible { outline: 2px solid var(--wax); }
+.cover { overflow: hidden; isolation: isolate; align-items: center; min-height: max(760px, 100dvh); }
+.cover-copy { position: relative; z-index: 1; justify-self: start; max-width: 39rem; padding-bottom: 50px; }
+.cover-copy .eyebrow { font-size: .65rem; max-width: 23rem; }
+.cover-wordmark {
+  font-family: var(--display);
+  font-size: clamp(9rem, 21vw, 19rem);
+  letter-spacing: -.075em;
+  line-height: .8;
+  margin: .08em 0 .09em -.03em;
+}
+.cover h1 { font-size: clamp(2.5rem, 5.4vw, 5.2rem); white-space: nowrap; margin-top: .25em; }
+.cover .epigraph { font-size: clamp(1rem, 1.3vw, 1.2rem); max-width: 29rem; margin-top: 1.9rem; line-height: 1.65; }
+.cover-art {
+  position: absolute;
+  z-index: -1;
+  width: 100%;
+  height: calc(100% - 104px);
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  mask-image: linear-gradient(to right, transparent 20%, #000 62%), linear-gradient(to bottom, transparent, #000 18%);
+  mask-composite: intersect;
+}
+.cover-art img, .cover-art video { display: block; width: 100%; height: 100%; object-fit: contain; object-position: right bottom; }
+.read-link {
+  display: inline-flex;
+  gap: 1.5rem;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: .73rem;
+  text-decoration: none;
+  padding: .85rem 0;
+  border-bottom: 1px solid var(--wax);
+  color: var(--wax);
+  margin-top: 1.8rem;
+}
+.hint { justify-content: flex-start; left: var(--pad-l); right: var(--pad-r); font-size: .62rem; letter-spacing: .12em; bottom: 36px; }
+.hint .arrow { display: none; }
+.illustrated { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: clamp(24px, 5vw, 80px); }
+.illustrated .slide-inner { max-width: 40rem; }
+.illustrated h2 { font-size: clamp(2.7rem, 4.8vw, 4.6rem); }
+.engraving { width: 100%; margin: 0; mix-blend-mode: multiply; }
+.engraving img { display: block; width: 100%; height: auto; }
+.fire .engraving { width: 145%; margin-left: -12%; mask-image: linear-gradient(to right, transparent, #000 20%, #000 95%, transparent); }
+.identity .engraving { mask-image: radial-gradient(ellipse, #000 65%, transparent 90%); }
+.landscape .slide-inner { max-width: 58rem; }
+.landscape-art { margin: 2rem -3rem 1rem; mix-blend-mode: multiply; mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 85%, transparent); }
+.landscape-art img { display: block; width: 100%; height: auto; max-height: 32vh; object-fit: cover; object-position: center 60%; }
+.ill { margin-right: 0; width: min(33%, 360px); shape-outside: none; }
+.ill.below.big { max-width: 100%; }
+.quad { gap: 1.8rem 2.2rem; }
+.quad b { color: var(--wax); font-size: 1.9rem; }
+.quad p { font-size: 1rem; }
+.badge { width: 140px; margin-bottom: 1.2rem; }
+.badge b { font-size: 1rem; }
+.closing .slide-inner { max-width: 49rem; }
+.closing h2 { font-size: clamp(2.9rem, 5.6vw, 4.8rem); }
+.closing p { max-width: 39rem; }
+.segs { width: 28px; }
+.seg .lbl { font-size: .65rem; letter-spacing: .06em; }
+.seg .fill { background: var(--wax); }
+.counter { font-size: .65rem; }
+.nav button { width: 42px; height: 42px; background: var(--paper); }
+@media (max-width: 1000px) {
+  .slide { --pad-l: 80px; --pad-r: 44px; }
+  .cover-copy { max-width: 29rem; }
+  .landscape-art { margin-left: -20px; margin-right: -20px; }
+  .cover-art { width: 125%; right: -20%; }
+  .illustrated { gap: 26px; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); }
+  .illustrated h2 { font-size: 3rem; }
+}
+@media (max-width: 900px), (pointer: coarse) {
+  .segs { width: auto; padding: 0 4px; background: var(--paper); }
+  .counter { padding: .2rem .5rem; background: var(--paper); bottom: calc(54px + env(safe-area-inset-bottom)); }
+  .hint { bottom: 72px; }
+}
+@media (max-width: 640px) {
+  body { font-size: 18px; line-height: 1.5; }
+  .masthead { height: 66px; left: 24px; right: 24px; }
+  .wordmark { font-size: 2rem; gap: 12px; }
+  .masthead-name { font-size: .55rem; padding-left: 12px; letter-spacing: .1em; }
+  .source-link { font-size: .6rem; }
+  .source-link span { margin-left: .1em; }
+  .slide, .slide.centered {
+    --pad-l: 28px;
+    --pad-r: 28px;
+    min-height: 100dvh;
+    height: auto;
+    padding: 104px var(--pad-r) 108px var(--pad-l);
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .slide-inner, .slide-inner.has-ill { max-width: 100%; }
+  .eyebrow { font-size: .63rem; margin-bottom: 1.2rem; }
+  h2, .illustrated h2 { font-size: clamp(2.6rem, 10vw, 3.8rem); }
+  .cover { min-height: max(860px, 100dvh); justify-content: flex-start; overflow: hidden; }
+  .cover-copy { padding: 0; }
+  .cover-copy .eyebrow { max-width: 18rem; font-size: .58rem; }
+  .cover-wordmark { font-size: clamp(8.5rem, 47vw, 16rem); margin-top: .1em; }
+  .cover h1 { font-size: clamp(2.5rem, 10vw, 3.9rem); }
+  .cover .epigraph { margin-top: 1.4rem; max-width: 23rem; font-size: 1rem; }
+  .cover-art { width: 135%; height: auto; right: -12%; bottom: 55px; mask-image: linear-gradient(to bottom, transparent, #000 24%); }
+  .cover-art img, .cover-art video { height: auto; }
+  .cover .read-link { margin-top: 1.2rem; }
+  .hint { display: none; }
+  .illustrated { gap: 24px; }
+  .engraving { max-width: 320px; align-self: center; }
+  .fire .engraving { width: 100%; margin: 0; max-width: 400px; }
+  .landscape-art { margin: 1.5rem -16px; }
+  .landscape-art img { max-height: none; aspect-ratio: 1.8; }
+  .ill, .ill.tall { max-width: 33%; margin-right: 0; }
+  .ill.below, .ill.below.big { max-width: 100%; width: 100%; }
+  .quad { grid-template-columns: 1fr; gap: 1.3rem; }
+  .quad b { font-size: 1.6rem; }
+  .quad p { font-size: 1rem; line-height: 1.5; }
+  .stand { font-size: 1.6rem; }
+  .badge { width: 112px; }
+  .republic p { font-size: 1em; }
+  .motto { font-size: 1.15rem !important; }
+  .closing h2 { font-size: 3rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}
+
+/* Each chapter is a full-bleed engraved scene, like the cover. */
+.immersive {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 100dvh;
+}
+.immersive .slide-inner {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: min(50vw, 40rem);
+  max-width: 100%;
+}
+.immersive h2 { font-size: clamp(2.7rem, 4.8vw, 4.6rem); }
+.immersive .republic { text-align: left; }
+.immersive .badge { display: none; }
+.page-art {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  mask-image: linear-gradient(to right, transparent 20%, rgb(0 0 0 / .06) 43%, rgb(0 0 0 / .2) 57%, #000 83%), linear-gradient(to bottom, transparent 2%, #000 15%);
+  mask-composite: intersect;
+}
+.page-art img, .page-art video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  object-position: right bottom;
+}
+.wide-art img, .wide-art video { object-fit: cover; object-position: 65% center; }
+.immersive .quad { gap: 1.5rem; }
+@media (min-width: 641px) and (max-width: 1000px) {
+  .immersive .slide-inner { width: 52vw; }
+  .immersive h2 { font-size: 3rem; }
+  .immersive .quad { grid-template-columns: 1fr; }
+  .page-art { mask-image: linear-gradient(to right, transparent 10%, rgb(0 0 0 / .08) 50%, rgb(0 0 0 / .3) 68%, #000 95%), linear-gradient(to bottom, transparent, #000 14%); }
+}
+@media (max-width: 640px) {
+  .immersive {
+    padding-top: 104px;
+    padding-bottom: max(340px, 48svh);
+    justify-content: flex-start;
+  }
+  .immersive .slide-inner { width: 100%; isolation: isolate; }
+  .immersive .slide-inner::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -2rem -3rem -2.5rem;
+    background: rgb(243 231 207 / .9);
+    filter: blur(22px);
+    pointer-events: none;
+  }
+  .immersive .slide-inner > * + * { margin-top: 1.1em; }
+  .immersive .slide-inner > h2 { margin-top: .35em; font-size: clamp(2.6rem, 10vw, 3.8rem); }
+  .page-art {
+    top: auto;
+    bottom: 0;
+    height: min(100%, 1000px);
+    mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0 / .25) 18%, #000 48%);
+    mask-composite: add;
+  }
+  .page-art img, .page-art video { object-fit: cover; object-position: center bottom; }
+  .wide-art img, .wide-art video { object-position: 65% bottom; }
+  .immersive .quad { grid-template-columns: 1fr; gap: 1.3rem; }
+}
+
+/* Animated artwork keeps the still image as its fallback. */
+.art-motion video { position: absolute; inset: 0; opacity: 0; }
+.art-motion.is-playing video { opacity: 1; }
+.art-motion.is-playing img { opacity: 0; }
+.motion-toggle {
+  position: fixed;
+  z-index: 7;
+  right: clamp(20px, 5vw, 64px);
+  bottom: calc(clamp(20px, 5vh, 48px) + 54px);
+  padding: .5rem .65rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: .62rem;
+  cursor: pointer;
+}
+@media (max-width: 900px), (pointer: coarse) {
+  .motion-toggle { right: 16px; bottom: calc(88px + env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .art-motion.is-playing video { opacity: 0; }
+  .art-motion.is-playing img { opacity: 1; }
+  .motion-toggle { display: none; }
+}
+
+/* Chapter buttons jump directly. */
+.reveal > * { transform: none; opacity: 1; transition: none; }
+mark { background-size: 100% 100%; transition: none; }
+/* Full-width parchment fades keep the artwork continuous at the edges. */
+.masthead {
+  left: 0;
+  right: 0;
+  padding-inline: clamp(28px, 5vw, 72px);
+  border: 0;
+  background: transparent;
+  isolation: isolate;
+}
+.masthead::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 -36px;
+  background: linear-gradient(to bottom, var(--paper) 35%, rgb(243 231 207 / .94) 62%, transparent);
+  pointer-events: none;
+}
+.masthead::after {
+  content: "";
+  position: absolute;
+  left: clamp(28px, 5vw, 72px);
+  right: clamp(28px, 5vw, 72px);
+  bottom: 0;
+  height: 1px;
+  background: var(--rule);
+  pointer-events: none;
+}
+.counter { background: transparent; }
+@media (max-width: 900px), (pointer: coarse) {
+  .segs {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(54px + env(safe-area-inset-bottom));
+    padding: 0 20px calc(10px + env(safe-area-inset-bottom));
+    background: transparent;
+    isolation: isolate;
+  }
+  .segs::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -64px 0 0;
+    background: linear-gradient(to bottom, transparent, rgb(243 231 207 / .9) 55%, var(--paper) 85%);
+    pointer-events: none;
+  }
+  .counter { background: transparent; }
+}
+@media (max-width: 640px) {
+  .masthead { padding-inline: 24px; }
+  .masthead::after { left: 24px; right: 24px; }
+}
