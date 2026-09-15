@@ -85,6 +85,7 @@ defmodule Arc.CLI.Lists do
   defp dir, do: Application.get_env(:arc_cli, :lists_dir, @default_dir)
   defp path(namespace, name), do: Path.expand(Path.join([dir(), namespace, name]))
 
+  @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     Arc.CLI.Exit.halt(1)
