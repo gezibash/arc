@@ -16,7 +16,16 @@ Releases are published on GitHub for each `vX.Y.Z` tag:
 The Linux tarballs need glibc 2.36 or newer (Debian 12, Ubuntu 22.04,
 RHEL 9, or newer). The macOS tarball needs Apple silicon.
 
-Install:
+Install with the script. It picks the tarball for this OS and CPU, checks
+the checksum, unpacks to `~/.local/share/arc`, and links `arc` into
+`~/.local/bin`. `ARC_VERSION`, `ARC_INSTALL_DIR`, and `ARC_BIN_DIR`
+override the defaults.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gezibash/arc/main/install.sh | sh
+```
+
+Or install by hand:
 
 ```bash
 curl -fsSLO https://github.com/gezibash/arc/releases/download/vX.Y.Z/arc-X.Y.Z-linux-x86_64.tar.gz
