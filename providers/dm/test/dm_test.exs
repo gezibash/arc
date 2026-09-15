@@ -207,7 +207,8 @@ defmodule DmTest do
   test "retract empties the recipient copy within the window", %{root: root} do
     id = send(root, @alice, @bob, "oops")
     assert {:error, "forbidden" <> _} = Command.run(root, @bob, "retract #{id}")
-    assert {:ok, "retracted " <> _} = Command.run(root, @alice, "retract #{id}")
+    assert {:ok, "retracted " <> _, [event]} = Command.run(root, @alice, "retract #{id}")
+    assert %{to: @bob, topic: "dm.retracted", meta: %{"id" => ^id, "from" => @alice}} = event
 
     {:ok, bob_copy} = Dm.Store.get_message(root, @bob, id)
     {:ok, alice_copy} = Dm.Store.get_message(root, @alice, id)
@@ -339,9 +340,13 @@ defmodule DmTest do
     assert alice["body"] == token("hey@self")
     assert [%{"event" => "delivered"}] = Dm.Store.receipts(root, @carol, id)
 
-    # Both recipients see it in a thread with the sender, and with each other.
-    assert [_] = lines(Command.run(root, @bob, "thread #{@alice}"))
-    assert [_] = lines(Command.run(root, @bob, "thread #{@carol}"))
+    # A group is its own conversation, keyed on every other participant in
+    # any order. It does not leak into the one-to-one threads.
+    assert [_] = lines(Command.run(root, @bob, "thread #{@alice},#{@carol}"))
+    assert [_] = lines(Command.run(root, @bob, "thread #{@carol},#{@alice}"))
+    assert {:ok, "no messages"} = Command.run(root, @bob, "thread #{@alice}")
+    assert {:ok, "no messages"} = Command.run(root, @bob, "thread #{@carol}")
+    assert {:error, "invalid_address"} = Command.run(root, @bob, "thread #{@alice},nope")
 
     # The conversation key names every other participant.
     {:ok, out} = Command.run(root, @bob, "conversations")
@@ -475,6 +480,86 @@ defmodule DmTest do
     # Alice still holds her copy.
     assert {:ok, _} = Command.run(root, @alice, "read #{old}")
     assert {:ok, _} = Command.run(root, @alice, "fetch #{old} f.md")
+  end
+
+  test "group thread --bodies shows read only when every receipt-sharing peer read it", %{
+    root: root
+  } do
+    {:ok, "id: " <> id, _} =
+      Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> group_body("hey", 2))
+
+    flags = fn ->
+      {:ok, out} = Command.run(root, @alice, "thread #{@bob},#{@carol} --bodies \"true\"")
+      [_, l] = String.split(out, "\n")
+      l |> String.split("\t") |> Enum.at(5)
+    end
+
+    assert flags.() == "delivered"
+    {:ok, _} = Command.run(root, @bob, "read #{id}")
+    assert flags.() == "delivered"
+    {:ok, _} = Command.run(root, @carol, "read #{id}")
+    assert flags.() == "read"
+  end
+
+  test "attachment names . and .. are rejected before any write", %{root: root} do
+    for name <- [".", ".."] do
+      lines = [
+        token("a@p"),
+        token("a@s"),
+        "attach:#{name}:" <> token("f@p"),
+        "attach:#{name}:" <> token("f@s")
+      ]
+
+      assert {:error, "unsealed attachment name" <> _} =
+               Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
+    end
+
+    assert {:ok, "no messages"} = Command.run(root, @bob, "inbox")
+    assert {:ok, "no messages"} = Command.run(root, @alice, "inbox")
+  end
+
+  test "a send that fails mid-write leaves no mailbox holding it", %{root: root} do
+    # Bob's msgs dir is a file, so his write raises after alice's copy landed.
+    File.mkdir_p!(Dm.Store.mailbox(root, @bob))
+    File.write!(Path.join(Dm.Store.mailbox(root, @bob), "msgs"), "")
+
+    assert_raise File.Error, fn -> Command.run(root, @alice, "send #{@bob}\n" <> body("x")) end
+    assert {:ok, "no messages"} = Command.run(root, @alice, "inbox")
+    assert {:ok, "used 0 of " <> _} = Command.run(root, @alice, "quota")
+  end
+
+  test "the usage counter tracks writes, retract, purge, and a recount", %{root: root} do
+    used = fn pk ->
+      {:ok, "used " <> rest} = Command.run(root, pk, "quota")
+      rest |> String.split(" of ") |> hd() |> String.to_integer()
+    end
+
+    lines = [
+      token("a@p"),
+      token("a@s"),
+      "attach:f.md:" <> token("x@p"),
+      "attach:f.md:" <> token("x@s")
+    ]
+
+    {:ok, "id: " <> old, _} =
+      Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
+
+    newer = send(root, @alice, @bob, "keep")
+
+    assert used.(@bob) == Dm.Store.recount_usage(root, @bob)
+    assert used.(@bob) > 0
+
+    {:ok, "retracted " <> _, _} = Command.run(root, @alice, "retract #{newer}")
+    assert used.(@bob) == Dm.Store.recount_usage(root, @bob)
+
+    {:ok, "purged 1"} = Command.run(root, @bob, "purge --before #{newer}")
+    assert used.(@bob) == Dm.Store.recount_usage(root, @bob)
+    refute File.exists?(Path.join([Dm.Store.mailbox(root, @bob), "blobs", old]))
+
+    # A mailbox with no counter file is walked once and the count stored.
+    File.rm!(Path.join(Dm.Store.mailbox(root, @alice), "usage"))
+    assert used.(@alice) == Dm.Store.recount_usage(root, @alice)
+    assert File.exists?(Path.join(Dm.Store.mailbox(root, @alice), "usage"))
   end
 
   test "unknown command and help", %{root: root} do

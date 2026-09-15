@@ -30,8 +30,7 @@ defmodule Dm.Store do
 
   def put_message(root, pk, %{"id" => id} = msg) do
     File.mkdir_p!(msgs_dir(root, pk))
-    File.write!(msg_path(root, pk, id), encode(msg))
-    :ok
+    write_counted(root, pk, msg_path(root, pk, id), encode(msg))
   end
 
   def get_message(root, pk, id) do
@@ -55,13 +54,23 @@ defmodule Dm.Store do
     end
   end
 
+  @doc "Remove one message and its blobs from a mailbox. Missing files are fine."
+  def delete_message(root, pk, id) do
+    blobs = Path.join([mailbox(root, pk), "blobs", id])
+    # Read the counter before the delete so a first walk sees the files.
+    base = usage(root, pk)
+    freed = file_size(msg_path(root, pk, id)) + tree_size(Path.join(blobs, "*"))
+    File.rm(msg_path(root, pk, id))
+    File.rm_rf(blobs)
+    write_usage(root, pk, max(base - freed, 0))
+  end
+
   # -- attachments ------------------------------------------------------------
 
   def put_blob(root, pk, id, name, token) do
     dir = Path.join([mailbox(root, pk), "blobs", id])
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, name), token)
-    :ok
+    write_counted(root, pk, Path.join(dir, name), token)
   end
 
   def get_blob(root, pk, id, name) do
@@ -73,17 +82,27 @@ defmodule Dm.Store do
 
   # -- budget -----------------------------------------------------------------
 
-  @doc "Bytes used by a mailbox: message files and blobs."
+  @doc """
+  Bytes used by a mailbox: message files and blobs. The count lives in the
+  `usage` file and every write adjusts it. A mailbox without one is
+  walked once and the result stored.
+  """
   def usage(root, pk) do
-    [Path.join(msgs_dir(root, pk), "*.json"), Path.join([mailbox(root, pk), "blobs", "*", "*"])]
-    |> Enum.flat_map(&Path.wildcard/1)
-    |> Enum.map(fn path ->
-      case File.stat(path) do
-        {:ok, %{size: size}} -> size
-        _ -> 0
-      end
-    end)
-    |> Enum.sum()
+    case File.read(usage_path(root, pk)) do
+      {:ok, text} ->
+        String.to_integer(String.trim(text))
+
+      _ ->
+        used = recount_usage(root, pk)
+        write_usage(root, pk, used)
+        used
+    end
+  end
+
+  @doc "Walk a mailbox and store its byte count. Repairs a drifted counter."
+  def recount_usage(root, pk) do
+    tree_size(Path.join(msgs_dir(root, pk), "*.json")) +
+      tree_size(Path.join([mailbox(root, pk), "blobs", "*", "*"]))
   end
 
   @doc "Delete messages and blobs with an id below `before` from one mailbox. Returns the count."
@@ -94,13 +113,35 @@ defmodule Dm.Store do
       |> Enum.map(& &1["id"])
       |> Enum.filter(&(&1 < before))
 
-    Enum.each(ids, fn id ->
-      File.rm(msg_path(root, pk, id))
-      File.rm_rf(Path.join([mailbox(root, pk), "blobs", id]))
-    end)
-
+    Enum.each(ids, &delete_message(root, pk, &1))
     length(ids)
   end
+
+  # Writes a file and moves the mailbox counter by the change in its size.
+  # The counter is read before the write so a first walk excludes the new file.
+  defp write_counted(root, pk, path, data) do
+    base = usage(root, pk)
+    before = file_size(path)
+    File.write!(path, data)
+    write_usage(root, pk, base + byte_size(data) - before)
+  end
+
+  defp write_usage(root, pk, used) do
+    File.mkdir_p!(mailbox(root, pk))
+    File.write!(usage_path(root, pk), Integer.to_string(used))
+    :ok
+  end
+
+  defp usage_path(root, pk), do: Path.join(mailbox(root, pk), "usage")
+
+  defp file_size(path) do
+    case File.stat(path) do
+      {:ok, %{size: size}} -> size
+      _ -> 0
+    end
+  end
+
+  defp tree_size(glob), do: glob |> Path.wildcard() |> Enum.map(&file_size/1) |> Enum.sum()
 
   # -- receipts ---------------------------------------------------------------
 
@@ -115,9 +156,10 @@ defmodule Dm.Store do
   Current reactions per message id: `%{id => [{by, value}]}`. The latest
   reaction by one key wins, and an empty value clears it.
   """
-  def reaction_index(root, pk) do
-    root
-    |> all_receipts(pk)
+  def reaction_index(root, pk), do: root |> all_receipts(pk) |> reaction_index()
+
+  def reaction_index(receipts) when is_list(receipts) do
+    receipts
     |> Enum.filter(&(&1["event"] == "reaction"))
     |> Enum.group_by(& &1["id"])
     |> Map.new(fn {id, rs} ->
@@ -137,14 +179,16 @@ defmodule Dm.Store do
   end
 
   @doc "Map of id => MapSet of events."
-  def receipt_index(root, pk) do
-    root
-    |> all_receipts(pk)
+  def receipt_index(root, pk), do: root |> all_receipts(pk) |> receipt_index()
+
+  def receipt_index(receipts) when is_list(receipts) do
+    receipts
     |> Enum.group_by(& &1["id"], & &1["event"])
     |> Map.new(fn {id, events} -> {id, MapSet.new(events)} end)
   end
 
-  defp all_receipts(root, pk) do
+  @doc "Every receipt in a mailbox, in file order. Load once per command."
+  def all_receipts(root, pk) do
     case File.read(receipts_path(root, pk)) do
       {:ok, text} ->
         text |> String.split("\n", trim: true) |> Enum.map(&:json.decode/1)

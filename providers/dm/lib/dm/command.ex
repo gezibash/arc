@@ -47,14 +47,22 @@ defmodule Dm.Command do
         |> maybe_put("reply_to", opts["reply_to"])
         |> maybe_put("attachments", attachment_meta(attachments))
 
-      Enum.each(holders, fn pk ->
-        i = token_index(pk, recipients)
-        :ok = Store.put_message(ctx.root, pk, Map.put(base, "body", Enum.at(tokens, i)))
+      # A send lands in every holder's mailbox or in none. Receipts follow
+      # the writes, so a failed write has nothing else to undo.
+      try do
+        Enum.each(holders, fn pk ->
+          i = token_index(pk, recipients)
+          :ok = Store.put_message(ctx.root, pk, Map.put(base, "body", Enum.at(tokens, i)))
 
-        Enum.each(attachments, fn {name, toks} ->
-          :ok = Store.put_blob(ctx.root, pk, id, name, Enum.at(toks, i))
+          Enum.each(attachments, fn {name, toks} ->
+            :ok = Store.put_blob(ctx.root, pk, id, name, Enum.at(toks, i))
+          end)
         end)
-      end)
+      rescue
+        e ->
+          Enum.each(holders, &Store.delete_message(ctx.root, &1, id))
+          reraise e, __STACKTRACE__
+      end
 
       Enum.each(recipients, &Store.add_receipt(ctx.root, &1, id, "delivered"))
 
@@ -154,12 +162,14 @@ defmodule Dm.Command do
     |> lines_or("no messages")
   end
 
+  # The peer is a conversation key as `conversations` prints it: one hex
+  # key, or a comma-joined set for a group. Order does not matter.
   defp dispatch(["thread", peer], opts, ctx) do
-    with :ok <- valid_peer(peer) do
+    with {:ok, peer} <- conversation_key(peer) do
       msgs =
         ctx.root
         |> Store.list_messages(ctx.from)
-        |> Enum.filter(&involves?(&1, peer))
+        |> Enum.filter(&(other(&1, ctx) == peer))
         |> since(opts["since"])
         |> limit(opts["limit"])
 
@@ -176,12 +186,14 @@ defmodule Dm.Command do
   defp dispatch(["read", id], _opts, ctx) do
     with :ok <- valid_id(id),
          {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id) do
-      if not outbound?(msg, ctx) and not read?(msg, Store.receipt_index(ctx.root, ctx.from)) do
+      receipts = Store.all_receipts(ctx.root, ctx.from)
+      index = Store.receipt_index(receipts)
+
+      if not outbound?(msg, ctx) and not read?(msg, index) do
         :ok = Store.add_receipt(ctx.root, ctx.from, id, "read")
       end
 
-      index = Store.receipt_index(ctx.root, ctx.from)
-      reactions = ctx.root |> Store.reaction_index(ctx.from) |> Map.get(id, [])
+      reactions = receipts |> Store.reaction_index() |> Map.get(id, [])
       {:ok, render(msg, retracted?(msg, index), reactions)}
     end
   end
@@ -261,7 +273,18 @@ defmodule Dm.Command do
       end)
 
       msg |> holders() |> Enum.each(&Store.add_receipt(ctx.root, &1, id, "retracted"))
-      {:ok, "retracted #{id}"}
+
+      # The dm.new event already carried the body to any online recipient.
+      # A dm.retracted event tells the same watcher to drop it.
+      events =
+        msg
+        |> holders()
+        |> Enum.reject(&(&1 == ctx.from))
+        |> Enum.map(fn pk ->
+          %{to: pk, topic: "dm.retracted", meta: %{"id" => id, "from" => ctx.from}, body: ""}
+        end)
+
+      {:ok, "retracted #{id}", events}
     end
   end
 
@@ -339,10 +362,22 @@ defmodule Dm.Command do
   # Line: id, dir, peer, t, reply_to or -, flags, body. This format is part
   # of the CLI interface; the conversation renderer reads it.
   defp thread_with_bodies(msgs, peer, ctx) do
-    index = Store.receipt_index(ctx.root, ctx.from)
-    reactions = Store.reaction_index(ctx.root, ctx.from)
-    show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
-    peer_index = if show_read, do: Store.receipt_index(ctx.root, peer), else: %{}
+    receipts = Store.all_receipts(ctx.root, ctx.from)
+    index = Store.receipt_index(receipts)
+    reactions = Store.reaction_index(receipts)
+
+    # An outbound message is read once every peer who shares read receipts
+    # has read it. A peer with receipts off never counts.
+    peer_indexes =
+      peer
+      |> String.split(",")
+      |> Enum.filter(&(Store.settings(ctx.root, &1)["receipts"] == "on"))
+      |> Enum.map(&Store.receipt_index(ctx.root, &1))
+
+    peers_read? = fn msg ->
+      peer_indexes != [] and Enum.all?(peer_indexes, &read?(msg, &1))
+    end
+
     unread = Enum.filter(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
 
     rows =
@@ -350,7 +385,7 @@ defmodule Dm.Command do
         state =
           cond do
             retracted?(msg, index) -> "retracted"
-            outbound?(msg, ctx) and read?(msg, peer_index) -> "read"
+            outbound?(msg, ctx) and peers_read?.(msg) -> "read"
             outbound?(msg, ctx) -> "delivered"
             read?(msg, index) -> "read"
             true -> "unread"
@@ -385,13 +420,13 @@ defmodule Dm.Command do
       quota                           bytes used of the mailbox budget
       purge --before <id>             delete your own messages older than id
       inbox [--unread] [--since id] [--limit n]
-      thread <peer> [--since id] [--limit n] [--bodies]   --bodies marks inbound read
+      thread <peer[,peer...]> [--since id] [--limit n] [--bodies]   a group key as conversations prints it; --bodies marks inbound read
       read <id>
       ack <id>...
       status <id>
       archive <id>...
       react <id> <emoji|none>
-      retract <id>                    sender only, within the retract window
+      retract <id>                    sender only, within the retract window; emits dm.retracted
       block <peer> | unblock <peer> | blocked
       mute <peer> | unmute <peer> | muted
       settings [receipts on|off]
@@ -401,6 +436,16 @@ defmodule Dm.Command do
   end
 
   defp valid_peer(peer), do: if(Store.pubkey?(peer), do: :ok, else: {:error, "invalid_address"})
+
+  # Normalizes a comma-joined set of keys to the form `other/2` produces.
+  defp conversation_key(peer) do
+    keys = peer |> String.split(",", trim: true) |> Enum.map(&String.trim/1) |> Enum.uniq()
+
+    if keys != [] and Enum.all?(keys, &Store.pubkey?/1),
+      do: {:ok, keys |> Enum.sort() |> Enum.join(",")},
+      else: {:error, "invalid_address"}
+  end
+
   defp valid_id(id), do: if(ULID.valid?(id), do: :ok, else: {:error, "not_found"})
 
   defp recipients(nil), do: {:error, "invalid_address missing recipient"}
@@ -483,6 +528,10 @@ defmodule Dm.Command do
     cond do
       Enum.any?(parsed, &is_nil/1) ->
         {:error, "unsealed attachment lines must be attach:<name>:<sealed-v1 token>"}
+
+      # The regex admits `.` and `..`, which name directories, not files.
+      Enum.any?(parsed, &(Enum.at(&1, 1) in [".", ".."])) ->
+        {:error, "unsealed attachment name must not be . or .."}
 
       rem(length(parsed), n) != 0 ->
         {:error, "unsealed each attachment needs #{n} tokens"}
@@ -589,7 +638,6 @@ defmodule Dm.Command do
     end
   end
 
-  defp involves?(msg, peer), do: peer in holders(msg)
   defp read?(msg, index), do: MapSet.member?(Map.get(index, msg["id"], MapSet.new()), "read")
 
   defp archived?(msg, index),
