@@ -4,9 +4,19 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-09-15
+
+### Added
+
+- Installable releases: a mix release with the bundled Erlang runtime, one
+  tarball per platform (linux-x86_64, linux-aarch64, darwin-aarch64), and a
+  relay image on ghcr.io. A `vX.Y.Z` tag builds and publishes them. See
+  `docs/DEPLOY.md`.
 
 ### Fixed
+
+- `arc relay` no longer crashes in a release for lack of `:crypto`, and no
+  longer prints an EXIT trace on SIGTERM.
 
 - `arc dm fetch` rejects a blob name that could leave the message's blob
   directory. Attachment names never start with a dot.
