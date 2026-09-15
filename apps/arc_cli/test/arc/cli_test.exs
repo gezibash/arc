@@ -82,7 +82,8 @@ defmodule Arc.CLITest do
 
   test "version prints the umbrella version and the build commit" do
     output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["version"]) end)
-    assert output =~ ~r/^arc 0\.2\.0 \([0-9a-f]{7,}|unknown\)\n$/
+    version = Regex.escape(Mix.Project.config()[:version])
+    assert output =~ ~r/^arc #{version} \([0-9a-f]{7,}|unknown\)\n$/
     assert ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["--version"]) end) == output
   end
 end
