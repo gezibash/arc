@@ -47,28 +47,36 @@ defmodule Dm.Command do
         |> maybe_put("reply_to", opts["reply_to"])
         |> maybe_put("attachments", attachment_meta(attachments))
 
-      Enum.each(holders, fn pk ->
-        i = token_index(pk, recipients)
-        :ok = Store.put_message(ctx.root, pk, Map.put(base, "body", Enum.at(tokens, i)))
+      # A send lands in every holder's mailbox, with its receipts, or in
+      # none. Each holder's counter moves once. A failed write removes
+      # what landed and rebuilds each counter from disk; a stray receipt
+      # for the dropped id is inert, since every index is keyed by id.
+      try do
+        Enum.each(holders, fn pk ->
+          i = token_index(pk, recipients)
+          msg = Map.put(base, "body", Enum.at(tokens, i))
+          {:ok, written} = Store.put_message(ctx.root, pk, msg, counted: false)
 
-        Enum.each(attachments, fn {name, toks} ->
-          :ok = Store.put_blob(ctx.root, pk, id, name, Enum.at(toks, i))
+          blobs =
+            Enum.map(attachments, fn {name, toks} ->
+              {:ok, n} = Store.put_blob(ctx.root, pk, id, name, Enum.at(toks, i), counted: false)
+              n
+            end)
+
+          :ok = Store.bump_usage(ctx.root, pk, written + Enum.sum(blobs))
         end)
-      end)
 
-      Enum.each(recipients, &Store.add_receipt(ctx.root, &1, id, "delivered"))
+        Enum.each(recipients, &Store.add_receipt(ctx.root, &1, id, "delivered"))
+      rescue
+        e ->
+          Enum.each(holders, &undo_send(ctx.root, &1, id))
+          reraise e, __STACKTRACE__
+      end
 
       # Each recipient gets a dm.new event carrying its own sealed token.
       events =
-        recipients
-        |> Enum.reject(&(&1 == ctx.from))
-        |> Enum.map(fn pk ->
-          %{
-            to: pk,
-            topic: "dm.new",
-            meta: %{"id" => id, "from" => ctx.from, "t" => base["t"]},
-            body: Enum.at(tokens, token_index(pk, recipients))
-          }
+        fan_out(holders, ctx, "dm.new", %{"id" => id, "t" => base["t"]}, fn pk ->
+          Enum.at(tokens, token_index(pk, recipients))
         end)
 
       {:ok, "id: #{id}", events}
@@ -82,8 +90,8 @@ defmodule Dm.Command do
     {:ok, "used #{used} of #{Config.mailbox_budget_bytes()} bytes"}
   end
 
-  # Deletes the caller's own messages and blobs older than an id. The second
-  # and last delete in the provider, on the owner's request only.
+  # Deletes the caller's own messages and blobs older than an id. The one
+  # delete a user can ask for; the other is the rollback of a failed send.
   defp dispatch(["purge"], opts, ctx) do
     with before when is_binary(before) <- opts["before"] || {:error, "missing --before <id>"},
          :ok <- valid_id(before) do
@@ -93,6 +101,7 @@ defmodule Dm.Command do
 
   defp dispatch(["fetch", id, name], _opts, ctx) do
     with :ok <- valid_id(id),
+         :ok <- valid_name(name),
          {:ok, _msg} <- Store.get_message(ctx.root, ctx.from, id) do
       Store.get_blob(ctx.root, ctx.from, id, name)
     end
@@ -154,12 +163,14 @@ defmodule Dm.Command do
     |> lines_or("no messages")
   end
 
+  # The peer is a conversation key as `conversations` prints it: one hex
+  # key, or a comma-joined set for a group. Order does not matter.
   defp dispatch(["thread", peer], opts, ctx) do
-    with :ok <- valid_peer(peer) do
+    with {:ok, peer} <- conversation_key(peer) do
       msgs =
         ctx.root
         |> Store.list_messages(ctx.from)
-        |> Enum.filter(&involves?(&1, peer))
+        |> Enum.filter(&(other(&1, ctx) == peer))
         |> since(opts["since"])
         |> limit(opts["limit"])
 
@@ -176,12 +187,14 @@ defmodule Dm.Command do
   defp dispatch(["read", id], _opts, ctx) do
     with :ok <- valid_id(id),
          {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id) do
-      if not outbound?(msg, ctx) and not read?(msg, Store.receipt_index(ctx.root, ctx.from)) do
+      receipts = Store.all_receipts(ctx.root, ctx.from)
+      index = Store.receipt_index(receipts)
+
+      if not outbound?(msg, ctx) and not read?(msg, index) do
         :ok = Store.add_receipt(ctx.root, ctx.from, id, "read")
       end
 
-      index = Store.receipt_index(ctx.root, ctx.from)
-      reactions = ctx.root |> Store.reaction_index(ctx.from) |> Map.get(id, [])
+      reactions = receipts |> Store.reaction_index() |> Map.get(id, [])
       {:ok, render(msg, retracted?(msg, index), reactions)}
     end
   end
@@ -230,18 +243,7 @@ defmodule Dm.Command do
       |> holders()
       |> Enum.each(&Store.add_receipt(ctx.root, &1, id, "reaction", extra))
 
-      events =
-        msg
-        |> holders()
-        |> Enum.reject(&(&1 == ctx.from))
-        |> Enum.map(fn pk ->
-          %{
-            to: pk,
-            topic: "dm.reaction",
-            meta: %{"id" => id, "from" => ctx.from, "value" => value},
-            body: ""
-          }
-        end)
+      events = fan_out(holders(msg), ctx, "dm.reaction", %{"id" => id, "value" => value})
 
       {:ok, if(value == "", do: "cleared #{id}", else: "reacted #{value} #{id}"), events}
     end
@@ -252,16 +254,24 @@ defmodule Dm.Command do
          {:ok, msg} <- Store.get_message(ctx.root, ctx.from, id),
          true <- outbound?(msg, ctx) or {:error, "forbidden not the sender"},
          true <- within_retract_window?(msg) or {:error, "too_late"} do
-      msg
-      |> holders()
-      |> Enum.reject(&(&1 == ctx.from))
-      |> Enum.each(fn pk ->
-        {:ok, copy} = Store.get_message(ctx.root, pk, id)
-        :ok = Store.put_message(ctx.root, pk, Map.put(copy, "body", ""))
+      # A recipient who already purged their copy has nothing to blank.
+      # Every step here is idempotent, so a retry after a failure completes.
+      Enum.each(holders(msg), fn pk ->
+        case Store.get_message(ctx.root, pk, id) do
+          {:ok, copy} when pk != ctx.from ->
+            {:ok, _} = Store.put_message(ctx.root, pk, Map.put(copy, "body", ""))
+
+          _ ->
+            :ok
+        end
       end)
 
       msg |> holders() |> Enum.each(&Store.add_receipt(ctx.root, &1, id, "retracted"))
-      {:ok, "retracted #{id}"}
+
+      # The dm.new event already carried the body to any online recipient.
+      # A dm.retracted event tells the same watcher to drop it.
+      events = fan_out(holders(msg), ctx, "dm.retracted", %{"id" => id})
+      {:ok, "retracted #{id}", events}
     end
   end
 
@@ -339,10 +349,22 @@ defmodule Dm.Command do
   # Line: id, dir, peer, t, reply_to or -, flags, body. This format is part
   # of the CLI interface; the conversation renderer reads it.
   defp thread_with_bodies(msgs, peer, ctx) do
-    index = Store.receipt_index(ctx.root, ctx.from)
-    reactions = Store.reaction_index(ctx.root, ctx.from)
-    show_read = Store.settings(ctx.root, peer)["receipts"] == "on"
-    peer_index = if show_read, do: Store.receipt_index(ctx.root, peer), else: %{}
+    receipts = Store.all_receipts(ctx.root, ctx.from)
+    index = Store.receipt_index(receipts)
+    reactions = Store.reaction_index(receipts)
+
+    # An outbound message is read once every peer who shares read receipts
+    # has read it. A peer with receipts off never counts.
+    peer_indexes =
+      peer
+      |> String.split(",")
+      |> Enum.filter(&(Store.settings(ctx.root, &1)["receipts"] == "on"))
+      |> Enum.map(&Store.receipt_index(ctx.root, &1))
+
+    peers_read? = fn msg ->
+      peer_indexes != [] and Enum.all?(peer_indexes, &read?(msg, &1))
+    end
+
     unread = Enum.filter(msgs, &(not outbound?(&1, ctx) and not read?(&1, index)))
 
     rows =
@@ -350,7 +372,7 @@ defmodule Dm.Command do
         state =
           cond do
             retracted?(msg, index) -> "retracted"
-            outbound?(msg, ctx) and read?(msg, peer_index) -> "read"
+            outbound?(msg, ctx) and peers_read?.(msg) -> "read"
             outbound?(msg, ctx) -> "delivered"
             read?(msg, index) -> "read"
             true -> "unread"
@@ -381,17 +403,17 @@ defmodule Dm.Command do
       conversations [--limit n]
       send --to <hex,...> [--reply-to id]   body: one token per recipient, then yours,
                                             then attach:<name>:<token> lines
-      fetch <id> <name>               the sealed attachment token
+      fetch <id> <name>               the sealed attachment token; a name never starts with a dot
       quota                           bytes used of the mailbox budget
       purge --before <id>             delete your own messages older than id
       inbox [--unread] [--since id] [--limit n]
-      thread <peer> [--since id] [--limit n] [--bodies]   --bodies marks inbound read
+      thread <peer[,peer...]> [--since id] [--limit n] [--bodies]   a group key as conversations prints it; --bodies marks inbound read
       read <id>
       ack <id>...
       status <id>
       archive <id>...
       react <id> <emoji|none>
-      retract <id>                    sender only, within the retract window
+      retract <id>                    sender only, within the retract window; emits dm.retracted
       block <peer> | unblock <peer> | blocked
       mute <peer> | unmute <peer> | muted
       settings [receipts on|off]
@@ -401,6 +423,18 @@ defmodule Dm.Command do
   end
 
   defp valid_peer(peer), do: if(Store.pubkey?(peer), do: :ok, else: {:error, "invalid_address"})
+
+  # Normalizes a comma-joined set of keys to the form `other/2` produces.
+  defp conversation_key(peer) do
+    with {:ok, keys} <- recipients(peer), do: {:ok, keys |> Enum.sort() |> Enum.join(",")}
+  end
+
+  # A blob name is one path segment that cannot climb: no slash, no leading
+  # dot, so `.` and `..` are out and the walk in Store sees every file.
+  @name_re ~r/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/
+  defp valid_name(name),
+    do: if(Regex.match?(@name_re, name), do: :ok, else: {:error, "not_found"})
+
   defp valid_id(id), do: if(ULID.valid?(id), do: :ok, else: {:error, "not_found"})
 
   defp recipients(nil), do: {:error, "invalid_address missing recipient"}
@@ -458,7 +492,7 @@ defmodule Dm.Command do
     Enum.map(attachments, fn {name, toks} -> %{"name" => name, "bytes" => byte_size(hd(toks))} end)
   end
 
-  @attach_re ~r/^attach:([A-Za-z0-9._-]+):(sealed-v1:[A-Za-z0-9+\/=]+)$/
+  @attach_re ~r/^attach:([A-Za-z0-9_-][A-Za-z0-9._-]*):(sealed-v1:[A-Za-z0-9+\/=]+)$/
 
   defp parse_send_body(nil, _n), do: {:error, "unsealed missing body"}
 
@@ -552,7 +586,33 @@ defmodule Dm.Command do
 
   defp holders(msg), do: Enum.uniq(List.wrap(msg["to"]) ++ [msg["from"]])
 
-  defp participants(msg, ctx), do: (List.wrap(msg["to"]) ++ [msg["from"]]) -- [ctx.from]
+  # One event per holder other than the caller. Meta always names the
+  # sender and, as `to`, the conversation key the recipient can open.
+  defp fan_out(holders, ctx, topic, meta, body \\ fn _pk -> "" end) do
+    holders
+    |> Enum.reject(&(&1 == ctx.from))
+    |> Enum.map(fn pk ->
+      to = holders |> Enum.reject(&(&1 == pk)) |> Enum.sort() |> Enum.join(",")
+
+      %{
+        to: pk,
+        topic: topic,
+        meta: Map.merge(meta, %{"from" => ctx.from, "to" => to}),
+        body: body.(pk)
+      }
+    end)
+  end
+
+  # Best effort per holder: remove what landed and rebuild the counter from
+  # disk, and never let one mailbox's failure hide the send's own error.
+  defp undo_send(root, pk, id) do
+    Store.remove_message(root, pk, id)
+    Store.recount_usage(root, pk)
+  rescue
+    _ -> :ok
+  end
+
+  defp participants(msg, ctx), do: Enum.reject(holders(msg), &(&1 == ctx.from))
 
   defp valid_reaction("none"), do: :ok
 
@@ -589,7 +649,6 @@ defmodule Dm.Command do
     end
   end
 
-  defp involves?(msg, peer), do: peer in holders(msg)
   defp read?(msg, index), do: MapSet.member?(Map.get(index, msg["id"], MapSet.new()), "read")
 
   defp archived?(msg, index),

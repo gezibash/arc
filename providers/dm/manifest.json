@@ -193,13 +193,13 @@
           "path": [
             "thread"
           ],
-          "summary": "List both directions of one thread in time order.",
+          "summary": "List one conversation in time order. A group is its own conversation: pass every other member, comma-separated, as arc dm prints it.",
           "args": [
             {
               "name": "peer",
               "kind": "positional",
               "required": true,
-              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+              "description": "Conversation: one peer, or a comma-separated set for a group; petnames, short names, key prefixes, or 64 hex"
             },
             {
               "name": "since",
@@ -235,13 +235,13 @@
           "path": [
             "open"
           ],
-          "summary": "Read a conversation. Marks its messages read. --format markdown exports a transcript, --raw prints tab-separated lines, --hex keeps public keys. With arc cache on dm, opened messages are cached sealed for arc cache search dm.",
+          "summary": "Read a conversation. Marks its messages read. A group is its own conversation: pass every other member, comma-separated, as arc dm prints it. --format markdown exports a transcript, --raw prints tab-separated lines, --hex keeps public keys. With arc cache on dm, opened messages are cached sealed for arc cache search dm.",
           "args": [
             {
               "name": "peer",
               "kind": "positional",
               "required": true,
-              "description": "Peer: petname, short name, key prefix, or 64 hex"
+              "description": "Conversation: one peer, or a comma-separated set for a group; petnames, short names, key prefixes, or 64 hex"
             },
             {
               "name": "since",

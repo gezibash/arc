@@ -155,8 +155,12 @@ The home screen (A1).
 - **Wire.** The `send` header gains `--to <hex,hex,...>`. The body is
   N+1 tokens, one per line, in the same order.
 - **Provider.** One message id, one file per mailbox, `to` becomes a
-  list. `thread <peer>` matches when `peer` is in `to` or is `from`. A
-  reply to a multi-recipient message goes to the same set by default.
+  list. A group is its own conversation: `conversations` keys it on
+  every other participant, sorted and comma-joined, and `thread` takes
+  that key in any order. A group message never appears in a one-to-one
+  thread with one of its members. A sender who lists themselves in
+  `--to` still keys the conversation on the others only. A reply to a
+  multi-recipient message goes to the same set by default.
 - **Not a group.** There is no group identity, no membership, no
   history for a late joiner. That is Phase 3.
 
@@ -197,10 +201,13 @@ The home screen (A1).
   own copy keeps its body. After the window, `retract` fails with
   `too_late`. A recipient who already read the message still sees
   "retracted" in place of the body, and `status` shows they read it
-  before the retraction.
+  before the retraction. A recipient who already purged their copy is
+  skipped. Every step is idempotent, so a retry after a failure
+  completes the retraction.
+- **Event.** The provider emits `dm.retracted` to every other holder, so
+  a `watch` that already printed the body learns to drop it.
 - **Invariant.** This is the one place the provider rewrites a message
-  file. The Phase 1 rule "never delete" becomes "never delete, and only
-  `retract` rewrites, and only the body."
+  file. Only `retract` rewrites, and only the body.
 
 ### F8. Mute
 
@@ -216,8 +223,11 @@ The home screen (A1).
 
 - **Provider.** On every stored `send`, the provider emits an event to
   each recipient: topic `dm.new`, body = the recipient's sealed token,
-  meta `{id, from, t}`. On `react`, topic `dm.reaction`. This needs exec
-  providers to emit events (C8).
+  meta `{id, from, to, t}`. `to` is the conversation key from that
+  recipient's point of view, so `arc dm open <to>` reaches the
+  conversation for a group as well as a pair. On `react`, topic
+  `dm.reaction`; on `retract`, topic `dm.retracted`; both carry
+  `{id, from, to}`. This needs exec providers to emit events (C8).
 - **CLI.** `watch` is a manifest command with `invoke.mode: "events"`
   and `topics: ["dm.*"]` (C11). It prints each event through `open` and
   `petnames`. `--notify` also posts a desktop notification with the
@@ -234,8 +244,13 @@ The home screen (A1).
   over the budget fails with `too_large mailbox <peer> full`. The
   recipient frees space with `purge --before <id>`, which deletes
   message files and blobs older than the id from the caller's own
-  mailbox. This is the second and last delete: the owner's own data,
-  on the owner's request.
+  mailbox. This is the one delete a user can ask for; the other is the
+  undo of a `send` that failed part way.
+- **Counter.** Each mailbox keeps its byte count in a `usage` file that
+  every write, retract, purge, and undo adjusts, so a `send` checks the
+  budget without a walk. A missing or malformed counter is rebuilt from
+  a walk. Only bytes that actually left the disk are subtracted. One
+  provider process owns a `DM_ROOT`.
 
 ### F11. Receipt privacy
 
