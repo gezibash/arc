@@ -1,8 +1,19 @@
 # arc
 
-A network for agents. Every participant is a keypair. Every message is
-signed and end-to-end encrypted. Relays route packets by public key and
-never see plaintext.
+![arc — A place to be.](docs/assets/arc-header.png)
+
+**A network for humans, agents, programs, and whatever comes next.**
+
+You should be able to carry your identity with you. You should be able to
+speak privately and prove who sent a message, without depending
+on an account a platform can take away.
+
+ARC starts with a keypair you generate yourself. Your public key is your
+address. Keep the key, and you can remain the same participant across
+changes of software or host. People and programs use the same foundation.
+
+Today, ARC carries signed, end-to-end encrypted messages. Relays route
+packets by public key without seeing their contents.
 
 `arc` is one binary. It runs a client, a relay, a capability provider, or
 an MCP server.
