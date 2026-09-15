@@ -185,7 +185,8 @@ defmodule DmTest do
     assert {:ok, "reacted 👍 " <> _, [%{to: @alice, topic: "dm.reaction"} = ev]} =
              Command.run(root, @bob, "react #{id} 👍")
 
-    assert ev.meta == %{"id" => id, "from" => @bob, "value" => "👍"}
+    # The event names the conversation the recipient can open, here bob alone.
+    assert ev.meta == %{"id" => id, "from" => @bob, "to" => @bob, "value" => "👍"}
     assert {:ok, "reacted ❤️ " <> _, _} = Command.run(root, @bob, "react #{id} ❤️")
     assert {:ok, "reacted 🎉 " <> _, _} = Command.run(root, @alice, "react #{id} 🎉")
     assert {:error, "invalid_reaction" <> _} = Command.run(root, @bob, "react #{id} toolong")
@@ -363,7 +364,7 @@ defmodule DmTest do
   test "a v1 message with a string recipient still lists and renders", %{root: root} do
     id = send(root, @alice, @bob, "old")
     {:ok, msg} = Dm.Store.get_message(root, @alice, id)
-    :ok = Dm.Store.put_message(root, @alice, Map.put(msg, "to", @bob))
+    {:ok, _} = Dm.Store.put_message(root, @alice, Map.put(msg, "to", @bob))
 
     {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
     [_, l] = String.split(out, "\n")
@@ -501,8 +502,8 @@ defmodule DmTest do
     assert flags.() == "read"
   end
 
-  test "attachment names . and .. are rejected before any write", %{root: root} do
-    for name <- [".", ".."] do
+  test "attachment names that start with a dot are rejected before any write", %{root: root} do
+    for name <- [".", "..", ".env"] do
       lines = [
         token("a@p"),
         token("a@s"),
@@ -510,7 +511,7 @@ defmodule DmTest do
         "attach:#{name}:" <> token("f@s")
       ]
 
-      assert {:error, "unsealed attachment name" <> _} =
+      assert {:error, "unsealed attachment lines" <> _} =
                Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
     end
 
@@ -518,14 +519,141 @@ defmodule DmTest do
     assert {:ok, "no messages"} = Command.run(root, @alice, "inbox")
   end
 
+  test "fetch never leaves the message's blob directory", %{root: root} do
+    lines = [
+      token("a@p"),
+      token("a@s"),
+      "attach:f.md:" <> token("x@p"),
+      "attach:f.md:" <> token("x@s")
+    ]
+
+    {:ok, "id: " <> id, _} = Command.run(root, @alice, "send #{@bob}\n" <> Enum.join(lines, "\n"))
+    {:ok, _} = Command.run(root, @bob, "settings receipts off")
+
+    assert {:ok, _} = Command.run(root, @alice, "fetch #{id} f.md")
+
+    for name <- ["../../../#{@bob}/settings.json", "..", ".", "../f.md", ".f.md", "a/b"] do
+      assert {:error, "not_found"} = Command.run(root, @alice, "fetch #{id} #{name}")
+    end
+  end
+
   test "a send that fails mid-write leaves no mailbox holding it", %{root: root} do
-    # Bob's msgs dir is a file, so his write raises after alice's copy landed.
-    File.mkdir_p!(Dm.Store.mailbox(root, @bob))
-    File.write!(Path.join(Dm.Store.mailbox(root, @bob), "msgs"), "")
+    # Alice's msgs dir is a file. Holders are written recipient first, so
+    # bob's copy lands and alice's write raises; the rollback removes bob's.
+    File.mkdir_p!(Dm.Store.mailbox(root, @alice))
+    File.write!(Path.join(Dm.Store.mailbox(root, @alice), "msgs"), "")
 
     assert_raise File.Error, fn -> Command.run(root, @alice, "send #{@bob}\n" <> body("x")) end
+    assert {:ok, "no messages"} = Command.run(root, @bob, "inbox")
+    assert {:ok, "used 0 of " <> _} = Command.run(root, @bob, "quota")
+    assert [] = Dm.Store.receipts(root, @bob, "any")
+  end
+
+  test "a send whose receipt write fails is rolled back and never delivered twice", %{root: root} do
+    File.mkdir_p!(Path.join(Dm.Store.mailbox(root, @bob), "receipts.jsonl"))
+
+    assert_raise File.Error, fn -> Command.run(root, @alice, "send #{@bob}\n" <> body("x")) end
+    assert_raise File.Error, fn -> Command.run(root, @alice, "send #{@bob}\n" <> body("x")) end
+    assert {:ok, "no messages"} = Command.run(root, @bob, "inbox")
     assert {:ok, "no messages"} = Command.run(root, @alice, "inbox")
-    assert {:ok, "used 0 of " <> _} = Command.run(root, @alice, "quota")
+  end
+
+  test "the rollback survives a mailbox that refuses the undo and keeps the send's error", %{
+    root: root
+  } do
+    # Bob's counter cannot be rewritten: his write fails at the counter
+    # step, and the undo for bob fails there again. Neither hides the cause.
+    bob = Dm.Store.mailbox(root, @bob)
+    File.mkdir_p!(Path.join(bob, "usage.tmp"))
+    File.write!(Path.join(bob, "usage"), "0")
+
+    err =
+      assert_raise(File.Error, fn -> Command.run(root, @alice, "send #{@bob}\n" <> body("x")) end)
+
+    assert err.path == Path.join(bob, "usage.tmp")
+    File.rm_rf!(Path.join(bob, "usage.tmp"))
+    assert {:ok, "no messages"} = Command.run(root, @bob, "inbox")
+    assert {:ok, "no messages"} = Command.run(root, @alice, "inbox")
+  end
+
+  test "a malformed or torn usage file is rebuilt, and the counter never goes negative", %{
+    root: root
+  } do
+    id = send(root, @alice, @bob, "hello")
+    usage = Path.join(Dm.Store.mailbox(root, @bob), "usage")
+    expected = Dm.Store.recount_usage(root, @bob)
+
+    for junk <- ["", "abc", "-7"] do
+      File.write!(usage, junk)
+      assert Dm.Store.usage(root, @bob) == expected
+      assert File.read!(usage) == Integer.to_string(expected)
+    end
+
+    # A counter that is too low is repaired rather than driven below zero.
+    File.write!(usage, "1")
+    {:ok, "retracted " <> _, _} = Command.run(root, @alice, "retract #{id}")
+    assert Dm.Store.usage(root, @bob) == Dm.Store.recount_usage(root, @bob)
+    refute File.exists?(usage <> ".tmp")
+  end
+
+  test "a refused unlink is not subtracted from the counter", %{root: root} do
+    old = send(root, @alice, @bob, "old")
+    newer = send(root, @alice, @bob, "new")
+    msgs = Path.join(Dm.Store.mailbox(root, @bob), "msgs")
+    before = Dm.Store.usage(root, @bob)
+
+    File.chmod!(msgs, 0o555)
+    on_exit(fn -> File.chmod!(msgs, 0o755) end)
+    assert {:ok, "purged 1"} = Command.run(root, @bob, "purge --before #{newer}")
+    File.chmod!(msgs, 0o755)
+
+    assert {:ok, _} = Command.run(root, @bob, "read #{old}")
+    assert Dm.Store.usage(root, @bob) == before
+    assert Dm.Store.usage(root, @bob) == Dm.Store.recount_usage(root, @bob)
+  end
+
+  test "a sender listed in --to keeps a plain one-to-one key", %{root: root} do
+    {:ok, "id: " <> id, _} =
+      Command.run(root, @alice, "send --to #{@bob},#{@alice}\n" <> group_body("hey", 2))
+
+    {:ok, out} = Command.run(root, @alice, "conversations")
+    assert [_, @bob <> "\t" <> _] = String.split(out, "\n")
+    assert [_] = lines(Command.run(root, @alice, "thread #{@bob}"))
+
+    {:ok, _} = Command.run(root, @bob, "read #{id}")
+    {:ok, out} = Command.run(root, @alice, "thread #{@bob} --bodies \"true\"")
+    [_, l] = String.split(out, "\n")
+    assert "read" = l |> String.split("\t") |> Enum.at(5)
+  end
+
+  test "retract completes when a recipient already purged their copy", %{root: root} do
+    {:ok, "id: " <> id, _} =
+      Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> group_body("oops", 2))
+
+    newer = send(root, @carol, @alice, "later")
+    assert {:ok, "purged 1"} = Command.run(root, @carol, "purge --before #{newer}")
+
+    assert {:ok, "retracted " <> _, events} = Command.run(root, @alice, "retract #{id}")
+    assert [@bob, @carol] = events |> Enum.map(& &1.to) |> Enum.sort()
+
+    assert [%{"event" => "delivered"}, %{"event" => "retracted"}] =
+             Dm.Store.receipts(root, @bob, id)
+
+    {:ok, bob_copy} = Dm.Store.get_message(root, @bob, id)
+    assert bob_copy["body"] == ""
+  end
+
+  test "events name the conversation key each recipient can open", %{root: root} do
+    {:ok, "id: " <> id, [bob_ev, carol_ev]} =
+      Command.run(root, @alice, "send --to #{@bob},#{@carol}\n" <> group_body("hey", 2))
+
+    assert bob_ev.meta["to"] == "#{@alice},#{@carol}"
+    assert carol_ev.meta["to"] == "#{@alice},#{@bob}"
+    assert [_] = lines(Command.run(root, @bob, "thread #{bob_ev.meta["to"]}"))
+
+    {:ok, _, events} = Command.run(root, @bob, "react #{id} 👍")
+    assert %{meta: %{"to" => to}} = Enum.find(events, &(&1.to == @alice))
+    assert to == "#{@bob},#{@carol}"
   end
 
   test "the usage counter tracks writes, retract, purge, and a recount", %{root: root} do

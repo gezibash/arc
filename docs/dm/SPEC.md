@@ -62,8 +62,10 @@ No packet is ever buffered or replayed on the wire.
   The CLI resolves names. The provider accepts hex only.
 - `<id>`: a message id. The provider assigns it: 26 character ULID, so ids
   sort by time.
-- A thread is the pair `{owner, peer}`. The provider derives threads from
-  message metadata. A thread has no address of its own.
+- A conversation is the owner plus every other participant. Its key is
+  the other participants' hex keys, sorted and comma-joined; a
+  one-to-one conversation keys on the peer alone. `conversations` prints
+  the key and `thread` takes it. A conversation has no address of its own.
 
 ## 6. Storage layout
 
@@ -73,8 +75,12 @@ All data lives under `DM_ROOT`. The default is `~/.arc/dm`.
 DM_ROOT/
   mailboxes/<pubkey>/
     msgs/<id>.json          one file per message, inbound and outbound
-    receipts.jsonl          append only: delivered, read, archived
+    blobs/<id>/<name>       one sealed attachment token per file
+    receipts.jsonl          append only: delivered, read, archived, ...
     blocked                 one public key per line
+    muted                   one public key per line
+    settings.json           receipts on|off
+    usage                   byte count of msgs/ and blobs/, rewritten whole
 ```
 
 Rules:
@@ -85,11 +91,15 @@ Rules:
   reads one mailbox only.
 - Every body on disk is ciphertext. The operator of the host cannot read
   a message.
-- The provider never deletes a message file. `archive` appends a receipt.
-- `receipts.jsonl` is the only mutable state. The provider appends and never
-  rewrites.
-- Phase 1 has no cap on mailbox size. Phase 2 adds a per-mailbox byte budget
-  and `too_large`.
+- The provider deletes message files in two cases only: `purge`, on the
+  owner's request in the owner's mailbox, and the undo of a `send` that
+  failed part way, which removes the copies that landed. `archive`
+  appends a receipt.
+- `receipts.jsonl` is append only. `retract` rewrites a body. `usage`,
+  `blocked`, `muted`, and `settings.json` are rewritten whole. A
+  missing, unreadable, or malformed `usage` file is rebuilt from a walk of
+  the mailbox.
+- Phase 2 adds a per-mailbox byte budget and `too_large`.
 
 ## 7. Message format
 
@@ -146,7 +156,7 @@ to one request line on the wire.
 |---|---|
 | `send <peer> [--reply-to <id>]` | Store the two sealed tokens from the request body, one per mailbox. Return `id`. |
 | `inbox [--unread] [--since <id>] [--limit n]` | List messages in the caller's mailbox, newest last. One line each. |
-| `thread <peer> [--since <id>] [--limit n]` | List both directions of one thread, in time order. |
+| `thread <key> [--since <id>] [--limit n]` | List one conversation, in time order. The key is one peer or a comma-joined set, as `conversations` prints it. |
 | `read <id>` | Return one message. Write a `read` receipt if inbound. |
 | `ack <id>...` | Write `read` receipts without returning bodies. |
 | `status <id>` | Return the receipts for one outbound message. |
@@ -228,6 +238,9 @@ Push delivery is not in Phase 1, see section 14.
   - `DM_MAX_BODY`: sealed body cap in bytes. Default `98304`.
 - The provider key is the identity that runs `arc serve providers/dm`.
   Citizens install it with `arc install <provider key> primary`.
+- One provider process owns a `DM_ROOT`. Two processes on one root race
+  the `usage` counter and lose updates. Give a second `arc serve` its own
+  `DM_ROOT`.
 
 ## 13. Confidentiality
 

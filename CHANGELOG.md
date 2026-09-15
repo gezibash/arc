@@ -4,6 +4,23 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `arc dm fetch` rejects a blob name that could leave the message's blob
+  directory. Attachment names never start with a dot.
+- A `send` that fails part way, receipts included, removes every copy that
+  landed and rebuilds each counter from disk.
+- The mailbox byte counter rebuilds itself from a walk when the `usage`
+  file is missing or malformed, never goes negative, and subtracts only
+  bytes that actually left the disk.
+- `retract` completes when a recipient already purged their copy, and emits
+  `dm.retracted`.
+- `thread` takes a conversation key as `conversations` prints it. A sender
+  who lists themselves in `--to` keeps a plain one-to-one key.
+- Events carry `to`, the conversation key the recipient can open.
+
 ## [0.2.0] - 2026-09-14
 
 ### Added
