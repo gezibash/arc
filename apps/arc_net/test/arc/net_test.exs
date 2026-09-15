@@ -336,6 +336,18 @@ defmodule Arc.NetTest do
       assert {:error, :closed} = :gen_tcp.recv(sock, 1, 700)
     end
 
+    test "does not restart an acceptor its supervisor shut down", %{relay: relay} do
+      before = :sys.get_state(relay)
+      [acceptor | _] = Map.keys(before.acceptor_refs)
+      :ok = Task.Supervisor.terminate_child(Arc.Net.TaskSupervisor, acceptor)
+      Process.sleep(100)
+
+      after_state = :sys.get_state(relay)
+      assert Process.alive?(relay)
+      refute Map.has_key?(after_state.acceptor_refs, acceptor)
+      assert map_size(after_state.acceptor_refs) == before.acceptor_count - 1
+    end
+
     test "restarts acceptor when it crashes", %{relay: relay, port: port} do
       before = :sys.get_state(relay)
       [old_acceptor | _] = Map.keys(before.acceptor_refs)

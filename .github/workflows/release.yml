@@ -1,0 +1,191 @@
+name: Release
+
+# Tag a commit `vX.Y.Z` (matching the version in mix.exs) to publish:
+#   - release tarballs for Linux x86_64, Linux aarch64, macOS aarch64
+#   - a multi-arch image at ghcr.io/<owner>/arc
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  MIX_ENV: prod
+  OTP_VERSION: "28.4.3"
+  ELIXIR_VERSION: "1.19.5"
+  # Same runtime for the Linux tarballs and the image. Bookworm's glibc
+  # (2.36) keeps the tarball runnable on Debian 12 / RHEL 9 era hosts.
+  ELIXIR_IMAGE: hexpm/elixir:1.19.5-erlang-28.4.3-debian-bookworm-20260824-slim
+  IMAGE: ghcr.io/${{ github.repository_owner }}/arc
+
+jobs:
+  version:
+    name: Check tag matches mix.exs
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          tag="$GITHUB_REF_NAME"
+          tag="${tag#v}"
+          mix_version="$(sed -nE 's/^ *version: "([^"]+)",?$/\1/p' mix.exs | head -1)"
+          if [ "$tag" != "$mix_version" ]; then
+            echo "tag v$tag does not match mix.exs version $mix_version" >&2
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  tarball:
+    name: Tarball ${{ matrix.target }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            os: ubuntu-24.04
+            container: hexpm/elixir:1.19.5-erlang-28.4.3-debian-bookworm-20260824-slim
+          - target: linux-aarch64
+            os: ubuntu-24.04-arm
+            container: hexpm/elixir:1.19.5-erlang-28.4.3-debian-bookworm-20260824-slim
+          - target: darwin-aarch64
+            os: macos-15
+            container: ""
+    steps:
+      - name: Install git and tar (container only)
+        if: matrix.container != ''
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates tar
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        if: matrix.container == ''
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+      - name: Mark checkout safe for git inside the container
+        if: matrix.container != ''
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get --only prod
+      - run: mix release arc_runtime --overwrite
+      - name: Smoke test
+        run: |
+          _build/prod/rel/arc_runtime/bin/arc version
+          _build/prod/rel/arc_runtime/bin/arc help > /dev/null
+      - name: Package
+        run: |
+          name="arc-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p dist/stage
+          cp -R _build/prod/rel/arc_runtime "dist/stage/arc"
+          tar -C dist/stage -czf "dist/$name.tar.gz" arc
+          rm -rf dist/stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  image:
+    name: Image ${{ matrix.arch }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Native build per arch, pushed by digest. The manifest job below
+      # joins the two digests under the version tags.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          build-args: ELIXIR_IMAGE=${{ env.ELIXIR_IMAGE }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+      - name: Export digest
+        run: |
+          mkdir -p digests
+          touch "digests/${{ steps.build.outputs.digest }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+
+  manifest:
+    name: Publish multi-arch image
+    needs: [version, image]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - name: Create manifest list
+        working-directory: digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+      - run: docker buildx imagetools inspect "${{ env.IMAGE }}:${{ needs.version.outputs.version }}"
+
+  github-release:
+    name: GitHub release
+    needs: [version, tarball, manifest]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: tarball-*
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "arc ${{ needs.version.outputs.version }}" \
+            --generate-notes \
+            --notes "Image: \`${{ env.IMAGE }}:${{ needs.version.outputs.version }}\`" \
+            dist/*

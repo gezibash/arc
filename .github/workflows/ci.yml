@@ -78,3 +78,26 @@ jobs:
           restore-keys: mix-dev-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
       - run: mix deps.get
       - run: mix dialyzer --format github
+
+  release:
+    name: Release smoke test
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-prod-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-prod-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get --only prod
+      - run: mix release arc_runtime --overwrite
+      - run: _build/prod/rel/arc_runtime/bin/arc version
+      - run: _build/prod/rel/arc_runtime/bin/arc keys gen

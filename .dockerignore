@@ -1,0 +1,11 @@
+_build
+deps
+bin
+.arc
+.claude
+.github
+docs
+tmp
+cover
+erl_crash.dump
+*.tar.gz

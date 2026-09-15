@@ -178,7 +178,20 @@ defmodule Arc.Net.Relay do
     {:noreply, state}
   end
 
+  # An acceptor stopped with `:shutdown` was stopped by its supervisor,
+  # which happens when the VM is shutting down. Restarting it would call
+  # into a supervisor that is already gone and crash the relay with an
+  # EXIT trace, so just drop the reference.
   @impl GenServer
+  def handle_info({:DOWN, ref, :process, pid, reason}, state)
+      when reason == :shutdown or (is_tuple(reason) and elem(reason, 0) == :shutdown) do
+    if Map.get(state.acceptor_refs, pid) == ref do
+      {:noreply, %{state | acceptor_refs: Map.delete(state.acceptor_refs, pid)}}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     if Map.get(state.acceptor_refs, pid) == ref do
       acceptor_refs =

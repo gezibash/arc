@@ -8,6 +8,7 @@ defmodule Arc.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      releases: releases(),
       dialyzer: [
         plt_add_apps: [:mix, :ex_unit],
         plt_core_path: "_build/plts",
@@ -30,6 +31,28 @@ defmodule Arc.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  # One release for every role. `bin/arc` (an overlay) boots the VM and
+  # runs `Arc.CLI.main/1`, so the same tarball runs a relay, a client, or
+  # the MCP server. `bin/arc_runtime` is the generated release control script.
+  defp releases do
+    [
+      arc_runtime: [
+        applications: [
+          arc_cli: :permanent,
+          arc_identity: :permanent,
+          arc_control: :permanent,
+          arc_data: :permanent,
+          arc_storage: :permanent,
+          arc_net: :permanent,
+          arc_mcp: :permanent
+        ],
+        include_executables_for: [:unix],
+        strip_beams: true,
+        overlays: "rel/overlays"
+      ]
     ]
   end
 
