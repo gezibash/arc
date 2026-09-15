@@ -1,0 +1,22 @@
+#!/bin/sh
+# User-facing entry point of the release. Boots the bundled Erlang runtime
+# and runs `Arc.CLI.main/1` with the given arguments, so `arc relay`,
+# `arc listen`, `arc mcp`, and every other command work from one tarball.
+# `bin/arc_runtime` is the generated release control script; this wrapper
+# resolves symlinks first so `ln -s .../bin/arc /usr/local/bin/arc` works.
+set -e
+
+readlink_f () {
+  cd "$(dirname "$1")" > /dev/null
+  filename="$(basename "$1")"
+  if [ -h "$filename" ]; then
+    readlink_f "$(readlink "$filename")"
+  else
+    echo "$(pwd -P)/$filename"
+  fi
+}
+
+SELF="$(readlink_f "$0")"
+RELEASE_ROOT="$(cd "$(dirname "$SELF")/.." && pwd -P)"
+
+exec "$RELEASE_ROOT/bin/arc_runtime" eval 'Arc.CLI.main(System.argv())' "$@"

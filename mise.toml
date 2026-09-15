@@ -60,6 +60,11 @@ description = "Build the arc escript binary"
 dir = "apps/arc_cli"
 run = "mix escript.build"
 
+[tasks.release]
+description = "Build the prod release (bundled runtime) into _build/prod/rel/arc_runtime"
+run = "mix release arc_runtime --overwrite"
+env = { MIX_ENV = "prod" }
+
 [tasks.clean]
 description = "Clean build artifacts"
 run = "mix clean"
