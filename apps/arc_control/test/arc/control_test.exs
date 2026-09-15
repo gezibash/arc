@@ -86,6 +86,34 @@ defmodule Arc.ControlTest do
     end
   end
 
+  describe "publish/1 keeps a published keyex" do
+    test "a second publish does not clear x25519_public" do
+      id = Identity.generate()
+      {x_pub, _} = Identity.to_x25519(id)
+
+      :ok = Control.publish(id)
+      :ok = Control.publish_keyex(id.public_key, x_pub)
+      :ok = Control.publish(id)
+
+      {:ok, [entry]} = Control.resolve(Identity.name(id))
+      assert entry.x25519_public == x_pub
+    end
+
+    test "revoke then publish starts active again with the keyex kept" do
+      id = Identity.generate()
+      {x_pub, _} = Identity.to_x25519(id)
+
+      :ok = Control.publish(id)
+      :ok = Control.publish_keyex(id.public_key, x_pub)
+      :ok = Control.revoke(id.public_key)
+      :ok = Control.publish(id)
+
+      {:ok, [entry]} = Control.resolve(Identity.name(id))
+      assert entry.status == :active
+      assert entry.x25519_public == x_pub
+    end
+  end
+
   describe "subscribe/1" do
     test "receives publish events" do
       {:ok, _} = Control.subscribe(:identity_published)

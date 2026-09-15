@@ -61,6 +61,32 @@ defmodule Arc.Data.PacketTest do
     assert {:error, :payload_hash_mismatch} = Packet.decode(corrupted)
   end
 
+  test "ek round trips and is covered by the signature", %{alice: alice, bob: bob, session: s} do
+    {nonce, ciphertext, seq, _} = Session.encrypt(s, "hello")
+
+    packet =
+      Packet.encode(alice, bob.public_key, s.session_id, seq, nonce, ciphertext, ek: s.ek_pub)
+
+    assert {:ok, decoded} = Packet.decode(packet)
+    assert decoded.ek == s.ek_pub
+
+    # Swap the ek inside the signed header: the signature no longer verifies.
+    {other_ek, _} = :crypto.generate_key(:ecdh, :x25519)
+    <<len::32-big, header::binary-size(len), rest::binary>> = packet
+
+    tampered_header =
+      String.replace(header, Base.encode64(s.ek_pub), Base.encode64(other_ek))
+
+    tampered = <<len::32-big>> <> tampered_header <> rest
+    assert {:error, :invalid_signature} = Packet.decode(tampered)
+  end
+
+  test "a packet without ek decodes with ek nil", %{alice: alice, bob: bob, session: s} do
+    {nonce, ciphertext, seq, _} = Session.encrypt(s, "hello")
+    packet = Packet.encode(alice, bob.public_key, s.session_id, seq, nonce, ciphertext)
+    assert {:ok, %{ek: nil}} = Packet.decode(packet)
+  end
+
   test "decode rejects malformed binary" do
     assert {:error, :malformed_packet} = Packet.decode(<<0, 1, 2, 3>>)
     assert {:error, :malformed_packet} = Packet.decode(<<>>)
@@ -79,18 +105,21 @@ defmodule Arc.Data.PacketTest do
     assert d2.seq == d1.seq + 1
   end
 
-  test "full encrypt-pack-decode-decrypt roundtrip", %{alice: alice, bob: bob} do
+  test "full encrypt-pack-decode-accept-decrypt roundtrip", %{alice: alice, bob: bob} do
     {bob_x_pub, _} = Identity.to_x25519(bob)
-    {alice_x_pub, _} = Identity.to_x25519(alice)
-
     session_a = Session.establish(alice, bob.public_key, bob_x_pub)
-    session_b = Session.establish(bob, alice.public_key, alice_x_pub)
 
     plaintext = "the quick brown fox"
     {nonce, ciphertext, seq, _} = Session.encrypt(session_a, plaintext)
-    packet = Packet.encode(alice, bob.public_key, session_a.session_id, seq, nonce, ciphertext)
 
+    packet =
+      Packet.encode(alice, bob.public_key, session_a.session_id, seq, nonce, ciphertext,
+        ek: session_a.ek_pub
+      )
+
+    # The responder has nothing but the packet and its own identity.
     {:ok, decoded} = Packet.decode(packet)
+    session_b = Session.accept(bob, decoded.src, decoded.ek, decoded.session_id)
     assert {:ok, ^plaintext} = Session.decrypt(session_b, decoded.nonce, decoded.ciphertext)
   end
 

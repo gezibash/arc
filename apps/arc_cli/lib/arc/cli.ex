@@ -11,7 +11,9 @@ defmodule Arc.CLI do
     "apps" => Arc.CLI.Apps,
     "host" => Arc.CLI.Host,
     "relay" => Arc.CLI.Relay,
-    "mcp" => Arc.CLI.MCP
+    "mcp" => Arc.CLI.MCP,
+    "lists" => Arc.CLI.Lists,
+    "cache" => Arc.CLI.Cache
   }
 
   # Subcommands whose module receives the command name as the first arg.
@@ -29,11 +31,32 @@ defmodule Arc.CLI do
     "serve" => Arc.CLI.Agent
   }
 
+  # The build embeds the umbrella version and the git commit it was built
+  # from. HEAD is an external resource so a new commit triggers a rebuild.
+  @git_dir Path.expand("../../../../.git", __DIR__)
+  @external_resource Path.join(@git_dir, "HEAD")
+  # HEAD usually points at a branch ref. Track that file too, so a new
+  # commit on the branch triggers a rebuild.
+  @external_resource (case File.read(Path.join(@git_dir, "HEAD")) do
+                        {:ok, "ref: " <> ref} -> Path.join(@git_dir, String.trim(ref))
+                        _ -> Path.join(@git_dir, "HEAD")
+                      end)
+  @version Mix.Project.config()[:version]
+  @git_sha (case System.cmd("git", ["rev-parse", "--short", "HEAD"], stderr_to_stdout: true) do
+              {sha, 0} -> String.trim(sha)
+              _ -> "unknown"
+            end)
+
+  def version_string, do: "arc #{@version} (#{@git_sha})"
+
   def main(args \\ []) do
+    configure_stdio()
     ensure_started()
     {max_frame_bytes, args} = pop_opt(args, "--max-frame-bytes")
     configure_frame_cap(max_frame_bytes)
     dispatch(args)
+  rescue
+    e in Arc.CLI.Exit.Error -> Arc.CLI.Exit.finish(e.code)
   end
 
   defp pop_opt(args, flag), do: pop_opt(args, flag, [])
@@ -59,6 +82,8 @@ defmodule Arc.CLI do
 
   defp dispatch([]), do: help()
   defp dispatch(["help"]), do: help()
+  defp dispatch(["version"]), do: IO.puts(version_string())
+  defp dispatch(["--version"]), do: IO.puts(version_string())
 
   defp dispatch([command | rest]) do
     cond do
@@ -74,6 +99,16 @@ defmodule Arc.CLI do
       true ->
         error("unknown command: #{Enum.join([command | rest], " ")}")
     end
+  end
+
+  # An escript starts with latin1 stdio. `IO.read` on a latin1 device
+  # re-encodes every UTF-8 byte as a code point, and `IO.write` strips a
+  # layer on the way out, so a non-ASCII page body arrives at the provider
+  # double-encoded and prints back as mojibake. Unicode stdio passes valid
+  # UTF-8 through unchanged in both directions.
+  defp configure_stdio do
+    :io.setopts(:standard_io, encoding: :unicode)
+    :io.setopts(:standard_error, encoding: :unicode)
   end
 
   defp ensure_started do
@@ -111,6 +146,9 @@ defmodule Arc.CLI do
       serve <target>              Serve a provider bundle or runtime URI with live request logs
       relay [--port PORT] [--key NAME]
                                  Run a relay node (routes encrypted packets by pubkey)
+      lists add|rm|ls <tool> ...  Saved peer lists a tool's commands expand
+      cache on|off|search <tool>  Local sealed cache of opened records, and search
+      version                     Print the arc version and build commit
 
     Options:
       --relay host:port           Connect to a relay node (for send/listen/serve)
@@ -139,6 +177,6 @@ defmodule Arc.CLI do
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
     IO.puts(:stderr, "Run 'arc help' for usage.")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

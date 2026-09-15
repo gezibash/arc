@@ -3,7 +3,7 @@ defmodule Arc.Data.Packet do
   Arc wire packet format.
 
       [4 bytes]   header_length (big-endian uint32)
-      [N bytes]   header (JSON): {src, dst, sid, seq, ts, ph}
+      [N bytes]   header (JSON): {src, dst, sid, seq, ts, ph, ek?}
       [64 bytes]  Ed25519 signature over header bytes
       [N bytes]   payload: nonce (12 bytes) <> ChaCha20-Poly1305 ciphertext
 
@@ -14,6 +14,8 @@ defmodule Arc.Data.Packet do
     seq  monotonic sequence number per session (replay prevention)
     ts   unix milliseconds (freshness check)
     ph   base64(SHA-256(payload)) — binds payload to signed header
+    ek   base64(ephemeral X25519 public key of the session initiator).
+         Present on every session v2 packet. Absent on a v1 packet.
 
   The Ed25519 signature covers the raw header bytes, binding all header
   fields to the sender's keypair. A valid signature proves the sender
@@ -41,14 +43,16 @@ defmodule Arc.Data.Packet do
     payload = nonce <> ciphertext
     ts = Keyword.get(opts, :ts, System.system_time(:millisecond))
 
-    header_map = %{
-      "src" => Base.encode64(src_identity.public_key),
-      "dst" => Base.encode64(dst_pk),
-      "sid" => Base.encode64(session_id),
-      "seq" => seq,
-      "ts" => ts,
-      "ph" => Base.encode64(:crypto.hash(:sha256, payload))
-    }
+    header_map =
+      %{
+        "src" => Base.encode64(src_identity.public_key),
+        "dst" => Base.encode64(dst_pk),
+        "sid" => Base.encode64(session_id),
+        "seq" => seq,
+        "ts" => ts,
+        "ph" => Base.encode64(:crypto.hash(:sha256, payload))
+      }
+      |> put_ek(Keyword.get(opts, :ek))
 
     header_bytes = IO.iodata_to_binary(:json.encode(header_map))
     header_len = byte_size(header_bytes)
@@ -56,6 +60,9 @@ defmodule Arc.Data.Packet do
 
     <<header_len::32-big>> <> header_bytes <> signature <> payload
   end
+
+  defp put_ek(header, <<ek::binary-size(32)>>), do: Map.put(header, "ek", Base.encode64(ek))
+  defp put_ek(header, _), do: header
 
   @doc """
   Decode and verify a packet. Returns the decoded fields including
@@ -73,6 +80,7 @@ defmodule Arc.Data.Packet do
              session_id: binary(),
              seq: non_neg_integer(),
              ts: non_neg_integer(),
+             ek: binary() | nil,
              nonce: binary(),
              ciphertext: binary()
            }}
@@ -100,6 +108,7 @@ defmodule Arc.Data.Packet do
          {:ok, session_id} <- safe_decode64(header["sid"]),
          {:seq, true} <- {:seq, is_integer(header["seq"]) and header["seq"] >= 0},
          {:ts, true} <- {:ts, is_integer(header["ts"])},
+         {:ok, ek} <- decode_ek(header["ek"]),
          <<nonce::binary-size(@nonce_bytes), ciphertext::binary>> <- payload do
       {:ok,
        %{
@@ -108,6 +117,7 @@ defmodule Arc.Data.Packet do
          session_id: session_id,
          seq: header["seq"],
          ts: header["ts"],
+         ek: ek,
          nonce: nonce,
          ciphertext: ciphertext
        }}
@@ -116,6 +126,15 @@ defmodule Arc.Data.Packet do
       {:ph, false} -> {:error, :payload_hash_mismatch}
       {:seq, false} -> {:error, :malformed_packet}
       {:ts, false} -> {:error, :malformed_packet}
+      _ -> {:error, :malformed_packet}
+    end
+  end
+
+  defp decode_ek(nil), do: {:ok, nil}
+
+  defp decode_ek(str) do
+    case safe_decode64(str) do
+      {:ok, <<ek::binary-size(32)>>} -> {:ok, ek}
       _ -> {:error, :malformed_packet}
     end
   end

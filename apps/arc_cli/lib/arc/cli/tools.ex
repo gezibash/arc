@@ -9,6 +9,7 @@ defmodule Arc.CLI.Tools do
   alias Arc.Data.CapabilityDiscovery
   alias Arc.Data.CapabilityInvocation
   alias Arc.Data.CapabilityPackage
+  alias Arc.Data.InterfaceManifest
   alias Arc.Data.Toolbox
   alias Arc.Identity
   alias Arc.Identity.KeyStore
@@ -360,13 +361,15 @@ defmodule Arc.CLI.Tools do
 
   defp invoke_installed(agent, command, install, input_parts) do
     {help?, clean_args} = extract_help(input_parts)
+    {output_opts, clean_args} = extract_output_flags(clean_args)
+    output_opts = Map.put(output_opts, :namespace, install["command"] || command)
 
     if help? do
       print_usage(command, install, clean_args)
     else
       case build_invocation(install, clean_args) do
         {:ok, invocation} ->
-          invoke_built_command(agent, install, invocation)
+          invoke_built_command(agent, install, Map.put(invocation, :output_opts, output_opts))
 
         {:error, {:invalid_arguments, message}} ->
           error("tool call failed: #{message}")
@@ -491,6 +494,177 @@ defmodule Arc.CLI.Tools do
       Enum.each(changes, fn change -> IO.puts("  #{change}") end)
     end
   end
+
+  # `--raw` keeps only open and petnames, so tab-separated lines print as
+  # the provider sent them. `--hex` drops petnames.
+  # `--raw` keeps only open and petnames. `--hex` drops petnames.
+  # `--format markdown` swaps the conversation renderer for markdown.
+  defp apply_output_filter(reply, %{"output" => %{"filters" => filters}}, opts)
+       when is_list(filters) do
+    %{identity: identity} = filter_context()
+    namespace = opts[:namespace]
+
+    markdown? = opts[:format] == "markdown"
+
+    filters =
+      filters
+      |> Enum.map(fn
+        "conversation" when markdown? -> "markdown"
+        filter -> filter
+      end)
+      |> Enum.reject(fn filter ->
+        (opts[:raw] and filter not in ["open", "petnames"]) or
+          (opts[:hex] and filter == "petnames")
+      end)
+
+    extra = %{"cache" => &Arc.CLI.Cache.store(namespace || "tool", identity, &1)}
+
+    Map.update(reply, :text, nil, fn
+      text when is_binary(text) -> Toolbox.apply_output_filters(text, filters, identity, extra)
+      other -> other
+    end)
+  end
+
+  defp apply_output_filter(reply, _command, _opts), do: reply
+
+  defp extract_output_flags(argv) do
+    {format, argv} = pop_format(argv)
+    {flags, rest} = Enum.split_with(argv, &(&1 in ["--raw", "--hex", "--notify", "--once"]))
+
+    {%{
+       raw: "--raw" in flags,
+       hex: "--hex" in flags,
+       notify: "--notify" in flags,
+       once: "--once" in flags,
+       format: format
+     }, rest}
+  end
+
+  defp pop_format(argv) do
+    case Enum.split_while(argv, &(&1 != "--format")) do
+      {before, ["--format", format | rest]} -> {format, before ++ rest}
+      _ -> {nil, argv}
+    end
+  end
+
+  # An events command sends its request once, as a hello, then prints every
+  # event the provider emits to this identity whose topic matches. It runs
+  # until Ctrl+C, or after the first event with --once.
+  defp invoke_events_command(agent, install, built) do
+    invocation = built.invocation
+    opts = Map.get(built, :output_opts, %{})
+    provider_pk = decode_provider_pk(install)
+    topics = invocation["topics"]
+
+    case CapabilityInvocation.invoke(agent, install, built.input, invocation_override: invocation) do
+      {:ok, _reply} -> :ok
+      {:error, {:remote, code, message}} -> error("tool call failed: #{code}: #{message}")
+      {:error, reason} -> error("tool call failed: #{inspect(reason)}")
+    end
+
+    IO.puts("watching. Ctrl+C to stop.")
+    events_loop(agent, provider_pk, topics, Map.get(built, :command), opts)
+  end
+
+  defp events_loop(agent, provider_pk, topics, command, opts) do
+    Agent.poll_mailbox(agent)
+
+    events =
+      agent
+      |> Agent.read_inbox()
+      |> Enum.filter(fn msg ->
+        msg[:kind] == :event and
+          (is_nil(provider_pk) or msg[:from_key] == provider_pk) and
+          topic_matches?(get_in(msg, [:meta, "topic"]), topics)
+      end)
+
+    Enum.each(events, &print_event(&1, command, opts))
+
+    if opts[:once] and events != [] do
+      :ok
+    else
+      Process.sleep(200)
+      events_loop(agent, provider_pk, topics, command, opts)
+    end
+  end
+
+  defp print_event(event, command, opts) do
+    meta = event[:meta] || %{}
+    topic = meta["topic"] || "event"
+    sender = meta["from"] || Identity.encode_public_key(event[:from_key])
+    body = event[:text] || ""
+    time = Calendar.strftime(DateTime.utc_now(), "%H:%M:%S")
+
+    # Meta fields other than the routing ones ride along as key=value, so an
+    # event with an empty body, such as a reaction, still says what happened.
+    extra =
+      meta
+      |> Map.drop(["topic", "from", "t"])
+      |> Enum.sort()
+      |> Enum.map_join(" ", fn {k, v} -> "#{k}=#{v}" end)
+
+    text =
+      [time, topic, sender, body, extra]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("  ")
+      |> apply_text_filters(command, opts)
+
+    IO.puts(text)
+    if opts[:notify], do: desktop_notify(topic, text)
+  end
+
+  defp apply_text_filters(text, command, opts) do
+    %{text: text}
+    |> apply_output_filter(command, opts)
+    |> Map.get(:text)
+  end
+
+  defp topic_matches?(_topic, nil), do: true
+  defp topic_matches?(nil, _globs), do: false
+
+  defp topic_matches?(topic, globs) do
+    Enum.any?(globs, fn glob ->
+      pattern = "^" <> (glob |> Regex.escape() |> String.replace("\\*", ".*")) <> "$"
+      Regex.match?(Regex.compile!(pattern), topic)
+    end)
+  end
+
+  defp decode_provider_pk(install) do
+    case install["provider_public_key"] do
+      hex when is_binary(hex) ->
+        case Base.decode16(hex, case: :mixed) do
+          {:ok, <<pk::binary-size(32)>>} -> pk
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # The body is opened on this machine before it reaches the notifier, and
+  # only the first line goes. macOS and Linux only; elsewhere this is a no-op.
+  defp desktop_notify(topic, text) do
+    first = text |> String.split("\n") |> hd() |> String.slice(0, 200)
+
+    case :os.type() do
+      {:unix, :darwin} ->
+        script = ~s(display notification "#{escape_quotes(first)}" with title "arc #{topic}")
+        System.cmd("osascript", ["-e", script], stderr_to_stdout: true)
+
+      {:unix, _} ->
+        System.cmd("notify-send", ["arc #{topic}", first], stderr_to_stdout: true)
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp escape_quotes(text), do: String.replace(text, "\"", "\\\"")
 
   defp print_reply(reply) do
     case reply[:kind] do
@@ -619,35 +793,54 @@ defmodule Arc.CLI.Tools do
     capability = install["capability"] || %{}
     commands = ToolRegistry.cli_commands(capability)
     base_invocation = capability["invocation"] || %{}
+    namespace = install["command"] || "tool"
 
-    if commands == [] do
-      {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
-    else
-      case resolve_command(capability, argv) do
-        {:ok, cli_command, remaining_argv} ->
-          args = Map.get(cli_command, "args", [])
+    cond do
+      commands == [] ->
+        {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
 
-          with {:ok, values} <- parse_cli_args(args, remaining_argv),
-               {:ok, input} <- render_input(cli_command, args, values) do
-            invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
-            {:ok, %{input: input, invocation: invocation, command: cli_command}}
-          end
+      interface_version(capability) > InterfaceManifest.max_cli_version() ->
+        {:error,
+         {:invalid_arguments,
+          "'#{namespace}' needs CLI interface v#{interface_version(capability)}; " <>
+            "this arc renders up to v#{InterfaceManifest.max_cli_version()}. Update arc."}}
 
-        {:error, _reason} = error ->
-          error
-      end
+      true ->
+        build_command_invocation(capability, base_invocation, namespace, argv)
     end
   end
 
-  defp invoke_built_command(agent, install, %{input: input, invocation: invocation}) do
+  defp interface_version(capability) do
+    case InterfaceManifest.cli(capability) do
+      %{"version" => v} when is_integer(v) -> v
+      _ -> 1
+    end
+  end
+
+  defp build_command_invocation(capability, base_invocation, namespace, argv) do
+    with {:ok, cli_command, remaining_argv} <- resolve_command(capability, argv),
+         args = Map.get(cli_command, "args", []),
+         {:ok, values} <- parse_cli_args(args, remaining_argv),
+         {:ok, input} <- render_input(cli_command, args, values, namespace) do
+      invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
+      {:ok, %{input: input, invocation: invocation, command: cli_command}}
+    end
+  end
+
+  defp invoke_built_command(agent, install, %{input: input, invocation: invocation} = built) do
     case invocation["mode"] || "request_reply" do
       "stream" ->
         invoke_stream_command(agent, install, input, invocation)
 
+      "events" ->
+        invoke_events_command(agent, install, built)
+
       _ ->
         case CapabilityInvocation.invoke(agent, install, input, invocation_override: invocation) do
           {:ok, reply} ->
-            print_reply(reply)
+            reply
+            |> apply_output_filter(Map.get(built, :command), Map.get(built, :output_opts, %{}))
+            |> print_reply()
 
           {:error, {:remote, code, message}} ->
             error("tool call failed: #{code}: #{message}")
@@ -928,11 +1121,17 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values) do
-    with {:ok, body} <- read_stdin_body() do
+  defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values, namespace) do
+    context = filter_context(namespace)
+
+    with {:ok, raw_body} <- read_body(input_spec, values),
+         {:ok, body} <- seal_stdin_body(raw_body, input_spec["seal_to"], values, context),
+         {:ok, attach_lines} <- attachment_lines(input_spec, values, context) do
+      body = Enum.join([body | attach_lines], "\n")
+
       case input_spec["template"] do
         template when is_binary(template) ->
-          with {:ok, header} <- Toolbox.render_template(template, values) do
+          with {:ok, header} <- Toolbox.render_template(template, values, context) do
             {:ok, header <> (input_spec["join_with"] || "\n") <> body}
           end
 
@@ -942,9 +1141,119 @@ defmodule Arc.CLI.Tools do
     end
   end
 
-  defp render_input(cli_command, args, values) do
-    Toolbox.render_input(cli_command, args, values)
+  defp render_input(cli_command, args, values, namespace) do
+    Toolbox.render_input(cli_command, args, values, filter_context(namespace))
   end
+
+  @max_attachment_bytes 4 * 1024 * 1024
+
+  # An attachment is sealed once per seal_to target and sent as one line per
+  # target: `attach:<name>:<token>`, after the body tokens. The plaintext is
+  # capped at 4 MiB so a message to several peers stays inside the 64 MiB
+  # request line.
+  defp attachment_lines(%{"attach" => arg, "seal_to" => targets}, values, context)
+       when is_binary(arg) and is_list(targets) do
+    case Map.get(values, arg) do
+      path when is_binary(path) and path != "" ->
+        full = Path.expand(path)
+        name = Path.basename(full)
+
+        with {:ok, bytes} <- File.read(full) |> attach_read_error(full),
+             true <-
+               byte_size(bytes) <= @max_attachment_bytes or
+                 {:error, {:invalid_arguments, "attachment #{name} is over 4 MiB"}},
+             true <-
+               Regex.match?(~r/^[A-Za-z0-9._-]+$/, name) or
+                 {:error,
+                  {:invalid_arguments, "attachment name #{name}: letters, digits, . _ - only"}},
+             {:ok, tokens} <- seal_stdin_tokens(bytes, targets, values, context) do
+          {:ok, Enum.map(tokens, &"attach:#{name}:#{&1}")}
+        end
+
+      _ ->
+        {:ok, []}
+    end
+  end
+
+  defp attachment_lines(_input_spec, _values, _context), do: {:ok, []}
+
+  defp attach_read_error({:ok, bytes}, _path), do: {:ok, bytes}
+
+  defp attach_read_error({:error, reason}, path),
+    do: {:error, {:invalid_arguments, "cannot read #{path}: #{reason}"}}
+
+  defp seal_stdin_body(body, nil, _values, _context), do: {:ok, body}
+
+  defp seal_stdin_body(body, targets, values, context) when is_list(targets) do
+    with {:ok, tokens} <- seal_stdin_tokens(body, targets, values, context) do
+      {:ok, Enum.join(tokens, "\n")}
+    end
+  end
+
+  # One token per peer, targets in order. A target may expand to several
+  # peers, so the token count can exceed the target count.
+  defp seal_stdin_tokens(body, targets, values, context) do
+    Enum.reduce_while(targets, {:ok, []}, fn target, {:ok, acc} ->
+      case Toolbox.seal_to(body, target, values, context) do
+        {:ok, tokens} -> {:cont, {:ok, acc ++ tokens}}
+        {:error, reason} -> {:halt, {:error, {:invalid_arguments, seal_error(target, reason)}}}
+      end
+    end)
+  end
+
+  defp seal_error(target, {:resolve, value, reason}),
+    do: "cannot seal to #{target}: #{value} #{reason}"
+
+  defp seal_error(target, {:no_keyex, value}),
+    do: "cannot seal to #{target}: #{value} has no published X25519 key"
+
+  defp seal_error(target, reason), do: "cannot seal to #{target}: #{inspect(reason)}"
+
+  # Filters that resolve names or seal bodies need the control plane and
+  # the caller's identity. Both are cheap to look up per invocation.
+  defp filter_context(namespace \\ nil) do
+    identity =
+      case KeyStore.resolve_active() do
+        {:ok, id} -> id
+        _ -> nil
+      end
+
+    lists =
+      if is_binary(namespace), do: &Arc.CLI.Lists.expand(namespace, &1), else: fn _ -> nil end
+
+    %{resolve: &Arc.Control.resolve/1, identity: identity, lists: lists}
+  end
+
+  # The body comes from a named argument, then from a file named by an
+  # option, then from stdin. Only the last blocks on a terminal.
+  defp read_body(input_spec, values) do
+    body_arg = input_spec["body"]
+    file_arg = input_spec["file"]
+
+    cond do
+      is_binary(body_arg) and present_value?(Map.get(values, body_arg)) ->
+        {:ok, values |> Map.get(body_arg) |> join_value()}
+
+      is_binary(file_arg) and is_binary(Map.get(values, file_arg)) ->
+        path = Path.expand(Map.get(values, file_arg))
+
+        case File.read(path) do
+          {:ok, body} -> {:ok, body}
+          {:error, reason} -> {:error, {:invalid_arguments, "cannot read #{path}: #{reason}"}}
+        end
+
+      true ->
+        read_stdin_body()
+    end
+  end
+
+  defp present_value?(nil), do: false
+  defp present_value?([]), do: false
+  defp present_value?(""), do: false
+  defp present_value?(_), do: true
+
+  defp join_value(values) when is_list(values), do: Enum.join(values, " ")
+  defp join_value(value), do: to_string(value)
 
   defp read_stdin_body do
     case IO.read(stream_input_device(), :eof) do
@@ -1186,6 +1495,6 @@ defmodule Arc.CLI.Tools do
   @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

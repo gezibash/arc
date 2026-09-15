@@ -17,6 +17,10 @@ defmodule Arc.Data.InterfaceManifest do
   """
 
   @cli_version 1
+  @max_cli_version 2
+
+  @doc "The newest CLI interface version this build renders."
+  def max_cli_version, do: @max_cli_version
 
   @spec normalize(map() | nil) :: map() | nil
   def normalize(interfaces) when is_map(interfaces) do
@@ -171,6 +175,7 @@ defmodule Arc.Data.InterfaceManifest do
     summary = present_string(Map.get(command, "summary")) || fallback_summary
     examples = normalize_examples(Map.get(command, "examples", []))
     invoke = normalize_cli_invoke(Map.get(command, "invoke"))
+    output = normalize_cli_output(Map.get(command, "output"))
 
     if is_nil(path) do
       []
@@ -182,6 +187,7 @@ defmodule Arc.Data.InterfaceManifest do
         |> maybe_put("args", if(args == [], do: nil, else: args))
         |> maybe_put("input", input)
         |> maybe_put("invoke", invoke)
+        |> maybe_put("output", output)
         |> maybe_put("examples", if(examples == [], do: nil, else: examples))
       ]
     end
@@ -300,6 +306,10 @@ defmodule Arc.Data.InterfaceManifest do
       "stdin" ->
         %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
         |> maybe_put("template", present_string(Map.get(input, "template")))
+        |> maybe_put("seal_to", normalize_seal_to(Map.get(input, "seal_to")))
+        |> maybe_put("body", present_string(Map.get(input, "body")))
+        |> maybe_put("file", present_string(Map.get(input, "file")))
+        |> maybe_put("attach", present_string(Map.get(input, "attach")))
 
       _ ->
         nil
@@ -312,16 +322,65 @@ defmodule Arc.Data.InterfaceManifest do
 
   defp normalize_cli_input(_, _args), do: nil
 
+  defp normalize_seal_to(target) when is_binary(target), do: normalize_seal_to([target])
+
+  defp normalize_seal_to(targets) when is_list(targets) do
+    case targets |> Enum.map(&present_string/1) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      list -> list
+    end
+  end
+
+  defp normalize_seal_to(_), do: nil
+
+  @output_filters ~w(open petnames conversation markdown cache)
+
+  # `output.filter` is one filter name or a list, applied in order. Known
+  # filters are `open`, `petnames`, and `preview:<n>`. Unknown entries are
+  # dropped. The normalized shape is always `%{"filters" => [..]}`.
+  defp normalize_cli_output(%{"filter" => filter}) when is_binary(filter),
+    do: normalize_cli_output(%{"filter" => [filter]})
+
+  # Already normalized. Normalization runs again on an installed record.
+  defp normalize_cli_output(%{"filters" => filters}) when is_list(filters),
+    do: normalize_cli_output(%{"filter" => filters})
+
+  defp normalize_cli_output(%{"filter" => filters}) when is_list(filters) do
+    case Enum.filter(filters, &valid_output_filter?/1) do
+      [] -> nil
+      list -> %{"filters" => list}
+    end
+  end
+
+  defp normalize_cli_output(_), do: nil
+
+  defp valid_output_filter?(filter) when filter in @output_filters, do: true
+  defp valid_output_filter?("preview:" <> n), do: Regex.match?(~r/^[1-9][0-9]*$/, n)
+  defp valid_output_filter?(_), do: false
+
   defp normalize_cli_invoke(invoke) when is_map(invoke) do
     %{}
     |> maybe_put("mode", normalize_cli_invoke_mode(Map.get(invoke, "mode")))
     |> maybe_put("method", present_string(Map.get(invoke, "method")))
     |> maybe_put("path", present_string(Map.get(invoke, "path")))
     |> maybe_put("stream", normalize_cli_stream(Map.get(invoke, "stream")))
+    |> maybe_put("topics", normalize_topics(Map.get(invoke, "topics")))
     |> empty_map_to_nil()
   end
 
   defp normalize_cli_invoke(_invoke), do: nil
+
+  # Topic globs an events command listens for. `*` matches any run of
+  # characters. Absent means every topic.
+  defp normalize_topics(topics) when is_list(topics) do
+    case topics |> Enum.map(&present_string/1) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      list -> list
+    end
+  end
+
+  defp normalize_topics(topic) when is_binary(topic), do: normalize_topics([topic])
+  defp normalize_topics(_), do: nil
 
   defp normalize_cli_stream(stream) when is_map(stream) do
     operations =
@@ -382,17 +441,32 @@ defmodule Arc.Data.InterfaceManifest do
   defp truthy?(_value, _default), do: false
 
   defp normalize_cli_invoke_mode("stream"), do: "stream"
+  defp normalize_cli_invoke_mode("events"), do: "events"
   defp normalize_cli_invoke_mode("request_reply"), do: "request_reply"
   defp normalize_cli_invoke_mode(_mode), do: nil
 
   defp normalize_optional_boolean(value) when value in [true, false], do: value
   defp normalize_optional_boolean(_value), do: nil
 
-  defp enforce_variadic_tail([]), do: []
-
+  # Only the last positional may be variadic. Options may follow it.
   defp enforce_variadic_tail(args) do
-    {prefix, last} = Enum.split(args, length(args) - 1)
-    prefix = Enum.map(prefix, &Map.put(&1, "variadic", false))
-    prefix ++ last
+    last_positional =
+      args
+      |> Enum.with_index()
+      |> Enum.filter(fn {arg, _} -> arg["kind"] == "positional" end)
+      |> List.last()
+
+    case last_positional do
+      nil ->
+        args
+
+      {_, last_index} ->
+        args
+        |> Enum.with_index()
+        |> Enum.map(fn
+          {arg, ^last_index} -> arg
+          {arg, _} -> Map.put(arg, "variadic", false)
+        end)
+    end
   end
 end

@@ -30,6 +30,8 @@ defmodule Arc.Data.Handler.Exec do
     {"op":"stream_data","app_session_id":"...","data":"..."}
     {"op":"stream_exit","app_session_id":"...","status":0}
     {"op":"stream_error","app_session_id":"...","message":"..."}
+    {"op":"event","to":"<hex pubkey>","topic":"...","meta":{},"body":"..."}
+                                                            server-initiated event
 
   URI:
     exec:///path/to/runtime?manifest=/abs/path/to/package.(json|toml)
@@ -225,6 +227,9 @@ defmodule Arc.Data.Handler.Exec do
 
       {:stream_error, app_session_id, meta, body} ->
         emit_stream_event(state, app_session_id, :stream_error, meta, body, true)
+
+      {:event, to_pk, topic, meta, body} ->
+        {:emit, [Arc.Data.Handler.emit_event(to_pk, topic, body, meta)], state}
 
       :ignore ->
         :unhandled
@@ -464,6 +469,19 @@ defmodule Arc.Data.Handler.Exec do
       |> maybe_put("message", maybe_string(event["message"]) || "stream error")
 
     {:stream_error, app_session_id, meta, normalize_text(event["body"] || "")}
+  end
+
+  defp decode_provider_map(%{"op" => "event", "to" => to, "topic" => topic} = event)
+       when is_binary(to) and is_binary(topic) do
+    case Base.decode16(to, case: :mixed) do
+      {:ok, <<to_pk::binary-size(32)>>} ->
+        meta = if is_map(event["meta"]), do: event["meta"], else: %{}
+        {:event, to_pk, topic, meta, normalize_text(event["body"] || "")}
+
+      _ ->
+        Logger.warning("provider event with an invalid recipient key dropped: #{inspect(to)}")
+        :ignore
+    end
   end
 
   defp decode_provider_map(_event), do: :ignore

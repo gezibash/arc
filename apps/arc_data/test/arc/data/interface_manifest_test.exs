@@ -74,6 +74,117 @@ defmodule Arc.Data.InterfaceManifestTest do
     assert raw["input"] == %{"source" => "stdin", "join_with" => "\n"}
   end
 
+  test "normalizes an events invoke mode with topic globs" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "dm",
+            "commands" => [
+              %{"path" => ["watch"], "invoke" => %{"mode" => "events", "topics" => ["dm.*", ""]}},
+              %{"path" => ["one"], "invoke" => %{"mode" => "events", "topics" => "x"}}
+            ]
+          }
+        }
+      })
+
+    [watch, one] = cli["commands"]
+    assert watch["invoke"] == %{"mode" => "events", "topics" => ["dm.*"]}
+    assert one["invoke"] == %{"mode" => "events", "topics" => ["x"]}
+  end
+
+  test "keeps an explicit interface version and reports the max it renders" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{"namespace" => "dm", "version" => 2, "commands" => [%{"path" => ["x"]}]}
+        }
+      })
+
+    assert cli["version"] == 2
+    assert InterfaceManifest.max_cli_version() == 2
+  end
+
+  test "the last positional stays variadic when options follow it" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "dm",
+            "commands" => [
+              %{
+                "path" => ["send"],
+                "args" => [
+                  %{"name" => "peer", "kind" => "positional", "required" => true},
+                  %{"name" => "text", "kind" => "positional", "variadic" => true},
+                  %{"name" => "file", "kind" => "option", "flag" => "--file"}
+                ]
+              }
+            ]
+          }
+        }
+      })
+
+    [send] = cli["commands"]
+    [peer, text, file] = send["args"]
+    assert peer["variadic"] == false
+    assert text["variadic"] == true
+    assert file["kind"] == "option"
+  end
+
+  test "normalizes seal_to and an open output filter" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "namespace" => "dm",
+            "commands" => [
+              %{
+                "path" => ["send"],
+                "args" => [%{"name" => "peer", "kind" => "positional", "required" => true}],
+                "input" => %{
+                  "source" => "stdin",
+                  "template" => "send {{peer|pubkey}}",
+                  "seal_to" => "peer"
+                }
+              },
+              %{
+                "path" => ["send2"],
+                "input" => %{
+                  "source" => "stdin",
+                  "seal_to" => ["peer", "me"],
+                  "body" => "text",
+                  "file" => "file",
+                  "attach" => "attach"
+                }
+              },
+              %{"path" => ["read"], "output" => %{"filter" => "open"}},
+              %{"path" => ["ls"], "output" => %{"filter" => "bogus"}},
+              %{
+                "path" => ["all"],
+                "output" => %{"filter" => ["open", "petnames", "preview:80", "nope"]}
+              }
+            ]
+          }
+        }
+      })
+
+    [send, send2, read, ls, all] = cli["commands"]
+
+    assert send["input"]["seal_to"] == ["peer"]
+    assert send2["input"]["seal_to"] == ["peer", "me"]
+    assert send2["input"]["body"] == "text"
+    assert send2["input"]["file"] == "file"
+    assert send2["input"]["attach"] == "attach"
+    assert read["output"] == %{"filters" => ["open"]}
+    refute Map.has_key?(ls, "output")
+    assert all["output"] == %{"filters" => ["open", "petnames", "preview:80"]}
+
+    # Normalizing an already normalized command is a no-op.
+    assert InterfaceManifest.cli(%{"interfaces" => %{"cli" => cli}})["commands"] ==
+             cli["commands"]
+  end
+
   test "loads a JSON interface manifest file" do
     path =
       Path.join(

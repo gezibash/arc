@@ -2,19 +2,32 @@ defmodule Arc.Data.Session do
   @moduledoc """
   Encrypted session between two agents.
 
-  Session establishment:
-    1. Both agents publish X25519 public keys via control plane
-    2. Each derives shared secret: ECDH(my_x25519_priv, their_x25519_pub)
-    3. Session key = HKDF-SHA256(shared_secret, info: "arc-session-v1")
-    4. All messages encrypted with ChaCha20-Poly1305 using session key
+  Session establishment, version 2:
+    1. The responder publishes an X25519 public key via the control plane.
+    2. The initiator generates an ephemeral X25519 keypair per session and
+       derives shared = ECDH(ephemeral_priv, responder_x25519_pub).
+    3. Session key = HKDF-SHA256(shared, salt: ephemeral_pub, info: "arc-session-v2").
+    4. Every packet header carries the ephemeral public key. The responder
+       derives the same key with ECDH(my_x25519_priv, ephemeral_pub).
+    5. All messages are encrypted with ChaCha20-Poly1305 under the session key.
+
+  Compromise of the initiator's long-term key does not expose past
+  sessions. Compromise of the responder's does. A responder ephemeral is
+  version 3 work.
+
+  Version 1 derived the key from both long-term keys and carried no
+  ephemeral. `establish_v1/3` remains so a peer on the previous release can
+  still be decrypted. It is deprecated.
 
   Each session has a unique session_id and a monotonic sequence counter
   used in the packet header for replay prevention.
   """
 
   alias Arc.Identity
+  alias Arc.Identity.HKDF
 
-  @hkdf_info "arc-session-v1"
+  @hkdf_info_v1 "arc-session-v1"
+  @hkdf_info_v2 "arc-session-v2"
   @nonce_bytes 12
 
   @type t :: %__MODULE__{
@@ -22,15 +35,18 @@ defmodule Arc.Data.Session do
           session_key: binary(),
           session_id: binary(),
           seq: non_neg_integer(),
-          my_identity: Identity.t()
+          my_identity: Identity.t(),
+          ek_pub: binary() | nil,
+          version: 1 | 2
         }
 
-  @enforce_keys [:peer_public_key, :session_key, :session_id, :seq, :my_identity]
-  defstruct [:peer_public_key, :session_key, :session_id, :seq, :my_identity]
+  @enforce_keys [:peer_public_key, :session_key, :session_id, :seq, :my_identity, :version]
+  defstruct [:peer_public_key, :session_key, :session_id, :seq, :my_identity, :ek_pub, :version]
 
   @doc """
-  Establish a session with a peer given their Ed25519 public key and X25519 public key.
-  Derives a shared secret via ECDH and a session key via HKDF-SHA256.
+  Start a version 2 session as the initiator. Needs the peer's Ed25519
+  public key and published X25519 public key. Generates an ephemeral key
+  that every packet of this session carries in its header.
   """
   @spec establish(Identity.t(), Identity.public_key(), binary()) :: t()
   def establish(
@@ -38,20 +54,66 @@ defmodule Arc.Data.Session do
         <<peer_ed_pub::binary-size(32)>>,
         <<peer_x25519_pub::binary-size(32)>>
       ) do
-    {_my_x_pub, my_x_priv} = Identity.to_x25519(my_identity)
-    shared_secret = :crypto.compute_key(:ecdh, peer_x25519_pub, my_x_priv, :x25519)
-
-    # HKDF-SHA256: extract then expand
-    prk = :crypto.mac(:hmac, :sha256, <<0::256>>, shared_secret)
-    session_key = :crypto.mac(:hmac, :sha256, prk, @hkdf_info <> <<1>>)
-    <<key::binary-size(32), _::binary>> = session_key
+    {ek_pub, ek_priv} = :crypto.generate_key(:ecdh, :x25519)
+    shared_secret = :crypto.compute_key(:ecdh, peer_x25519_pub, ek_priv, :x25519)
 
     %__MODULE__{
       peer_public_key: peer_ed_pub,
-      session_key: key,
+      session_key: HKDF.derive(shared_secret, ek_pub, @hkdf_info_v2, 32),
       session_id: :crypto.strong_rand_bytes(16),
       seq: 0,
-      my_identity: my_identity
+      my_identity: my_identity,
+      ek_pub: ek_pub,
+      version: 2
+    }
+  end
+
+  @doc """
+  Join a version 2 session as the responder, from the ephemeral public key
+  and session id in the initiator's packet header.
+  """
+  @spec accept(Identity.t(), Identity.public_key(), binary(), binary()) :: t()
+  def accept(
+        %Identity{} = my_identity,
+        <<peer_ed_pub::binary-size(32)>>,
+        <<ek_pub::binary-size(32)>>,
+        <<session_id::binary-size(16)>>
+      ) do
+    {_my_x_pub, my_x_priv} = Identity.to_x25519(my_identity)
+    shared_secret = :crypto.compute_key(:ecdh, ek_pub, my_x_priv, :x25519)
+
+    %__MODULE__{
+      peer_public_key: peer_ed_pub,
+      session_key: HKDF.derive(shared_secret, ek_pub, @hkdf_info_v2, 32),
+      session_id: session_id,
+      seq: 0,
+      my_identity: my_identity,
+      ek_pub: ek_pub,
+      version: 2
+    }
+  end
+
+  @doc """
+  Version 1 session from both long-term keys. Deprecated. Kept so packets
+  from a peer on the previous release still decrypt.
+  """
+  @spec establish_v1(Identity.t(), Identity.public_key(), binary()) :: t()
+  def establish_v1(
+        %Identity{} = my_identity,
+        <<peer_ed_pub::binary-size(32)>>,
+        <<peer_x25519_pub::binary-size(32)>>
+      ) do
+    {_my_x_pub, my_x_priv} = Identity.to_x25519(my_identity)
+    shared_secret = :crypto.compute_key(:ecdh, peer_x25519_pub, my_x_priv, :x25519)
+
+    %__MODULE__{
+      peer_public_key: peer_ed_pub,
+      session_key: HKDF.derive(shared_secret, <<0::256>>, @hkdf_info_v1, 32),
+      session_id: :crypto.strong_rand_bytes(16),
+      seq: 0,
+      my_identity: my_identity,
+      ek_pub: nil,
+      version: 1
     }
   end
 

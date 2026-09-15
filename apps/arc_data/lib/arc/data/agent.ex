@@ -11,6 +11,7 @@ defmodule Arc.Data.Agent do
   """
 
   use GenServer
+  require Logger
 
   alias Arc.Control
   alias Arc.Data.CapabilityManifest
@@ -41,6 +42,16 @@ defmodule Arc.Data.Agent do
     {handler_uri, opts} = Keyword.pop(opts, :serve)
     {observer, opts} = Keyword.pop(opts, :observer)
     GenServer.start_link(__MODULE__, {identity, handler_uri, observer}, opts)
+  end
+
+  @doc """
+  Send an event frame to a peer outside any request. The peer sees it in
+  its inbox with kind `:event` and `meta["topic"]`.
+  """
+  @spec emit_event(GenServer.server(), binary(), String.t(), binary()) :: :ok
+  def emit_event(agent, <<to_pk::binary-size(32)>>, topic, body)
+      when is_binary(topic) and is_binary(body) do
+    GenServer.call(agent, {:emit_event, to_pk, topic, body})
   end
 
   def publish(agent) do
@@ -93,6 +104,7 @@ defmodule Arc.Data.Agent do
           Application.get_env(:arc_data, :allowed_clock_skew_ms, @default_allowed_clock_skew_ms)
       }
 
+      schedule_replay_sweep(state)
       {:ok, state}
     else
       {:error, {:already_registered, _pid}} ->
@@ -138,13 +150,23 @@ defmodule Arc.Data.Agent do
     end
   end
 
+  def handle_call({:emit_event, to_pk, topic, body}, _from, state) do
+    state = send_reply(state, to_pk, Frame.encode_event(topic, body))
+    {:reply, :ok, state}
+  end
+
   def handle_call({:send, peer_query, message, opts}, _from, state) do
     with {:ok, peer_pk} <- resolve_peer_key(state, peer_query),
          %Session{} = session <- Map.get(state.sessions, peer_pk) do
       payload = build_outgoing_payload(message, opts)
       {nonce, ciphertext, seq, session} = Session.encrypt(session, payload)
       state = %{state | sessions: Map.put(state.sessions, peer_pk, session)}
-      packet = Packet.encode(state.identity, peer_pk, session.session_id, seq, nonce, ciphertext)
+
+      packet =
+        Packet.encode(state.identity, peer_pk, session.session_id, seq, nonce, ciphertext,
+          ek: session.ek_pub
+        )
+
       deliver(state.identity.public_key, peer_pk, packet)
       {:reply, :ok, state}
     else
@@ -201,6 +223,12 @@ defmodule Arc.Data.Agent do
     {:noreply, receive_packet(packet, state)}
   end
 
+  def handle_info(:sweep_replay_guard, state) do
+    state = sweep_replay_guard(state, System.system_time(:millisecond))
+    schedule_replay_sweep(state)
+    {:noreply, state}
+  end
+
   def handle_info(msg, %{handler: {mod, handler_state}} = state) do
     if function_exported?(mod, :handle_info, 2) do
       case mod.handle_info(msg, handler_state) do
@@ -244,7 +272,7 @@ defmodule Arc.Data.Agent do
          true <- decoded.dst == state.identity.public_key,
          {:ok, state} <- enforce_replay_and_freshness(state, decoded) do
       state
-      |> ensure_session(decoded.src)
+      |> session_for_packet(decoded)
       |> decrypt_and_dispatch(decoded)
     else
       _ -> state
@@ -510,13 +538,37 @@ defmodule Arc.Data.Agent do
       %Session{} = session ->
         {nonce, ciphertext, seq, session} = Session.encrypt(session, message)
         state = %{state | sessions: Map.put(state.sessions, to_pk, session)}
-        packet = Packet.encode(state.identity, to_pk, session.session_id, seq, nonce, ciphertext)
+
+        packet =
+          Packet.encode(state.identity, to_pk, session.session_id, seq, nonce, ciphertext,
+            ek: session.ek_pub
+          )
+
         deliver(state.identity.public_key, to_pk, packet)
         state
 
       nil ->
         state
     end
+  end
+
+  # A guard entry protects against replay of packets in one session. A
+  # packet older than the skew window is rejected as stale before the guard
+  # is consulted, so an entry whose newest packet is older than twice the
+  # window can never be hit again and is dropped.
+  defp sweep_replay_guard(state, now_ms) do
+    horizon = now_ms - 2 * state.allowed_clock_skew_ms
+
+    guard =
+      state.replay_guard
+      |> Enum.reject(fn {_key, %{max_ts: max_ts}} -> max_ts < horizon end)
+      |> Map.new()
+
+    %{state | replay_guard: guard}
+  end
+
+  defp schedule_replay_sweep(state) do
+    Process.send_after(self(), :sweep_replay_guard, state.allowed_clock_skew_ms)
   end
 
   defp enforce_replay_and_freshness(state, decoded) do
@@ -543,7 +595,34 @@ defmodule Arc.Data.Agent do
     end
   end
 
-  defp ensure_session(state, peer_pk) do
+  # A v2 packet carries the initiator's ephemeral key, so the receiver can
+  # always derive the session key. A packet whose session id matches the
+  # session already held for that peer reuses it. Any other v2 packet
+  # starts a fresh accepted session, which replaces the one held.
+  defp session_for_packet(state, %{ek: <<_::binary-size(32)>> = ek} = decoded) do
+    case Map.get(state.sessions, decoded.src) do
+      %Session{session_id: sid} when sid == decoded.session_id ->
+        state
+
+      _ ->
+        session = Session.accept(state.identity, decoded.src, ek, decoded.session_id)
+        %{state | sessions: Map.put(state.sessions, decoded.src, session)}
+    end
+  end
+
+  # No ephemeral key: a v1 packet from a peer on the previous release.
+  defp session_for_packet(state, decoded) do
+    Logger.warning(
+      "session v1 packet from #{Identity.name(decoded.src)}; v1 is deprecated and will be removed"
+    )
+
+    case Map.get(state.sessions, decoded.src) do
+      %Session{version: 1} -> state
+      _ -> ensure_session(state, decoded.src, &Session.establish_v1/3)
+    end
+  end
+
+  defp ensure_session(state, peer_pk, establish \\ &Session.establish/3) do
     if Map.has_key?(state.sessions, peer_pk) do
       state
     else
@@ -551,7 +630,7 @@ defmodule Arc.Data.Agent do
 
       case Control.resolve(peer_name) do
         {:ok, [entry | _]} when entry.x25519_public != nil ->
-          session = Session.establish(state.identity, entry.public_key, entry.x25519_public)
+          session = establish.(state.identity, entry.public_key, entry.x25519_public)
           %{state | sessions: Map.put(state.sessions, entry.public_key, session)}
 
         _ ->

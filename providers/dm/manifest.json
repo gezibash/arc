@@ -1,0 +1,679 @@
+{
+  "published_at": "2026-09-14T00:00:00Z",
+  "release": {
+    "version": "0.1.0",
+    "channel": "stable"
+  },
+  "capability": {
+    "id": "primary",
+    "kind": "data",
+    "scheme": "dm",
+    "title": "Direct Messages",
+    "summary": "Sealed direct messages with a persistent inbox. Bodies are sealed to the reader before they leave the sender. The host stores ciphertext only.",
+    "invocation": {
+      "method": "RAW",
+      "path": "/"
+    },
+    "examples": [
+      "inbox --unread",
+      "read 01J7Q0X5R8M4N6P2T9V1W3Y5Z7",
+      "whoami"
+    ]
+  },
+  "interfaces": {
+    "cli": {
+      "version": 2,
+      "namespace": "dm",
+      "commands": [
+        {
+          "path": [],
+          "summary": "Home: every conversation with unread count and the latest message.",
+          "args": [
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max conversations, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "conversations --limit {{limit|json}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames",
+              "preview:60"
+            ]
+          }
+        },
+        {
+          "path": [
+            "conversations"
+          ],
+          "summary": "List conversations: peer, last id, last time, unread, muted, latest message.",
+          "args": [
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max conversations, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "conversations --limit {{limit|json}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames",
+              "preview:60"
+            ]
+          },
+          "examples": [
+            "",
+            "--limit 10"
+          ]
+        },
+        {
+          "path": [
+            "send"
+          ],
+          "summary": "Send a message to one or more peers. Body from the text argument, --file, or stdin. Everything is sealed to each reader and to you before it leaves this machine.",
+          "args": [
+            {
+              "name": "to",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipients: names, key prefixes, or hex, comma-separated. A saved list name (arc lists add dm <name> ...) expands."
+            },
+            {
+              "name": "text",
+              "kind": "positional",
+              "required": false,
+              "variadic": true,
+              "description": "Message text. Omit to read --file or stdin."
+            },
+            {
+              "name": "reply_to",
+              "kind": "option",
+              "flag": "--reply-to",
+              "type": "string",
+              "required": false,
+              "description": "Id of the message this replies to"
+            },
+            {
+              "name": "file",
+              "kind": "option",
+              "flag": "--file",
+              "type": "string",
+              "required": false,
+              "description": "Read the body from this file"
+            },
+            {
+              "name": "attach",
+              "kind": "option",
+              "flag": "--attach",
+              "type": "string",
+              "required": false,
+              "description": "Attach this file, up to 4 MiB, sealed to every reader"
+            }
+          ],
+          "input": {
+            "source": "stdin",
+            "template": "send --to {{to|pubkey}} --reply-to {{reply_to|json}}",
+            "seal_to": [
+              "to",
+              "me"
+            ],
+            "body": "text",
+            "file": "file",
+            "attach": "attach"
+          },
+          "examples": [
+            "jolly-volta \"Looks right.\"",
+            "jolly-volta,aqua-bohr \"Standup moved to 10.\"",
+            "devs --file notes.md",
+            "jolly-volta --attach acl-draft.md \"Draft attached.\""
+          ]
+        },
+        {
+          "path": [
+            "inbox"
+          ],
+          "summary": "List messages in your mailbox: id, direction, peer, time, sealed bytes.",
+          "args": [
+            {
+              "name": "unread",
+              "kind": "option",
+              "flag": "--unread",
+              "type": "boolean",
+              "required": false,
+              "description": "Only unread inbound messages"
+            },
+            {
+              "name": "since",
+              "kind": "option",
+              "flag": "--since",
+              "type": "string",
+              "required": false,
+              "description": "Only ids greater than this ULID"
+            },
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max messages, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "inbox --unread \"{{unread}}\" --since {{since|json}} --limit {{limit|json}}"
+          },
+          "examples": [
+            "",
+            "--unread",
+            "--since 01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ],
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "thread"
+          ],
+          "summary": "List both directions of one thread in time order.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            },
+            {
+              "name": "since",
+              "kind": "option",
+              "flag": "--since",
+              "type": "string",
+              "required": false,
+              "description": "Only ids greater than this ULID"
+            },
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max messages, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "thread {{peer|pubkey}} --since {{since|json}} --limit {{limit|json}}"
+          },
+          "examples": [
+            "jolly-volta"
+          ],
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "open"
+          ],
+          "summary": "Read a conversation. Marks its messages read. --format markdown exports a transcript, --raw prints tab-separated lines, --hex keeps public keys. With arc cache on dm, opened messages are cached sealed for arc cache search dm.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Peer: petname, short name, key prefix, or 64 hex"
+            },
+            {
+              "name": "since",
+              "kind": "option",
+              "flag": "--since",
+              "type": "string",
+              "required": false,
+              "description": "Only ids greater than this ULID"
+            },
+            {
+              "name": "limit",
+              "kind": "option",
+              "flag": "--limit",
+              "type": "string",
+              "required": false,
+              "description": "Max messages, default 50"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "thread {{peer|pubkey}} --bodies \"true\" --since {{since|json}} --limit {{limit|json}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "cache",
+              "petnames",
+              "conversation"
+            ]
+          },
+          "examples": [
+            "jolly-volta",
+            "jolly-volta --limit 20",
+            "jolly-volta --format markdown > jolly.md",
+            "jolly-volta --raw"
+          ]
+        },
+        {
+          "path": [
+            "watch"
+          ],
+          "summary": "Print each message and reaction as it lands, opened. --notify also posts a desktop notification. Ctrl+C to stop.",
+          "input": {
+            "source": "template",
+            "template": "whoami"
+          },
+          "invoke": {
+            "mode": "events",
+            "topics": [
+              "dm.*"
+            ]
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames"
+            ]
+          },
+          "examples": [
+            "",
+            "--notify"
+          ]
+        },
+        {
+          "path": [
+            "read"
+          ],
+          "summary": "Read one message. Marks an inbound message as read.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "read {{id}}"
+          },
+          "output": {
+            "filter": [
+              "open",
+              "petnames"
+            ]
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7",
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 | arc journal write arc/decisions/2026-09-14-acl --title \"DM from jolly\""
+          ]
+        },
+        {
+          "path": [
+            "fetch"
+          ],
+          "summary": "Print an attachment, opened with your key. Redirect to a file.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            },
+            {
+              "name": "name",
+              "kind": "positional",
+              "required": true,
+              "description": "Attachment name"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "fetch {{id}} {{name}}"
+          },
+          "output": {
+            "filter": [
+              "open"
+            ]
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 acl-draft.md > acl-draft.md"
+          ]
+        },
+        {
+          "path": [
+            "ack"
+          ],
+          "summary": "Mark inbound messages as read without reading them.",
+          "args": [
+            {
+              "name": "ids",
+              "kind": "positional",
+              "required": true,
+              "description": "Message ids",
+              "variadic": true
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "ack {{ids}}"
+          }
+        },
+        {
+          "path": [
+            "status"
+          ],
+          "summary": "Show delivered and read receipts for a message you sent.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "status {{id}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "archive"
+          ],
+          "summary": "Hide messages from inbox. They stay in thread.",
+          "args": [
+            {
+              "name": "ids",
+              "kind": "positional",
+              "required": true,
+              "description": "Message ids",
+              "variadic": true
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "archive {{ids}}"
+          }
+        },
+        {
+          "path": [
+            "react"
+          ],
+          "summary": "React to a message with an emoji, or none to clear. The reaction is plaintext metadata: the host sees who reacted with what.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            },
+            {
+              "name": "value",
+              "kind": "positional",
+              "required": true,
+              "description": "One to four characters, or none"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "react {{id}} {{value}}"
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 \ud83d\udc4d",
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7 none"
+          ]
+        },
+        {
+          "path": [
+            "retract"
+          ],
+          "summary": "Unsend a message you sent, within the retract window (default 10 minutes). Recipients keep a retracted marker.",
+          "args": [
+            {
+              "name": "id",
+              "kind": "positional",
+              "required": true,
+              "description": "Message id"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "retract {{id}}"
+          },
+          "examples": [
+            "01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
+        },
+        {
+          "path": [
+            "block"
+          ],
+          "summary": "Refuse future messages from a peer.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "block {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "unblock"
+          ],
+          "summary": "Reverse block.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Recipient: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "unblock {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "blocked"
+          ],
+          "summary": "List blocked keys.",
+          "input": {
+            "source": "template",
+            "template": "blocked"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "whoami"
+          ],
+          "summary": "Print your mailbox address.",
+          "input": {
+            "source": "template",
+            "template": "whoami"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "mute"
+          ],
+          "summary": "Stop counting a peer as unread. Messages still arrive.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Peer: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "mute {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "unmute"
+          ],
+          "summary": "Reverse mute.",
+          "args": [
+            {
+              "name": "peer",
+              "kind": "positional",
+              "required": true,
+              "description": "Peer: petname, short name, key prefix, or 64 hex"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "unmute {{peer|pubkey}}"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "muted"
+          ],
+          "summary": "List muted peers.",
+          "input": {
+            "source": "template",
+            "template": "muted"
+          },
+          "output": {
+            "filter": [
+              "petnames"
+            ]
+          }
+        },
+        {
+          "path": [
+            "settings"
+          ],
+          "summary": "Show settings, or set one: settings receipts on|off. With receipts off, senders see delivered but not read.",
+          "args": [
+            {
+              "name": "key",
+              "kind": "positional",
+              "required": false,
+              "description": "receipts"
+            },
+            {
+              "name": "value",
+              "kind": "positional",
+              "required": false,
+              "description": "on or off"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "settings {{key}} {{value}}"
+          },
+          "examples": [
+            "",
+            "receipts off"
+          ]
+        },
+        {
+          "path": [
+            "quota"
+          ],
+          "summary": "Bytes used of your mailbox budget.",
+          "input": {
+            "source": "template",
+            "template": "quota"
+          }
+        },
+        {
+          "path": [
+            "purge"
+          ],
+          "summary": "Delete your own messages and attachments older than an id. This is the only delete. Other holders keep their copies.",
+          "args": [
+            {
+              "name": "before",
+              "kind": "option",
+              "flag": "--before",
+              "type": "string",
+              "required": true,
+              "description": "Delete messages with an id below this ULID"
+            }
+          ],
+          "input": {
+            "source": "template",
+            "template": "purge --before {{before|json}}"
+          },
+          "examples": [
+            "--before 01J7Q0X5R8M4N6P2T9V1W3Y5Z7"
+          ]
+        }
+      ]
+    }
+  }
+}

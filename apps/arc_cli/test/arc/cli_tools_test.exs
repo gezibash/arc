@@ -217,6 +217,224 @@ defmodule Arc.CLIToolsTest do
     assert output =~ "/pages/hrs/nb/page\n# Title\n\nA long body with \"quotes\" and {{braces}}."
   end
 
+  test "seal_to seals the stdin body per target and the open filter decodes the reply" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _manifest_path} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(System.tmp_dir!(), "arc_dm_manifest_#{System.unique_integer([:positive])}.json")
+
+    write_dm_manifest(manifest_path)
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    {:ok, input_device} = StringIO.open("a private line\n")
+    old_input_device = Application.get_env(:arc_cli, :stream_input_device)
+    Application.put_env(:arc_cli, :stream_input_device, input_device)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+
+      if old_input_device do
+        Application.put_env(:arc_cli, :stream_input_device, old_input_device)
+      else
+        Application.delete_env(:arc_cli, :stream_input_device)
+      end
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id)])
+      end)
+
+    # The echo provider returns the header and both tokens. The header
+    # carries the server's hex key. The first token is sealed to the server
+    # and cannot be opened here. The second is sealed to the caller and
+    # opens to the stdin body.
+    # petnames turns the server's hex key into its name.
+    assert output =~ "/dm/#{Identity.name(server_id)}\n[sealed: cannot open]\na private line\n"
+    refute output =~ "sealed-v1:"
+    refute output =~ Identity.encode_public_key(server_id)
+
+    # --hex keeps the key. The stdin device is drained, so send a body inline.
+    hex_output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "--hex", "again"])
+      end)
+
+    assert hex_output =~
+             "/dm/#{Identity.encode_public_key(server_id)}\n[sealed: cannot open]\nagain\n"
+  end
+
+  test "a stdin command takes its body from an argument or a file before stdin" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _manifest_path} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(System.tmp_dir!(), "arc_dm_manifest_#{System.unique_integer([:positive])}.json")
+
+    body_path =
+      Path.join(System.tmp_dir!(), "arc_dm_body_#{System.unique_integer([:positive])}.md")
+
+    write_dm_manifest(manifest_path)
+    File.write!(body_path, "from a file\n")
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    # stdin holds a body that must not be used when an argument or file wins.
+    {:ok, input_device} = StringIO.open("from stdin\n")
+    old_input_device = Application.get_env(:arc_cli, :stream_input_device)
+    Application.put_env(:arc_cli, :stream_input_device, input_device)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+      File.rm(body_path)
+
+      if old_input_device do
+        Application.put_env(:arc_cli, :stream_input_device, old_input_device)
+      else
+        Application.delete_env(:arc_cli, :stream_input_device)
+      end
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    from_arg =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "two", "words"])
+      end)
+
+    from_file =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "--file", body_path])
+      end)
+
+    {result, missing} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "--file", "/nope/none.md"])
+      end)
+
+    # A saved list expands to its members, and an attachment is sealed per reader.
+    ExUnit.CaptureIO.capture_io(fn ->
+      Arc.CLI.main(["lists", "add", "dm", "team", Identity.name(server_id)])
+    end)
+
+    with_attach =
+      ExUnit.CaptureIO.capture_io(fn ->
+        Arc.CLI.main(["dm", "send", "team", "--attach", body_path, "see file"])
+      end)
+
+    assert from_arg =~ "[sealed: cannot open]\ntwo words\n"
+    assert from_file =~ "[sealed: cannot open]\nfrom a file\n"
+    assert result == {:exit, 1}
+    assert missing =~ "cannot read /nope/none.md"
+
+    attach_name = Path.basename(body_path)
+
+    assert with_attach =~
+             "[sealed: cannot open]\nsee file\nattach:#{attach_name}:[sealed: cannot open]\n" <>
+               "attach:#{attach_name}:from a file\n"
+  end
+
+  test "an events command prints matching events from the provider" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    runtime = Path.expand("../../../../test/fixtures/providers/events-provider.exs", __DIR__)
+    manifest = Path.expand("../../../../test/fixtures/providers/events-provider.json", __DIR__)
+    File.chmod!(runtime, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(server_id,
+        serve: "exec://#{runtime}?manifest=#{URI.encode_www_form(manifest)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["ev", "watch", "--once"]) end)
+
+    assert output =~ "watching. Ctrl+C to stop.\n"
+
+    assert output =~
+             ~r/\d\d:\d\d:\d\d  test\.ping  #{Identity.encode_public_key(server_id)}  pong for #{Identity.encode_public_key(client_id)}  n=1\n/
+  end
+
+  test "a tool that needs a newer interface version is refused with advice" do
+    client_id = persist_cli_identity()
+    server_id = Identity.generate()
+    {runtime_path, _} = hello_provider_paths()
+
+    manifest_path =
+      Path.join(System.tmp_dir!(), "arc_v9_manifest_#{System.unique_integer([:positive])}.json")
+
+    write_dm_manifest(manifest_path)
+    manifest = manifest_path |> File.read!() |> :json.decode()
+    manifest = put_in(manifest, ["interfaces", "cli", "version"], 9)
+    File.write!(manifest_path, manifest |> :json.encode() |> IO.iodata_to_binary())
+    File.chmod!(runtime_path, 0o755)
+
+    {:ok, server} =
+      Agent.start_link(
+        server_id,
+        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
+      )
+
+    :ok = Agent.publish(server)
+
+    on_exit(fn ->
+      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      KeyStore.remove(Identity.name(client_id))
+      File.rm(manifest_path)
+    end)
+
+    ExUnit.CaptureIO.capture_io("y\n", fn ->
+      Arc.CLI.main(["install", Identity.name(server_id), "primary"])
+    end)
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["dm", "send", Identity.name(server_id), "hi"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "needs CLI interface v9"
+    assert stderr =~ "Update arc"
+  end
+
   test "installed tools can be invoked as top-level arc subcommands" do
     client_id = persist_cli_identity()
     server_id = Identity.generate()
@@ -732,6 +950,61 @@ defmodule Arc.CLIToolsTest do
                 }
               ],
               "input" => %{"source" => "stdin", "template" => "POST /echo /pages/{{path}}"}
+            }
+          ]
+        }
+      }
+    }
+
+    File.write!(path, manifest |> :json.encode() |> IO.iodata_to_binary())
+  end
+
+  defp write_dm_manifest(path) do
+    manifest = %{
+      "published_at" => "2026-03-06T00:00:00Z",
+      "release" => %{"version" => "1.0.0", "channel" => "stable"},
+      "capability" => %{
+        "id" => "primary",
+        "kind" => "service",
+        "scheme" => "dm",
+        "title" => "DM",
+        "summary" => "Sealed messages through the hello echo runtime.",
+        "invocation" => %{"method" => "RAW", "path" => "/"}
+      },
+      "interfaces" => %{
+        "cli" => %{
+          "version" => 1,
+          "namespace" => "dm",
+          "commands" => [
+            %{
+              "path" => ["send"],
+              "summary" => "Send a sealed body from stdin",
+              "args" => [
+                %{"name" => "to", "kind" => "positional", "type" => "string", "required" => true},
+                %{
+                  "name" => "text",
+                  "kind" => "positional",
+                  "type" => "string",
+                  "required" => false,
+                  "variadic" => true
+                },
+                %{"name" => "file", "kind" => "option", "flag" => "--file", "type" => "string"},
+                %{
+                  "name" => "attach",
+                  "kind" => "option",
+                  "flag" => "--attach",
+                  "type" => "string"
+                }
+              ],
+              "input" => %{
+                "source" => "stdin",
+                "template" => "POST /echo /dm/{{to|pubkey}}",
+                "seal_to" => ["to", "me"],
+                "body" => "text",
+                "file" => "file",
+                "attach" => "attach"
+              },
+              "output" => %{"filter" => ["open", "petnames"]}
             }
           ]
         }

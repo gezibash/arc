@@ -20,6 +20,24 @@ defmodule Arc.Data.Handler.ExecTest do
     assert event.body =~ "provider hello"
   end
 
+  test "an event line becomes an event frame to the named peer" do
+    {path, manifest_path} = hello_provider_paths()
+    File.chmod!(path, 0o755)
+    {:ok, state} = Exec.init("exec://#{path}?manifest=#{URI.encode_www_form(manifest_path)}")
+
+    to = Base.encode16(@from_pk, case: :lower)
+    line = ~s({"op":"event","to":"#{to}","topic":"dm.new","meta":{"id":"x"},"body":"hi"})
+    assert {:emit, [event], _} = Exec.handle_info({state.port, {:data, {:eol, line}}}, state)
+    assert event.to_pk == @from_pk
+    assert {:ok, frame} = Arc.Data.Frame.decode(event.payload)
+    assert frame.type == :event
+    assert frame.meta == %{"topic" => "dm.new", "id" => "x"}
+    assert frame.body == "hi"
+
+    bad = ~s({"op":"event","to":"nope","topic":"dm.new","body":"hi"})
+    assert {:noreply, _} = Exec.handle_info({state.port, {:data, {:eol, bad}}}, state)
+  end
+
   test "reply lines larger than the read chunk are reassembled" do
     {path, manifest_path} = hello_provider_paths()
     File.chmod!(path, 0o755)

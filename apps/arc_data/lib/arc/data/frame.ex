@@ -15,6 +15,7 @@ defmodule Arc.Data.Frame do
                  7=stream_close
                  8=stream_exit
                  9=stream_error
+                 10=event (server-initiated, meta.topic names it)
       [2 bytes]  flags
       [16 bytes] request_id
       [4 bytes]  meta_length (big-endian)
@@ -33,6 +34,7 @@ defmodule Arc.Data.Frame do
   @stream_close_type 7
   @stream_exit_type 8
   @stream_error_type 9
+  @event_type 10
   @request_id_bytes 16
 
   @type frame_type ::
@@ -45,6 +47,7 @@ defmodule Arc.Data.Frame do
           | :stream_close
           | :stream_exit
           | :stream_error
+          | :event
 
   @type decoded_frame :: %{
           version: pos_integer(),
@@ -121,6 +124,15 @@ defmodule Arc.Data.Frame do
     encode_frame(:stream_error, request_id, error_meta, body)
   end
 
+  @doc """
+  Encode an event frame: a message a provider sends without a request.
+  `topic` names the event. The request id is fresh; nothing correlates it.
+  """
+  @spec encode_event(String.t(), binary(), map()) :: binary()
+  def encode_event(topic, body, meta \\ %{}) when is_binary(topic) and is_binary(body) do
+    encode_frame(:event, new_request_id(), Map.put(meta, "topic", topic), body)
+  end
+
   @spec encode_frame(frame_type(), binary(), map(), binary()) :: binary()
   def encode_frame(type, request_id, meta, body)
       when is_atom(type) and is_map(meta) and is_binary(body) do
@@ -137,7 +149,8 @@ defmodule Arc.Data.Frame do
               @stream_resize_type,
               @stream_close_type,
               @stream_exit_type,
-              @stream_error_type
+              @stream_error_type,
+              @event_type
             ] do
     req_id = ensure_request_id(request_id)
     meta_bytes = IO.iodata_to_binary(:json.encode(meta))
@@ -199,6 +212,7 @@ defmodule Arc.Data.Frame do
   defp decode_type(@stream_close_type), do: {:ok, :stream_close}
   defp decode_type(@stream_exit_type), do: {:ok, :stream_exit}
   defp decode_type(@stream_error_type), do: {:ok, :stream_error}
+  defp decode_type(@event_type), do: {:ok, :event}
   defp decode_type(_), do: {:error, :unknown_type}
 
   defp type_code(:request), do: @request_type
@@ -210,6 +224,7 @@ defmodule Arc.Data.Frame do
   defp type_code(:stream_close), do: @stream_close_type
   defp type_code(:stream_exit), do: @stream_exit_type
   defp type_code(:stream_error), do: @stream_error_type
+  defp type_code(:event), do: @event_type
 
   defp safe_decode_json(bytes) do
     case :json.decode(bytes) do

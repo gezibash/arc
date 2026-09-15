@@ -84,7 +84,8 @@ defmodule Arc.Net.RelayHandlerTest do
         session.session_id,
         seq,
         nonce,
-        ciphertext
+        ciphertext,
+        ek: session.ek_pub
       )
 
     :ok = :gen_tcp.send(sock, <<byte_size(packet)::32-big, packet::binary>>)

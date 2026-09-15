@@ -54,7 +54,7 @@ defmodule Arc.CLI.MCP do
       "usage: arc mcp <task> [--host HOST] [--port PORT] [--relay host:port] [--relay-pubkey <key>]"
     )
 
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 
   defp resolve_relay_pubkey_pin(opts) do
@@ -103,6 +103,6 @@ defmodule Arc.CLI.MCP do
   @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

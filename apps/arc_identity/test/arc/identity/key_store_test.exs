@@ -116,7 +116,7 @@ defmodule Arc.Identity.KeyStoreTest do
       prev = KeyStore.default_name()
 
       # Remove default file temporarily
-      default_path = Path.expand("~/.config/arc/default_key")
+      default_path = Path.expand(Application.fetch_env!(:arc_identity, :default_file))
       had_default = File.exists?(default_path)
       if had_default, do: File.rename!(default_path, default_path <> ".bak")
 

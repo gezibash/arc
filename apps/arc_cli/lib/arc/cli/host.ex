@@ -172,7 +172,7 @@ defmodule Arc.CLI.Host do
       arc host token issue --identity <key-or-name> [--scope <scope>]... [--ttl <seconds>] [--label <label>] [--socket PATH]
     """)
 
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 
   defp relay_address(nil), do: Arc.Net.relay_address()
@@ -218,6 +218,6 @@ defmodule Arc.CLI.Host do
   @spec error(String.t()) :: no_return()
   defp error(msg) do
     IO.puts(:stderr, "error: #{msg}")
-    System.halt(1)
+    Arc.CLI.Exit.halt(1)
   end
 end

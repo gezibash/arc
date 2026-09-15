@@ -61,16 +61,20 @@ defmodule Arc.Control.Local do
 
   @impl GenServer
   def handle_call({:publish, identity}, _from, state) do
+    # Reload from disk so a keyex published by another process survives.
+    entries = load_entries()
+    existing = Map.get(entries, identity.public_key)
+
     entry = %{
       public_key: identity.public_key,
       name: Identity.name(identity),
       short_name: Identity.short_name(identity),
-      x25519_public: nil,
+      x25519_public: existing && existing.x25519_public,
       published_at: System.monotonic_time(:millisecond),
       status: :active
     }
 
-    state = put_in(state, [:entries, identity.public_key], entry)
+    state = %{state | entries: Map.put(entries, identity.public_key, entry)}
     persist_entry(entry)
     notify(state.subscribers, {:identity_published, entry})
     {:reply, :ok, state}
@@ -139,7 +143,9 @@ defmodule Arc.Control.Local do
 
   # --- Persistence ---
 
-  defp control_dir, do: Path.expand(@control_dir)
+  defp control_dir do
+    Path.expand(Application.get_env(:arc_control, :control_dir, @control_dir))
+  end
 
   defp persist_entry(entry) do
     dir = control_dir()
