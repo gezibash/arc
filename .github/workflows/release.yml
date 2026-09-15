@@ -188,7 +188,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "arc ${{ needs.version.outputs.version }}" \
+            --title "arc" \
             --generate-notes \
             --notes "Image: \`${{ env.IMAGE }}:${{ needs.version.outputs.version }}\`" \
             dist/*
