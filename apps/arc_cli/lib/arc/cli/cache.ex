@@ -131,8 +131,8 @@ defmodule Arc.CLI.Cache do
       {:ok, id} ->
         fun.(id)
 
-      _ ->
-        IO.puts(:stderr, "error: no active key")
+      {:error, reason} ->
+        IO.puts(:stderr, "error: #{Arc.CLI.Keys.describe_error(reason)}")
         Arc.CLI.Exit.halt(1)
     end
   end

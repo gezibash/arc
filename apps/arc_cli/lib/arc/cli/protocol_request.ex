@@ -245,6 +245,12 @@ defmodule Arc.CLI.ProtocolRequest do
   defp describe_error(reason) when reason in [:no_default, :not_found],
     do: "active identity or provider was not found; check your key and service address"
 
+  defp describe_error({:invalid_identity_selector, _source} = reason),
+    do: Arc.CLI.Keys.describe_error(reason)
+
+  defp describe_error({:identity_selector_file, _path, _reason} = reason),
+    do: Arc.CLI.Keys.describe_error(reason)
+
   defp describe_error({:remote, _code, message}) when is_binary(message),
     do: "provider reported an error: " <> safe_text(message)
 

@@ -1457,14 +1457,8 @@ defmodule Arc.CLI.Tools do
       {:ok, id} ->
         fun.(id)
 
-      {:error, :no_default} ->
-        error("No active key. Run 'arc keys gen' first.")
-
-      {:error, :not_found} ->
-        error("ARC_KEY='#{System.get_env("ARC_KEY")}' not found in key store.")
-
       {:error, reason} ->
-        error(inspect(reason))
+        error(Arc.CLI.Keys.describe_error(reason))
     end
   end
 

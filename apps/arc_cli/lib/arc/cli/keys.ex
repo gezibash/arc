@@ -5,7 +5,7 @@ defmodule Arc.CLI.Keys do
   Usage:
     arc keys gen              Generate a new key
     arc keys ls               List all keys
-    arc keys use <name>       Set the active key
+    arc keys use <name>       Set the global default key
     arc keys show             Show the resolved active key
     arc keys rm <name>        Remove a key
   """
@@ -23,8 +23,10 @@ defmodule Arc.CLI.Keys do
         # Auto-set as default if it's the only key
         case KeyStore.list() do
           [{_, _}] ->
-            :ok = KeyStore.set_default(Identity.name(id))
-            IO.puts("  (set as default — only key)")
+            case KeyStore.set_default(Identity.name(id)) do
+              :ok -> IO.puts("  (set as default — only key)")
+              {:error, reason} -> error(describe_error(reason))
+            end
 
           _ ->
             IO.puts("  tip: run 'arc keys use #{Identity.short_name(id)}' to make it active")
@@ -34,12 +36,11 @@ defmodule Arc.CLI.Keys do
 
   def run(["ls" | _opts]) do
     keys = KeyStore.list()
+    {active, source} = active_name_and_source()
 
     if keys == [] do
       IO.puts("No keys. Run 'arc keys gen' to create one.")
     else
-      active = resolve_active_name()
-
       for {name, id} <- keys do
         marker = if name == active, do: "* ", else: "  "
         pk_hex = Identity.encode_public_key(id)
@@ -47,9 +48,7 @@ defmodule Arc.CLI.Keys do
         IO.puts("#{marker}#{name}  (#{pk_short})")
       end
 
-      if active && System.get_env("ARC_KEY") do
-        IO.puts("\n  active via ARC_KEY=#{System.get_env("ARC_KEY")}")
-      end
+      if active, do: IO.puts("\n  active via #{source_label(source)}")
     end
   end
 
@@ -57,31 +56,28 @@ defmodule Arc.CLI.Keys do
     case KeyStore.set_default(name) do
       :ok ->
         {:ok, id} = KeyStore.get(name)
-        IO.puts("Active key: #{Identity.name(id)}")
+        IO.puts("Default key: #{Identity.name(id)}")
 
       {:error, :not_found} ->
         error("no key matching '#{name}'")
 
       {:error, :ambiguous} ->
         error("'#{name}' matches multiple keys — be more specific")
+
+      {:error, reason} ->
+        error(describe_error(reason))
     end
   end
 
   def run(["show" | _opts]) do
-    case KeyStore.resolve_active() do
-      {:ok, id} ->
+    case KeyStore.resolve_active_with_source() do
+      {:ok, id, source} ->
         IO.puts("Active identity")
         print_identity(id)
-        print_source()
+        IO.puts("  source:     #{source_label(source)}")
 
-      {:error, :no_default} ->
-        error("No active key. Run 'arc keys gen' to create one.")
-
-      {:error, :not_found} ->
-        error("ARC_KEY='#{System.get_env("ARC_KEY")}' not found in key store")
-
-      {:error, :ambiguous} ->
-        error("ARC_KEY='#{System.get_env("ARC_KEY")}' matches multiple keys")
+      {:error, reason} ->
+        error(describe_error(reason))
     end
   end
 
@@ -89,8 +85,11 @@ defmodule Arc.CLI.Keys do
     case KeyStore.get(name) do
       {:ok, id} ->
         full_name = Identity.name(id)
-        :ok = KeyStore.remove(full_name)
-        IO.puts("Removed: #{full_name}")
+
+        case KeyStore.remove(full_name) do
+          :ok -> IO.puts("Removed: #{full_name}")
+          {:error, reason} -> error(describe_error(reason))
+        end
 
       {:error, :not_found} ->
         error("no key matching '#{name}'")
@@ -107,40 +106,60 @@ defmodule Arc.CLI.Keys do
     Commands:
       gen              Generate a new key
       ls               List all keys (* marks active)
-      use <name>       Set the active key
+      use <name>       Set the global default in ~/.config/arc/default.key
       show             Show the resolved active key
       rm <name>        Remove a key
 
     Environment:
       ARC_KEY=<name>   Override active key for this terminal
+
+    Selection order:
+      ARC_KEY -> ./arc.key -> ~/.config/arc/default.key
+      Files contain a key name or unambiguous prefix. No parent-directory search.
+      An invalid selection is an error; only a missing selector falls through.
     """)
   end
 
-  defp resolve_active_name do
-    case System.get_env("ARC_KEY") do
-      nil ->
-        case KeyStore.default_name() do
-          {:ok, name} -> name
-          _ -> nil
-        end
+  @doc false
+  def describe_error(:no_default),
+    do: "No active key. Run 'arc keys use <name>' to select one, or 'arc keys gen' to create one."
 
-      env_name ->
-        case KeyStore.get(env_name) do
-          {:ok, id} -> Identity.name(id)
-          _ -> nil
-        end
+  def describe_error(:not_found),
+    do:
+      "Selected identity not found in key store; check ARC_KEY, ./arc.key, or the global default."
+
+  def describe_error(:ambiguous),
+    do: "Identity selector matches multiple keys; use a full key name."
+
+  def describe_error({:invalid_identity_selector, source}),
+    do:
+      "Invalid identity selector in #{source_label(source)}; expected a non-empty key name or prefix."
+
+  def describe_error({:identity_selector_file, path, reason}),
+    do: "Could not access identity selector #{path}: #{:file.format_error(reason)}"
+
+  def describe_error({:default_saved, reason}),
+    do: "Default key was saved, but legacy selector cleanup failed. " <> describe_error(reason)
+
+  def describe_error({:key_removed, reason}),
+    do: "Key was removed, but default selector cleanup failed. " <> describe_error(reason)
+
+  def describe_error(reason), do: inspect(reason)
+
+  defp active_name_and_source do
+    case KeyStore.resolve_active_with_source() do
+      {:ok, id, source} -> {Identity.name(id), source}
+      {:error, :no_default} -> {nil, nil}
+      {:error, reason} -> error(describe_error(reason))
     end
   end
+
+  defp source_label(:environment), do: "ARC_KEY"
+  defp source_label({:file, path}), do: path
 
   defp print_identity(%Identity{} = id) do
     IO.puts("  name:       #{Identity.name(id)}")
     IO.puts("  public_key: #{Identity.encode_public_key(id)}")
-  end
-
-  defp print_source do
-    if System.get_env("ARC_KEY") do
-      IO.puts("  source:     ARC_KEY=#{System.get_env("ARC_KEY")}")
-    end
   end
 
   @spec error(String.t()) :: no_return()

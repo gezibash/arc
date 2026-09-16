@@ -127,7 +127,7 @@ defmodule Arc.CLI do
     Commands:
       keys gen                    Generate a new key
       keys ls                     List all keys (* marks active)
-      keys use <name>             Set the active key
+      keys use <name>             Set the global default key
       keys show                   Show the resolved active key
       keys rm <name>              Remove a key
       publish                     Publish current identity to the control plane
@@ -181,6 +181,7 @@ defmodule Arc.CLI do
                                  Default for --max-frame-bytes
 
     Notes:
+      Identity: ARC_KEY -> ./arc.key -> ~/.config/arc/default.key (key names, current folder only)
       Installed tools dispatch as native subcommands: `arc <tool-name> ...`
       Provider bundles use `Arcfile` + `manifest.json`, e.g. `arc serve ~/.arc/providers/sandbox`
       Low-level escape hatch: `exec:///path/to/runtime?manifest=/abs/path/to/manifest.(json|toml)`

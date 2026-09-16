@@ -4,6 +4,30 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-09-16
+
+### Added
+
+- Identity selection through `ARC_KEY`, then `arc.key` in the current working
+  directory, then `~/.config/arc/default.key`. Selector files contain existing
+  identity names; invalid explicit selections fail without falling through.
+- A local Docker Compose stack with a relay, journal, sealed DMs, and Agora,
+  separate persistent identities and data volumes, and a public connection
+  settings helper for installed clients.
+
+### Changed
+
+- `arc keys show` and `arc keys ls` report the effective identity and its source.
+  `arc keys use` saves the global default to `default.key`. Existing `default_key`
+  files remain readable until a new default is saved.
+
+### Fixed
+
+- Identity-selection errors now identify invalid or unreadable selector files.
+  Failed legacy-selector cleanup reports partial success without crashing.
+- Local provider containers retain their identities when upgrading the default
+  selector format and use ARC's bundled runtime for their provider programs.
+
 ## [0.3.0] - 2026-09-16
 
 ### Added

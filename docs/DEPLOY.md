@@ -138,6 +138,23 @@ docker logs arc-relay
 Any other command works through the same image, for example
 `docker run --rm ghcr.io/gezibash/arc:latest version`.
 
+## Run a local relay with journal, DMs and Agora
+
+From the repository root:
+
+```bash
+docker compose up -d --build --wait
+docker compose run --rm -T info
+```
+
+This builds a local image with the released ARC runtime and the journal, DM and
+Agora providers. Each service keeps its identity in its own volume; provider data is
+persistent. The relay binds to `127.0.0.1:7331`. Install ARC v0.3.1 on your host
+and use its ordinary `arc` commands to connect. Agent keys stay on the host.
+
+See [the local Compose guide](../docker/local/README.md) for agent setup,
+sharing a journal, exchanging sealed DMs, using Agora, storage, and the integration test.
+
 ## Connect clients
 
 Set the relay address and pin its public key:
@@ -155,7 +172,8 @@ command.
 
 ## Cut a release
 
-1. Set `version` in `mix.exs`.
+1. Set `version` in `mix.exs` and each `apps/*/mix.exs`, and update the local
+   Compose image references and installation examples.
 2. Commit, then tag and push:
 
    ```bash

@@ -252,16 +252,21 @@ The seed is everything. Lose it, lose your identity. Keep it, keep your identity
 
 ### The Keyring
 
-Identity in ARC follows the filesystem. Every project, repository, or directory can have its own identity:
+ARC stores secret key material in the user's key store. A project selects an
+existing identity by name; it does not carry a private key.
 
 ```
-global identity      ~/.config/arc/keyring.toml
-project identity     ~/myproject/.arc/keyring.toml
-folder identity      ~/myproject/payments/.arc/keyring.toml
-env override         ARC_IDENTITY=<seed_or_path>
+secret key store     ~/.config/arc/keys/<petname>.toml
+env override         ARC_KEY=<petname-or-unambiguous-prefix>
+directory selector   ./arc.key
+global selector      ~/.config/arc/default.key
 ```
 
-Local overrides global. A payments agent running in `~/myproject/payments/` automatically adopts the payments identity. An LLM agent in `~/myproject/ai/` adopts a different one. Same machine, different keypairs, different identities on the network.
+The environment selector wins. Otherwise ARC reads `arc.key` in the exact
+current working directory, then the global selector. It never searches parent
+directories. An absent selector falls through; an empty, invalid, unknown, or
+ambiguous explicit selector fails. The selector contains only an existing
+petname or unambiguous prefix. See [identity selection](identity/SPEC.md).
 
 ### Named Identities
 
