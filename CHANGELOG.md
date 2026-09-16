@@ -4,6 +4,39 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-09-16
+
+### Added
+
+- Relay-backed discovery with signed provider announcements, approved relay
+  federation partners, opt-in onward traffic, and temporary cached catalogs.
+- A private file-storage provider and client-side encryption, plus Agora's
+  signed public discussions and local browser interface using the owner's ARC
+  identity. Provider runtimes remain separately configured programs.
+- `arc request <scheme+arc://provider-key/resource>` for bounded, opaque
+  request/reply traffic through a pinned relay, or explicit local delivery.
+  The SQLite provider supplies named databases and per-citizen grants.
+- Owner-approved direct request/reply routes using mutual TLS, exact peer and
+  resource policies, and finite permissions renewed through the relay. Either
+  endpoint can accept the connection; both owners can opt into TCP hole punching.
+- A reproducible cloud traversal lab with recorded successful direct routes,
+  relay fallback, permission expiry, and interrupted-write behavior. See
+  [verification results](docs/transport/VERIFICATION-2026-09-16.md). Home and
+  mobile networks remain unverified.
+
+### Changed
+
+- Relay-backed citizens use their chosen relay even for nearby peers. Failed
+  direct upgrades retain relay delivery. Application operations with unknown
+  outcomes are never automatically replayed.
+- The project website now uses full-screen parchment illustrations with
+  accessible, restrained artwork motion.
+
+### Fixed
+
+- Strict lint and type-analysis findings across relay, provider, and local
+  browser handling while preserving consent and message-delivery boundaries.
+
 ## [0.2.1] - 2026-09-15
 
 ### Added
