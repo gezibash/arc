@@ -54,15 +54,25 @@ defmodule Arc.Host.AgentPool do
   end
 
   def handle_call(:status, _from, state) do
-    identities =
+    entries =
       state.entries
       |> Map.values()
       |> Enum.filter(&(is_pid(&1.agent) and Process.alive?(&1.agent)))
-      |> Enum.map(&Identity.name(&1.identity))
-      |> Enum.sort()
 
-    {:reply, %{identity_count: length(identities), identities: identities, relay: state.relay},
-     state}
+    identities = entries |> Enum.map(&Identity.name(&1.identity)) |> Enum.sort()
+
+    relay_connections =
+      entries
+      |> Enum.map(&relay_connection(&1.identity, state.relay))
+      |> Enum.sort_by(& &1["identity"])
+
+    {:reply,
+     %{
+       identity_count: length(identities),
+       identities: identities,
+       relay: state.relay,
+       relay_connections: relay_connections
+     }, state}
   end
 
   defp ensure_agent(identity, state) do
@@ -110,6 +120,47 @@ defmodule Arc.Host.AgentPool do
       result -> result
     end
   end
+
+  defp relay_connection(identity, nil) do
+    %{
+      "identity" => Identity.name(identity),
+      "public_key" => Base.encode16(identity.public_key, case: :lower),
+      "status" => "local"
+    }
+  end
+
+  defp relay_connection(identity, %{host: host, port: port}) do
+    connection = %{
+      "identity" => Identity.name(identity),
+      "public_key" => Base.encode16(identity.public_key, case: :lower),
+      "status" => "disconnected",
+      "host" => List.to_string(host),
+      "port" => port
+    }
+
+    case relay_call(:relay_status, [identity.public_key]) do
+      {:ok, %{status: status} = runtime}
+      when status in [:connected, :reconnecting, :disconnected] ->
+        connection
+        |> Map.put("status", Atom.to_string(status))
+        |> runtime_endpoint(runtime)
+
+      {:error, reason} when reason in [:relay_status_unavailable, :relay_runtime_unavailable] ->
+        Map.put(connection, "status", "unknown")
+
+      _ ->
+        connection
+    end
+  end
+
+  defp runtime_endpoint(connection, %{host: host, port: port})
+       when is_binary(host) and is_integer(port) and port in 1..65_535 do
+    connection
+    |> Map.put("host", host)
+    |> Map.put("port", port)
+  end
+
+  defp runtime_endpoint(connection, _runtime), do: connection
 
   # Arc.Net is an optional runtime peer, not a compile-time dependency.
   defp relay_call(function, args) do

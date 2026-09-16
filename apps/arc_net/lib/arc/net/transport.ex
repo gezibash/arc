@@ -84,6 +84,13 @@ defmodule Arc.Net.Transport do
   end
 
   @doc false
+  def relay_status(transport_pid) when is_pid(transport_pid) do
+    GenServer.call(transport_pid, :relay_status, 500)
+  catch
+    :exit, _ -> {:error, :relay_status_unavailable}
+  end
+
+  @doc false
   def relay_endpoint_context(transport_pid) when is_pid(transport_pid) do
     GenServer.call(transport_pid, :relay_endpoint_context)
   catch
@@ -151,6 +158,10 @@ defmodule Arc.Net.Transport do
     else
       {:reply, {:error, :relay_not_connected}, state}
     end
+  end
+
+  def handle_call(:relay_status, _from, state) do
+    {:reply, {:ok, relay_status_document(state)}, state}
   end
 
   def handle_call(:relay_endpoint_context, _from, state) do
@@ -660,6 +671,28 @@ defmodule Arc.Net.Transport do
 
   defp relay_connect_timeout do
     Application.get_env(:arc_net, :relay_connect_timeout_ms, @default_relay_connect_timeout_ms)
+  end
+
+  defp relay_status_document(state) do
+    status =
+      cond do
+        is_pid(state.relay_conn) and Process.alive?(state.relay_conn) -> :connected
+        is_map(state.relay_config) and reconnecting?(state) -> :reconnecting
+        true -> :disconnected
+      end
+
+    case state.relay_config do
+      %{target: {host, port}} when is_list(host) and is_integer(port) ->
+        %{status: status, host: List.to_string(host), port: port}
+
+      _ ->
+        %{status: status}
+    end
+  end
+
+  defp reconnecting?(state) do
+    state.reconnect_timer != nil or state.reconnect_token != nil or
+      (is_pid(state.reconnect_worker) and Process.alive?(state.reconnect_worker))
   end
 
   defp tcp_options, do: [:binary, packet: :raw, active: false, keepalive: true, reuseaddr: true]

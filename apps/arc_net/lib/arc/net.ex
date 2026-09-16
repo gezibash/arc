@@ -117,6 +117,23 @@ defmodule Arc.Net do
     end
   end
 
+  @doc "Return the live connection state for this identity's existing relay transport."
+  @spec relay_status(binary()) ::
+          {:ok,
+           %{
+             required(:status) => :connected | :reconnecting | :disconnected,
+             optional(:host) => String.t(),
+             optional(:port) => pos_integer()
+           }}
+          | {:error, :relay_not_connected | :relay_status_unavailable}
+  def relay_status(source_pubkey) when is_binary(source_pubkey) do
+    case TransportManager.lookup(source_pubkey, 500) do
+      {:ok, transport} -> Transport.relay_status(transport)
+      :error -> {:error, :relay_not_connected}
+      {:error, :unavailable} -> {:error, :relay_status_unavailable}
+    end
+  end
+
   @doc "Return this identity's current relay-observed endpoint for direct-promotion setup."
   def relay_endpoint(source_pubkey) when is_binary(source_pubkey) do
     with {:ok, transport} <- relay_transport(source_pubkey),

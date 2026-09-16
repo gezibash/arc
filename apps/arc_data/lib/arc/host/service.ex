@@ -123,7 +123,8 @@ defmodule Arc.Host.Service do
       "connections" => map_size(state.connections),
       "identity_count" => pool.identity_count,
       "identities" => pool.identities,
-      "relay" => relay_document(state.relay, state.relay_pubkey)
+      "relay" => relay_document(state.relay, state.relay_pubkey),
+      "relay_connections" => pool.relay_connections
     }
 
     {:reply, result, state}

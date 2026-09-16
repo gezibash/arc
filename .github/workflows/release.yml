@@ -80,6 +80,7 @@ jobs:
         run: |
           _build/prod/rel/arc_runtime/bin/arc version
           _build/prod/rel/arc_runtime/bin/arc help > /dev/null
+          _build/prod/rel/arc_runtime/bin/arc status --json --no-docker
       - name: Package
         run: |
           name="arc-${{ needs.version.outputs.version }}-${{ matrix.target }}"

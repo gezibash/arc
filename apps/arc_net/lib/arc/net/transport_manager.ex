@@ -50,6 +50,14 @@ defmodule Arc.Net.TransportManager do
     GenServer.call(__MODULE__, {:lookup, identity_or_pubkey})
   end
 
+  @spec lookup(Identity.t() | binary(), timeout()) ::
+          {:ok, pid()} | :error | {:error, :unavailable}
+  def lookup(identity_or_pubkey, timeout) when is_integer(timeout) and timeout > 0 do
+    GenServer.call(__MODULE__, {:lookup, identity_or_pubkey}, timeout)
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
   @spec count() :: non_neg_integer()
   def count do
     GenServer.call(__MODULE__, :count)

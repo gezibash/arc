@@ -10,6 +10,7 @@ defmodule Arc.CLI do
     "keys" => Arc.CLI.Keys,
     "apps" => Arc.CLI.Apps,
     "host" => Arc.CLI.Host,
+    "status" => Arc.CLI.Status,
     "relay" => Arc.CLI.Relay,
     "mcp" => Arc.CLI.MCP,
     "lists" => Arc.CLI.Lists,
@@ -137,6 +138,7 @@ defmodule Arc.CLI do
       apps init [path]            Scaffold a local ARC provider bundle (Arcfile + manifest.json)
       apps open <command>        Open an installed Agora board in your local browser
       host <...>                  Run the local ARC host service and issue delegated SDK tokens
+      status [--check] [--json]    Show identity, relay settings, and live local host connections
       tool <subcommand>           Manage installed ARC tools
       trust <subcommand>          Manage trusted remote signers
       discover [query]            Search remote capability summaries

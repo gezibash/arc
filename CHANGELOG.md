@@ -4,6 +4,15 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-09-16
+
+### Added
+
+- `arc status` shows the selected identity, client relay configuration, live
+  local host connections, and the local Compose stack. `--check` performs a
+  bounded relay greeting check without registering a citizen; `--json` provides
+  machine-readable output.
+
 ## [0.3.1] - 2026-09-16
 
 ### Added

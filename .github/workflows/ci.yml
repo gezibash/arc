@@ -108,3 +108,4 @@ jobs:
       - run: mix release arc_runtime --overwrite
       - run: _build/prod/rel/arc_runtime/bin/arc version
       - run: _build/prod/rel/arc_runtime/bin/arc keys gen
+      - run: _build/prod/rel/arc_runtime/bin/arc status --json --no-docker

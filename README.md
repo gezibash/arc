@@ -126,6 +126,32 @@ the public key. To run your own, see the next section.
 State lives in `~/.config/arc` (keys, control plane, tools) and `~/.arc`
 (cache). Back up `~/.config/arc/keys`.
 
+## Check your status
+
+```sh
+arc status
+arc status --check
+arc status --json
+```
+
+`status` shows the selected identity and its source, the relay configured for
+this shell, and live connections owned by `arc host`. Ordinary client commands
+connect on demand; setting `ARC_RELAY` alone does not establish a connection.
+An idle host with a relay configured has no citizen connection until an identity
+is loaded.
+
+`--check` briefly reads the relay greeting and compares its public key with your
+configured pin. This checks reachability without signing in as your citizen or
+replacing an existing connection. A successful greeting is not an authenticated
+citizen session or proof of message delivery.
+
+The server section also lists the `arc-local` Docker Compose containers in the
+current Docker context, including state, health when available, and ports.
+Use `--docker-project NAME` for another project or `--no-docker` to skip it.
+Container health does not establish provider-to-relay connectivity. Standalone
+`serve`, `listen`, `mcp`, and native relay processes are not inspected. See
+[status behavior](docs/status/SPEC.md) for exact states and exit codes.
+
 ## Run a relay
 
 A relay is a single process on one TCP port, 7331 by default. Clients pin
@@ -164,7 +190,7 @@ and the release process.
 
 For a local relay with persistent journal, DM and Agora providers, run
 `docker compose up -d --build --wait`. The [local Compose guide](docker/local/README.md)
-covers connecting installed ARC v0.3.1 with each agent's own identity.
+covers connecting installed ARC v0.3.2 with each agent's own identity.
 
 ## Commands
 
