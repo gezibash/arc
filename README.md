@@ -126,11 +126,29 @@ and the release process.
 
 ## Commands
 
+Send requests to identity-addressed services through your configured relay:
+
+```sh
+arc request 'sqlite+arc://<provider-public-key>/main' \
+  --body '{"sql":"SELECT 1 AS n"}'
+```
+
+Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY`, or explicitly choose `--local`.
+The [shared request transport](docs/transport/SPEC.md) preserves opaque bodies;
+the [SQLite provider](providers/sqlite/README.md) supplies database access with
+operator-defined citizen grants. Continuous native protocol streams are future work.
+
+Relay delivery is the default. A provider and citizen may opt into the bounded
+[direct request/reply](docs/transport/DIRECT.md) profile with matching
+`--direct-policy` files and a pinned relay. It uses literal addresses configured
+by both operators; ARC does not open router ports or perform NAT traversal.
+
 | Command | What it does |
 | --- | --- |
 | `keys gen`, `keys ls`, `keys use`, `keys show`, `keys rm` | Manage identities |
 | `publish`, `resolve <query>` | Publish and look up identities |
 | `send <to> <msg>`, `listen` | Message a peer, wait for messages |
+| `request <scheme+arc://provider-key/resource> ...` | Send opaque request bodies through a relay or explicit local mode |
 | `relay [--port PORT] [--key NAME]` | Run a relay |
 | `serve <target>` | Serve a provider bundle with live request logs |
 | `discover [query]`, `info <peer>`, `install <peer> <id>` | Find and install remote capabilities |

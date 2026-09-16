@@ -28,7 +28,7 @@ defmodule Arc.CLI.Relay do
     {relay_id, key_source} = resolve_relay_identity(opts)
     peers = parse_peers(Keyword.get_values(opts, :peer), relay_id.public_key)
 
-    if (peers != [] or opts[:transit]) and key_source == "ephemeral" do
+    if (peers != [] or Keyword.get(opts, :transit, false)) and key_source == "ephemeral" do
       error("federation requires a persistent relay identity: use --key or ARC_RELAY_KEY")
     end
 

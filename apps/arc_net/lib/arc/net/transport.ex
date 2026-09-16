@@ -25,6 +25,9 @@ defmodule Arc.Net.Transport do
   @ed25519_pubkey_bytes 32
   @relay_challenge_bytes 32
   @default_relay_hello_timeout_ms 2_000
+  @default_relay_connect_timeout_ms 2_000
+  @default_reconnect_base_ms 250
+  @default_reconnect_cap_ms 5_000
   @directory_timeout_ms 2_000
   @max_directory_pending 32
 
@@ -82,6 +85,11 @@ defmodule Arc.Net.Transport do
 
   @impl GenServer
   def init([]) do
+    # Client connections stay linked for supervisor shutdown cleanup. Trapping
+    # their exits lets the monitor below turn an ordinary relay loss into a
+    # bounded reconnect rather than taking down this transport.
+    Process.flag(:trap_exit, true)
+
     {:ok,
      %{
        relay_conn: nil,
@@ -89,8 +97,36 @@ defmodule Arc.Net.Transport do
        my_pubkey: nil,
        relay_target: nil,
        relay_pubkey: nil,
+       relay_config: nil,
+       reconnect_timer: nil,
+       reconnect_token: nil,
+       reconnect_attempt: 0,
+       reconnect_worker: nil,
+       reconnect_worker_ref: nil,
        directory_pending: %{}
      }}
+  end
+
+  @impl GenServer
+  def format_status(_reason, [_pdict, state]) do
+    config =
+      case state.relay_config do
+        nil -> nil
+        %{target: target, pin: pin} -> %{target: target, pin: pin, identity: :redacted}
+      end
+
+    [data: [{"State", %{state | relay_config: config}}]]
+  end
+
+  @impl GenServer
+  def terminate(_reason, state) do
+    _ = cancel_reconnect(state)
+
+    if is_pid(state.relay_conn) and Process.alive?(state.relay_conn) do
+      Process.exit(state.relay_conn, :shutdown)
+    end
+
+    :ok
   end
 
   @impl GenServer
@@ -117,31 +153,7 @@ defmodule Arc.Net.Transport do
         {:reply, {:error, :invalid_port}, state}
 
       true ->
-        case normalize_host(host) do
-          {:ok, host_cl} ->
-            target = {host_cl, port}
-            my_pubkey = my_identity.public_key
-
-            if same_live_connection?(state, target, my_pubkey, expected_relay_pubkey) do
-              emit([:transport, :connect, :noop], %{count: 1}, %{reason: :already_connected})
-              {:reply, :ok, state}
-            else
-              state = disconnect_relay(state, :reconnect)
-
-              connect_new_relay(
-                state,
-                host_cl,
-                port,
-                my_identity,
-                target,
-                expected_relay_pubkey
-              )
-            end
-
-          :error ->
-            emit([:transport, :connect, :failed], %{count: 1}, %{reason: :invalid_host})
-            {:reply, {:error, :invalid_host}, state}
-        end
+        connect_relay_for_host(state, host, port, my_identity, expected_relay_pubkey)
     end
   end
 
@@ -175,10 +187,62 @@ defmodule Arc.Net.Transport do
     end
   end
 
+  defp connect_relay_for_host(state, host, port, my_identity, expected_relay_pubkey) do
+    case normalize_host(host) do
+      {:ok, host_cl} ->
+        connect_relay_target(state, host_cl, port, my_identity, expected_relay_pubkey)
+
+      :error ->
+        emit([:transport, :connect, :failed], %{count: 1}, %{reason: :invalid_host})
+        {:reply, {:error, :invalid_host}, state}
+    end
+  end
+
+  defp connect_relay_target(state, host, port, my_identity, expected_relay_pubkey) do
+    target = {host, port}
+    my_pubkey = my_identity.public_key
+
+    case effective_relay_pin(state, target, my_pubkey, expected_relay_pubkey) do
+      {:error, :relay_pubkey_pin_changed} ->
+        emit([:transport, :connect, :failed], %{count: 1}, %{reason: :relay_pubkey_pin_changed})
+        {:reply, {:error, :relay_pubkey_pin_changed}, state}
+
+      {:ok, relay_pin} ->
+        connect_relay_with_pin(state, host, port, my_identity, target, relay_pin)
+    end
+  end
+
+  defp connect_relay_with_pin(state, host, port, my_identity, target, relay_pin) do
+    if same_live_connection?(state, target, my_identity.public_key, relay_pin) do
+      emit([:transport, :connect, :noop], %{count: 1}, %{reason: :already_connected})
+      {:reply, :ok, state}
+    else
+      state =
+        state
+        |> cancel_reconnect()
+        |> disconnect_relay(:reconnect)
+        |> clear_relay_config()
+
+      connect_new_relay(state, host, port, my_identity, target, relay_pin)
+    end
+  end
+
   defp connect_new_relay(state, host_cl, port, my_identity, target, expected_relay_pubkey) do
-    case :gen_tcp.connect(host_cl, port, [:binary, packet: :raw, active: false, keepalive: true]) do
-      {:ok, socket} ->
-        connect_socket(state, socket, my_identity, target, expected_relay_pubkey)
+    case establish_relay(host_cl, port, my_identity, target, expected_relay_pubkey, self()) do
+      {:ok, conn, relay_pubkey, my_pubkey} ->
+        new_state =
+          install_connection(
+            state,
+            conn,
+            relay_pubkey,
+            my_pubkey,
+            my_identity,
+            target,
+            expected_relay_pubkey
+          )
+
+        emit([:transport, :connect, :ok], %{count: 1}, %{target: target})
+        {:reply, :ok, new_state}
 
       {:error, reason} ->
         emit([:transport, :connect, :failed], %{count: 1}, %{reason: reason})
@@ -186,54 +250,85 @@ defmodule Arc.Net.Transport do
     end
   end
 
-  defp connect_socket(state, socket, my_identity, target, expected_relay_pubkey) do
+  defp establish_relay(host, port, my_identity, _target, expected_relay_pubkey, transport_pid) do
+    case :gen_tcp.connect(host, port, tcp_options(), relay_connect_timeout()) do
+      {:ok, socket} ->
+        result = establish_socket(socket, my_identity, expected_relay_pubkey, transport_pid)
+
+        if match?({:error, _}, result), do: :gen_tcp.close(socket)
+        result
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp establish_socket(socket, my_identity, expected_relay_pubkey, transport_pid) do
     with {:ok, relay_pubkey, relay_challenge} <- recv_relay_hello(socket),
          :ok <- validate_relay_pubkey_pin(relay_pubkey, expected_relay_pubkey),
          {:ok, client_hello, my_pubkey} <-
            Handshake.client_hello(my_identity, relay_pubkey, relay_challenge),
          :ok <- :gen_tcp.send(socket, client_hello) do
-      case Connection.start_link(socket: socket, role: :client, transport_pid: self()) do
+      case Connection.start_link(socket: socket, role: :client, transport_pid: transport_pid) do
         {:ok, conn} ->
-          case :gen_tcp.controlling_process(socket, conn) do
+          # A reconnect worker must not own the established connection. The
+          # transport itself keeps its synchronous connection linked.
+          if self() != transport_pid, do: Process.unlink(conn)
+
+          case transfer_socket(socket, conn) do
             :ok ->
               Connection.activate(conn)
-              ref = Process.monitor(conn)
-
-              new_state = %{
-                state
-                | relay_conn: conn,
-                  relay_conn_ref: ref,
-                  my_pubkey: my_pubkey,
-                  relay_target: target,
-                  relay_pubkey: relay_pubkey
-              }
-
-              emit([:transport, :connect, :ok], %{count: 1}, %{target: target})
-              {:reply, :ok, new_state}
+              {:ok, conn, relay_pubkey, my_pubkey}
 
             {:error, reason} ->
               Connection.close(conn)
-              :gen_tcp.close(socket)
-              emit([:transport, :connect, :failed], %{count: 1}, %{reason: reason})
-              {:reply, {:error, reason}, state}
+              {:error, reason}
           end
 
         {:error, reason} ->
-          :gen_tcp.close(socket)
-          emit([:transport, :connect, :failed], %{count: 1}, %{reason: reason})
-          {:reply, {:error, reason}, state}
+          {:error, reason}
       end
-    else
-      {:error, :relay_pubkey_mismatch} ->
-        :gen_tcp.close(socket)
-        emit([:transport, :connect, :failed], %{count: 1}, %{reason: :relay_pubkey_mismatch})
-        {:reply, {:error, :relay_pubkey_mismatch}, state}
+    end
+  end
+
+  defp transfer_socket(socket, conn) do
+    case :gen_tcp.controlling_process(socket, conn) do
+      :ok ->
+        :ok
 
       {:error, reason} ->
-        :gen_tcp.close(socket)
-        emit([:transport, :connect, :failed], %{count: 1}, %{reason: reason})
-        {:reply, {:error, reason}, state}
+        Connection.close(conn)
+        {:error, reason}
     end
+  end
+
+  defp install_connection(
+         state,
+         conn,
+         relay_pubkey,
+         my_pubkey,
+         my_identity,
+         target,
+         expected_relay_pubkey
+       ) do
+    ref = Process.monitor(conn)
+
+    %{
+      state
+      | relay_conn: conn,
+        relay_conn_ref: ref,
+        my_pubkey: my_pubkey,
+        relay_target: target,
+        relay_pubkey: relay_pubkey,
+        relay_config: %{
+          target: target,
+          identity: my_identity,
+          pin: expected_relay_pubkey || relay_pubkey
+        },
+        reconnect_attempt: 0,
+        reconnect_worker: nil,
+        reconnect_worker_ref: nil
+    }
   end
 
   @impl GenServer
@@ -261,7 +356,7 @@ defmodule Arc.Net.Transport do
                 reason: :relay_send_failed
               })
 
-              {:noreply, disconnect_relay(state, :relay_send_failed)}
+              {:noreply, state |> disconnect_relay(:relay_send_failed) |> schedule_reconnect()}
           end
         else
           Mailbox.deliver(to_pk, packet)
@@ -270,7 +365,7 @@ defmodule Arc.Net.Transport do
             reason: :relay_dead
           })
 
-          {:noreply, disconnect_relay(state, :relay_dead)}
+          {:noreply, state |> disconnect_relay(:relay_dead) |> schedule_reconnect()}
         end
     end
   end
@@ -280,7 +375,7 @@ defmodule Arc.Net.Transport do
       {:ok, %{dst: dst_pk}} ->
         case Registry.lookup(Arc.Data.AgentRegistry, dst_pk) do
           [{pid, _}] ->
-            send(pid, {:arc_packet, packet})
+            send(pid, {:arc_relay_packet, packet})
 
             emit(
               [:transport, :packet, :delivered_local],
@@ -321,10 +416,80 @@ defmodule Arc.Net.Transport do
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{relay_conn_ref: ref} = state) do
     emit([:transport, :relay, :down], %{count: 1}, %{})
 
-    state = fail_directory_requests(state, :relay_discovery_unavailable)
+    {:noreply, relay_lost(state, :connection_down)}
+  end
+
+  def handle_info({:reconnect, token}, %{reconnect_token: token, relay_conn: nil} = state) do
+    config = state.relay_config
+    {host, port} = config.target
+    transport = self()
+
+    {worker, worker_ref} =
+      spawn_monitor(fn ->
+        result =
+          establish_relay(host, port, config.identity, config.target, config.pin, transport)
+
+        send(transport, {:relay_reconnect_result, token, result})
+      end)
 
     {:noreply,
-     %{state | relay_conn: nil, relay_conn_ref: nil, relay_target: nil, relay_pubkey: nil}}
+     %{state | reconnect_timer: nil, reconnect_worker: worker, reconnect_worker_ref: worker_ref}}
+  end
+
+  def handle_info({:reconnect, _token}, state), do: {:noreply, state}
+
+  def handle_info(
+        {:relay_reconnect_result, token, {:ok, conn, relay_pubkey, my_pubkey}},
+        %{reconnect_token: token, relay_conn: nil, relay_config: config} = state
+      ) do
+    state =
+      install_connection(
+        state,
+        conn,
+        relay_pubkey,
+        my_pubkey,
+        config.identity,
+        config.target,
+        config.pin
+      )
+
+    emit([:transport, :reconnect, :ok], %{count: 1}, %{target: config.target})
+    notify_agent(state.my_pubkey, :up)
+
+    {:noreply,
+     %{
+       state
+       | reconnect_token: nil,
+         reconnect_timer: nil,
+         reconnect_worker: nil,
+         reconnect_worker_ref: nil
+     }}
+  end
+
+  def handle_info(
+        {:relay_reconnect_result, _token, {:ok, conn, _relay_pubkey, _my_pubkey}},
+        state
+      ) do
+    Connection.close(conn)
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:relay_reconnect_result, token, {:error, reason}},
+        %{reconnect_token: token, relay_conn: nil} = state
+      ) do
+    emit([:transport, :reconnect, :failed], %{count: 1}, %{reason: reason})
+    {:noreply, schedule_reconnect(%{state | reconnect_worker: nil, reconnect_worker_ref: nil})}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, reason},
+        %{reconnect_worker_ref: ref, relay_conn: nil} = state
+      ) do
+    # A worker normally reports its result before exiting. This path handles a
+    # crashed worker without blocking the transport or retaining a stale attempt.
+    state = %{state | reconnect_worker: nil, reconnect_worker_ref: nil}
+    {:noreply, if(reason == :normal, do: state, else: schedule_reconnect(state))}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -403,7 +568,100 @@ defmodule Arc.Net.Transport do
     end
 
     state = fail_directory_requests(state, :relay_discovery_unavailable)
-    %{state | relay_conn: nil, relay_conn_ref: nil, relay_target: nil, relay_pubkey: nil}
+    if state.relay_conn, do: notify_agent(state.my_pubkey, :down)
+    %{state | relay_conn: nil, relay_conn_ref: nil}
+  end
+
+  defp relay_lost(state, _reason) do
+    state = fail_directory_requests(state, :relay_discovery_unavailable)
+    notify_agent(state.my_pubkey, :down)
+
+    state
+    |> Map.merge(%{relay_conn: nil, relay_conn_ref: nil})
+    |> schedule_reconnect()
+  end
+
+  defp schedule_reconnect(%{relay_config: nil} = state), do: state
+
+  defp schedule_reconnect(state) do
+    state = cancel_reconnect_timer(state)
+    token = make_ref()
+    delay = reconnect_delay(state.reconnect_attempt)
+    timer = Process.send_after(self(), {:reconnect, token}, delay)
+
+    %{
+      state
+      | reconnect_timer: timer,
+        reconnect_token: token,
+        reconnect_attempt: state.reconnect_attempt + 1
+    }
+  end
+
+  defp cancel_reconnect(state) do
+    if is_pid(state.reconnect_worker) and Process.alive?(state.reconnect_worker) do
+      Process.exit(state.reconnect_worker, :shutdown)
+    end
+
+    if state.reconnect_worker_ref do
+      Process.demonitor(state.reconnect_worker_ref, [:flush])
+    end
+
+    state
+    |> cancel_reconnect_timer()
+    |> Map.merge(%{
+      reconnect_token: nil,
+      reconnect_worker: nil,
+      reconnect_worker_ref: nil,
+      reconnect_attempt: 0
+    })
+  end
+
+  defp cancel_reconnect_timer(%{reconnect_timer: nil} = state), do: state
+
+  defp cancel_reconnect_timer(state) do
+    Process.cancel_timer(state.reconnect_timer, async: true, info: false)
+    %{state | reconnect_timer: nil}
+  end
+
+  defp clear_relay_config(state) do
+    %{state | relay_config: nil, relay_target: nil, relay_pubkey: nil}
+  end
+
+  defp reconnect_delay(attempt) do
+    base = Application.get_env(:arc_net, :relay_reconnect_base_ms, @default_reconnect_base_ms)
+    cap = Application.get_env(:arc_net, :relay_reconnect_cap_ms, @default_reconnect_cap_ms)
+    backoff = min(round(max(base, 1) * :math.pow(2, min(attempt, 6))), max(cap, 1))
+    jitter = :rand.uniform(max(div(backoff, 4), 1)) - 1
+    backoff + jitter
+  end
+
+  defp relay_connect_timeout do
+    Application.get_env(:arc_net, :relay_connect_timeout_ms, @default_relay_connect_timeout_ms)
+  end
+
+  defp tcp_options, do: [:binary, packet: :raw, active: false, keepalive: true]
+
+  defp effective_relay_pin(state, target, my_pubkey, requested_pin) do
+    case state.relay_config do
+      %{target: ^target, identity: %{public_key: ^my_pubkey}, pin: stored_pin} ->
+        cond do
+          requested_pin == nil -> {:ok, stored_pin}
+          requested_pin == stored_pin -> {:ok, requested_pin}
+          true -> {:error, :relay_pubkey_pin_changed}
+        end
+
+      _ ->
+        {:ok, requested_pin}
+    end
+  end
+
+  defp notify_agent(nil, _status), do: :ok
+
+  defp notify_agent(pubkey, status) do
+    case Registry.lookup(Arc.Data.AgentRegistry, pubkey) do
+      [{pid, _}] -> send(pid, {:arc_relay_status, status})
+      [] -> :ok
+    end
   end
 
   defp valid_directory_operation?(operation), do: operation in [:announce, :search, :resolve]

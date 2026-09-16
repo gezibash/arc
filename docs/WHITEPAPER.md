@@ -30,13 +30,17 @@ This whitepaper describes both the current implementation and the design intent 
 - CLI — key management, publish, resolve, serve, relay, discover, host, trust, tools, MCP
 - MCP integration — task-scoped tool projection from mounted capabilities
 - Capability system — manifests, signed packages, discovery, provider bundles
+- Protocol request client — `<scheme>+arc://<provider-key>/<resource>` through
+  relays or explicit local mode, including a real SQLite query provider;
+  see [transport scope](transport/SPEC.md)
 
 **Not yet implemented:**
 - TUN interface (`arc0`), `.arc` DNS resolver, `10.64.0.0/10` address space
 - Direct connection promotion (STUN, hole-punching)
 - Storage backends (SQLite, Postgres, S3)
 - Blockchain control plane adapters (Hedera, Ethereum, Solana, Nostr)
-- URI scheme handlers (`sql+arc://`, `http+arc://`, `shell+arc://`, etc.)
+- Native protocol bridges and continuous byte streams (Git helpers, browser
+  proxies, etc.); the implemented URI client currently uses bounded request/reply
 - Group messaging
 - Binary distribution via Burrito
 
@@ -326,23 +330,48 @@ The control plane is only on the path during session establishment. Once a sessi
 [N bytes]   ChaCha20-Poly1305 encrypted payload
 ```
 
-### Promotion — Relay to Direct (Design Intent)
+### Promotion — Relay to Direct
 
-ARC always works via relay. But relay is not always optimal. The protocol is designed to support transparent promotion to direct connections:
+Remote ARC conversations start through relays. When both endpoints explicitly
+allow it, a verified direct path may carry application traffic while relays
+continue discovery and coordination. The identity-addressed URI stays unchanged:
 
+```text
+sqlite+arc://<provider-public-key>/main
+
+  relay only (default)  -> application traffic stays on ARC relays
+  allow direct         -> matching local rules and mutual consent over relays
+                       -> verify direct reachability and peer identities
+                       -> direct request/reply within a finite lease
 ```
-Phase 1 (always works):
-  proto+arc://zim   →  traffic relayed through BEAM mesh
-                        encrypted, works through NAT and firewalls
 
-Phase 2 (when possible):
-  proto://zim       →  ARC negotiates direct connection
-                        hole punching, STUN-style address discovery
-                        session key reused, no re-handshake
-                        ARC steps aside, native protocol takes over
-```
+Resilience is the first objective of [path selection](transport/PATHS.md). Either
+citizen can dial a reachable peer, regardless of which one provides the service.
+ARC keeps a healthy route while checking alternatives; a failed direct attempt
+must not interrupt working relay communication.
 
-The scheme suffix signals intent. `sql+arc://` always relays. `sqlite://zim` attempts promotion, falls back to relay gracefully. The application sees the same interface either way. Promotion is not yet implemented — all traffic currently flows through the relay mesh.
+If relay access fails, an existing healthy direct connection can continue within
+its approved scope until the current permission expires while ARC restores relay
+access. Direct traffic cannot renew that permission or authorize a replacement
+connection. Expiry stops direct sends and admission even if the connection still
+works; renewal requires an authenticated exchange through relays.
+
+The first direct profile is an explicit `--direct-policy` setting on both the
+provider and citizen. Consent includes address disclosure, is scoped to the peer
+and service, and expires unless renewed through relays. Changing paths preserves
+ARC authentication and provider grants. In-flight requests stay on their original
+path; a lost response can leave a write's outcome unknown and must never cause
+automatic resubmission. Recovery after a direct connection fails or its permission
+ends requires a usable, authorized relay route and does not guarantee uninterrupted
+service.
+
+The supported initial profile requires a reachable listener and literal,
+operator-approved addresses. It does not configure routers, perform NAT traversal,
+rank routes automatically, resume byte streams, or transport arbitrary protocols.
+See [direct request/reply](transport/DIRECT.md) for the policy file and
+[connection lifecycle](transport/PROMOTION.md) for state transitions and future
+work. It supersedes the earlier proposal to remove `+arc` or reuse a session key
+without a fresh path authentication step.
 
 ---
 
@@ -489,7 +518,12 @@ Because the control plane is pluggable and bridgeable, an agent registered on He
 
 ARC nodes form a relay mesh. Any node running the arc binary can participate as a relay. Relays see only encrypted blobs — they cannot read message content, cannot determine sender or recipient beyond routing metadata, and are cryptographically prevented from injecting or modifying traffic.
 
-The relay mesh is the fallback that makes ARC always work — through NAT, through firewalls, through hostile network environments. When direct promotion is possible, ARC steps aside. When it is not, the relay handles it transparently.
+The relay mesh is ARC's primary communication path when permitted relay routes
+are reachable. The implemented direct request/reply profile is an explicit,
+scoped option agreed by both endpoints; relays retain discovery and coordination.
+A failed direct path can return new work to a verified relay route, while
+uncertain in-flight operations remain explicit failures. Neither relaying nor
+promotion guarantees connectivity through every network restriction.
 
 Running a relay is a form of participation in the network. Relay operators can be incentivized through the control plane's native token mechanics — a detail left to individual deployments and providers.
 

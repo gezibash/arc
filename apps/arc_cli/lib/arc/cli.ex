@@ -13,7 +13,8 @@ defmodule Arc.CLI do
     "relay" => Arc.CLI.Relay,
     "mcp" => Arc.CLI.MCP,
     "lists" => Arc.CLI.Lists,
-    "cache" => Arc.CLI.Cache
+    "cache" => Arc.CLI.Cache,
+    "request" => Arc.CLI.ProtocolRequest
   }
 
   # Subcommands whose module receives the command name as the first arg.
@@ -143,6 +144,7 @@ defmodule Arc.CLI do
       mount <task> ...            Manage task-scoped mounted capabilities
       mcp <task>                  Serve mounted capabilities as MCP tools over local Streamable HTTP
       send <to> <message>         Send a message (waits for reply)
+      request <uri> ...          Send an opaque body to a scheme+arc:// service
       info <peer> [capability]    Fetch remote capability summary or one detail view
       listen                      Listen for incoming messages
       serve <target>              Serve a provider bundle or runtime URI with live request logs
@@ -161,6 +163,8 @@ defmodule Arc.CLI do
                                  (requires a configured relay and relay public-key pin)
       --federate-network          Permit onward federation from `serve` or `listen`
                                  (requires a configured relay and relay public-key pin)
+      --direct-policy PATH        Permit only listed direct connection scopes for `serve` or `request`
+                                 (requires a configured relay and relay public-key pin; peers learn listed addresses)
       --key <name>                Relay identity key for `arc relay` (or ARC_RELAY_KEY)
       --peer <key>@host:port      Approve a direct federation peer; repeat for each partner
       --transit                   Allow this relay to forward approved federation traffic

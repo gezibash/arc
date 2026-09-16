@@ -23,12 +23,14 @@ defmodule Arc.CLI.Agent do
     {relay_addr, clean_args} = pop_opt(args, "--relay")
     {federate?, clean_args} = pop_flag(clean_args, "--federate")
     {federate_network?, clean_args} = pop_flag(clean_args, "--federate-network")
+    {direct_policy_path, clean_args} = pop_opt(clean_args, "--direct-policy")
 
     opts = [
       relay: relay_addr,
       relay_pubkey: relay_pubkey,
       federate: federate?,
-      federate_network: federate_network?
+      federate_network: federate_network?,
+      direct_policy_path: direct_policy_path
     ]
 
     cond do
@@ -39,8 +41,14 @@ defmodule Arc.CLI.Agent do
           (not match?(["serve" | _], clean_args) and not match?(["listen" | _], clean_args)) ->
         error("federation flags are only supported by `arc serve` and `arc listen`")
 
+      direct_policy_path != nil and not match?(["serve" | _], clean_args) ->
+        error("--direct-policy is only supported by `arc serve`")
+
       true ->
-        dispatch(clean_args, opts)
+        case load_direct_policy(direct_policy_path, opts) do
+          {:ok, policy} -> dispatch(clean_args, Keyword.put(opts, :direct_policy, policy))
+          {:error, reason} -> error(describe_direct_policy_error(reason))
+        end
     end
   end
 
@@ -299,6 +307,8 @@ defmodule Arc.CLI.Agent do
                             through direct relay federation (requires relay pin)
       --federate-network     Permit onward discovery through federating relays
                             (requires relay pin; cannot combine with --federate)
+      --direct-policy PATH   Allow only listed direct scopes (requires pinned relay;
+                            each approved peer learns its listed address)
 
     Serve targets:
       /path/to/bundle-dir
@@ -720,7 +730,9 @@ defmodule Arc.CLI.Agent do
       {:ok, id} ->
         serve_uri = attach_host_runtime_env(uri, id)
 
-        case Agent.start_link(id, serve: serve_uri, observer: self()) do
+        agent_opts = [serve: serve_uri, observer: self()] ++ direct_policy_agent_opts(opts)
+
+        case Agent.start_link(id, agent_opts) do
           {:ok, agent} ->
             :ok = Agent.publish(agent)
             relay_info = maybe_connect_relay(id, opts, agent)
@@ -949,6 +961,46 @@ defmodule Arc.CLI.Agent do
         relay_pubkey_pin
     end
   end
+
+  defp load_direct_policy(nil, _opts), do: {:ok, nil}
+
+  defp load_direct_policy(path, opts) when is_binary(path) do
+    with {:ok, _relay} <- direct_policy_relay(opts),
+         {:ok, _pin} <- direct_policy_pin(opts) do
+      Arc.Data.Direct.Policy.load_file(path)
+    end
+  end
+
+  defp direct_policy_relay(opts) do
+    address = Keyword.get(opts, :relay) || System.get_env("ARC_RELAY")
+
+    case address && Arc.Net.relay_address_from(address) do
+      {host, port} -> {:ok, {host, port}}
+      _ -> {:error, :direct_policy_requires_relay}
+    end
+  end
+
+  defp direct_policy_pin(opts) do
+    pin = Keyword.get(opts, :relay_pubkey) || System.get_env("ARC_RELAY_PUBKEY")
+
+    case pin && Arc.Net.relay_pubkey_from(pin) do
+      key when is_binary(key) -> {:ok, key}
+      _ -> {:error, :direct_policy_requires_relay}
+    end
+  end
+
+  defp direct_policy_agent_opts(opts) do
+    case Keyword.get(opts, :direct_policy) do
+      nil -> []
+      policy -> [direct_policy: policy]
+    end
+  end
+
+  defp describe_direct_policy_error(:direct_policy_requires_relay),
+    do: "--direct-policy requires a pinned relay; use --relay and --relay-pubkey"
+
+  defp describe_direct_policy_error(reason),
+    do: "invalid direct policy: #{inspect(reason)}"
 
   defp pop_opt(args, flag), do: pop_opt(args, flag, [])
 

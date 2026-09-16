@@ -56,6 +56,15 @@ defmodule Arc.Data.Handler.Exec do
   # several `:noeol` chunks and are joined in `handle_info/2`. Not a cap.
   @line_chunk_bytes 65_536
 
+  # Binary request/reply bodies are deliberately kept much smaller than the
+  # provider stdout line limit. They cross the generic ARC request path and
+  # must therefore match the client-side body limit.
+  @max_binary_body_bytes 1_024 * 1_024
+
+  # A provider that does not answer retains its request state. Bound that state
+  # rather than expiring it, because an expiry could mis-correlate a late reply.
+  @max_pending_requests 256
+
   @impl true
   def init(uri) when is_binary(uri) do
     parsed = URI.parse(uri)
@@ -64,6 +73,7 @@ defmodule Arc.Data.Handler.Exec do
 
     with true <- File.exists?(executable) or {:error, {:not_found, executable}},
          {:ok, package} <- load_package(executable, params),
+         {:ok, max_request_bytes} <- request_body_limit(package),
          {:ok, port} <- open_port(executable, parse_args(params), runtime_env(params)) do
       {:ok,
        %{
@@ -71,6 +81,7 @@ defmodule Arc.Data.Handler.Exec do
          executable: executable,
          manifest_path: manifest_path(executable, params),
          package: package,
+         max_request_bytes: max_request_bytes,
          pending_requests: %{},
          pending_order: [],
          stream_sessions: %{},
@@ -91,16 +102,35 @@ defmodule Arc.Data.Handler.Exec do
   def handle_message(message, from_pk, context, state) when is_map(context) do
     correlation_id = request_correlation_id(context)
 
-    payload =
-      base_event_payload("request", message, from_pk, context)
-      |> Map.put("request_id", correlation_id)
+    cond do
+      byte_size(message) > state.max_request_bytes ->
+        reject_request(
+          state,
+          from_pk,
+          context,
+          "request body exceeds #{state.max_request_bytes} bytes"
+        )
 
-    state =
-      state
-      |> put_pending_request(correlation_id, from_pk, context)
-      |> send_port_payload(payload)
+      Map.has_key?(state.pending_requests, correlation_id) ->
+        reject_request(state, from_pk, context, "provider request id is already pending")
 
-    {:noreply, state}
+      map_size(state.pending_requests) >= @max_pending_requests ->
+        reject_request(state, from_pk, context, "provider request queue is full")
+
+      true ->
+        payload =
+          base_event_payload("request", message, from_pk, context)
+          |> Map.put("request_id", correlation_id)
+          |> encode_binary_request(state)
+
+        case try_send_port_payload(state, payload) do
+          {:ok, state} ->
+            {:noreply, put_pending_request(state, correlation_id, from_pk, context)}
+
+          {:busy, state} ->
+            reject_request(state, from_pk, context, "provider request queue is busy")
+        end
+    end
   end
 
   @impl true
@@ -154,7 +184,7 @@ defmodule Arc.Data.Handler.Exec do
   end
 
   def handle_info({port, {:exit_status, code}}, %{port: port} = state) do
-    events =
+    stream_events =
       Enum.flat_map(state.stream_sessions, fn {app_session_id, session} ->
         [
           %{
@@ -171,7 +201,13 @@ defmodule Arc.Data.Handler.Exec do
         ]
       end)
 
-    {:emit, events, %{state | stream_sessions: %{}, pending_requests: %{}, pending_order: []}}
+    request_events =
+      Enum.map(state.pending_requests, fn {_correlation_id, pending} ->
+        request_error_event(pending, "provider exited with status #{code}")
+      end)
+
+    {:emit, stream_events ++ request_events,
+     %{state | stream_sessions: %{}, pending_requests: %{}, pending_order: []}}
   end
 
   def handle_info(_message, _state), do: :unhandled
@@ -207,14 +243,8 @@ defmodule Arc.Data.Handler.Exec do
 
   defp dispatch_provider_event(event, state) do
     case event do
-      {:reply, correlation_id, reply} ->
-        emit_request_event(
-          state,
-          correlation_id,
-          :response,
-          %{"status" => 200},
-          normalize_text(reply)
-        )
+      {:reply, correlation_id, reply, encoding} ->
+        emit_request_reply(state, correlation_id, reply, encoding)
 
       {:error, correlation_id, error} ->
         emit_request_error(state, correlation_id, normalize_text(error))
@@ -246,26 +276,19 @@ defmodule Arc.Data.Handler.Exec do
     state.package || %{}
   end
 
-  defp emit_request_event(state, correlation_id, frame_type, meta, body) do
+  defp emit_request_reply(state, correlation_id, reply, encoding) do
     case pop_pending_request(state, correlation_id) do
       {nil, _state} ->
         :unhandled
 
       {pending, state} ->
-        event =
-          if pending.framed? do
-            %{
-              to_pk: pending.to_pk,
-              frame_type: frame_type,
-              request_id: pending.request_id,
-              meta: meta,
-              body: body
-            }
-          else
-            %{to_pk: pending.to_pk, payload: body}
-          end
+        case decode_reply_body(pending, correlation_id, reply, encoding) do
+          {:ok, body} ->
+            emit_popped_request_event(state, pending, :response, %{"status" => 200}, body)
 
-        {:emit, [event], state}
+          {:error, message} ->
+            {:emit, [request_error_event(pending, message)], state}
+        end
     end
   end
 
@@ -275,20 +298,38 @@ defmodule Arc.Data.Handler.Exec do
         :unhandled
 
       {pending, state} ->
-        event =
-          if pending.framed? do
-            %{
-              to_pk: pending.to_pk,
-              frame_type: :error,
-              request_id: pending.request_id,
-              meta: %{"code" => "handler_error", "message" => message},
-              body: ""
-            }
-          else
-            %{to_pk: pending.to_pk, payload: "error: #{message}"}
-          end
+        {:emit, [request_error_event(pending, message)], state}
+    end
+  end
 
-        {:emit, [event], state}
+  defp emit_popped_request_event(state, pending, frame_type, meta, body) do
+    event =
+      if pending.framed? do
+        %{
+          to_pk: pending.to_pk,
+          frame_type: frame_type,
+          request_id: pending.request_id,
+          meta: meta,
+          body: body
+        }
+      else
+        %{to_pk: pending.to_pk, payload: body}
+      end
+
+    {:emit, [event], state}
+  end
+
+  defp request_error_event(pending, message) do
+    if pending.framed? do
+      %{
+        to_pk: pending.to_pk,
+        frame_type: :error,
+        request_id: pending.request_id,
+        meta: %{"code" => "handler_error", "message" => message},
+        body: ""
+      }
+    else
+      %{to_pk: pending.to_pk, payload: "error: #{message}"}
     end
   end
 
@@ -362,6 +403,20 @@ defmodule Arc.Data.Handler.Exec do
   end
 
   defp put_pending_request(state, correlation_id, to_pk, context) do
+    pending = pending_request(state, to_pk, context)
+
+    %{
+      state
+      | pending_requests: Map.put(state.pending_requests, correlation_id, pending),
+        pending_order: state.pending_order ++ [correlation_id]
+    }
+  end
+
+  defp reject_request(state, to_pk, context, message) do
+    {:emit, [request_error_event(pending_request(state, to_pk, context), message)], state}
+  end
+
+  defp pending_request(state, to_pk, context) do
     request_id =
       case Map.get(context, :request_id) do
         request_id when is_binary(request_id) and byte_size(request_id) == 16 ->
@@ -371,16 +426,11 @@ defmodule Arc.Data.Handler.Exec do
           Arc.Data.Frame.new_request_id()
       end
 
-    pending = %{
+    %{
       to_pk: to_pk,
       request_id: request_id,
-      framed?: Map.get(context, :framed?, false)
-    }
-
-    %{
-      state
-      | pending_requests: Map.put(state.pending_requests, correlation_id, pending),
-        pending_order: state.pending_order ++ [correlation_id]
+      framed?: Map.get(context, :framed?, false),
+      binary_response?: binary_response?(state)
     }
   end
 
@@ -435,6 +485,20 @@ defmodule Arc.Data.Handler.Exec do
     state
   end
 
+  defp try_send_port_payload(state, payload) do
+    encoded = [IO.iodata_to_binary(:json.encode(payload)), "\n"]
+
+    try do
+      if Port.command(state.port, encoded, [:nosuspend]) do
+        {:ok, state}
+      else
+        {:busy, state}
+      end
+    catch
+      :error, :badarg -> {:busy, state}
+    end
+  end
+
   defp decode_provider_event(line) do
     line
     |> :json.decode()
@@ -444,7 +508,7 @@ defmodule Arc.Data.Handler.Exec do
   end
 
   defp decode_provider_map(%{"reply" => reply} = event) do
-    {:reply, maybe_string(event["request_id"]), reply}
+    {:reply, maybe_string(event["request_id"]), reply, Map.get(event, "encoding", :absent)}
   end
 
   defp decode_provider_map(%{"error" => error} = event) do
@@ -568,4 +632,72 @@ defmodule Arc.Data.Handler.Exec do
 
   defp decode_path(nil), do: ""
   defp decode_path(path), do: URI.decode(path)
+
+  defp binary_request?(state) do
+    get_in(state, [:package, "capability", "invocation", "request_body", "encoding"]) == "base64"
+  end
+
+  defp binary_response?(state) do
+    get_in(state, [:package, "capability", "invocation", "response_body", "encoding"]) == "base64"
+  end
+
+  defp request_body_limit(package) do
+    case get_in(package, ["capability", "invocation", "request_body"]) do
+      request_body when is_map(request_body) -> validated_request_body_limit(request_body)
+      _ -> {:error, :invalid_request_body}
+    end
+  end
+
+  defp validated_request_body_limit(request_body) do
+    hard_limit =
+      if request_body["encoding"] == "base64", do: @max_binary_body_bytes, else: @max_line_bytes
+
+    case Map.fetch(request_body, "max_bytes") do
+      :error ->
+        {:ok, hard_limit}
+
+      {:ok, max_bytes}
+      when is_integer(max_bytes) and max_bytes > 0 and max_bytes <= @max_line_bytes ->
+        {:ok, min(hard_limit, max_bytes)}
+
+      {:ok, max_bytes} ->
+        {:error, {:invalid_request_body_max_bytes, max_bytes}}
+    end
+  end
+
+  defp encode_binary_request(payload, state) do
+    if binary_request?(state) do
+      payload
+      |> Map.put("encoding", "base64")
+      |> Map.put("message", Base.encode64(payload["message"]))
+    else
+      payload
+    end
+  end
+
+  defp decode_reply_body(%{binary_response?: true}, nil, _reply, _encoding),
+    do: {:error, "provider binary reply is missing request_id"}
+
+  defp decode_reply_body(%{binary_response?: true}, _correlation_id, reply, "base64")
+       when is_binary(reply) do
+    with {:ok, body} <- Base.decode64(reply),
+         true <- byte_size(body) <= @max_binary_body_bytes do
+      {:ok, body}
+    else
+      :error -> {:error, "provider binary reply is not valid base64"}
+      false -> {:error, "provider binary reply exceeds #{@max_binary_body_bytes} bytes"}
+    end
+  end
+
+  defp decode_reply_body(%{binary_response?: true}, _correlation_id, _reply, :absent),
+    do: {:error, "provider binary reply is missing base64 encoding"}
+
+  defp decode_reply_body(%{binary_response?: true}, _correlation_id, _reply, encoding),
+    do: {:error, "provider reply has unexpected encoding #{inspect(encoding)}"}
+
+  defp decode_reply_body(%{binary_response?: false}, _correlation_id, reply, :absent),
+    do: {:ok, normalize_text(reply)}
+
+  defp decode_reply_body(%{binary_response?: false}, _correlation_id, _reply, encoding),
+    do: {:error, "provider reply has unexpected encoding #{inspect(encoding)}"}
 end

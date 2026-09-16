@@ -187,9 +187,12 @@ defmodule Arc.Net.TransportManager do
         {pubkey, transport_refs} = Map.pop(state.transport_refs, ref)
 
         state =
-          state
-          |> Map.put(:transport_refs, transport_refs)
-          |> delete_entry(pubkey, stop_transport?: false, clear_transport_ref?: false)
+          delete_entry(
+            pubkey,
+            %{state | transport_refs: transport_refs},
+            stop_transport?: false,
+            clear_transport_ref?: false
+          )
 
         {:noreply, state}
 

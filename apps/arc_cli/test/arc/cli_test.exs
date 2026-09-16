@@ -51,6 +51,36 @@ defmodule Arc.CLITest do
     assert stderr =~ "--federate and --federate-network cannot be combined"
   end
 
+  test "a direct policy is rejected before resolving a serve target" do
+    policy =
+      Path.join(
+        System.tmp_dir!(),
+        "arc-invalid-direct-policy-#{System.unique_integer([:positive])}.json"
+      )
+
+    File.write!(policy, "not json")
+
+    on_exit(fn -> File.rm(policy) end)
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main([
+          "serve",
+          "/does/not/exist",
+          "--direct-policy",
+          policy,
+          "--relay",
+          "127.0.0.1:7331",
+          "--relay-pubkey",
+          String.duplicate("0", 64)
+        ])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "invalid direct policy"
+    refute stderr =~ "Arcfile"
+  end
+
   test "lists add, ls, and rm keep a peer list per tool" do
     run = fn argv -> ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(argv) end) end
 
