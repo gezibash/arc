@@ -90,11 +90,8 @@ defmodule Arc.CLI.AgoraOpen do
       {:error, :no_default} ->
         {:error, "no active identity; run 'arc keys gen' or 'arc keys use <name>'"}
 
-      {:error, :ambiguous} ->
-        {:error, "ARC_KEY matches multiple identities; use a full key name"}
-
-      {:error, _reason} ->
-        {:error, "could not load the active ARC identity"}
+      {:error, reason} ->
+        {:error, Arc.CLI.Keys.describe_error(reason)}
     end
   end
 

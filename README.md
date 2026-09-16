@@ -66,6 +66,44 @@ or public key prefix:
 arc resolve <name>
 ```
 
+## Choose an identity
+
+ARC keeps private identity material in `~/.config/arc/keys/*.toml`. Do not
+put a seed or public key in a selector file. Selectors contain only the
+petname, or an unambiguous prefix, of an identity already in that key store.
+
+ARC resolves the active identity in this order:
+
+```text
+ARC_KEY
+  ↓ otherwise
+./arc.key
+  ↓ otherwise
+~/.config/arc/default.key
+```
+
+`./arc.key` means the exact directory where the command starts. ARC does not
+search parent directories. This makes a repository or agent directory choose
+its own identity without exposing private key material:
+
+```sh
+printf '%s\n' 'EXISTING-KEY-NAME' > arc.key
+arc keys show
+```
+
+Use a one-command override when needed:
+
+```sh
+ARC_KEY=EXISTING-KEY-NAME arc keys show
+```
+
+An absent selector falls through to the next location. An empty, unreadable,
+unknown, ambiguous, or invalid selector is an error; ARC never silently picks
+another identity. `arc keys use NAME` sets the global default in
+`~/.config/arc/default.key`; it does not create or change `arc.key`. Existing
+installations can still read `~/.config/arc/default_key` only when
+`default.key` is absent. See the [identity selector specification](docs/identity/SPEC.md).
+
 Talk to a peer through a relay. Set the relay once per shell, then listen
 in one terminal and send from another:
 
@@ -123,6 +161,10 @@ docker logs arc-relay
 
 [docs/DEPLOY.md](docs/DEPLOY.md) has a systemd unit, the frame size cap,
 and the release process.
+
+For a local relay with persistent journal, DM and Agora providers, run
+`docker compose up -d --build --wait`. The [local Compose guide](docker/local/README.md)
+covers connecting installed ARC v0.3.1 with each agent's own identity.
 
 ## Commands
 

@@ -3,16 +3,19 @@ defmodule Arc.Identity.KeyStore do
   Multi-key store in ~/.config/arc/keys/.
 
   Each identity is stored as a TOML file named by its petname.
-  A default key can be set and is stored in ~/.config/arc/default_key.
+  Active identity selection checks ARC_KEY, then arc.key in the current
+  working directory, then ~/.config/arc/default.key. Each selector contains
+  a petname or unambiguous name prefix, never private key material.
 
-  Per-terminal key selection is done via the ARC_KEY env var,
-  which takes a petname or unambiguous prefix.
+  The old default_key file is read only when default.key is absent.
   """
 
   alias Arc.Identity
 
   @keys_dir Path.join(["~", ".config", "arc", "keys"])
-  @default_file Path.join(["~", ".config", "arc", "default_key"])
+  @default_file Path.join(["~", ".config", "arc", "default.key"])
+
+  @type selection_source :: :environment | {:file, String.t()}
 
   @doc """
   Generate a new identity and store it.
@@ -111,18 +114,16 @@ defmodule Arc.Identity.KeyStore do
   @doc """
   Remove a key by petname or prefix.
   """
-  @spec remove(String.t()) :: :ok | {:error, :not_found | :ambiguous}
+  @spec remove(String.t()) :: :ok | {:error, term()}
   def remove(name_or_prefix) do
     case get(name_or_prefix) do
       {:ok, identity} ->
         name = Identity.name(identity)
         path = Path.join(keys_dir(), "#{name}.toml")
-        File.rm(path)
+        was_default = default() == {:ok, identity}
 
-        # Clear default if it was the removed key
-        case default_name() do
-          {:ok, ^name} -> File.rm(default_file())
-          _ -> :ok
+        with :ok <- File.rm(path) do
+          clear_removed_default(was_default)
         end
 
       {:error, _} = err ->
@@ -133,14 +134,17 @@ defmodule Arc.Identity.KeyStore do
   @doc """
   Set the default key by petname or prefix.
   """
-  @spec set_default(String.t()) :: :ok | {:error, :not_found | :ambiguous}
+  @spec set_default(String.t()) :: :ok | {:error, term()}
   def set_default(name_or_prefix) do
     case get(name_or_prefix) do
       {:ok, identity} ->
         name = Identity.name(identity)
-        File.mkdir_p!(Path.dirname(default_file()))
-        File.write!(default_file(), name)
-        :ok
+
+        with :ok <- File.mkdir_p(Path.dirname(default_file())),
+             :ok <- File.write(default_file(), name) do
+          # Retire the old selector only after the new one is safely written.
+          retire_legacy_default()
+        end
 
       {:error, _} = err ->
         err
@@ -161,26 +165,122 @@ defmodule Arc.Identity.KeyStore do
   @doc """
   Get the default key name.
   """
-  @spec default_name() :: {:ok, String.t()} | {:error, :no_default}
+  @spec default_name() :: {:ok, String.t()} | {:error, term()}
   def default_name do
-    case File.read(default_file()) do
-      {:ok, name} ->
-        name = String.trim(name)
-        if name == "", do: {:error, :no_default}, else: {:ok, name}
-
-      {:error, :enoent} ->
-        {:error, :no_default}
+    with {:ok, name, _source} <- default_selection() do
+      {:ok, name}
     end
   end
 
   @doc """
-  Resolve the active identity. Checks ARC_KEY env, then default.
+  Resolve the active identity: ARC_KEY, current-directory arc.key, then default.
+  Only an absent selector falls through; an invalid selection returns an error.
   """
   @spec resolve_active() :: {:ok, Identity.t()} | {:error, term()}
   def resolve_active do
+    with {:ok, identity, _source} <- resolve_active_with_source() do
+      {:ok, identity}
+    end
+  end
+
+  @doc "Resolve the active identity and identify the selector that chose it."
+  @spec resolve_active_with_source() ::
+          {:ok, Identity.t(), selection_source()} | {:error, term()}
+  def resolve_active_with_source do
+    with {:ok, name, source} <- active_selection(),
+         {:ok, identity} <- get(name) do
+      {:ok, identity, source}
+    end
+  end
+
+  defp active_selection do
     case System.get_env("ARC_KEY") do
-      nil -> default()
-      name -> get(name)
+      nil ->
+        case read_selector(Path.expand("arc.key")) do
+          {:error, :enoent} -> default_selection()
+          result -> result
+        end
+
+      name ->
+        parse_selector(name, :environment)
+    end
+  end
+
+  defp default_selection do
+    case read_selector(default_file()) do
+      {:error, :enoent} ->
+        case read_selector(legacy_default_file()) do
+          {:error, :enoent} -> {:error, :no_default}
+          result -> result
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp read_selector(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        parse_selector(contents, {:file, path})
+
+      {:error, :enoent} ->
+        # A dangling symlink is an explicit broken choice, not a missing file.
+        case File.lstat(path) do
+          {:error, :enoent} -> {:error, :enoent}
+          _ -> {:error, {:identity_selector_file, path, :enoent}}
+        end
+
+      {:error, reason} ->
+        {:error, {:identity_selector_file, path, reason}}
+    end
+  end
+
+  defp parse_selector(contents, source) do
+    if String.valid?(contents) and Regex.match?(~r/\A[a-z0-9-]+\z/, String.trim(contents)) do
+      {:ok, String.trim(contents), source}
+    else
+      {:error, {:invalid_identity_selector, source}}
+    end
+  end
+
+  defp clear_removed_default(false), do: :ok
+
+  defp clear_removed_default(true) do
+    case clear_default() do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:key_removed, reason}}
+    end
+  end
+
+  defp clear_default do
+    [default_file(), legacy_default_file()]
+    |> Enum.uniq()
+    |> Enum.reduce_while(:ok, fn path, :ok ->
+      case remove_selector(path) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp retire_legacy_default do
+    result =
+      if legacy_default_file() != default_file(),
+        do: remove_selector(legacy_default_file()),
+        else: :ok
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:default_saved, reason}}
+    end
+  end
+
+  defp remove_selector(path) do
+    case File.rm(path) do
+      :ok -> :ok
+      {:error, :enoent} -> :ok
+      {:error, reason} -> {:error, {:identity_selector_file, path, reason}}
     end
   end
 
@@ -189,6 +289,8 @@ defmodule Arc.Identity.KeyStore do
   defp default_file do
     Path.expand(Application.get_env(:arc_identity, :default_file, @default_file))
   end
+
+  defp legacy_default_file, do: Path.join(Path.dirname(default_file()), "default_key")
 
   defp load_file(path) do
     with {:ok, content} <- File.read(path),

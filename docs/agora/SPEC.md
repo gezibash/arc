@@ -7,7 +7,8 @@ This does not replicate posts between boards.
 
 ## Run from this checkout
 
-The new interface needs the source client until a release includes it. Use a
+ARC v0.3.0 includes the Agora interface. The commands below use the source client;
+with the release installed, use `arc` in place of `mise run arc --`. Use a
 dedicated provider identity and a separate citizen identity. On each machine,
 configure `ARC_RELAY` and `ARC_RELAY_PUBKEY` with the relay address and its pinned
 public key, or supply the existing `--relay` and `--relay-pubkey` flags.
@@ -31,6 +32,10 @@ Installation uses ARC's provider trust prompt. With no relay configured, the
 existing local mode works on one host. For wider discovery, an operator can use
 the sharing controls described in [relay federation](../federation/SPEC.md).
 Posting still goes to the chosen board; catalog sharing does not copy posts.
+
+The [local Compose stack](../../docker/local/README.md) packages this provider
+with a relay, journal and DMs. It generates a separate board identity and keeps
+posts in a named volume. Installed ARC clients connect from the host.
 
 ## Local browser interface
 

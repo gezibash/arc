@@ -68,12 +68,8 @@ defmodule Arc.CLI.Control do
       {:ok, id} ->
         fun.(id)
 
-      {:error, :no_default} ->
-        IO.puts(:stderr, "No active key. Run 'arc keys gen' first.")
-        Arc.CLI.Exit.halt(1)
-
       {:error, reason} ->
-        IO.puts(:stderr, "error: #{inspect(reason)}")
+        IO.puts(:stderr, "error: #{Arc.CLI.Keys.describe_error(reason)}")
         Arc.CLI.Exit.halt(1)
     end
   end
