@@ -17,10 +17,15 @@ defmodule Arc.CLIToolsTest do
     trust_dir =
       Path.join(System.tmp_dir!(), "arc_cli_trust_#{System.unique_integer([:positive])}")
 
+    lists_dir =
+      Path.join(System.tmp_dir!(), "arc_cli_lists_#{System.unique_integer([:positive])}")
+
     old_tool_dir = Application.get_env(:arc_cli, :tool_registry_dir)
     old_trust_dir = Application.get_env(:arc_cli, :trust_store_dir)
+    old_lists_dir = Application.get_env(:arc_cli, :lists_dir)
     Application.put_env(:arc_cli, :tool_registry_dir, tool_dir)
     Application.put_env(:arc_cli, :trust_store_dir, trust_dir)
+    Application.put_env(:arc_cli, :lists_dir, lists_dir)
 
     on_exit(fn ->
       System.delete_env("ARC_KEY")
@@ -37,8 +42,15 @@ defmodule Arc.CLIToolsTest do
         Application.delete_env(:arc_cli, :trust_store_dir)
       end
 
+      if old_lists_dir do
+        Application.put_env(:arc_cli, :lists_dir, old_lists_dir)
+      else
+        Application.delete_env(:arc_cli, :lists_dir)
+      end
+
       File.rm_rf!(tool_dir)
       File.rm_rf!(trust_dir)
+      File.rm_rf!(lists_dir)
     end)
 
     :ok

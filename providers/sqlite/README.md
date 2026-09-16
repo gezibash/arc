@@ -7,6 +7,13 @@ public database names to absolute local paths and grants each ARC public key a
 
 ## Configure
 
+Install the provider's pinned Python runtime before serving it:
+
+```sh
+cd providers/sqlite
+mise install
+```
+
 `SQLITE_CONFIG` is required and must be an absolute path to a regular JSON
 file. The provider refuses to start without valid configuration.
 

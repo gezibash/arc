@@ -1,6 +1,26 @@
 defmodule Arc.CLITest do
   use ExUnit.Case
 
+  setup do
+    lists_dir =
+      Path.join(System.tmp_dir!(), "arc_cli_lists_#{System.unique_integer([:positive])}")
+
+    old_lists_dir = Application.get_env(:arc_cli, :lists_dir)
+    Application.put_env(:arc_cli, :lists_dir, lists_dir)
+
+    on_exit(fn ->
+      if old_lists_dir do
+        Application.put_env(:arc_cli, :lists_dir, old_lists_dir)
+      else
+        Application.delete_env(:arc_cli, :lists_dir)
+      end
+
+      File.rm_rf!(lists_dir)
+    end)
+
+    :ok
+  end
+
   test "help output includes commands" do
     output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["help"]) end)
     assert output =~ "keys"

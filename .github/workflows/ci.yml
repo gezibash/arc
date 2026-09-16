@@ -42,12 +42,16 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-24.04
+    env:
+      MISE_ERLANG_COMPILE: "false"
+      MISE_ERLANG_PRECOMPILED_OS: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
+      - name: Install test and SQLite provider runtimes
+        uses: jdx/mise-action@v4
         with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
+          version: 2026.9.9
+          working_directory: providers/sqlite
       - uses: actions/cache@v4
         with:
           path: |
@@ -56,6 +60,9 @@ jobs:
           key: mix-${{ env.MIX_ENV }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
           restore-keys: mix-${{ env.MIX_ENV }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
       - run: mix deps.get
+      - name: Test SQLite provider
+        working-directory: providers/sqlite
+        run: mise exec -- python -m unittest discover -s tests -v
       - run: mix test --warnings-as-errors
 
   dialyzer:
