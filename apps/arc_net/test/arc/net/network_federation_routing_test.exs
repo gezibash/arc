@@ -404,6 +404,7 @@ defmodule Arc.Net.NetworkFederationRoutingTest do
   end
 
   defp connect(ctx, identity) do
+    previous = Relay.route_for(ctx.relay, identity.public_key)
     {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", ctx.port, [:binary, active: false])
     on_exit(fn -> :gen_tcp.close(socket) end)
     {:ok, hello} = :gen_tcp.recv(socket, 64, 1_000)
@@ -411,7 +412,30 @@ defmodule Arc.Net.NetworkFederationRoutingTest do
     _info = recv(socket)
     {:ok, proof, _} = Handshake.client_hello(identity, key, challenge)
     :ok = :gen_tcp.send(socket, proof)
+    # Directory acknowledgments and route registration use different processes.
+    # Wait for the actual new route before testing replies or replacement cleanup.
+    await_route(
+      ctx.relay,
+      identity.public_key,
+      previous,
+      System.monotonic_time(:millisecond) + 1_000
+    )
+
     socket
+  end
+
+  defp await_route(relay, public_key, previous, deadline) do
+    current = Relay.route_for(relay, public_key)
+
+    if is_pid(current) and current != previous do
+      :ok
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "the authenticated connection did not become the current route"
+
+      Process.sleep(10)
+      await_route(relay, public_key, previous, deadline)
+    end
   end
 
   defp announce(socket, record) do
