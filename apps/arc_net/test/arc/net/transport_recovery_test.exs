@@ -66,6 +66,59 @@ defmodule Arc.Net.TransportRecoveryTest do
     stop(restored)
   end
 
+  test "reports an existing relay connection and its bounded reconnect state" do
+    relay_key = :crypto.strong_rand_bytes(32)
+    {:ok, relay} = Relay.start_link(0, relay_public_key: relay_key)
+    port = Relay.get_port(relay)
+    identity = Identity.generate()
+    {:ok, idle_transport} = Transport.start_link()
+
+    on_exit(fn ->
+      stop(idle_transport)
+      TransportManager.reset()
+      stop(relay)
+    end)
+
+    assert {:ok, %{status: :disconnected}} = Transport.relay_status(idle_transport)
+
+    assert :ok = Arc.Net.connect_relay(~c"localhost", port, identity, relay_key)
+
+    assert {:ok, %{status: :connected, host: "localhost", port: ^port}} =
+             Arc.Net.relay_status(identity.public_key)
+
+    assert {:ok, transport} = TransportManager.lookup(identity.public_key)
+
+    assert :ok = :sys.suspend(TransportManager)
+
+    try do
+      {elapsed_us, result} = :timer.tc(fn -> Arc.Net.relay_status(identity.public_key) end)
+      assert result == {:error, :relay_status_unavailable}
+      assert elapsed_us < 1_000_000
+    after
+      :ok = :sys.resume(TransportManager)
+    end
+
+    assert :ok = :sys.suspend(transport)
+
+    try do
+      {elapsed_us, result} = :timer.tc(fn -> Arc.Net.relay_status(identity.public_key) end)
+      assert result == {:error, :relay_status_unavailable}
+      assert elapsed_us < 1_000_000
+    after
+      :ok = :sys.resume(transport)
+    end
+
+    assert {:error, :relay_not_connected} = Arc.Net.relay_status(Identity.generate().public_key)
+
+    stop(relay)
+    drop_connection(transport)
+
+    assert eventually(fn ->
+             Arc.Net.relay_status(identity.public_key) ==
+               {:ok, %{status: :reconnecting, host: "localhost", port: port}}
+           end)
+  end
+
   test "an explicit switch cancels a pending retry for the old relay" do
     first_key = :crypto.strong_rand_bytes(32)
     {:ok, first} = Relay.start_link(0, relay_public_key: first_key)

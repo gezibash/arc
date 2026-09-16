@@ -13,6 +13,106 @@ defmodule Arc.Host.ServiceTest do
   alias Arc.Host.Service
   alias Arc.Identity
   alias Arc.Identity.KeyStore
+  alias Arc.Net.Relay
+  alias Arc.Net.TransportManager
+
+  test "configured relay status is empty until the host loads an identity" do
+    socket_path = tmp_socket_path("arc_host_idle_relay")
+
+    {:ok, host} =
+      Service.start_link(socket_path: socket_path, relay: {~c"localhost", 7331})
+
+    on_exit(fn ->
+      stop(host)
+      _ = File.rm(socket_path)
+    end)
+
+    assert %{
+             "identity_count" => 0,
+             "relay" => %{"host" => "localhost", "port" => 7331},
+             "relay_connections" => []
+           } = Service.status(host)
+  end
+
+  test "host relay status exposes public live and reconnecting connection state" do
+    Application.ensure_all_started(:arc_net)
+
+    socket_path = tmp_socket_path("arc_host_relay_status")
+    relay_key = :crypto.strong_rand_bytes(32)
+    {:ok, relay} = Relay.start_link(0, relay_public_key: relay_key)
+    port = Relay.get_port(relay)
+    {:ok, identity} = KeyStore.generate()
+
+    {:ok, host} =
+      Service.start_link(
+        socket_path: socket_path,
+        relay: {~c"localhost", port},
+        relay_pubkey: relay_key
+      )
+
+    on_exit(fn ->
+      stop(host)
+      stop(relay)
+      TransportManager.reset()
+      _ = File.rm(socket_path)
+      _ = KeyStore.remove(Identity.name(identity))
+    end)
+
+    {:ok, admin_token} = Service.read_admin_token(socket_path)
+    {:ok, delegated} = issue_token(socket_path, admin_token, Identity.name(identity))
+    {:ok, socket} = Client.connect(socket_path)
+
+    assert {:ok, _initialized} =
+             Client.request_connected(socket, "initialize", %{"token" => delegated["token"]})
+
+    public_connection = %{
+      "identity" => Identity.name(identity),
+      "public_key" => Base.encode16(identity.public_key, case: :lower),
+      "status" => "connected",
+      "host" => "localhost",
+      "port" => port
+    }
+
+    assert [^public_connection] = Service.status(host)["relay_connections"]
+
+    assert {:ok, transport} = TransportManager.lookup(identity.public_key)
+    assert :ok = :sys.suspend(transport)
+
+    try do
+      unknown_connection = %{public_connection | "status" => "unknown"}
+      assert [^unknown_connection] = Service.status(host)["relay_connections"]
+    after
+      :ok = :sys.resume(transport)
+    end
+
+    assert Map.keys(public_connection) |> Enum.sort() ==
+             ["host", "identity", "port", "public_key", "status"]
+
+    assert :ok = Client.close(socket)
+    stop(relay)
+
+    {:ok, replacement} = Relay.start_link(0, relay_public_key: relay_key)
+    replacement_port = Relay.get_port(replacement)
+
+    assert :ok = Arc.Net.connect_relay(~c"localhost", replacement_port, identity, relay_key)
+
+    replacement_connection = %{
+      public_connection
+      | "host" => "localhost",
+        "port" => replacement_port
+    }
+
+    assert [^replacement_connection] = Service.status(host)["relay_connections"]
+
+    stop(replacement)
+    drop_relay_connection(transport)
+
+    reconnecting_connection = %{replacement_connection | "status" => "reconnecting"}
+
+    assert eventually(fn ->
+             Service.status(host)["relay_connections"] == [reconnecting_connection]
+           end)
+  end
 
   test "host serves status initialize info and call over the local socket" do
     socket_path = tmp_socket_path("arc_host_service")
@@ -378,6 +478,36 @@ defmodule Arc.Host.ServiceTest do
       |> maybe_put("scopes", scopes)
 
     Client.request(socket_path, "token.issue", params, token: admin_token)
+  end
+
+  defp eventually(fun, attempts \\ 80)
+
+  defp eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      true
+    else
+      Process.sleep(25)
+      eventually(fun, attempts - 1)
+    end
+  end
+
+  defp eventually(_fun, 0), do: false
+
+  defp drop_relay_connection(transport) do
+    conn = :sys.get_state(transport).relay_conn
+    Process.exit(conn, :shutdown)
+  end
+
+  defp stop(pid) when is_pid(pid) do
+    if Process.alive?(pid) do
+      Process.unlink(pid)
+
+      try do
+        GenServer.stop(pid, :normal)
+      catch
+        :exit, _ -> :ok
+      end
+    end
   end
 
   defp maybe_put(map, _key, nil), do: map
