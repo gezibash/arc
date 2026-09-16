@@ -13,6 +13,7 @@ defmodule Arc.Data.Direct.PolicyTest do
 
   test "owner approvals bind exact full keys, resources, and literal addresses" do
     assert {:ok, [rule]} = Policy.normalize([@rule])
+    assert rule.hole_punch == false
 
     assert {:ok, {127, 0, 0, 1}, 5000} =
              Policy.candidate(rule, %{"host" => "127.0.0.1", "port" => 5000})
@@ -34,6 +35,36 @@ defmodule Arc.Data.Direct.PolicyTest do
              })
 
     assert {:ok, [^rule]} = Policy.normalize([rule])
+  end
+
+  test "hole punching is an explicit opt-in with an exact dial allowlist" do
+    assert {:ok, [rule]} = Policy.normalize([Map.put(@rule, "hole_punch", true)])
+    assert rule.hole_punch == true
+    assert rule.dial == [{127, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}]
+    assert {:ok, [^rule]} = Policy.normalize([rule])
+
+    assert {:error, :invalid_direct_policy} =
+             Policy.normalize([
+               @rule
+               |> Map.put("dial", [])
+               |> Map.put("hole_punch", true)
+               |> Map.put("listen", %{"bind" => "0.0.0.0", "address" => "192.0.2.7", "port" => 0})
+             ])
+
+    for value <- ["true", 1, nil] do
+      assert {:error, :invalid_direct_policy} =
+               Policy.normalize([Map.put(@rule, "hole_punch", value)])
+    end
+  end
+
+  test "normalizes existing programmatic seven-key rules with a false hole-punch default" do
+    assert {:ok, [rule]} = Policy.normalize([@rule])
+
+    existing_normalized = Map.delete(rule, :hole_punch)
+    assert map_size(existing_normalized) == 7
+    assert {:ok, [renormalized]} = Policy.normalize([existing_normalized])
+    assert renormalized.hole_punch == false
+    assert renormalized == rule
   end
 
   test "rejects misspelled settings, wildcard scope, unsafe destinations, and unlimited leases" do

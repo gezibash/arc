@@ -161,7 +161,6 @@ defmodule Arc.Net.Direct.Connection do
       {:ok, peer_nonce}
     else
       {:error, _} = error -> error
-      other -> {:error, other}
     end
   end
 
@@ -286,7 +285,6 @@ defmodule Arc.Net.Direct.Connection do
       :ok
     else
       {:error, _} = error -> error
-      _ -> {:error, :certificate_pin_mismatch}
     end
   end
 

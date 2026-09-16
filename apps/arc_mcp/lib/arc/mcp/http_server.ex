@@ -479,16 +479,16 @@ defmodule Arc.MCP.HTTPServer do
   defp maybe_acquire_relay(identity, agent_pid, state) do
     case state.relay_addr do
       {host, port} ->
-        with :ok <-
-               Arc.Net.acquire_relay(
-                 host,
-                 port,
-                 identity,
-                 state.relay_pubkey_pin,
-                 relay_acquire_opts(agent_pid, state)
-               ),
-             :ok <- Agent.publish_relay(agent_pid),
-             do: :ok
+        case Arc.Net.acquire_relay(
+               host,
+               port,
+               identity,
+               state.relay_pubkey_pin,
+               relay_acquire_opts(agent_pid, state)
+             ) do
+          :ok -> Agent.publish_relay(agent_pid)
+          result -> result
+        end
 
       _ ->
         :ok

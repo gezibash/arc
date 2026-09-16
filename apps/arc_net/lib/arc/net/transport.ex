@@ -83,6 +83,21 @@ defmodule Arc.Net.Transport do
     :exit, _ -> {:error, :relay_not_connected}
   end
 
+  @doc false
+  def relay_endpoint_context(transport_pid) when is_pid(transport_pid) do
+    GenServer.call(transport_pid, :relay_endpoint_context)
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
+  end
+
+  @doc false
+  def relay_endpoint_current?(transport_pid, conn_pid)
+      when is_pid(transport_pid) and is_pid(conn_pid) do
+    GenServer.call(transport_pid, {:relay_endpoint_current?, conn_pid})
+  catch
+    :exit, _ -> false
+  end
+
   @impl GenServer
   def init([]) do
     # Client connections stay linked for supervisor shutdown cleanup. Trapping
@@ -136,6 +151,14 @@ defmodule Arc.Net.Transport do
     else
       {:reply, {:error, :relay_not_connected}, state}
     end
+  end
+
+  def handle_call(:relay_endpoint_context, _from, state) do
+    {:reply, current_endpoint_context(state), state}
+  end
+
+  def handle_call({:relay_endpoint_current?, conn_pid}, _from, state) do
+    {:reply, current_endpoint?(state, conn_pid), state}
   end
 
   def handle_call({:connect_relay, host, port, my_identity, expected_relay_pubkey}, _from, state) do
@@ -639,7 +662,27 @@ defmodule Arc.Net.Transport do
     Application.get_env(:arc_net, :relay_connect_timeout_ms, @default_relay_connect_timeout_ms)
   end
 
-  defp tcp_options, do: [:binary, packet: :raw, active: false, keepalive: true]
+  defp tcp_options, do: [:binary, packet: :raw, active: false, keepalive: true, reuseaddr: true]
+
+  defp current_endpoint_context(%{relay_conn: conn, relay_config: %{pin: pin}})
+       when is_pid(conn) and is_binary(pin) and byte_size(pin) == @ed25519_pubkey_bytes do
+    if Process.alive?(conn) do
+      case Connection.endpoint(conn) do
+        {:ok, %{local: local}} -> {:ok, %{connection: conn, local: local}}
+        {:error, _reason} -> {:error, :relay_not_connected}
+      end
+    else
+      {:error, :relay_not_connected}
+    end
+  end
+
+  defp current_endpoint_context(_state), do: {:error, :relay_not_connected}
+
+  defp current_endpoint?(%{relay_conn: conn, relay_config: %{pin: pin}}, conn)
+       when is_pid(conn) and is_binary(pin) and byte_size(pin) == @ed25519_pubkey_bytes,
+       do: Process.alive?(conn)
+
+  defp current_endpoint?(_state, _conn), do: false
 
   defp effective_relay_pin(state, target, my_pubkey, requested_pin) do
     case state.relay_config do
@@ -664,7 +707,8 @@ defmodule Arc.Net.Transport do
     end
   end
 
-  defp valid_directory_operation?(operation), do: operation in [:announce, :search, :resolve]
+  defp valid_directory_operation?(operation),
+    do: operation in [:announce, :search, :resolve, :observe]
 
   defp directory_timeout(operation) when operation in [:search, :resolve], do: 10_000
   defp directory_timeout(_), do: @directory_timeout_ms

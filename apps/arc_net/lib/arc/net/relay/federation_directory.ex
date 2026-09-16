@@ -176,22 +176,36 @@ defmodule Arc.Net.Relay.FederationDirectory do
   defp validate_reply(_, _, _), do: :error
 
   defp verify_records(records, routes, peer, request) do
-    if routes == nil or
-         (is_map(routes) and Enum.all?(records, &is_map/1) and
-            Enum.sort(Map.keys(routes)) == Enum.sort(Enum.map(records, & &1["public_key"]))) do
-      Enum.reduce_while(records, {:ok, []}, fn record, {:ok, entries} ->
-        with {:ok, entry} <- RelayAnnouncement.verify(record),
-             path <- if(routes, do: routes[record["public_key"]], else: [hex_key(peer)]),
-             {:ok, path} <- verify_path(path, entry, peer, request) do
-          {:cont, {:ok, entries ++ [Map.put(entry, :relay_path, path)]}}
-        else
-          _ -> {:halt, :error}
-        end
-      end)
+    if valid_record_routes?(records, routes) do
+      Enum.reduce_while(records, {:ok, []}, &verify_record(&1, &2, routes, peer, request))
     else
       :error
     end
   end
+
+  defp valid_record_routes?(records, nil), do: Enum.all?(records, &is_map/1)
+
+  defp valid_record_routes?(records, routes) when is_map(routes) do
+    Enum.all?(records, &is_map/1) and
+      Enum.sort(Map.keys(routes)) == Enum.sort(Enum.map(records, & &1["public_key"]))
+  end
+
+  defp valid_record_routes?(_, _), do: false
+
+  defp verify_record(record, {:ok, entries}, routes, peer, request) do
+    with {:ok, entry} <- RelayAnnouncement.verify(record),
+         {:ok, path} <- verify_record_path(routes, record, entry, peer, request) do
+      {:cont, {:ok, entries ++ [Map.put(entry, :relay_path, path)]}}
+    else
+      _ -> {:halt, :error}
+    end
+  end
+
+  defp verify_record_path(nil, _record, entry, peer, request),
+    do: verify_path([hex_key(peer)], entry, peer, request)
+
+  defp verify_record_path(routes, record, entry, peer, request),
+    do: verify_path(routes[record["public_key"]], entry, peer, request)
 
   defp verify_path(path, entry, peer, request) when is_list(path) and length(path) in 1..8 do
     visited = get_in(request, ["network", "path"]) || []

@@ -10,6 +10,7 @@ defmodule Arc.Net.Direct do
 
   alias Arc.Net.Direct.Connection
   alias Arc.Net.Direct.Listener
+  alias Arc.Net.Direct.Punch
 
   @max_packet_bytes 1_114_112
   @default_timeout_ms 5_000
@@ -78,6 +79,19 @@ defmodule Arc.Net.Direct do
         {:error, reason} ->
           {:error, reason}
       end
+    else
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc "Attempt one bounded, relay-coordinated TCP simultaneous open."
+  @spec punch(pid(), keyword()) :: {:ok, pid()} | {:error, term()}
+  def punch(owner, opts) when is_pid(owner) and is_list(opts) do
+    with :ok <- validate_common(owner, opts),
+         {:ok, host} <- host(Keyword.get(opts, :host)),
+         {:ok, port} <- port(Keyword.get(opts, :port)),
+         :ok <- Punch.validate(opts, host, port) do
+      Punch.run(owner, opts)
     else
       {:error, _} = error -> error
     end
@@ -225,7 +239,8 @@ defmodule Arc.Net.Direct do
   def verify_peer_certificate(_cert, :valid, expected), do: {:valid, expected}
   def verify_peer_certificate(_cert, _event, expected), do: {:unknown, expected}
 
-  defp start_connection(owner, socket, opts, role) do
+  @doc false
+  def start_connection(owner, socket, opts, role) do
     case Connection.start_link(owner: owner, socket: socket, opts: opts, role: role) do
       {:ok, pid} ->
         with :ok <- :ssl.controlling_process(socket, pid),

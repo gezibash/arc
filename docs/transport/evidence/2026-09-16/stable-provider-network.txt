@@ -1,0 +1,22 @@
+stable
+default via 10.200.0.1 dev arc-peer
+10.200.0.0/24 dev arc-peer proto kernel scope link src 10.200.0.2
+Chain ARC_LAB_INPUT (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+       0        0 ACCEPT     0    --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED
+       3      180 DROP       0    --  *      *       0.0.0.0/0            0.0.0.0/0
+Chain ARC_LAB_FORWARD (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+      18     5225 ACCEPT     6    --  arc-host *       10.200.0.2           10.88.0.10
+      11     4305 ACCEPT     6    --  arc-host *       10.200.0.2           10.88.0.11
+      28     8649 ACCEPT     0    --  *      arc-host  0.0.0.0/0            10.200.0.2           ctstate RELATED,ESTABLISHED
+       0        0 DROP       0    --  arc-host *       0.0.0.0/0            0.0.0.0/0
+       0        0 DROP       0    --  *      arc-host  0.0.0.0/0            0.0.0.0/0
+Chain ARC_LAB_SNAT (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+       2      120 SNAT       0    --  *      *       0.0.0.0/0            0.0.0.0/0            to:10.88.0.12
+Chain ARC_LAB_DNAT (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+ipv4     2 tcp      6 431996 ESTABLISHED src=10.200.0.2 dst=10.88.0.10 sport=53646 dport=7331 src=10.88.0.10 dst=10.88.0.12 sport=7331 dport=53646 [ASSURED] mark=0 use=1
+ipv4     2 tcp      6 431996 ESTABLISHED src=10.200.0.2 dst=10.88.0.11 sport=53646 dport=47444 src=10.88.0.11 dst=10.88.0.12 sport=47444 dport=53646 [ASSURED] mark=0 use=1
+qdisc noqueue 0: root refcnt 2

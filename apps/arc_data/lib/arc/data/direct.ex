@@ -216,7 +216,8 @@ defmodule Arc.Data.Direct do
            "type" => "offer",
            "scope" => scope,
            "fingerprint" => hex(credentials.fingerprint),
-           "lease_ms" => rule.lease_ms
+           "lease_ms" => rule.lease_ms,
+           "hole_punch" => rule.hole_punch
          },
          :offer
        )}
@@ -440,6 +441,16 @@ defmodule Arc.Data.Direct do
     end
   end
 
+  def handle_info({:punch_endpoint, id, worker, result}, state) do
+    case state.routes[id] do
+      %{phase: :probing, hole_punch: true, punch_worker: ^worker} = route ->
+        {:noreply, punch_endpoint(state, %{route | punch_worker: nil}, result)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:arc_direct_closed, {id, direction}, pid, _reason}, state) do
     case state.routes[id] do
       route when is_map(route) ->
@@ -528,8 +539,23 @@ defmodule Arc.Data.Direct do
     end
   end
 
-  def handle_info({:arc_relay_status, status}, state) when status in [:up, :down],
-    do: {:noreply, %{state | relay_up: status == :up}}
+  def handle_info({:arc_relay_status, :down}, state) do
+    # A new punched path must use the source port of its current relay socket.
+    # Losing that socket abandons preparation, never an already admitted lease.
+    state =
+      Enum.reduce(state.routes, state, fn
+        {id, %{hole_punch: true, phase: phase}}, acc when phase != :active ->
+          retire(acc, id, :relay_unavailable)
+
+        _, acc ->
+          acc
+      end)
+
+    {:noreply, %{state | relay_up: false}}
+  end
+
+  def handle_info({:arc_relay_status, :up}, state),
+    do: {:noreply, %{state | relay_up: true}}
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{owner_ref: ref} = state),
     do: {:stop, :normal, state}
@@ -566,6 +592,7 @@ defmodule Arc.Data.Direct do
         | phase: :validating,
           peer_fingerprint: fingerprint,
           relay_sid: sid,
+          hole_punch: rule.hole_punch and message["hole_punch"] == true,
           lease_ms: min(rule.lease_ms, lease),
           deadline: now() + min(rule.lease_ms, lease)
       }
@@ -621,10 +648,12 @@ defmodule Arc.Data.Direct do
           "type" => "accept",
           "lease_ms" => route.lease_ms,
           "fingerprint" => hex(route.credentials.fingerprint),
-          "candidate" => candidate
+          "candidate" => candidate,
+          "hole_punch" => route.hole_punch
         },
         :accept
       )
+      |> observe_punch_endpoint(route)
     end
   end
 
@@ -635,12 +664,14 @@ defmodule Arc.Data.Direct do
          %{"type" => "accept", "lease_ms" => lease, "fingerprint" => fingerprint} = message
        ) do
     with true <- is_integer(lease) and lease in 1_000..route.lease_ms,
+         true <- valid_punch_accept?(route, message),
          {:ok, fingerprint} <- unhex(fingerprint, 32) do
       route = %{
         route
         | peer_fingerprint: fingerprint,
           lease_ms: lease,
           deadline: min(route.deadline, now() + lease),
+          hole_punch: message["hole_punch"] == true,
           phase: :probing
       }
 
@@ -648,9 +679,27 @@ defmodule Arc.Data.Direct do
       {route, candidate} = listen(route, state)
       route = dial(route, state, "provider", message["candidate"])
       state = put_route(state, route)
+
       control(state, route, %{"type" => "candidates", "candidate" => candidate}, :candidates)
+      |> observe_punch_endpoint(route)
     else
       _ -> retire(state, route.id, :invalid_accept)
+    end
+  end
+
+  defp receive_control(
+         state,
+         %{phase: :probing, hole_punch: true, peer_punch: nil} = route,
+         _sid,
+         %{"type" => "punch_candidate", "candidate" => candidate}
+       ) do
+    case Policy.candidate(route.rule, candidate) do
+      {:ok, host, port} ->
+        route = %{route | peer_punch: {host, port}}
+        put_route(state, start_punch(route, state))
+
+      _ ->
+        state
     end
   end
 
@@ -667,8 +716,8 @@ defmodule Arc.Data.Direct do
          "type" => "nominate",
          "direction" => direction
        })
-       when direction in ["provider", "caller"] do
-    if is_pid(route.connections[direction]) do
+       when direction in ["provider", "caller", "punch"] do
+    if pending_connection?(direction, route.connections[direction]) do
       route = %{route | selected: direction}
 
       if MapSet.member?(route.connected, direction),
@@ -815,9 +864,97 @@ defmodule Arc.Data.Direct do
       from: nil,
       package: nil,
       renewal: nil,
-      last_renewal: nil
+      last_renewal: nil,
+      hole_punch: false,
+      punch_worker: nil,
+      punch_context: nil,
+      peer_punch: nil,
+      punch_started: false
     }
   end
+
+  defp valid_punch_accept?(route, message) do
+    enabled = Map.get(message, "hole_punch", false)
+    is_boolean(enabled) and (not enabled or route.rule.hole_punch)
+  end
+
+  defp observe_punch_endpoint(state, %{hole_punch: false}), do: state
+
+  defp observe_punch_endpoint(state, route) do
+    owner = self()
+    public_key = state.identity.public_key
+
+    worker =
+      spawn(fn ->
+        result = network(:relay_endpoint, [public_key])
+        send(owner, {:punch_endpoint, route.id, self(), result})
+      end)
+
+    put_route(state, %{route | punch_worker: worker})
+  end
+
+  defp punch_endpoint(state, route, {:ok, context}) do
+    route = %{route | punch_context: context}
+    state = put_route(state, start_punch(route, state))
+
+    control(
+      state,
+      route,
+      %{"type" => "punch_candidate", "candidate" => context.observed},
+      :punch_candidate
+    )
+  end
+
+  defp punch_endpoint(state, route, _error), do: put_route(state, route)
+
+  defp start_punch(
+         %{punch_started: false, punch_context: context, peer_punch: {host, port}} = route,
+         state
+       )
+       when is_map(context) do
+    owner = self()
+    {local_ip, local_port} = context.local
+
+    opts =
+      carrier_opts(route, state, "punch") ++
+        [
+          host: host,
+          port: port,
+          local_ip: local_ip,
+          local_port: local_port,
+          role: if(route.role == :caller, do: :client, else: :server)
+        ]
+
+    worker =
+      spawn(fn ->
+        result =
+          if network(:relay_endpoint_current?, [state.identity.public_key, context.connection]) ==
+               true,
+             do: carrier(:punch, [owner, opts]),
+             else: {:error, :stale_relay_endpoint}
+
+        send(owner, {:dial_result, route.id, "punch", self(), result})
+      end)
+
+    %{
+      route
+      | punch_started: true,
+        connections: Map.put(route.connections, "punch", {:dialing, worker})
+    }
+  end
+
+  defp start_punch(route, _state), do: route
+
+  defp network(function, args) do
+    if Code.ensure_loaded?(Arc.Net),
+      do: apply(Arc.Net, function, args),
+      else: {:error, :relay_runtime_unavailable}
+  catch
+    :exit, _ -> {:error, :relay_unavailable}
+  end
+
+  defp pending_connection?("punch", {:dialing, worker}), do: is_pid(worker)
+  defp pending_connection?(_direction, pid), do: is_pid(pid)
 
   defp listen(%{rule: %{listen: nil}} = route, _state), do: {route, nil}
 
@@ -871,6 +1008,8 @@ defmodule Arc.Data.Direct do
   end
 
   defp prepare(state, route) do
+    if route.punch_worker, do: Process.exit(route.punch_worker, :shutdown)
+
     route.connections
     |> Enum.reject(fn {direction, _} -> direction == route.selected end)
     |> Enum.each(fn {_, pid} -> close_connection(pid) end)
@@ -1042,6 +1181,9 @@ defmodule Arc.Data.Direct do
         &route.scope[&1]
       )
 
+    # Keep the existing binding unchanged for peers without the extension.
+    fields = if route.hole_punch, do: fields ++ ["tcp-hole-punch-v1"], else: fields
+
     :crypto.hash(
       :sha256,
       "ARC_DIRECT_V1" <>
@@ -1153,8 +1295,10 @@ defmodule Arc.Data.Direct do
     end)
   end
 
-  defp close_connections(route),
-    do: Enum.each(route.connections, fn {_, pid} -> close_connection(pid) end)
+  defp close_connections(route) do
+    if route.punch_worker, do: Process.exit(route.punch_worker, :shutdown)
+    Enum.each(route.connections, fn {_, pid} -> close_connection(pid) end)
+  end
 
   defp close_connection({:dialing, worker}), do: Process.exit(worker, :shutdown)
   defp close_connection(pid), do: carrier(:close, [pid])

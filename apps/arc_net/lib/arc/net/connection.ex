@@ -46,6 +46,7 @@ defmodule Arc.Net.Connection do
 
   # --- Client API ---
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
   end
@@ -72,6 +73,20 @@ defmodule Arc.Net.Connection do
   @doc "The frame cap the relay advertised, or `:unbounded`. `nil` before the relay info arrives."
   def peer_max_frame_bytes(conn_pid) do
     GenServer.call(conn_pid, :peer_max_frame_bytes)
+  end
+
+  @doc false
+  def endpoint(conn_pid) when is_pid(conn_pid) do
+    GenServer.call(conn_pid, :endpoint)
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
+  end
+
+  @doc false
+  def peer_endpoint(conn_pid) when is_pid(conn_pid) do
+    GenServer.call(conn_pid, :peer_endpoint)
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
   end
 
   @doc "Best-effort packet forward path used by relay fanout."
@@ -271,8 +286,36 @@ defmodule Arc.Net.Connection do
     {:reply, state.peer_max_frame_bytes, state}
   end
 
+  def handle_call(:endpoint, _from, state) do
+    {:reply, socket_endpoint(state.socket), state}
+  end
+
+  def handle_call(:peer_endpoint, _from, state) do
+    {:reply, socket_peer_endpoint(state.socket), state}
+  end
+
   def handle_call(_msg, _from, state) do
     {:reply, {:error, :unsupported}, state}
+  end
+
+  defp socket_endpoint(socket) do
+    with {:ok, local} <- :inet.sockname(socket),
+         {:ok, peer} <- :inet.peername(socket) do
+      {:ok, %{local: local, peer: peer}}
+    else
+      {:error, _reason} -> {:error, :connection_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
+  end
+
+  defp socket_peer_endpoint(socket) do
+    case :inet.peername(socket) do
+      {:ok, peer} -> {:ok, peer}
+      {:error, _reason} -> {:error, :connection_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
   end
 
   @impl GenServer
@@ -412,34 +455,30 @@ defmodule Arc.Net.Connection do
   end
 
   defp dispatch_frame(packet, %{role: :client, parent: transport_pid} = state) do
-    cond do
-      directory_frame?(packet) ->
-        Transport.directory_received(transport_pid, directory_payload(packet))
-        state
+    if directory_frame?(packet) do
+      Transport.directory_received(transport_pid, directory_payload(packet))
+      state
+    else
+      case Handshake.decode_relay_info(packet) do
+        {:ok, cap} ->
+          %{state | peer_max_frame_bytes: cap}
 
-      true ->
-        case Handshake.decode_relay_info(packet) do
-          {:ok, cap} ->
-            %{state | peer_max_frame_bytes: cap}
-
-          :error ->
-            Transport.packet_received(transport_pid, packet)
-            state
-        end
+        :error ->
+          Transport.packet_received(transport_pid, packet)
+          state
+      end
     end
   end
 
   defp dispatch_frame(packet, %{role: :federation, parent: federation_pid} = state) do
-    cond do
-      federation_frame?(packet) ->
-        forward_federation_frame(federation_pid, federation_payload(packet))
-        state
-
-      true ->
-        case Handshake.decode_relay_info(packet) do
-          {:ok, cap} -> %{state | peer_max_frame_bytes: cap}
-          :error -> state
-        end
+    if federation_frame?(packet) do
+      forward_federation_frame(federation_pid, federation_payload(packet))
+      state
+    else
+      case Handshake.decode_relay_info(packet) do
+        {:ok, cap} -> %{state | peer_max_frame_bytes: cap}
+        :error -> state
+      end
     end
   end
 

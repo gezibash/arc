@@ -96,21 +96,26 @@ defmodule Arc.Host.AgentPool do
   end
 
   defp initialize_agent(agent, identity, relay) do
-    with :ok <- Agent.publish(agent), :ok <- maybe_connect_relay(identity, relay, agent), do: :ok
+    case Agent.publish(agent) do
+      :ok -> maybe_connect_relay(identity, relay, agent)
+      result -> result
+    end
   end
 
   defp maybe_connect_relay(_identity, nil, _agent), do: :ok
 
   defp maybe_connect_relay(identity, %{host: host, port: port, pubkey: pubkey}, agent) do
-    if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :connect_relay, 4) do
-      # Arc.Net is an optional runtime peer, not a compile-time dep.
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      with :ok <- apply(Arc.Net, :connect_relay, [host, port, identity, pubkey]),
-           :ok <- Agent.publish_relay(agent),
-           do: :ok
-    else
-      {:error, :relay_runtime_unavailable}
+    case relay_call(:connect_relay, [host, port, identity, pubkey]) do
+      :ok -> Agent.publish_relay(agent)
+      result -> result
     end
+  end
+
+  # Arc.Net is an optional runtime peer, not a compile-time dependency.
+  defp relay_call(function, args) do
+    if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, function, length(args)),
+      do: apply(Arc.Net, function, args),
+      else: {:error, :relay_runtime_unavailable}
   end
 
   defp do_resolve_identity(nil), do: KeyStore.resolve_active()

@@ -4,7 +4,8 @@
 
 This extends the [connection lifecycle](PROMOTION.md) and [OTP TLS
 carrier](CARRIER.md). The first direct profile implements explicit reverse
-dialing and nomination from local policy. Broader pathfinding remains design work.
+dialing, nomination from local policy, and an optional best-effort TCP
+hole-punch attempt. Broader pathfinding remains design work.
 ARC should preserve an authorized working communication path while preparing
 alternatives. Reliability takes priority over a shorter path or lower latency.
 
@@ -55,6 +56,7 @@ Keep a bounded set of permitted candidates per peer and consent scope:
 | Current relay route | Existing connections | Existing relays | Current sharing, transit, and service permissions remain valid. |
 | Direct toward provider | Citizen | Provider | Provider allows listening; citizen allows dialing this candidate. |
 | Direct toward citizen | Provider | Citizen | Citizen allows listening; provider allows dialing this candidate. |
+| Hole-punch candidate | Either endpoint | Short-lived peer port reuse | Both exact rules enable `hole_punch`; each observed endpoint is in the other rule's `dial` list. |
 | Fresh relay route | Citizen's selected relay | Approved federation partners | Fresh discovery establishes a permitted route to the provider. |
 
 Candidates bind endpoint identities, transport address, listener owner, consent
@@ -148,8 +150,11 @@ at multiple home relays is outside this initial plan.
   nomination, finite leases, and bounded direct request/reply admission. It does
   not choose a route from health or latency measurements; matching owner policy
   explicitly selects the available candidates.
-- There is at most one local candidate per endpoint and direction. NAT traversal,
-  address-history scoring, and automatic route ranking remain future work.
+- There is at most one configured listener candidate per endpoint and direction.
+  Mutual `hole_punch` rules can add relay-observed, exact-address candidates with
+  source-port reuse. Endpoint-dependent NATs, firewall policy, and OS socket
+  support can still prevent a connection; no router mapping is configured.
+  Address-history scoring and automatic route ranking remain future work.
 
 The configured pinned relay reconnects automatically. Backup-relay selection
 still needs explicit configuration and publication semantics; this document does
@@ -170,6 +175,9 @@ not introduce supported configuration keys.
   another connection or override the new policy.
 - Break the direct path just after a write commits. Recovery must not execute
   it again, even if a new relay route is immediately available.
+- Exercise mutual source-port reuse across representative NAT and firewall
+  types. A failed punch must keep the relay request path and must not replay a
+  submitted application operation. Loopback alone is insufficient evidence.
 - Disconnect and restore the selected relay, then exercise any explicitly
   configured backup. Verify pins, sharing scope, and fresh reply authority.
 - Lose relay access while direct requests continue. Verify the original lease

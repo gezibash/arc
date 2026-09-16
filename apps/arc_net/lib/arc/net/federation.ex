@@ -172,22 +172,7 @@ defmodule Arc.Net.Federation do
     state =
       case Map.fetch(state.peers, peer_pk) do
         {:ok, peer} ->
-          if should_dial?(state.identity.public_key, peer_pk) do
-            case Map.get(state.links, peer_pk) do
-              %{stage: :dialing} ->
-                state
-
-              %{conn: conn} = link when is_map(link) ->
-                if is_pid(conn) and Process.alive?(conn),
-                  do: state,
-                  else: dial_peer(state, peer_pk, peer)
-
-              _ ->
-                dial_peer(state, peer_pk, peer)
-            end
-          else
-            state
-          end
+          maybe_dial_peer(state, peer_pk, peer)
 
         :error ->
           state
@@ -332,6 +317,27 @@ defmodule Arc.Net.Federation do
 
   def handle_info(_message, state), do: {:noreply, state}
 
+  defp maybe_dial_peer(state, peer_pk, peer) do
+    if should_dial?(state.identity.public_key, peer_pk) do
+      dial_peer_unless_connected(state, peer_pk, peer)
+    else
+      state
+    end
+  end
+
+  defp dial_peer_unless_connected(state, peer_pk, peer) do
+    case Map.get(state.links, peer_pk) do
+      %{stage: :dialing} ->
+        state
+
+      %{conn: conn} when is_pid(conn) ->
+        if Process.alive?(conn), do: state, else: dial_peer(state, peer_pk, peer)
+
+      _ ->
+        dial_peer(state, peer_pk, peer)
+    end
+  end
+
   @impl true
   def terminate(_reason, state) do
     Enum.each(state.links, fn {_peer, link} ->
@@ -422,14 +428,16 @@ defmodule Arc.Net.Federation do
              role: :federation,
              federation_pid: manager,
              peer_max_frame_bytes: peer_max_frame_bytes
-           ),
-         :ok <- :gen_tcp.controlling_process(socket, conn) do
-      {:ok, conn, peer_max_frame_bytes}
-    else
-      {:ok, conn} ->
-        Connection.close(conn)
-        {:error, :socket_transfer_failed}
+           ) do
+      case :gen_tcp.controlling_process(socket, conn) do
+        :ok ->
+          {:ok, conn, peer_max_frame_bytes}
 
+        {:error, _} = error ->
+          Connection.close(conn)
+          error
+      end
+    else
       {:error, _} = error ->
         error
 

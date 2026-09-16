@@ -8,6 +8,7 @@ defmodule Arc.Net do
   """
 
   alias Arc.Data.Packet
+  alias Arc.Net.Transport
   alias Arc.Net.TransportManager
 
   @default_directory_limit 10
@@ -69,35 +70,36 @@ defmodule Arc.Net do
     with {:ok, transport} <- relay_transport(source_pubkey),
          {:ok, reply} <-
            Arc.Net.Transport.directory_request(transport, :search, fields) do
-      with %{"ok" => true, "entries" => records, "total" => total} <- reply,
-           true <- is_list(records) and is_integer(total) and total >= 0,
-           true <- length(records) <= limit,
-           true <- is_boolean(Map.get(reply, "partial", false)),
-           true <- is_boolean(Map.get(reply, "cached", false)),
-           {:ok, next} <- validate_cursor(Map.get(reply, "next")),
-           {:ok, entries} <- validate_directory_entries(records, query, :search) do
-        if valid_page?(entries, after_cursor, next) do
-          result = %{entries: entries, next: next, total: total}
-
-          result =
-            if Map.has_key?(reply, "partial"),
-              do: Map.put(result, :partial?, reply["partial"]),
-              else: result
-
-          result =
-            if Map.has_key?(reply, "cached"),
-              do: Map.put(result, :cached?, reply["cached"]),
-              else: result
-
-          {:ok, result}
-        else
-          {:error, :relay_discovery_unavailable}
-        end
-      else
-        %{"ok" => false, "error" => reason} -> {:error, directory_error(reason)}
-        _ -> {:error, :relay_discovery_unavailable}
-      end
+      validate_relay_discovery_reply(reply, query, after_cursor, limit)
     end
+  end
+
+  defp validate_relay_discovery_reply(reply, query, after_cursor, limit) do
+    with %{"ok" => true, "entries" => records, "total" => total} <- reply,
+         true <- valid_directory_page?(reply, records, total, limit),
+         {:ok, next} <- validate_cursor(Map.get(reply, "next")),
+         {:ok, entries} <- validate_directory_entries(records, query, :search),
+         true <- valid_page?(entries, after_cursor, next) do
+      {:ok, discovery_result(reply, entries, next, total)}
+    else
+      %{"ok" => false, "error" => reason} -> {:error, directory_error(reason)}
+      _ -> {:error, :relay_discovery_unavailable}
+    end
+  end
+
+  defp valid_directory_page?(reply, records, total, limit) do
+    is_list(records) and is_integer(total) and total >= 0 and length(records) <= limit and
+      is_boolean(Map.get(reply, "partial", false)) and is_boolean(Map.get(reply, "cached", false))
+  end
+
+  defp discovery_result(reply, entries, next, total) do
+    %{entries: entries, next: next, total: total}
+    |> maybe_put_discovery_flag(reply, "partial", :partial?)
+    |> maybe_put_discovery_flag(reply, "cached", :cached?)
+  end
+
+  defp maybe_put_discovery_flag(result, reply, key, result_key) do
+    if Map.has_key?(reply, key), do: Map.put(result, result_key, reply[key]), else: result
   end
 
   @doc "Deliver only through a live relay connection; never use local mailbox fallback."
@@ -112,6 +114,31 @@ defmodule Arc.Net do
   def relay_public_key(source_pubkey) when is_binary(source_pubkey) do
     with {:ok, transport} <- relay_transport(source_pubkey) do
       Arc.Net.Transport.relay_public_key(transport)
+    end
+  end
+
+  @doc "Return this identity's current relay-observed endpoint for direct-promotion setup."
+  def relay_endpoint(source_pubkey) when is_binary(source_pubkey) do
+    with {:ok, transport} <- relay_transport(source_pubkey),
+         {:ok, %{connection: conn, local: local}} <- Transport.relay_endpoint_context(transport),
+         {:ok, %{"ok" => true, "observed" => observed}} <-
+           Arc.Net.Transport.directory_request(transport, :observe, %{}),
+         true <- valid_observed_endpoint?(observed),
+         true <- Transport.relay_endpoint_current?(transport, conn) do
+      {:ok, %{connection: conn, local: local, observed: observed}}
+    else
+      {:ok, %{"ok" => false}} -> {:error, :relay_observation_unavailable}
+      {:error, _} = error -> error
+      _ -> {:error, :relay_observation_unavailable}
+    end
+  end
+
+  @doc "Whether an observed relay connection remains the source identity's current connection."
+  def relay_endpoint_current?(source_pubkey, conn_pid)
+      when is_binary(source_pubkey) and is_pid(conn_pid) do
+    case relay_transport(source_pubkey) do
+      {:ok, transport} -> Transport.relay_endpoint_current?(transport, conn_pid)
+      _ -> false
     end
   end
 
@@ -247,6 +274,20 @@ defmodule Arc.Net do
     case TransportManager.lookup(source_pubkey) do
       {:ok, transport} -> {:ok, transport}
       :error -> {:error, :relay_not_connected}
+    end
+  end
+
+  defp valid_observed_endpoint?(%{"host" => host, "port" => port} = endpoint)
+       when map_size(endpoint) == 2 do
+    is_binary(host) and valid_observed_ip?(host) and is_integer(port) and port in 1..65_535
+  end
+
+  defp valid_observed_endpoint?(_), do: false
+
+  defp valid_observed_ip?(host) do
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, _ip} -> true
+      {:error, _reason} -> false
     end
   end
 

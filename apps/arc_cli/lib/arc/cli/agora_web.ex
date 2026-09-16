@@ -143,7 +143,7 @@ defmodule Arc.CLI.AgoraWeb do
     |> Map.put(:state, :redacted)
     |> Map.put(:message, :redacted)
     |> Map.put(:reason, :redacted)
-    |> Map.put(:log, :redacted)
+    |> Map.put(:log, [])
   end
 
   defp validate_tool(tool) when is_map(tool) do

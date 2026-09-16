@@ -792,7 +792,6 @@ defmodule Arc.Data.Agent do
       {:ok, package}
     else
       {:error, _} = error -> error
-      _ -> {:error, :invalid_capability_package}
     end
   end
 
@@ -947,9 +946,7 @@ defmodule Arc.Data.Agent do
       state = %{state | sessions: Map.put(state.sessions, peer_key, session)}
       {:ok, session.session_id, state}
     else
-      false -> {{:error, :peer_mismatch}, nil, state}
       {:error, _} = error -> {error, nil, state}
-      _ -> {{:error, :relay_refresh_failed}, nil, state}
     end
   end
 

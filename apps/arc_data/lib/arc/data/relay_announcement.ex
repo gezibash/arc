@@ -155,15 +155,15 @@ defmodule Arc.Data.RelayAnnouncement do
   @doc "Matches a provider identity by full petname, short petname, or public-key prefix."
   @spec matches?(entry(), String.t()) :: boolean()
   def matches?(entry, query) when is_map(entry) and is_binary(query) and query != "" do
-    if not String.valid?(query) do
-      false
-    else
+    if String.valid?(query) do
       query = String.downcase(query)
       public_key = entry |> Map.get(:public_key) |> public_key_hex()
 
       query == String.downcase(to_string(Map.get(entry, :name, ""))) or
         query == String.downcase(to_string(Map.get(entry, :short_name, ""))) or
         (is_binary(public_key) and String.starts_with?(public_key, query))
+    else
+      false
     end
   end
 
@@ -283,23 +283,23 @@ defmodule Arc.Data.RelayAnnouncement do
   defp validate_version(%{"version" => @version_v1}),
     do: {:ok, @version_v1, :local, nil, @v1_record_keys}
 
-  defp validate_version(%{"version" => @version_v2, "federation" => "direct"} = record) do
-    with {:ok, relay_public_key} <- decode_hex(record["relay_public_key"], 32) do
-      {:ok, @version_v2, :direct, relay_public_key, @v2_record_keys}
-    else
-      _ -> :error
-    end
-  end
+  defp validate_version(%{"version" => @version_v2, "federation" => "direct"} = record),
+    do: validate_federated_version(record, @version_v2, :direct, @v2_record_keys)
 
-  defp validate_version(%{"version" => @version_v3, "federation" => "network"} = record) do
-    with {:ok, relay_public_key} <- decode_hex(record["relay_public_key"], 32) do
-      {:ok, @version_v3, :network, relay_public_key, @v3_record_keys}
-    else
-      _ -> :error
-    end
-  end
+  defp validate_version(%{"version" => @version_v3, "federation" => "network"} = record),
+    do: validate_federated_version(record, @version_v3, :network, @v3_record_keys)
 
   defp validate_version(_), do: :error
+
+  defp validate_federated_version(record, version, federation, record_keys) do
+    case decode_hex(record["relay_public_key"], 32) do
+      {:ok, relay_public_key} ->
+        {:ok, version, federation, relay_public_key, record_keys}
+
+      :error ->
+        :error
+    end
+  end
 
   defp validate_capabilities(capabilities)
        when is_list(capabilities) and length(capabilities) <= @max_capabilities do

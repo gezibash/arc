@@ -192,10 +192,7 @@ defmodule Arc.CLI.ProtocolRequest do
     case File.open(path, [:write, :binary, :exclusive]) do
       {:ok, file} ->
         try do
-          case IO.binwrite(file, body) do
-            :ok -> :ok
-            _ -> {:error, :output_write_failed}
-          end
+          IO.binwrite(file, body)
         after
           File.close(file)
         end
@@ -210,10 +207,7 @@ defmodule Arc.CLI.ProtocolRequest do
     :ok = :io.setopts(:standard_io, encoding: :latin1)
 
     try do
-      case IO.binwrite(:stdio, body) do
-        :ok -> :ok
-        _ -> {:error, :output_write_failed}
-      end
+      IO.binwrite(:stdio, body)
     after
       :io.setopts(:standard_io, encoding: encoding)
     end
@@ -263,6 +257,7 @@ defmodule Arc.CLI.ProtocolRequest do
     |> String.replace(~r/[\x00-\x1f\x7f]/u, " ")
   end
 
+  @spec error(String.t()) :: no_return()
   defp error(message) do
     IO.puts(:stderr, "Error: #{message}")
     Arc.CLI.Exit.halt(1)

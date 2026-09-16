@@ -30,6 +30,7 @@ pinned relay. The file is JSON and has this exact outer shape:
       "path": "/main",
       "lease_ms": 30000,
       "dial": ["192.0.2.44"],
+      "hole_punch": true,
       "listen": {"bind": "0.0.0.0", "address": "192.0.2.44", "port": 0}
     }
   ]
@@ -46,14 +47,43 @@ path. A file accepts at most 32 rules and cannot contain duplicate scopes.
 `lease_ms` defaults to 30000 and must be from 1000 through 120000. `dial` holds
 at most four literal IPv4 or IPv6 addresses; host names, wildcard addresses, and
 link-local or multicast addresses are rejected. At least one of `dial` or
-`listen` is required.
+`listen` is required. `hole_punch` defaults to `false`. When set to `true`, the
+same rule must have a nonempty exact `dial` allowlist.
 
 `listen` is optional. `bind` is the local literal address to bind, `address` is
 the literal address advertised to the peer, and `port` may be 0 so the operating
 system chooses a port. The advertised listener address must appear in the other
-endpoint's `dial` list. The process does not configure a router, discover a
-public mapping, or use STUN. The operator must arrange firewall rules and any
-public address mapping.
+endpoint's `dial` list. ARC does not configure a router or use STUN. For this
+ordinary listener, the operator arranges any required firewall rule and public
+address mapping.
+
+## Optional TCP hole punching
+
+`"hole_punch": true` is a separate, mutual opt-in. It does not broaden a rule's
+peer, resource, or address scope. After both endpoints have accepted the exact
+scope over authenticated relays, each endpoint may ask its own relay for that
+connection's observed source IP address and port. The endpoints exchange those
+observations only inside the authenticated relay conversation. The observed
+address must still be present in the other owner's `dial` list before it becomes
+a candidate.
+
+For this mode, both owners set `"hole_punch": true` in their matching rule and
+list the peer's permitted public address in `dial`. They can omit `listen`
+entirely. Existing rules without the flag keep their previous behavior.
+
+ARC then makes short-lived outbound and inbound attempts using the same local
+TCP source port. The OTP carrier keeps fixed TLS client and server roles during
+simultaneous active and passive attempts. This uses Erlang/OTP TCP and TLS only;
+it adds no service or runtime dependency. It does not configure a router, create
+a port mapping, publish an address, or expose a general listener.
+
+This is best effort. Endpoint-dependent NATs, restrictive firewalls, and
+operating systems that cannot reuse the port prevent it from working. ARC falls
+back to the existing relay path in those cases. A failed attempt never replays
+an application request. Loopback tests only exercise local carrier mechanics;
+they do not demonstrate traversal across real NATs.
+
+## Reachable listener setup
 
 For a provider that listens and a citizen that dials it, the provider's rule
 has `listen` and the citizen's matching rule lists the provider address in
@@ -110,7 +140,9 @@ relay path is available.
 
 ## First-profile boundaries
 
-- One reachable listener is required; there is no NAT hole punching.
+- Ordinary direct rules need one reachable listener. Rules with mutual
+  `hole_punch` consent can attempt source-port reuse without a configured
+  listener, but they have no cross-network reachability guarantee.
 - There are no configured backup relay sets, address-history scoring, or
   automatic route ranking.
 - ARC does not resume a partially transferred byte stream.

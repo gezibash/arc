@@ -137,6 +137,13 @@ defmodule Arc.Net.Relay do
   def init(port) when is_integer(port), do: init({port, []})
 
   def init({port, opts}) do
+    case relay_init_config(opts) do
+      {:ok, config} -> start_relay(port, config)
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp relay_init_config(opts) do
     backlog = Application.get_env(:arc_net, :relay_backlog, @default_backlog)
     acceptors = Application.get_env(:arc_net, :relay_acceptors, @default_acceptors)
 
@@ -146,94 +153,120 @@ defmodule Arc.Net.Relay do
     relay_identity = Keyword.get(opts, :relay_identity)
     peers = Keyword.get(opts, :federation_peers, [])
     transit = Keyword.get(opts, :federation_transit, false)
+    relay_public_key = relay_public_key(opts, relay_identity)
 
-    relay_public_key =
-      if match?(%Identity{}, relay_identity),
-        do: relay_identity.public_key,
-        else: Keyword.get(opts, :relay_public_key, :crypto.strong_rand_bytes(32))
-
-    if valid_pubkey?(relay_public_key) and valid_count?(acceptors) and
-         valid_count?(route_partitions) and valid_federation?(relay_identity, peers) and
-         is_boolean(transit) do
-      cleanup_previous_runtime()
-
-      {:ok, listen_socket} =
-        :gen_tcp.listen(port, [
-          :binary,
-          packet: :raw,
-          active: false,
-          reuseaddr: true,
-          backlog: backlog
-        ])
-
-      routes_tables = init_tables(route_partitions)
-      {shard_pids, shard_refs} = start_shards(route_partitions, routes_tables)
-      put_runtime(routes_tables, shard_pids)
-
-      {:ok, actual_port} = :inet.port(listen_socket)
-      acceptor_refs = start_acceptors(listen_socket, self(), relay_public_key, acceptors)
-      {federation, federation_ref} = start_federation(relay_identity, peers)
-
-      if federation do
-        Process.send_after(self(), :sweep_federation, 30_000)
-        Process.send_after(self(), :sync_catalogs, @catalog_interval)
-      end
-
-      state = %{
-        listen_socket: listen_socket,
-        port: actual_port,
-        relay_public_key: relay_public_key,
-        acceptor_count: acceptors,
-        route_partitions: route_partitions,
-        acceptor_refs: acceptor_refs,
-        routes_tables: routes_tables,
-        shard_pids: shard_pids,
-        shard_refs: shard_refs,
-        directory_records: %{},
-        directory_clients: %{},
-        directory_conn_refs: %{},
-        federation: federation,
-        federation_ref: federation_ref,
-        federation_peers: Enum.map(peers, & &1.public_key),
-        federation_transit: transit,
-        federation_queries: %{},
-        federation_entries: %{},
-        federation_returns: %{},
-        federation_network_returns: %{},
-        federation_seen: %{},
-        federation_catalog:
-          FederationCatalog.new(relay_public_key, Enum.map(peers, & &1.public_key)),
-        catalog_generation: 0,
-        catalog_ready: MapSet.new(),
-        catalog_syncs: %{},
-        catalog_queue: MapSet.new(),
-        catalog_attempts: %{},
-        catalog_hits: 0,
-        catalog_sync_pages: 0,
-        federation_live_queries: 0
-      }
-
-      emit([:relay, :started], %{count: 1}, %{
-        port: actual_port,
-        backlog: backlog,
-        acceptors: acceptors,
-        route_partitions: route_partitions,
-        route_shards: map_size(shard_pids)
-      })
-
-      {:ok, state}
-    else
-      reason =
-        cond do
-          not valid_pubkey?(relay_public_key) -> :invalid_relay_pubkey
-          not valid_count?(acceptors) -> :invalid_acceptor_count
-          not valid_federation?(relay_identity, peers) -> :invalid_federation_config
-          not is_boolean(transit) -> :invalid_federation_config
-          true -> :invalid_route_partitions
-        end
-
-      {:stop, reason}
+    with :ok <-
+           validate_relay_config(
+             relay_public_key,
+             acceptors,
+             route_partitions,
+             relay_identity,
+             peers,
+             transit
+           ) do
+      {:ok,
+       %{
+         backlog: backlog,
+         acceptors: acceptors,
+         route_partitions: route_partitions,
+         relay_identity: relay_identity,
+         relay_public_key: relay_public_key,
+         peers: peers,
+         transit: transit
+       }}
     end
+  end
+
+  defp relay_public_key(_opts, %Identity{} = identity), do: identity.public_key
+
+  defp relay_public_key(opts, _identity),
+    do: Keyword.get(opts, :relay_public_key, :crypto.strong_rand_bytes(32))
+
+  defp validate_relay_config(relay_key, acceptors, route_partitions, identity, peers, transit) do
+    cond do
+      not valid_pubkey?(relay_key) -> {:error, :invalid_relay_pubkey}
+      not valid_count?(acceptors) -> {:error, :invalid_acceptor_count}
+      not valid_federation?(identity, peers) -> {:error, :invalid_federation_config}
+      not is_boolean(transit) -> {:error, :invalid_federation_config}
+      not valid_count?(route_partitions) -> {:error, :invalid_route_partitions}
+      true -> :ok
+    end
+  end
+
+  defp start_relay(port, config) do
+    cleanup_previous_runtime()
+
+    {:ok, listen_socket} =
+      :gen_tcp.listen(port, [
+        :binary,
+        packet: :raw,
+        active: false,
+        reuseaddr: true,
+        backlog: config.backlog
+      ])
+
+    routes_tables = init_tables(config.route_partitions)
+    {shard_pids, shard_refs} = start_shards(config.route_partitions, routes_tables)
+    put_runtime(routes_tables, shard_pids)
+
+    {:ok, actual_port} = :inet.port(listen_socket)
+
+    acceptor_refs =
+      start_acceptors(listen_socket, self(), config.relay_public_key, config.acceptors)
+
+    {federation, federation_ref} = start_federation(config.relay_identity, config.peers)
+    schedule_federation_work(federation)
+
+    state = %{
+      listen_socket: listen_socket,
+      port: actual_port,
+      relay_public_key: config.relay_public_key,
+      acceptor_count: config.acceptors,
+      route_partitions: config.route_partitions,
+      acceptor_refs: acceptor_refs,
+      routes_tables: routes_tables,
+      shard_pids: shard_pids,
+      shard_refs: shard_refs,
+      directory_records: %{},
+      directory_clients: %{},
+      directory_conn_refs: %{},
+      federation: federation,
+      federation_ref: federation_ref,
+      federation_peers: Enum.map(config.peers, & &1.public_key),
+      federation_transit: config.transit,
+      federation_queries: %{},
+      federation_entries: %{},
+      federation_returns: %{},
+      federation_network_returns: %{},
+      federation_seen: %{},
+      federation_catalog:
+        FederationCatalog.new(config.relay_public_key, Enum.map(config.peers, & &1.public_key)),
+      catalog_generation: 0,
+      catalog_ready: MapSet.new(),
+      catalog_syncs: %{},
+      catalog_queue: MapSet.new(),
+      catalog_attempts: %{},
+      catalog_hits: 0,
+      catalog_sync_pages: 0,
+      federation_live_queries: 0
+    }
+
+    emit([:relay, :started], %{count: 1}, %{
+      port: actual_port,
+      backlog: config.backlog,
+      acceptors: config.acceptors,
+      route_partitions: config.route_partitions,
+      route_shards: map_size(shard_pids)
+    })
+
+    {:ok, state}
+  end
+
+  defp schedule_federation_work(nil), do: :ok
+
+  defp schedule_federation_work(_federation) do
+    Process.send_after(self(), :sweep_federation, 30_000)
+    Process.send_after(self(), :sync_catalogs, @catalog_interval)
   end
 
   @impl GenServer
@@ -625,48 +658,60 @@ defmodule Arc.Net.Relay do
     state = prune_federation(state)
 
     cond do
-      peer not in state.federation_peers or
-          not FederationDirectory.valid_ingress?(request, peer, state.relay_public_key) ->
+      not valid_federation_request?(state, peer, request) ->
         {:reply, %{"error" => "invalid_federation_request"}, state}
 
-      FederationDirectory.network?(request) and
-          (Map.has_key?(state.federation_seen, request["network"]["id"]) or
-             map_size(state.federation_seen) >= @max_directory_records) ->
+      duplicate_network_request?(state, request) ->
         {:reply, %{"entries" => [], "routes" => %{}, "next" => :null, "partial" => true}, state}
 
       true ->
-        state =
-          if FederationDirectory.network?(request) do
-            expires = System.monotonic_time(:millisecond) + 12_000
+        state = remember_network_request(state, request)
+        federation_request_reply(state, peer, request, from)
+    end
+  end
 
-            %{
-              state
-              | federation_seen: Map.put(state.federation_seen, request["network"]["id"], expires)
-            }
-          else
-            state
-          end
+  defp valid_federation_request?(state, peer, request) do
+    peer in state.federation_peers and
+      FederationDirectory.valid_ingress?(request, peer, state.relay_public_key)
+  end
 
-        onward = state.federation_transit and FederationDirectory.network?(request)
-        peers = FederationDirectory.eligible_peers(state.federation_peers, request)
+  defp duplicate_network_request?(state, request) do
+    FederationDirectory.network?(request) and
+      (Map.has_key?(state.federation_seen, request["network"]["id"]) or
+         map_size(state.federation_seen) >= @max_directory_records)
+  end
 
-        if onward and peers != [] and FederationDirectory.can_continue?(request) do
-          query = %{
-            kind: :peer,
-            peer: peer,
-            from: from,
-            incoming: request,
-            request: FederationDirectory.continue(request, state.relay_public_key)
-          }
+  defp remember_network_request(state, request) do
+    if FederationDirectory.network?(request) do
+      expires = System.monotonic_time(:millisecond) + 12_000
 
-          {:noreply, start_federation_query(state, query)}
-        else
-          reply =
-            FederationDirectory.export(local_entries(state), state.relay_public_key, request)
+      %{
+        state
+        | federation_seen: Map.put(state.federation_seen, request["network"]["id"], expires)
+      }
+    else
+      state
+    end
+  end
 
-          partial = onward and peers != [] and not FederationDirectory.can_continue?(request)
-          {:reply, Map.put(reply, "partial", partial), state}
-        end
+  defp federation_request_reply(state, peer, request, from) do
+    onward = state.federation_transit and FederationDirectory.network?(request)
+    peers = FederationDirectory.eligible_peers(state.federation_peers, request)
+
+    if onward and peers != [] and FederationDirectory.can_continue?(request) do
+      query = %{
+        kind: :peer,
+        peer: peer,
+        from: from,
+        incoming: request,
+        request: FederationDirectory.continue(request, state.relay_public_key)
+      }
+
+      {:noreply, start_federation_query(state, query)}
+    else
+      reply = FederationDirectory.export(local_entries(state), state.relay_public_key, request)
+      partial = onward and peers != [] and not FederationDirectory.can_continue?(request)
+      {:reply, Map.put(reply, "partial", partial), state}
     end
   end
 
@@ -721,50 +766,9 @@ defmodule Arc.Net.Relay do
   defp finish_federation_query(state, query, responses) do
     if query.caller_monitor, do: Process.demonitor(query.caller_monitor, [:flush])
 
-    responses =
-      Enum.map(responses, fn {peer, result} ->
-        if peer in Map.get(query, :invalid_peers, []),
-          do: {peer, {:error, :federation_peer_unavailable}},
-          else: {peer, result}
-      end)
-
-    local =
-      if query.kind == :peer,
-        do:
-          FederationDirectory.exportable(
-            local_entries(state),
-            state.relay_public_key,
-            query.incoming
-          ),
-        else: local_entries(state)
-
-    opts = if query.kind == :peer, do: [home: state.relay_public_key], else: []
-
-    {reply, imported} =
-      FederationDirectory.combine(local, responses, query.request, opts)
-
-    state = refresh_catalog(state)
-    changed? = query.catalog_generation != state.catalog_generation
-
-    state = if changed?, do: state, else: cache_imported(state, imported)
-
-    # A search that started cold may finish after synchronization or withdrawal.
-    # Use the known current catalog instead of returning an older branch result.
-    reply =
-      if changed? and query.kind == :directory and query.request["type"] == "search" and
-           FederationCatalog.synced_peers(state.federation_catalog) > 0 do
-        entries =
-          local_entries(state) ++
-            Enum.map(FederationCatalog.entries(state.federation_catalog), &elem(&1, 1))
-
-        FederationDirectory.cached(entries, query.request)
-        |> Map.merge(%{
-          "cached" => true,
-          "partial" => FederationCatalog.partial?(state.federation_catalog)
-        })
-      else
-        Map.put(reply, "cached", false)
-      end
+    {reply, imported} = combine_federation_query(state, query, responses)
+    {state, changed?} = refresh_query_catalog(state, query, imported)
+    reply = current_query_reply(state, query, reply, changed?)
 
     case query do
       %{kind: :peer, from: from} ->
@@ -791,6 +795,62 @@ defmodule Arc.Net.Relay do
           else: route_remote(state, conn, packet, false)
     end
   end
+
+  defp combine_federation_query(state, query, responses) do
+    local = federation_query_local_entries(state, query)
+    responses = invalidate_query_peers(responses, query)
+
+    FederationDirectory.combine(
+      local,
+      responses,
+      query.request,
+      federation_query_options(state, query)
+    )
+  end
+
+  defp federation_query_local_entries(state, %{kind: :peer, incoming: incoming}) do
+    FederationDirectory.exportable(local_entries(state), state.relay_public_key, incoming)
+  end
+
+  defp federation_query_local_entries(state, _query), do: local_entries(state)
+
+  defp federation_query_options(state, %{kind: :peer}), do: [home: state.relay_public_key]
+  defp federation_query_options(_state, _query), do: []
+
+  defp invalidate_query_peers(responses, query) do
+    Enum.map(responses, fn {peer, result} ->
+      if peer in Map.get(query, :invalid_peers, []),
+        do: {peer, {:error, :federation_peer_unavailable}},
+        else: {peer, result}
+    end)
+  end
+
+  defp refresh_query_catalog(state, query, imported) do
+    state = refresh_catalog(state)
+    changed? = query.catalog_generation != state.catalog_generation
+    {if(changed?, do: state, else: cache_imported(state, imported)), changed?}
+  end
+
+  # A search that started cold may finish after synchronization or withdrawal.
+  # Use the known current catalog instead of returning an older branch result.
+  defp current_query_reply(state, query, reply, true) do
+    if query.kind == :directory and query.request["type"] == "search" and
+         FederationCatalog.synced_peers(state.federation_catalog) > 0 do
+      entries =
+        local_entries(state) ++
+          Enum.map(FederationCatalog.entries(state.federation_catalog), &elem(&1, 1))
+
+      FederationDirectory.cached(entries, query.request)
+      |> Map.merge(%{
+        "cached" => true,
+        "partial" => FederationCatalog.partial?(state.federation_catalog)
+      })
+    else
+      Map.put(reply, "cached", false)
+    end
+  end
+
+  defp current_query_reply(_state, _query, reply, false), do: Map.put(reply, "cached", false)
 
   # A complete public key selects one cryptographic identity even when other
   # branches are unavailable. Names and prefixes still require complete replies.
@@ -874,66 +934,77 @@ defmodule Arc.Net.Relay do
          {:ok, decoded} <- Packet.decode(packet),
          true <- valid_sender_fast?(conn, decoded.src),
          true <- fresh_packet?(decoded) do
-      key = {decoded.src, decoded.dst, decoded.session_id}
-      imported = Map.get(state.federation_entries, decoded.dst)
-      return = Map.get(state.federation_returns, key)
-
-      network_reply =
-        Map.get(state.federation_network_returns, {decoded.dst, decoded.src, decoded.session_id})
-
-      peer =
-        cond do
-          return != nil and return.kind == :inbound -> return.peer
-          imported != nil -> imported.peer
-          true -> nil
-        end
-
-      cond do
-        network_reply != nil and network_reply.local_end == :destination and
-            network_reply.local_conn == conn ->
-          send_network_reply(state, packet, decoded, network_reply)
-
-        imported != nil and imported.entry.federation == :network ->
-          send_network_request(state, conn, packet, decoded, imported.entry)
-
-        peer != nil ->
-          state = put_return(state, key, peer, :outbound)
-
-          if match?(%{peer: ^peer}, Map.get(state.federation_returns, key)) do
-            case safe_federation_forward(state.federation, peer, packet) do
-              :ok ->
-                emit(
-                  [:relay, :federation, :forwarded],
-                  %{count: 1, bytes: byte_size(packet)},
-                  %{}
-                )
-
-              {:error, _} ->
-                drop_fast(packet, :federation_unavailable)
-            end
-          end
-
-          state
-
-        resolve? ->
-          request = %{"type" => "resolve", "query" => Base.encode16(decoded.dst, case: :lower)}
-
-          start_federation_query(state, %{
-            kind: :route,
-            conn: conn,
-            packet: packet,
-            request: request
-          })
-
-        true ->
-          drop_fast(packet, :no_route)
-          state
-      end
+      route_remote_packet(state, conn, packet, decoded, resolve?)
     else
       _ ->
         drop_fast(packet, :no_route)
         state
     end
+  end
+
+  defp route_remote_packet(state, conn, packet, decoded, resolve?) do
+    context = remote_route_context(state, decoded)
+
+    cond do
+      destination_network_reply?(context, conn) ->
+        send_network_reply(state, packet, decoded, context.network_reply)
+
+      network_entry?(context.imported) ->
+        send_network_request(state, conn, packet, decoded, context.imported.entry)
+
+      context.peer != nil ->
+        forward_to_federation_peer(state, packet, context.key, context.peer)
+
+      resolve? ->
+        start_remote_route_query(state, conn, packet, decoded.dst)
+
+      true ->
+        drop_fast(packet, :no_route)
+        state
+    end
+  end
+
+  defp remote_route_context(state, decoded) do
+    key = {decoded.src, decoded.dst, decoded.session_id}
+    imported = Map.get(state.federation_entries, decoded.dst)
+    return = Map.get(state.federation_returns, key)
+
+    %{
+      key: key,
+      imported: imported,
+      peer: remote_route_peer(return, imported),
+      network_reply:
+        Map.get(state.federation_network_returns, {decoded.dst, decoded.src, decoded.session_id})
+    }
+  end
+
+  defp remote_route_peer(%{kind: :inbound, peer: peer}, _imported), do: peer
+  defp remote_route_peer(_return, %{peer: peer}), do: peer
+  defp remote_route_peer(_return, _imported), do: nil
+
+  defp destination_network_reply?(%{network_reply: reply}, conn) do
+    reply != nil and reply.local_end == :destination and reply.local_conn == conn
+  end
+
+  defp network_entry?(%{entry: %{federation: :network}}), do: true
+  defp network_entry?(_entry), do: false
+
+  defp forward_to_federation_peer(state, packet, key, peer) do
+    state = put_return(state, key, peer, :outbound)
+
+    if match?(%{peer: ^peer}, Map.get(state.federation_returns, key)) do
+      case safe_federation_forward(state.federation, peer, packet) do
+        :ok -> emit([:relay, :federation, :forwarded], %{count: 1, bytes: byte_size(packet)}, %{})
+        {:error, _} -> drop_fast(packet, :federation_unavailable)
+      end
+    end
+
+    state
+  end
+
+  defp start_remote_route_query(state, conn, packet, destination) do
+    request = %{"type" => "resolve", "query" => Base.encode16(destination, case: :lower)}
+    start_federation_query(state, %{kind: :route, conn: conn, packet: packet, request: request})
   end
 
   defp send_network_request(state, conn, packet, decoded, entry) do
@@ -1341,87 +1412,148 @@ defmodule Arc.Net.Relay do
   # bounded, infrequent metadata; packet forwarding remains on the ETS path.
   defp handle_directory_control(state, conn_pid, pubkey, payload) do
     case decode_directory_request(payload) do
-      {:ok, request_id, %{"type" => "announce", "record" => record}} ->
-        case verify_announcement(record, pubkey, state.relay_public_key) do
-          {:ok, entry} ->
-            case put_directory_record(state, pubkey, conn_pid, entry) do
-              {:ok, state} ->
-                send_directory_reply(conn_pid, request_id, %{"ok" => true})
-                state
-
-              {:error, state} ->
-                send_directory_error(conn_pid, request_id, "directory_full")
-                state
-            end
-
-          :error ->
-            send_directory_error(conn_pid, request_id, "invalid_announcement")
-            state
-        end
-
-      {:ok, request_id, %{"type" => "resolve", "query" => query}} ->
-        cond do
-          not valid_directory_query?(query) ->
-            send_directory_error(conn_pid, request_id, "invalid_query")
-            state
-
-          state.federation != nil ->
-            cached_directory_query(state, %{
-              kind: :directory,
-              conn: conn_pid,
-              pubkey: pubkey,
-              request_id: request_id,
-              request: %{"type" => "resolve", "query" => query}
-            })
-
-          true ->
-            entries = directory_entries(state, query, :resolve) |> Enum.take(2)
-            send_directory_reply(conn_pid, request_id, %{"ok" => true, "entries" => entries})
-            state
-        end
-
-      {:ok, request_id, %{"type" => "search", "query" => query} = request} ->
-        with true <- valid_directory_query?(query),
-             {:ok, after_cursor} <- validate_directory_cursor(Map.get(request, "after")) do
-          limit = directory_limit(Map.get(request, "limit"))
-
-          if state.federation do
-            request = %{"type" => "search", "query" => query, "limit" => limit}
-            request = if after_cursor, do: Map.put(request, "after", after_cursor), else: request
-
-            cached_directory_query(state, %{
-              kind: :directory,
-              conn: conn_pid,
-              pubkey: pubkey,
-              request_id: request_id,
-              request: request
-            })
-          else
-            {entries, next, total} =
-              paged_directory_entries(state, query, after_cursor, limit, request_id)
-
-            send_directory_reply(conn_pid, request_id, %{
-              "ok" => true,
-              "entries" => entries,
-              "next" => next || :null,
-              "total" => total
-            })
-
-            state
-          end
-        else
-          _ ->
-            send_directory_error(conn_pid, request_id, "invalid_query")
-            state
-        end
-
-      {:ok, request_id, _request} ->
-        send_directory_error(conn_pid, request_id, "invalid_request")
-        state
+      {:ok, request_id, request} ->
+        handle_directory_request(state, conn_pid, pubkey, request_id, request)
 
       :error ->
         state
     end
+  end
+
+  defp handle_directory_request(state, conn_pid, pubkey, request_id, %{
+         "type" => "announce",
+         "record" => record
+       }) do
+    announce_directory_record(state, conn_pid, pubkey, request_id, record)
+  end
+
+  defp handle_directory_request(state, conn_pid, pubkey, request_id, %{
+         "type" => "resolve",
+         "query" => query
+       }) do
+    resolve_directory_request(state, conn_pid, pubkey, request_id, query)
+  end
+
+  defp handle_directory_request(
+         state,
+         conn_pid,
+         pubkey,
+         request_id,
+         %{"type" => "search", "query" => query} = request
+       ) do
+    search_directory_request(state, conn_pid, pubkey, request_id, query, request)
+  end
+
+  defp handle_directory_request(
+         state,
+         conn_pid,
+         _pubkey,
+         request_id,
+         %{"type" => "observe"} = request
+       ) do
+    observe_directory_endpoint(state, conn_pid, request_id, request)
+  end
+
+  defp handle_directory_request(state, conn_pid, _pubkey, request_id, _request) do
+    send_directory_error(conn_pid, request_id, "invalid_request")
+    state
+  end
+
+  defp observe_directory_endpoint(state, conn_pid, request_id, request) do
+    if self_observation_request?(request) do
+      case Connection.peer_endpoint(conn_pid) do
+        {:ok, endpoint} ->
+          send_directory_reply(conn_pid, request_id, %{
+            "ok" => true,
+            "observed" => observed_endpoint(endpoint)
+          })
+
+        {:error, _reason} ->
+          send_directory_error(conn_pid, request_id, "observation_unavailable")
+      end
+    else
+      send_directory_error(conn_pid, request_id, "invalid_request")
+    end
+
+    state
+  end
+
+  defp self_observation_request?(request),
+    do: Enum.sort(Map.keys(request)) == ["request_id", "type"]
+
+  defp observed_endpoint({ip, port}) when is_integer(port) and port in 1..65_535 do
+    %{"host" => ip |> :inet.ntoa() |> List.to_string(), "port" => port}
+  end
+
+  defp announce_directory_record(state, conn_pid, pubkey, request_id, record) do
+    with {:ok, entry} <- verify_announcement(record, pubkey, state.relay_public_key),
+         {:ok, state} <- put_directory_record(state, pubkey, conn_pid, entry) do
+      send_directory_reply(conn_pid, request_id, %{"ok" => true})
+      state
+    else
+      {:error, state} ->
+        send_directory_error(conn_pid, request_id, "directory_full")
+        state
+
+      :error ->
+        send_directory_error(conn_pid, request_id, "invalid_announcement")
+        state
+    end
+  end
+
+  defp resolve_directory_request(state, conn_pid, pubkey, request_id, query) do
+    cond do
+      not valid_directory_query?(query) ->
+        send_directory_error(conn_pid, request_id, "invalid_query")
+        state
+
+      state.federation != nil ->
+        cached_directory_query(
+          state,
+          directory_query(conn_pid, pubkey, request_id, %{"type" => "resolve", "query" => query})
+        )
+
+      true ->
+        entries = directory_entries(state, query, :resolve) |> Enum.take(2)
+        send_directory_reply(conn_pid, request_id, %{"ok" => true, "entries" => entries})
+        state
+    end
+  end
+
+  defp search_directory_request(state, conn_pid, pubkey, request_id, query, request) do
+    with true <- valid_directory_query?(query),
+         {:ok, after_cursor} <- validate_directory_cursor(Map.get(request, "after")) do
+      limit = directory_limit(Map.get(request, "limit"))
+      search_directory_entries(state, conn_pid, pubkey, request_id, query, after_cursor, limit)
+    else
+      _ ->
+        send_directory_error(conn_pid, request_id, "invalid_query")
+        state
+    end
+  end
+
+  defp search_directory_entries(state, conn_pid, pubkey, request_id, query, after_cursor, limit) do
+    if state.federation do
+      request = %{"type" => "search", "query" => query, "limit" => limit}
+      request = if after_cursor, do: Map.put(request, "after", after_cursor), else: request
+      cached_directory_query(state, directory_query(conn_pid, pubkey, request_id, request))
+    else
+      {entries, next, total} =
+        paged_directory_entries(state, query, after_cursor, limit, request_id)
+
+      send_directory_reply(conn_pid, request_id, %{
+        "ok" => true,
+        "entries" => entries,
+        "next" => next || :null,
+        "total" => total
+      })
+
+      state
+    end
+  end
+
+  defp directory_query(conn_pid, pubkey, request_id, request) do
+    %{kind: :directory, conn: conn_pid, pubkey: pubkey, request_id: request_id, request: request}
   end
 
   defp decode_directory_request(payload) do

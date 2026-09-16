@@ -286,56 +286,40 @@ defmodule Arc.Data.InterfaceManifest do
   defp normalize_cli_input(%{"source" => "agora"} = input, _args),
     do: %{"source" => "agora", "operation" => present_string(input["operation"])}
 
-  defp normalize_cli_input(input, _args) when is_map(input) do
-    case Map.get(input, "source") do
-      "sealed_file" ->
-        %{"source" => "sealed_file", "file" => present_string(input["file"])}
+  defp normalize_cli_input(%{"source" => "sealed_file"} = input, _args),
+    do: %{"source" => "sealed_file", "file" => present_string(input["file"])}
 
-      "private_file" ->
-        %{
-          "source" => "private_file",
-          "operation" => present_string(input["operation"]),
-          "id" => present_string(input["id"]),
-          "after" => present_string(input["after"])
-        }
-
-      "arg" ->
-        case Map.get(input, "name") do
-          name when is_binary(name) and name != "" ->
-            %{
-              "source" => "arg",
-              "name" => name,
-              "join_with" => Map.get(input, "join_with", " ")
-            }
-
-          _ ->
-            nil
-        end
-
-      "template" ->
-        case Map.get(input, "template") do
-          template when is_binary(template) and template != "" ->
-            %{"source" => "template", "template" => template}
-
-          _ ->
-            nil
-        end
-
-      "json" ->
-        %{"source" => "json"}
-
-      "stdin" ->
-        %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
-        |> maybe_put("template", present_string(Map.get(input, "template")))
-        |> maybe_put("seal_to", normalize_seal_to(Map.get(input, "seal_to")))
-        |> maybe_put("body", present_string(Map.get(input, "body")))
-        |> maybe_put("file", present_string(Map.get(input, "file")))
-        |> maybe_put("attach", present_string(Map.get(input, "attach")))
-
-      _ ->
-        nil
-    end
+  defp normalize_cli_input(%{"source" => "private_file"} = input, _args) do
+    %{
+      "source" => "private_file",
+      "operation" => present_string(input["operation"]),
+      "id" => present_string(input["id"]),
+      "after" => present_string(input["after"])
+    }
   end
+
+  defp normalize_cli_input(%{"source" => "arg", "name" => name} = input, _args)
+       when is_binary(name) and name != "" do
+    %{"source" => "arg", "name" => name, "join_with" => Map.get(input, "join_with", " ")}
+  end
+
+  defp normalize_cli_input(%{"source" => "template", "template" => template}, _args)
+       when is_binary(template) and template != "" do
+    %{"source" => "template", "template" => template}
+  end
+
+  defp normalize_cli_input(%{"source" => "json"}, _args), do: %{"source" => "json"}
+
+  defp normalize_cli_input(%{"source" => "stdin"} = input, _args) do
+    %{"source" => "stdin", "join_with" => Map.get(input, "join_with", "\n")}
+    |> maybe_put("template", present_string(Map.get(input, "template")))
+    |> maybe_put("seal_to", normalize_seal_to(Map.get(input, "seal_to")))
+    |> maybe_put("body", present_string(Map.get(input, "body")))
+    |> maybe_put("file", present_string(Map.get(input, "file")))
+    |> maybe_put("attach", present_string(Map.get(input, "attach")))
+  end
+
+  defp normalize_cli_input(input, _args) when is_map(input), do: nil
 
   defp normalize_cli_input(_, [%{"name" => name}]) when is_binary(name) do
     %{"source" => "arg", "name" => name, "join_with" => " "}

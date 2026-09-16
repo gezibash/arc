@@ -582,54 +582,63 @@ defmodule Arc.CLI.Agent do
   defp print_discovery(
          %{query: query, total: total, truncated?: truncated?, matches: matches} = result
        ) do
-    query_label = if query == "", do: "(all)", else: query
-    IO.puts("Query: #{query_label}")
+    print_discovery_heading(query, result)
+    print_discovery_count(result, total, truncated?, matches)
+    Enum.each(matches, &print_discovery_match(&1, result[:scope]))
+  end
 
-    if result[:partial?] do
-      IO.puts("Federation search is incomplete; additional providers may exist.")
+  defp print_discovery_heading(query, result) do
+    IO.puts("Query: #{if(query == "", do: "(all)", else: query)}")
+
+    if result[:partial?],
+      do: IO.puts("Federation search is incomplete; additional providers may exist.")
+  end
+
+  defp print_discovery_count(result, total, truncated?, matches) do
+    case result[:scope] do
+      :relay -> print_relay_discovery_count(result[:next], matches)
+      _ -> print_local_discovery_count(total, truncated?, matches)
     end
+  end
 
-    cond do
-      result[:scope] == :relay ->
-        IO.puts("Matches on this relay page: #{length(matches)}")
-        if result[:next], do: IO.puts("Continue with --after #{result.next}")
+  defp print_relay_discovery_count(next, matches) do
+    IO.puts("Matches on this relay page: #{length(matches)}")
+    if next, do: IO.puts("Continue with --after #{next}")
+  end
 
-      truncated? ->
-        IO.puts("Matches: #{length(matches)} shown of #{total}")
+  defp print_local_discovery_count(total, true, matches),
+    do: IO.puts("Matches: #{length(matches)} shown of #{total}")
 
-      true ->
-        IO.puts("Matches: #{total}")
-    end
+  defp print_local_discovery_count(total, false, _matches), do: IO.puts("Matches: #{total}")
 
-    Enum.each(matches, fn %{provider: provider, capability: capability} ->
-      provider_name = provider["name"] || provider["short_name"] || "unknown"
+  defp print_discovery_match(%{provider: provider, capability: capability}, scope) do
+    provider_name = provider["name"] || provider["short_name"] || "unknown"
+    provider_query = discovery_provider_query(provider, provider_name, scope)
+    id = capability["id"] || "unknown"
+    kind = capability["kind"] || "capability"
+    scheme = capability["scheme"] || "unknown"
+    title = capability["title"] || id
 
-      provider_query =
-        if result[:scope] == :relay,
-          do: provider["public_key"] || provider_name,
-          else: provider_name
+    IO.puts("")
+    IO.puts("#{provider_name}/#{id} [#{kind}/#{scheme}]")
+    IO.puts("  #{title}")
+    print_discovery_summary(capability["summary"] || "")
+    IO.puts("  Expand: arc info #{provider_query} #{id}")
+    IO.puts("  Mount:  arc mount <task> add #{provider_query} #{id}")
+    print_discovery_install(capability, provider_query, id)
+  end
 
-      id = capability["id"] || "unknown"
-      kind = capability["kind"] || "capability"
-      scheme = capability["scheme"] || "unknown"
-      title = capability["title"] || id
-      summary = capability["summary"] || ""
+  defp discovery_provider_query(provider, provider_name, :relay),
+    do: provider["public_key"] || provider_name
 
-      IO.puts("")
-      IO.puts("#{provider_name}/#{id} [#{kind}/#{scheme}]")
-      IO.puts("  #{title}")
+  defp discovery_provider_query(_provider, provider_name, _scope), do: provider_name
 
-      if summary != "" do
-        IO.puts("  #{summary}")
-      end
+  defp print_discovery_summary(""), do: :ok
+  defp print_discovery_summary(summary), do: IO.puts("  #{summary}")
 
-      IO.puts("  Expand: arc info #{provider_query} #{id}")
-      IO.puts("  Mount:  arc mount <task> add #{provider_query} #{id}")
-
-      if Arc.CLI.ToolRegistry.cli_interface(capability) do
-        IO.puts("  Install: arc install #{provider_query} #{id}")
-      end
-    end)
+  defp print_discovery_install(capability, provider_query, id) do
+    if Arc.CLI.ToolRegistry.cli_interface(capability),
+      do: IO.puts("  Install: arc install #{provider_query} #{id}")
   end
 
   defp print_mount_added(task, mount) do
@@ -760,14 +769,20 @@ defmodule Arc.CLI.Agent do
   end
 
   defp maybe_connect_relay(my_identity, opts, agent) do
-    relay_addr =
-      case Keyword.get(opts, :relay) do
-        nil -> Arc.Net.relay_address()
-        addr -> Arc.Net.relay_address_from(addr)
-      end
-
+    relay_addr = configured_relay_address(opts)
     relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
+    validate_relay_configuration!(opts, relay_addr, relay_pubkey_pin)
+    connect_configured_relay(relay_addr, relay_pubkey_pin, my_identity, opts, agent)
+  end
 
+  defp configured_relay_address(opts) do
+    case Keyword.get(opts, :relay) do
+      nil -> Arc.Net.relay_address()
+      addr -> Arc.Net.relay_address_from(addr)
+    end
+  end
+
+  defp validate_relay_configuration!(opts, relay_addr, relay_pubkey_pin) do
     if federation_requested?(opts) and relay_addr == nil do
       error("federation flags require --relay (or ARC_RELAY)")
     end
@@ -779,29 +794,33 @@ defmodule Arc.CLI.Agent do
     if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
       error("invalid relay address (expected host:port)")
     end
+  end
 
+  defp connect_configured_relay(relay_addr, relay_pubkey_pin, my_identity, opts, agent) do
     case relay_addr do
       {host, port} ->
-        case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
-          :ok ->
-            case Agent.publish_relay(agent, federation: federation_option(opts)) do
-              :ok -> :ok
-              {:error, reason} -> error("relay announcement failed: #{inspect(reason)}")
-            end
-
-            %{
-              host: List.to_string(host),
-              port: port,
-              pubkey_pin: relay_pubkey_pin,
-              connected?: true
-            }
-
-          {:error, reason} ->
-            error("relay connect failed: #{inspect(reason)}")
-        end
+        connect_and_publish_relay(host, port, relay_pubkey_pin, my_identity, opts, agent)
 
       nil ->
         nil
+    end
+  end
+
+  defp connect_and_publish_relay(host, port, relay_pubkey_pin, my_identity, opts, agent) do
+    case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
+      :ok ->
+        publish_relay_or_error(agent, opts)
+        %{host: List.to_string(host), port: port, pubkey_pin: relay_pubkey_pin, connected?: true}
+
+      {:error, reason} ->
+        error("relay connect failed: #{inspect(reason)}")
+    end
+  end
+
+  defp publish_relay_or_error(agent, opts) do
+    case Agent.publish_relay(agent, federation: federation_option(opts)) do
+      :ok -> :ok
+      {:error, reason} -> error("relay announcement failed: #{inspect(reason)}")
     end
   end
 

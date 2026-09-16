@@ -35,6 +35,23 @@ defmodule Arc.CLI.AgoraWebTest do
     %{server: server, owner_public_key: identity.public_key, tool: tool}
   end
 
+  test "status redaction preserves the required log list" do
+    status =
+      AgoraWeb.format_status(%{
+        state: %{identity: "secret"},
+        message: "secret",
+        reason: "secret",
+        log: ["secret"],
+        retained: :value
+      })
+
+    assert status.state == :redacted
+    assert status.message == :redacted
+    assert status.reason == :redacted
+    assert status.log == []
+    assert status.retained == :value
+  end
+
   test "stopping the browser releases its listener and citizen agent", ctx do
     port = AgoraWeb.port(ctx.server)
     [{agent, _}] = Registry.lookup(Arc.Data.AgentRegistry, ctx.owner_public_key)

@@ -8,8 +8,9 @@ TLS, independent ARC crypto contexts, finite leases, and relay-session renewal.
 See [direct request/reply](DIRECT.md) for the supported configuration.
 
 This document also retains the broader lifecycle design. Statements about path
-ranking, multiple candidates, NAT traversal, byte streams, and richer recovery
-remain future work unless [DIRECT.md](DIRECT.md) says otherwise.
+ranking, multiple candidates, byte streams, and richer recovery remain future
+work unless [DIRECT.md](DIRECT.md) says otherwise. `hole_punch` is a limited
+best-effort TCP source-port reuse attempt, not general NAT traversal.
 
 ARC starts remote conversations through relays. Once the endpoints agree, a
 verified direct path may carry application traffic. Discovery and ongoing
@@ -59,6 +60,13 @@ service. Local network candidates need separate permission. Candidates and
 negotiation material stay in encrypted endpoint messages, never public catalogs.
 Changing the peer, resource, capability digest, or allowed disclosure requires a
 new agreement. Existing provider grants remain authoritative for every request.
+
+When both exact rules enable `hole_punch`, relay-observed source IP addresses and
+ports may be exchanged after that consent. Each observed address must still be in
+the other owner's literal `dial` allowlist. The short-lived TCP attempts reuse a
+source port with fixed TLS client and server roles. They do not configure routers
+or expose a general application listener. Failure leaves traffic on relays and
+never causes an application request to be replayed.
 
 ## Lifecycle
 

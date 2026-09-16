@@ -227,29 +227,8 @@ defmodule Arc.Net.FederationTransportTest do
 
         :ok = send_frame(socket, @prefix <> (response |> :json.encode() |> IO.iodata_to_binary()))
 
-        if mode == :replay_proof do
-          :ok =
-            send_frame(socket, @prefix <> (response |> :json.encode() |> IO.iodata_to_binary()))
-        end
-
-        if mode == :ignore_requests do
-          {:ok, _request} = recv_frame(socket)
-          Process.sleep(1_400)
-        else
-          if mode == :observe_forward do
-            {:ok, first} = recv_frame(socket)
-            {:ok, second} = recv_frame(socket)
-            assert Enum.any?([first, second], &(byte_size(&1) > 300 * 1024))
-          else
-            if mode == :observe_route do
-              {:ok, first} = recv_frame(socket)
-              {:ok, second} = recv_frame(socket)
-              assert Enum.all?([first, second], &(byte_size(&1) > 100))
-            else
-              Process.sleep(500)
-            end
-          end
-        end
+        replay_proof(socket, response, mode)
+        handle_peer_mode(socket, mode)
 
         :gen_tcp.close(socket)
         :gen_tcp.close(listen)
@@ -257,6 +236,33 @@ defmodule Arc.Net.FederationTransportTest do
 
     {port, task}
   end
+
+  defp replay_proof(socket, response, :replay_proof),
+    do: send_frame(socket, encoded_proof(response))
+
+  defp replay_proof(_socket, _response, _mode), do: :ok
+
+  defp handle_peer_mode(socket, :ignore_requests) do
+    {:ok, _request} = recv_frame(socket)
+    Process.sleep(1_400)
+  end
+
+  defp handle_peer_mode(socket, mode) when mode in [:observe_forward, :observe_route] do
+    {:ok, first} = recv_frame(socket)
+    {:ok, second} = recv_frame(socket)
+    assert_observed_frames([first, second], mode)
+  end
+
+  defp handle_peer_mode(_socket, _mode), do: Process.sleep(500)
+
+  defp assert_observed_frames(frames, :observe_forward),
+    do: assert(Enum.any?(frames, &(byte_size(&1) > 300 * 1024)))
+
+  defp assert_observed_frames(frames, :observe_route),
+    do: assert(Enum.all?(frames, &(byte_size(&1) > 100)))
+
+  defp encoded_proof(response),
+    do: @prefix <> (response |> :json.encode() |> IO.iodata_to_binary())
 
   defp proof_message(client_pk, server_pk, client_nonce, server_nonce, server_x) do
     @proof_prefix <> client_pk <> server_pk <> client_nonce <> server_nonce <> server_x
@@ -266,11 +272,14 @@ defmodule Arc.Net.FederationTransportTest do
     do: :gen_tcp.send(socket, <<byte_size(body)::32-big, body::binary>>)
 
   defp recv_frame(socket) do
-    with {:ok, <<length::32-big>>} <- :gen_tcp.recv(socket, 4, 2_000),
-         {:ok, body} <- :gen_tcp.recv(socket, length, 2_000) do
-      {:ok, body}
-    end
+    :gen_tcp.recv(socket, 4, 2_000)
+    |> recv_frame_body(socket)
   end
+
+  defp recv_frame_body({:ok, <<length::32-big>>}, socket),
+    do: :gen_tcp.recv(socket, length, 2_000)
+
+  defp recv_frame_body(error, _socket), do: error
 
   defp greater_identity(manager_key) do
     candidate = Identity.generate()

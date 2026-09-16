@@ -448,12 +448,7 @@ defmodule Arc.Net.Relay.FederationCatalog do
       ~w(type version mode epoch revision token records routes next truncated) ++
         if(reset?, do: ["reset"], else: [])
 
-    if exact_keys?(reply, allowed) and (request["mode"] == "snapshot" or reset?) and
-         hex?(reply["epoch"], 16) and
-         is_integer(reply["revision"]) and reply["revision"] >= 0 and hex?(reply["token"], 16) and
-         is_list(reply["records"]) and length(reply["records"]) <= @max_page and
-         is_map(reply["routes"]) and
-         nullable_hex?(reply["next"], 32) and is_boolean(reply["truncated"]) do
+    if valid_snapshot_reply?(reply, request, allowed, reset?) do
       {:ok, reply}
     else
       :error
@@ -466,11 +461,7 @@ defmodule Arc.Net.Relay.FederationCatalog do
        ) do
     allowed = ~w(type version mode epoch base_revision revision events truncated)
 
-    if exact_keys?(reply, allowed) and request["mode"] == "delta" and hex?(reply["epoch"], 16) and
-         is_integer(reply["base_revision"]) and is_integer(reply["revision"]) and
-         reply["base_revision"] >= 0 and reply["revision"] >= reply["base_revision"] and
-         is_list(reply["events"]) and length(reply["events"]) <= @max_journal and
-         is_boolean(reply["truncated"]) do
+    if valid_delta_reply?(reply, request, allowed) do
       {:ok, reply}
     else
       :error
@@ -478,6 +469,36 @@ defmodule Arc.Net.Relay.FederationCatalog do
   end
 
   defp valid_reply(_, _), do: :error
+
+  defp valid_snapshot_reply?(reply, request, allowed, reset?) do
+    exact_keys?(reply, allowed) and snapshot_request?(request, reset?) and
+      valid_snapshot_fields?(reply)
+  end
+
+  defp snapshot_request?(request, reset?), do: request["mode"] == "snapshot" or reset?
+
+  defp valid_snapshot_fields?(reply) do
+    hex?(reply["epoch"], 16) and
+      valid_nonnegative_integer?(reply["revision"]) and
+      hex?(reply["token"], 16) and
+      is_list(reply["records"]) and length(reply["records"]) <= @max_page and
+      is_map(reply["routes"]) and nullable_hex?(reply["next"], 32) and
+      is_boolean(reply["truncated"])
+  end
+
+  defp valid_delta_reply?(reply, request, allowed) do
+    exact_keys?(reply, allowed) and request["mode"] == "delta" and
+      hex?(reply["epoch"], 16) and valid_delta_fields?(reply)
+  end
+
+  defp valid_delta_fields?(reply) do
+    valid_nonnegative_integer?(reply["base_revision"]) and
+      is_integer(reply["revision"]) and reply["revision"] >= reply["base_revision"] and
+      is_list(reply["events"]) and length(reply["events"]) <= @max_journal and
+      is_boolean(reply["truncated"])
+  end
+
+  defp valid_nonnegative_integer?(value), do: is_integer(value) and value >= 0
 
   defp verify_records(records, routes, peer, visited) when is_list(records) and is_map(routes) do
     if Map.keys(routes) |> Enum.sort() == Enum.map(records, & &1["public_key"]) |> Enum.sort() do

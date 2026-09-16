@@ -74,6 +74,11 @@ defmodule Arc.Data.Direct.Policy do
 
   def format_ip(ip), do: ip |> :inet.ntoa() |> to_string()
 
+  defp rule(%{peer: _, capability: _, scheme: _, path: _, lease_ms: _, dial: _, listen: _} = rule)
+       when map_size(rule) == 7 do
+    rule(Map.put(rule, :hole_punch, false))
+  end
+
   defp rule(
          %{
            peer: peer,
@@ -82,11 +87,11 @@ defmodule Arc.Data.Direct.Policy do
            path: path,
            lease_ms: lease,
            dial: dial,
+           hole_punch: hole_punch,
            listen: listen
          } = normalized
        )
-       when map_size(normalized) == 7 do
-    # Revalidate programmatic callers through the same rules as file input.
+       when map_size(normalized) == 8 do
     rule(%{
       "peer" => Base.encode16(peer, case: :lower),
       "capability" => capability,
@@ -94,6 +99,7 @@ defmodule Arc.Data.Direct.Policy do
       "path" => path,
       "lease_ms" => lease,
       "dial" => Enum.map(dial, &format_ip/1),
+      "hole_punch" => hole_punch,
       "listen" =>
         if(listen,
           do: %{
@@ -113,11 +119,12 @@ defmodule Arc.Data.Direct.Policy do
        ) do
     lease = Map.get(input, "lease_ms", 30_000)
     dial = Map.get(input, "dial", [])
+    hole_punch = Map.get(input, "hole_punch", false)
 
     with true <-
            Enum.all?(
              Map.keys(input),
-             &(&1 in ~w(peer capability scheme path lease_ms dial listen))
+             &(&1 in ~w(peer capability scheme path lease_ms dial hole_punch listen))
            ),
          true <- is_binary(peer) and byte_size(peer) == 64,
          {:ok, peer} <- Base.decode16(peer, case: :mixed),
@@ -127,8 +134,10 @@ defmodule Arc.Data.Direct.Policy do
          {:ok, _} <- Arc.Data.Protocol.parse("#{scheme}+arc://#{Base.encode16(peer)}#{path}"),
          true <- is_list(dial) and length(dial) <= 4,
          {:ok, dial} <- addresses(dial),
+         true <- is_boolean(hole_punch),
          {:ok, listen} <- listener(input["listen"]),
-         true <- dial != [] or not is_nil(listen) do
+         true <- dial != [] or not is_nil(listen),
+         true <- not hole_punch or dial != [] do
       {:ok,
        %{
          peer: peer,
@@ -137,6 +146,7 @@ defmodule Arc.Data.Direct.Policy do
          path: path,
          lease_ms: lease,
          dial: dial,
+         hole_punch: hole_punch,
          listen: listen
        }}
     else

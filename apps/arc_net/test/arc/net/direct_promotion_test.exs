@@ -32,6 +32,50 @@ defmodule Arc.Net.DirectPromotionTest do
     assert manager_state.routes[route.generation].selected == "caller"
   end
 
+  test "mutual hole punching reuses relay endpoints without configured listeners" do
+    ctx =
+      pair(:neither, client_rule: %{"hole_punch" => true}, provider_rule: %{"hole_punch" => true})
+
+    [client_identity, provider_identity] = ctx.identities
+    {:ok, client_endpoint} = Arc.Net.relay_endpoint(client_identity.public_key)
+    {:ok, provider_endpoint} = Arc.Net.relay_endpoint(provider_identity.public_key)
+    body = <<0, 255, 128, 10, 65>>
+
+    assert {:ok, %{body: ^body}} = Protocol.request(ctx.client, ctx.uri, body)
+    manager = Agent.direct(ctx.client)
+    route = Direct.route(manager, ctx.target)
+    assert is_map(route), "expected promotion from the relay-observed endpoints"
+    internal = :sys.get_state(manager).routes[route.generation]
+    assert internal.selected == "punch"
+    assert internal.punch_context == client_endpoint
+    assert internal.peer_punch == provider_endpoint.local
+    assert internal.rule.listen == nil
+    assert map_size(internal.connections) == 1
+
+    outage(ctx)
+    assert {:ok, %{body: ^body}} = Protocol.request(ctx.client, ctx.uri, body)
+    assert Direct.route(manager, ctx.target).generation == route.generation
+  end
+
+  test "one-sided hole punching consent keeps the request on relays" do
+    ctx = pair(:neither, client_rule: %{"hole_punch" => true})
+    assert {:ok, %{body: "relay"}} = Protocol.request(ctx.client, ctx.uri, "relay")
+    assert Direct.route(Agent.direct(ctx.client), ctx.target) == nil
+    assert eventually(fn -> Direct.status(Agent.direct(ctx.provider)) == [] end)
+  end
+
+  test "a relay-observed address outside the owner's allowlist cannot promote" do
+    ctx =
+      pair(:neither,
+        client_rule: %{"hole_punch" => true, "dial" => ["127.0.0.2"]},
+        provider_rule: %{"hole_punch" => true}
+      )
+
+    assert {:ok, %{body: "relay"}} = Protocol.request(ctx.client, ctx.uri, "relay")
+    assert Direct.route(Agent.direct(ctx.client), ctx.target) == nil
+    assert eventually(fn -> Direct.status(Agent.direct(ctx.provider)) == [] end)
+  end
+
   test "a maximum-sized request remains byte-exact over the promoted path" do
     ctx = pair(:provider)
     body = :binary.copy(<<0, 255, 128, 10>>, div(Protocol.max_body_bytes(), 4))
@@ -263,12 +307,19 @@ defmodule Arc.Net.DirectPromotionTest do
     client_identity = Identity.generate()
     provider_identity = Identity.generate()
     lease = Keyword.get(opts, :lease_ms, 10_000)
-    client_rules = [rule(provider_identity.public_key, direction in [:caller, :both], lease)]
+
+    client_rules = [
+      rule(provider_identity.public_key, direction in [:caller, :both], lease)
+      |> Map.merge(Keyword.get(opts, :client_rule, %{}))
+    ]
 
     provider_rules =
       if direction == :denied,
         do: [],
-        else: [rule(client_identity.public_key, direction in [:provider, :both], lease)]
+        else: [
+          rule(client_identity.public_key, direction in [:provider, :both], lease)
+          |> Map.merge(Keyword.get(opts, :provider_rule, %{}))
+        ]
 
     runtime = Path.join(@fixtures, Keyword.get(opts, :runtime, "binary-echo-provider.exs"))
     manifest = Path.join(@fixtures, "binary-echo-provider.json")

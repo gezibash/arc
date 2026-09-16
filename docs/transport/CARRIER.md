@@ -5,7 +5,8 @@
 Use Erlang/OTP's built-in `:ssl` application for the first
 [optional direct promotion](PROMOTION.md) carrier. Carry bounded ARC packets over
 TLS over TCP, with ARC relays retaining discovery, consent, and permission
-renewal. If neither endpoint is reachable, stay on the existing ARC relay path.
+renewal. Mutual hole-punch consent permits a bounded attempt when no configured
+listener is reachable; unsuccessful attempts keep the existing ARC relay path.
 
 This revises the earlier WebRTC-first choice after considering its additional
 native build dependencies. It selects a smaller initial reachability scope rather
@@ -38,7 +39,7 @@ claim that all networking or cryptography is pure Elixir.
 | Citizen exposes an approved reachable listener | Provider connects back; application caller/provider roles remain unchanged. |
 | Peers share an explicitly permitted local network | Try the approved local address. |
 | A permitted public IPv6 address is reachable | Try it, subject to firewall policy. |
-| Neither side has a reachable approved listener | Keep application traffic on ARC relays. |
+| Neither side has a reachable approved listener | Try source-port reuse only with mutual hole-punch consent; otherwise keep application traffic on ARC relays. |
 
 [Resilient path selection](PATHS.md) defines how endpoints negotiate the dialer,
 probe both permitted directions, and select a verified path while retaining a
@@ -46,11 +47,18 @@ working relay route. Application caller/provider roles never determine who must
 accept the network connection.
 
 Port mappings or firewall openings, when required, are explicit operator setup.
-The initial implementation does not change router settings, perform TCP hole
-punching, or assume that an outbound connection's observed source port is a
-listening endpoint. It does not add a STUN service or a public discovery service.
-All candidates are scoped, authenticated, and checked under the lifecycle's
-address-disclosure policy. Reachability is measured, never inferred from a claim.
+Mutual exact `hole_punch` policy can also use each endpoint's relay-observed
+source address and reusable TCP source port for short-lived simultaneous active
+and passive attempts. The relay-observed endpoint remains private to the
+authenticated conversation and must appear in the other owner's `dial` list.
+Fixed TLS client and server roles keep the carrier handshake unambiguous. The
+socket strategy follows the active/passive combination described in
+[RFC 6544, Appendix B](https://www.rfc-editor.org/rfc/rfc6544#appendix-B). ARC
+does not change router settings, add a STUN service, or publish a discovery
+service. Endpoint-dependent NATs, firewall policy, and OS socket behavior can
+reject the attempt, which falls back to relays without replaying application work.
+All candidates are scoped and authenticated; an observation is not a general
+reachability claim.
 
 This supports the stated goal of promotion when possible. It makes no promise of
 automatic direct connectivity between arbitrary machines behind restrictive
