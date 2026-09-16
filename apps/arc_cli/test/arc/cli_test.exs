@@ -1,6 +1,26 @@
 defmodule Arc.CLITest do
   use ExUnit.Case
 
+  setup do
+    lists_dir =
+      Path.join(System.tmp_dir!(), "arc_cli_lists_#{System.unique_integer([:positive])}")
+
+    old_lists_dir = Application.get_env(:arc_cli, :lists_dir)
+    Application.put_env(:arc_cli, :lists_dir, lists_dir)
+
+    on_exit(fn ->
+      if old_lists_dir do
+        Application.put_env(:arc_cli, :lists_dir, old_lists_dir)
+      else
+        Application.delete_env(:arc_cli, :lists_dir)
+      end
+
+      File.rm_rf!(lists_dir)
+    end)
+
+    :ok
+  end
+
   test "help output includes commands" do
     output = ExUnit.CaptureIO.capture_io(fn -> Arc.CLI.main(["help"]) end)
     assert output =~ "keys"
@@ -21,6 +41,64 @@ defmodule Arc.CLITest do
 
     assert result == {:exit, 1}
     assert stderr =~ "unknown command: no-such-command"
+  end
+
+  test "federation opt-in flags are limited to live listeners and providers" do
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["discover", "files", "--federate"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "federation flags are only supported by `arc serve` and `arc listen`"
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["discover", "files", "--federate-network"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "federation flags are only supported by `arc serve` and `arc listen`"
+  end
+
+  test "direct and onward federation flags cannot be combined" do
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main(["listen", "--federate", "--federate-network"])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "--federate and --federate-network cannot be combined"
+  end
+
+  test "a direct policy is rejected before resolving a serve target" do
+    policy =
+      Path.join(
+        System.tmp_dir!(),
+        "arc-invalid-direct-policy-#{System.unique_integer([:positive])}.json"
+      )
+
+    File.write!(policy, "not json")
+
+    on_exit(fn -> File.rm(policy) end)
+
+    {result, stderr} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Arc.CLI.main([
+          "serve",
+          "/does/not/exist",
+          "--direct-policy",
+          policy,
+          "--relay",
+          "127.0.0.1:7331",
+          "--relay-pubkey",
+          String.duplicate("0", 64)
+        ])
+      end)
+
+    assert result == {:exit, 1}
+    assert stderr =~ "invalid direct policy"
+    refute stderr =~ "Arcfile"
   end
 
   test "lists add, ls, and rm keep a peer list per tool" do

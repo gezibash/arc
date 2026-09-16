@@ -1,0 +1,10 @@
+{
+  "frames": 120,
+  "duration_seconds": 5,
+  "width": 1536,
+  "height": 1024,
+  "audio_streams": 0,
+  "file_size": 933805,
+  "body_temporal_mean_absolute_change": 0.0019149326253682375,
+  "flame_temporal_mean_absolute_change": 4.989419937133789
+}

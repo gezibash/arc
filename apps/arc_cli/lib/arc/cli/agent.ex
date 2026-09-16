@@ -21,8 +21,35 @@ defmodule Arc.CLI.Agent do
   def run(args) do
     {relay_pubkey, args} = pop_opt(args, "--relay-pubkey")
     {relay_addr, clean_args} = pop_opt(args, "--relay")
-    opts = [relay: relay_addr, relay_pubkey: relay_pubkey]
-    dispatch(clean_args, opts)
+    {federate?, clean_args} = pop_flag(clean_args, "--federate")
+    {federate_network?, clean_args} = pop_flag(clean_args, "--federate-network")
+    {direct_policy_path, clean_args} = pop_opt(clean_args, "--direct-policy")
+
+    opts = [
+      relay: relay_addr,
+      relay_pubkey: relay_pubkey,
+      federate: federate?,
+      federate_network: federate_network?,
+      direct_policy_path: direct_policy_path
+    ]
+
+    cond do
+      federate? and federate_network? ->
+        error("--federate and --federate-network cannot be combined")
+
+      (federate? or federate_network?) and
+          (not match?(["serve" | _], clean_args) and not match?(["listen" | _], clean_args)) ->
+        error("federation flags are only supported by `arc serve` and `arc listen`")
+
+      direct_policy_path != nil and not match?(["serve" | _], clean_args) ->
+        error("--direct-policy is only supported by `arc serve`")
+
+      true ->
+        case load_direct_policy(direct_policy_path, opts) do
+          {:ok, policy} -> dispatch(clean_args, Keyword.put(opts, :direct_policy, policy))
+          {:error, reason} -> error(describe_direct_policy_error(reason))
+        end
+    end
   end
 
   defp dispatch(["send", to, message | _], opts) do
@@ -60,11 +87,17 @@ defmodule Arc.CLI.Agent do
   end
 
   defp dispatch(["discover" | query_parts], opts) do
+    {cursor, query_parts} = pop_opt(query_parts, "--after")
+    {limit, query_parts} = pop_opt(query_parts, "--limit")
     query = Enum.join(query_parts, " ")
+    discovery_opts = [limit: discovery_limit(limit)]
+
+    discovery_opts =
+      if cursor, do: Keyword.put(discovery_opts, :after, cursor), else: discovery_opts
 
     with_agent(
       fn agent, _id ->
-        case CapabilityDiscovery.discover(agent, query) do
+        case CapabilityDiscovery.discover(agent, query, discovery_opts) do
           {:ok, result} ->
             print_discovery(result)
 
@@ -113,13 +146,18 @@ defmodule Arc.CLI.Agent do
   end
 
   defp dispatch(["mount", task, "call", peer, capability_id | input_parts], opts) do
-    input = Enum.join(input_parts, " ")
-
     with_agent(
       fn agent, id ->
         with {:ok, mount} <- DynamicToolRegistry.get(id, task, peer, capability_id),
-             {:ok, reply} <- CapabilityInvocation.invoke(agent, mount, input) do
-          print_message(reply)
+             {:ok, built} <- mounted_call_input(mount, input_parts, id),
+             {:ok, reply} <-
+               CapabilityInvocation.invoke(agent, mount, built.input,
+                 invocation_override: built.invocation
+               ),
+             {:ok, verified} <- Toolbox.finish_reply(reply, built) do
+          if Map.has_key?(built, :agora),
+            do: IO.puts(verified.text),
+            else: print_message(verified)
         else
           {:error, :not_found} ->
             error("mount call failed: #{peer}/#{capability_id} is not mounted in task '#{task}'")
@@ -265,6 +303,12 @@ defmodule Arc.CLI.Agent do
     Options:
       --relay host:port      Connect through a relay node
       --relay-pubkey <key>   Pin relay identity pubkey (hex/base64)
+      --federate             Allow this listener or provider to be discovered
+                            through direct relay federation (requires relay pin)
+      --federate-network     Permit onward discovery through federating relays
+                            (requires relay pin; cannot combine with --federate)
+      --direct-policy PATH   Allow only listed direct scopes (requires pinned relay;
+                            each approved peer learns its listed address)
 
     Serve targets:
       /path/to/bundle-dir
@@ -372,6 +416,18 @@ defmodule Arc.CLI.Agent do
         drain_serve_events()
     after
       0 -> :ok
+    end
+  end
+
+  defp mounted_call_input(mount, argv, identity) do
+    if Arc.Data.Agora.enabled?(mount["capability"] || %{}) do
+      Toolbox.build_invocation(mount, argv, %{identity: identity})
+    else
+      {:ok,
+       %{
+         input: Enum.join(argv, " "),
+         invocation: get_in(mount, ["capability", "invocation"]) || %{}
+       }}
     end
   end
 
@@ -523,39 +579,66 @@ defmodule Arc.CLI.Agent do
     end)
   end
 
-  defp print_discovery(%{query: query, total: total, truncated?: truncated?, matches: matches}) do
-    query_label = if query == "", do: "(all)", else: query
-    IO.puts("Query: #{query_label}")
+  defp print_discovery(
+         %{query: query, total: total, truncated?: truncated?, matches: matches} = result
+       ) do
+    print_discovery_heading(query, result)
+    print_discovery_count(result, total, truncated?, matches)
+    Enum.each(matches, &print_discovery_match(&1, result[:scope]))
+  end
 
-    if truncated? do
-      IO.puts("Matches: #{length(matches)} shown of #{total}")
-    else
-      IO.puts("Matches: #{total}")
+  defp print_discovery_heading(query, result) do
+    IO.puts("Query: #{if(query == "", do: "(all)", else: query)}")
+
+    if result[:partial?],
+      do: IO.puts("Federation search is incomplete; additional providers may exist.")
+  end
+
+  defp print_discovery_count(result, total, truncated?, matches) do
+    case result[:scope] do
+      :relay -> print_relay_discovery_count(result[:next], matches)
+      _ -> print_local_discovery_count(total, truncated?, matches)
     end
+  end
 
-    Enum.each(matches, fn %{provider: provider, capability: capability} ->
-      provider_name = provider["name"] || provider["short_name"] || "unknown"
-      id = capability["id"] || "unknown"
-      kind = capability["kind"] || "capability"
-      scheme = capability["scheme"] || "unknown"
-      title = capability["title"] || id
-      summary = capability["summary"] || ""
+  defp print_relay_discovery_count(next, matches) do
+    IO.puts("Matches on this relay page: #{length(matches)}")
+    if next, do: IO.puts("Continue with --after #{next}")
+  end
 
-      IO.puts("")
-      IO.puts("#{provider_name}/#{id} [#{kind}/#{scheme}]")
-      IO.puts("  #{title}")
+  defp print_local_discovery_count(total, true, matches),
+    do: IO.puts("Matches: #{length(matches)} shown of #{total}")
 
-      if summary != "" do
-        IO.puts("  #{summary}")
-      end
+  defp print_local_discovery_count(total, false, _matches), do: IO.puts("Matches: #{total}")
 
-      IO.puts("  Expand: arc info #{provider_name} #{id}")
-      IO.puts("  Mount:  arc mount <task> add #{provider_name} #{id}")
+  defp print_discovery_match(%{provider: provider, capability: capability}, scope) do
+    provider_name = provider["name"] || provider["short_name"] || "unknown"
+    provider_query = discovery_provider_query(provider, provider_name, scope)
+    id = capability["id"] || "unknown"
+    kind = capability["kind"] || "capability"
+    scheme = capability["scheme"] || "unknown"
+    title = capability["title"] || id
 
-      if Arc.CLI.ToolRegistry.cli_interface(capability) do
-        IO.puts("  Install: arc install #{provider_name} #{id}")
-      end
-    end)
+    IO.puts("")
+    IO.puts("#{provider_name}/#{id} [#{kind}/#{scheme}]")
+    IO.puts("  #{title}")
+    print_discovery_summary(capability["summary"] || "")
+    IO.puts("  Expand: arc info #{provider_query} #{id}")
+    IO.puts("  Mount:  arc mount <task> add #{provider_query} #{id}")
+    print_discovery_install(capability, provider_query, id)
+  end
+
+  defp discovery_provider_query(provider, provider_name, :relay),
+    do: provider["public_key"] || provider_name
+
+  defp discovery_provider_query(_provider, provider_name, _scope), do: provider_name
+
+  defp print_discovery_summary(""), do: :ok
+  defp print_discovery_summary(summary), do: IO.puts("  #{summary}")
+
+  defp print_discovery_install(capability, provider_query, id) do
+    if Arc.CLI.ToolRegistry.cli_interface(capability),
+      do: IO.puts("  Install: arc install #{provider_query} #{id}")
   end
 
   defp print_mount_added(task, mount) do
@@ -637,7 +720,7 @@ defmodule Arc.CLI.Agent do
         {:ok, agent} ->
           try do
             :ok = Agent.publish(agent)
-            maybe_connect_relay(id, opts)
+            maybe_connect_relay(id, opts, agent)
             fun.(agent, id)
           after
             if Process.alive?(agent), do: GenServer.stop(agent, :normal)
@@ -656,10 +739,12 @@ defmodule Arc.CLI.Agent do
       {:ok, id} ->
         serve_uri = attach_host_runtime_env(uri, id)
 
-        case Agent.start_link(id, serve: serve_uri, observer: self()) do
+        agent_opts = [serve: serve_uri, observer: self()] ++ direct_policy_agent_opts(opts)
+
+        case Agent.start_link(id, agent_opts) do
           {:ok, agent} ->
             :ok = Agent.publish(agent)
-            relay_info = maybe_connect_relay(id, opts)
+            relay_info = maybe_connect_relay(id, opts, agent)
             fun.(agent, id, relay_info)
 
           {:error, {:handler_init_failed, _uri, {:missing_capability_manifest, mod}}} ->
@@ -683,40 +768,68 @@ defmodule Arc.CLI.Agent do
     end
   end
 
-  defp maybe_connect_relay(my_identity, opts) do
-    relay_addr =
-      case Keyword.get(opts, :relay) do
-        nil -> Arc.Net.relay_address()
-        addr -> Arc.Net.relay_address_from(addr)
-      end
-
+  defp maybe_connect_relay(my_identity, opts, agent) do
+    relay_addr = configured_relay_address(opts)
     relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
+    validate_relay_configuration!(opts, relay_addr, relay_pubkey_pin)
+    connect_configured_relay(relay_addr, relay_pubkey_pin, my_identity, opts, agent)
+  end
 
+  defp configured_relay_address(opts) do
+    case Keyword.get(opts, :relay) do
+      nil -> Arc.Net.relay_address()
+      addr -> Arc.Net.relay_address_from(addr)
+    end
+  end
+
+  defp validate_relay_configuration!(opts, relay_addr, relay_pubkey_pin) do
+    if federation_requested?(opts) and relay_addr == nil do
+      error("federation flags require --relay (or ARC_RELAY)")
+    end
+
+    if federation_requested?(opts) and relay_pubkey_pin == nil do
+      error("federation flags require --relay-pubkey (or ARC_RELAY_PUBKEY)")
+    end
+
+    if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
+      error("invalid relay address (expected host:port)")
+    end
+  end
+
+  defp connect_configured_relay(relay_addr, relay_pubkey_pin, my_identity, opts, agent) do
     case relay_addr do
       {host, port} ->
-        case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
-          :ok ->
-            %{
-              host: List.to_string(host),
-              port: port,
-              pubkey_pin: relay_pubkey_pin,
-              connected?: true
-            }
-
-          {:error, reason} ->
-            IO.puts(:stderr, "relay connect failed: #{inspect(reason)}")
-
-            %{
-              host: List.to_string(host),
-              port: port,
-              pubkey_pin: relay_pubkey_pin,
-              connected?: false,
-              error: reason
-            }
-        end
+        connect_and_publish_relay(host, port, relay_pubkey_pin, my_identity, opts, agent)
 
       nil ->
         nil
+    end
+  end
+
+  defp connect_and_publish_relay(host, port, relay_pubkey_pin, my_identity, opts, agent) do
+    case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
+      :ok ->
+        publish_relay_or_error(agent, opts)
+        %{host: List.to_string(host), port: port, pubkey_pin: relay_pubkey_pin, connected?: true}
+
+      {:error, reason} ->
+        error("relay connect failed: #{inspect(reason)}")
+    end
+  end
+
+  defp publish_relay_or_error(agent, opts) do
+    case Agent.publish_relay(agent, federation: federation_option(opts)) do
+      :ok -> :ok
+      {:error, reason} -> error("relay announcement failed: #{inspect(reason)}")
+    end
+  end
+
+  defp discovery_limit(nil), do: 10
+
+  defp discovery_limit(value) do
+    case Integer.parse(value) do
+      {limit, ""} when limit in 1..50 -> limit
+      _ -> error("--limit must be between 1 and 50")
     end
   end
 
@@ -868,6 +981,46 @@ defmodule Arc.CLI.Agent do
     end
   end
 
+  defp load_direct_policy(nil, _opts), do: {:ok, nil}
+
+  defp load_direct_policy(path, opts) when is_binary(path) do
+    with {:ok, _relay} <- direct_policy_relay(opts),
+         {:ok, _pin} <- direct_policy_pin(opts) do
+      Arc.Data.Direct.Policy.load_file(path)
+    end
+  end
+
+  defp direct_policy_relay(opts) do
+    address = Keyword.get(opts, :relay) || System.get_env("ARC_RELAY")
+
+    case address && Arc.Net.relay_address_from(address) do
+      {host, port} -> {:ok, {host, port}}
+      _ -> {:error, :direct_policy_requires_relay}
+    end
+  end
+
+  defp direct_policy_pin(opts) do
+    pin = Keyword.get(opts, :relay_pubkey) || System.get_env("ARC_RELAY_PUBKEY")
+
+    case pin && Arc.Net.relay_pubkey_from(pin) do
+      key when is_binary(key) -> {:ok, key}
+      _ -> {:error, :direct_policy_requires_relay}
+    end
+  end
+
+  defp direct_policy_agent_opts(opts) do
+    case Keyword.get(opts, :direct_policy) do
+      nil -> []
+      policy -> [direct_policy: policy]
+    end
+  end
+
+  defp describe_direct_policy_error(:direct_policy_requires_relay),
+    do: "--direct-policy requires a pinned relay; use --relay and --relay-pubkey"
+
+  defp describe_direct_policy_error(reason),
+    do: "invalid direct policy: #{inspect(reason)}"
+
   defp pop_opt(args, flag), do: pop_opt(args, flag, [])
 
   defp pop_opt([flag, value | rest], flag, acc) do
@@ -881,6 +1034,25 @@ defmodule Arc.CLI.Agent do
   defp pop_opt([], _flag, acc) do
     {nil, Enum.reverse(acc)}
   end
+
+  defp pop_flag(args, flag) do
+    {found?, rest} =
+      Enum.reduce(args, {false, []}, fn arg, {found?, rest} ->
+        if arg == flag, do: {true, rest}, else: {found?, [arg | rest]}
+      end)
+
+    {found?, Enum.reverse(rest)}
+  end
+
+  defp federation_option(opts) do
+    cond do
+      opts[:federate_network] -> :network
+      opts[:federate] -> :direct
+      true -> :local
+    end
+  end
+
+  defp federation_requested?(opts), do: opts[:federate] or opts[:federate_network]
 
   @spec error(String.t()) :: no_return()
   defp error(msg) do

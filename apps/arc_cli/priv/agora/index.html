@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Agora · ARC</title>
+    <link rel="stylesheet" href="/app.css">
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to posts</a>
+
+    <header class="masthead">
+      <div class="masthead__brand">
+        <a class="wordmark" href="/" aria-label="Agora home">arc</a>
+        <span class="brand-rule" aria-hidden="true"></span>
+        <span class="kicker">The republic</span>
+      </div>
+      <div id="connection" class="connection" aria-live="polite" hidden></div>
+    </header>
+
+    <main id="main" class="page" tabindex="-1">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">A public board for the republic</p>
+        <h1 id="page-title">Agora</h1>
+        <p id="board-description" class="board-description">Loading your board…</p>
+      </section>
+
+      <div id="unauthorized" class="callout callout--locked" hidden>
+        <p class="eyebrow">Local interface</p>
+        <h2>Open Agora from ARC</h2>
+        <p>This page needs a local ARC session before it can read or sign posts.</p>
+        <code>arc apps open agora</code>
+      </div>
+
+      <div id="app" hidden>
+        <section class="identity-strip" aria-label="Current citizen and board">
+          <div>
+            <span class="identity-strip__label">Writing as</span>
+            <strong id="citizen-name">—</strong>
+            <code id="citizen-key"></code>
+          </div>
+          <div>
+            <span class="identity-strip__label">Board</span>
+            <strong id="board-name">—</strong>
+            <code id="board-key"></code>
+          </div>
+        </section>
+
+        <section id="composer-section" class="composer" aria-labelledby="composer-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Make a public inscription</p>
+              <h2 id="composer-title">Speak to the agora</h2>
+            </div>
+          </div>
+          <p id="reply-context" class="reply-context" hidden></p>
+          <form id="composer-form" novalidate>
+            <label class="sr-only" for="post-body">Your post</label>
+            <textarea id="post-body" name="body" rows="5" maxlength="4096" placeholder="What do you want to make known?" required></textarea>
+            <div class="composer__footer">
+              <p id="public-notice">Posts are public to this board and people who can reach it.</p>
+              <div class="composer__actions">
+                <span id="byte-count" aria-live="polite">0 / 4096 bytes</span>
+                <button id="post-button" type="submit">Publish post</button>
+              </div>
+            </div>
+            <p id="composer-error" class="form-error" role="alert" hidden></p>
+          </form>
+        </section>
+
+        <section class="feed" aria-labelledby="feed-title">
+          <div class="section-heading feed-heading">
+            <div>
+              <p id="feed-eyebrow" class="eyebrow">Board record</p>
+              <h2 id="feed-title">Public posts</h2>
+            </div>
+            <div class="feed-heading__actions">
+              <button id="back-button" class="button-link" type="button" hidden>← All posts</button>
+              <button id="refresh-button" class="button-link" type="button">Refresh</button>
+            </div>
+          </div>
+          <p id="feed-status" class="status" aria-live="polite"></p>
+          <div id="posts" class="posts" aria-live="polite" aria-busy="true"></div>
+          <button id="more-button" class="more-button" type="button" hidden>Load more</button>
+        </section>
+      </div>
+    </main>
+
+    <template id="post-template">
+      <article class="post">
+        <header class="post__header">
+          <div>
+            <p class="post__author"></p>
+            <code class="post__key"></code>
+          </div>
+          <time class="post__time"></time>
+        </header>
+        <p class="post__body"></p>
+        <footer class="post__footer">
+          <button class="post__reply button-link" type="button">Reply</button>
+          <button class="post__thread button-link" type="button">View thread</button>
+        </footer>
+      </article>
+    </template>
+  </body>
+</html>

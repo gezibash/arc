@@ -457,8 +457,16 @@ defmodule Arc.MCP.HTTPServer do
       {:ok, agent_pid} ->
         Process.unlink(agent_pid)
         :ok = Agent.publish(agent_pid)
-        maybe_acquire_relay(identity, agent_pid, state)
-        {:ok, agent_pid}
+
+        case maybe_acquire_relay(identity, agent_pid, state) do
+          :ok ->
+            {:ok, agent_pid}
+
+          {:error, reason} ->
+            release_agent_transport(identity.public_key, agent_pid)
+            GenServer.stop(agent_pid, :normal)
+            {:error, reason}
+        end
 
       {:error, {:already_registered, _public_key}} ->
         {:error, :identity_in_use}
@@ -471,16 +479,16 @@ defmodule Arc.MCP.HTTPServer do
   defp maybe_acquire_relay(identity, agent_pid, state) do
     case state.relay_addr do
       {host, port} ->
-        _ =
-          Arc.Net.acquire_relay(
-            host,
-            port,
-            identity,
-            state.relay_pubkey_pin,
-            relay_acquire_opts(agent_pid, state)
-          )
-
-        :ok
+        case Arc.Net.acquire_relay(
+               host,
+               port,
+               identity,
+               state.relay_pubkey_pin,
+               relay_acquire_opts(agent_pid, state)
+             ) do
+          :ok -> Agent.publish_relay(agent_pid)
+          result -> result
+        end
 
       _ ->
         :ok

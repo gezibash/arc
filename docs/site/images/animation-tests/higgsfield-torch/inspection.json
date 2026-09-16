@@ -1,0 +1,27 @@
+{
+  "frames": 121,
+  "width": 1176,
+  "height": 784,
+  "fps": 24,
+  "audio_streams": 0,
+  "whole_frame": {
+    "adjacent_mean_absolute_change": 0.3451,
+    "seam_mean_absolute_change": 1.8368,
+    "first_to_middle_mean_absolute_change": 2.3342
+  },
+  "flame_region": {
+    "adjacent_mean_absolute_change": 5.3143,
+    "seam_mean_absolute_change": 5.5319,
+    "first_to_middle_mean_absolute_change": 17.4101
+  },
+  "body_region": {
+    "adjacent_mean_absolute_change": 0.2613,
+    "seam_mean_absolute_change": 1.9081,
+    "first_to_middle_mean_absolute_change": 2.0511
+  },
+  "background_region": {
+    "adjacent_mean_absolute_change": 0.131,
+    "seam_mean_absolute_change": 1.4898,
+    "first_to_middle_mean_absolute_change": 1.6777
+  }
+}

@@ -1,6 +1,6 @@
 defmodule Arc.CLI.Apps do
   @moduledoc """
-  CLI commands for local ARC provider bundles.
+  CLI commands for local ARC provider bundles and human interfaces.
   """
 
   alias Arc.CLI.ProviderBundle
@@ -17,12 +17,18 @@ defmodule Arc.CLI.Apps do
     init_bundle(path)
   end
 
+  defp dispatch(["open" | args]) do
+    Arc.CLI.AgoraOpen.run(args)
+  end
+
   defp dispatch(_) do
     IO.puts("""
     arc apps commands
 
     Commands:
       apps init [path]       Create a local ARC provider bundle scaffold
+      apps open <command>    Open an installed Agora board with your active identity
+                             [--port PORT] [--relay host:port] [--relay-pubkey KEY]
     """)
   end
 

@@ -2,6 +2,7 @@ defmodule Arc.NetTest do
   use ExUnit.Case, async: false
 
   alias Arc.Data.Packet
+  alias Arc.Data.RelayAnnouncement
   alias Arc.Identity
   alias Arc.Net.Handshake
 
@@ -45,6 +46,39 @@ defmodule Arc.NetTest do
     Handshake.decode_relay_info(body)
   end
 
+  defp recv_directory_control(sock) do
+    <<_len::32-big, body::binary>> = recv_framed(sock)
+    <<"ARC_DIRECTORY_V1", payload::binary>> = body
+    :json.decode(payload)
+  end
+
+  defp send_directory_reply(sock, reply) do
+    payload = reply |> :json.encode() |> IO.iodata_to_binary()
+    :ok = :gen_tcp.send(sock, frame("ARC_DIRECTORY_V1" <> payload))
+  end
+
+  defp start_fake_relay(handler) do
+    {:ok, listen_socket} =
+      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
+
+    {:ok, {_address, port}} = :inet.sockname(listen_socket)
+    relay_public_key = :crypto.strong_rand_bytes(32)
+    challenge = :crypto.strong_rand_bytes(32)
+
+    task =
+      Task.async(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen_socket)
+        :ok = :gen_tcp.send(socket, Handshake.relay_hello(relay_public_key, challenge) |> elem(1))
+        :ok = :gen_tcp.send(socket, frame(Handshake.relay_info(:unbounded)))
+        {:ok, _client_hello} = :gen_tcp.recv(socket, 96, 2_000)
+        handler.(socket)
+        :gen_tcp.close(socket)
+        :gen_tcp.close(listen_socket)
+      end)
+
+    {port, task}
+  end
+
   defp put_env(key, value) do
     original = Application.get_env(:arc_net, key)
     Application.put_env(:arc_net, key, value)
@@ -61,6 +95,21 @@ defmodule Arc.NetTest do
   defp clear_transport_connection do
     :ok = Arc.Net.TransportManager.reset()
     Process.sleep(80)
+  end
+
+  defp storage_announcement(identity, opts \\ []) do
+    RelayAnnouncement.create(
+      identity,
+      [
+        %{
+          "id" => "files",
+          "kind" => "storage",
+          "title" => "Private files",
+          "summary" => "Encrypted file storage"
+        }
+      ],
+      opts
+    )
   end
 
   defp stop_relay(relay) do
@@ -665,6 +714,202 @@ defmodule Arc.NetTest do
                  Identity.generate(),
                  <<1, 2, 3>>
                )
+    end
+
+    test "announces, searches, resolves, and pages public provider records through a relay" do
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      port = Arc.Net.Relay.get_port(relay)
+      citizen = Identity.generate()
+      provider_a = Identity.generate()
+      provider_b = Identity.generate()
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, provider_a)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, provider_b)
+
+      # Announcing immediately after the transport connection proves the relay
+      # binds directory ownership from the authenticated connection state.
+      assert :ok = Arc.Net.announce(provider_a.public_key, storage_announcement(provider_a))
+      assert :ok = Arc.Net.announce(provider_b.public_key, storage_announcement(provider_b))
+
+      assert {:ok, %{entries: [first], next: cursor, total: 2}} =
+               Arc.Net.discover_via_relay(citizen.public_key, "storage", limit: 1)
+
+      assert is_binary(cursor)
+      assert first.capabilities != []
+
+      assert {:ok, %{entries: [second], next: nil, total: 2}} =
+               Arc.Net.discover_via_relay(citizen.public_key, "storage", limit: 1, after: cursor)
+
+      assert second.public_key != first.public_key
+      query = Base.encode16(provider_a.public_key, case: :lower)
+
+      assert {:ok, [%{public_key: provider_pk}]} =
+               Arc.Net.resolve_via_relay(citizen.public_key, query)
+
+      assert provider_pk == provider_a.public_key
+
+      stop_relay(relay)
+    end
+
+    test "rejects an announcement signed by a different identity" do
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      port = Arc.Net.Relay.get_port(relay)
+      citizen = Identity.generate()
+      connected = Identity.generate()
+      signer = Identity.generate()
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, connected)
+
+      assert {:error, :invalid_announcement} =
+               Arc.Net.announce(connected.public_key, storage_announcement(signer))
+
+      assert {:ok, %{entries: [], total: 0}} =
+               Arc.Net.discover_via_relay(citizen.public_key, "storage")
+
+      stop_relay(relay)
+    end
+
+    test "default search excludes connected citizens without capabilities" do
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      port = Arc.Net.Relay.get_port(relay)
+      citizen = Identity.generate()
+      provider = Identity.generate()
+      idle_citizen = Identity.generate()
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, provider)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, idle_citizen)
+      assert :ok = Arc.Net.announce(provider.public_key, storage_announcement(provider))
+
+      assert :ok =
+               Arc.Net.announce(
+                 idle_citizen.public_key,
+                 RelayAnnouncement.create(idle_citizen, [])
+               )
+
+      assert {:ok, %{entries: [%{public_key: provider_key}], total: 1}} =
+               Arc.Net.discover_via_relay(citizen.public_key, "")
+
+      assert provider_key == provider.public_key
+      stop_relay(relay)
+    end
+
+    test "rejects an expired signed record without stopping the relay" do
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      port = Arc.Net.Relay.get_port(relay)
+      citizen = Identity.generate()
+      provider = Identity.generate()
+      expired = storage_announcement(provider, now: System.system_time(:second) - 200, ttl: 180)
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, provider)
+      assert {:error, :invalid_announcement} = Arc.Net.announce(provider.public_key, expired)
+      assert :ok = Arc.Net.announce(provider.public_key, storage_announcement(provider))
+      assert {:ok, %{total: 1}} = Arc.Net.discover_via_relay(citizen.public_key, "storage")
+
+      stop_relay(relay)
+    end
+
+    test "times out cleanly when a legacy relay never answers directory controls" do
+      {port, task} = start_fake_relay(fn _socket -> Process.sleep(2_300) end)
+      citizen = Identity.generate()
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+      started_at = System.monotonic_time(:millisecond)
+
+      assert {:error, :relay_discovery_unavailable} =
+               Arc.Net.discover_via_relay(citizen.public_key, "storage")
+
+      elapsed = System.monotonic_time(:millisecond) - started_at
+      assert elapsed >= 1_800 and elapsed < 2_500
+      assert {:ok, transport} = Arc.Net.TransportManager.lookup(citizen.public_key)
+      assert :sys.get_state(transport).directory_pending == %{}
+      Task.await(task, 3_000)
+    end
+
+    test "malformed correlated replies fail safely and do not poison later requests" do
+      {port, task} =
+        start_fake_relay(fn socket ->
+          malformed = recv_directory_control(socket)
+
+          send_directory_reply(socket, %{
+            "type" => "reply",
+            "request_id" => malformed["request_id"],
+            "ok" => true,
+            "entries" => %{},
+            "total" => 0,
+            "next" => :null
+          })
+
+          valid = recv_directory_control(socket)
+
+          send_directory_reply(socket, %{
+            "type" => "reply",
+            "request_id" => valid["request_id"],
+            "ok" => true,
+            "entries" => [],
+            "total" => 0,
+            "next" => :null
+          })
+        end)
+
+      citizen = Identity.generate()
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+
+      assert {:error, :relay_discovery_unavailable} =
+               Arc.Net.discover_via_relay(citizen.public_key, "storage")
+
+      assert {:ok, %{entries: [], next: nil, total: 0}} =
+               Arc.Net.discover_via_relay(citizen.public_key, "storage")
+
+      Task.await(task, 3_000)
+    end
+
+    test "removes an announcement when its provider disconnects" do
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      port = Arc.Net.Relay.get_port(relay)
+      citizen = Identity.generate()
+      provider = Identity.generate()
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, provider)
+      assert :ok = Arc.Net.announce(provider.public_key, storage_announcement(provider))
+      assert {:ok, %{total: 1}} = Arc.Net.discover_via_relay(citizen.public_key, "storage")
+
+      assert :ok = Arc.Net.TransportManager.reset()
+      # Citizen must reconnect after the pool reset; the provider's directory
+      # record is removed by its connection monitor.
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, citizen)
+
+      assert wait_until(fn ->
+               match?(
+                 {:ok, %{total: 0}},
+                 Arc.Net.discover_via_relay(citizen.public_key, "storage")
+               )
+             end)
+
+      stop_relay(relay)
+    end
+
+    test "strict relay delivery rejects an unowned packet and has no fallback" do
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      port = Arc.Net.Relay.get_port(relay)
+      alice = Identity.generate()
+      bob = Identity.generate()
+
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, alice)
+      assert :ok = Arc.Net.connect_relay(~c"localhost", port, bob)
+      packet = make_packet(alice, bob.public_key)
+
+      assert {:error, :invalid_source} =
+               Arc.Net.deliver_via_relay(bob.public_key, alice.public_key, packet)
+
+      assert {:error, :relay_not_connected} =
+               Arc.Net.deliver_via_relay(:crypto.strong_rand_bytes(32), bob.public_key, packet)
+
+      stop_relay(relay)
     end
   end
 end

@@ -1,0 +1,23 @@
+blocked
+default via 10.200.0.1 dev arc-peer
+10.200.0.0/24 dev arc-peer proto kernel scope link src 10.200.0.2
+Chain ARC_LAB_INPUT (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+       0        0 ACCEPT     0    --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED
+       2      120 DROP       0    --  *      *       0.0.0.0/0            0.0.0.0/0
+Chain ARC_LAB_FORWARD (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+       3      180 DROP       0    --  *      *       10.200.0.2           10.88.0.12
+       0        0 DROP       0    --  *      *       10.88.0.12           10.200.0.2
+      32     7865 ACCEPT     6    --  arc-host *       10.200.0.2           10.88.0.10
+       0        0 ACCEPT     6    --  arc-host *       10.200.0.2           10.88.0.12
+      22    11284 ACCEPT     0    --  *      arc-host  0.0.0.0/0            10.200.0.2           ctstate RELATED,ESTABLISHED
+       0        0 DROP       0    --  arc-host *       0.0.0.0/0            0.0.0.0/0
+       0        0 DROP       0    --  *      arc-host  0.0.0.0/0            0.0.0.0/0
+Chain ARC_LAB_SNAT (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+       1       60 SNAT       0    --  *      *       0.0.0.0/0            0.0.0.0/0            to:10.88.0.11
+Chain ARC_LAB_DNAT (1 references)
+    pkts      bytes target     prot opt in     out     source               destination
+ipv4     2 tcp      6 431999 ESTABLISHED src=10.200.0.2 dst=10.88.0.10 sport=41644 dport=7331 src=10.88.0.10 dst=10.88.0.11 sport=7331 dport=41644 [ASSURED] mark=0 use=1
+qdisc noqueue 0: root refcnt 2

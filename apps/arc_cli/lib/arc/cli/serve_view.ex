@@ -23,7 +23,7 @@ defmodule Arc.CLI.ServeView do
         optional_line("Runtime", serve_meta[:runtime_path]),
         optional_line("Manifest", serve_meta[:manifest_path]),
         "Inspect: arc info #{provider_name} primary",
-        "Install: arc install #{provider_name} primary"
+        usage_line(identity, capability, relay_info)
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -56,6 +56,29 @@ defmodule Arc.CLI.ServeView do
     suffix = event_suffix(event[:type], event)
 
     String.trim(prefix <> " " <> suffix)
+  end
+
+  defp usage_line(identity, capability, relay_info) do
+    if is_map(ToolRegistry.cli_interface(capability)) do
+      "Install: arc install #{Identity.name(identity)} primary"
+    else
+      request_usage(identity, capability, relay_info)
+    end
+  end
+
+  defp request_usage(identity, capability, relay_info) do
+    invocation = capability["invocation"] || %{}
+    id = capability["id"] || "primary"
+    key = Identity.encode_public_key(identity)
+    uri = "#{capability["scheme"]}+arc://#{key}#{invocation["path"] || "/"}"
+
+    if invocation["mode"] != "stream" and is_binary(id) and
+         Regex.match?(~r/\A[a-zA-Z0-9_-]{1,64}\z/, id) and
+         match?({:ok, _}, Arc.Data.Protocol.parse(uri)) do
+      local_flag = if is_nil(relay_info), do: " --local", else: ""
+      capability_flag = if id == "primary", do: "", else: " --capability #{id}"
+      "Request: arc request #{uri} --input request.json#{capability_flag}#{local_flag}"
+    end
   end
 
   defp event_suffix(:request, event) do
@@ -150,9 +173,18 @@ defmodule Arc.CLI.ServeView do
   defp preview_label(""), do: nil
 
   defp preview_label(body) do
+    body = to_string(body)
+
+    if String.valid?(body) do
+      text_preview(body)
+    else
+      "#{byte_size(body)} bytes (binary)"
+    end
+  end
+
+  defp text_preview(body) do
     sanitized =
       body
-      |> to_string()
       |> String.replace(~r/\s+/u, " ")
       |> String.trim()
 

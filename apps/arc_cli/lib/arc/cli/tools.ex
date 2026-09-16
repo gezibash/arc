@@ -3,6 +3,7 @@ defmodule Arc.CLI.Tools do
   Durable ARC tool installation and invocation commands.
   """
 
+  alias Arc.CLI.PrivateFile
   alias Arc.CLI.ToolRegistry
   alias Arc.CLI.TrustStore
   alias Arc.Data.Agent
@@ -796,6 +797,9 @@ defmodule Arc.CLI.Tools do
     namespace = install["command"] || "tool"
 
     cond do
+      Arc.Data.Agora.enabled?(capability) ->
+        Toolbox.build_invocation(install, argv, filter_context(namespace))
+
       commands == [] ->
         {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
 
@@ -823,7 +827,7 @@ defmodule Arc.CLI.Tools do
          {:ok, values} <- parse_cli_args(args, remaining_argv),
          {:ok, input} <- render_input(cli_command, args, values, namespace) do
       invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
-      {:ok, %{input: input, invocation: invocation, command: cli_command}}
+      {:ok, %{input: input, invocation: invocation, command: cli_command, values: values}}
     end
   end
 
@@ -838,9 +842,7 @@ defmodule Arc.CLI.Tools do
       _ ->
         case CapabilityInvocation.invoke(agent, install, input, invocation_override: invocation) do
           {:ok, reply} ->
-            reply
-            |> apply_output_filter(Map.get(built, :command), Map.get(built, :output_opts, %{}))
-            |> print_reply()
+            finish_command_reply(reply, built)
 
           {:error, {:remote, code, message}} ->
             error("tool call failed: #{code}: #{message}")
@@ -849,6 +851,26 @@ defmodule Arc.CLI.Tools do
             error("tool call failed: #{inspect(reason)}")
         end
     end
+  end
+
+  defp finish_command_reply(reply, %{agora: _} = built) do
+    case Toolbox.finish_reply(reply, built) do
+      {:ok, verified} -> IO.puts(verified.text)
+      {:error, {:invalid_arguments, message}} -> error("tool call failed: #{message}")
+    end
+  end
+
+  defp finish_command_reply(reply, %{command: %{"output" => %{"private_file" => output}}} = built) do
+    case PrivateFile.finish(reply[:text], built, output, filter_context().identity) do
+      {:ok, message} -> IO.puts(message)
+      {:error, message} -> error("tool call failed: #{message}")
+    end
+  end
+
+  defp finish_command_reply(reply, built) do
+    reply
+    |> apply_output_filter(Map.get(built, :command), Map.get(built, :output_opts, %{}))
+    |> print_reply()
   end
 
   defp invoke_stream_command(agent, install, input, invocation) do
@@ -1121,6 +1143,34 @@ defmodule Arc.CLI.Tools do
     end
   end
 
+  defp render_input(
+         %{"input" => %{"source" => "sealed_file"} = input} = command,
+         _args,
+         values,
+         _namespace
+       ) do
+    if get_in(command, ["output", "private_file", "operation"]) == "put" do
+      private_file_input(PrivateFile.upload(values[input["file"]], filter_context().identity))
+    else
+      {:error, {:invalid_arguments, "invalid private-file upload interface"}}
+    end
+  end
+
+  defp render_input(
+         %{"input" => %{"source" => "private_file"} = input} = command,
+         _args,
+         values,
+         _namespace
+       ) do
+    output = get_in(command, ["output", "private_file"]) || %{}
+
+    if input["operation"] in ["get", "list"] and output["operation"] == input["operation"] do
+      private_file_input(PrivateFile.request(input["operation"], values, input, output))
+    else
+      {:error, {:invalid_arguments, "invalid private-file interface"}}
+    end
+  end
+
   defp render_input(%{"input" => %{"source" => "stdin"} = input_spec}, _args, values, namespace) do
     context = filter_context(namespace)
 
@@ -1144,6 +1194,9 @@ defmodule Arc.CLI.Tools do
   defp render_input(cli_command, args, values, namespace) do
     Toolbox.render_input(cli_command, args, values, filter_context(namespace))
   end
+
+  defp private_file_input({:ok, input}), do: {:ok, input}
+  defp private_file_input({:error, message}), do: {:error, {:invalid_arguments, message}}
 
   @max_attachment_bytes 4 * 1024 * 1024
 
@@ -1421,7 +1474,7 @@ defmodule Arc.CLI.Tools do
         {:ok, agent} ->
           try do
             :ok = Agent.publish(agent)
-            maybe_connect_relay(id, opts)
+            maybe_connect_relay(id, opts, agent)
             fun.(agent, id)
           after
             if Process.alive?(agent), do: GenServer.stop(agent, :normal)
@@ -1433,7 +1486,7 @@ defmodule Arc.CLI.Tools do
     end)
   end
 
-  defp maybe_connect_relay(my_identity, opts) do
+  defp maybe_connect_relay(my_identity, opts, agent) do
     relay_addr =
       case Keyword.get(opts, :relay) do
         nil -> Arc.Net.relay_address()
@@ -1442,11 +1495,21 @@ defmodule Arc.CLI.Tools do
 
     relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
 
+    if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
+      error("invalid relay address (expected host:port)")
+    end
+
     case relay_addr do
       {host, port} ->
         case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
-          :ok -> :ok
-          {:error, reason} -> IO.puts(:stderr, "relay connect failed: #{inspect(reason)}")
+          :ok ->
+            case Agent.publish_relay(agent) do
+              :ok -> :ok
+              {:error, reason} -> error("relay announcement failed: #{inspect(reason)}")
+            end
+
+          {:error, reason} ->
+            error("relay connect failed: #{inspect(reason)}")
         end
 
       nil ->

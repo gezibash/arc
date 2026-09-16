@@ -102,7 +102,61 @@ defmodule Arc.Data.InterfaceManifestTest do
       })
 
     assert cli["version"] == 2
-    assert InterfaceManifest.max_cli_version() == 2
+    assert InterfaceManifest.max_cli_version() == 4
+  end
+
+  test "round trips version 3 private-file commands without changing legacy output filters" do
+    cli =
+      InterfaceManifest.cli(%{
+        "interfaces" => %{
+          "cli" => %{
+            "version" => 3,
+            "namespace" => "files",
+            "commands" => [
+              %{
+                "path" => ["put"],
+                "input" => %{"source" => "sealed_file", "file" => "path"},
+                "output" => %{"private_file" => %{"operation" => "put"}}
+              },
+              %{
+                "path" => ["get"],
+                "input" => %{
+                  "source" => "private_file",
+                  "operation" => "get",
+                  "id" => "id"
+                },
+                "output" => %{
+                  "private_file" => %{"operation" => "get", "id" => "id", "path" => "output"}
+                }
+              },
+              %{"path" => ["legacy"], "output" => %{"filter" => ["open", "preview:40"]}}
+            ]
+          }
+        }
+      })
+
+    [put, get, legacy] = cli["commands"]
+
+    assert cli["version"] == 3
+    assert put["input"] == %{"source" => "sealed_file", "file" => "path"}
+
+    assert put["output"] == %{
+             "private_file" => %{"operation" => "put", "id" => nil, "path" => nil}
+           }
+
+    assert get["input"] == %{
+             "source" => "private_file",
+             "operation" => "get",
+             "id" => "id",
+             "after" => nil
+           }
+
+    assert get["output"] == %{
+             "private_file" => %{"operation" => "get", "id" => "id", "path" => "output"}
+           }
+
+    assert legacy["output"] == %{"filters" => ["open", "preview:40"]}
+    assert InterfaceManifest.cli(%{"interfaces" => %{"cli" => cli}}) == cli
   end
 
   test "the last positional stays variadic when options follow it" do

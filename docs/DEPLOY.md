@@ -55,7 +55,11 @@ A release runs only on the OS and CPU that built it.
 
 ## Run a relay
 
-A relay routes encrypted packets between agents. It never sees plaintext.
+A relay routes encrypted application packets between agents. Service
+announcements and directory queries are public metadata. Operators can enable
+[relay federation](federation/SPEC.md) with approved partner relays. Publishers
+choose direct or network sharing; intermediate operators must add `--transit`
+to permit onward discovery and traffic.
 
 1. Generate a persistent relay key, so the relay public key stays the same
    across restarts. Clients pin this key.

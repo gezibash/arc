@@ -38,9 +38,15 @@ defmodule Arc.Net.Connection do
   @default_hello_timeout_ms 5_000
   @default_max_mailbox_len 2_048
   @default_overflow_policy :disconnect
+  @directory_prefix "ARC_DIRECTORY_V1"
+  @max_directory_control_bytes 256 * 1024
+  @federation_prefix "ARC_FEDERATION_V1"
+  @max_federation_frame_bytes 8 * 1024 * 1024 + 512 * 1024
+  @max_federation_parent_mailbox_len 32
 
   # --- Client API ---
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
   end
@@ -54,9 +60,33 @@ defmodule Arc.Net.Connection do
     GenServer.call(conn_pid, {:send_packet, packet})
   end
 
+  @doc false
+  def send_control(conn_pid, control) when is_map(control) do
+    GenServer.call(conn_pid, {:send_control, control})
+  end
+
+  @doc false
+  def send_federation(conn_pid, payload) when is_binary(payload) do
+    GenServer.call(conn_pid, {:send_federation, payload}, 5_000)
+  end
+
   @doc "The frame cap the relay advertised, or `:unbounded`. `nil` before the relay info arrives."
   def peer_max_frame_bytes(conn_pid) do
     GenServer.call(conn_pid, :peer_max_frame_bytes)
+  end
+
+  @doc false
+  def endpoint(conn_pid) when is_pid(conn_pid) do
+    GenServer.call(conn_pid, :endpoint)
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
+  end
+
+  @doc false
+  def peer_endpoint(conn_pid) when is_pid(conn_pid) do
+    GenServer.call(conn_pid, :peer_endpoint)
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
   end
 
   @doc "Best-effort packet forward path used by relay fanout."
@@ -94,12 +124,17 @@ defmodule Arc.Net.Connection do
     socket = Keyword.fetch!(opts, :socket)
     role = Keyword.fetch!(opts, :role)
     max_frame_bytes = max_frame_bytes_setting()
+
+    max_frame_bytes =
+      if role == :federation, do: federation_frame_cap(max_frame_bytes), else: max_frame_bytes
+
     hello_timeout_ms = Application.get_env(:arc_net, :hello_timeout_ms, @default_hello_timeout_ms)
 
     parent =
       case role do
         :client -> Keyword.fetch!(opts, :transport_pid)
         :relay_client -> Keyword.fetch!(opts, :relay_pid)
+        :federation -> Keyword.fetch!(opts, :federation_pid)
       end
 
     hello_timer_ref =
@@ -113,14 +148,16 @@ defmodule Arc.Net.Connection do
       socket: socket,
       role: role,
       parent: parent,
+      parent_ref: if(role == :federation, do: Process.monitor(parent), else: nil),
       relay_pubkey: Keyword.get(opts, :relay_pubkey),
       relay_challenge: Keyword.get(opts, :relay_challenge, maybe_relay_challenge(role)),
       recv_buffer: <<>>,
       # relay_client waits for signed hello first; client is always in frame mode
-      hello_done: role == :client,
+      hello_done: role in [:client, :federation],
+      authenticated_pubkey: nil,
       hello_timer_ref: hello_timer_ref,
       max_frame_bytes: max_frame_bytes,
-      peer_max_frame_bytes: nil
+      peer_max_frame_bytes: Keyword.get(opts, :peer_max_frame_bytes)
     }
 
     emit([:connection, :started], %{count: 1}, %{role: role})
@@ -206,15 +243,91 @@ defmodule Arc.Net.Connection do
     end
   end
 
+  def handle_call({:send_control, control}, _from, state) do
+    payload = control |> :json.encode() |> IO.iodata_to_binary()
+    frame = @directory_prefix <> payload
+
+    cond do
+      byte_size(payload) > @max_directory_control_bytes ->
+        {:reply, {:error, :control_too_large}, state}
+
+      is_integer(state.peer_max_frame_bytes) and byte_size(frame) > state.peer_max_frame_bytes ->
+        {:reply, {:error, :frame_too_large}, state}
+
+      true ->
+        case send_framed(state.socket, frame) do
+          :ok -> {:reply, :ok, state}
+          {:error, _} = error -> {:stop, :normal, error, state}
+        end
+    end
+  rescue
+    _ -> {:reply, {:error, :invalid_control}, state}
+  end
+
+  def handle_call({:send_federation, payload}, _from, state) do
+    frame = @federation_prefix <> payload
+
+    cond do
+      byte_size(payload) > @max_federation_frame_bytes ->
+        {:reply, {:error, :federation_frame_too_large}, state}
+
+      is_integer(state.peer_max_frame_bytes) and byte_size(frame) > state.peer_max_frame_bytes ->
+        {:reply, {:error, :frame_too_large}, state}
+
+      true ->
+        case send_framed(state.socket, frame) do
+          :ok -> {:reply, :ok, state}
+          {:error, _} = error -> {:stop, :normal, error, state}
+        end
+    end
+  end
+
   def handle_call(:peer_max_frame_bytes, _from, state) do
     {:reply, state.peer_max_frame_bytes, state}
+  end
+
+  def handle_call(:endpoint, _from, state) do
+    {:reply, socket_endpoint(state.socket), state}
+  end
+
+  def handle_call(:peer_endpoint, _from, state) do
+    {:reply, socket_peer_endpoint(state.socket), state}
   end
 
   def handle_call(_msg, _from, state) do
     {:reply, {:error, :unsupported}, state}
   end
 
+  defp socket_endpoint(socket) do
+    with {:ok, local} <- :inet.sockname(socket),
+         {:ok, peer} <- :inet.peername(socket) do
+      {:ok, %{local: local, peer: peer}}
+    else
+      {:error, _reason} -> {:error, :connection_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
+  end
+
+  defp socket_peer_endpoint(socket) do
+    case :inet.peername(socket) do
+      {:ok, peer} -> {:ok, peer}
+      {:error, _reason} -> {:error, :connection_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :connection_unavailable}
+  end
+
   @impl GenServer
+  def handle_info(
+        {:DOWN, ref, :process, parent, _reason},
+        %{parent_ref: ref, parent: parent} = state
+      )
+      when is_reference(ref) do
+    :gen_tcp.close(state.socket)
+    {:stop, :normal, state}
+  end
+
   def handle_info(:hello_timeout, %{hello_done: false} = state) do
     :gen_tcp.close(state.socket)
     emit([:connection, :closed], %{count: 1}, %{reason: :hello_timeout})
@@ -271,7 +384,15 @@ defmodule Arc.Net.Connection do
            ) do
           cancel_hello_timer(state.hello_timer_ref)
           Relay.register(state.parent, self(), pubkey)
-          process_frames(%{state | recv_buffer: rest, hello_done: true, hello_timer_ref: nil})
+          Relay.client_authenticated(state.parent, self(), pubkey)
+
+          process_frames(%{
+            state
+            | recv_buffer: rest,
+              hello_done: true,
+              hello_timer_ref: nil,
+              authenticated_pubkey: pubkey
+          })
         else
           {:error, :invalid_hello_signature, state}
         end
@@ -287,7 +408,7 @@ defmodule Arc.Net.Connection do
   defp process_buffer(state), do: process_frames(state)
 
   defp process_frames(state) do
-    case drain_frames(state.recv_buffer, state.max_frame_bytes) do
+    case drain_frames(state.recv_buffer, state.max_frame_bytes, state.role) do
       {:ok, frames, rest} ->
         state = Enum.reduce(frames, state, &dispatch_frame/2)
         {:ok, %{state | recv_buffer: rest}}
@@ -297,40 +418,112 @@ defmodule Arc.Net.Connection do
     end
   end
 
-  defp drain_frames(buffer, max_frame_bytes), do: drain_frames(buffer, max_frame_bytes, [])
+  defp drain_frames(buffer, max_frame_bytes, role),
+    do: drain_frames(buffer, max_frame_bytes, role, [])
 
-  defp drain_frames(buffer, _max_frame_bytes, acc) when byte_size(buffer) < 4 do
+  defp drain_frames(buffer, _max_frame_bytes, _role, acc) when byte_size(buffer) < 4 do
     {:ok, Enum.reverse(acc), buffer}
   end
 
-  defp drain_frames(<<len::32-big, _::binary>>, max_frame_bytes, _acc)
+  defp drain_frames(<<len::32-big, _::binary>>, max_frame_bytes, _role, _acc)
        when is_integer(max_frame_bytes) and len > max_frame_bytes do
     {:error, :frame_too_large}
   end
 
-  defp drain_frames(<<len::32-big, rest::binary>> = buffer, _max_frame_bytes, acc)
+  defp drain_frames(
+         <<len::32-big, prefix::binary-size(17), _::binary>>,
+         _max_frame_bytes,
+         :relay_client,
+         _acc
+       )
+       when len > @max_federation_frame_bytes and prefix == @federation_prefix do
+    {:error, :federation_frame_too_large}
+  end
+
+  defp drain_frames(<<len::32-big, rest::binary>> = buffer, _max_frame_bytes, _role, acc)
        when byte_size(rest) < len do
     {:ok, Enum.reverse(acc), buffer}
   end
 
-  defp drain_frames(<<len::32-big, packet::binary-size(len), rest::binary>>, max_frame_bytes, acc) do
-    drain_frames(rest, max_frame_bytes, [packet | acc])
+  defp drain_frames(
+         <<len::32-big, packet::binary-size(len), rest::binary>>,
+         max_frame_bytes,
+         role,
+         acc
+       ) do
+    drain_frames(rest, max_frame_bytes, role, [packet | acc])
   end
 
   defp dispatch_frame(packet, %{role: :client, parent: transport_pid} = state) do
-    case Handshake.decode_relay_info(packet) do
-      {:ok, cap} ->
-        %{state | peer_max_frame_bytes: cap}
+    if directory_frame?(packet) do
+      Transport.directory_received(transport_pid, directory_payload(packet))
+      state
+    else
+      case Handshake.decode_relay_info(packet) do
+        {:ok, cap} ->
+          %{state | peer_max_frame_bytes: cap}
 
-      :error ->
-        Transport.packet_received(transport_pid, packet)
-        state
+        :error ->
+          Transport.packet_received(transport_pid, packet)
+          state
+      end
     end
   end
 
-  defp dispatch_frame(packet, %{role: :relay_client, parent: relay_pid} = state) do
-    Relay.route_packet(relay_pid, self(), packet)
+  defp dispatch_frame(packet, %{role: :federation, parent: federation_pid} = state) do
+    if federation_frame?(packet) do
+      forward_federation_frame(federation_pid, federation_payload(packet))
+      state
+    else
+      case Handshake.decode_relay_info(packet) do
+        {:ok, cap} -> %{state | peer_max_frame_bytes: cap}
+        :error -> state
+      end
+    end
+  end
+
+  defp dispatch_frame(
+         packet,
+         %{role: :relay_client, parent: relay_pid, authenticated_pubkey: pubkey} = state
+       ) do
+    cond do
+      directory_frame?(packet) ->
+        Relay.directory_frame(relay_pid, self(), pubkey, directory_payload(packet))
+
+      federation_frame?(packet) ->
+        forward_federation_frame(relay_pid, federation_payload(packet), pubkey)
+
+      true ->
+        Relay.route_packet(relay_pid, self(), packet)
+    end
+
     state
+  end
+
+  defp directory_frame?(<<@directory_prefix, payload::binary>>),
+    do: byte_size(payload) <= @max_directory_control_bytes
+
+  defp directory_frame?(_), do: false
+  defp directory_payload(<<@directory_prefix, payload::binary>>), do: payload
+
+  defp federation_frame?(<<@federation_prefix, payload::binary>>),
+    do: byte_size(payload) <= @max_federation_frame_bytes
+
+  defp federation_frame?(_), do: false
+  defp federation_payload(<<@federation_prefix, payload::binary>>), do: payload
+
+  defp forward_federation_frame(parent, payload, pubkey \\ nil) do
+    if message_queue_len(parent) >= @max_federation_parent_mailbox_len do
+      close(self())
+
+      emit([:connection, :backpressure, :disconnect], %{count: 1, bytes: byte_size(payload)}, %{
+        reason: :federation_parent_overflow
+      })
+    else
+      if is_nil(pubkey),
+        do: send(parent, {:federation_frame, self(), payload}),
+        else: Relay.federation_frame(parent, self(), pubkey, payload)
+    end
   end
 
   defp send_framed(socket, packet) do
@@ -355,6 +548,12 @@ defmodule Arc.Net.Connection do
       _ -> :unbounded
     end
   end
+
+  defp federation_frame_cap(:unbounded),
+    do: @max_federation_frame_bytes + byte_size(@federation_prefix)
+
+  defp federation_frame_cap(cap),
+    do: min(cap, @max_federation_frame_bytes + byte_size(@federation_prefix))
 
   defp backpressure_settings do
     max_mailbox_len =

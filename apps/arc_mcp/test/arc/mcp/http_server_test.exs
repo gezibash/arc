@@ -434,7 +434,18 @@ defmodule Arc.MCP.HTTPServerTest do
   end
 
   defp stop_process(pid) when is_pid(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    ref = Process.monitor(pid)
+
+    try do
+      GenServer.stop(pid, :normal, 1_000)
+    catch
+      # The test process and this on_exit callback can both initiate shutdown.
+      # Verify the monitored terminal state below, including when stop races it.
+      :exit, _ -> :ok
+    end
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 1_000
+    assert reason in [:normal, :shutdown, :noproc] or match?({:shutdown, _}, reason)
   end
 
   defp stop_process(_pid), do: :ok

@@ -1,0 +1,27 @@
+{
+  "service": "Higgsfield",
+  "model": "kling3_0",
+  "source": "../../gatekeepers-engraving.png",
+  "status": "completed",
+  "job_id": "18c31493-fb09-4aed-a9a7-ef7b7b875b23",
+  "estimated_credits": 7.5,
+  "params": {
+    "model": "kling3_0",
+    "mode": "std",
+    "duration": 5,
+    "sound": "off",
+    "count": 1,
+    "prompt": "Locked-off camera, living antique copperplate engraving. Animate only the small real people on the foreground path below the closed gate. Several standing people in the queue take one or two slow, natural walking steps forward toward the gate, with alternating feet, subtle weight shifts and restrained robe movement. A few waiting figures gently turn their heads or shift their stance, while the seated people remain seated and make only slight natural movements. Quiet patient crowd, distinct individuals moving at different moments. Keep every person small and in the original perspective; preserve their period robes, identities and the original fine black engraved linework. Motion stays entirely on the lower foreground path. The huge architecture, closed doors, lion statues, carved figures above the doorway, rooftop statues, trees, clouds, red banner, and parchment remain absolutely still. Preserve the camera framing, composition, color and lighting. No zoom, pan, new people, disappearing figures, opening doors, dancing, running, photorealism, lettering, or changes to the buildings. Silent.",
+    "medias": [
+      {
+        "role": "start_image",
+        "value": "260d0d04-4486-4afb-9273-f9dd8c2b0942"
+      }
+    ]
+  },
+  "output": "../../gatekeepers-people.mp4",
+  "credits_before": 95,
+  "credits_after": 87.5,
+  "output_duration_seconds": 4.25,
+  "processing": "Original image background retained; feathered foreground motion region; forward playback with a 0.75 second dissolve at the repeat point; silent H.264 video."
+}

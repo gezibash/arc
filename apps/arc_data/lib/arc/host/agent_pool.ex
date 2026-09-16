@@ -82,27 +82,40 @@ defmodule Arc.Host.AgentPool do
   end
 
   defp start_agent(identity, state) do
-    with {:ok, agent} <- Agent.start_link(identity),
-         :ok <- Agent.publish(agent),
-         :ok <- maybe_connect_relay(identity, state.relay) do
-      entry = %{identity: identity, agent: agent}
-      {:ok, entry, put_in(state.entries[identity.public_key], entry)}
-    else
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, agent} <- Agent.start_link(identity) do
+      case initialize_agent(agent, identity, state.relay) do
+        :ok ->
+          entry = %{identity: identity, agent: agent}
+          {:ok, entry, put_in(state.entries[identity.public_key], entry)}
+
+        {:error, reason} ->
+          GenServer.stop(agent, :normal)
+          {:error, reason}
+      end
     end
   end
 
-  defp maybe_connect_relay(_identity, nil), do: :ok
-
-  defp maybe_connect_relay(identity, %{host: host, port: port, pubkey: pubkey}) do
-    if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :connect_relay, 4) do
-      # Arc.Net is an optional runtime peer, not a compile-time dep.
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(Arc.Net, :connect_relay, [host, port, identity, pubkey])
-    else
-      {:error, :relay_runtime_unavailable}
+  defp initialize_agent(agent, identity, relay) do
+    case Agent.publish(agent) do
+      :ok -> maybe_connect_relay(identity, relay, agent)
+      result -> result
     end
+  end
+
+  defp maybe_connect_relay(_identity, nil, _agent), do: :ok
+
+  defp maybe_connect_relay(identity, %{host: host, port: port, pubkey: pubkey}, agent) do
+    case relay_call(:connect_relay, [host, port, identity, pubkey]) do
+      :ok -> Agent.publish_relay(agent)
+      result -> result
+    end
+  end
+
+  # Arc.Net is an optional runtime peer, not a compile-time dependency.
+  defp relay_call(function, args) do
+    if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, function, length(args)),
+      do: apply(Arc.Net, function, args),
+      else: {:error, :relay_runtime_unavailable}
   end
 
   defp do_resolve_identity(nil), do: KeyStore.resolve_active()

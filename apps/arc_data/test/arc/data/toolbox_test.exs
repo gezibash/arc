@@ -63,6 +63,17 @@ defmodule Arc.Data.ToolboxTest do
              Toolbox.build_invocation(tool, ["write", "inbox"])
   end
 
+  test "private-file commands never fall back to sending plaintext arguments" do
+    args = [%{"name" => "path", "kind" => "positional", "required" => true}]
+
+    for source <- ["sealed_file", "private_file"] do
+      private_tool = tool(%{"source" => source, "file" => "path"}, args)
+
+      assert {:error, {:invalid_arguments, "private files require the trusted local ARC CLI"}} =
+               Toolbox.build_invocation(private_tool, ["write", "/private/citizen-filename.pdf"])
+    end
+  end
+
   describe "pubkey and seal filters" do
     setup do
       bob = Arc.Identity.generate()

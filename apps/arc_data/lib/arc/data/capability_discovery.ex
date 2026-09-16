@@ -14,6 +14,7 @@ defmodule Arc.Data.CapabilityDiscovery do
   alias Arc.Data.Agent
   alias Arc.Data.CapabilityManifest
   alias Arc.Data.Frame
+  alias Arc.Data.RelayAnnouncement
 
   @default_limit 10
   @default_timeout_ms 10_000
@@ -32,6 +33,13 @@ defmodule Arc.Data.CapabilityDiscovery do
 
   @spec discover(pid(), String.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def discover(agent, query \\ "", opts \\ []) when is_binary(query) and is_list(opts) do
+    case Agent.info(agent) do
+      %{relay_discovery: true, public_key: public_key} -> discover_relay(public_key, query, opts)
+      _ -> discover_local(agent, query, opts)
+    end
+  end
+
+  defp discover_local(agent, query, opts) do
     limit = Keyword.get(opts, :limit, @default_limit)
 
     with {:ok, entries} <- discoverable_entries(agent) do
@@ -58,6 +66,41 @@ defmodule Arc.Data.CapabilityDiscovery do
          matches: Enum.take(matches, limit)
        }}
     end
+  end
+
+  defp discover_relay(public_key, query, opts) do
+    if Code.ensure_loaded?(Arc.Net) and function_exported?(Arc.Net, :discover_via_relay, 3) do
+      # Arc.Net is an optional runtime peer, not a compile-time dependency.
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      case apply(Arc.Net, :discover_via_relay, [public_key, query, opts]) do
+        {:ok, %{entries: entries, next: next} = page} ->
+          matches =
+            entries
+            |> Enum.reject(&(&1.public_key == public_key))
+            |> Enum.flat_map(fn entry ->
+              match_capabilities(RelayAnnouncement.provider(entry), entry.capabilities, query)
+            end)
+
+          {:ok,
+           %{
+             query: query,
+             total: length(matches),
+             truncated?: next != nil,
+             matches: matches,
+             next: next,
+             scope: :relay,
+             partial?: Map.get(page, :partial?, false),
+             cached?: Map.get(page, :cached?, false)
+           }}
+
+        error ->
+          error
+      end
+    else
+      {:error, :relay_runtime_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :relay_not_connected}
   end
 
   @spec fetch_summary(pid(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}

@@ -7,6 +7,7 @@ defmodule Arc.Data.Toolbox do
   surface without giving `arc_data` a dependency on `arc_cli`.
   """
 
+  alias Arc.Data.Agora
   alias Arc.Data.InterfaceManifest
   alias Arc.Identity
   alias Arc.Identity.SealedBox
@@ -34,32 +35,70 @@ defmodule Arc.Data.Toolbox do
     end
   end
 
-  @spec build_invocation(map(), [String.t()]) :: {:ok, map()} | {:error, term()}
-  def build_invocation(tool, argv) when is_map(tool) and is_list(argv) do
+  @spec build_invocation(map(), [String.t()], map()) :: {:ok, map()} | {:error, term()}
+  def build_invocation(tool, argv, context \\ %{})
+
+  def build_invocation(tool, argv, context) when is_map(tool) and is_list(argv) do
     capability = tool["capability"] || %{}
     commands = cli_commands(capability)
     base_invocation = capability["invocation"] || %{}
 
-    if commands == [] do
-      {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
-    else
-      case resolve_command(capability, argv) do
-        {:ok, cli_command, remaining_argv} ->
-          args = Map.get(cli_command, "args", [])
+    version = (cli_interface(capability) || %{})["version"] || 1
 
-          with {:ok, values} <- parse_cli_args(args, remaining_argv),
-               {:ok, input} <- render_input(cli_command, args, values) do
-            invocation = merge_invocation(base_invocation, Map.get(cli_command, "invoke"))
-            {:ok, %{input: input, invocation: invocation, command: cli_command}}
-          end
+    cond do
+      version > InterfaceManifest.max_cli_version() ->
+        {:error, {:invalid_arguments, "update ARC to use this interface version"}}
 
-        {:error, _reason} = error ->
-          error
-      end
+      Agora.enabled?(capability) and version < 4 ->
+        {:error, {:invalid_arguments, "Agora requires interface version 4"}}
+
+      commands == [] ->
+        {:ok, %{input: Enum.join(argv, " "), invocation: base_invocation}}
+
+      true ->
+        build_cli_command(tool, capability, argv, base_invocation, context)
     end
   end
 
-  def build_invocation(_tool, _argv), do: {:error, :invalid_tool}
+  def build_invocation(_tool, _argv, _context), do: {:error, :invalid_tool}
+
+  defp build_cli_command(tool, capability, argv, base_invocation, context) do
+    with {:ok, command, remaining} <- resolve_command(capability, argv),
+         args = Map.get(command, "args", []),
+         {:ok, values} <- parse_cli_args(args, remaining),
+         {:ok, rendered} <- prepare_input(command, args, values, tool, context),
+         invocation = merge_invocation(base_invocation, command["invoke"]),
+         :ok <- validate_invocation(rendered, invocation) do
+      {:ok, Map.merge(rendered, %{invocation: invocation, command: command, values: values})}
+    end
+  end
+
+  defp validate_invocation(%{agora: _}, invocation) do
+    if (invocation["mode"] || "request_reply") == "request_reply",
+      do: :ok,
+      else: {:error, {:invalid_arguments, "Agora requires request/reply invocation"}}
+  end
+
+  defp validate_invocation(_, _), do: :ok
+
+  defp prepare_input(%{"input" => %{"source" => "agora"} = input}, _args, values, tool, context) do
+    with {:ok, text, expected} <-
+           Agora.prepare(input["operation"], values, Map.put(context, :board, Agora.board(tool))) do
+      {:ok, %{input: text, agora: expected}}
+    end
+  end
+
+  defp prepare_input(command, args, values, _tool, context) do
+    with {:ok, input} <- render_input(command, args, values, context), do: {:ok, %{input: input}}
+  end
+
+  @doc "Verify protocol-specific replies before exposing provider text to a caller."
+  def finish_reply(%{text: text} = reply, %{agora: expected}) do
+    with {:ok, verified} <- Agora.finish(text, expected), do: {:ok, %{reply | text: verified}}
+  end
+
+  def finish_reply(_reply, %{agora: _}), do: {:error, {:invalid_arguments, "invalid Agora reply"}}
+  def finish_reply(reply, _built), do: {:ok, reply}
 
   def cli_interface(capability) when is_map(capability) do
     InterfaceManifest.cli(capability)
@@ -275,7 +314,16 @@ defmodule Arc.Data.Toolbox do
   """
   @spec render_input(map(), [map()], map(), filter_context()) ::
           {:ok, String.t()} | {:error, term()}
-  def render_input(cli_command, args, values, context \\ %{}) do
+  def render_input(cli_command, args, values, context \\ %{})
+
+  def render_input(%{"input" => %{"source" => "agora"}}, _args, _values, _context),
+    do: {:error, {:invalid_arguments, "Agora requires the verified tool invocation path"}}
+
+  def render_input(%{"input" => %{"source" => source}}, _args, _values, _context)
+      when source in ["sealed_file", "private_file"],
+      do: {:error, {:invalid_arguments, "private files require the trusted local ARC CLI"}}
+
+  def render_input(cli_command, args, values, context) do
     case Map.get(cli_command, "input") do
       %{"source" => "arg", "name" => name} = input_spec ->
         case Map.fetch(values, name) do

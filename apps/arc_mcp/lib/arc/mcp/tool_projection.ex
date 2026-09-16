@@ -8,8 +8,10 @@ defmodule Arc.MCP.ToolProjection do
   """
 
   alias Arc.Data.Agent
+  alias Arc.Data.Agora
   alias Arc.Data.CapabilityInvocation
   alias Arc.Data.Frame
+  alias Arc.Data.Toolbox
   alias Arc.MCP.DynamicToolRegistry
 
   @type descriptor :: %{
@@ -63,12 +65,14 @@ defmodule Arc.MCP.ToolProjection do
 
       _ ->
         with {:ok, descriptor} <- lookup(owner, task, tool_name, opts),
-             {:ok, input} <- extract_input(arguments),
+             {:ok, built} <- prepare_call(agent, owner, descriptor.mount, arguments),
              {:ok, reply} <-
-               CapabilityInvocation.invoke(agent, descriptor.mount, input,
-                 app_session_id: extract_app_session_id(arguments)
-               ) do
-          {:ok, success_result(reply.text)}
+               CapabilityInvocation.invoke(agent, descriptor.mount, built.input,
+                 app_session_id: extract_app_session_id(arguments),
+                 invocation_override: built.invocation
+               ),
+             {:ok, verified} <- Toolbox.finish_reply(reply, built) do
+          {:ok, success_result(verified.text)}
         else
           {:error, :not_found} ->
             {:error, {:tool_not_found, tool_name}}
@@ -125,6 +129,26 @@ defmodule Arc.MCP.ToolProjection do
   end
 
   defp mount_input_schema(capability) do
+    if Agora.enabled?(capability) do
+      %{
+        "type" => "object",
+        "properties" => %{
+          "argv" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" =>
+              "Public board command: [post, body], [reply, id, body], [read, id], [feed, --limit, 20], or [thread, id]. ARC signs public posts as your authenticated identity and verifies every returned post."
+          }
+        },
+        "required" => ["argv"],
+        "additionalProperties" => false
+      }
+    else
+      raw_input_schema(capability)
+    end
+  end
+
+  defp raw_input_schema(capability) do
     request_body = get_in(capability, ["invocation", "request_body"]) || %{}
 
     %{
@@ -204,6 +228,32 @@ defmodule Arc.MCP.ToolProjection do
 
   defp extract_input(%{"input" => input}) when is_binary(input), do: {:ok, input}
   defp extract_input(_arguments), do: {:error, :missing_input}
+
+  defp prepare_call(agent, owner, mount, arguments) do
+    if Agora.enabled?(mount["capability"] || %{}) do
+      argv = arguments["argv"]
+      owner_key = if is_struct(owner, Arc.Identity), do: owner.public_key, else: owner
+
+      cond do
+        Map.keys(arguments) != ["argv"] or not is_list(argv) or not Enum.all?(argv, &is_binary/1) ->
+          {:error, {:invalid_arguments, "expected arguments.argv to be an array of strings"}}
+
+        Agent.info(agent).public_key != owner_key ->
+          {:error, {:invalid_arguments, "Agora signer must match the authenticated owner"}}
+
+        true ->
+          Toolbox.build_invocation(mount, argv, %{
+            sign_post: fn board, body, parent ->
+              Agent.sign_agora_post(agent, board, body, parent)
+            end
+          })
+      end
+    else
+      with {:ok, input} <- extract_input(arguments) do
+        {:ok, %{input: input, invocation: get_in(mount, ["capability", "invocation"]) || %{}}}
+      end
+    end
+  end
 
   defp extract_app_session_id(%{"app_session_id" => sid}) when is_binary(sid) and sid != "",
     do: sid

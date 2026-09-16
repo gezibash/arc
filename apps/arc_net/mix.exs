@@ -4,7 +4,7 @@ defmodule Arc.Net.MixProject do
   def project do
     [
       app: :arc_net,
-      version: "0.2.1",
+      version: "0.3.0",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -18,7 +18,7 @@ defmodule Arc.Net.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:crypto, :logger],
+      extra_applications: [:crypto, :ssl, :public_key, :logger],
       mod: {Arc.Net.Application, []}
     ]
   end

@@ -72,4 +72,39 @@ defmodule Arc.CLIServeViewTest do
     assert request == "[serve] request from peer-alpha (abcd…1234) GET /info"
     assert stream == "[serve] stream-resize from peer-beta (eeff…8899) session=sb-12345678 120x40"
   end
+
+  test "opaque request bodies do not crash text log rendering" do
+    body = :binary.copy(<<0, 255, 128, 10>>, 20_000)
+
+    output =
+      ServeView.render_event(%{
+        type: :request,
+        from: "peer-alpha",
+        peer_key: "abcd…1234",
+        method: "RAW",
+        path: "/",
+        body: body
+      })
+
+    assert output =~ "80000 bytes (binary)"
+    assert String.valid?(output)
+  end
+
+  test "request-only providers show their URI instead of an unsupported install command" do
+    identity = Identity.generate()
+
+    capability = %{
+      "id" => "primary",
+      "scheme" => "sqlite",
+      "invocation" => %{"mode" => "request_reply", "method" => "QUERY", "path" => "/main"}
+    }
+
+    output = ServeView.render_banner(identity, %{capability: capability}, nil)
+
+    assert output =~
+             "Request: arc request sqlite+arc://#{Identity.encode_public_key(identity)}/main"
+
+    assert output =~ "--input request.json --local"
+    refute output =~ "Install:"
+  end
 end

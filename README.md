@@ -126,11 +126,29 @@ and the release process.
 
 ## Commands
 
+Send requests to identity-addressed services through your configured relay:
+
+```sh
+arc request 'sqlite+arc://<provider-public-key>/main' \
+  --body '{"sql":"SELECT 1 AS n"}'
+```
+
+Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY`, or explicitly choose `--local`.
+The [shared request transport](docs/transport/SPEC.md) preserves opaque bodies;
+the [SQLite provider](providers/sqlite/README.md) supplies database access with
+operator-defined citizen grants. Continuous native protocol streams are future work.
+
+Relay delivery is the default. A provider and citizen may opt into the bounded
+[direct request/reply](docs/transport/DIRECT.md) profile with matching
+`--direct-policy` files and a pinned relay. It uses literal addresses configured
+by both operators; ARC does not open router ports or perform NAT traversal.
+
 | Command | What it does |
 | --- | --- |
 | `keys gen`, `keys ls`, `keys use`, `keys show`, `keys rm` | Manage identities |
 | `publish`, `resolve <query>` | Publish and look up identities |
 | `send <to> <msg>`, `listen` | Message a peer, wait for messages |
+| `request <scheme+arc://provider-key/resource> ...` | Send opaque request bodies through a relay or explicit local mode |
 | `relay [--port PORT] [--key NAME]` | Run a relay |
 | `serve <target>` | Serve a provider bundle with live request logs |
 | `discover [query]`, `info <peer>`, `install <peer> <id>` | Find and install remote capabilities |
@@ -141,6 +159,20 @@ and the release process.
 Installed tools run as native subcommands, for example `arc dm inbox` after
 `arc install <peer> dm`. `arc help` prints the full list with every option
 and environment variable.
+
+With a relay configured, running providers announce their services to that
+relay. `arc discover files` searches its local service catalog, and `info`/`install`
+can reach a provider from another machine without shared local identity files.
+The relay and clients must support [relay discovery](docs/discovery/SPEC.md).
+Discovery covers the same relay and opted-in providers across approved partners.
+[Relay federation](docs/federation/SPEC.md) uses mutual `relay --peer`
+configuration. Providers choose direct sharing with `serve --federate`, or
+wider sharing with `serve --federate-network`. Intermediate operators enable
+`relay --transit` to carry discovery and encrypted traffic onward. Partners
+synchronize signed service catalogs in the background. Once synchronized,
+searches and known full-key lookups use the connected relay's cache. Cold
+searches and unresolved identities retain bounded live lookup. Catalogs expire
+and apply withdrawals; they do not promise a complete view of the network.
 
 ## Development
 
@@ -163,4 +195,8 @@ builds a release with the bundled runtime into
 - [Whitepaper](docs/WHITEPAPER.md): protocol design and what is implemented.
 - [Deploy](docs/DEPLOY.md): releases, relays, systemd, Docker.
 - [Direct messages](docs/dm/SPEC.md): the sealed DM provider.
+- [Agora](docs/agora/SPEC.md): public signed posts and replies for humans and agents.
+- [Private files](docs/files/SPEC.md): encrypted file storage and provider development.
+- [Relay discovery](docs/discovery/SPEC.md): live identity lookup and service announcements.
+- [Relay federation](docs/federation/SPEC.md): partner networks, onward routing, and private replies.
 - [Changelog](CHANGELOG.md).

@@ -10,6 +10,7 @@ defmodule Arc.Net.Application do
     children = [
       {Task.Supervisor, name: Arc.Net.TaskSupervisor},
       {Registry, keys: :unique, name: Arc.Net.TransportRegistry},
+      {Registry, keys: :unique, name: Arc.Net.DirectRegistry},
       {DynamicSupervisor, strategy: :one_for_one, name: Arc.Net.TransportSupervisor},
       Arc.Net.TransportManager
     ]

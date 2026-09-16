@@ -32,6 +32,10 @@ defmodule Arc.CLI.Host do
         relay = relay_address(opts[:relay])
         relay_pubkey = resolve_relay_pubkey_pin(opts[:relay_pubkey])
 
+        if relay == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
+          error("invalid relay address (expected host:port)")
+        end
+
         {:ok, pid} =
           Service.start_link(
             socket_path: socket_path,
