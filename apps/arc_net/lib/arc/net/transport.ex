@@ -741,9 +741,10 @@ defmodule Arc.Net.Transport do
   end
 
   defp valid_directory_operation?(operation),
-    do: operation in [:announce, :search, :resolve, :observe]
+    do: operation in [:announce, :search, :resolve, :observe, :status]
 
   defp directory_timeout(operation) when operation in [:search, :resolve], do: 10_000
+  defp directory_timeout(:status), do: 5_000
   defp directory_timeout(_), do: @directory_timeout_ms
 
   defp decode_directory_reply(payload) do

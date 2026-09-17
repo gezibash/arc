@@ -1,60 +1,55 @@
 # Status
 
-`arc status` is a read-only diagnostic snapshot. It does not start services,
-generate or select identities, publish capabilities, or register citizen routes.
+`arc status` queries the configured relay through ARC's existing control
+connection. The default output is a compact key/value table. This is a snapshot
+of the remote service, not a persistent connection indicator for the caller.
 
-## Client
+## Configuration
 
-Identity selection follows [the identity specification](../identity/SPEC.md).
-The report includes the selected public identity and selection source. A missing
-selection is a normal setup state; an invalid explicit selector is an error and
-never falls through. No secret key material or host token is included.
+The relay address comes from `--relay`, otherwise `ARC_RELAY`. The required
+public-key pin comes from `--relay-pubkey`, otherwise `ARC_RELAY_PUBKEY`.
+Invalid or missing settings fail without falling back to a local service.
+Identity selection is independent: status does not read or change the selected
+citizen. `arc host status` remains the separate local host query.
 
-The client relay comes from `--relay`, otherwise `ARC_RELAY`. The public-key pin
-comes from `--relay-pubkey`, otherwise `ARC_RELAY_PUBKEY`. Explicit invalid values
-are errors. A configured relay is not labelled connected: normal CLI processes
-connect on demand and terminate when their command finishes.
+The query uses a temporary in-memory identity, sends a `status` directory
+request, and closes its connection. It does not save a key, publish a capability,
+or replace an existing citizen route. Its temporary route exists only for the
+query. The complete query has a three-second deadline.
 
-`--check` opens a temporary connection, reads the ARC relay greeting, optionally
-compares the configured public-key pin, and closes the connection. The total
-probe deadline is two seconds, including name resolution. It never sends a
-citizen authentication proof, so it cannot take over an existing citizen route.
-The result is `reachable`, `unreachable`, or `key_mismatch`. A matching greeting
-is not cryptographic proof of relay ownership or end-to-end delivery.
+Status MUST NOT invoke deployment tools, inspect containers, or assume a Compose
+project name. Runtime state comes from ARC-owned interfaces.
 
-## Server
+## Relay response
 
-The local host is queried using its existing public `status` operation at
-`~/.config/arc/host.sock`, or `--socket PATH`. Its reported states are `running`,
-`not_running`, and `unavailable`; an unresponsive or incompatible host is not
-declared stopped. The query is bounded.
+The `status` directory request permits only `type` and `request_id`. The relay
+returns `ok: true` and a `status` object containing:
 
-Host status adds `relay_connections` without removing older fields. Each entry
-contains only the public identity name and public key, connection state, and
-relay host/port when configured. States are `connected`, `reconnecting`,
-`disconnected`, `local`, or `unknown` when the runtime cannot be observed.
-An empty loaded identity set yields no connections, even with a configured
-relay. An older host without this field reports live connection data unavailable.
-Connections for the selected identity are highlighted separately from shell
-configuration, since the host may use a different relay.
+- `state`: `running`, meaning the relay answered this query.
+- `role`: `relay`.
+- `version`: the running relay application version.
+- `public_key`: the relay's lowercase hexadecimal public key.
+- `uptime_seconds`: elapsed monotonic time since relay startup.
+- `federation_transit`: whether onward federation traffic is enabled.
 
-Docker inspection uses only public container-list metadata for the exact Compose
-project `arc-local` (override with `--docker-project NAME`). It follows the current
-Docker context and does not inspect environment, logs, volumes, or credentials.
-`--no-docker` skips it. Missing Docker and an unavailable daemon are distinct
-states. Container state and health are not evidence of ARC connectivity.
+No citizen identities, peer addresses, or private configuration are returned.
+The CLI adds `address`, the selected target. A running response does not prove
+end-to-end delivery, federation health, or a citizen's persistent connection.
+The existing handshake checks the presented key against the pin; its greeting
+is not cryptographic proof of server ownership.
 
-Standalone `arc serve`, `arc listen`, `arc mcp`, and native `arc relay` processes
-do not expose a shared status endpoint and are outside this snapshot. Their
-absence from the report must not be interpreted as stopped or disconnected.
+Older relays that reject the operation report unsupported status queries.
+There is no fallback from an unsupported query to a successful greeting check.
 
 ## Output and exit status
 
-`--json` emits the same public snapshot with `version`, `identity`, `relay`,
-`host`, and `docker` fields. It remains valid JSON when a diagnostic fails.
+`--format json` and its alias `--json` emit the same public fields as the table.
+Errors produce `state: error` and a safe `message`, with `address` when a valid
+target was queried. Exit status is zero for a successful query and one for a
+configuration, connection, protocol, or option error. `--help` succeeds without
+contacting a service. `--check` is retained as a compatibility alias: every
+status invocation now queries the relay.
 
-Exit status is zero for a completed snapshot, including an unconfigured client,
-stopped host, or unavailable optional Docker inspection. Invalid options,
-invalid explicit identity/relay selection, an unobservable local host, and a
-failed explicit relay check return one. A reachable relay with no pin is clearly
-labelled unpinned and does not establish trust.
+This replaces the combined client/host/container snapshot shipped in v0.3.2.
+Its JSON shape changes accordingly. `--socket`, `--docker`, and
+`--docker-project` are no longer accepted by `arc status`.
