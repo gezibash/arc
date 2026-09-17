@@ -15,6 +15,7 @@ defmodule Arc.CLI.ToolRegistry do
   @registry_version 2
   @reserved_commands MapSet.new([
                        "keys",
+                       "join",
                        "publish",
                        "resolve",
                        "apps",

@@ -303,6 +303,11 @@ defmodule Arc.CLI.ProtocolIntegrationTest do
     on_exit(fn -> stop_and_assert_child(provider) end)
     assert_ready(provider.port, "Serving SQLite over ARC")
 
+    # `--local` is an explicit delivery choice. A corrupt joined-relay file
+    # must not affect this same-host request or cause it to consult a relay.
+    File.write!(Path.join(citizen_state, "relays.json"), "not json")
+    File.chmod!(Path.join(citizen_state, "relays.json"), 0o600)
+
     uri = "sqlite+arc://#{provider_identity.public_key}/main"
 
     local =

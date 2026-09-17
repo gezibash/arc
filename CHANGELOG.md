@@ -4,6 +4,15 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-09-17
+
+### Added
+
+- `arc join HOST[:PORT]` confirms and remembers a relay fingerprint, selects
+  that relay for future commands, and creates an identity on a fresh setup.
+  Known relay keys cannot be silently replaced. Explicit flags and environment
+  settings retain precedence over saved relay defaults.
+
 ## [0.4.0] - 2026-09-17
 
 ### Added

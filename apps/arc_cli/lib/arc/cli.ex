@@ -8,6 +8,7 @@ defmodule Arc.CLI do
   # Subcommands whose module receives only the remaining args.
   @bare_commands %{
     "keys" => Arc.CLI.Keys,
+    "join" => Arc.CLI.Join,
     "apps" => Arc.CLI.Apps,
     "host" => Arc.CLI.Host,
     "status" => Arc.CLI.Status,
@@ -128,6 +129,7 @@ defmodule Arc.CLI do
     Usage: arc <command> [subcommand] [options]
 
     Commands:
+      join <host[:port]>          Join a relay and remember it as your default
       keys gen                    Generate a new key
       keys ls                     List all keys (* marks active)
       keys use <name>             Set the global default key

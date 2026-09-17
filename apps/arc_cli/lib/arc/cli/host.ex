@@ -29,38 +29,39 @@ defmodule Arc.CLI.Host do
         error("host already running at #{socket_path}")
 
       {:error, _reason} ->
-        relay = relay_address(opts[:relay])
-        relay_pubkey = resolve_relay_pubkey_pin(opts[:relay_pubkey])
+        case Arc.CLI.RelaySettings.resolve(opts) do
+          {:ok, %{relay: relay, relay_pubkey: relay_pubkey}} ->
+            {:ok, pid} =
+              Service.start_link(
+                socket_path: socket_path,
+                relay: relay,
+                relay_pubkey: relay_pubkey
+              )
 
-        if relay == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
-          error("invalid relay address (expected host:port)")
-        end
+            ref = Process.monitor(pid)
 
-        {:ok, pid} =
-          Service.start_link(
-            socket_path: socket_path,
-            relay: relay,
-            relay_pubkey: relay_pubkey
-          )
+            IO.puts("ARC host listening on #{socket_path}")
+            IO.puts("Admin token: #{token_path}")
 
-        ref = Process.monitor(pid)
+            case relay do
+              {host, port} ->
+                IO.puts("Relay: #{List.to_string(host)}:#{port}")
 
-        IO.puts("ARC host listening on #{socket_path}")
-        IO.puts("Admin token: #{token_path}")
+              nil ->
+                IO.puts("Relay: local only")
+            end
 
-        case relay do
-          {host, port} ->
-            IO.puts("Relay: #{List.to_string(host)}:#{port}")
+            IO.puts("Press Ctrl+C to stop.")
 
-          nil ->
-            IO.puts("Relay: local only")
-        end
+            receive do
+              {:DOWN, ^ref, :process, _pid, _reason} ->
+                :ok
+            end
 
-        IO.puts("Press Ctrl+C to stop.")
-
-        receive do
-          {:DOWN, ^ref, :process, _pid, _reason} ->
-            :ok
+          {:error, :invalid_relay_config} ->
+            error(
+              "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
+            )
         end
     end
   end
@@ -177,18 +178,6 @@ defmodule Arc.CLI.Host do
     """)
 
     Arc.CLI.Exit.halt(1)
-  end
-
-  defp relay_address(nil), do: Arc.Net.relay_address()
-  defp relay_address(addr), do: Arc.Net.relay_address_from(addr)
-
-  defp resolve_relay_pubkey_pin(nil), do: Arc.Net.relay_pubkey()
-
-  defp resolve_relay_pubkey_pin(value) do
-    case Arc.Net.relay_pubkey_from(value) do
-      nil -> error("invalid --relay-pubkey (expected 32-byte hex or base64)")
-      pubkey -> pubkey
-    end
   end
 
   defp pop_opt(args, flag), do: pop_opt(args, flag, [])

@@ -104,8 +104,21 @@ another identity. `arc keys use NAME` sets the global default in
 installations can still read `~/.config/arc/default_key` only when
 `default.key` is absent. See the [identity selector specification](docs/identity/SPEC.md).
 
-Talk to a peer through a relay. Set the relay once per shell, then listen
-in one terminal and send from another:
+Talk to a peer through a relay. Join once and compare the displayed fingerprint
+with the operator:
+
+```sh
+arc join relay.example.com
+arc status
+arc discover
+```
+
+A bare hostname uses port 7331; use `arc join localhost:17331` for another
+port. Joining saves the default for future commands and creates an identity
+only on a fresh setup. It does not start a background connection or federate
+relays. See [joining a relay](docs/join/SPEC.md).
+
+For a temporary override, set the relay per shell:
 
 ```bash
 export ARC_RELAY=relay.example.com:7331
@@ -135,8 +148,8 @@ arc status --relay localhost:7331 --relay-pubkey <relay-public-key>
 arc host status
 ```
 
-`arc status` queries the relay selected by `ARC_RELAY` and `ARC_RELAY_PUBKEY`
-(or the explicit flags). It prints the relay's own version, uptime, public key,
+`arc status` queries the relay saved by `arc join`, overridden by `ARC_RELAY`
+and `ARC_RELAY_PUBKEY` or explicit flags. It prints the relay's own version, uptime, public key,
 and onward federation setting. `--json` is an alias for `--format json`.
 No selected citizen is required, and existing citizen connections stay intact.
 
@@ -193,7 +206,7 @@ and the release process.
 
 For a local relay with persistent journal, DM and Agora providers, run
 `docker compose up -d --build --wait`. The [local Compose guide](docker/local/README.md)
-covers connecting installed ARC v0.4.0 with each agent's own identity.
+covers connecting installed ARC v0.4.1 with each agent's own identity.
 
 ## Commands
 

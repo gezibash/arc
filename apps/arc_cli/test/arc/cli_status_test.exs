@@ -5,6 +5,18 @@ defmodule Arc.CLI.StatusTest do
   alias Arc.Net.Relay
 
   setup do
+    root = Path.join(System.tmp_dir!(), "arc-status-#{System.unique_integer([:positive])}")
+    previous_path = Application.get_env(:arc_net, :relay_config_path)
+    Application.put_env(:arc_net, :relay_config_path, Path.join(root, "relays.json"))
+
+    on_exit(fn ->
+      if previous_path,
+        do: Application.put_env(:arc_net, :relay_config_path, previous_path),
+        else: Application.delete_env(:arc_net, :relay_config_path)
+
+      File.rm_rf!(root)
+    end)
+
     for key <- ["ARC_KEY", "ARC_RELAY", "ARC_RELAY_PUBKEY"] do
       previous = System.get_env(key)
       System.delete_env(key)
