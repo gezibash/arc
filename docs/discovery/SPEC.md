@@ -8,6 +8,10 @@ that carries ARC packets. A new client needs the relay address and its public
 key; it does not need another citizen's local control files or a separate
 directory address.
 
+The same control connection also supports a relay-owned `status` query; see
+[status](../status/SPEC.md). This query stays on the selected relay and does not
+search or forward through federation.
+
 Discovery includes participants on the **same relay** and opted-in publishers
 on explicitly configured federation peers, including further relays reached
 through permitted transit. See

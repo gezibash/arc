@@ -4,6 +4,35 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Experimental managed relay boot, a protected local `arc update` interface,
+  signed release-channel verification, bounded ARC/local artifact transfer,
+  conservative OTP package preflight, and a read-only release provider.
+  Checks notify; updates require an operator. Production qualification and
+  official signed channels are still required before rollout.
+- An isolated application hot-upgrade/downgrade proof that passes encrypted
+  traffic across existing relay connections while state migration is paused.
+  CI runs the proof. This does not provide a production updater.
+- A live-update design covering stable/beta channels and operator-started
+  updates, with incompatible releases left pending for a restart decision.
+
+### Changed
+
+- Failed updates retain release identities and the interrupted phase in the
+  private recovery journal. Unreadable recovery state blocks retries, and a
+  rejected archive digest no longer leaves its temporary download behind.
+- Moved the relay accept loop into its own module so it does not retain old
+  relay callback code during the hot-upgrade proof.
+- `arc status` now queries the configured relay by default, with service-owned
+  fields, a key/value table, and `--format json` (`--json` alias). The previous
+  combined snapshot JSON changes; use `arc host status` for the local host.
+  Older relays need an upgrade for this query.
+- Removed Docker inspection and the hardcoded local Compose project from
+  `arc status`. Status no longer depends on the deployment platform.
+
 ## [0.3.2] - 2026-09-16
 
 ### Added

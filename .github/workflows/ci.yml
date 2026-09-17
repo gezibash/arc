@@ -64,6 +64,18 @@ jobs:
         working-directory: providers/sqlite
         run: mise exec -- python -m unittest discover -s tests -v
       - run: mix test --warnings-as-errors
+      - name: Prove relay application hot upgrade and downgrade
+        run: |
+          mix format --check-formatted scripts/test-hot-upgrade.exs
+          mix run --no-start scripts/test-hot-upgrade.exs
+      - name: Prove managed relay update and permanent restart
+        run: |
+          mix format --check-formatted scripts/test-managed-update.exs scripts/support/*.exs scripts/test-update-recovery.exs scripts/prepare-hot-base.exs scripts/build-hot-release.exs
+          mix run --no-start scripts/test-managed-update.exs
+      - name: Prove managed update crash recovery
+        run: mix run --no-start scripts/test-update-recovery.exs
+      - name: Prove managed update through federation
+        run: mix run --no-start scripts/test-managed-update.exs --federation
 
   dialyzer:
     name: Dialyzer
@@ -108,4 +120,4 @@ jobs:
       - run: mix release arc_runtime --overwrite
       - run: _build/prod/rel/arc_runtime/bin/arc version
       - run: _build/prod/rel/arc_runtime/bin/arc keys gen
-      - run: _build/prod/rel/arc_runtime/bin/arc status --json --no-docker
+      - run: _build/prod/rel/arc_runtime/bin/arc status --help

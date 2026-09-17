@@ -19,4 +19,25 @@ readlink_f () {
 SELF="$(readlink_f "$0")"
 RELEASE_ROOT="$(cd "$(dirname "$SELF")/.." && pwd -P)"
 
+if [ "$1" = "service" ] && [ "$2" = "start" ]; then
+  if [ "$2" != "start" ] || [ "$3" != "--config" ] || [ -z "$4" ] || [ -n "$5" ]; then
+    echo "usage: arc service start --config ABS_JSON_PATH" >&2
+    exit 2
+  fi
+
+  case "$4" in
+    /*) ;;
+    *)
+      echo "error: service config must be an absolute path" >&2
+      exit 2
+      ;;
+  esac
+
+  # `start` uses the generated release control script and its committed
+  # start_erl.data selection. Do not infer a version directory here.
+  # Updates are administered through the private Unix socket. Do not expose
+  # distributed Erlang or rely on a cookie shipped inside a release archive.
+  ARC_SERVICE_CONFIG="$4" RELEASE_DISTRIBUTION=none exec "$RELEASE_ROOT/bin/arc_runtime" start
+fi
+
 exec "$RELEASE_ROOT/bin/arc_runtime" eval 'Arc.CLI.main(System.argv())' "$@"

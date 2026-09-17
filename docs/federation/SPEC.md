@@ -324,6 +324,20 @@ Catalog integration tests exercise cached searches, empty cached results,
 withdrawals, same-identity relay restart, and withdrawal convergence around a
 cycle. Socket tests check background synchronization, local search replies,
 bounded task scheduling, and rejection of late results after peer departure.
+The lifecycle tests also verify that stopping a federation manager cancels an
+outbound handshake and closes its socket without waiting for the peer timeout.
+
+To diagnose an integration child that fails to shut down, enable the test-only
+stack sampler. It prints function names and arities, not process state or keys:
+
+```bash
+ARC_TEST_SHUTDOWN_DIAGNOSTICS=1 mise exec -- mix test \
+  apps/arc_cli/test/arc/cli_catalog_federation_test.exs
+```
+
+The catalog harness sends one shutdown request and uses a fixed deadline;
+additional child output does not extend that deadline. Timeout reports retain
+the child output for diagnosis.
 
 Unit and socket tests cover signed scopes, route/home binding, malformed
 paths, loop and budget limits, downstream partial replies, private return

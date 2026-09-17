@@ -20,6 +20,8 @@ defmodule Arc.Net.Relay do
   alias Arc.Identity
   alias Arc.Net.Connection
   alias Arc.Net.Federation
+  # Kept outside Relay so acceptors do not retain old Relay code during upgrades.
+  alias Arc.Net.Relay.Acceptor
   alias Arc.Net.Relay.FederationCatalog
   alias Arc.Net.Relay.FederationDirectory
   alias Arc.Net.Relay.RouteShard
@@ -241,6 +243,7 @@ defmodule Arc.Net.Relay do
       federation_seen: %{},
       federation_catalog:
         FederationCatalog.new(config.relay_public_key, Enum.map(config.peers, & &1.public_key)),
+      started_at: System.monotonic_time(:second),
       catalog_generation: 0,
       catalog_ready: MapSet.new(),
       catalog_syncs: %{},
@@ -1454,6 +1457,16 @@ defmodule Arc.Net.Relay do
     observe_directory_endpoint(state, conn_pid, request_id, request)
   end
 
+  defp handle_directory_request(
+         state,
+         conn_pid,
+         _pubkey,
+         request_id,
+         %{"type" => "status"} = request
+       ) do
+    relay_status_request(state, conn_pid, request_id, request)
+  end
+
   defp handle_directory_request(state, conn_pid, _pubkey, request_id, _request) do
     send_directory_error(conn_pid, request_id, "invalid_request")
     state
@@ -1476,6 +1489,38 @@ defmodule Arc.Net.Relay do
     end
 
     state
+  end
+
+  defp relay_status_request(state, conn_pid, request_id, request) do
+    if self_observation_request?(request) do
+      send_directory_reply(conn_pid, request_id, %{
+        "ok" => true,
+        "status" => %{
+          "role" => "relay",
+          "state" => "running",
+          "version" => relay_version(),
+          "public_key" => Base.encode16(state.relay_public_key, case: :lower),
+          "uptime_seconds" => relay_uptime_seconds(state),
+          "federation_transit" => state.federation_transit
+        }
+      })
+    else
+      send_directory_error(conn_pid, request_id, "invalid_request")
+    end
+
+    state
+  end
+
+  defp relay_uptime_seconds(state) do
+    max(System.monotonic_time(:second) - state.started_at, 0)
+  end
+
+  defp relay_version do
+    case Application.spec(:arc_net, :vsn) do
+      version when is_list(version) -> List.to_string(version)
+      version when is_binary(version) -> version
+      _ -> "unknown"
+    end
   end
 
   defp self_observation_request?(request),
@@ -1889,9 +1934,12 @@ defmodule Arc.Net.Relay do
 
   defp start_acceptor(listen_socket, relay_pid, relay_public_key) do
     {:ok, acceptor_pid} =
-      Task.Supervisor.start_child(Arc.Net.TaskSupervisor, fn ->
-        accept_loop(listen_socket, relay_pid, relay_public_key)
-      end)
+      Task.Supervisor.start_child(
+        Arc.Net.TaskSupervisor,
+        Acceptor,
+        :accept_loop,
+        [listen_socket, relay_pid, relay_public_key]
+      )
 
     acceptor_ref = Process.monitor(acceptor_pid)
     {acceptor_pid, acceptor_ref}
@@ -1906,30 +1954,6 @@ defmodule Arc.Net.Relay do
        ) do
     {acceptor_pid, acceptor_ref} = start_acceptor(listen_socket, relay_pid, relay_public_key)
     Map.put(Map.delete(acceptor_refs, dead_acceptor_pid), acceptor_pid, acceptor_ref)
-  end
-
-  defp accept_loop(listen_socket, relay_pid, relay_public_key) do
-    case :gen_tcp.accept(listen_socket) do
-      {:ok, socket} ->
-        {:ok, conn} =
-          Connection.start_link(
-            socket: socket,
-            role: :relay_client,
-            relay_pid: relay_pid,
-            relay_pubkey: relay_public_key
-          )
-
-        :ok = :gen_tcp.controlling_process(socket, conn)
-        Connection.send_relay_hello(conn)
-        Connection.activate(conn)
-        accept_loop(listen_socket, relay_pid, relay_public_key)
-
-      {:error, :closed} ->
-        :ok
-
-      {:error, _reason} ->
-        accept_loop(listen_socket, relay_pid, relay_public_key)
-    end
   end
 
   defp put_runtime(routes_tables, shard_pids) do

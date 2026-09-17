@@ -130,27 +130,30 @@ State lives in `~/.config/arc` (keys, control plane, tools) and `~/.arc`
 
 ```sh
 arc status
-arc status --check
-arc status --json
+arc status --format json
+arc status --relay localhost:7331 --relay-pubkey <relay-public-key>
+arc host status
 ```
 
-`status` shows the selected identity and its source, the relay configured for
-this shell, and live connections owned by `arc host`. Ordinary client commands
-connect on demand; setting `ARC_RELAY` alone does not establish a connection.
-An idle host with a relay configured has no citizen connection until an identity
-is loaded.
+`arc status` queries the relay selected by `ARC_RELAY` and `ARC_RELAY_PUBKEY`
+(or the explicit flags). It prints the relay's own version, uptime, public key,
+and onward federation setting. `--json` is an alias for `--format json`.
+No selected citizen is required, and existing citizen connections stay intact.
 
-`--check` briefly reads the relay greeting and compares its public key with your
-configured pin. This checks reachability without signing in as your citizen or
-replacing an existing connection. A successful greeting is not an authenticated
-citizen session or proof of message delivery.
+A running relay response does not imply that your citizen has a persistent
+connection. Use `arc host status` for the local host. Status uses ARC's own
+interfaces regardless of how the service is deployed. Older relays must be
+upgraded to support the new status query.
+See [status behavior](docs/status/SPEC.md) for exact states and exit codes.
 
-The server section also lists the `arc-local` Docker Compose containers in the
-current Docker context, including state, health when available, and ports.
-Use `--docker-project NAME` for another project or `--no-docker` to skip it.
-Container health does not establish provider-to-relay connectivity. Standalone
-`serve`, `listen`, `mcp`, and native relay processes are not inspected. See
-[status behavior](docs/status/SPEC.md) for exact states and exit codes.
+### Live update work
+
+The experimental [managed relay updater](docs/updates/OPERATIONS.md) adds
+`arc update status|check|apply --socket PATH`, signed channel metadata and
+release transfer through ARC providers. Checks notify; an operator starts each
+installation. It requires a prepared native base and an explicitly supported
+upgrade package. Existing releases are not automatically hot-upgradeable.
+See the [update policy and qualification gates](docs/updates/SPEC.md).
 
 ## Run a relay
 

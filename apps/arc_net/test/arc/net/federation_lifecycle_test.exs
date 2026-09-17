@@ -93,6 +93,56 @@ defmodule Arc.Net.FederationLifecycleTest do
     assert {:error, _} = Task.await(request, 2_000)
   end
 
+  test "stopping a manager cancels an in-flight outbound handshake" do
+    [identity, peer] =
+      Enum.sort_by([Identity.generate(), Identity.generate()], & &1.public_key)
+
+    {:ok, relay} =
+      GenServer.start_link(CallbackRelay, owner: self(), label: "dial", blocked: false)
+
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listen)
+    owner = self()
+
+    server =
+      Task.async(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen, 2_000)
+        send(owner, :outbound_handshake_accepted)
+        :gen_tcp.recv(socket, 0, 2_000)
+      end)
+
+    {:ok, federation} =
+      Federation.start_link(
+        relay: relay,
+        identity: identity,
+        peers: [%{public_key: peer.public_key, host: ~c"127.0.0.1", port: port}]
+      )
+
+    on_exit(fn ->
+      stop_process(federation)
+      stop_process(relay)
+      :gen_tcp.close(listen)
+    end)
+
+    Process.unlink(federation)
+    Process.unlink(relay)
+
+    assert_receive :outbound_handshake_accepted, 1_000
+
+    await(fn ->
+      match?(%{stage: :dialing}, :sys.get_state(federation).links[peer.public_key])
+    end)
+
+    dial_pid = :sys.get_state(federation).links[peer.public_key].dial_pid
+    dial_monitor = Process.monitor(dial_pid)
+    started_at = System.monotonic_time(:millisecond)
+
+    assert :ok = GenServer.stop(federation, :normal, 300)
+    assert System.monotonic_time(:millisecond) - started_at < 300
+    assert_receive {:DOWN, ^dial_monitor, :process, ^dial_pid, :shutdown}, 1_000
+    assert {:error, :closed} = Task.await(server, 1_000)
+  end
+
   defp request_high(pair),
     do: Federation.request(pair.low, pair.high_id.public_key, %{"type" => "test"})
 

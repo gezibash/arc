@@ -23,7 +23,10 @@ defmodule Arc.CLI.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      mod: {Arc.CLI.Application, []},
+      # SASL supplies the OTP release handler used by the managed service's
+      # operator-controlled update path. It is not used by normal CLI eval.
+      extra_applications: [:logger, :sasl]
     ]
   end
 
