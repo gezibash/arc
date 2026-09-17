@@ -487,19 +487,29 @@ defmodule Arc.CLI.CatalogFederationIntegrationTest do
   defp stop_child(port) when is_port(port) do
     if Port.info(port) do
       true = Port.command(port, "shutdown\n")
-
-      receive do
-        {^port, {:data, _chunk}} -> stop_child(port)
-        {^port, {:exit_status, 0}} -> :ok
-        {^port, {:exit_status, status}} -> flunk("child exited with status #{status}")
-      after
-        2_000 ->
-          Port.close(port)
-          flunk("child ignored shutdown request")
-      end
+      await_shutdown(port, System.monotonic_time(:millisecond) + 2_000, "")
     else
       :ok
     end
+  end
+
+  defp await_shutdown(port, deadline, output) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+    if remaining <= 0, do: shutdown_timeout(port, output)
+
+    receive do
+      {^port, {:data, chunk}} -> await_shutdown(port, deadline, output <> chunk)
+      {^port, {:exit_status, 0}} -> :ok
+      {^port, {:exit_status, status}} -> flunk("child exited with status #{status}:\n#{output}")
+    after
+      remaining ->
+        shutdown_timeout(port, output)
+    end
+  end
+
+  defp shutdown_timeout(port, output) do
+    if Port.info(port), do: Port.close(port)
+    flunk("child ignored shutdown request:\n#{output}")
   end
 
   defp stop_and_assert_child(%{port: port, os_pid: os_pid}) do

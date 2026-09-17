@@ -24,9 +24,41 @@ if match?([command | _] when command in ["relay", "serve"], argv) do
   {:ok, _task} = Task.start(fn -> Arc.CLI.main(argv) end)
 
   case IO.gets("") do
-    "shutdown\n" -> System.stop(0)
-    :eof -> System.stop(0)
-    _ -> System.stop(1)
+    "shutdown\n" ->
+      if System.get_env("ARC_TEST_SHUTDOWN_DIAGNOSTICS") == "1" do
+        IO.puts("shutdown command received")
+
+        spawn(fn ->
+          Process.sleep(750)
+
+          snapshots =
+            for pid <- Process.list(), reduce: [] do
+              acc ->
+                case Process.info(pid, [:registered_name, :current_stacktrace]) do
+                  nil ->
+                    acc
+
+                  info ->
+                    frames =
+                      Enum.map(info[:current_stacktrace], fn {module, function, arity, _location} ->
+                        {module, function, if(is_list(arity), do: length(arity), else: arity)}
+                      end)
+
+                    [{pid, info[:registered_name], frames} | acc]
+                end
+            end
+
+          IO.puts("shutdown process stacks: #{inspect(snapshots, limit: :infinity)}")
+        end)
+      end
+
+      System.stop(0)
+
+    :eof ->
+      System.stop(0)
+
+    _ ->
+      System.stop(1)
   end
 else
   Arc.CLI.main(argv)
