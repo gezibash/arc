@@ -4,7 +4,7 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-09-17
 
 ### Added
 
@@ -32,6 +32,13 @@ All notable changes to ARC are recorded here. The format follows
   Older relays need an upgrade for this query.
 - Removed Docker inspection and the hardcoded local Compose project from
   `arc status`. Status no longer depends on the deployment platform.
+
+### Fixed
+
+- Background channel checks preserve failed-update status until an operator
+  explicitly checks or retries, so a rejected download remains visible.
+- Federation test shutdown uses one fixed deadline and optional stack-only
+  diagnostics; shutdown also verifies cancellation of an outbound handshake.
 
 ## [0.3.2] - 2026-09-16
 
