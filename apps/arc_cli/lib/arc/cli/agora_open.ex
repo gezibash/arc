@@ -59,26 +59,32 @@ defmodule Arc.CLI.AgoraOpen do
 
   defp validate_options(command, opts) do
     port = Keyword.get(opts, :port, 0)
-    relay_text = Keyword.get(opts, :relay, System.get_env("ARC_RELAY"))
-    pin_text = Keyword.get(opts, :relay_pubkey, System.get_env("ARC_RELAY_PUBKEY"))
-    relay = if relay_text, do: Arc.Net.relay_address_from(relay_text)
-    pin = if pin_text, do: Arc.Net.relay_pubkey_from(pin_text)
 
-    cond do
-      port < 0 or port > 65_535 ->
+    with true <- port >= 0 and port <= 65_535,
+         {:ok, %{relay: relay, relay_pubkey: pin}} <- Arc.CLI.RelaySettings.resolve(opts) do
+      {:ok, command, [port: port, relay: relay, relay_pubkey: pin]}
+    else
+      false ->
         {:error, "invalid --port (expected 0 through 65535)"}
 
-      relay_text != nil and relay == nil ->
-        {:error, "invalid relay address (expected host:port)"}
+      {:error, :invalid_relay_config} ->
+        {:error, relay_settings_error(opts)}
+    end
+  end
 
-      pin_text != nil and pin == nil ->
-        {:error, "invalid relay public key (expected 32-byte hex or base64)"}
+  defp relay_settings_error(opts) do
+    address = Keyword.get(opts, :relay, System.get_env("ARC_RELAY"))
+    pin = Keyword.get(opts, :relay_pubkey, System.get_env("ARC_RELAY_PUBKEY"))
 
-      pin != nil and relay == nil ->
-        {:error, "a relay public-key pin requires a relay address"}
+    cond do
+      is_binary(address) and Arc.Net.relay_address_from(address) == nil ->
+        "invalid relay address (expected host:port)"
+
+      is_binary(pin) and Arc.Net.relay_pubkey_from(pin) == nil ->
+        "invalid relay public key (expected 32-byte hex or base64)"
 
       true ->
-        {:ok, command, [port: port, relay: relay, relay_pubkey: pin]}
+        "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
     end
   end
 

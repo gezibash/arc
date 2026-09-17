@@ -757,16 +757,15 @@ defmodule Arc.CLI.Agent do
   end
 
   defp maybe_connect_relay(my_identity, opts, agent) do
-    relay_addr = configured_relay_address(opts)
-    relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
-    validate_relay_configuration!(opts, relay_addr, relay_pubkey_pin)
-    connect_configured_relay(relay_addr, relay_pubkey_pin, my_identity, opts, agent)
-  end
+    case Arc.CLI.RelaySettings.resolve(opts) do
+      {:ok, %{relay: relay_addr, relay_pubkey: relay_pubkey_pin}} ->
+        validate_relay_configuration!(opts, relay_addr, relay_pubkey_pin)
+        connect_configured_relay(relay_addr, relay_pubkey_pin, my_identity, opts, agent)
 
-  defp configured_relay_address(opts) do
-    case Keyword.get(opts, :relay) do
-      nil -> Arc.Net.relay_address()
-      addr -> Arc.Net.relay_address_from(addr)
+      {:error, :invalid_relay_config} ->
+        error(
+          "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
+        )
     end
   end
 
@@ -777,10 +776,6 @@ defmodule Arc.CLI.Agent do
 
     if federation_requested?(opts) and relay_pubkey_pin == nil do
       error("federation flags require --relay-pubkey (or ARC_RELAY_PUBKEY)")
-    end
-
-    if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
-      error("invalid relay address (expected host:port)")
     end
   end
 
@@ -947,52 +942,12 @@ defmodule Arc.CLI.Agent do
     end
   end
 
-  defp resolve_relay_pubkey_pin(opts) do
-    relay_pubkey_opt = Keyword.get(opts, :relay_pubkey)
-
-    relay_pubkey_pin =
-      case relay_pubkey_opt do
-        nil -> Arc.Net.relay_pubkey()
-        value -> Arc.Net.relay_pubkey_from(value)
-      end
-
-    cond do
-      relay_pubkey_opt != nil and relay_pubkey_pin == nil ->
-        error("invalid --relay-pubkey (expected 32-byte hex or base64)")
-
-      relay_pubkey_opt == nil and System.get_env("ARC_RELAY_PUBKEY") != nil and
-          relay_pubkey_pin == nil ->
-        error("invalid ARC_RELAY_PUBKEY (expected 32-byte hex or base64)")
-
-      true ->
-        relay_pubkey_pin
-    end
-  end
-
   defp load_direct_policy(nil, _opts), do: {:ok, nil}
 
   defp load_direct_policy(path, opts) when is_binary(path) do
-    with {:ok, _relay} <- direct_policy_relay(opts),
-         {:ok, _pin} <- direct_policy_pin(opts) do
+    with {:ok, %{relay: relay, relay_pubkey: pin}} <- Arc.CLI.RelaySettings.resolve(opts),
+         true <- (relay != nil and is_binary(pin)) or {:error, :direct_policy_requires_relay} do
       Arc.Data.Direct.Policy.load_file(path)
-    end
-  end
-
-  defp direct_policy_relay(opts) do
-    address = Keyword.get(opts, :relay) || System.get_env("ARC_RELAY")
-
-    case address && Arc.Net.relay_address_from(address) do
-      {host, port} -> {:ok, {host, port}}
-      _ -> {:error, :direct_policy_requires_relay}
-    end
-  end
-
-  defp direct_policy_pin(opts) do
-    pin = Keyword.get(opts, :relay_pubkey) || System.get_env("ARC_RELAY_PUBKEY")
-
-    case pin && Arc.Net.relay_pubkey_from(pin) do
-      key when is_binary(key) -> {:ok, key}
-      _ -> {:error, :direct_policy_requires_relay}
     end
   end
 
@@ -1005,6 +960,9 @@ defmodule Arc.CLI.Agent do
 
   defp describe_direct_policy_error(:direct_policy_requires_relay),
     do: "--direct-policy requires a pinned relay; use --relay and --relay-pubkey"
+
+  defp describe_direct_policy_error(:invalid_relay_config),
+    do: "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
 
   defp describe_direct_policy_error(reason),
     do: "invalid direct policy: #{inspect(reason)}"

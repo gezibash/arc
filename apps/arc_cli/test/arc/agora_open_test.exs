@@ -14,7 +14,8 @@ defmodule Arc.CLI.AgoraOpenTest do
     for {app, key, path} <- [
           {:arc_identity, :keys_dir, "keys"},
           {:arc_identity, :default_file, "default_key"},
-          {:arc_cli, :tool_registry_dir, "tools"}
+          {:arc_cli, :tool_registry_dir, "tools"},
+          {:arc_net, :relay_config_path, "relays.json"}
         ] do
       previous = Application.fetch_env(app, key)
       Application.put_env(app, key, Path.join(root, path))

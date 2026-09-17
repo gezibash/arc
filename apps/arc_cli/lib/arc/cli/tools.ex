@@ -1481,20 +1481,8 @@ defmodule Arc.CLI.Tools do
   end
 
   defp maybe_connect_relay(my_identity, opts, agent) do
-    relay_addr =
-      case Keyword.get(opts, :relay) do
-        nil -> Arc.Net.relay_address()
-        addr -> Arc.Net.relay_address_from(addr)
-      end
-
-    relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
-
-    if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
-      error("invalid relay address (expected host:port)")
-    end
-
-    case relay_addr do
-      {host, port} ->
+    case Arc.CLI.RelaySettings.resolve(opts) do
+      {:ok, %{relay: {host, port}, relay_pubkey: relay_pubkey_pin}} ->
         case Arc.Net.connect_relay(host, port, my_identity, relay_pubkey_pin) do
           :ok ->
             case Agent.publish_relay(agent) do
@@ -1506,30 +1494,13 @@ defmodule Arc.CLI.Tools do
             error("relay connect failed: #{inspect(reason)}")
         end
 
-      nil ->
+      {:ok, %{relay: nil, relay_pubkey: nil}} ->
         :ok
-    end
-  end
 
-  defp resolve_relay_pubkey_pin(opts) do
-    relay_pubkey_opt = Keyword.get(opts, :relay_pubkey)
-
-    relay_pubkey_pin =
-      case relay_pubkey_opt do
-        nil -> Arc.Net.relay_pubkey()
-        value -> Arc.Net.relay_pubkey_from(value)
-      end
-
-    cond do
-      relay_pubkey_opt != nil and relay_pubkey_pin == nil ->
-        error("invalid --relay-pubkey (expected 32-byte hex or base64)")
-
-      relay_pubkey_opt == nil and System.get_env("ARC_RELAY_PUBKEY") != nil and
-          relay_pubkey_pin == nil ->
-        error("invalid ARC_RELAY_PUBKEY (expected 32-byte hex or base64)")
-
-      true ->
-        relay_pubkey_pin
+      {:error, :invalid_relay_config} ->
+        error(
+          "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
+        )
     end
   end
 

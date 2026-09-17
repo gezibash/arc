@@ -39,15 +39,20 @@ defmodule Arc.CLI.Status do
   end
 
   defp query(opts) do
-    address = Keyword.get(opts, :relay, System.get_env("ARC_RELAY"))
-    pin_text = Keyword.get(opts, :relay_pubkey, System.get_env("ARC_RELAY_PUBKEY"))
-    relay = Arc.Net.relay_address_from(address)
-    pin = Arc.Net.relay_pubkey_from(pin_text)
+    case Arc.CLI.RelaySettings.resolve(opts) do
+      {:ok, %{relay: {_, _} = relay, relay_pubkey: pin}} when is_binary(pin) ->
+        fetch(relay, pin)
 
-    cond do
-      relay == nil -> error("Set --relay or ARC_RELAY to host:port.")
-      pin == nil -> error("Set --relay-pubkey or ARC_RELAY_PUBKEY to a valid relay public key.")
-      true -> fetch(relay, pin)
+      {:ok, %{relay: nil}} ->
+        error("Join a relay or set --relay or ARC_RELAY to host:port.")
+
+      {:ok, %{relay: {_, _}, relay_pubkey: nil}} ->
+        error("Set --relay-pubkey or ARC_RELAY_PUBKEY to a valid relay public key.")
+
+      {:error, :invalid_relay_config} ->
+        error(
+          "Relay settings are invalid; run arc join again or provide --relay and --relay-pubkey."
+        )
     end
   end
 

@@ -73,16 +73,18 @@ defmodule Arc.CLI.ProtocolRequest do
     if opts[:local] do
       {:ok, nil}
     else
-      address = opts[:relay] || System.get_env("ARC_RELAY")
-      pin = opts[:relay_pubkey] || System.get_env("ARC_RELAY_PUBKEY")
+      case Arc.CLI.RelaySettings.resolve(opts) do
+        {:ok, %{relay: {host, port}, relay_pubkey: key}} when is_binary(key) ->
+          {:ok, {host, port, key}}
 
-      with true <- is_binary(address) or {:error, :relay_required},
-           {host, port} <- Arc.Net.relay_address_from(address),
-           key when is_binary(key) <- Arc.Net.relay_pubkey_from(pin) do
-        {:ok, {host, port, key}}
-      else
-        {:error, _} = error -> error
-        _ -> {:error, :invalid_relay_configuration}
+        {:ok, %{relay: nil}} ->
+          {:error, :relay_required}
+
+        {:ok, %{relay: {_, _}, relay_pubkey: nil}} ->
+          {:error, :invalid_relay_configuration}
+
+        {:error, :invalid_relay_config} ->
+          {:error, :invalid_relay_configuration}
       end
     end
   end
@@ -222,8 +224,7 @@ defmodule Arc.CLI.ProtocolRequest do
     do: "--direct-policy requires a pinned relay; use --relay and --relay-pubkey"
 
   defp describe_error(:invalid_relay_configuration),
-    do:
-      "invalid relay address or missing/invalid relay public key; use --relay and --relay-pubkey"
+    do: "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
 
   defp describe_error(:invalid_protocol_uri),
     do:

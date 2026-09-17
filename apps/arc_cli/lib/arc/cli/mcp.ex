@@ -22,34 +22,30 @@ defmodule Arc.CLI.MCP do
   end
 
   defp dispatch([task | _], opts) when is_binary(task) and task != "" do
-    relay_addr =
-      case Keyword.get(opts, :relay) do
-        nil -> Arc.Net.relay_address()
-        addr -> Arc.Net.relay_address_from(addr)
-      end
+    case Arc.CLI.RelaySettings.resolve(opts) do
+      {:ok, %{relay: relay_addr, relay_pubkey: relay_pubkey_pin}} ->
+        {:ok, server} =
+          HTTPServer.start_link(
+            task: task,
+            host: opts[:host],
+            port: opts[:port],
+            relay: relay_addr,
+            relay_pubkey: relay_pubkey_pin
+          )
 
-    relay_pubkey_pin = resolve_relay_pubkey_pin(opts)
+        IO.puts("MCP listening on #{HTTPServer.url(server)} for task '#{task}'")
 
-    if relay_addr == nil and (opts[:relay] != nil or System.get_env("ARC_RELAY") != nil) do
-      error("invalid relay address (expected host:port)")
+        IO.puts(
+          "Authenticate initialize requests with x-arc-public-key, x-arc-timestamp, x-arc-nonce, and x-arc-signature headers."
+        )
+
+        Process.sleep(:infinity)
+
+      {:error, :invalid_relay_config} ->
+        error(
+          "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
+        )
     end
-
-    {:ok, server} =
-      HTTPServer.start_link(
-        task: task,
-        host: opts[:host],
-        port: opts[:port],
-        relay: relay_addr,
-        relay_pubkey: relay_pubkey_pin
-      )
-
-    IO.puts("MCP listening on #{HTTPServer.url(server)} for task '#{task}'")
-
-    IO.puts(
-      "Authenticate initialize requests with x-arc-public-key, x-arc-timestamp, x-arc-nonce, and x-arc-signature headers."
-    )
-
-    Process.sleep(:infinity)
   end
 
   defp dispatch(_, _opts) do
@@ -59,28 +55,6 @@ defmodule Arc.CLI.MCP do
     )
 
     Arc.CLI.Exit.halt(1)
-  end
-
-  defp resolve_relay_pubkey_pin(opts) do
-    relay_pubkey_opt = Keyword.get(opts, :relay_pubkey)
-
-    relay_pubkey_pin =
-      case relay_pubkey_opt do
-        nil -> Arc.Net.relay_pubkey()
-        value -> Arc.Net.relay_pubkey_from(value)
-      end
-
-    cond do
-      relay_pubkey_opt != nil and relay_pubkey_pin == nil ->
-        error("invalid --relay-pubkey (expected 32-byte hex or base64)")
-
-      relay_pubkey_opt == nil and System.get_env("ARC_RELAY_PUBKEY") != nil and
-          relay_pubkey_pin == nil ->
-        error("invalid ARC_RELAY_PUBKEY (expected 32-byte hex or base64)")
-
-      true ->
-        relay_pubkey_pin
-    end
   end
 
   defp parse_port(nil), do: nil

@@ -6,8 +6,10 @@ of the remote service, not a persistent connection indicator for the caller.
 
 ## Configuration
 
-The relay address comes from `--relay`, otherwise `ARC_RELAY`. The required
-public-key pin comes from `--relay-pubkey`, otherwise `ARC_RELAY_PUBKEY`.
+The relay address comes from `--relay`, otherwise `ARC_RELAY`, otherwise the
+default saved by `arc join`. The required public-key pin comes from
+`--relay-pubkey`, otherwise `ARC_RELAY_PUBKEY`, otherwise the remembered pin
+for that address. See [joining a relay](../join/SPEC.md).
 Invalid or missing settings fail without falling back to a local service.
 Identity selection is independent: status does not read or change the selected
 citizen. `arc host status` remains the separate local host query.
