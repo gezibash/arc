@@ -146,6 +146,10 @@ The journal retains the original release identities and interrupted phase when
 a worker fails. The public status omits those private recovery details. If the
 journal cannot be read or persisted during failure handling, further update
 attempts remain blocked.
+While the service is running, background channel checks preserve a blocked
+status and its journal instead of overwriting the failure. For failures before
+mutation that do not require reconciliation, an operator can explicitly check
+or retry after addressing the cause.
 An unsuccessful preflight can also leave a retained archive requiring inspection
 before another staging attempt.
 

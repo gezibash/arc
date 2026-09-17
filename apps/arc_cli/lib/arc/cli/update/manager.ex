@@ -64,7 +64,8 @@ defmodule Arc.CLI.Update.Manager do
   def handle_info(:channel_check, state) do
     Process.send_after(self(), :channel_check, 3_600_000)
 
-    if state.job == nil and state.status["reconciliation_required"] != true do
+    if state.job == nil and state.status["state"] != "blocked" and
+         state.status["reconciliation_required"] != true do
       {:reply, _result, next} = begin_job("check", state)
       {:noreply, next}
     else

@@ -123,6 +123,31 @@ defmodule Arc.CLI.Update.ManagerTest do
     GenServer.stop(manager)
   end
 
+  test "background checks preserve a rejected download until an operator retries", context do
+    start_supervised!({Manager, config: context.config})
+    test_pid = self()
+    ref = make_ref()
+    :ok = Store.write(context.root, "journal", %{"state" => "staging"})
+
+    :sys.replace_state(Manager, fn state ->
+      %{state | job: {test_pid, ref}, status: %{"state" => "staging"}}
+    end)
+
+    send(Manager, {:update_result, test_pid, {:error, :digest_mismatch}})
+
+    assert {:ok, %{"state" => "blocked", "reconciliation_required" => false}} =
+             Manager.request("status", %{})
+
+    assert {:ok, journal} = Store.read(context.root, "journal")
+    send(Manager, :channel_check)
+
+    assert {:ok, %{"state" => "blocked", "reason" => "digest_mismatch", "busy" => false}} =
+             Manager.request("status", %{})
+
+    assert {:ok, ^journal} = Store.read(context.root, "journal")
+    assert {:ok, %{"state" => "staging"}} = Manager.request("apply", %{})
+  end
+
   test "failed journal persistence leaves prior mutation evidence fail-closed", context do
     journal = %{
       "state" => "applying",
