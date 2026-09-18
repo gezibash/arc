@@ -510,15 +510,29 @@ defmodule Arc.ManagedUpdate.Proof do
 
   def stop_service(_), do: :ok
 
-  def update(paths, operation) do
-    {output, 0} =
+  # The service starts its own channel check one second after boot. A request
+  # that lands during that check is refused as busy, so retry for a bounded time.
+  def update(paths, operation, deadline \\ System.monotonic_time(:millisecond) + 8_000) do
+    result =
       System.cmd(
         Path.join(paths.base, "bin/arc"),
         ["update", operation, "--socket", Path.join(paths.state, "admin.sock")],
         stderr_to_stdout: true
       )
 
-    :json.decode(output)
+    case result do
+      {output, 0} ->
+        :json.decode(output)
+
+      {output, _status} ->
+        if String.contains?(output, "update_busy") and
+             System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(100)
+          update(paths, operation, deadline)
+        else
+          raise("arc update #{operation} failed: #{output}")
+        end
+    end
   end
 
   def relay_status(paths) do
