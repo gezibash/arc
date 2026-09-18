@@ -1904,6 +1904,8 @@ defmodule Arc.Net.Relay do
     end)
   end
 
+  # Only terminate/2 stops an unlinked shard. The relay does not trap exits, so if
+  # a supervisor stops the relay while the node keeps running, the shards leak.
   defp start_shard(idx, routes_table) do
     {:ok, shard_pid} = RouteShard.start_link(index: idx, routes_table: routes_table)
     Process.unlink(shard_pid)
