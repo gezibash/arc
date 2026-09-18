@@ -452,6 +452,8 @@ defmodule Arc.MCP.HTTPServer do
     })
   end
 
+  # Only terminate/2 stops an unlinked session agent. The server does not trap exits,
+  # so if a supervisor stops the server while the node keeps running, the agents leak.
   defp start_session_agent(identity, state) do
     case Agent.start_link(identity) do
       {:ok, agent_pid} ->
