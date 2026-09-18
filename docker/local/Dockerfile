@@ -1,5 +1,5 @@
 # Keep the released core image unchanged; package providers alongside it.
-ARG ARC_IMAGE=ghcr.io/gezibash/arc:0.4.1
+ARG ARC_IMAGE=ghcr.io/gezibash/arc:0.5.0
 FROM hexpm/elixir:1.19.5-erlang-28.4.3-debian-bookworm-20260824-slim AS providers
 
 ENV MIX_ENV=prod
