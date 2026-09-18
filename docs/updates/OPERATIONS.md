@@ -168,6 +168,10 @@ additional network administration port or trust the cookie bundled in an archive
 
 ## Release authoring
 
+See [signed channel publication](PUBLISHING.md) for operator signing and the
+optional local Docker provider. Public channel deployment remains separate.
+
+
 The release publisher must assign an immutable build identifier and author
 application upgrade instructions for the exact old and new builds. Standard
 `mix release` does not produce these instructions.
@@ -208,13 +212,14 @@ and are currently refused. A release signature does not override this check.
 
 Publish with the read-only [release provider](../../providers/releases/README.md).
 `Arc.CLI.Update.Manifest.sign/2` signs the strict channel document using an
-explicit publisher identity. No official signing key or live channel is
-provisioned by this implementation.
+explicit publisher identity. Operator tooling can provision a local channel;
+no official public signing key or public channel is provisioned automatically.
 
 ## Channel encoding
 
 The implementation in `Arc.CLI.Update.Manifest` defines the closed JSON schema.
-The signature covers `ARC-RELEASE-CHANNEL-V1` followed by one zero byte and
+The signature covers `ARC-RELEASE-CHANNEL-V1` (schema 1) or
+`ARC-RELEASE-CHANNEL-V2` (schema 2), followed by one zero byte and
 canonical JSON: sorted string keys, preserved array order, JSON strings,
 integers, booleans and null. Floats and unknown fields are rejected. Signature
 bytes use lowercase hexadecimal Ed25519. Sequence equality requires identical

@@ -1,0 +1,27 @@
+# Opt-in local release-channel provider. Start it alongside the standard stack:
+# docker compose -f compose.yaml -f docker/local/compose.releases.yaml --profile releases up -d
+#
+# ARC_RELEASES_ROOT is a read-only host directory containing signed channel
+# documents and archives. The private signing key is intentionally not mounted.
+services:
+  releases:
+    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.4.1}
+    pull_policy: never
+    profiles: [releases]
+    init: true
+    restart: unless-stopped
+    command: [releases]
+    environment:
+      RELEASES_ROOT: /home/arc/releases
+    depends_on:
+      relay:
+        condition: service_healthy
+    volumes:
+      - releases-config:/home/arc/.config/arc
+      - releases-public:/home/arc/public
+      - relay-public:/run/arc/relay:ro
+      - ${ARC_RELEASES_ROOT:?Set ARC_RELEASES_ROOT to the signed release directory}:/home/arc/releases:ro
+
+volumes:
+  releases-config:
+  releases-public:

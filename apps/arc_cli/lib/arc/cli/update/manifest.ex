@@ -5,10 +5,12 @@ defmodule Arc.CLI.Update.Manifest do
   This module only establishes publisher authority and update eligibility. It
   does not fetch an artifact, stage a release, or apply an OTP upgrade.
 
-  Version one deliberately uses a small, closed JSON-shaped schema. All map
+  Both versions use a small, closed JSON-shaped schema. All map
   keys are strings, unknown keys are rejected, and the signature covers the
   deterministic JSON encoding of the unsigned document prefixed by the domain
-  separator `ARC-RELEASE-CHANNEL-V1\\0`.
+  separator `ARC-RELEASE-CHANNEL-V1\\0` or `ARC-RELEASE-CHANNEL-V2\\0`.
+  Version two also permits a restart-only release without hot-upgrade sources.
+  Its `install` object must name the same archive as `sha256` and `size`.
 
   Public API:
 
@@ -30,15 +32,15 @@ defmodule Arc.CLI.Update.Manifest do
 
   alias Arc.Identity
 
-  @schema_version 1
-  @domain "ARC-RELEASE-CHANNEL-V1\0"
+  @schema_versions [1, 2]
+  @domain "ARC-RELEASE-CHANNEL-V"
   @channels ["stable", "beta"]
   @sha256_hex_bytes 64
   @public_key_hex_bytes 64
 
   @type verified :: %{manifest: map(), digest: String.t()}
 
-  @doc "Signs a complete, unsigned version-one channel manifest."
+  @doc "Signs a complete, unsigned supported channel manifest."
   @spec sign(Identity.t(), map()) :: {:ok, map()} | {:error, atom()}
   def sign(%Identity{} = identity, unsigned) when is_map(unsigned) do
     with :ok <- validate_unsigned(unsigned),
@@ -200,7 +202,7 @@ defmodule Arc.CLI.Update.Manifest do
 
     with true <-
            Enum.sort(Map.keys(unsigned)) == Enum.sort(expected) or {:error, :invalid_manifest},
-         true <- unsigned["schema_version"] == @schema_version or {:error, :unsupported_schema},
+         true <- unsigned["schema_version"] in @schema_versions or {:error, :unsupported_schema},
          true <- unsigned["channel"] in @channels or {:error, :invalid_channel},
          true <-
            valid_hex?(unsigned["publisher"], @public_key_hex_bytes) or
@@ -210,15 +212,20 @@ defmodule Arc.CLI.Update.Manifest do
          true <-
            (is_list(unsigned["releases"]) and unsigned["releases"] != []) or
              {:error, :invalid_releases},
-         :ok <- validate_releases(unsigned["releases"], unsigned["channel"]) do
+         :ok <-
+           validate_releases(
+             unsigned["releases"],
+             unsigned["channel"],
+             unsigned["schema_version"]
+           ) do
       :ok
     else
       {:error, _reason} = error -> error
     end
   end
 
-  defp validate_releases(releases, channel) do
-    with :ok <- validate_all(releases, &validate_release(&1, channel)),
+  defp validate_releases(releases, channel, schema) do
+    with :ok <- validate_all(releases, &validate_release(&1, channel, schema)),
          identities <- Enum.map(releases, &{&1["build"], &1["platform"]}),
          true <-
            length(identities) == MapSet.size(MapSet.new(identities)) or
@@ -229,10 +236,10 @@ defmodule Arc.CLI.Update.Manifest do
     end
   end
 
-  defp validate_release(release, channel) when is_map(release) do
+  defp validate_release(release, channel, schema) when is_map(release) do
     with :ok <- validate_release_shape(release),
          :ok <- validate_release_identity(release, channel),
-         :ok <- validate_release_artifact(release),
+         :ok <- validate_release_artifact(release, schema),
          :ok <- validate_sources(release["sources"]) do
       :ok
     else
@@ -240,7 +247,7 @@ defmodule Arc.CLI.Update.Manifest do
     end
   end
 
-  defp validate_release(_release, _channel), do: {:error, :invalid_release}
+  defp validate_release(_release, _channel, _schema), do: {:error, :invalid_release}
 
   @release_keys Enum.sort([
                   "version",
@@ -290,14 +297,17 @@ defmodule Arc.CLI.Update.Manifest do
     end
   end
 
-  defp validate_release_artifact(release) do
+  defp validate_release_artifact(release, schema) do
     with true <- positive_integer?(release["size"]) or {:error, :invalid_size},
          true <- valid_hex?(release["sha256"], @sha256_hex_bytes) or {:error, :invalid_sha256},
          true <- is_boolean(release["restart_required"]) or {:error, :invalid_restart_required},
          true <- is_boolean(release["withdrawn"]) or {:error, :invalid_withdrawn},
          true <- is_boolean(release["eligible"]) or {:error, :invalid_eligible},
          true <-
-           (is_list(release["sources"]) and release["sources"] != []) or
+           (is_list(release["sources"]) and
+              (release["sources"] != [] or
+                 (schema == 2 and release["restart_required"] and
+                    release["install"] == Map.take(release, ["sha256", "size"])))) or
              {:error, :invalid_sources} do
       :ok
     else
@@ -509,7 +519,8 @@ defmodule Arc.CLI.Update.Manifest do
     end)
   end
 
-  defp signing_payload(unsigned), do: @domain <> canonical(unsigned)
+  defp signing_payload(unsigned),
+    do: @domain <> Integer.to_string(unsigned["schema_version"]) <> "\0" <> canonical(unsigned)
 
   defp digest(unsigned) do
     unsigned
