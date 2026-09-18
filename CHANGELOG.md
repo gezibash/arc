@@ -6,6 +6,8 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-18
+
 ### Added
 
 - `arc update` without `--socket` updates the local installation through the
@@ -21,6 +23,19 @@ All notable changes to ARC are recorded here. The format follows
 - Channel documents accept an optional per-release `install` object naming
   the complete installation archive. Verifiers from earlier releases reject
   documents that carry it.
+- `Arc.CLI.Update.Publisher` and `scripts/publish-release-channel.exs` sign and
+  publish a channel document from an operator keystore key. Publication holds
+  a root lock, requires an increasing sequence, keeps published builds
+  immutable, checks the size and SHA-256 of every archive and `install`
+  archive, and replaces the channel file atomically.
+- Channel schema version 2 has the signature domain `ARC-RELEASE-CHANNEL-V2`.
+  A version 2 release can have no hot-upgrade sources. It must then set
+  `restart_required` and carry an `install` object that repeats its `sha256`
+  and `size`, so `arc update` can install it. Releases through v0.4.1 reject
+  version 2 documents.
+- `scripts/verify-release-channel.exs` verifies a channel and downloads every
+  archive through a pinned relay. `docker/local/compose.releases.yaml` adds an
+  opt-in local releases provider. See `docs/updates/PUBLISHING.md`.
 
 ## [0.4.1] - 2026-09-17
 
