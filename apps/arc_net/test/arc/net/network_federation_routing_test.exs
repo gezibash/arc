@@ -34,7 +34,7 @@ defmodule Arc.Net.NetworkFederationRoutingTest do
           )
       )
 
-    on_exit(fn -> if Process.alive?(relay), do: GenServer.stop(relay, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(relay) end)
     sink = start_supervised!({Forwarder, self()})
     :sys.replace_state(relay, &%{&1 | federation: sink})
     %{relay: relay, home: home, left: left, right: right, port: Relay.get_port(relay)}
@@ -300,7 +300,7 @@ defmodule Arc.Net.NetworkFederationRoutingTest do
 
     on_exit(fn ->
       Arc.Net.TransportManager.reset()
-      if Process.alive?(agent), do: GenServer.stop(agent, :normal)
+      Arc.Net.TestTeardown.stop(agent)
     end)
 
     assert :ok = Arc.Net.connect_relay(~c"127.0.0.1", ctx.port, citizen, ctx.home.public_key)

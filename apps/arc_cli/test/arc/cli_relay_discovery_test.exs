@@ -39,9 +39,7 @@ defmodule Arc.CLI.RelayDiscoveryIntegrationTest do
     on_exit(fn ->
       :telemetry.detach(telemetry_id)
 
-      if Process.alive?(relay) do
-        GenServer.stop(relay, :normal)
-      end
+      Arc.CLI.TestTeardown.stop(relay)
 
       File.rm_rf!(root)
     end)

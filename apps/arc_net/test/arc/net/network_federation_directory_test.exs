@@ -132,7 +132,7 @@ defmodule Arc.Net.NetworkFederationDirectoryTest do
   test "splits the downstream budget and reports unselected peers" do
     peers = [key(70), key(71), key(72)] |> Enum.sort()
     {:ok, manager} = start_fake_manager(self())
-    on_exit(fn -> if Process.alive?(manager), do: GenServer.stop(manager, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(manager) end)
 
     request = @base_request |> Directory.originate(key(73)) |> put_in(["network", "budget"], 4)
     responses = Directory.query(manager, peers, request)

@@ -23,7 +23,7 @@ defmodule Arc.CLI.AgoraIntegrationTest do
     relay_pin = Base.encode16(relay_key, case: :lower)
 
     on_exit(fn ->
-      if Process.alive?(relay), do: GenServer.stop(relay, :normal)
+      Arc.CLI.TestTeardown.stop(relay)
       File.rm_rf!(root)
     end)
 

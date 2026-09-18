@@ -63,7 +63,7 @@ defmodule Arc.CLI.PrivateFilesIntegrationTest do
     :ok = Agent.publish(provider)
 
     on_exit(fn ->
-      if Process.alive?(provider), do: GenServer.stop(provider, :normal)
+      Arc.CLI.TestTeardown.stop(provider)
     end)
 
     install_output =
@@ -150,7 +150,7 @@ defmodule Arc.CLI.PrivateFilesIntegrationTest do
     :ok = Agent.publish(provider)
 
     on_exit(fn ->
-      if Process.alive?(provider), do: GenServer.stop(provider, :normal)
+      Arc.CLI.TestTeardown.stop(provider)
     end)
 
     ExUnit.CaptureIO.capture_io("y\n", fn ->

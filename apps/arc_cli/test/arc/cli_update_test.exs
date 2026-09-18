@@ -76,8 +76,8 @@ defmodule Arc.CLI.UpdateTest do
     :ok = Agent.publish_relay(provider)
 
     on_exit(fn ->
-      if Process.alive?(provider), do: GenServer.stop(provider, :normal)
-      if Process.alive?(relay), do: GenServer.stop(relay, :normal)
+      Arc.CLI.TestTeardown.stop(provider)
+      Arc.CLI.TestTeardown.stop(relay)
 
       for {name, value} <- previous_env do
         if value, do: System.put_env(name, value), else: System.delete_env(name)

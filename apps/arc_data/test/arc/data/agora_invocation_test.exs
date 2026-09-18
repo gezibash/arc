@@ -23,7 +23,7 @@ defmodule Arc.Data.AgoraInvocationTest do
 
     on_exit(fn ->
       for agent <- [client, provider, impostor] do
-        if Process.alive?(agent), do: GenServer.stop(agent, :normal)
+        Arc.Data.TestTeardown.stop(agent)
       end
     end)
 
