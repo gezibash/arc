@@ -264,12 +264,12 @@ defmodule Arc.CLI.Update.Installer do
     cond do
       length(entries) > @max_entries -> {:error, :too_many_archive_entries}
       expanded_size(entries) > @max_expanded_bytes -> {:error, :archive_expands_too_large}
-      true -> verify_entry_list(entries, version, MapSet.new())
+      true -> verify_entry_list(entries, version, %{})
     end
   end
 
   defp verify_entry_list([], version, seen) do
-    missing = Enum.reject(@required, &MapSet.member?(seen, &1))
+    missing = Enum.reject(@required, &Map.has_key?(seen, &1))
 
     cond do
       missing != [] -> {:error, {:missing_archive_entries, missing}}
@@ -284,17 +284,17 @@ defmodule Arc.CLI.Update.Installer do
     cond do
       not safe_path?(name) -> {:error, {:unsafe_archive_path, name}}
       not under_prefix?(name) -> {:error, {:unexpected_archive_path, name}}
-      MapSet.member?(seen, name) -> {:error, {:duplicate_archive_path, name}}
+      Map.has_key?(seen, name) -> {:error, {:duplicate_archive_path, name}}
       entry_type(entry) not in [:regular, :directory] -> {:error, {:unsafe_archive_entry, name}}
-      true -> verify_entry_list(rest, version, MapSet.put(seen, name))
+      true -> verify_entry_list(rest, version, Map.put(seen, name, true))
     end
   end
 
   defp version_directory?(seen, version) do
     directory = "arc/releases/" <> version
 
-    MapSet.member?(seen, directory) or
-      Enum.any?(seen, &String.starts_with?(&1, directory <> "/"))
+    Map.has_key?(seen, directory) or
+      Enum.any?(Map.keys(seen), &String.starts_with?(&1, directory <> "/"))
   end
 
   defp under_prefix?("arc"), do: true
