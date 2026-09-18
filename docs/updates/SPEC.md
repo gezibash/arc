@@ -4,7 +4,10 @@
 
 This document defines the channel and rollout policy. The experimental
 [managed relay implementation](OPERATIONS.md) provides `arc update`, signed
-metadata verification and a release provider. Official signed channels and
+metadata verification and a release provider. `arc update` without `--socket`
+replaces a local installation with a complete archive fetched through the
+configured relay; it is a full replacement, not a hot upgrade, and follows the
+same channel, publisher and distribution rules. Official signed channels and
 automatic application are not enabled. The accompanying isolated proof
 exercises a supported application upgrade and downgrade; it does not establish
 that every ARC release can be hot-upgraded.

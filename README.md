@@ -159,14 +159,36 @@ interfaces regardless of how the service is deployed. Older relays must be
 upgraded to support the new status query.
 See [status behavior](docs/status/SPEC.md) for exact states and exit codes.
 
-### Live update work
+### Update
+
+`arc update` searches the relay you joined for a release provider, verifies
+the signed release channel against a publisher key you trust, and replaces
+this installation when a newer release is available:
+
+```bash
+arc update --publisher PUBLISHER_KEY   # first run: trust and remember the publisher
+arc update                              # later runs: search the relay and install
+arc update check                        # report only; nothing is downloaded
+arc update status                       # local settings, no network
+```
+
+The command connects as your active key, like every other relay command.
+The publisher key is remembered under `~/.config/arc/update/`, separately
+from the relay pin; a different key is refused until you pass
+`--replace-publisher`. Channel metadata and the archive travel only through
+the relay, with no HTTP fallback, and the replaced release stays at
+`~/.local/share/arc.previous` until the next update. `--source` names one
+`releases+arc://` provider instead of searching, and `--channel beta` follows
+prereleases. No official publisher key or channel is provisioned yet, so this
+currently works against a channel you publish yourself; see
+[updating a local installation](docs/updates/OPERATIONS.md#updating-a-local-installation).
 
 The experimental [managed relay updater](docs/updates/OPERATIONS.md) adds
-`arc update status|check|apply --socket PATH`, signed channel metadata and
-release transfer through ARC providers. Checks notify; an operator starts each
-installation. It requires a prepared native base and an explicitly supported
-upgrade package. Existing releases are not automatically hot-upgradeable.
-See the [update policy and qualification gates](docs/updates/SPEC.md).
+`arc update status|check|apply --socket PATH` for a running relay service.
+Checks notify; an operator starts each hot installation. It requires a
+prepared native base and an explicitly supported upgrade package. Existing
+releases are not automatically hot-upgradeable. See the
+[update policy and qualification gates](docs/updates/SPEC.md).
 
 ## Run a relay
 

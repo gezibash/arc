@@ -1,7 +1,7 @@
 defmodule Arc.CLI.Update.Store do
   @moduledoc false
 
-  @names ~w(checkpoint journal)
+  @names ~w(checkpoint journal settings)
   @limit 1_048_576
 
   def read(root, name) when name in @names do

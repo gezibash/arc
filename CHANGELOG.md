@@ -4,6 +4,24 @@ All notable changes to ARC are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `arc update` without `--socket` updates the local installation through the
+  configured relay as the active citizen key: it discovers a `releases`
+  provider (or uses `--source`),
+  verifies the signed channel against a remembered `--publisher` key with
+  replay protection, downloads the newest eligible complete archive in
+  bounded chunks, checks its digest and tar members, starts the candidate to
+  confirm its version, and swaps it into place, keeping the replaced release
+  as `<root>.previous`. `check` reports only; `status` reads local state.
+  `--channel`, `--replace-publisher`, `--relay`, `--relay-pubkey` and
+  `--format json` are supported.
+- Channel documents accept an optional per-release `install` object naming
+  the complete installation archive. Verifiers from earlier releases reject
+  documents that carry it.
+
 ## [0.4.1] - 2026-09-17
 
 ### Added

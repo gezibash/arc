@@ -1,11 +1,111 @@
 # Managed relay updates
 
-This is the initial relay-only implementation. Existing released installations
-must first move to a prepared, stopped native base. Do not run the replacement
-installer against a live release tree. This work does not update external
-providers, the local host service, container images, or Erlang itself.
+This document covers two update paths that share the signed channel format
+and the release provider:
+
+- [Updating a local installation](#updating-a-local-installation) replaces
+  the complete release tree an `arc` binary runs from, fetched through the
+  configured relay. This is what `arc update` does without `--socket`.
+- The managed relay hot updater, below it, applies an authored OTP upgrade
+  package to one running relay service through a private local socket.
+
+The hot path is the initial relay-only implementation. Existing released
+installations must first move to a prepared, stopped native base. Do not run
+the replacement installer against a live release tree. This work does not
+update external providers, the local host service, container images, or
+Erlang itself.
+
+## Updating a local installation
+
+```sh
+arc update --publisher PUBLISHER_PUBLIC_KEY_HEX   # trust and remember the publisher
+arc update                                        # search the relay, verify, install
+arc update check                                  # report availability only
+arc update status                                 # local state; no network
+```
+
+The command runs from the release tree the installer script unpacks
+(`RELEASE_ROOT`, normally `~/.local/share/arc`). It refuses to run from a
+source checkout. Each run:
+
+1. Resolves the relay saved by `arc join` (or `--relay`/`--relay-pubkey`) and
+   connects as the active citizen key, the one `arc join` created or
+   `arc keys use` selected, exactly as `arc discover` and `arc request` do.
+2. Searches the relay directory for capabilities with the `releases` scheme,
+   unless `--source releases+arc://PROVIDER_KEY/releases` names one provider.
+   Up to five providers are tried in discovery order; the first channel
+   document that verifies wins. Hosting a channel grants no authority: only
+   the publisher signature is trusted.
+3. Fetches the selected channel (`stable` by default, `--channel beta` for
+   prereleases) and verifies it with `Arc.CLI.Update.Manifest`: pinned
+   publisher, channel, signature, expiry, and a monotonic sequence recorded
+   per channel in the checkpoint file.
+4. Selects the newest eligible release for this OS and CPU that carries an
+   `install` object. The channel's latest release is reported separately, so
+   an installation is never called up to date when the newest release ships
+   without a complete archive. Lower versions are never installed.
+5. With `apply` (the default), streams the archive through the relay in
+   bounded chunks, checks its exact size and SHA-256, and validates the tar
+   members: every member is a regular file or directory under `arc/`, and
+   `arc/releases/<version>/` exists.
+6. Extracts beside the installation, runs the candidate's `bin/arc version`
+   with the running release's `RELEASE_*` variables cleared, and requires it
+   to report the expected version. Only then are the two directories swapped
+   with renames: the old tree becomes `<root>.previous`, and the candidate
+   becomes the root. The previous release is removed by the next successful
+   update, never by a failed one.
+
+Local state lives in a mode-0700 directory, `~/.config/arc/update/` by default:
+
+| File              | Contents                                                     |
+| ----------------- | ------------------------------------------------------------ |
+| `settings.json`   | Trusted publisher and selected channel                       |
+| `checkpoint.json` | Highest accepted sequence and digest per channel             |
+| `journal.json`    | Last update phase (`staging`, `installing`, `current`, `failed`) |
+| `staging/`        | The archive while it is downloaded and validated             |
+
+A different `--publisher` is refused until `--replace-publisher` is passed,
+which also restarts the checkpoint. A journal left in `installing` by a crash
+blocks further updates until the operator has checked the root and
+`<root>.previous` and removed the journal. Exit status is 1 when the update is
+blocked or fails; `--format json` prints the same report as a document.
+
+The running process keeps the code it already loaded; nothing is hot-loaded.
+Running services started from the old tree keep running until restarted.
+
+### Publishing a complete archive
+
+Release archives are the tarballs the release workflow builds:
+`arc-<version>-<os>-<arch>.tar.gz`, with every member under `arc/`. To offer
+one through the [release provider](../../providers/releases/README.md), store
+it as `blobs/<sha256>.tar.gz` and add an `install` object to the platform's
+release entry in the signed channel document:
+
+```json
+{
+  "version": "0.5.0",
+  "build": "BUILD_ID",
+  "runtime": "16.3.1",
+  "platform": {"os": "linux", "arch": "x86_64"},
+  "size": 1,
+  "sha256": "HOT_PACKAGE_SHA256",
+  "sources": [{"build": "PREVIOUS_BUILD", "runtime": "16.3.1",
+               "upgrade_plan_sha256": "RELUP_SHA256", "downgrade_plan_sha256": "RELUP_SHA256"}],
+  "restart_required": true,
+  "withdrawn": false,
+  "eligible": true,
+  "install": {"sha256": "TARBALL_SHA256", "size": 41234567}
+}
+```
+
+`install` is optional and separate from the hot package fields, which keep
+their meaning for managed relays. A release without `install` is still
+reported as the channel's latest but cannot be installed by `arc update`.
+Verifiers from before `install` existed reject a document that carries it.
 
 ## Operator controls
+
+## Managed relay operator controls
 
 ```sh
 arc service start --config /absolute/path/service.json
@@ -119,6 +219,11 @@ canonical JSON: sorted string keys, preserved array order, JSON strings,
 integers, booleans and null. Floats and unknown fields are rejected. Signature
 bytes use lowercase hexadecimal Ed25519. Sequence equality requires identical
 canonical unsigned bytes. Expired or replayed metadata is rejected.
+
+A release may carry an optional `install` object with the `sha256` and `size`
+of its complete installation archive; see
+[publishing a complete archive](#publishing-a-complete-archive). Every other
+release key is required.
 
 Each source edge's `upgrade_plan_sha256` and `downgrade_plan_sha256` bind the
 **same complete raw `relup` file**, which contains both directions. Both fields
