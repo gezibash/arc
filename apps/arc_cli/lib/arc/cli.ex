@@ -143,7 +143,8 @@ defmodule Arc.CLI do
       apps open <command>        Open an installed Agora board in your local browser
       host <...>                  Run the local ARC host service and issue delegated SDK tokens
       status [--format json]      Query the configured relay’s status
-      update status|check|apply   Control updates through a local --socket PATH
+      update [check|status]       Install the newest release published on your relay
+                                 (--socket PATH controls a managed relay service instead)
       service start --config PATH Start an upgrade-capable relay (native release)
       tool <subcommand>           Manage installed ARC tools
       trust <subcommand>          Manage trusted remote signers

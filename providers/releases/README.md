@@ -32,6 +32,11 @@ The provider is public and read-only. Publication authority stays with the
 separate release-manifest signer; the updater verifies that signature
 before treating a channel document as trustworthy.
 
+Blobs serve two kinds of archive under the same digest naming: hot-update
+packages for managed relays, and complete installation tarballs that a
+release's optional `install` object references for `arc update`. Both are
+looked up only by their lower-case SHA-256.
+
 ## Request protocol
 
 The capability address has the form:

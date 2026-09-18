@@ -15,6 +15,7 @@ defmodule Arc.CLI.Update.Source do
   @max_chunk_bytes 256 * 1024
   @max_chunk_reply_bytes 512 * 1024
   @default_deadline_ms 120_000
+  @max_deadline_ms 3_600_000
   @hex ~r/\A[0-9a-f]{64}\z/
 
   @type source :: {:arc, pid(), String.t()} | {:local, String.t()}
@@ -217,7 +218,7 @@ defmodule Arc.CLI.Update.Source do
   defp deadline(opts) do
     timeout = Keyword.get(opts, :deadline_ms, @default_deadline_ms)
 
-    if is_integer(timeout) and timeout > 0 and timeout <= 120_000,
+    if is_integer(timeout) and timeout > 0 and timeout <= @max_deadline_ms,
       do: {:ok, System.monotonic_time(:millisecond) + timeout},
       else: {:error, :invalid_deadline}
   end

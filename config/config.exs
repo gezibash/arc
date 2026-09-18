@@ -28,7 +28,8 @@ if config_env() == :test do
   config :arc_cli,
     exit_mode: :return,
     lists_dir: Path.join(test_root, "lists"),
-    cache_dir: Path.join(test_root, "cache")
+    cache_dir: Path.join(test_root, "cache"),
+    update_state_dir: Path.join(test_root, "update")
 end
 
 # Sample configuration:

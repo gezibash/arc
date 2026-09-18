@@ -18,6 +18,10 @@ defmodule Arc.CLI.Update.Manifest do
     * `select/2` returns the newest advertised platform release and the newest
       operator-applicable hot-update edge. It never infers an upgrade from
       version numbers alone or selects a lower SemVer target.
+    * `select_install/2` returns the newest eligible complete installation
+      archive for a local CLI installation. A release advertises one through
+      its optional `install` object, which names the full release archive
+      separately from the hot-update package.
 
   A pin is an exact immutable release build identifier. Selecting a channel
   with a pin suppresses advancement; callers still receive the advertised
@@ -130,6 +134,47 @@ defmodule Arc.CLI.Update.Manifest do
 
   def select(_verified, _opts), do: {:error, :invalid_verified_manifest}
 
+  @doc """
+  Selects the newest complete installation archive for a local installation.
+
+  Required options are `:installed_version` and `:platform`. Only releases
+  that are eligible, not withdrawn, and carry an `install` object qualify.
+  The result reports the channel's latest platform release separately, so an
+  installation is never called up to date merely because the newest release
+  ships without a complete archive.
+  """
+  @spec select_install(verified(), keyword()) :: {:ok, map()} | {:error, atom()}
+  def select_install(%{manifest: manifest} = verified, opts)
+      when is_map(manifest) and is_list(opts) do
+    platform = Keyword.get(opts, :platform)
+
+    with {:ok, installed} <- parse_installed_version(Keyword.get(opts, :installed_version)),
+         :ok <- validate_platform(platform),
+         true <- is_binary(verified[:digest]) or {:error, :invalid_verified_manifest} do
+      platform_releases =
+        manifest["releases"]
+        |> Enum.reject(& &1["withdrawn"])
+        |> Enum.filter(&(&1["platform"] == platform))
+        |> newest_first()
+
+      latest = List.first(platform_releases)
+      candidate = Enum.find(platform_releases, &(&1["eligible"] and is_map(&1["install"])))
+      {status, reason} = install_status(latest, candidate, installed)
+
+      {:ok,
+       %{
+         latest: latest,
+         install: if(status == :available, do: candidate),
+         status: status,
+         reason: reason
+       }}
+    else
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def select_install(_verified, _opts), do: {:error, :invalid_verified_manifest}
+
   defp split_signed(document) do
     expected =
       [
@@ -197,25 +242,39 @@ defmodule Arc.CLI.Update.Manifest do
 
   defp validate_release(_release, _channel), do: {:error, :invalid_release}
 
-  defp validate_release_shape(release) do
-    expected =
-      [
-        "version",
-        "build",
-        "runtime",
-        "platform",
-        "size",
-        "sha256",
-        "sources",
-        "restart_required",
-        "withdrawn",
-        "eligible"
-      ]
+  @release_keys Enum.sort([
+                  "version",
+                  "build",
+                  "runtime",
+                  "platform",
+                  "size",
+                  "sha256",
+                  "sources",
+                  "restart_required",
+                  "withdrawn",
+                  "eligible"
+                ])
 
-    if Enum.sort(Map.keys(release)) == Enum.sort(expected),
-      do: :ok,
-      else: {:error, :invalid_release}
+  defp validate_release_shape(release) do
+    keys = Enum.sort(Map.keys(release))
+
+    cond do
+      keys == @release_keys -> :ok
+      keys == Enum.sort(["install" | @release_keys]) -> validate_install(release["install"])
+      true -> {:error, :invalid_release}
+    end
   end
+
+  # The optional complete archive is a plain artifact reference. Its platform
+  # and version are the enclosing release's; it never carries hot-edge data.
+  defp validate_install(%{"size" => size, "sha256" => sha256} = install)
+       when map_size(install) == 2 do
+    if positive_integer?(size) and valid_hex?(sha256, @sha256_hex_bytes),
+      do: :ok,
+      else: {:error, :invalid_install}
+  end
+
+  defp validate_install(_), do: {:error, :invalid_install}
 
   defp validate_release_identity(release, channel) do
     with true <- valid_string?(release["version"], 128) or {:error, :invalid_version},
@@ -389,6 +448,31 @@ defmodule Arc.CLI.Update.Manifest do
       :eq -> :up_to_date
       :lt -> :blocked
       :gt -> if(latest["restart_required"], do: :restart_required, else: :blocked)
+    end
+  end
+
+  defp install_status(nil, _candidate, _installed), do: {:blocked, :no_platform_release}
+
+  defp install_status(latest, candidate, installed) do
+    case Version.compare(Version.parse!(latest["version"]), installed) do
+      :lt -> {:blocked, :lower_semver_target}
+      :eq -> {:up_to_date, :current_release}
+      :gt -> install_candidate_status(candidate, installed)
+    end
+  end
+
+  defp install_candidate_status(nil, _installed), do: {:blocked, :no_install_archive}
+
+  defp install_candidate_status(candidate, installed) do
+    if Version.compare(Version.parse!(candidate["version"]), installed) == :gt,
+      do: {:available, :newer_release},
+      else: {:blocked, :no_install_archive}
+  end
+
+  defp parse_installed_version(value) do
+    case parse_version(value) do
+      {:ok, version} -> {:ok, version}
+      :error -> {:error, :invalid_installed_version}
     end
   end
 
