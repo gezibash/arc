@@ -9,7 +9,8 @@ All notable changes to ARC are recorded here. The format follows
 ### Added
 
 - `arc update` without `--socket` updates the local installation through the
-  configured relay: it discovers a `releases` provider (or uses `--source`),
+  configured relay as the active citizen key: it discovers a `releases`
+  provider (or uses `--source`),
   verifies the signed channel against a remembered `--publisher` key with
   replay protection, downloads the newest eligible complete archive in
   bounded chunks, checks its digest and tar members, starts the candidate to

@@ -3,8 +3,9 @@ defmodule Arc.CLI.Update.SelfUpdate do
   Updates this ARC installation from a release provider reached only through
   the configured relay.
 
-  `arc update` finds a `releases` provider on the joined relay (or uses an
-  explicit `--source`), fetches the selected channel document, verifies it
+  `arc update` connects to the joined relay as the selected citizen identity,
+  finds a `releases` provider there (or uses an explicit `--source`), fetches
+  the selected channel document, verifies it
   against the trusted release publisher with replay protection, and compares
   the newest eligible complete archive with the installed release. `apply`
   downloads that archive through the relay, validates it, and hands it to
@@ -22,6 +23,7 @@ defmodule Arc.CLI.Update.SelfUpdate do
   alias Arc.CLI.Update.{Engine, Installer, Manifest, Source, Store}
   alias Arc.Data.{Agent, CapabilityDiscovery, Protocol}
   alias Arc.Identity
+  alias Arc.Identity.KeyStore
 
   @channels ["stable", "beta"]
   @max_install_bytes 1_024 * 1_024 * 1_024
@@ -89,12 +91,16 @@ defmodule Arc.CLI.Update.SelfUpdate do
     with {:ok, publisher} <- resolve_publisher(context.opts, context.settings),
          :ok <- ensure_not_interrupted(context),
          {:ok, relay} <- relay_settings(context.opts),
+         {:ok, identity} <- active_identity(),
          {:ok, checkpoint} <- read_checkpoint(context, publisher),
          {:ok, document} <-
-           with_relay(relay, fn agent ->
+           with_relay(identity, relay, fn agent ->
              evaluate(operation, context, publisher, checkpoint, agent)
            end) do
-      {:ok, Map.put(document, "relay", relay_label(relay))}
+      {:ok,
+       document
+       |> Map.put("relay", relay_label(relay))
+       |> Map.put("identity", Identity.name(identity))}
     end
   end
 
@@ -315,11 +321,16 @@ defmodule Arc.CLI.Update.SelfUpdate do
 
   defp relay_label({host, port, _pin}), do: "#{host}:#{port}"
 
-  # An ephemeral identity carries the update session, so no citizen key is
-  # required and the user's own announcements are untouched.
-  defp with_relay({host, port, pin}, fun) do
-    identity = Identity.generate()
+  # The update session runs as the selected citizen, exactly like discover
+  # and request: the same key `arc join` created or `arc keys use` chose.
+  defp active_identity do
+    case KeyStore.resolve_active() do
+      {:ok, identity} -> {:ok, identity}
+      {:error, reason} -> {:error, {:identity, reason}}
+    end
+  end
 
+  defp with_relay(identity, {host, port, pin}, fun) do
     case Agent.start_link(identity) do
       {:ok, agent} ->
         try do
@@ -327,7 +338,6 @@ defmodule Arc.CLI.Update.SelfUpdate do
             fun.(agent)
           end
         after
-          Arc.Net.release_relay(identity.public_key, agent)
           if Process.alive?(agent), do: GenServer.stop(agent, :normal)
         end
 
@@ -337,7 +347,7 @@ defmodule Arc.CLI.Update.SelfUpdate do
   end
 
   defp connect(agent, identity, host, port, pin) do
-    with :ok <- Arc.Net.acquire_relay(host, port, identity, pin, owner_pid: agent),
+    with :ok <- Arc.Net.connect_relay(host, port, identity, pin),
          :ok <- Agent.publish_relay(agent) do
       :ok
     else
@@ -558,6 +568,8 @@ defmodule Arc.CLI.Update.SelfUpdate do
 
   def describe_error(:invalid_relay_configuration),
     do: "relay settings are invalid; run arc join again or provide --relay and --relay-pubkey"
+
+  def describe_error({:identity, reason}), do: Arc.CLI.Keys.describe_error(reason)
 
   def describe_error({:relay_connect_failed, reason}),
     do: "relay connection failed: " <> reason_code(reason)

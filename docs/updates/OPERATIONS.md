@@ -28,9 +28,9 @@ The command runs from the release tree the installer script unpacks
 (`RELEASE_ROOT`, normally `~/.local/share/arc`). It refuses to run from a
 source checkout. Each run:
 
-1. Resolves the relay saved by `arc join` (or `--relay`/`--relay-pubkey`), and
-   connects with a fresh ephemeral identity, so no citizen key is needed and
-   the user's own announcements are untouched.
+1. Resolves the relay saved by `arc join` (or `--relay`/`--relay-pubkey`) and
+   connects as the active citizen key, the one `arc join` created or
+   `arc keys use` selected, exactly as `arc discover` and `arc request` do.
 2. Searches the relay directory for capabilities with the `releases` scheme,
    unless `--source releases+arc://PROVIDER_KEY/releases` names one provider.
    Up to five providers are tried in discovery order; the first channel

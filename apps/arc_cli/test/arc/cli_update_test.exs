@@ -5,6 +5,7 @@ defmodule Arc.CLI.UpdateTest do
   alias Arc.CLI.Update.{Engine, Installer, Manifest}
   alias Arc.Data.Agent
   alias Arc.Identity
+  alias Arc.Identity.KeyStore
   alias Arc.Net.RelayConfig
 
   @bundle Path.expand("../../../../providers/releases", __DIR__)
@@ -22,7 +23,7 @@ defmodule Arc.CLI.UpdateTest do
     build_release(install_root, "0.4.1")
 
     previous_env =
-      for name <- ["RELEASES_ROOT", "RELEASE_ROOT", "ARC_RELAY", "ARC_RELAY_PUBKEY"],
+      for name <- ["RELEASES_ROOT", "RELEASE_ROOT", "ARC_RELAY", "ARC_RELAY_PUBKEY", "ARC_KEY"],
           into: %{},
           do: {name, System.get_env(name)}
 
@@ -30,14 +31,26 @@ defmodule Arc.CLI.UpdateTest do
     System.put_env("RELEASE_ROOT", install_root)
     System.delete_env("ARC_RELAY")
     System.delete_env("ARC_RELAY_PUBKEY")
+    System.delete_env("ARC_KEY")
 
     previous_config =
-      for {app, key} <- [{:arc_net, :relay_config_path}, {:arc_cli, :update_state_dir}],
+      for {app, key} <- [
+            {:arc_net, :relay_config_path},
+            {:arc_cli, :update_state_dir},
+            {:arc_identity, :keys_dir},
+            {:arc_identity, :default_file}
+          ],
           into: %{},
           do: {{app, key}, Application.fetch_env(app, key)}
 
     Application.put_env(:arc_net, :relay_config_path, Path.join(root, "relays.json"))
     Application.put_env(:arc_cli, :update_state_dir, Path.join(root, "update-state"))
+    Application.put_env(:arc_identity, :keys_dir, Path.join(root, "keys"))
+    Application.put_env(:arc_identity, :default_file, Path.join(root, "default.key"))
+
+    # The updater runs as the selected citizen, the key `arc join` would create.
+    {:ok, citizen} = KeyStore.generate()
+    :ok = KeyStore.set_default(Identity.name(citizen))
 
     {:ok, relay} = Arc.Net.Relay.start_link(0)
     port = Arc.Net.Relay.get_port(relay)
@@ -88,6 +101,7 @@ defmodule Arc.CLI.UpdateTest do
       install_root: install_root,
       port: port,
       provider: provider_identity,
+      citizen: citizen,
       publisher: Identity.generate()
     }
   end
@@ -110,6 +124,7 @@ defmodule Arc.CLI.UpdateTest do
              "releases+arc://#{Identity.encode_public_key(ctx.provider)}/releases"
 
     assert document["relay"] == "127.0.0.1:#{ctx.port}"
+    assert document["identity"] == Identity.name(ctx.citizen)
     assert document["publisher"] == publisher
     assert document["previous"] == ctx.install_root <> ".previous"
 
@@ -168,10 +183,16 @@ defmodule Arc.CLI.UpdateTest do
     assert {:ok, "0.4.1"} = Installer.installed_version(ctx.install_root)
   end
 
-  test "arc update needs a trusted publisher and a release installation" do
+  test "arc update needs a trusted publisher, a citizen key, and a release installation",
+       ctx do
     {result, stderr} = run_stderr(["update", "check"])
     assert result == {:exit, 1}
     assert stderr =~ "--publisher"
+
+    :ok = KeyStore.remove(Identity.name(ctx.citizen))
+    {result, stderr} = run_stderr(["update", "check", "--publisher", String.duplicate("a", 64)])
+    assert result == {:exit, 1}
+    assert stderr =~ "arc keys"
 
     System.delete_env("RELEASE_ROOT")
     {result, stderr} = run_stderr(["update", "check", "--publisher", String.duplicate("a", 64)])

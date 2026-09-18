@@ -107,6 +107,7 @@ defmodule Arc.CLI.Update do
       {"Install", release_label(document["install"])},
       {"Source", present(document["source"])},
       {"Relay", present(document["relay"])},
+      {"Identity", present(document["identity"])},
       {"Publisher", present(document["publisher"])},
       {"Previous", present(document["previous"])},
       {"Message", present(document["message"])}
@@ -139,8 +140,9 @@ defmodule Arc.CLI.Update do
     arc update [check|apply|status] [options]
     arc update status|check|apply --socket PATH
 
-    Without --socket, arc update finds a release provider on your joined relay,
-    verifies the signed release channel against the trusted publisher, and
+    Without --socket, arc update connects to your joined relay as your active
+    key, finds a release provider there, verifies the signed release channel
+    against the trusted publisher, and
     replaces this installation when a newer release is available. check reports
     availability without downloading an archive. status prints local update
     settings without using the network. The replaced release is kept beside

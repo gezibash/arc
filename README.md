@@ -172,6 +172,7 @@ arc update check                        # report only; nothing is downloaded
 arc update status                       # local settings, no network
 ```
 
+The command connects as your active key, like every other relay command.
 The publisher key is remembered under `~/.config/arc/update/`, separately
 from the relay pin; a different key is refused until you pass
 `--replace-publisher`. Channel metadata and the archive travel only through
