@@ -158,6 +158,42 @@ defmodule Arc.CLI.UpdateTest do
     assert stderr =~ "--replace-publisher"
   end
 
+  test "arc update installs a schema-two restart-only release from the publisher", ctx do
+    archive = build_archive(Path.join(ctx.root, "work"), "9.9.9")
+    File.cp!(archive.path, Path.join([ctx.releases, "blobs", archive.sha256 <> ".tar.gz"]))
+
+    unsigned = %{
+      "schema_version" => 2,
+      "channel" => "stable",
+      "publisher" => Identity.encode_public_key(ctx.publisher),
+      "sequence" => 1,
+      "expires_at" => System.system_time(:second) + 3_600,
+      "releases" => [
+        %{
+          "version" => "9.9.9",
+          "build" => "build-999",
+          "runtime" => "16.0",
+          "platform" => Engine.platform(),
+          "size" => archive.size,
+          "sha256" => archive.sha256,
+          "sources" => [],
+          "restart_required" => true,
+          "withdrawn" => false,
+          "eligible" => true,
+          "install" => %{"sha256" => archive.sha256, "size" => archive.size}
+        }
+      ]
+    }
+
+    assert :ok = Arc.CLI.Update.Publisher.publish(ctx.releases, ctx.publisher, unsigned)
+
+    publisher = Identity.encode_public_key(ctx.publisher)
+    {result, output} = run(["update", "--publisher", publisher, "--format", "json"])
+    assert result == :ok, output
+    assert :json.decode(output)["install"]["version"] == "9.9.9"
+    assert {:ok, "9.9.9"} = Installer.installed_version(ctx.install_root)
+  end
+
   test "arc update check reports availability without downloading or installing", ctx do
     archive = build_archive(Path.join(ctx.root, "work"), "9.9.9")
     publish_channel(ctx, archive)

@@ -155,6 +155,69 @@ defmodule Arc.CLI.Update.ManifestTest do
     assert pinned_selection.latest == newer
   end
 
+  test "schema version two admits a signed restart-only release without hot sources" do
+    publisher = Identity.generate()
+
+    restart_only =
+      release("0.4.0", "build-004", %{
+        "sources" => [],
+        "restart_required" => true,
+        "install" => %{"sha256" => @digest, "size" => 123}
+      })
+
+    unsigned =
+      manifest(publisher, %{
+        "schema_version" => 2,
+        "releases" => [restart_only]
+      })
+
+    assert {:ok, signed} = Manifest.sign(publisher, unsigned)
+    assert {:ok, verified} = verify(signed, publisher, last_sequence: nil, last_digest: nil)
+    assert {:ok, selection} = select(verified, pin: nil)
+
+    assert selection.latest == restart_only
+    assert selection.status == :restart_required
+    assert selection.reason == :restart_required
+    assert is_nil(selection.eligible)
+
+    assert {:ok, installable} = select_install(verified, installed_version: "0.3.2")
+    assert installable.status == :available
+    assert installable.install == restart_only
+
+    for bad <- [
+          Map.delete(restart_only, "install"),
+          Map.put(restart_only, "install", %{"sha256" => @digest, "size" => 124}),
+          Map.put(restart_only, "restart_required", false)
+        ] do
+      broken = manifest(publisher, %{"schema_version" => 2, "releases" => [bad]})
+      assert {:error, :invalid_sources} = Manifest.sign(publisher, broken)
+    end
+  end
+
+  test "schema version one rejects empty sources and signatures are schema-domain separated" do
+    publisher = Identity.generate()
+
+    invalid_v1 =
+      manifest(publisher, %{
+        "releases" => [
+          release("0.4.0", "build-004", %{
+            "sources" => [],
+            "restart_required" => true,
+            "eligible" => false
+          })
+        ]
+      })
+
+    assert {:error, :invalid_sources} = Manifest.sign(publisher, invalid_v1)
+
+    assert {:ok, signed_v1} = Manifest.sign(publisher, manifest(publisher))
+
+    assert {:error, :invalid_signature} =
+             signed_v1
+             |> Map.put("schema_version", 2)
+             |> verify(publisher, last_sequence: nil, last_digest: nil)
+  end
+
   test "accepts an optional complete install archive and rejects malformed ones" do
     publisher = Identity.generate()
     install = %{"sha256" => @digest, "size" => 4_096}

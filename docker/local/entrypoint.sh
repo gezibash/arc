@@ -45,7 +45,7 @@ case "${1:-}" in
     prepare_identity
     exec arc relay --key "$identity_name" --port 7331
     ;;
-  journal|dm|agora)
+  journal|dm|agora|releases)
     provider=$1
     prepare_identity
     configure_relay
@@ -70,5 +70,5 @@ case "${1:-}" in
     printf 'export ARC_DM_PROVIDER=%s\n' "$dm_public"
     printf 'export ARC_AGORA_PROVIDER=%s\n' "$agora_public"
     ;;
-  *) fail "Usage: entrypoint.sh relay|journal|dm|agora|client|info" ;;
+  *) fail "Usage: entrypoint.sh relay|journal|dm|agora|releases|client|info" ;;
 esac

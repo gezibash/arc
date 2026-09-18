@@ -4,6 +4,9 @@
 operator-published, already-signed channel documents and immutable archives; it
 does not sign, promote, install, or modify a release.
 
+See [publication instructions](../../docs/updates/PUBLISHING.md) for signing,
+versioned restart-only metadata, and a local Docker proof.
+
 ## Layout
 
 Set `RELEASES_ROOT` to a pre-existing directory with this exact layout:
