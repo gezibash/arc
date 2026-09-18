@@ -315,7 +315,7 @@ defmodule Arc.Net.FederationTransportTest do
   end
 
   defp stop_federation(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    Arc.Net.TestTeardown.stop(pid)
   catch
     :exit, _ -> :ok
   end

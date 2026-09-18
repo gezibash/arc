@@ -15,7 +15,7 @@ defmodule Arc.Net.FederationRoutingTest do
         federation_peers: [%{public_key: peer.public_key, host: ~c"127.0.0.1", port: 1}]
       )
 
-    on_exit(fn -> if Process.alive?(relay), do: GenServer.stop(relay, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(relay) end)
     %{relay: relay, home: home, peer: peer, port: Relay.get_port(relay)}
   end
 

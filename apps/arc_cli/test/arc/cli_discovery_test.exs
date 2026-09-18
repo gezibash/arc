@@ -56,8 +56,8 @@ defmodule Arc.CLIDiscoveryTest do
     :ok = Agent.publish(sqlite_server)
 
     on_exit(fn ->
-      if Process.alive?(hello_server), do: GenServer.stop(hello_server, :normal)
-      if Process.alive?(sqlite_server), do: GenServer.stop(sqlite_server, :normal)
+      Arc.CLI.TestTeardown.stop(hello_server)
+      Arc.CLI.TestTeardown.stop(sqlite_server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -87,7 +87,7 @@ defmodule Arc.CLIDiscoveryTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -128,7 +128,7 @@ defmodule Arc.CLIDiscoveryTest do
     :ok = KeyStore.save(second_client)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(first_client))
       KeyStore.remove(Identity.name(second_client))
     end)
@@ -165,7 +165,7 @@ defmodule Arc.CLIDiscoveryTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 

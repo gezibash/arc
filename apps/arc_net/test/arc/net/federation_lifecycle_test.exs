@@ -237,7 +237,7 @@ defmodule Arc.Net.FederationLifecycleTest do
     try do
       GenServer.stop(pid, :normal, 1_000)
     catch
-      :exit, {:noproc, _} -> :ok
+      :exit, _ -> :ok
     end
 
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000

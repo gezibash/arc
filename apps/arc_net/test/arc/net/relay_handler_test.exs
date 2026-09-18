@@ -161,7 +161,7 @@ defmodule Arc.Net.RelayHandlerTest do
     publish_identity(client_id)
 
     {:ok, server_agent} = start_exec_server(server_id, runtime_path, manifest_path)
-    on_exit(fn -> if Process.alive?(server_agent), do: GenServer.stop(server_agent, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(server_agent) end)
 
     :ok = Arc.Net.connect_relay(~c"localhost", relay_port, server_id)
 
@@ -189,7 +189,7 @@ defmodule Arc.Net.RelayHandlerTest do
     publish_identity(client_id)
 
     {:ok, server_agent} = start_exec_server(server_id, runtime_path, manifest_path)
-    on_exit(fn -> if Process.alive?(server_agent), do: GenServer.stop(server_agent, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(server_agent) end)
 
     :ok = Arc.Net.connect_relay(~c"localhost", relay_port, server_id)
 
@@ -244,8 +244,8 @@ defmodule Arc.Net.RelayHandlerTest do
     {:ok, server_agent_two} = start_exec_server(server_two, users_runtime, users_manifest)
 
     on_exit(fn ->
-      if Process.alive?(server_agent_one), do: GenServer.stop(server_agent_one, :normal)
-      if Process.alive?(server_agent_two), do: GenServer.stop(server_agent_two, :normal)
+      Arc.Net.TestTeardown.stop(server_agent_one)
+      Arc.Net.TestTeardown.stop(server_agent_two)
     end)
 
     :ok = Arc.Net.connect_relay(~c"localhost", relay_port, server_one)
@@ -282,7 +282,7 @@ defmodule Arc.Net.RelayHandlerTest do
     publish_identity(client_id)
 
     {:ok, server_agent} = start_exec_server(server_id, runtime_path, manifest_path)
-    on_exit(fn -> if Process.alive?(server_agent), do: GenServer.stop(server_agent, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(server_agent) end)
 
     :ok = Arc.Net.connect_relay(~c"localhost", relay_port, server_id)
 

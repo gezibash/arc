@@ -59,14 +59,7 @@ defmodule Arc.UpdateRecovery.Proof do
         service = start(paths, phase, marker)
         ready(paths)
 
-        request =
-          Task.async(fn ->
-            System.cmd(
-              Path.join(paths.base, "bin/arc"),
-              ["update", "apply", "--socket", Path.join(paths.state, "admin.sock")],
-              stderr_to_stdout: true
-            )
-          end)
+        request = Task.async(fn -> apply_when_idle(paths) end)
 
         wait(fn -> File.exists?(marker) end, "phase #{phase} was not reached", 30_000)
         ensure(File.read!(marker) == phase, "wrong phase barrier")
@@ -231,6 +224,23 @@ defmodule Arc.UpdateRecovery.Proof do
     Fixture.wait_socket(Path.join(paths.state, "admin.sock"))
     _ = Fixture.update(paths, "check")
     Fixture.wait_status(paths, &(&1["state"] == "available"))
+  end
+
+  # The service starts its own channel check one second after boot and refuses
+  # an apply during that check. The service is killed during the apply, so the
+  # final result is not examined.
+  defp apply_when_idle(paths, deadline \\ System.monotonic_time(:millisecond) + 8_000) do
+    {output, _status} =
+      System.cmd(
+        Path.join(paths.base, "bin/arc"),
+        ["update", "apply", "--socket", Path.join(paths.state, "admin.sock")],
+        stderr_to_stdout: true
+      )
+
+    if String.contains?(output, "update_busy") and System.monotonic_time(:millisecond) < deadline do
+      Process.sleep(100)
+      apply_when_idle(paths, deadline)
+    end
   end
 
   defp inject_store_barrier(paths) do

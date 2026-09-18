@@ -154,7 +154,7 @@ defmodule Arc.Net.DirectRenewalTest do
   end
 
   defp stop(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+    Arc.Net.TestTeardown.stop(pid)
   catch
     :exit, _ -> :ok
   end

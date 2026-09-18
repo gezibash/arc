@@ -72,7 +72,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -113,7 +113,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -155,7 +155,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -200,7 +200,7 @@ defmodule Arc.CLIToolsTest do
     Application.put_env(:arc_cli, :stream_input_device, input_device)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
       File.rm(manifest_path)
 
@@ -253,7 +253,7 @@ defmodule Arc.CLIToolsTest do
     Application.put_env(:arc_cli, :stream_input_device, input_device)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
       File.rm(manifest_path)
 
@@ -321,7 +321,7 @@ defmodule Arc.CLIToolsTest do
     Application.put_env(:arc_cli, :stream_input_device, input_device)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
       File.rm(manifest_path)
       File.rm(body_path)
@@ -389,7 +389,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -428,7 +428,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
       File.rm(manifest_path)
     end)
@@ -463,7 +463,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -498,7 +498,7 @@ defmodule Arc.CLIToolsTest do
     :ok = KeyStore.save(second_client)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(first_client))
       KeyStore.remove(Identity.name(second_client))
     end)
@@ -535,7 +535,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -617,8 +617,8 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(client), do: GenServer.stop(client, :normal)
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(client)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
       File.rm(manifest_path)
     end)
@@ -648,7 +648,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -701,7 +701,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -773,7 +773,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -815,7 +815,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -865,7 +865,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
       File.rm(manifest_path)
     end)
@@ -886,7 +886,7 @@ defmodule Arc.CLIToolsTest do
     :ok = Agent.publish(server2)
 
     on_exit(fn ->
-      if Process.alive?(server2), do: GenServer.stop(server2, :normal)
+      Arc.CLI.TestTeardown.stop(server2)
     end)
 
     diff_output =

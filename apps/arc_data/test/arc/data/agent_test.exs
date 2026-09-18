@@ -464,22 +464,14 @@ defmodule Arc.Data.AgentTest do
     {runtime, manifest}
   end
 
-  defp wait_for_messages(agent, 1, _min_count) do
-    Agent.poll_mailbox(agent)
-    Process.sleep(10)
-    Agent.read_inbox(agent)
-  end
-
-  defp wait_for_messages(agent, attempts, min_count) do
+  # Agent.read_inbox/1 drains the inbox, so each poll must keep what it read.
+  defp wait_for_messages(agent, attempts, min_count, seen \\ []) do
     Agent.poll_mailbox(agent)
     Process.sleep(35)
+    messages = seen ++ Agent.read_inbox(agent)
 
-    case Agent.read_inbox(agent) do
-      messages when length(messages) < min_count ->
-        wait_for_messages(agent, attempts - 1, min_count)
-
-      messages ->
-        messages
-    end
+    if length(messages) < min_count and attempts > 1,
+      do: wait_for_messages(agent, attempts - 1, min_count, messages),
+      else: messages
   end
 end

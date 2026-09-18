@@ -107,9 +107,7 @@ defmodule Arc.Data.BinaryProviderTest do
       )
 
     on_exit(fn ->
-      for process <- [client, provider],
-          Process.alive?(process),
-          do: GenServer.stop(process, :normal)
+      Enum.each([client, provider], &Arc.Data.TestTeardown.stop/1)
     end)
 
     :ok = Agent.publish(client)

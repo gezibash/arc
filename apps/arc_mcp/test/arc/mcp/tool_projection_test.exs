@@ -59,8 +59,8 @@ defmodule Arc.MCP.ToolProjectionTest do
     :ok = Agent.publish(receiver_agent)
 
     on_exit(fn ->
-      if Process.alive?(sender_agent), do: GenServer.stop(sender_agent, :normal)
-      if Process.alive?(receiver_agent), do: GenServer.stop(receiver_agent, :normal)
+      Arc.MCP.TestTeardown.stop(sender_agent)
+      Arc.MCP.TestTeardown.stop(receiver_agent)
     end)
 
     assert {:ok, result} =

@@ -42,7 +42,7 @@ defmodule Arc.MCP.AgoraProjectionTest do
 
     on_exit(fn ->
       for agent <- [bob_agent, alice_agent, provider] do
-        if Process.alive?(agent), do: GenServer.stop(agent, :normal)
+        Arc.MCP.TestTeardown.stop(agent)
       end
     end)
 

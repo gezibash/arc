@@ -32,7 +32,7 @@ defmodule Arc.CLIInfoTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 
@@ -64,7 +64,7 @@ defmodule Arc.CLIInfoTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
       KeyStore.remove(Identity.name(client_id))
     end)
 

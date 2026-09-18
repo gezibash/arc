@@ -39,9 +39,7 @@ defmodule Arc.CLI.RelayDiscoveryIntegrationTest do
     on_exit(fn ->
       :telemetry.detach(telemetry_id)
 
-      if Process.alive?(relay) do
-        GenServer.stop(relay, :normal)
-      end
+      Arc.CLI.TestTeardown.stop(relay)
 
       File.rm_rf!(root)
     end)
@@ -270,20 +268,37 @@ defmodule Arc.CLI.RelayDiscoveryIntegrationTest do
   end
 
   defp stop_child(port) when is_port(port) do
-    if Port.info(port) do
-      true = Port.command(port, "shutdown\n")
+    # An on_exit callback does not own the port and receives none of its
+    # messages. A port monitor reports the close to any process.
+    ref = Port.monitor(port)
 
-      receive do
-        {^port, {:data, _chunk}} -> stop_child(port)
-        {^port, {:exit_status, 0}} -> :ok
-        {^port, {:exit_status, status}} -> flunk("child exited with status #{status}")
-      after
-        2_000 ->
-          Port.close(port)
-          flunk("child ignored shutdown request")
-      end
-    else
-      :ok
+    try do
+      Port.command(port, "shutdown\n")
+    rescue
+      ArgumentError -> :ok
+    end
+
+    await_stopped(port, ref)
+  end
+
+  defp await_stopped(port, ref) do
+    receive do
+      {^port, {:data, _chunk}} ->
+        await_stopped(port, ref)
+
+      {^port, {:exit_status, 0}} ->
+        Process.demonitor(ref, [:flush])
+        :ok
+
+      {^port, {:exit_status, status}} ->
+        flunk("child exited with status #{status}")
+
+      {:DOWN, ^ref, :port, ^port, _reason} ->
+        :ok
+    after
+      2_000 ->
+        Port.close(port)
+        flunk("child ignored shutdown request")
     end
   end
 

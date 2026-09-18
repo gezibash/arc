@@ -29,7 +29,7 @@ defmodule Arc.Net.Relay.CatalogRuntimeTest do
           Enum.map(peers, &%{public_key: &1.public_key, host: ~c"127.0.0.1", port: 1})
       )
 
-    on_exit(fn -> if Process.alive?(relay), do: GenServer.stop(relay, :normal) end)
+    on_exit(fn -> Arc.Net.TestTeardown.stop(relay) end)
     manager = start_supervised!({Manager, self()})
     :sys.replace_state(relay, &%{&1 | federation: manager})
 

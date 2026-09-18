@@ -177,9 +177,7 @@ defmodule Arc.Data.ProtocolTest do
     :ok = Agent.publish(server)
 
     on_exit(fn ->
-      for process <- [client, server],
-          Process.alive?(process),
-          do: GenServer.stop(process, :normal)
+      Enum.each([client, server], &Arc.Data.TestTeardown.stop/1)
     end)
 
     {client, provider_id, server}

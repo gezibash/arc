@@ -15,7 +15,7 @@ defmodule Arc.CLIRelayModeTest do
 
     on_exit(fn ->
       Arc.Net.TransportManager.reset()
-      if Process.alive?(relay), do: GenServer.stop(relay, :normal)
+      Arc.CLI.TestTeardown.stop(relay)
       Application.put_env(:arc_data, :mailbox_dir, previous)
       File.rm_rf!(root)
       Arc.Control.Local.reset()
@@ -47,9 +47,7 @@ defmodule Arc.CLIRelayModeTest do
     :ok = Agent.publish(local_only)
 
     on_exit(fn ->
-      for agent <- [client, provider, local_only],
-          Process.alive?(agent),
-          do: GenServer.stop(agent, :normal)
+      Enum.each([client, provider, local_only], &Arc.CLI.TestTeardown.stop/1)
     end)
 
     for {identity, agent} <- [{client_id, client}, {provider_id, provider}] do
@@ -99,7 +97,7 @@ defmodule Arc.CLIRelayModeTest do
     identity = Identity.generate()
     peer = Identity.generate()
     {:ok, client} = Agent.start_link(identity)
-    on_exit(fn -> if Process.alive?(client), do: GenServer.stop(client, :normal) end)
+    on_exit(fn -> Arc.CLI.TestTeardown.stop(client) end)
 
     for id <- [identity, peer] do
       assert :ok = Arc.Net.connect_relay(~c"127.0.0.1", ctx.port, id, ctx.pin)
@@ -133,7 +131,7 @@ defmodule Arc.CLIRelayModeTest do
   test "direct federation opt-in binds the live announcement to its relay", ctx do
     identity = Identity.generate()
     {:ok, agent} = Agent.start_link(identity)
-    on_exit(fn -> if Process.alive?(agent), do: GenServer.stop(agent, :normal) end)
+    on_exit(fn -> Arc.CLI.TestTeardown.stop(agent) end)
 
     assert :ok = Arc.Net.connect_relay(~c"127.0.0.1", ctx.port, identity, ctx.pin)
     assert :ok = Agent.publish_relay(agent, federation: :direct)
@@ -149,7 +147,7 @@ defmodule Arc.CLIRelayModeTest do
   test "network federation opt-in keeps its onward scope on the live announcement", ctx do
     identity = Identity.generate()
     {:ok, agent} = Agent.start_link(identity)
-    on_exit(fn -> if Process.alive?(agent), do: GenServer.stop(agent, :normal) end)
+    on_exit(fn -> Arc.CLI.TestTeardown.stop(agent) end)
 
     assert :ok = Arc.Net.connect_relay(~c"127.0.0.1", ctx.port, identity, ctx.pin)
     assert :ok = Agent.publish_relay(agent, federation: :network)

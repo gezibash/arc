@@ -40,7 +40,7 @@ defmodule Arc.CLI.Update.SourceRelayTest do
     on_exit(fn ->
       :telemetry.detach(telemetry_id)
       restore_env("RELEASES_ROOT", previous_root)
-      if Process.alive?(relay), do: GenServer.stop(relay, :normal)
+      Arc.CLI.TestTeardown.stop(relay)
       Arc.Net.TransportManager.reset()
       Arc.Control.Local.reset()
       File.rm_rf!(root)
@@ -73,9 +73,7 @@ defmodule Arc.CLI.Update.SourceRelayTest do
       )
 
     on_exit(fn ->
-      for agent <- [citizen, provider],
-          Process.alive?(agent),
-          do: GenServer.stop(agent, :normal)
+      Enum.each([citizen, provider], &Arc.CLI.TestTeardown.stop/1)
     end)
 
     for {identity, agent} <- [{citizen_identity, citizen}, {provider_identity, provider}] do

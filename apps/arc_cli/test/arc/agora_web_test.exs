@@ -29,7 +29,7 @@ defmodule Arc.CLI.AgoraWebTest do
     Process.unlink(server)
 
     on_exit(fn ->
-      if Process.alive?(server), do: GenServer.stop(server, :normal)
+      Arc.CLI.TestTeardown.stop(server)
     end)
 
     %{server: server, owner_public_key: identity.public_key, tool: tool}
@@ -284,8 +284,8 @@ defmodule Arc.CLI.AgoraWebTest do
   end
 
   defp stop_server_and_provider(server, provider, root) do
-    if Process.alive?(server), do: GenServer.stop(server, :normal)
-    if Process.alive?(provider), do: GenServer.stop(provider, :normal)
+    Arc.CLI.TestTeardown.stop(server)
+    Arc.CLI.TestTeardown.stop(provider)
     File.rm_rf!(root)
   end
 

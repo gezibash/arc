@@ -164,6 +164,8 @@ defmodule Arc.Net.TransportRecoveryTest do
   end
 
   test "manager removes a terminated transport without crashing" do
+    # The manager is global. Entries from an earlier test module must not count here.
+    :ok = TransportManager.reset()
     {:ok, relay} = Relay.start_link(0)
     identity = Identity.generate()
 
@@ -177,7 +179,10 @@ defmodule Arc.Net.TransportRecoveryTest do
 
     assert :ok = DynamicSupervisor.terminate_child(Arc.Net.TransportSupervisor, transport)
     assert eventually(fn -> TransportManager.lookup(identity.public_key) == :error end)
-    assert TransportManager.count() == 0
+
+    # lookup/1 reports :error for a dead transport before the manager handles
+    # its :DOWN message, so wait for the entry itself to go.
+    assert eventually(fn -> TransportManager.count() == 0 end)
   end
 
   defp eventually(fun, attempts \\ 80)
