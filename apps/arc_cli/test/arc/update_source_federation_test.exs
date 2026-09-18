@@ -64,7 +64,6 @@ defmodule Arc.CLI.Update.SourceFederationTest do
   test "refuses a provider that did not opt into federation", ctx do
     network = start_network(:local, true)
     on_exit(fn -> stop_network(network) end)
-
     bytes = :crypto.strong_rand_bytes(64)
     write_release(ctx.releases, "{\"channel\":\"stable\"}", digest(bytes), bytes)
     assert_provider_available_on_middle_relay(network)
@@ -247,8 +246,15 @@ defmodule Arc.CLI.Update.SourceFederationTest do
           network.home_probe,
           network.middle_probe
         ],
-        is_pid(process) and Process.alive?(process),
-        do: GenServer.stop(process, :normal)
+        is_pid(process) do
+      # The agents are linked to the test process, which can still be exiting
+      # here. An agent that dies during the stop is already stopped.
+      try do
+        GenServer.stop(process, :normal)
+      catch
+        :exit, _ -> :ok
+      end
+    end
 
     Enum.each([network.a, network.b, network.c], &stop_child/1)
     File.rm_rf!(network.root)
@@ -432,12 +438,34 @@ defmodule Arc.CLI.Update.SourceFederationTest do
   end
 
   defp stop_child(child) do
-    if Port.info(child) do
+    # An on_exit callback does not own the port and receives none of its
+    # messages. A port monitor reports the close to any process.
+    ref = Port.monitor(child)
+
+    try do
       Port.command(child, "shutdown\n")
-      await_child(child, System.monotonic_time(:millisecond) + 10_000, "")
+    rescue
+      ArgumentError -> :ok
     end
 
-    :ok
+    await_stopped(child, ref, System.monotonic_time(:millisecond) + 10_000)
+  end
+
+  defp await_stopped(child, ref, deadline) do
+    receive do
+      {^child, {:data, _chunk}} ->
+        await_stopped(child, ref, deadline)
+
+      {^child, {:exit_status, _status}} ->
+        Process.demonitor(ref, [:flush])
+        :ok
+
+      {:DOWN, ^ref, :port, ^child, _reason} ->
+        :ok
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        flunk("child ignored shutdown request")
+    end
   end
 
   defp restore_env(name, nil), do: System.delete_env(name)

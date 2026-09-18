@@ -485,22 +485,36 @@ defmodule Arc.CLI.CatalogFederationIntegrationTest do
   end
 
   defp stop_child(port) when is_port(port) do
-    if Port.info(port) do
-      true = Port.command(port, "shutdown\n")
-      await_shutdown(port, System.monotonic_time(:millisecond) + 2_000, "")
-    else
-      :ok
+    # An on_exit callback does not own the port and receives none of its
+    # messages. A port monitor reports the close to any process.
+    ref = Port.monitor(port)
+
+    try do
+      Port.command(port, "shutdown\n")
+    rescue
+      ArgumentError -> :ok
     end
+
+    await_shutdown(port, ref, System.monotonic_time(:millisecond) + 2_000, "")
   end
 
-  defp await_shutdown(port, deadline, output) do
+  defp await_shutdown(port, ref, deadline, output) do
     remaining = deadline - System.monotonic_time(:millisecond)
     if remaining <= 0, do: shutdown_timeout(port, output)
 
     receive do
-      {^port, {:data, chunk}} -> await_shutdown(port, deadline, output <> chunk)
-      {^port, {:exit_status, 0}} -> :ok
-      {^port, {:exit_status, status}} -> flunk("child exited with status #{status}:\n#{output}")
+      {^port, {:data, chunk}} ->
+        await_shutdown(port, ref, deadline, output <> chunk)
+
+      {^port, {:exit_status, 0}} ->
+        Process.demonitor(ref, [:flush])
+        :ok
+
+      {^port, {:exit_status, status}} ->
+        flunk("child exited with status #{status}:\n#{output}")
+
+      {:DOWN, ^ref, :port, ^port, _reason} ->
+        :ok
     after
       remaining ->
         shutdown_timeout(port, output)
