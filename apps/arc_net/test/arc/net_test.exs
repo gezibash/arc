@@ -541,6 +541,27 @@ defmodule Arc.NetTest do
       %{port: Arc.Net.Relay.get_port(relay)}
     end
 
+    test "a crashed connection does not disconnect other clients", %{port: port} do
+      alice = Identity.generate()
+      bob = Identity.generate()
+      mallory = Identity.generate()
+      sock_b = relay_connect(port, bob)
+      sock_m = relay_connect(port, mallory)
+      Process.sleep(100)
+
+      mallory_conn = Arc.Net.Relay.route_for(Process.whereis(Arc.Net.Relay), mallory.public_key)
+      Process.exit(mallory_conn, :kill)
+      Process.sleep(100)
+
+      sock_a = relay_connect(port, alice)
+      Process.sleep(100)
+      packet = make_packet(alice, bob.public_key)
+      :ok = :gen_tcp.send(sock_a, frame(packet))
+      assert recv_framed(sock_b) == frame(packet)
+
+      Enum.each([sock_a, sock_b, sock_m], &:gen_tcp.close/1)
+    end
+
     for {name, header} <- [
           {"a header that is not an object", "[]"},
           {"a number header", "1"},
