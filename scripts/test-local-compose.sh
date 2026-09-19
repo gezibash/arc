@@ -12,7 +12,7 @@ compose_file="$repo_root/compose.yaml"
 test_compose_file="$repo_root/docker/local/compose.test.yaml"
 project_name="arc-local-smoke-${RANDOM}-${RANDOM}"
 log_dir="$(mktemp -d "${TMPDIR:-/tmp}/arc-compose-smoke.XXXXXX")"
-preview_image="${ARC_LOCAL_PREVIEW_IMAGE:-arc-local-preview:0.5.1}"
+preview_image="${ARC_LOCAL_PREVIEW_IMAGE:-arc-local-preview:0.5.2}"
 declare -a compose=(docker compose -p "$project_name" -f "$compose_file" -f "$test_compose_file")
 
 fail() {
@@ -268,7 +268,7 @@ docker compose version >/dev/null || fail "Docker Compose v2 is required"
 # implied. The service image remains project-scoped for isolated cleanup.
 docker build --tag "$preview_image" --file "$repo_root/Dockerfile" "$repo_root"
 export ARC_IMAGE="$preview_image"
-export ARC_LOCAL_IMAGE="${project_name}-services:0.5.1"
+export ARC_LOCAL_IMAGE="${project_name}-services:0.5.2"
 
 # The port is unused by this test: clients address the relay through the
 # Compose network. An ephemeral host port prevents collisions with a local relay.
@@ -277,7 +277,7 @@ export ARC_LOCAL_PORT=0
 "${compose[@]}" up -d --build --wait
 
 # New service volumes must use the current selector spelling. Do this before
-# any conversion so a fresh v0.5.1 service cannot silently retain old state.
+# any conversion so a fresh v0.5.2 service cannot silently retain old state.
 for service in relay journal dm agora; do
   "${compose[@]}" exec -T "$service" test -f /home/arc/.config/arc/default.key ||
     fail "${service} did not create default.key"
@@ -415,7 +415,7 @@ agora_assert_thread "$agora_thread_a" "$agora_post_id" "$agent_a_public_key" "$a
 
 # Existing service volumes from v0.3.0 use default_key. Simulate that layout
 # only inside this disposable project and require every provider to preserve
-# its identity when v0.5.1 starts through the legacy fallback.
+# its identity when v0.5.2 starts through the legacy fallback.
 for service in relay journal dm agora; do
   "${compose[@]}" exec -T "$service" sh -ec '
     test -f /home/arc/.config/arc/default.key
