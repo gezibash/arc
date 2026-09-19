@@ -5,7 +5,7 @@
 # documents and archives. The private signing key is intentionally not mounted.
 services:
   releases:
-    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.5.0}
+    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.5.1}
     pull_policy: never
     profiles: [releases]
     init: true
