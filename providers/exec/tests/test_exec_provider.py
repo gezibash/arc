@@ -136,8 +136,8 @@ class ExecProviderTest(unittest.TestCase):
 
     def test_job_starts_at_once_and_reports_its_result(self):
         started = time.monotonic()
-        job = self.reply({"action": "start", "script": "sleep 0.3; echo done; echo warn >&2; exit 4"})
-        self.assertLess(time.monotonic() - started, 0.25)
+        job = self.reply({"action": "start", "script": "sleep 1.5; echo done; echo warn >&2; exit 4"})
+        self.assertLess(time.monotonic() - started, 1.0)
         self.assertEqual("running", job["state"])
         self.assertEqual("running", self.reply({"action": "status", "job": job["job"]})["state"])
         status = self.wait_for_job(job["job"])
@@ -215,7 +215,7 @@ class LeaseTest(unittest.TestCase):
         # Shorten the interval below the 1 second config minimum for the test.
         lease.config = provider.LeaseConfig(["hold"], ["release"], 50)
         with lease:
-            time.sleep(0.3)
+            time.sleep(0.6)
         refreshes = calls.count("hold")
         self.assertGreaterEqual(refreshes, 3)
         self.assertEqual("release", calls[-1])

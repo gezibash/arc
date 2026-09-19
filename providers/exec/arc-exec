@@ -17,7 +17,7 @@ The wake configuration is ARC_WAKE_CONFIG, or ~/.config/arc/wake.toml:
 
   [wake."<citizen-public-key>"]
   kind = "command"
-  argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/exec-provider/sprite/citizen-up"]
+  argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
 """
 
 from __future__ import annotations

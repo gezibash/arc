@@ -1,7 +1,7 @@
 # Exec: remote commands and wakeable citizens on ARC
 
 Status: proposed. Phases 1 and 3a of section 18 exist in `providers/exec`:
-the provider (section 8), the start script (section 10.3), the lease
+the provider (section 8), the start script (section 10.4), the lease
 (section 11), jobs (sections 12.1 and 12.2), and the wrapper `arc-exec`. The
 other sections describe work that does not exist yet.
 
@@ -232,7 +232,7 @@ This file has the same role as `ProxyCommand` in `~/.ssh/config`.
 ```toml
 [wake."<citizen-public-key>"]
 kind = "command"
-argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/bin/citizen-up"]
+argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
 ```
 
 - The `command` kind runs a local program. Exit status 0 means that the
@@ -268,19 +268,43 @@ The wake hook is the only reliable sign that the machine is awake. The relay
 can show `online` for a paused machine (section 9). On an awake machine, the
 start script only refreshes the lease, so the hook is fast.
 
-### 10.3 Start script
+### 10.3 Platform and lease script
 
-The start script runs on the machine. On a Sprite, the path is
-`/home/sprite/bin/citizen-up`. The script does these steps:
+The bundle supports two platforms. The setting `CITIZEN_PLATFORM` in
+`citizen.env` selects the platform.
 
-1. It creates the lease `arc` with an expiry of 120 seconds. The create call
-   fails if the lease exists.
-2. If the lease existed, the machine did not pause. `arc serve` has a good
-   relay connection.
-   - The start script refreshes the lease to 120 seconds.
-   - The start script exits with status 0.
-3. If the lease did not exist, the start script stops each old `arc serve`
-   process. Then it starts a new `arc serve` as a plain process.
+| Platform | Machine | Lease |
+| --- | --- | --- |
+| `sprite` | A Fly.io Sprite. It pauses. | The task `arc` of the Sprites Tasks API |
+| `none` | A machine that never pauses | None. Each lease command does nothing. |
+
+The script `citizen/lease` gives one interface for the two platforms:
+
+| Command | Action |
+| --- | --- |
+| `lease hold SECONDS` | Create or refresh the lease. |
+| `lease create SECONDS` | Create the lease. Exit with status 3 if the lease exists. |
+| `lease delete` | Delete the lease. |
+| `lease pauses` | Exit with status 0 if the platform can pause the machine. |
+
+To add a platform, add one case to `citizen/lease`. The provider, the start
+script, and the caller do not change.
+
+### 10.4 Start script
+
+The start script is `citizen/citizen-up` in the bundle. It runs on the
+machine. It does these steps:
+
+1. If the platform can pause, the script creates the lease with an expiry of
+   120 seconds.
+   - If the lease existed, the machine did not pause. The script refreshes
+     the lease to 120 seconds.
+   - If the lease did not exist, the machine can have paused. The old relay
+     connection is not reliable.
+2. If the lease existed, or the platform does not pause, and `arc serve`
+   runs, the script exits with status 0.
+3. If not, the script stops the old `arc serve` process group. Then it starts
+   a new `arc serve` as a plain process.
 4. The start script waits until the relay has the announcement of the
    citizen. Then it exits with status 0.
 5. If the relay has no announcement after 20 seconds, the start script
@@ -303,8 +327,8 @@ a `lease` object to `EXEC_CONFIG`:
   "grants": ["<64 lowercase hex characters>"],
   "cwd": "/home/sprite",
   "lease": {
-    "hold": ["/.sprite/bin/sprite-env", "curl", "-X", "PUT", "/v1/tasks/arc", "-d", "{\"expire\":300}"],
-    "release": ["/.sprite/bin/sprite-env", "curl", "-X", "PUT", "/v1/tasks/arc", "-d", "{\"expire\":60}"],
+    "hold": ["/home/sprite/exec-provider/citizen/lease", "hold", "300"],
+    "release": ["/home/sprite/exec-provider/citizen/lease", "hold", "60"],
     "interval_ms": 60000
   }
 }
@@ -503,7 +527,7 @@ token_env = "SPRITES_TOKEN"
 | Phase | Scope |
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
-| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `providers/exec/sprite/citizen-up`, the `lease` object, and `providers/exec/arc-exec`. |
+| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `providers/exec/citizen/`, the `lease` object, and `providers/exec/arc-exec`. |
 | 2 | Wake hooks and the `asleep` state in `arc request`. |
 | 3a | Asynchronous jobs: `start`, `status`, and `arc-exec --start`, `--status`, `--wait`. Done. |
 | 3b | The job result in the mailbox (section 12.3). |
