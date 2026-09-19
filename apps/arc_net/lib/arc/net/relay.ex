@@ -494,14 +494,6 @@ defmodule Arc.Net.Relay do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # A hot update does not run init/1 again. Apply the trap_exit and shard links here.
-  @impl GenServer
-  def code_change(_old_vsn, state, _extra) do
-    Process.flag(:trap_exit, true)
-    Enum.each(Map.keys(state.shard_refs), &Process.link/1)
-    {:ok, state}
-  end
-
   @impl GenServer
   def terminate(_reason, state) do
     :gen_tcp.close(state.listen_socket)
@@ -1935,6 +1927,11 @@ defmodule Arc.Net.Relay do
 
   defp start_shard(idx, routes_table) do
     {:ok, shard_pid} = RouteShard.start_link(index: idx, routes_table: routes_table)
+
+    # A relay that a hot update loaded into a running process did not run init/1, so it
+    # does not trap exits. A linked shard crash would then stop that relay.
+    if Process.info(self(), :trap_exit) != {:trap_exit, true}, do: Process.unlink(shard_pid)
+
     shard_ref = Process.monitor(shard_pid)
     {shard_pid, shard_ref}
   end
