@@ -194,6 +194,27 @@ defmodule Arc.CLI.Update.ManifestTest do
     end
   end
 
+  test "schema version two keeps an ineligible restart-only release without install valid" do
+    publisher = Identity.generate()
+
+    # The form that channels used before the install object existed.
+    announced =
+      release("0.4.1", "build-041", %{
+        "sources" => [],
+        "restart_required" => true,
+        "eligible" => false
+      })
+
+    unsigned = manifest(publisher, %{"schema_version" => 2, "releases" => [announced]})
+
+    assert {:ok, signed} = Manifest.sign(publisher, unsigned)
+    assert {:ok, verified} = verify(signed, publisher, last_sequence: nil, last_digest: nil)
+    assert {:ok, selection} = select_install(verified, installed_version: "0.3.2")
+    assert selection.status == :blocked
+    assert selection.reason == :no_install_archive
+    assert is_nil(selection.install)
+  end
+
   test "schema version one rejects empty sources and signatures are schema-domain separated" do
     publisher = Identity.generate()
 

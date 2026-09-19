@@ -31,6 +31,9 @@ Prepare a complete unsigned manifest following `Arc.CLI.Update.Manifest`:
   `restart_required: true`, and `sources: []`. Its `install` object must repeat
   the release `sha256` and `size`. Set `eligible: true` to let `arc update`
   install it. Do not invent live-upgrade plan hashes.
+- If such a release has no `install` object, it must set `eligible: false`.
+  Channels published before `install` existed use this form. `arc update`
+  reports the release but cannot install it.
 - A release with a hot package and a full release archive names the full
   archive in `install`. Place both archives in `blobs/`.
 - Version `1` remains supported without changing its signing bytes. Version `2`

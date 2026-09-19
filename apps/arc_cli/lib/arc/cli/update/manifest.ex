@@ -10,7 +10,9 @@ defmodule Arc.CLI.Update.Manifest do
   deterministic JSON encoding of the unsigned document prefixed by the domain
   separator `ARC-RELEASE-CHANNEL-V1\\0` or `ARC-RELEASE-CHANNEL-V2\\0`.
   Version two also permits a restart-only release without hot-upgrade sources.
-  Its `install` object must name the same archive as `sha256` and `size`.
+  Its `install` object must name the same archive as `sha256` and `size`. A
+  release without `install` must set `eligible` to false; it announces the
+  archive, but nothing can install or apply it.
 
   Public API:
 
@@ -297,6 +299,12 @@ defmodule Arc.CLI.Update.Manifest do
     end
   end
 
+  # Channels published before `install` existed announce restart-only archives without it.
+  defp restart_only_archive?(%{"install" => install} = release),
+    do: install == Map.take(release, ["sha256", "size"])
+
+  defp restart_only_archive?(release), do: release["eligible"] == false
+
   defp validate_release_artifact(release, schema) do
     with true <- positive_integer?(release["size"]) or {:error, :invalid_size},
          true <- valid_hex?(release["sha256"], @sha256_hex_bytes) or {:error, :invalid_sha256},
@@ -307,7 +315,7 @@ defmodule Arc.CLI.Update.Manifest do
            (is_list(release["sources"]) and
               (release["sources"] != [] or
                  (schema == 2 and release["restart_required"] and
-                    release["install"] == Map.take(release, ["sha256", "size"])))) or
+                    restart_only_archive?(release)))) or
              {:error, :invalid_sources} do
       :ok
     else
