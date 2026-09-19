@@ -21,8 +21,10 @@ defmodule Arc.MCP.ToolProjection do
         }
 
   @default_send_timeout_ms 2_000
-  # The reply wait runs inside Arc.MCP.Server.request/2, which has a 30 s call timeout.
   @max_send_timeout_ms 15_000
+  # The whole send tool call (connect, send, reply wait) must end before the 25 s call
+  # timeout in Arc.MCP.Server.request/2.
+  @send_budget_ms 20_000
 
   @spec list(binary(), String.t(), keyword()) :: {:ok, [descriptor()]} | {:error, term()}
   def list(owner, task, opts \\ []) when is_binary(task) and task != "" do
@@ -264,6 +266,8 @@ defmodule Arc.MCP.ToolProjection do
   defp extract_app_session_id(_arguments), do: nil
 
   defp call_send_tool(agent, arguments) do
+    started_at = System.monotonic_time(:millisecond)
+
     with {:ok, to} <- extract_required_string(arguments, "to"),
          {:ok, message} <- extract_required_string(arguments, "message"),
          {:ok, _entry} <- Agent.connect(agent, to),
@@ -273,7 +277,7 @@ defmodule Arc.MCP.ToolProjection do
              request_id: request_id,
              meta: %{"method" => "RAW", "path" => "/"}
            ) do
-      {:ok, wait_for_send_reply(agent, to, request_id, arguments)}
+      {:ok, wait_for_send_reply(agent, to, request_id, arguments, started_at)}
     else
       {:error, {:missing_argument, name}} ->
         {:error, {:invalid_arguments, "expected arguments.#{name} to be a string"}}
@@ -289,9 +293,9 @@ defmodule Arc.MCP.ToolProjection do
     end
   end
 
-  defp wait_for_send_reply(agent, to, request_id, arguments) do
+  defp wait_for_send_reply(agent, to, request_id, arguments, started_at) do
     if await_reply?(arguments) do
-      timeout_ms = reply_timeout(arguments)
+      timeout_ms = min(reply_timeout(arguments), max(@send_budget_ms - elapsed_ms(started_at), 0))
 
       case wait_for_reply(agent, request_id, timeout_ms) do
         {:ok, %{kind: :response, text: text}} -> success_result(text)

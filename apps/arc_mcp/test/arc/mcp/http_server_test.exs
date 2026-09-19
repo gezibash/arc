@@ -219,6 +219,32 @@ defmodule Arc.MCP.HTTPServerTest do
     assert Process.alive?(server)
   end
 
+  test "a stopped session gets 404, frees its key, and does not stop the server",
+       %{dir: dir} do
+    owner = persist_identity()
+    {:ok, server} = HTTPServer.start_link(task: "demo", port: 0, registry_opts: [dir: dir])
+
+    on_exit(fn ->
+      stop_process(server)
+      KeyStore.remove(Identity.name(owner))
+    end)
+
+    {session_id, protocol_version} = initialize_session(server, owner)
+    session = :sys.get_state(server).sessions[session_id]
+    Process.exit(session.pid, :kill)
+    assert wait_until(fn -> not Process.alive?(session.agent_pid) end)
+
+    notification = %{"jsonrpc" => "2.0", "method" => "notifications/initialized"}
+    headers = session_headers(session_id, protocol_version)
+    assert http_request(server, "POST", headers, encode_json(notification)).status == 404
+
+    sse_headers = [{"accept", "text/event-stream"} | headers]
+    assert http_request(server, "GET", sse_headers, "").status == 404
+
+    assert Process.alive?(server)
+    {_new_session_id, _protocol_version} = initialize_session(server, owner)
+  end
+
   defp persist_identity do
     identity = Identity.generate()
     :ok = KeyStore.save(identity)

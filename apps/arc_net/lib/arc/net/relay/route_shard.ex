@@ -29,7 +29,27 @@ defmodule Arc.Net.Relay.RouteShard do
       conns: %{}
     }
 
-    {:ok, state}
+    {:ok, adopt_routes(state)}
+  end
+
+  # A shard that replaces a crashed shard takes over the routes in the table. A connection
+  # that is already dead causes an immediate :DOWN, which deletes its row.
+  defp adopt_routes(state) do
+    :ets.foldl(
+      fn {pubkey, conn_pid}, acc ->
+        ref = Process.monitor(conn_pid)
+
+        %{
+          acc
+          | routes: Map.put(acc.routes, pubkey, conn_pid),
+            conns: Map.put(acc.conns, conn_pid, %{pubkey: pubkey, ref: ref})
+        }
+      end,
+      state,
+      state.routes_table
+    )
+  catch
+    :error, :badarg -> state
   end
 
   @impl GenServer
