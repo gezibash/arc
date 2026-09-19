@@ -4,7 +4,7 @@ defmodule Arc.Storage.MixProject do
   def project do
     [
       app: :arc_storage,
-      version: "0.5.1",
+      version: "0.5.2",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",

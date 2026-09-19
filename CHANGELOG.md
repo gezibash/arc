@@ -6,6 +6,16 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-19
+
+### Fixed
+
+- A schema 2 channel can again announce a restart-only release without an
+  `install` object if the release sets `eligible` to false. Channels published
+  before `install` existed use this form. Since v0.5.0 such channels failed
+  verification with `invalid_sources`, and a publisher could not add a new
+  sequence to them. v0.5.0 and v0.5.1 still reject these channels.
+
 ## [0.5.1] - 2026-09-19
 
 A managed relay must use a restart-only update for this release, because it

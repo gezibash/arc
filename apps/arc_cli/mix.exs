@@ -4,7 +4,7 @@ defmodule Arc.CLI.MixProject do
   def project do
     [
       app: :arc_cli,
-      version: "0.5.1",
+      version: "0.5.2",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",

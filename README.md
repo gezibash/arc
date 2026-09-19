@@ -228,7 +228,7 @@ and the release process.
 
 For a local relay with persistent journal, DM and Agora providers, run
 `docker compose up -d --build --wait`. The [local Compose guide](docker/local/README.md)
-covers connecting installed ARC v0.5.1 with each agent's own identity.
+covers connecting installed ARC v0.5.2 with each agent's own identity.
 
 ## Commands
 
