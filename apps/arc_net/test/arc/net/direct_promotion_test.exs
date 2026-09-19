@@ -11,7 +11,7 @@ defmodule Arc.Net.DirectPromotionTest do
     ctx = pair(:provider, lease_ms: 4_000)
     body = :binary.copy(<<0, 255, 128, 10, 65>>, 1024)
     assert {:ok, %{body: ^body}} = Protocol.request(ctx.client, ctx.uri, body)
-    route = Direct.route(Agent.direct(ctx.client), ctx.target)
+    route = await_route(Agent.direct(ctx.client), ctx.target)
     assert is_map(route), "expected an authenticated direct route"
     original_deadline = route.deadline
 
@@ -26,7 +26,7 @@ defmodule Arc.Net.DirectPromotionTest do
   test "the provider dials a reachable caller when only the caller allows listening" do
     ctx = pair(:caller)
     assert {:ok, %{body: "reverse"}} = Protocol.request(ctx.client, ctx.uri, "reverse")
-    route = Direct.route(Agent.direct(ctx.client), ctx.target)
+    route = await_route(Agent.direct(ctx.client), ctx.target)
     assert is_map(route), "reverse dialing did not promote"
     manager_state = :sys.get_state(Agent.direct(ctx.client))
     assert manager_state.routes[route.generation].selected == "caller"
@@ -43,7 +43,7 @@ defmodule Arc.Net.DirectPromotionTest do
 
     assert {:ok, %{body: ^body}} = Protocol.request(ctx.client, ctx.uri, body)
     manager = Agent.direct(ctx.client)
-    route = Direct.route(manager, ctx.target)
+    route = await_route(manager, ctx.target)
     assert is_map(route), "expected promotion from the relay-observed endpoints"
     internal = :sys.get_state(manager).routes[route.generation]
     assert internal.selected == "punch"
@@ -80,7 +80,7 @@ defmodule Arc.Net.DirectPromotionTest do
     ctx = pair(:provider)
     body = :binary.copy(<<0, 255, 128, 10>>, div(Protocol.max_body_bytes(), 4))
     assert {:ok, %{body: ^body}} = Protocol.request(ctx.client, ctx.uri, body)
-    assert is_map(Direct.route(Agent.direct(ctx.client), ctx.target))
+    assert is_map(await_route(Agent.direct(ctx.client), ctx.target))
   end
 
   test "a stalled application cannot accumulate direct bodies beyond its queue bound" do
@@ -88,7 +88,7 @@ defmodule Arc.Net.DirectPromotionTest do
     assert {:ok, %{body: "warm"}} = Protocol.request(ctx.client, ctx.uri, "warm")
     manager = Agent.direct(ctx.client)
     provider_manager = Agent.direct(ctx.provider)
-    route = Direct.route(manager, ctx.target)
+    route = await_route(manager, ctx.target)
     :sys.suspend(ctx.provider)
 
     try do
@@ -121,7 +121,7 @@ defmodule Arc.Net.DirectPromotionTest do
     ctx = pair(:provider, lease_ms: 6_000)
     assert {:ok, %{body: "first"}} = Protocol.request(ctx.client, ctx.uri, "first")
     manager = Agent.direct(ctx.client)
-    original = Direct.route(manager, ctx.target)
+    original = await_route(manager, ctx.target)
     assert is_map(original)
     outage(ctx)
     assert {:ok, %{body: "during"}} = Protocol.request(ctx.client, ctx.uri, "during")
@@ -163,7 +163,7 @@ defmodule Arc.Net.DirectPromotionTest do
 
     ctx = pair(:provider, lease_ms: 2_000, runtime: "direct-counter-provider.exs")
     assert {:ok, %{body: "warm"}} = Protocol.request(ctx.client, ctx.uri, "warm")
-    route = Direct.route(Agent.direct(ctx.client), ctx.target)
+    route = await_route(Agent.direct(ctx.client), ctx.target)
     assert is_map(route)
     outage(ctx)
     Process.sleep(max(0, route.deadline - System.monotonic_time(:millisecond) - 200))
@@ -190,7 +190,7 @@ defmodule Arc.Net.DirectPromotionTest do
     ctx = pair(:provider)
     assert {:ok, %{body: "first"}} = Protocol.request(ctx.client, ctx.uri, "first")
     manager = Agent.direct(ctx.client)
-    route = Direct.route(manager, ctx.target)
+    route = await_route(manager, ctx.target)
     assert :ok = Direct.revoke(manager, route.generation)
     refute Direct.admitted?(manager, route.generation)
     assert {:error, :direct_unavailable} = Direct.send_packet(manager, route.generation, "old")
@@ -202,7 +202,7 @@ defmodule Arc.Net.DirectPromotionTest do
     ctx = pair(:provider, observer: self())
     assert {:ok, %{body: "first"}} = Protocol.request(ctx.client, ctx.uri, "first")
     manager = Agent.direct(ctx.client)
-    route = Direct.route(manager, ctx.target)
+    route = await_route(manager, ctx.target)
     session = :sys.get_state(manager).routes[route.generation].session
     request_id = Arc.Data.Frame.new_request_id()
 
@@ -411,6 +411,29 @@ defmodule Arc.Net.DirectPromotionTest do
     Arc.Net.TestTeardown.stop(pid)
   catch
     :exit, _ -> :ok
+  end
+
+  # Promotion is negotiated over the relay and can reach its active phase just
+  # after the relayed request returns, so read the route through a bounded wait.
+  defp await_route(manager, target) do
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    wait_route(manager, target, deadline)
+  end
+
+  defp wait_route(manager, target, deadline) do
+    route = Direct.route(manager, target)
+
+    cond do
+      is_map(route) ->
+        route
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        route
+
+      true ->
+        Process.sleep(20)
+        wait_route(manager, target, deadline)
+    end
   end
 
   defp eventually(fun, timeout \\ 2_000) do
