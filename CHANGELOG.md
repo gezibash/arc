@@ -6,6 +6,37 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-19
+
+A managed relay must use a restart-only update for this release, because it
+changes modules other than `Arc.Net.Relay`.
+
+### Fixed
+
+- One relay client could disconnect other clients. A packet header that was not
+  a JSON object, or a header field that was not a string, crashed the
+  relay-side connection before the signature check. The crash also stopped the
+  acceptor and every connection that it accepted. The relay now drops such a
+  packet, and connections no longer link to their acceptor.
+- Relay-side connections now close when their relay stops, so clients
+  reconnect to a restarted relay.
+- A restarted route shard keeps the routes of live clients. A registration for
+  a stopped shard now goes to its replacement.
+- The relay traps exits and keeps its route shards linked, so the shards stop
+  with the relay. A new relay also stops shards that a previous relay left.
+- In the MCP HTTP server, a session that stops no longer stops the server or
+  the other sessions. Its agent stops, and later requests get 404, so the
+  client starts a new session with the same key.
+- A second MCP `initialize` with a key that is already active gets 409. Before,
+  it stopped the server.
+- MCP session servers no longer restart after DELETE, so four fast deletes no
+  longer stop the server.
+- MCP calls that take too long get an HTTP error, not a closed socket. The
+  `send` tool finishes in 20 seconds.
+- The MCP server writes a missing JSON-RPC id as `null`, not `"nil"`.
+- The MCP acceptor tries again after a temporary accept error, for example when
+  file descriptors run out.
+
 ## [0.5.0] - 2026-09-18
 
 ### Added

@@ -1,19 +1,19 @@
 # A local ARC network with Docker Compose
 
 Docker runs the relay with journal, DM and Agora providers. Your agents use
-installed ARC v0.5.0 on the host to connect through the pinned relay. Only the
+installed ARC v0.5.1 on the host to connect through the pinned relay. Only the
 relay publishes a host port, bound to `127.0.0.1`. Agent keys stay on the host.
 
-The service build packages the providers with the released ARC `0.5.0` runtime.
+The service build packages the providers with the released ARC `0.5.1` runtime.
 It downloads build dependencies once; provider startup does not download or
 compile code. The core release image and standalone providers remain unchanged.
 
 ## Install ARC
 
-From the repository root, if you have not installed v0.5.0:
+From the repository root, if you have not installed v0.5.1:
 
 ```sh
-ARC_VERSION=0.5.0 sh install.sh
+ARC_VERSION=0.5.1 sh install.sh
 export PATH="$HOME/.local/bin:$PATH"
 arc version
 ```
@@ -26,8 +26,8 @@ the provider package explicitly. This does not claim that the matching GHCR tag
 already exists:
 
 ```sh
-docker build -t arc-local-preview:0.5.0 .
-ARC_IMAGE=arc-local-preview:0.5.0 docker compose up -d --build --wait
+docker build -t arc-local-preview:0.5.1 .
+ARC_IMAGE=arc-local-preview:0.5.1 docker compose up -d --build --wait
 ```
 
 ## Start
@@ -88,7 +88,7 @@ arc install "$ARC_AGORA_PROVIDER" primary --trust
 
 Here `--trust` accepts the exact local provider selected by its public key.
 Installed tools are scoped to the selected agent. Complete this setup for both
-agents before sending a DM. In v0.5.0, `publish` populates the local public
+agents before sending a DM. In v0.5.1, `publish` populates the local public
 identity directory used by DM encryption. The examples assume both agents use
 the same Mac account and have published there. Provider discovery and requests
 travel through the relay; cross-machine DM recipient-key synchronization is
