@@ -1,0 +1,9 @@
+#!/bin/sh
+# Serve the exec provider bundle as a plain process. citizen-up starts it.
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd)
+. "$here/citizen.env"
+export ARC_KEY ARC_RELAY ARC_RELAY_PUBKEY EXEC_CONFIG
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+cd "$here"
+exec arc serve .
