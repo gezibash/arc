@@ -17,12 +17,9 @@ defmodule Arc.MCP.Server do
   end
 
   @spec request(pid(), map()) :: map() | nil
+  # Shorter than the 30 s call from each HTTP handler, so a timeout here can still be reported.
   def request(server, request) when is_map(request) do
-    GenServer.call(server, {:request, request}, 30_000)
-  catch
-    # The caller is the HTTP server. A failed session must not stop the other sessions.
-    :exit, _reason ->
-      error_response(request, -32_603, "session unavailable")
+    GenServer.call(server, {:request, request}, 25_000)
   end
 
   @spec subscribe(pid(), pid()) :: :ok
@@ -214,7 +211,8 @@ defmodule Arc.MCP.Server do
   defp error_response(request, code, message) do
     %{
       "jsonrpc" => "2.0",
-      "id" => Map.get(request, "id"),
+      # :json writes nil as the string "nil". JSON-RPC needs null.
+      "id" => Map.get(request, "id") || :null,
       "error" => %{"code" => code, "message" => message}
     }
   end

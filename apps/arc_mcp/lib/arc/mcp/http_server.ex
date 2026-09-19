@@ -88,7 +88,6 @@ defmodule Arc.MCP.HTTPServer do
     Enum.each(state.sessions, fn {_session_id, session} ->
       close_stream(session)
       stop_session(session.pid)
-      release_session_transport(session)
       stop_agent(session.agent_pid)
     end)
 
@@ -124,6 +123,21 @@ defmodule Arc.MCP.HTTPServer do
     {:noreply, state}
   end
 
+  @impl GenServer
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    case Enum.find(state.sessions, fn {_session_id, session} -> session.pid == pid end) do
+      {session_id, session} ->
+        close_stream(session)
+        stop_agent(session.agent_pid)
+        {:noreply, %{state | sessions: Map.delete(state.sessions, session_id)}}
+
+      nil ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
   defp accept_loop(listen_sock, server) do
     case :gen_tcp.accept(listen_sock) do
       {:ok, socket} ->
@@ -150,32 +164,41 @@ defmodule Arc.MCP.HTTPServer do
             send_response(socket, status, headers, body)
 
           {:sse, headers, session_id} ->
+            # The stream must end when the server stops, also if terminate/2 does not run.
+            server_ref = Process.monitor(server)
             send_sse_headers(socket, headers)
             :ok = :gen_tcp.send(socket, ": connected\n\n")
-            sse_loop(socket, server, session_id)
+            sse_loop(socket, server, server_ref, session_id)
         end
 
       {:error, status, body} ->
         send_response(socket, status, [{"content-type", "text/plain"}], body)
     end
+  catch
+    # If the server is busy or stopped, send an HTTP error instead of closing without a reply.
+    :exit, _reason ->
+      send_response(socket, 503, [{"content-type", "text/plain"}], "MCP server unavailable")
   after
     safe_close_socket(socket)
   end
 
-  defp sse_loop(socket, server, session_id) do
+  defp sse_loop(socket, server, server_ref, session_id) do
     receive do
       {:arc_mcp, message} ->
         send_sse_message(socket, message)
-        sse_loop(socket, server, session_id)
+        sse_loop(socket, server, server_ref, session_id)
 
       {:close, _reason} ->
         GenServer.cast(server, {:stream_closed, session_id, self()})
+        :ok
+
+      {:DOWN, ^server_ref, :process, _pid, _reason} ->
         :ok
     after
       @keepalive_ms ->
         case :gen_tcp.send(socket, ": keepalive\n\n") do
           :ok ->
-            sse_loop(socket, server, session_id)
+            sse_loop(socket, server, server_ref, session_id)
 
           {:error, _} ->
             GenServer.cast(server, {:stream_closed, session_id, self()})
@@ -214,7 +237,7 @@ defmodule Arc.MCP.HTTPServer do
          {:ok, session_id} <- fetch_session_id(headers),
          {:ok, session} <- fetch_session(state, session_id),
          state <- replace_stream(state, session_id, connection_pid),
-         :ok <- Server.subscribe(session.pid, connection_pid) do
+         :ok <- session_call(fn -> Server.subscribe(session.pid, connection_pid) end) do
       headers = [
         {"content-type", "text/event-stream"},
         {"cache-control", "no-cache"},
@@ -239,7 +262,6 @@ defmodule Arc.MCP.HTTPServer do
          {:ok, session} <- fetch_session(state, session_id) do
       close_stream(session)
       stop_session(session.pid)
-      release_session_transport(session)
       stop_agent(session.agent_pid)
       state = %{state | sessions: Map.delete(state.sessions, session_id)}
       {{:response, 204, [{"mcp-session-id", session_id}], ""}, state}
@@ -257,40 +279,33 @@ defmodule Arc.MCP.HTTPServer do
     session_id = new_session_id()
 
     with {:ok, identity} <- authenticate_initialize(http_request),
-         {:ok, agent_pid} <- start_session_agent(identity, state) do
-      case start_session_server(identity, agent_pid, state) do
-        {:ok, session_pid} ->
-          response = Server.request(session_pid, request)
+         {:ok, agent_pid} <- start_session_agent(identity, state),
+         {:ok, session_pid} <- start_session_server(identity, agent_pid, state),
+         {:ok, response} <- initialize_session(session_pid, agent_pid, request) do
+      # If the session stops later, handle_info/2 removes it and stops its agent.
+      Process.monitor(session_pid)
 
-          protocol_version =
-            get_in(response, ["result", "protocolVersion"]) || MCP.protocol_version()
+      protocol_version =
+        get_in(response, ["result", "protocolVersion"]) || MCP.protocol_version()
 
-          session = %{
-            pid: session_pid,
-            agent_pid: agent_pid,
-            owner_name: Identity.name(identity),
-            owner_public_key: identity.public_key,
-            protocol_version: protocol_version,
-            stream_pid: nil
-          }
+      session = %{
+        pid: session_pid,
+        agent_pid: agent_pid,
+        owner_name: Identity.name(identity),
+        owner_public_key: identity.public_key,
+        protocol_version: protocol_version,
+        stream_pid: nil
+      }
 
-          state = %{state | sessions: Map.put(state.sessions, session_id, session)}
+      state = %{state | sessions: Map.put(state.sessions, session_id, session)}
 
-          headers = [
-            {"content-type", "application/json"},
-            {"mcp-session-id", session_id},
-            {"mcp-protocol-version", protocol_version}
-          ]
+      headers = [
+        {"content-type", "application/json"},
+        {"mcp-session-id", session_id},
+        {"mcp-protocol-version", protocol_version}
+      ]
 
-          {{:response, 200, headers, encode_json(response)}, state}
-
-        {:error, reason} ->
-          release_agent_transport(identity.public_key, agent_pid)
-          stop_agent(agent_pid)
-
-          {{:response, 500, [{"content-type", "text/plain"}],
-            "failed to initialize session: #{inspect(reason)}"}, state}
-      end
+      {{:response, 200, headers, encode_json(response)}, state}
     else
       {:error, :unauthorized} ->
         {{:response, 401, [{"content-type", "text/plain"}], "invalid ARC auth"}, state}
@@ -303,18 +318,32 @@ defmodule Arc.MCP.HTTPServer do
         {{:response, 409, [{"content-type", "text/plain"}],
           "ARC key is already active in this runtime"}, state}
 
+      {:error, status, message} ->
+        {{:response, status, [{"content-type", "text/plain"}], message}, state}
+
       {:error, reason} ->
         {{:response, 500, [{"content-type", "text/plain"}],
           "failed to initialize session: #{inspect(reason)}"}, state}
     end
   end
 
+  defp initialize_session(session_pid, agent_pid, request) do
+    case session_call(fn -> {:ok, Server.request(session_pid, request)} end) do
+      {:ok, response} ->
+        {:ok, response}
+
+      {:error, _status, _message} = error ->
+        stop_session(session_pid)
+        stop_agent(agent_pid)
+        error
+    end
+  end
+
   defp handle_post_request(request, json, state) do
     with {:ok, session_id} <- fetch_session_id(request.headers),
          {:ok, session} <- fetch_session(state, session_id),
-         :ok <- validate_protocol_header(request.headers, session.protocol_version) do
-      response = Server.request(session.pid, json)
-
+         :ok <- validate_protocol_header(request.headers, session.protocol_version),
+         {:ok, response} <- session_call(fn -> {:ok, Server.request(session.pid, json)} end) do
       headers = [
         {"content-type", "application/json"},
         {"mcp-session-id", session_id},
@@ -329,6 +358,15 @@ defmodule Arc.MCP.HTTPServer do
       {:error, status, message} ->
         {{:response, status, [{"content-type", "text/plain"}], message}, state}
     end
+  end
+
+  # The session runs in another process. An exit there must not stop this server. A stopped
+  # session gets 404, so the client starts a new session.
+  defp session_call(fun) do
+    fun.()
+  catch
+    :exit, {:timeout, _} -> {:error, 504, "MCP session timed out"}
+    :exit, _reason -> {:error, 404, "unknown MCP session"}
   end
 
   defp replace_stream(state, session_id, new_stream_pid) do
@@ -433,7 +471,7 @@ defmodule Arc.MCP.HTTPServer do
   defp parse_error do
     %{
       "jsonrpc" => "2.0",
-      "id" => nil,
+      "id" => :null,
       "error" => %{"code" => -32_700, "message" => "parse error"}
     }
   end
@@ -445,16 +483,24 @@ defmodule Arc.MCP.HTTPServer do
   end
 
   defp start_session_server(identity, agent_pid, state) do
-    DynamicSupervisor.start_child(state.session_sup, {
-      Server,
-      [
-        task: state.task,
-        owner: identity.public_key,
-        agent: agent_pid,
-        poll_ms: state.poll_ms,
-        registry_opts: state.registry_opts
-      ]
-    })
+    spec =
+      {Server,
+       [
+         task: state.task,
+         owner: identity.public_key,
+         agent: agent_pid,
+         poll_ms: state.poll_ms,
+         registry_opts: state.registry_opts
+       ]}
+
+    case DynamicSupervisor.start_child(state.session_sup, spec) do
+      {:ok, session_pid} ->
+        {:ok, session_pid}
+
+      {:error, reason} ->
+        stop_agent(agent_pid)
+        {:error, reason}
+    end
   end
 
   # The session supervisor stops the agents on every server exit. It also returns a failed
@@ -471,7 +517,6 @@ defmodule Arc.MCP.HTTPServer do
             {:ok, agent_pid}
 
           {:error, reason} ->
-            release_agent_transport(identity.public_key, agent_pid)
             stop_agent(agent_pid)
             {:error, reason}
         end
@@ -514,21 +559,6 @@ defmodule Arc.MCP.HTTPServer do
         opts
     end
   end
-
-  defp release_session_transport(session) do
-    release_agent_transport(session.owner_public_key, session.agent_pid)
-  end
-
-  defp release_agent_transport(owner_public_key, agent_pid)
-       when is_binary(owner_public_key) and is_pid(agent_pid) do
-    _ = Arc.Net.release_relay(owner_public_key, agent_pid)
-    :ok
-  catch
-    # TransportManager also releases the lease when the agent stops.
-    :exit, _reason -> :ok
-  end
-
-  defp release_agent_transport(_owner_public_key, _agent_pid), do: :ok
 
   defp fetch_identity(public_key) do
     case KeyStore.get_by_public_key(public_key) do
@@ -760,7 +790,7 @@ defmodule Arc.MCP.HTTPServer do
 
   defp stop_session(pid) when is_pid(pid), do: stop_process(pid)
 
-  # A process can stop between the check and the call. That must not abort terminate/2.
+  # The process can already be gone. That must not abort the caller, for example terminate/2.
   defp stop_process(pid) do
     GenServer.stop(pid, :normal)
   catch
