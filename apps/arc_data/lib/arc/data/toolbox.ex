@@ -434,13 +434,15 @@ defmodule Arc.Data.Toolbox do
     query = render_value(Map.get(values, target), " ")
 
     with {:ok, entries} <- resolve_peers(query, context) do
+      # The recipient key comes from the Ed25519 public key, so a sender can
+      # seal to any key it knows. No published key exchange record is needed.
       Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, acc} ->
-        case entry.x25519_public do
-          <<x_pub::binary-size(32)>> ->
+        case Identity.public_key_to_x25519(entry.public_key) do
+          {:ok, x_pub} ->
             {:cont, {:ok, [encode_sealed(SealedBox.seal(x_pub, body)) | acc]}}
 
-          _ ->
-            {:halt, {:error, {:no_keyex, entry.name}}}
+          {:error, :invalid_public_key} ->
+            {:halt, {:error, {:invalid_public_key, entry.name}}}
         end
       end)
       |> case do
@@ -604,8 +606,7 @@ defmodule Arc.Data.Toolbox do
 
   defp resolve_entry(value, _context), do: bare_hex_entry(value, :no_resolver)
 
-  # A full hex public key stands on its own for `pubkey`. It carries no
-  # X25519 key, so `seal` still needs the control plane entry.
+  # A full hex public key stands on its own for `pubkey` and for `seal`.
   defp bare_hex_entry(<<hex::binary-size(64)>> = value, reason) do
     case Base.decode16(hex, case: :mixed) do
       {:ok, pk} -> {:ok, %{public_key: pk, x25519_public: nil, name: value}}

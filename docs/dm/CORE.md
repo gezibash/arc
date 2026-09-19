@@ -272,10 +272,49 @@ cannot be replayed. Run the sweep on a timer every `allowed_clock_skew_ms`.
 **Tests:** `agent_test.exs` inserts an old guard entry, advances the clock
 through a test hook, and asserts the entry is gone.
 
+## C8. X25519 key from the Ed25519 public key
+
+**Module:** `Arc.Identity` (`apps/arc_identity/lib/arc/identity.ex`),
+`Arc.Data.Toolbox`.
+
+**Problem:** `seal` found the recipient's X25519 key only in the local control
+directory. A sender on a different host had no entry for the recipient, so it
+could not seal. The old `to_x25519/1` used the Ed25519 seed as the X25519
+secret. Only the recipient could compute the matching public key.
+
+**Required:**
+
+- `to_x25519/1` uses the standard conversion. The X25519 secret is the
+  clamped first 32 bytes of SHA-512 of the seed. libsodium calls this
+  `crypto_sign_ed25519_sk_to_curve25519`.
+- `public_key_to_x25519/1` computes the X25519 public key from the Ed25519
+  public key with the birational map u = (1 + y) / (1 - y) mod p. libsodium
+  calls this `crypto_sign_ed25519_pk_to_curve25519`.
+- `public_key_to_x25519/1` rejects a key that maps to a point of small order,
+  and a y that is not below the field prime.
+- `seal:to` computes the recipient key from the resolved Ed25519 public key.
+  It does not read `x25519_public` from the control plane entry. A full hex
+  public key needs no entry.
+- Sessions continue to use the X25519 key that the peer announces or
+  publishes. Each side uses its own secret with the key of the other side, so
+  a session between versions still agrees on one shared secret.
+
+**Breaking change:** data that an earlier version sealed does not open. This
+includes DMs, private files, and the local sealed cache. There is no fallback
+to the old key.
+
+**Tests:**
+
+- `identity_test.exs`: the libsodium vector from
+  `test/default/ed25519_convert`, agreement of the two functions for 200
+  random identities, and the rejected inputs.
+- `toolbox_test.exs`: `seal:to` works for an entry without `x25519_public`
+  and for a bare hex key without a resolver.
+
 ## Out of scope
 
 - A second control plane implementation. `Arc.Control.Local` stays the only
-  one. DM works on one host or on hosts that share the control directory.
+  one.
 - Storage backends in `arc_storage`. The DM provider stores files under
   `DM_ROOT` like the journal.
 - Group messaging.

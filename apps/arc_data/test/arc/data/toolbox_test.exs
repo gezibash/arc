@@ -126,12 +126,29 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.open_tokens(token, me) == "note"
     end
 
-    test "seal fails when the target has no keyex", %{nokey: nokey, context: ctx} do
-      name = Arc.Identity.name(nokey)
+    test "seal needs no published keyex", %{nokey: nokey, context: ctx} do
+      values = %{"to" => Arc.Identity.name(nokey), "body" => "no directory"}
 
-      # The error names the resolved entry, "nokey" in the stub resolver.
-      assert {:error, {:no_keyex, "nokey"}} =
-               Toolbox.render_template("{{body|seal:to}}", %{"to" => name, "body" => "x"}, ctx)
+      assert {:ok, token} = Toolbox.render_template("{{body|seal:to}}", values, ctx)
+      assert Toolbox.open_tokens(token, nokey) == "no directory"
+    end
+
+    test "seal:to a bare hex key works without a resolver", %{bob: bob} do
+      values = %{"to" => Arc.Identity.encode_public_key(bob), "body" => "offline"}
+
+      assert {:ok, token} = Toolbox.render_template("{{body|seal:to}}", values, %{})
+      assert Toolbox.open_tokens(token, bob) == "offline"
+    end
+
+    test "seal rejects a key with no curve point" do
+      small_order = String.duplicate("0", 64)
+
+      assert {:error, {:invalid_public_key, ^small_order}} =
+               Toolbox.render_template(
+                 "{{body|seal:to}}",
+                 %{"to" => small_order, "body" => "x"},
+                 %{}
+               )
     end
 
     test "seal without a target is a template error" do

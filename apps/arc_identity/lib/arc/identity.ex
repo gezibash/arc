@@ -68,13 +68,65 @@ defmodule Arc.Identity do
   @doc """
   Derive an X25519 keypair from this identity for ECDH key exchange.
   Returns {x25519_public, x25519_secret}.
+
+  This is the standard conversion that libsodium calls
+  `crypto_sign_ed25519_sk_to_curve25519`: the secret is the clamped first half
+  of SHA-512 of the seed. The public key equals
+  `public_key_to_x25519(identity.public_key)`, so any sender can compute it
+  from the Ed25519 public key alone.
   """
   @spec to_x25519(t()) :: {binary(), binary()}
-  def to_x25519(%__MODULE__{secret_key: sk}) do
-    # Ed25519 secret key can be used as X25519 seed via clamping
-    # OTP handles the conversion internally when we use the same seed
-    :crypto.generate_key(:ecdh, :x25519, sk)
+  def to_x25519(%__MODULE__{seed: seed}) do
+    <<scalar::binary-size(32), _::binary-size(32)>> = :crypto.hash(:sha512, seed)
+    <<first, middle::binary-size(30), last>> = scalar
+
+    x_secret =
+      <<Bitwise.band(first, 248), middle::binary, last |> Bitwise.band(127) |> Bitwise.bor(64)>>
+
+    {x_public, _} = :crypto.generate_key(:ecdh, :x25519, x_secret)
+    {x_public, x_secret}
   end
+
+  # Field prime of Curve25519, 2^255 - 19.
+  @p 57_896_044_618_658_097_711_785_492_504_343_953_926_634_992_332_820_282_019_728_792_003_956_564_819_949
+
+  # u-coordinates of the points of small order. A key that maps to one of these
+  # gives a shared secret that an attacker can predict. libsodium rejects the
+  # same set.
+  @small_order_u [
+    0,
+    1,
+    325_606_250_916_557_431_795_983_626_356_110_631_294_008_115_727_848_805_560_023_387_167_927_233_504,
+    39_382_357_235_489_614_581_723_060_781_553_021_112_529_911_719_440_698_176_882_885_853_963_445_705_823,
+    @p - 1
+  ]
+
+  @doc """
+  Compute the X25519 public key of an identity from its Ed25519 public key.
+
+  This is the birational map from edwards25519 to Curve25519,
+  u = (1 + y) / (1 - y) mod p. libsodium calls it
+  `crypto_sign_ed25519_pk_to_curve25519`. The result equals the public half
+  of `to_x25519/1` for the same identity.
+  """
+  @spec public_key_to_x25519(public_key()) :: {:ok, <<_::256>>} | {:error, :invalid_public_key}
+  def public_key_to_x25519(<<encoded::little-unsigned-size(256)>>) do
+    # The top bit holds the sign of x. The curve map uses y only.
+    y = Bitwise.band(encoded, Bitwise.bsl(1, 255) - 1)
+
+    with true <- y < @p and y != 1,
+         u = rem((1 + y) * inverse(@p + 1 - y), @p),
+         false <- u in @small_order_u do
+      {:ok, <<u::little-unsigned-size(256)>>}
+    else
+      _ -> {:error, :invalid_public_key}
+    end
+  end
+
+  def public_key_to_x25519(_), do: {:error, :invalid_public_key}
+
+  # Fermat inverse: a^(p - 2) mod p.
+  defp inverse(a), do: :crypto.mod_pow(rem(a, @p), @p - 2, @p) |> :binary.decode_unsigned()
 
   @doc """
   Encode a public key as a hex string.
