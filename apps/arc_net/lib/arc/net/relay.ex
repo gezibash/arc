@@ -196,6 +196,9 @@ defmodule Arc.Net.Relay do
   end
 
   defp start_relay(port, config) do
+    # The route shards stay linked. Trapping exits lets terminate/2 stop them on a parent
+    # :shutdown, and a :kill or a failed init still takes the linked shards down.
+    Process.flag(:trap_exit, true)
     cleanup_previous_runtime()
 
     {:ok, listen_socket} =
@@ -484,6 +487,10 @@ defmodule Arc.Net.Relay do
       end
     end
   end
+
+  # The acceptors cannot recover from a closed listen socket.
+  def handle_info({:EXIT, port, reason}, %{listen_socket: port} = state),
+    do: {:stop, reason, state}
 
   def handle_info(_msg, state), do: {:noreply, state}
 
@@ -1836,9 +1843,15 @@ defmodule Arc.Net.Relay do
   end
 
   defp restart_shard(state, dead_pid, idx) do
-    clear_partition_table(idx, state.routes_tables)
     routes_table = Enum.at(state.routes_tables, idx)
+    # Connections register only once, at hello. Give their routes to the new shard.
+    live_routes = table_entries(routes_table)
+    clear_partition_table(idx, state.routes_tables)
     {new_pid, new_ref} = start_shard(idx, routes_table)
+
+    Enum.each(live_routes, fn {pubkey, conn_pid} ->
+      if Process.alive?(conn_pid), do: RouteShard.register(new_pid, conn_pid, pubkey)
+    end)
 
     shard_pids = Map.put(state.shard_pids, idx, new_pid)
 
@@ -1875,6 +1888,14 @@ defmodule Arc.Net.Relay do
     :ok
   end
 
+  defp table_entries(nil), do: []
+
+  defp table_entries(table) do
+    :ets.tab2list(table)
+  catch
+    :error, :badarg -> []
+  end
+
   defp clear_table(nil), do: :ok
 
   defp clear_table(table) do
@@ -1906,7 +1927,11 @@ defmodule Arc.Net.Relay do
 
   defp start_shard(idx, routes_table) do
     {:ok, shard_pid} = RouteShard.start_link(index: idx, routes_table: routes_table)
-    Process.unlink(shard_pid)
+
+    # A relay that a hot update loaded into a running process did not run init/1, so it
+    # does not trap exits. A linked shard crash would then stop that relay.
+    if Process.info(self(), :trap_exit) != {:trap_exit, true}, do: Process.unlink(shard_pid)
+
     shard_ref = Process.monitor(shard_pid)
     {shard_pid, shard_ref}
   end
@@ -1982,9 +2007,14 @@ defmodule Arc.Net.Relay do
 
   defp cleanup_previous_runtime do
     case :persistent_term.get(@runtime_key, nil) do
-      %{routes_tables: routes_tables} ->
+      %{routes_tables: routes_tables} = runtime ->
         clear_runtime()
         delete_tables(routes_tables)
+        # A previous relay that skipped terminate/2 can leave its shards running.
+        runtime
+        |> Map.get(:shard_pids, {})
+        |> Tuple.to_list()
+        |> Enum.each(&Process.exit(&1, :kill))
 
       _ ->
         :ok

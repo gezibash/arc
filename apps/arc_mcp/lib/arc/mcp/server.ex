@@ -3,7 +3,8 @@ defmodule Arc.MCP.Server do
   Task-scoped MCP session server for mounted ARC capabilities.
   """
 
-  use GenServer
+  # HTTPServer stops sessions with GenServer.stop/2. A restart would leave an untracked session.
+  use GenServer, restart: :temporary
 
   alias Arc.MCP
   alias Arc.MCP.ToolProjection
@@ -18,6 +19,10 @@ defmodule Arc.MCP.Server do
   @spec request(pid(), map()) :: map() | nil
   def request(server, request) when is_map(request) do
     GenServer.call(server, {:request, request}, 30_000)
+  catch
+    # The caller is the HTTP server. A failed session must not stop the other sessions.
+    :exit, _reason ->
+      error_response(request, -32_603, "session unavailable")
   end
 
   @spec subscribe(pid(), pid()) :: :ok
@@ -105,8 +110,8 @@ defmodule Arc.MCP.Server do
        when is_binary(method) do
     case {Map.has_key?(request, "id"), method} do
       {true, "initialize"} ->
-        protocol_version =
-          negotiate_protocol(Map.get(request["params"] || %{}, "protocolVersion"))
+        params = if is_map(request["params"]), do: request["params"], else: %{}
+        protocol_version = negotiate_protocol(Map.get(params, "protocolVersion"))
 
         state = %{state | protocol_version: protocol_version}
         {ok_response(request, initialize_result(state)), state}

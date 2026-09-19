@@ -18,6 +18,7 @@ defmodule Arc.MCP.HTTPServer do
   @default_port 5004
   @read_timeout 5_000
   @keepalive_ms 15_000
+  @accept_retry_ms 100
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -126,14 +127,18 @@ defmodule Arc.MCP.HTTPServer do
   defp accept_loop(listen_sock, server) do
     case :gen_tcp.accept(listen_sock) do
       {:ok, socket} ->
-        Task.start(fn -> handle_socket(socket, server) end)
+        {:ok, handler} = Task.start(fn -> handle_socket(socket, server) end)
+        # The handler owns the socket, so the socket does not close when this acceptor stops.
+        _ = :gen_tcp.controlling_process(socket, handler)
         accept_loop(listen_sock, server)
 
       {:error, :closed} ->
         :ok
 
       {:error, _reason} ->
-        :ok
+        # A temporary error (for example :emfile) must not stop the listener for good.
+        Process.sleep(@accept_retry_ms)
+        accept_loop(listen_sock, server)
     end
   end
 
@@ -452,10 +457,13 @@ defmodule Arc.MCP.HTTPServer do
     })
   end
 
+  # The session supervisor stops the agents on every server exit. It also returns a failed
+  # agent start as {:error, reason}, so a duplicate key does not stop the server.
   defp start_session_agent(identity, state) do
-    case Agent.start_link(identity) do
+    agent_spec = Supervisor.child_spec({Agent, identity}, restart: :temporary)
+
+    case DynamicSupervisor.start_child(state.session_sup, agent_spec) do
       {:ok, agent_pid} ->
-        Process.unlink(agent_pid)
         :ok = Agent.publish(agent_pid)
 
         case maybe_acquire_relay(identity, agent_pid, state) do
@@ -464,7 +472,7 @@ defmodule Arc.MCP.HTTPServer do
 
           {:error, reason} ->
             release_agent_transport(identity.public_key, agent_pid)
-            GenServer.stop(agent_pid, :normal)
+            stop_agent(agent_pid)
             {:error, reason}
         end
 
@@ -515,6 +523,9 @@ defmodule Arc.MCP.HTTPServer do
        when is_binary(owner_public_key) and is_pid(agent_pid) do
     _ = Arc.Net.release_relay(owner_public_key, agent_pid)
     :ok
+  catch
+    # TransportManager also releases the lease when the agent stops.
+    :exit, _reason -> :ok
   end
 
   defp release_agent_transport(_owner_public_key, _agent_pid), do: :ok
@@ -738,9 +749,7 @@ defmodule Arc.MCP.HTTPServer do
     |> Base.url_encode64(padding: false)
   end
 
-  defp stop_agent(pid) when is_pid(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
-  end
+  defp stop_agent(pid) when is_pid(pid), do: stop_process(pid)
 
   defp stop_agent(_pid), do: :ok
 
@@ -749,8 +758,13 @@ defmodule Arc.MCP.HTTPServer do
 
   defp close_stream(_session), do: :ok
 
-  defp stop_session(pid) when is_pid(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+  defp stop_session(pid) when is_pid(pid), do: stop_process(pid)
+
+  # A process can stop between the check and the call. That must not abort terminate/2.
+  defp stop_process(pid) do
+    GenServer.stop(pid, :normal)
+  catch
+    :exit, _reason -> :ok
   end
 
   defp safe_close_socket(nil), do: :ok
