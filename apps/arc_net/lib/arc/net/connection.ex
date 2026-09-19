@@ -148,7 +148,9 @@ defmodule Arc.Net.Connection do
       socket: socket,
       role: role,
       parent: parent,
-      parent_ref: if(role == :federation, do: Process.monitor(parent), else: nil),
+      # A relay-side connection must close with its relay, or the client stays attached to nothing.
+      parent_ref:
+        if(role in [:federation, :relay_client], do: Process.monitor(parent), else: nil),
       relay_pubkey: Keyword.get(opts, :relay_pubkey),
       relay_challenge: Keyword.get(opts, :relay_challenge, maybe_relay_challenge(role)),
       recv_buffer: <<>>,
