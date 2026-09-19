@@ -183,6 +183,42 @@ defmodule Arc.MCP.HTTPServerTest do
     assert wait_until(fn -> Arc.Net.Relay.stats(relay).conns == 0 end)
   end
 
+  test "a second initialize with an active key gets 409 and the server keeps running",
+       %{dir: dir} do
+    owner = persist_identity()
+    {:ok, server} = HTTPServer.start_link(task: "demo", port: 0, registry_opts: [dir: dir])
+
+    on_exit(fn ->
+      stop_process(server)
+      KeyStore.remove(Identity.name(owner))
+    end)
+
+    {_session_id, _protocol_version} = initialize_session(server, owner)
+
+    body =
+      encode_json(%{"jsonrpc" => "2.0", "id" => 2, "method" => "initialize", "params" => %{}})
+
+    assert http_request(server, "POST", auth_headers(owner, "/mcp", body), body).status == 409
+    assert Process.alive?(server)
+  end
+
+  test "deleting more sessions than the restart limit keeps the server running", %{dir: dir} do
+    owners = for _ <- 1..5, do: persist_identity()
+    {:ok, server} = HTTPServer.start_link(task: "demo", port: 0, registry_opts: [dir: dir])
+
+    on_exit(fn ->
+      stop_process(server)
+      Enum.each(owners, &KeyStore.remove(Identity.name(&1)))
+    end)
+
+    for owner <- owners do
+      {session_id, protocol_version} = initialize_session(server, owner)
+      assert delete_session(server, session_id, protocol_version).status == 204
+    end
+
+    assert Process.alive?(server)
+  end
+
   defp persist_identity do
     identity = Identity.generate()
     :ok = KeyStore.save(identity)

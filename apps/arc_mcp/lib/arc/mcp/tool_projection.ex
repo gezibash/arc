@@ -21,6 +21,8 @@ defmodule Arc.MCP.ToolProjection do
         }
 
   @default_send_timeout_ms 2_000
+  # The reply wait runs inside Arc.MCP.Server.request/2, which has a 30 s call timeout.
+  @max_send_timeout_ms 15_000
 
   @spec list(binary(), String.t(), keyword()) :: {:ok, [descriptor()]} | {:error, term()}
   def list(owner, task, opts \\ []) when is_binary(task) and task != "" do
@@ -198,7 +200,8 @@ defmodule Arc.MCP.ToolProjection do
             "timeout_ms" => %{
               "type" => "integer",
               "description" => "Reply wait timeout in milliseconds when await_reply is true",
-              "minimum" => 1
+              "minimum" => 1,
+              "maximum" => @max_send_timeout_ms
             }
           },
           "required" => ["to", "message"],
@@ -344,7 +347,7 @@ defmodule Arc.MCP.ToolProjection do
 
   defp reply_timeout(%{"timeout_ms" => timeout_ms})
        when is_integer(timeout_ms) and timeout_ms > 0,
-       do: timeout_ms
+       do: min(timeout_ms, @max_send_timeout_ms)
 
   defp reply_timeout(_arguments), do: @default_send_timeout_ms
 
