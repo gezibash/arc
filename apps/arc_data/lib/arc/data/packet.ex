@@ -139,13 +139,18 @@ defmodule Arc.Data.Packet do
     end
   end
 
+  # The header comes from an unauthenticated peer. Any value that is not an object must be
+  # an error, because the relay decodes it in a connection process.
   defp safe_decode_json(bytes) do
-    {:ok, :json.decode(bytes)}
+    case :json.decode(bytes) do
+      header when is_map(header) -> {:ok, header}
+      _ -> {:error, :malformed_packet}
+    end
   rescue
     _ -> {:error, :malformed_packet}
   end
 
-  defp safe_decode64(nil), do: {:error, :malformed_packet}
+  defp safe_decode64(str) when not is_binary(str), do: {:error, :malformed_packet}
 
   defp safe_decode64(str) do
     case Base.decode64(str) do

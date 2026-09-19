@@ -531,6 +531,69 @@ defmodule Arc.NetTest do
     end
   end
 
+  describe "Arc.Net.Relay malformed packets" do
+    setup do
+      Application.ensure_all_started(:arc_net)
+      # One acceptor links every connection, so a crash would reach all of them.
+      put_env(:relay_acceptors, 1)
+      {:ok, relay} = Arc.Net.Relay.start_link(0)
+      on_exit(fn -> stop_relay(relay) end)
+      %{port: Arc.Net.Relay.get_port(relay)}
+    end
+
+    test "a crashed connection does not disconnect other clients", %{port: port} do
+      alice = Identity.generate()
+      bob = Identity.generate()
+      mallory = Identity.generate()
+      sock_b = relay_connect(port, bob)
+      sock_m = relay_connect(port, mallory)
+      Process.sleep(100)
+
+      mallory_conn = Arc.Net.Relay.route_for(Process.whereis(Arc.Net.Relay), mallory.public_key)
+      Process.exit(mallory_conn, :kill)
+      Process.sleep(100)
+
+      sock_a = relay_connect(port, alice)
+      Process.sleep(100)
+      packet = make_packet(alice, bob.public_key)
+      :ok = :gen_tcp.send(sock_a, frame(packet))
+      assert recv_framed(sock_b) == frame(packet)
+
+      Enum.each([sock_a, sock_b, sock_m], &:gen_tcp.close/1)
+    end
+
+    for {name, header} <- [
+          {"a header that is not an object", "[]"},
+          {"a number header", "1"},
+          {"a src that is not a string", ~s({"src":1})}
+        ] do
+      test "#{name} does not disconnect other clients", %{port: port} do
+        alice = Identity.generate()
+        bob = Identity.generate()
+        mallory = Identity.generate()
+        sock_b = relay_connect(port, bob)
+        sock_m = relay_connect(port, mallory)
+        Process.sleep(100)
+
+        header = unquote(header)
+
+        bad =
+          <<byte_size(header)::32-big, header::binary, :crypto.strong_rand_bytes(64)::binary, 0>>
+
+        :ok = :gen_tcp.send(sock_m, frame(bad))
+        Process.sleep(100)
+
+        sock_a = relay_connect(port, alice)
+        Process.sleep(100)
+        packet = make_packet(alice, bob.public_key)
+        :ok = :gen_tcp.send(sock_a, frame(packet))
+        assert recv_framed(sock_b) == frame(packet)
+
+        Enum.each([sock_a, sock_b, sock_m], &:gen_tcp.close/1)
+      end
+    end
+  end
+
   describe "Arc.Net.Relay identity hello" do
     test "sends configured relay pubkey as first bytes on new connection" do
       relay_pubkey = :crypto.strong_rand_bytes(32)
