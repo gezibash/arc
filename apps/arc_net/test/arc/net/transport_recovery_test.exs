@@ -201,7 +201,8 @@ defmodule Arc.Net.TransportRecoveryTest do
 
   defp drop_connection(transport) do
     conn = :sys.get_state(transport).relay_conn
-    Process.exit(conn, :shutdown)
+    # The connection can already be gone, because it closes when its relay stops.
+    if is_pid(conn), do: Process.exit(conn, :shutdown)
   end
 
   defp stop(pid) when is_pid(pid) do

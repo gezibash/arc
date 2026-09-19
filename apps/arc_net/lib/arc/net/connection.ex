@@ -327,6 +327,7 @@ defmodule Arc.Net.Connection do
       )
       when is_reference(ref) do
     :gen_tcp.close(state.socket)
+    emit([:connection, :closed], %{count: 1}, %{reason: :parent_down})
     {:stop, :normal, state}
   end
 

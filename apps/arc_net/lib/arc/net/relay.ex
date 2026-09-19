@@ -337,7 +337,6 @@ defmodule Arc.Net.Relay do
 
   def handle_cast({:register_fallback, conn_pid, pubkey}, state) do
     dispatch_register(state, conn_pid, pubkey)
-    {:noreply, state}
   end
 
   def handle_cast({:client_authenticated, conn_pid, pubkey}, state) do
@@ -488,9 +487,10 @@ defmodule Arc.Net.Relay do
     end
   end
 
-  # The acceptors cannot recover from a closed listen socket.
+  # The acceptors cannot recover from a closed listen socket. A :normal reason would stop
+  # the relay without a log entry.
   def handle_info({:EXIT, port, reason}, %{listen_socket: port} = state),
-    do: {:stop, reason, state}
+    do: {:stop, {:listen_socket_closed, reason}, state}
 
   def handle_info(_msg, state), do: {:noreply, state}
 
@@ -505,8 +505,13 @@ defmodule Arc.Net.Relay do
     stop_shards(state.shard_refs)
     stop_directory_monitors(state.directory_conn_refs)
 
-    if is_pid(state.federation) and Process.alive?(state.federation) do
-      GenServer.stop(state.federation, :normal)
+    # The federation process can stop at the same time. That must not abort the cleanup below.
+    if is_pid(state.federation) do
+      try do
+        GenServer.stop(state.federation, :normal)
+      catch
+        :exit, _reason -> :ok
+      end
     end
 
     Enum.each(state.federation_queries, fn {_ref, query} ->
@@ -1410,12 +1415,29 @@ defmodule Arc.Net.Relay do
   defp dispatch_register(state, conn_pid, pubkey) do
     if is_pid(conn_pid) and valid_pubkey?(pubkey) do
       case shard_pid_from_state(state, pubkey) do
-        nil -> :ok
-        shard_pid -> RouteShard.register(shard_pid, conn_pid, pubkey)
-      end
-    end
+        nil ->
+          {:noreply, state}
 
-    :ok
+        shard_pid ->
+          # A dead shard loses the cast. Its :DOWN can still be in the mailbox, so restart
+          # the shard now.
+          {shard_pid, state} = live_shard(state, shard_pid, pubkey)
+          RouteShard.register(shard_pid, conn_pid, pubkey)
+          {:noreply, state}
+      end
+    else
+      {:noreply, state}
+    end
+  end
+
+  defp live_shard(state, shard_pid, pubkey) do
+    if Process.alive?(shard_pid) do
+      {shard_pid, state}
+    else
+      idx = :erlang.phash2(pubkey, state.route_partitions)
+      state = restart_shard(state, shard_pid, idx)
+      {Map.fetch!(state.shard_pids, idx), state}
+    end
   end
 
   # Directory control is deliberately handled in the relay process. It is
@@ -1842,16 +1864,15 @@ defmodule Arc.Net.Relay do
     Map.get(state.shard_pids, idx)
   end
 
+  # Connections register only once, at hello. The new shard keeps the routes in the table and
+  # takes them over in RouteShard.init/1.
   defp restart_shard(state, dead_pid, idx) do
-    routes_table = Enum.at(state.routes_tables, idx)
-    # Connections register only once, at hello. Give their routes to the new shard.
-    live_routes = table_entries(routes_table)
-    clear_partition_table(idx, state.routes_tables)
-    {new_pid, new_ref} = start_shard(idx, routes_table)
+    case Map.get(state.shard_refs, dead_pid) do
+      %{ref: ref} -> Process.demonitor(ref, [:flush])
+      _ -> :ok
+    end
 
-    Enum.each(live_routes, fn {pubkey, conn_pid} ->
-      if Process.alive?(conn_pid), do: RouteShard.register(new_pid, conn_pid, pubkey)
-    end)
+    {new_pid, new_ref} = start_shard(idx, Enum.at(state.routes_tables, idx))
 
     shard_pids = Map.put(state.shard_pids, idx, new_pid)
 
@@ -1883,27 +1904,6 @@ defmodule Arc.Net.Relay do
     end)
   end
 
-  defp clear_partition_table(idx, routes_tables) do
-    clear_table(Enum.at(routes_tables, idx))
-    :ok
-  end
-
-  defp table_entries(nil), do: []
-
-  defp table_entries(table) do
-    :ets.tab2list(table)
-  catch
-    :error, :badarg -> []
-  end
-
-  defp clear_table(nil), do: :ok
-
-  defp clear_table(table) do
-    :ets.delete_all_objects(table)
-  catch
-    :error, :badarg -> :ok
-  end
-
   defp delete_tables(tables) do
     Enum.each(tables, fn table ->
       try do
@@ -1927,10 +1927,6 @@ defmodule Arc.Net.Relay do
 
   defp start_shard(idx, routes_table) do
     {:ok, shard_pid} = RouteShard.start_link(index: idx, routes_table: routes_table)
-
-    # A relay that a hot update loaded into a running process did not run init/1, so it
-    # does not trap exits. A linked shard crash would then stop that relay.
-    if Process.info(self(), :trap_exit) != {:trap_exit, true}, do: Process.unlink(shard_pid)
 
     shard_ref = Process.monitor(shard_pid)
     {shard_pid, shard_ref}

@@ -436,6 +436,32 @@ defmodule Arc.NetTest do
       assert map_size(after_state.shard_pids) == map_size(before.shard_pids)
     end
 
+    test "live connections keep their routes when their shards restart", %{
+      relay: relay,
+      port: port
+    } do
+      alice = Identity.generate()
+      bob = Identity.generate()
+      sock_a = relay_connect(port, alice)
+      sock_b = relay_connect(port, bob)
+      Process.sleep(100)
+
+      relay
+      |> :sys.get_state()
+      |> Map.fetch!(:shard_pids)
+      |> Map.values()
+      |> Enum.each(&Process.exit(&1, :kill))
+
+      Process.sleep(200)
+
+      packet = make_packet(alice, bob.public_key)
+      :ok = :gen_tcp.send(sock_a, frame(packet))
+      assert recv_framed(sock_b) == frame(packet)
+
+      :gen_tcp.close(sock_a)
+      :gen_tcp.close(sock_b)
+    end
+
     test "drops packet when destination connection is over mailbox limit with drop policy", %{
       relay: relay,
       port: port
