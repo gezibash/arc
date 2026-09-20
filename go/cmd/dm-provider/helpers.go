@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/gezibash/arc/go/provider"
 )
 
 // text is one reply with no events.
@@ -193,7 +195,7 @@ func validReaction(value string) error {
 
 // since drops the messages at or below the id of --since.
 func since(messages []*message, options map[string]any) []*message {
-	id, ok := option(options, "since")
+	id, ok := provider.Option(options, "since")
 	if !ok {
 		return messages
 	}
@@ -225,7 +227,7 @@ func limitFirst(size int, options map[string]any) int {
 }
 
 func limitOf(options map[string]any) int {
-	text, ok := option(options, "limit")
+	text, ok := provider.Option(options, "limit")
 	if !ok {
 		return 50
 	}

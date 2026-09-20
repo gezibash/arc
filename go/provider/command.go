@@ -1,4 +1,4 @@
-package main
+package provider
 
 import (
 	"encoding/json"
@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// The parser of a command line. A provider whose requests read as a command
+// line uses it, so the rules are the same for every one of them.
+//
 // The parser reads one command line into positionals and options.
 //
 // An option is "--flag value", "--flag \"value\"", or a bare "--flag".
@@ -32,17 +35,17 @@ var (
 	tokenPattern      = regexp.MustCompile(`^("((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))`)
 )
 
-// splitMessage splits a request into its command line and its body. The body
+// SplitMessage splits a request into its command line and its body. The body
 // is everything after the first newline.
-func splitMessage(message string) (line string, body string, hasBody bool) {
+func SplitMessage(message string) (line string, body string, hasBody bool) {
 	if index := strings.Index(message, "\n"); index >= 0 {
 		return message[:index], message[index+1:], true
 	}
 	return message, "", false
 }
 
-// parseLine reads one command line.
-func parseLine(line string) ([]string, map[string]any) {
+// ParseLine reads one command line into its positionals and its options.
+func ParseLine(line string) ([]string, map[string]any) {
 	args, rest := positionals(strings.TrimSpace(line), nil)
 	return args, scanOptions(rest, map[string]any{})
 }
@@ -113,7 +116,7 @@ func scanOptions(text string, found map[string]any) map[string]any {
 }
 
 // value is what follows a flag: nothing, a quoted run, or one bare token.
-type value struct {
+type optionValue struct {
 	text   string
 	quoted bool
 	absent bool
@@ -121,24 +124,24 @@ type value struct {
 
 // takeValue reads the value of one flag. The value follows at least one
 // space.
-func takeValue(rest string) (value, string) {
+func takeValue(rest string) (optionValue, string) {
 	space := spacePattern.FindString(rest)
 	if space == "" {
-		return value{absent: true}, rest
+		return optionValue{absent: true}, rest
 	}
 
 	text := rest[len(space):]
 
 	switch {
 	case text == "", strings.HasPrefix(text, "--"):
-		return value{absent: true}, rest
+		return optionValue{absent: true}, rest
 
 	case strings.HasPrefix(text, `"`):
 		if found, after, ok := jsonString(text, afterQuotePattern); ok {
-			return value{text: found, quoted: true}, after
+			return optionValue{text: found, quoted: true}, after
 		}
 		if close, ok := closeQuote(text); ok {
-			return value{text: text[1:close], quoted: true}, text[close+1:]
+			return optionValue{text: text[1:close], quoted: true}, text[close+1:]
 		}
 		return bareValue(text, rest)
 
@@ -147,12 +150,12 @@ func takeValue(rest string) (value, string) {
 	}
 }
 
-func bareValue(text, rest string) (value, string) {
+func bareValue(text, rest string) (optionValue, string) {
 	found := barePattern.FindString(text)
 	if found == "" {
-		return value{absent: true}, rest
+		return optionValue{absent: true}, rest
 	}
-	return value{text: found}, text[len(found):]
+	return optionValue{text: found}, text[len(found):]
 }
 
 // jsonString reads a JSON string literal that ends at a boundary.
@@ -204,7 +207,7 @@ func closeQuote(text string) (int, bool) {
 	return 0, false
 }
 
-func putOption(found map[string]any, name string, given value) {
+func putOption(found map[string]any, name string, given optionValue) {
 	key := strings.ReplaceAll(name, "-", "_")
 
 	switch {
@@ -235,14 +238,14 @@ func unescape(text string) string {
 	return out.String()
 }
 
-// option reads one option as a string. A bare flag is not a string.
-func option(options map[string]any, name string) (string, bool) {
+// Option reads one option as a string. A bare flag is not a string.
+func Option(options map[string]any, name string) (string, bool) {
 	text, ok := options[name].(string)
 	return text, ok
 }
 
-// flagSet says whether a bare flag stands.
-func flagSet(options map[string]any, name string) bool {
+// Flag says whether a bare flag stands.
+func Flag(options map[string]any, name string) bool {
 	set, ok := options[name].(bool)
 	return ok && set
 }

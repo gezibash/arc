@@ -1,6 +1,6 @@
 # ARC in Go
 
-Status: phases 1 to 4 and 6 are done. ARC runs end to end in Go. The code is in `go/`. This plan describes a port of
+Status: phases 1 to 4, 6 and the providers of phase 7 are done. ARC runs end to end in Go. The code is in `go/`. This plan describes a port of
 ARC from Elixir to Go, as packages that other people import.
 
 ```bash
@@ -94,8 +94,13 @@ Binaries live under `cmd`:
 | --- | --- |
 | `cmd/arc` | The command line tool. keys, join, status, serve, call, discover, resolve. |
 | `cmd/arc-relay` | A relay, for a server or a container. Done. |
-| `cmd/exec-provider` | The exec provider |
-| `cmd/dm-provider` | The DM provider |
+| `cmd/exec-provider` | The exec provider. Done. |
+| `cmd/dm-provider` | The DM provider. Done. |
+| `cmd/sqlite-provider` | SQL over ARC. Done. |
+| `cmd/files-provider` | Private files. Done. |
+| `cmd/agora-provider` | The public board. Done. |
+| `cmd/journal-provider` | The notebooks. Done. |
+| `cmd/releases-provider` | The release channels. Done. |
 
 ### 4.1 The provider interface
 
@@ -187,7 +192,7 @@ the root of the repository.
 | 4 | `relay`: sessions, directory, routes | Done. An Elixir client talks to the Go relay. |
 | 5 | Federation, direct connections | Two Go relays federate. The Elixir relay federates with a Go relay. |
 | 6 | `cmd/arc`: the command surface of today | The CLI tests of the Elixir suite pass against the Go binary. |
-| 7 | The remaining providers, and MCP | Each provider answers its own test suite. |
+| 7 | The remaining providers, and MCP | The providers are done: exec, dm, sqlite, files, releases, agora and journal. MCP is open. |
 
 Each phase is one pull request. A phase that does not pass its proof does not
 merge.

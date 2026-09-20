@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/gezibash/arc/go/provider"
 	"regexp"
 	"sort"
 	"strconv"
@@ -43,8 +45,8 @@ type answer struct {
 
 // run reads one message and answers it.
 func (s *server) run(from, message string) (*answer, error) {
-	line, body, hasBody := splitMessage(message)
-	args, options := parseLine(line)
+	line, body, hasBody := provider.SplitMessage(message)
+	args, options := provider.ParseLine(line)
 
 	if !isPublicKey(from) {
 		return nil, errorf("forbidden no caller key")
@@ -157,7 +159,7 @@ func (s *server) send(ctx *request) (*answer, error) {
 	}
 
 	holders := unique(append(append([]string{}, recipients...), ctx.from))
-	replyTo, _ := option(ctx.options, "reply_to")
+	replyTo, _ := provider.Option(ctx.options, "reply_to")
 	now := timestamp()
 
 	var meta []attach
@@ -342,7 +344,7 @@ func (s *server) quota(ctx *request) (*answer, error) {
 }
 
 func (s *server) purgeCommand(ctx *request) (*answer, error) {
-	before, ok := option(ctx.options, "before")
+	before, ok := provider.Option(ctx.options, "before")
 	if !ok {
 		return nil, errorf("missing --before <id>")
 	}
@@ -435,7 +437,7 @@ func (s *server) conversations(ctx *request) (*answer, error) {
 func (s *server) inbox(ctx *request) (*answer, error) {
 	index := s.store.receiptIndex(ctx.from)
 	muted := s.store.muted(ctx.from)
-	onlyUnread := flagSet(ctx.options, "unread")
+	onlyUnread := provider.Flag(ctx.options, "unread")
 
 	var found []*message
 	for _, msg := range s.store.listMessages(ctx.from) {
@@ -477,7 +479,7 @@ func (s *server) thread(ctx *request, peer string) (*answer, error) {
 	}
 	found = lastOf(since(found, ctx.options), ctx.options)
 
-	if flagSet(ctx.options, "bodies") {
+	if provider.Flag(ctx.options, "bodies") {
 		return s.threadWithBodies(ctx, found, key)
 	}
 
