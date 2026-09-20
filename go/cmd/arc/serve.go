@@ -7,16 +7,19 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gezibash/arc/go/bundle"
 	"github.com/gezibash/arc/go/citizen"
 	"github.com/spf13/cobra"
 )
 
 func serveCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "serve <uri>",
+		Use:   "serve <uri|directory>",
 		Short: "Serve a provider over the relay",
 		Long: "The address names the provider program and its manifest:\n\n" +
 			"  exec:///path/to/runtime?manifest=/path/to/capability.json\n\n" +
+			"A directory that holds an Arcfile works as well. Write one with\n" +
+			"arc apps init.\n\n" +
 			"The citizen announces the capability, and passes each request to\n" +
 			"the program. It serves until you stop it.",
 		Args: cobra.ExactArgs(1),
@@ -39,11 +42,19 @@ func serve(command *cobra.Command, args []string) error {
 
 	policy, _ := command.Flags().GetString("direct-policy")
 
+	address, held2, err := bundle.Resolve(args[0])
+	if err != nil {
+		return err
+	}
+	if held2 != nil {
+		fmt.Fprintf(os.Stderr, "the bundle %s runs %s\n", held2.Root, held2.Command)
+	}
+
 	serving, err := citizen.Serve(ctx, citizen.Options{
 		Identity:       held.me,
 		Relay:          held.relay.Address,
 		RelayPublicKey: held.relay.Pin,
-		Serve:          args[0],
+		Serve:          address,
 		DirectPolicy:   policy,
 		Log:            stderrLog(),
 	})

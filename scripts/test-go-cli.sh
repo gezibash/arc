@@ -15,7 +15,7 @@ export ARC_STORE="$work"
 
 keep="${ARC_KEEP_WORK:-}"
 cleanup() {
-  for held in "${relay_pid:-}" "${serve_pid:-}" "${echo_pid:-}" "${dm_pid:-}" "${listen_pid:-}"; do
+  for held in "${relay_pid:-}" "${serve_pid:-}" "${echo_pid:-}" "${dm_pid:-}" "${listen_pid:-}" "${app_pid:-}"; do
     [ -n "$held" ] && kill "$held" 2>/dev/null || true
   done
   [ -n "$keep" ] && printf 'work: %s\n' "$work" || rm -rf "$work"
@@ -232,7 +232,8 @@ say "arc dm send seals a message to its reader"
 
 arc --key "$stranger_name" dm inbox > "$work/dm-inbox.txt" 2>&1 ||
   fail "the inbox failed: $(cat "$work/dm-inbox.txt")"
-grep -q "$caller_key" "$work/dm-inbox.txt" || fail "the inbox holds $(cat "$work/dm-inbox.txt")"
+# The inbox names its senders by petname, because the capability asks for it.
+grep -q "$caller_name" "$work/dm-inbox.txt" || fail "the inbox holds $(cat "$work/dm-inbox.txt")"
 say "the reader sees the message in its inbox"
 
 # The provider holds ciphertext only.
@@ -240,6 +241,64 @@ grep -rl "a sealed hello" "$work/dm" > /dev/null 2>&1 &&
   fail "the provider holds the plain text"
 say "the provider holds ciphertext only"
 
+# The filters of a capability run over its answer. The thread command of dm
+# writes petnames, and arc opens each sealed body with the key of the reader.
+arc --key "$stranger_name" dm open "$caller_key" > "$work/dm-open.txt" 2>&1 ||
+  fail "the thread failed: $(cat "$work/dm-open.txt")"
+grep -q "a sealed hello" "$work/dm-open.txt" ||
+  fail "the sealed body did not open: $(cat "$work/dm-open.txt")"
+grep -q "$caller_key" "$work/dm-open.txt" &&
+  fail "the answer still holds a raw public key"
+say "the filters open the body and write petnames"
+
+arc --key "$stranger_name" dm open "$caller_key" --raw > "$work/dm-raw.txt" 2>&1 ||
+  fail "the raw thread failed: $(cat "$work/dm-raw.txt")"
+grep -q "sealed-v1:" "$work/dm-raw.txt" || fail "--raw opened the body anyway"
+say "--raw prints the answer as the provider wrote it"
+
+# The cache keeps a copy of each record, sealed to the reader.
+arc --key "$stranger_name" cache on dm | grep -q "the cache of dm is on" || fail "the cache did not turn on"
+arc --key "$stranger_name" dm open "$caller_key" > /dev/null 2>&1
+arc --key "$stranger_name" cache status dm | grep -q "the cache of dm is on and holds 1 records" ||
+  fail "the cache kept nothing: $(arc --key "$stranger_name" cache status dm)"
+
+arc --key "$stranger_name" cache search dm "sealed hello" | grep -q "a sealed hello" ||
+  fail "the cache did not answer the search"
+grep -rl "a sealed hello" "$work/cache" > /dev/null 2>&1 &&
+  fail "the cache holds the plain text"
+say "arc cache keeps the records sealed, and searches them"
+
+arc --key "$stranger_name" cache clear dm | grep -q "removed 1 records" || fail "the cache did not clear"
+arc --key "$stranger_name" cache off dm | grep -q "the cache of dm is off" || fail "the cache did not turn off"
+say "arc cache clears and turns off"
+
+# A bundle is a provider that lives in a directory.
+arc apps init "$work/hello-app" | grep -q "wrote a bundle" || fail "arc apps init wrote nothing"
+[ -x "$work/hello-app/run.sh" ] || fail "the runtime is not executable"
+say "arc apps init writes a bundle"
+
+arc keys gen > "$work/app.txt"
+app_name="$(head -1 "$work/app.txt")"
+app_key="$(tail -1 "$work/app.txt")"
+
+arc --key "$app_name" serve "$work/hello-app" > "$work/app.log" 2>"$work/app.err" &
+app_pid=$!
+
+for _ in $(seq 1 50); do
+  grep -q "serves on" "$work/app.log" 2>/dev/null && break
+  sleep 0.1
+done
+grep -q "serves on" "$work/app.log" || fail "the bundle did not serve: $(cat "$work/app.err")"
+say "arc serve runs a bundle directory"
+
+caller install "$app_key" --yes > /dev/null 2>&1 || fail "the bundle install failed"
+caller hello-app "from the bundle" > "$work/app-reply.txt" 2>&1 ||
+  fail "the bundle command failed: $(cat "$work/app-reply.txt")"
+grep -q "hello from hello-app: from the bundle" "$work/app-reply.txt" ||
+  fail "the bundle answered $(cat "$work/app-reply.txt")"
+say "the bundle answers through its own command"
+
+kill "$app_pid" 2>/dev/null || true
 kill "$dm_pid" 2>/dev/null || true
 
 caller lists add dm friends "$provider_key" | grep -q "$provider_key" || fail "the list was not saved"

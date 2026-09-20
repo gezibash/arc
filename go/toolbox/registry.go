@@ -42,6 +42,7 @@ var reserved = map[string]bool{
 	"info": true, "listen": true, "serve": true, "relay": true, "install": true,
 	"tool": true, "trust": true, "help": true, "call": true, "status": true,
 	"whoami": true, "request": true, "version": true, "completion": true,
+	"cache": true, "lists": true, "update": true,
 }
 
 var commandPattern = regexp.MustCompile(`[^a-z0-9-]+`)

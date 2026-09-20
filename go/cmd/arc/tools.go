@@ -444,11 +444,56 @@ func runInstalled(name string, argv []string) (bool, error) {
 		return true, err
 	}
 
-	os.Stdout.Write(answer.Body)
-	if len(answer.Body) > 0 && !strings.HasSuffix(string(answer.Body), "\n") {
+	body := string(answer.Body)
+	if raw, _ := command.Flags().GetBool("raw"); !raw {
+		body = renderAnswer(command, held, name, invocation.Command, body)
+	}
+
+	os.Stdout.WriteString(body)
+	if len(body) > 0 && !strings.HasSuffix(body, "\n") {
 		fmt.Println()
 	}
 	return true, nil
+}
+
+// renderAnswer runs the filters that the capability names. The cache is a
+// filter of this machine, and keeps a copy of each record.
+func renderAnswer(command *cobra.Command, held *settings, name string, spec map[string]any, body string) string {
+	filters := toolbox.OutputFilters(spec)
+	if len(filters) == 0 {
+		return body
+	}
+
+	if hex, _ := command.Flags().GetBool("hex"); hex {
+		filters = without(filters, "petnames")
+	}
+
+	// A format of the caller stands in for the one that the capability names.
+	if format, _ := command.Flags().GetString("format"); format != "" {
+		filters = append(without(without(filters, "conversation"), "markdown"), format)
+	}
+
+	cache := &toolbox.Cache{Dir: held.keys.Dir}
+	extra := map[string]func(string) string{
+		"cache": func(text string) string {
+			if _, err := cache.Keep(name, held.me, text); err != nil {
+				fmt.Fprintf(os.Stderr, "the cache did not keep this answer: %v\n", err)
+			}
+			return text
+		},
+	}
+	return toolbox.ApplyOutput(body, filters, held.me, extra)
+}
+
+// without returns the filters, less the one of that name.
+func without(filters []string, name string) []string {
+	out := filters[:0:0]
+	for _, filter := range filters {
+		if filter != name {
+			out = append(out, filter)
+		}
+	}
+	return out
 }
 
 // readsStdin says whether a command still needs the standard input. An
@@ -474,6 +519,8 @@ func readArcFlags(command *cobra.Command, name string, argv []string) ([]string,
 		"--relay": true, "--relay-pubkey": true, "--key": true, "--store": true,
 		"--timeout": true,
 	}
+	takesValue["--format"] = true
+	noValue := map[string]bool{"--raw": true, "--hex": true}
 
 	var rest []string
 	seenName := false
@@ -488,6 +535,13 @@ func readArcFlags(command *cobra.Command, name string, argv []string) ([]string,
 
 			index++
 			if err := command.Flags().Set(strings.TrimPrefix(argument, "--"), argv[index]); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if noValue[argument] {
+			if err := command.Flags().Set(strings.TrimPrefix(argument, "--"), "true"); err != nil {
 				return nil, err
 			}
 			continue
@@ -545,6 +599,9 @@ func installedCommand(name string) *cobra.Command {
 	command.Flags().String("key", "", "the identity to use, by petname")
 	command.Flags().String("store", "", "the directory of ARC")
 	command.Flags().Int("timeout", 30, "how many seconds to wait for the answer")
+	command.Flags().Bool("raw", false, "print the answer as the provider wrote it")
+	command.Flags().Bool("hex", false, "keep the public keys, instead of writing petnames")
+	command.Flags().String("format", "", "show the answer as conversation or as markdown")
 	return command
 }
 
