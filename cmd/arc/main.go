@@ -106,6 +106,7 @@ func root() *cobra.Command {
 		updateCommand(),
 		appsCommand(),
 		cacheCommand(),
+		versionCommand(),
 	)
 	return command
 }

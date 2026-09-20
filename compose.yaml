@@ -12,8 +12,6 @@ services:
     build:
       context: .
       dockerfile: docker/local/Dockerfile
-      args:
-        ARC_IMAGE: ${ARC_IMAGE:-ghcr.io/gezibash/arc:0.6.0}
     command: [relay]
     ports:
       - "127.0.0.1:${ARC_LOCAL_PORT:-7331}:7331"
