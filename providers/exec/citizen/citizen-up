@@ -51,7 +51,9 @@ log "started arc serve pid $!"
 
 deadline=$((SECONDS + 20))
 while [ $SECONDS -lt $deadline ]; do
-  if env -u ARC_KEY arc info "$CITIZEN_PUBLIC_KEY" primary >/dev/null 2>&1; then
+  # The probe identity queries the relay directory. A query with the citizen
+  # key would replace the relay connection of `arc serve`.
+  if ARC_KEY="$CITIZEN_PROBE_KEY" arc discover exec 2>/dev/null | grep -q "$CITIZEN_PUBLIC_KEY"; then
     log "ready"
     exit 0
   fi

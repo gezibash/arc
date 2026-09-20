@@ -6,4 +6,19 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 export ARC_KEY ARC_RELAY ARC_RELAY_PUBKEY EXEC_CONFIG
 export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 cd "$here"
+
+# After a wake, the network needs a moment. `arc serve` connects to the relay
+# one time at startup. If that connection fails, the process keeps running and
+# every announcement fails. Wait for the relay before the start.
+host=${ARC_RELAY%%:*}
+port=${ARC_RELAY##*:}
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+  if timeout 2 bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+
 exec arc serve .

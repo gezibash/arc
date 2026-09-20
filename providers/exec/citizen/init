@@ -42,6 +42,14 @@ export PATH="$HOME/.local/bin:$PATH"
 public_key=$(ARC_KEY=$key arc keys show | awk '/public_key:/ {print $2}')
 [[ $public_key =~ ^[0-9a-f]{64}$ ]] || { echo "init: no ARC key named $key" >&2; exit 1; }
 
+# The readiness check needs a second identity. A relay keeps one connection
+# for each identity, so a query with the citizen key would replace the
+# connection of `arc serve` and remove its announcement.
+probe=$(grep '^CITIZEN_PROBE_KEY=' "$here/citizen.env" 2>/dev/null | cut -d= -f2 || true)
+if [ -z "$probe" ] || ! ARC_KEY="$probe" arc keys show >/dev/null 2>&1; then
+  probe=$(arc keys gen | awk '$1 == "name:" {print $2}')
+fi
+
 cat > "$here/citizen.env" <<EOF
 ARC_KEY=$key
 ARC_RELAY=$relay
@@ -49,6 +57,7 @@ ARC_RELAY_PUBKEY=$relay_pubkey
 EXEC_CONFIG=$here/config.json
 CITIZEN_PUBLIC_KEY=$public_key
 CITIZEN_PLATFORM=$platform
+CITIZEN_PROBE_KEY=$probe
 EOF
 
 grant_list=$(printf '"%s", ' "${grants[@]}")
