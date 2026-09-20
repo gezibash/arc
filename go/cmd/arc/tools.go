@@ -402,12 +402,17 @@ func runInstalled(name string, argv []string) (bool, error) {
 		return true, err
 	}
 
-	// A command that reads the standard input takes its body from there.
+	// A command may take its body from the standard input, from one of its
+	// arguments, or from a file.
 	if invocation.Command != nil {
 		if input, ok := invocation.Command["input"].(map[string]any); ok && input["source"] == "stdin" {
-			body, err := io.ReadAll(io.LimitReader(os.Stdin, client.MaxBodyBytes+1))
-			if err != nil {
-				return true, err
+			var body []byte
+
+			if readsStdin(input, invocation.Values) {
+				body, err = io.ReadAll(io.LimitReader(os.Stdin, client.MaxBodyBytes+1))
+				if err != nil {
+					return true, err
+				}
 			}
 
 			invocation.Body, err = toolbox.RenderStdin(invocation.Command, invocation.Values, body, context)
@@ -444,6 +449,22 @@ func runInstalled(name string, argv []string) (bool, error) {
 		fmt.Println()
 	}
 	return true, nil
+}
+
+// readsStdin says whether a command still needs the standard input. An
+// argument or a file that carries the body stands in for it, and a terminal
+// never does.
+func readsStdin(input map[string]any, values map[string]any) bool {
+	for _, field := range []string{"body", "file"} {
+		if name := text(input[field]); name != "" {
+			if value, held := values[name]; held && value != nil && value != "" {
+				return false
+			}
+		}
+	}
+
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice == 0
 }
 
 // readArcFlags takes the flags of arc out of the line, and returns what the

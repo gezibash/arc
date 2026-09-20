@@ -15,8 +15,9 @@ export ARC_STORE="$work"
 
 keep="${ARC_KEEP_WORK:-}"
 cleanup() {
-  [ -n "${relay_pid:-}" ] && kill "$relay_pid" 2>/dev/null || true
-  [ -n "${serve_pid:-}" ] && kill "$serve_pid" 2>/dev/null || true
+  for held in "${relay_pid:-}" "${serve_pid:-}" "${echo_pid:-}" "${dm_pid:-}" "${listen_pid:-}"; do
+    [ -n "$held" ] && kill "$held" 2>/dev/null || true
+  done
   [ -n "$keep" ] && printf 'work: %s\n' "$work" || rm -rf "$work"
 }
 trap cleanup EXIT
@@ -29,6 +30,7 @@ go build -o "$work/arc" ./cmd/arc
 go build -o "$work/arc-relay" ./cmd/arc-relay
 go build -o "$work/exec-provider" ./cmd/exec-provider
 go build -o "$work/echo-provider" ./citizen/testdata/echo
+go build -o "$work/dm-provider" ./cmd/dm-provider
 say "the binaries build"
 
 arc() { "$work/arc" --store "$work" "$@"; }
@@ -201,6 +203,44 @@ arc --key "$stranger_name" publish > /dev/null || fail "the identity did not pub
 caller resolve "$stranger_name" | grep -q "on this machine" ||
   fail "the identity of this machine does not resolve"
 say "arc publish and arc resolve answer without the relay"
+
+# The DM provider carries sealed messages between two citizens, through the
+# command line that its capability declares.
+arc keys gen > "$work/dm.txt"
+dm_name="$(head -1 "$work/dm.txt")"
+dm_key="$(tail -1 "$work/dm.txt")"
+
+DM_ROOT="$work/dm" arc --key "$dm_name" serve \
+  "exec://$work/dm-provider?manifest=$root/providers/dm/manifest.json" \
+  > "$work/dm.log" 2>"$work/dm.err" &
+dm_pid=$!
+
+for _ in $(seq 1 50); do
+  grep -q "serves on" "$work/dm.log" 2>/dev/null && break
+  sleep 0.1
+done
+grep -q "serves on" "$work/dm.log" || fail "the dm citizen did not serve: $(cat "$work/dm.err")"
+
+caller install "$dm_key" --yes > /dev/null || fail "the dm install failed"
+arc --key "$stranger_name" install "$dm_key" --yes > /dev/null || fail "the reader could not install dm"
+say "two citizens install the direct message capability"
+
+caller dm send "$stranger_key" "a sealed hello" > "$work/dm-send.txt" 2>&1 ||
+  fail "the message did not send: $(cat "$work/dm-send.txt")"
+grep -q "id: " "$work/dm-send.txt" || fail "the send gave $(cat "$work/dm-send.txt")"
+say "arc dm send seals a message to its reader"
+
+arc --key "$stranger_name" dm inbox > "$work/dm-inbox.txt" 2>&1 ||
+  fail "the inbox failed: $(cat "$work/dm-inbox.txt")"
+grep -q "$caller_key" "$work/dm-inbox.txt" || fail "the inbox holds $(cat "$work/dm-inbox.txt")"
+say "the reader sees the message in its inbox"
+
+# The provider holds ciphertext only.
+grep -rl "a sealed hello" "$work/dm" > /dev/null 2>&1 &&
+  fail "the provider holds the plain text"
+say "the provider holds ciphertext only"
+
+kill "$dm_pid" 2>/dev/null || true
 
 caller lists add dm friends "$provider_key" | grep -q "$provider_key" || fail "the list was not saved"
 caller lists ls dm | grep -q friends || fail "the list is not shown"

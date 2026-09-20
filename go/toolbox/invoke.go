@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -283,7 +285,9 @@ func renderInput(command map[string]any, args []map[string]any, values map[strin
 		return encodeJSON(values), nil
 
 	case "stdin":
-		return "", invalid("this command reads its body from the standard input")
+		// The caller fills this body with RenderStdin, which reads the
+		// standard input, an argument, or a file.
+		return "", nil
 
 	case "agora", "sealed_file", "private_file":
 		return "", invalid("this command needs a part of arc that is not built yet")
@@ -294,7 +298,10 @@ func renderInput(command map[string]any, args []map[string]any, values map[strin
 }
 
 // RenderStdin builds the body of a command that reads the standard input.
-// The body may be sealed to one or more peers, as the template says.
+//
+// The command may name an argument that carries the body instead, or a file
+// to read. The body may then be sealed to one or more readers, and a header
+// line may stand above it.
 func RenderStdin(command map[string]any, values map[string]any, body []byte, context Context) (string, error) {
 	input, _ := command["input"].(map[string]any)
 	if input == nil || input["source"] != "stdin" {
@@ -302,6 +309,24 @@ func RenderStdin(command map[string]any, values map[string]any, body []byte, con
 	}
 
 	bodyText := string(body)
+
+	// An argument of the command line stands in for the standard input.
+	if name := text(input["body"]); name != "" {
+		if given, held := values[name]; held {
+			bodyText = renderValue(given, " ")
+		}
+	}
+
+	// A file stands in for both.
+	if name := text(input["file"]); name != "" {
+		if path := renderValue(values[name], ""); path != "" {
+			data, err := readFile(path)
+			if err != nil {
+				return "", invalid("arc cannot read %s: %v", path, err)
+			}
+			bodyText = string(data)
+		}
+	}
 
 	// A sealed body travels as one token for each reader.
 	if targets, ok := input["seal_to"].([]any); ok && len(targets) > 0 {
@@ -468,6 +493,18 @@ func resolvePeers(query string, context Context) ([][]byte, error) {
 		return nil, invalid("this command names no citizen")
 	}
 	return keys, nil
+}
+
+// readFile reads the file that an argument names.
+func readFile(path string) ([]byte, error) {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+	}
+	return os.ReadFile(path)
 }
 
 func encodeSealed(sealed []byte) string {
