@@ -31,8 +31,8 @@ defmodule Arc.Data.RelayAnnouncement do
     "detail_path" => 256
   }
 
-  @v1_record_keys ~w(version public_key x25519_public capabilities issued_at expires_at signature)
-  @v2_record_keys ~w(version public_key x25519_public capabilities issued_at expires_at federation relay_public_key signature)
+  @v1_record_keys ~w(version public_key capabilities issued_at expires_at signature)
+  @v2_record_keys ~w(version public_key capabilities issued_at expires_at federation relay_public_key signature)
   @v3_record_keys @v2_record_keys
   @v1_domain "arc-relay-announcement-v1\n"
   @v2_domain "arc-relay-announcement-v2\n"
@@ -40,7 +40,6 @@ defmodule Arc.Data.RelayAnnouncement do
 
   @type entry :: %{
           public_key: <<_::256>>,
-          x25519_public: <<_::256>>,
           name: String.t(),
           short_name: String.t(),
           capabilities: [map()],
@@ -78,8 +77,6 @@ defmodule Arc.Data.RelayAnnouncement do
     unsigned = %{
       "version" => @version_v1,
       "public_key" => Identity.encode_public_key(identity),
-      "x25519_public" =>
-        identity |> Identity.to_x25519() |> elem(0) |> Identity.encode_public_key(),
       "capabilities" => capabilities,
       "issued_at" => now,
       "expires_at" => now + ttl
@@ -110,8 +107,8 @@ defmodule Arc.Data.RelayAnnouncement do
     now = Keyword.get(opts, :now, System.system_time(:second))
 
     with true <- is_integer(now),
-         {:ok, unsigned, public_key, x25519_public, signature, capabilities, issued_at,
-          expires_at, federation, relay_public_key, version} <-
+         {:ok, unsigned, public_key, signature, capabilities, issued_at, expires_at, federation,
+          relay_public_key, version} <-
            validate_shape(record),
          true <- byte_size(canonical(record)) <= @max_record_bytes,
          true <- issued_at <= now + @max_future_skew,
@@ -121,7 +118,6 @@ defmodule Arc.Data.RelayAnnouncement do
       {:ok,
        %{
          public_key: public_key,
-         x25519_public: x25519_public,
          name: Identity.name(public_key),
          short_name: Identity.short_name(public_key),
          capabilities: capabilities,
@@ -266,14 +262,13 @@ defmodule Arc.Data.RelayAnnouncement do
     with {:ok, version, federation, relay_public_key, record_keys} <- validate_version(record),
          true <- Map.keys(record) |> MapSet.new() == MapSet.new(record_keys),
          {:ok, public_key} <- decode_hex(record["public_key"], 32),
-         {:ok, x25519_public} <- decode_hex(record["x25519_public"], 32),
          {:ok, signature} <- decode_hex(record["signature"], 64),
          true <- is_integer(record["issued_at"]),
          true <- is_integer(record["expires_at"]),
          {:ok, capabilities} <- validate_capabilities(record["capabilities"]) do
       unsigned = Map.take(record, record_keys -- ["signature"])
 
-      {:ok, unsigned, public_key, x25519_public, signature, capabilities, record["issued_at"],
+      {:ok, unsigned, public_key, signature, capabilities, record["issued_at"],
        record["expires_at"], federation, relay_public_key, version}
     else
       _ -> :error

@@ -285,8 +285,8 @@ defmodule Arc.MCP.ToolProjection do
       {:error, :not_found} ->
         {:error, {:tool_error, "no identity found for recipient"}}
 
-      {:error, :no_keyex} ->
-        {:error, {:tool_error, "recipient has no key exchange material published"}}
+      {:error, :invalid_public_key} ->
+        {:error, {:tool_error, "recipient public key cannot receive encrypted data"}}
 
       {:error, reason} ->
         {:error, {:tool_error, inspect(reason)}}

@@ -114,7 +114,6 @@ described in the federation spec:
 | --- | --- |
 | `version` | Record format, currently `1` |
 | `public_key` | Citizen's lowercase Ed25519 public-key hex |
-| `x25519_public` | The citizen's signed key-exchange public key |
 | `capabilities` | Bounded public summaries, possibly empty |
 | `issued_at` | Unix time in seconds |
 | `expires_at` | Expiration time, at most 180 seconds after issue |
@@ -123,7 +122,9 @@ described in the federation spec:
 The signature covers `arc-relay-announcement-v1\n` followed by compact JSON
 with recursively sorted object keys, excluding the signature field. Public
 names are derived from the identity key, never supplied as separate aliases.
-The signed record binds the key-exchange material and all capability fields.
+The signed record binds all capability fields. The record carries no X25519
+key. A receiver computes the X25519 key of a citizen from its Ed25519 public
+key.
 
 Records are limited to 8 KiB and eight capability summaries. Receivers reject
 bad signatures, unsupported fields, expired records, and issue times more
@@ -142,9 +143,10 @@ service quality, or the completeness of a relay's search results. Relay
 operators can omit offers. Provider detail still uses the existing signed
 capability package and local signer-trust checks.
 
-No new decryption authority is granted to a relay. The signed key-exchange
-record prevents a directory from substituting a different key for a known
-citizen. It does not make arbitrary search results trusted providers.
+No new decryption authority is granted to a relay. The X25519 key of a citizen
+follows from its Ed25519 public key, so a directory cannot substitute a
+different key for a known citizen. This does not make arbitrary search results
+trusted providers.
 
 Relay-backed agents send requests, replies, and events through their selected
 transport, even if the recipient happens to run in the same process. Incoming

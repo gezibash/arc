@@ -103,6 +103,66 @@ defmodule Arc.IdentityTest do
       shared_b = :crypto.compute_key(:ecdh, x_pub_a, x_priv_b, :x25519)
       assert shared_a == shared_b
     end
+
+    # Vector from libsodium test/default/ed25519_convert.
+    test "matches libsodium crypto_sign_ed25519_sk_to_curve25519" do
+      id =
+        Identity.from_seed(
+          Base.decode16!("421151a459faeade3d247115f94aedae42318124095afabe4d1451a559faedee",
+            case: :lower
+          )
+        )
+
+      assert Base.encode16(id.public_key, case: :lower) ==
+               "b5076a8474a832daee4dd5b4040983b6623b5f344aca57d4d6ee4baf3f259e6e"
+
+      {x_pub, x_priv} = Identity.to_x25519(id)
+
+      assert Base.encode16(x_pub, case: :lower) ==
+               "f1814f0e8ff1043d8a44d25babff3cedcae6c22c3edaa48f857ae70de2baae50"
+
+      assert Base.encode16(x_priv, case: :lower) ==
+               "8052030376d47112be7f73ed7a019293dd12ad910b654455798b4667d73de166"
+    end
+  end
+
+  describe "public_key_to_x25519/1" do
+    test "matches the public half of to_x25519/1" do
+      for _ <- 1..200 do
+        id = Identity.generate()
+        {x_pub, _} = Identity.to_x25519(id)
+        assert {:ok, ^x_pub} = Identity.public_key_to_x25519(id.public_key)
+      end
+    end
+
+    test "ignores the sign bit of x" do
+      id = Identity.generate()
+      <<head::binary-size(31), last>> = id.public_key
+      flipped = <<head::binary, Bitwise.bxor(last, 0x80)>>
+
+      assert Identity.public_key_to_x25519(flipped) ==
+               Identity.public_key_to_x25519(id.public_key)
+    end
+
+    test "rejects keys that map to points of small order" do
+      p = Integer.pow(2, 255) - 19
+
+      for y <- [0, 1, p - 1] do
+        assert {:error, :invalid_public_key} =
+                 Identity.public_key_to_x25519(<<y::little-size(256)>>)
+      end
+    end
+
+    test "rejects a y that is not below the field prime" do
+      p = Integer.pow(2, 255) - 19
+
+      assert {:error, :invalid_public_key} =
+               Identity.public_key_to_x25519(<<p::little-size(256)>>)
+    end
+
+    test "rejects input that is not 32 bytes" do
+      assert {:error, :invalid_public_key} = Identity.public_key_to_x25519(<<1, 2, 3>>)
+    end
   end
 
   describe "encode_public_key/1" do

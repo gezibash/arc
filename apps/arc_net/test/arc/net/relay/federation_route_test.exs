@@ -89,7 +89,6 @@ defmodule Arc.Net.Relay.FederationRouteTest do
     do: %{
       "version" => 1,
       "public_key" => "a",
-      "x25519_public" => "b",
       "capabilities" => [],
       "issued_at" => 1,
       "expires_at" => 2,

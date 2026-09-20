@@ -33,8 +33,8 @@ defmodule Arc.Data.Direct do
     :exit, _ -> false
   end
 
-  def promote(manager, target, package, peer_x, timeout_ms \\ @attempt_ms) do
-    GenServer.call(manager, {:promote, target, package, peer_x, timeout_ms}, @attempt_ms + 1_000)
+  def promote(manager, target, package, timeout_ms \\ @attempt_ms) do
+    GenServer.call(manager, {:promote, target, package, timeout_ms}, @attempt_ms + 1_000)
   catch
     :exit, _ -> {:error, :direct_unavailable}
   end
@@ -173,13 +173,12 @@ defmodule Arc.Data.Direct do
     {:reply, status, state}
   end
 
-  def handle_call({:promote, target, package, peer_x, timeout}, from, state) do
+  def handle_call({:promote, target, package, timeout}, from, state) do
     state = sweep(state)
     query = scope_query(target, get_in(package, ["capability", "id"]))
     rule = Policy.find(state.policy, target.key, query)
 
     with true <- is_integer(timeout) and timeout > 0,
-         true <- is_binary(peer_x) and byte_size(peer_x) == 32,
          true <- not is_nil(rule),
          true <- room?(state),
          true <- not busy?(state, target.key, query),
@@ -188,8 +187,8 @@ defmodule Arc.Data.Direct do
          true <- get_in(verified, ["provider", "public_key"]) == target.provider,
          true <- get_in(verified, ["capability", "scheme"]) == target.scheme,
          true <- get_in(verified, ["capability", "invocation", "mode"]) == "request_reply",
-         {:ok, credentials} <- carrier(:credentials, []) do
-      session = Session.establish(state.identity, target.key, peer_x)
+         {:ok, credentials} <- carrier(:credentials, []),
+         {:ok, session} <- Session.establish(state.identity, target.key) do
       id = random_id()
 
       scope =

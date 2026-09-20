@@ -31,12 +31,6 @@ defmodule Arc.Control.Local do
   end
 
   @impl Arc.Control
-  def publish_keyex(<<public_key::binary-size(32)>>, x25519_public)
-      when is_binary(x25519_public) do
-    GenServer.call(__MODULE__, {:publish_keyex, public_key, x25519_public})
-  end
-
-  @impl Arc.Control
   def revoke(<<public_key::binary-size(32)>>) do
     GenServer.call(__MODULE__, {:revoke, public_key})
   end
@@ -61,15 +55,13 @@ defmodule Arc.Control.Local do
 
   @impl GenServer
   def handle_call({:publish, identity}, _from, state) do
-    # Reload from disk so a keyex published by another process survives.
+    # Reload from disk so entries published by another process survive.
     entries = load_entries()
-    existing = Map.get(entries, identity.public_key)
 
     entry = %{
       public_key: identity.public_key,
       name: Identity.name(identity),
       short_name: Identity.short_name(identity),
-      x25519_public: existing && existing.x25519_public,
       published_at: System.monotonic_time(:millisecond),
       status: :active
     }
@@ -91,23 +83,6 @@ defmodule Arc.Control.Local do
       |> Enum.filter(&(match_entry?(&1, query) and &1.status == :active))
 
     {:reply, {:ok, results}, state}
-  end
-
-  def handle_call({:publish_keyex, public_key, x25519_public}, _from, state) do
-    # Reload to get latest
-    entries = load_entries()
-
-    case Map.get(entries, public_key) do
-      nil ->
-        {:reply, {:error, :not_found}, %{state | entries: entries}}
-
-      entry ->
-        entry = %{entry | x25519_public: x25519_public}
-        entries = Map.put(entries, public_key, entry)
-        persist_entry(entry)
-        notify(state.subscribers, {:keyex_published, entry})
-        {:reply, :ok, %{state | entries: entries}}
-    end
   end
 
   def handle_call({:revoke, public_key}, _from, state) do
