@@ -83,7 +83,7 @@ A listener publishes an identity, not a storage capability.
 # Provider on C:
 export ARC_RELAY='relay-c.example.com:7331'
 export ARC_RELAY_PUBKEY='<relay-C-public-key-hex>'
-mise run arc -- serve providers/files --federate-network
+mise run arc -- serve go/cmd/files-provider --federate-network
 
 # Citizen on A, in a separate shell or machine:
 export ARC_RELAY='relay-a.example.com:7331'

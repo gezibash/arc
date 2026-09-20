@@ -77,7 +77,7 @@ Running services started from the old tree keep running until restarted.
 
 Release archives are the tarballs the release workflow builds:
 `arc-<version>-<os>-<arch>.tar.gz`, with every member under `arc/`. To offer
-one through the [release provider](../../providers/releases/README.md), store
+one through the [release provider](../../go/cmd/releases-provider/README.md), store
 it as `blobs/<sha256>.tar.gz` and add an `install` object to the platform's
 release entry in the signed channel document:
 
@@ -210,7 +210,7 @@ explicit state changes. Changes to the acceptor, federation workers, route
 shards, updater, application supervision, or runtime require additional proof
 and are currently refused. A release signature does not override this check.
 
-Publish with the read-only [release provider](../../providers/releases/README.md).
+Publish with the read-only [release provider](../../go/cmd/releases-provider/README.md).
 `Arc.CLI.Update.Manifest.sign/2` signs the strict channel document using an
 explicit publisher identity. Operator tooling can provision a local channel;
 no official public signing key or public channel is provisioned automatically.

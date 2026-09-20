@@ -183,5 +183,5 @@ mise exec -- mix test apps/arc_data/test/arc/data/protocol_test.exs \
   apps/arc_cli/test/arc/cli_protocol_test.exs
 ```
 
-See [SQLite provider](../../providers/sqlite/README.md) for its independent tests
+See [SQLite provider](../../go/cmd/sqlite-provider/README.md) for its independent tests
 and [federation](../federation/SPEC.md) for operator routing policy.

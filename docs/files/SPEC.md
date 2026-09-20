@@ -2,7 +2,7 @@
 
 ## 1. Purpose and current scope
 
-The `providers/files` bundle stores immutable encrypted files for ARC citizens.
+The `go/cmd/files-provider` bundle stores immutable encrypted files for ARC citizens.
 The trusted ARC client encrypts both the basename and the raw file bytes to
 the active citizen before invoking the provider. The provider stores signed
 encrypted envelopes and never needs the citizen's secret key.
@@ -31,7 +31,7 @@ from that identity, not literal names to copy.
 
 ```bash
 mise run arc -- keys gen
-ARC_KEY=<provider-key-name> mise run arc -- serve providers/files
+ARC_KEY=<provider-key-name> mise run arc -- serve go/cmd/files-provider
 ```
 
 `serve` reads the bundle's `Arcfile` and runs `run.sh`. The script builds the
@@ -183,19 +183,19 @@ listing. Backups and replication are not implemented here.
 
 | Location | Responsibility |
 | --- | --- |
-| [Provider bundle](../../providers/files/Arcfile) | Runtime launch recipe |
-| [Manifest](../../providers/files/manifest.json) | Installed commands and private-file interface version |
+| [Provider bundle](../../go/cmd/files-provider/Arcfile) | Runtime launch recipe |
+| [Manifest](../../go/cmd/files-provider/manifest.json) | Installed commands and private-file interface version |
 | [Trusted client](../../apps/arc_cli/lib/arc/cli/private_file.ex) | Encryption, signatures, reply verification, safe binary output |
 | [CLI integration](../../apps/arc_cli/lib/arc/cli/tools.ex) | Resolve the active identity and invoke the private-file renderer |
 | [Interface normalization](../../apps/arc_data/lib/arc/data/interface_manifest.ex) | Preserve versioned private-file command descriptions |
-| [Provider tests](../../providers/files/test/files_test.exs) | Storage access, signatures, limits, and protocol errors |
+| [Provider tests](../../go/cmd/files-provider/test/files_test.exs) | Storage access, signatures, limits, and protocol errors |
 | [Client tests](../../apps/arc_cli/test/arc/private_file_test.exs) | Binary round trips, tamper detection, recipient isolation, and output-path protection |
 
 Run the provider checks from its directory and the ARC integration checks from
 the repository root:
 
 ```bash
-cd providers/files
+cd go/cmd/files-provider
 mix test
 ```
 

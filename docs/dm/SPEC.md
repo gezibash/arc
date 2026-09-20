@@ -7,7 +7,7 @@ or public key. The provider stores the message in the recipient's mailbox.
 The recipient reads the mailbox at any time. Both parties keep a full history
 of every thread.
 
-DM is a standalone provider bundle at `providers/dm`. It depends on core
+DM is a standalone provider bundle at `go/cmd/dm-provider`. It depends on core
 changes C1 to C3 in `docs/dm/CORE.md`: a sealed box, X25519 key
 publication through the CLI, and template filters that seal and open
 message bodies. The provider stores ciphertext only. The whitepaper requires
@@ -229,14 +229,14 @@ Push delivery is not in Phase 1, see section 14.
 
 ## 12. Runtime
 
-- Language: Elixir. The bundle at `providers/dm` is a small Mix project with
+- Language: Elixir. The bundle at `go/cmd/dm-provider` is a small Mix project with
   the same `Arcfile`, `manifest.json`, and `run.sh` shape as the journal.
 - The stdio loop runs in the main process. There is no background job in
   Phase 1.
 - Configuration comes from environment variables:
   - `DM_ROOT`: data directory. Default `~/.arc/dm`.
   - `DM_MAX_BODY`: sealed body cap in bytes. Default `98304`.
-- The provider key is the identity that runs `arc serve providers/dm`.
+- The provider key is the identity that runs `arc serve go/cmd/dm-provider`.
   Citizens install it with `arc install <provider key> primary`.
 - One provider process owns a `DM_ROOT`. Two processes on one root race
   the `usage` counter and lose updates. Give a second `arc serve` its own

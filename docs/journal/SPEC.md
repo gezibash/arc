@@ -220,7 +220,7 @@ journal replies with one JSON object per line on stdout:
 
 ## 12. Runtime
 
-- Language: Elixir. The bundle at `providers/journal` is a small Mix project.
+- Language: Elixir. The bundle at `go/cmd/journal-provider` is a small Mix project.
 - `run.sh` builds an escript on first start and runs it. Build output goes to
   stderr so stdout stays a clean JSON stream.
 - One OTP supervisor runs the index job and the push job. The stdio loop runs

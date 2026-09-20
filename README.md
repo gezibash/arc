@@ -240,7 +240,7 @@ arc request 'sqlite+arc://<provider-public-key>/main' \
 
 Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY`, or explicitly choose `--local`.
 The [shared request transport](docs/transport/SPEC.md) preserves opaque bodies;
-the [SQLite provider](providers/sqlite/README.md) supplies database access with
+the [SQLite provider](go/cmd/sqlite-provider/README.md) supplies database access with
 operator-defined citizen grants. Continuous native protocol streams are future work.
 
 Relay delivery is the default. A provider and citizen may opt into the bounded

@@ -28,7 +28,7 @@ most `262144` raw bytes.
 Serve the bundle with the normal ARC provider flow:
 
 ```sh
-bin/arc serve providers/releases --relay relay.example:7331 --relay-pubkey <relay-key>
+bin/arc serve go/cmd/releases-provider --relay relay.example:7331 --relay-pubkey <relay-key>
 ```
 
 The provider is public and read-only. Publication authority stays with the
@@ -98,7 +98,7 @@ local fallback.
 ## Tests
 
 ```sh
-cd providers/releases
+cd go/cmd/releases-provider
 mise exec -- mix test
 
 cd /Users/zim/Work/arc

@@ -80,7 +80,7 @@ JSON
 mkdir -p "$work/jobs"
 
 EXEC_CONFIG="$work/exec.json" arc serve \
-  "exec://$work/exec-provider?manifest=$root/providers/exec/manifest.json" \
+  "exec://$work/exec-provider?manifest=$root/go/cmd/exec-provider/manifest.json" \
   > "$work/serve.log" 2>"$work/serve.err" &
 serve_pid=$!
 
@@ -211,7 +211,7 @@ dm_name="$(head -1 "$work/dm.txt")"
 dm_key="$(tail -1 "$work/dm.txt")"
 
 DM_ROOT="$work/dm" arc --key "$dm_name" serve \
-  "exec://$work/dm-provider?manifest=$root/providers/dm/manifest.json" \
+  "exec://$work/dm-provider?manifest=$root/go/cmd/dm-provider/manifest.json" \
   > "$work/dm.log" 2>"$work/dm.err" &
 dm_pid=$!
 

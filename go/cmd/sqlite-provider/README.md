@@ -10,7 +10,7 @@ public database names to absolute local paths and grants each ARC public key a
 Install the provider's pinned Python runtime before serving it:
 
 ```sh
-cd providers/sqlite
+cd go/cmd/sqlite-provider
 mise install
 ```
 
@@ -52,7 +52,7 @@ export SQLITE_CONFIG=/absolute/path/sqlite.json
 From the repository root, serve the bundle with ARC's normal provider flow:
 
 ```sh
-ARC_KEY=<provider-key> mise run arc -- serve providers/sqlite
+ARC_KEY=<provider-key> mise run arc -- serve go/cmd/sqlite-provider
 ```
 
 Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY` for the provider and citizen. To

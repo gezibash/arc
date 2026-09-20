@@ -14,7 +14,7 @@ configure `ARC_RELAY` and `ARC_RELAY_PUBKEY` with the relay address and its pinn
 public key, or supply the existing `--relay` and `--relay-pubkey` flags.
 
 ```bash
-ARC_KEY=<provider-key-name> mise run arc -- serve providers/agora
+ARC_KEY=<provider-key-name> mise run arc -- serve go/cmd/agora-provider
 ```
 
 In the citizen's terminal:

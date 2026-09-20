@@ -1,7 +1,7 @@
 # SQLite over ARC
 
-The real provider lives in `providers/sqlite`. Its [provider contract and operator
-configuration](../../providers/sqlite/README.md) are the source for supported
+The real provider lives in `go/cmd/sqlite-provider`. Its [provider contract and operator
+configuration](../../go/cmd/sqlite-provider/README.md) are the source for supported
 queries and limits. It uses the [shared request transport](../transport/SPEC.md)
 and advertises the `sqlite` scheme.
 

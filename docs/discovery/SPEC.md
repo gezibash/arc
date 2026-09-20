@@ -39,7 +39,7 @@ export ARC_RELAY_PUBKEY='<relay-public-key-hex>'
 With a provider identity active, run:
 
 ```bash
-mise run arc -- serve providers/files
+mise run arc -- serve go/cmd/files-provider
 ```
 
 The running provider announces its signed identity and file-storage summary.

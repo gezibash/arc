@@ -145,7 +145,7 @@ nohup env ARC_KEY=<provider key name> bin/arc relay --port 7411 > ~/.arc/journal
 ```
 
 ```bash
-nohup env ARC_KEY=<provider key name> JOURNAL_ROOT=$HOME/.arc/journal bin/arc serve providers/journal --relay 127.0.0.1:7411 > ~/.arc/journal/serve.log 2>&1 &
+nohup env ARC_KEY=<provider key name> JOURNAL_ROOT=$HOME/.arc/journal bin/arc serve go/cmd/journal-provider --relay 127.0.0.1:7411 > ~/.arc/journal/serve.log 2>&1 &
 ```
 
 The first `serve` builds the escript. Wait for `arc journal ls` to answer.
