@@ -247,8 +247,8 @@ defmodule Arc.Net.DirectPromotionTest do
     {:ok, reverse} =
       Protocol.parse("binary-echo+arc://#{Identity.encode_public_key(client_id)}/main")
 
-    {:ok, client_entry} = Agent.connect(ctx.provider, Identity.encode_public_key(client_id))
-    {:ok, provider_entry} = Agent.connect(ctx.client, Identity.encode_public_key(provider_id))
+    {:ok, _} = Agent.connect(ctx.provider, Identity.encode_public_key(client_id))
+    {:ok, _} = Agent.connect(ctx.client, Identity.encode_public_key(provider_id))
 
     {:ok, client_package} =
       Arc.Data.CapabilityManifest.detail(client_id, :sys.get_state(ctx.client).handler, "primary")
@@ -269,15 +269,10 @@ defmodule Arc.Net.DirectPromotionTest do
       try do
         tasks = [
           Task.async(fn ->
-            Direct.promote(
-              client_manager,
-              ctx.target,
-              provider_package,
-              provider_entry.x25519_public
-            )
+            Direct.promote(client_manager, ctx.target, provider_package)
           end),
           Task.async(fn ->
-            Direct.promote(provider_manager, reverse, client_package, client_entry.x25519_public)
+            Direct.promote(provider_manager, reverse, client_package)
           end)
         ]
 

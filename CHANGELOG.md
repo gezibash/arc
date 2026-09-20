@@ -6,6 +6,49 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-20
+
+A relay and its clients must run the same version. This release changes the
+relay announcement and the key exchange, so a mixed network does not work.
+
+### Changed
+
+- **Breaking:** the X25519 key of an identity now uses the standard
+  conversion from Ed25519, the same as libsodium. Data that an earlier
+  version sealed does not open. This includes DMs, private files, and the
+  local sealed cache.
+- A sender can now seal to any public key without a published key exchange
+  record. `seal:to` computes the recipient key from the Ed25519 public key.
+  A DM to a citizen on a different host no longer needs a shared control
+  directory.
+- Sessions compute the X25519 key of the peer from its Ed25519 public key.
+
+### Removed
+
+- **Breaking:** the key exchange record. `Control.publish_keyex/2` and the
+  `x25519_public` field of control plane entries and relay announcements are
+  gone. `arc publish` and `arc resolve` print no `keyex` or `x25519` lines.
+  Relays and clients of this version reject announcements from earlier
+  versions, and the reverse. Upgrade them together.
+- The `has_key_exchange` field of the host `resolve` operation.
+
+### Added
+
+- `Arc.Identity.public_key_to_x25519/1` computes the X25519 public key of an
+  identity from its Ed25519 public key.
+- The exec provider at `providers/exec`. A granted key runs commands on the
+  machine of a citizen through the relay. A job continues after the caller
+  disconnects, and the provider reports the result to the caller. See
+  `docs/exec/SPEC.md`.
+- A citizen machine that pauses when it is idle. The caller wakes it, and the
+  citizen holds a lease while it works. `providers/exec/citizen/` holds one
+  script for each platform.
+- `docs/exec/MLD.md`, the machine lifecycle definition. It describes the
+  contract for a new platform, and the delegated identity of a per-task
+  machine.
+- `docker/fly/`, an image that runs a relay and the DM provider on one Fly.io
+  machine.
+
 ## [0.5.2] - 2026-09-19
 
 ### Fixed

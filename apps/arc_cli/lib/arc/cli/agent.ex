@@ -75,8 +75,8 @@ defmodule Arc.CLI.Agent do
           {:error, :not_found} ->
             error("no identity found for '#{to}'")
 
-          {:error, :no_keyex} ->
-            error("peer '#{to}' has no key exchange material published")
+          {:error, :invalid_public_key} ->
+            error("peer '#{to}' has a public key that cannot receive encrypted data")
 
           {:error, reason} ->
             error("connect failed: #{inspect(reason)}")
@@ -204,8 +204,8 @@ defmodule Arc.CLI.Agent do
           {:error, :not_found} ->
             error("no identity found for '#{to}'")
 
-          {:error, :no_keyex} ->
-            error("peer '#{to}' has no key exchange material published")
+          {:error, :invalid_public_key} ->
+            error("peer '#{to}' has a public key that cannot receive encrypted data")
 
           {:error, reason} ->
             error("connect failed: #{inspect(reason)}")
@@ -236,8 +236,8 @@ defmodule Arc.CLI.Agent do
           {:error, :not_found} ->
             error("no identity found for '#{to}'")
 
-          {:error, :no_keyex} ->
-            error("peer '#{to}' has no key exchange material published")
+          {:error, :invalid_public_key} ->
+            error("peer '#{to}' has a public key that cannot receive encrypted data")
 
           {:error, reason} ->
             error("connect failed: #{inspect(reason)}")

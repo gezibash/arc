@@ -1,0 +1,5 @@
+# Written by citizen/init and at run time.
+citizen.env
+config.json
+serve.pid
+*.log

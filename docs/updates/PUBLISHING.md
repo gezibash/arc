@@ -70,7 +70,7 @@ only the release provider against the existing relay:
 ```sh
 export ARC_LOCAL_PORT=17331
 export ARC_RELEASES_ROOT=/absolute/provider-root
-export ARC_LOCAL_IMAGE=arc-local-release-provider:0.5.2
+export ARC_LOCAL_IMAGE=arc-local-release-provider:0.6.0
 docker compose build relay
 docker compose -f compose.yaml -f docker/local/compose.releases.yaml \
   --profile releases up -d --no-deps --wait releases

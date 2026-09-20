@@ -1,0 +1,40 @@
+#!/bin/sh
+# Hold the machine awake. One interface for each platform.
+#
+#   lease hold SECONDS     create or refresh the lease
+#   lease create SECONDS   create the lease. Exit 3 if the lease exists.
+#   lease delete           delete the lease
+#   lease pauses           exit 0 if the platform can pause this machine
+#
+# CITIZEN_PLATFORM in citizen.env selects the platform:
+#   sprite   a Fly.io Sprite. The lease is the Sprites Tasks API task "arc".
+#   none     a machine that never pauses. Every lease command is a no-op.
+set -eu
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+CITIZEN_PLATFORM=$(. "$here/citizen.env" && echo "${CITIZEN_PLATFORM:-none}")
+action=${1:?usage: lease hold|create|delete|pauses [SECONDS]}
+
+case "$CITIZEN_PLATFORM" in
+  sprite)
+    tasks() { /.sprite/bin/sprite-env curl -sf "$@" >/dev/null 2>&1; }
+    case "$action" in
+      hold) tasks -X PUT /v1/tasks/arc -d "{\"expire\":${2:?seconds}}" ;;
+      create) tasks -X POST /v1/tasks -d "{\"name\":\"arc\",\"expire\":${2:?seconds}}" || exit 3 ;;
+      delete) tasks -X DELETE /v1/tasks/arc || true ;;
+      pauses) exit 0 ;;
+      *) echo "lease: unknown action $action" >&2; exit 2 ;;
+    esac
+    ;;
+  none)
+    case "$action" in
+      pauses) exit 1 ;;
+      hold | create | delete) exit 0 ;;
+      *) echo "lease: unknown action $action" >&2; exit 2 ;;
+    esac
+    ;;
+  *)
+    echo "lease: unknown CITIZEN_PLATFORM $CITIZEN_PLATFORM" >&2
+    exit 2
+    ;;
+esac

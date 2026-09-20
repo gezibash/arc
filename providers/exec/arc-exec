@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Run one command on an exec citizen. Wake the citizen first when needed.
+
+This is the caller side of docs/exec/SPEC.md, section 10.2, as a wrapper
+around `arc request`. It needs Python 3.11 or newer for tomllib.
+
+  arc-exec <citizen-public-key> --script 'git status'
+  arc-exec <citizen-public-key> -- uname -a
+  arc-exec <citizen-public-key> --start --script 'make test'     # prints a job ID
+  arc-exec <citizen-public-key> --status <job>
+  arc-exec <citizen-public-key> --wait --script 'make test'      # start, then poll
+
+A job keeps running when the caller disconnects. `--status` exits 75 while
+the job runs, and with the job's exit code after it ends.
+
+The wake configuration is ARC_WAKE_CONFIG, or ~/.config/arc/wake.toml:
+
+  [wake."<citizen-public-key>"]
+  kind = "command"
+  argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
+
+WAKE_TIMEOUT_S = 30
+# The provider releases its lease to 60 seconds after the last command.
+# A reply younger than this proves the machine has not paused.
+FRESH_REPLY_S = 30
+STATE_DIR = Path.home() / ".cache" / "arc" / "exec"
+POLL_S = 5
+EX_TEMPFAIL = 75
+
+
+def log(verbose: bool, message: str) -> None:
+    if verbose:
+        stamp = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
+        print(f"{stamp} arc-exec: {message}", file=sys.stderr)
+
+
+def load_hook(citizen: str) -> list[str] | None:
+    path = Path(os.environ.get("ARC_WAKE_CONFIG", Path.home() / ".config" / "arc" / "wake.toml"))
+    if not path.is_file():
+        return None
+    hook = tomllib.loads(path.read_text()).get("wake", {}).get(citizen)
+    if hook is None:
+        return None
+    if hook.get("kind") != "command" or not isinstance(hook.get("argv"), list):
+        sys.exit(f"arc-exec: {path}: wake.{citizen} must have kind = \"command\" and an argv list")
+    return [os.path.expanduser(part) for part in hook["argv"]]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("citizen", help="citizen public key, 64 hex characters")
+    parser.add_argument("--script", help="run this text with bash -lc")
+    parser.add_argument("--timeout-ms", type=int, help="command limit; the provider caps it")
+    parser.add_argument("--start", action="store_true", help="start a job and print its ID")
+    parser.add_argument("--wait", action="store_true", help="start a job and poll until it ends")
+    parser.add_argument("--status", metavar="JOB", help="print the state and the output of a job")
+    parser.add_argument("-v", "--verbose", action="store_true", help="log each step with a timestamp")
+    parser.add_argument("argv", nargs="*", help="run this argv without a shell")
+    args = parser.parse_args()
+    if args.status:
+        if args.script or args.argv or args.start or args.wait:
+            parser.error("--status takes no command")
+    elif bool(args.script) == bool(args.argv):
+        parser.error("give exactly one of --script or an argv after --")
+
+    state = STATE_DIR / args.citizen
+    hook = load_hook(args.citizen)
+    if hook is None:
+        log(args.verbose, "no wake hook, sending without a wake")
+    elif state.exists() and time.time() - state.stat().st_mtime < FRESH_REPLY_S:
+        log(args.verbose, "last reply is fresh, skipping the wake hook")
+    else:
+        log(args.verbose, f"waking: {' '.join(hook)}")
+        try:
+            woke = subprocess.run(hook, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=WAKE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            print("arc-exec: wake_timeout", file=sys.stderr)
+            return 124
+        if woke.returncode != 0:
+            print(f"arc-exec: wake_failed (hook exited {woke.returncode})", file=sys.stderr)
+            return 125
+        log(args.verbose, "citizen ready")
+
+    if args.status:
+        return show(finished(request(args, {"action": "status", "job": args.status}, 15_000)))
+
+    body = {"script": args.script} if args.script else {"argv": args.argv}
+    if args.timeout_ms is not None:
+        body["timeout_ms"] = args.timeout_ms
+    if not (args.start or args.wait):
+        return show(request(args, body, min((args.timeout_ms or 60_000) + 5_000, 120_000)))
+
+    job = request(args, dict(body, action="start"), 15_000)["job"]
+    if args.start:
+        print(job)
+        return 0
+    log(args.verbose, f"job {job} started, polling each {POLL_S} seconds")
+    print(f"arc-exec: job {job}", file=sys.stderr)
+    while True:
+        time.sleep(POLL_S)
+        status = request(args, {"action": "status", "job": job}, 15_000)
+        if status["state"] != "running":
+            return show(finished(status))
+
+
+def request(args: argparse.Namespace, body: dict, timeout_ms: int) -> dict:
+    log(args.verbose, f"sending {body.get('action', 'run')} request")
+    reply = subprocess.run(
+        ["arc", "request", f"exec+arc://{args.citizen}/", "--timeout", str(timeout_ms), "--body", json.dumps(body)],
+        capture_output=True,
+        text=True,
+    )
+    if reply.returncode != 0:
+        sys.stderr.write(reply.stdout + reply.stderr)
+        sys.exit(reply.returncode)
+    log(args.verbose, "reply received")
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR / args.citizen).touch()
+    # `arc request` prints the reply body as the last line.
+    return json.loads(reply.stdout.strip().splitlines()[-1])
+
+
+def finished(status: dict) -> dict:
+    if status["state"] == "running":
+        print(f"arc-exec: job {status['job']} is running since {status['started_at']}", file=sys.stderr)
+        sys.exit(EX_TEMPFAIL)
+    if status["state"] == "lost":
+        sys.stdout.write(status["stdout"])
+        sys.stderr.write(status["stderr"])
+        print(f"arc-exec: job {status['job']} is lost: its process ended without a result", file=sys.stderr)
+        sys.exit(1)
+    return status
+
+
+def show(result: dict) -> int:
+    sys.stdout.write(result["stdout"])
+    sys.stderr.write(result["stderr"])
+    if result["timed_out"]:
+        print("arc-exec: the command timed out", file=sys.stderr)
+    if result["truncated"]:
+        print("arc-exec: the output was truncated", file=sys.stderr)
+    return result["exit"] if isinstance(result["exit"], int) and result["exit"] >= 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

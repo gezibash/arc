@@ -95,26 +95,20 @@ defmodule Arc.Data.Protocol do
              true <- entry.public_key == target.key or {:error, :provider_mismatch},
              {:ok, package} <- fetch_capability(agent, target, capability_id, deadline),
              :ok <- validate_request(package["capability"], target, body) do
-          generation = maybe_promote(manager, target, package, entry, deadline)
+          generation = maybe_promote(manager, target, package, deadline)
           {:ok, package, generation}
         end
     end
   end
 
-  defp maybe_promote(nil, _target, _package, _entry, _deadline), do: :relay
+  defp maybe_promote(nil, _target, _package, _deadline), do: :relay
 
-  defp maybe_promote(manager, target, package, entry, deadline) do
+  defp maybe_promote(manager, target, package, deadline) do
     remaining = deadline - System.monotonic_time(:millisecond)
     # Leave an application budget. A failed optimization cannot extend the
     # caller's deadline or submit the same request on two paths.
     if remaining > 500 and Direct.allowed?(manager, target, package["capability"]["id"]) do
-      case Direct.promote(
-             manager,
-             target,
-             package,
-             entry.x25519_public,
-             min(3_000, div(remaining, 2))
-           ) do
+      case Direct.promote(manager, target, package, min(3_000, div(remaining, 2))) do
         {:ok, %{generation: generation}} -> generation
         _ -> :relay
       end

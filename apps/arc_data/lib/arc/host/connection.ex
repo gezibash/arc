@@ -216,7 +216,6 @@ defmodule Arc.Host.Connection do
                 "name" => entry.name,
                 "short_name" => entry.short_name,
                 "public_key" => encode_hex(entry.public_key),
-                "has_key_exchange" => not is_nil(entry.x25519_public),
                 "status" => Atom.to_string(entry.status)
               }
             end)

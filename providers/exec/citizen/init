@@ -1,0 +1,95 @@
+#!/bin/bash
+# Write citizen.env and config.json for this bundle. Run it once on the
+# citizen machine, from any directory.
+#
+#   citizen/init --key NAME --relay HOST:PORT --relay-pubkey HEX \
+#     --grant HEX [--grant HEX ...] [--platform sprite|none] [--cwd DIR]
+#     [--notify-dm]
+#
+# --key       the ARC key of the citizen. Create it first with `arc keys gen`.
+# --grant     a caller key that can run commands. A grant equals a shell login.
+# --platform  sprite: a Fly.io Sprite that pauses. none: a machine that never
+#             pauses. The default is none.
+# --cwd       the default directory for commands. The default is $HOME.
+# --notify-dm when a job ends, send the result to its owner as a direct
+#             message. The citizen must have the DM tool installed.
+set -eu
+
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+key='' relay='' relay_pubkey='' platform=none cwd=$HOME notify_dm=0 grants=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --key) key=$2; shift 2 ;;
+    --relay) relay=$2; shift 2 ;;
+    --relay-pubkey) relay_pubkey=$2; shift 2 ;;
+    --grant) grants+=("$2"); shift 2 ;;
+    --platform) platform=$2; shift 2 ;;
+    --cwd) cwd=$2; shift 2 ;;
+    --notify-dm) notify_dm=1; shift ;;
+    *) usage ;;
+  esac
+done
+[ -n "$key" ] && [ -n "$relay" ] && [ -n "$relay_pubkey" ] && [ ${#grants[@]} -gt 0 ] || usage
+case $platform in sprite | none) ;; *) echo "init: --platform must be sprite or none" >&2; exit 2 ;; esac
+for grant in "${grants[@]}" "$relay_pubkey"; do
+  [[ $grant =~ ^[0-9a-f]{64}$ ]] || { echo "init: $grant is not 64 lowercase hex characters" >&2; exit 2; }
+done
+[[ $cwd = /* && -d $cwd && $cwd != *'"'* && $cwd != *'\'* ]] || { echo "init: --cwd must be an existing absolute directory" >&2; exit 2; }
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+export PATH="$HOME/.local/bin:$PATH"
+public_key=$(ARC_KEY=$key arc keys show | awk '/public_key:/ {print $2}')
+[[ $public_key =~ ^[0-9a-f]{64}$ ]] || { echo "init: no ARC key named $key" >&2; exit 1; }
+
+# The readiness check needs a second identity. A relay keeps one connection
+# for each identity, so a query with the citizen key would replace the
+# connection of `arc serve` and remove its announcement.
+probe=$(grep '^CITIZEN_PROBE_KEY=' "$here/citizen.env" 2>/dev/null | cut -d= -f2 || true)
+if [ -z "$probe" ] || ! ARC_KEY="$probe" arc keys show >/dev/null 2>&1; then
+  probe=$(arc keys gen | awk '$1 == "name:" {print $2}')
+fi
+
+cat > "$here/citizen.env" <<EOF
+ARC_KEY=$key
+ARC_RELAY=$relay
+ARC_RELAY_PUBKEY=$relay_pubkey
+EXEC_CONFIG=$here/config.json
+CITIZEN_PUBLIC_KEY=$public_key
+CITIZEN_PLATFORM=$platform
+CITIZEN_PROBE_KEY=$probe
+EOF
+
+grant_list=$(printf '"%s", ' "${grants[@]}")
+lease=
+if [ "$platform" != none ]; then
+  lease=$(cat <<EOF
+,
+  "lease": {
+    "hold": ["$here/citizen/lease", "hold", "300"],
+    "release": ["$here/citizen/lease", "hold", "60"],
+    "interval_ms": 60000
+  }
+EOF
+)
+fi
+notify=
+if [ "$notify_dm" = 1 ]; then
+  notify=$(cat <<EOF
+,
+  "notify": {
+    "argv": ["$here/citizen/notify-dm", "{owner}"]
+  }
+EOF
+)
+fi
+cat > "$here/config.json" <<EOF
+{
+  "grants": [${grant_list%, }],
+  "cwd": "$cwd"$lease$notify
+}
+EOF
+
+echo "citizen $public_key"
+echo "wrote $here/citizen.env and $here/config.json"
+echo "start it with: $here/citizen/citizen-up"

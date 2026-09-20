@@ -1,0 +1,13 @@
+{
+  "published_at": "2026-09-19T00:00:00Z",
+  "release": {"version": "0.1.0", "channel": "stable"},
+  "capability": {
+    "id": "primary",
+    "kind": "compute",
+    "scheme": "exec",
+    "title": "Command execution over ARC",
+    "summary": "Runs one command per request as the provider's user, for granted public keys only.",
+    "invocation": {"mode": "request_reply", "method": "EXEC", "path": "/", "request_body": {"max_bytes": 1048576}},
+    "examples": ["exec+arc://provider/"]
+  }
+}

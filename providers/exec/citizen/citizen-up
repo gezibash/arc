@@ -1,0 +1,65 @@
+#!/bin/bash
+# Make the citizen ready to serve. A caller runs this after a wake.
+# See docs/exec/SPEC.md, section 10.3.
+#
+# On a platform that pauses, a live lease proves that the machine did not
+# pause since the last run, so the running `arc serve` still has its relay
+# connection. Without the lease, the old relay connection is gone.
+#
+# Exit 0: the citizen is ready. Exit 1: the relay has no announcement.
+# Stdout stays empty. Callers can use this script in an SSH ProxyCommand.
+set -u
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+set -a
+. "$here/citizen.env"
+set +a
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+lease="$here/citizen/lease"
+pidfile="$here/serve.pid"
+
+log() { echo "$(date -u +%FT%TZ) citizen-up: $*" >> "$here/citizen-up.log"; }
+serving() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
+
+fresh=0
+if "$lease" pauses; then
+  "$lease" create 120
+  case $? in
+    0) fresh=1 ;;
+    3) "$lease" hold 120 ;;
+    *) log "lease command failed"; exit 1 ;;
+  esac
+fi
+
+if [ $fresh = 0 ] && serving; then
+  log "kept arc serve pid $(cat "$pidfile")"
+  exit 0
+fi
+
+if [ -f "$pidfile" ]; then
+  kill -TERM -- "-$(cat "$pidfile")" 2>/dev/null
+fi
+# A new session makes the process group ID equal to the PID, so the kill above
+# stops arc serve and its provider together. macOS has no setsid command.
+if command -v setsid >/dev/null; then
+  setsid "$here/citizen/serve" >> "$here/serve.log" 2>&1 < /dev/null &
+else
+  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$here/citizen/serve" >> "$here/serve.log" 2>&1 < /dev/null &
+fi
+echo $! > "$pidfile"
+log "started arc serve pid $!"
+
+deadline=$((SECONDS + 20))
+while [ $SECONDS -lt $deadline ]; do
+  # The probe identity queries the relay directory. A query with the citizen
+  # key would replace the relay connection of `arc serve`.
+  if ARC_KEY="$CITIZEN_PROBE_KEY" arc discover exec 2>/dev/null | grep -q "$CITIZEN_PUBLIC_KEY"; then
+    log "ready"
+    exit 0
+  fi
+  sleep 0.3
+done
+
+"$lease" delete
+log "no announcement after 20 seconds"
+exit 1

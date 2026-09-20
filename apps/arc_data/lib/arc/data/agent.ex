@@ -170,17 +170,7 @@ defmodule Arc.Data.Agent do
   @impl GenServer
   def handle_call(:publish, _from, state) do
     id = state.identity
-    result = Control.publish(id)
-
-    case result do
-      :ok ->
-        {x_pub, _x_priv} = Identity.to_x25519(id)
-        Control.publish_keyex(id.public_key, x_pub)
-        {:reply, :ok, state}
-
-      error ->
-        {:reply, error, state}
-    end
+    {:reply, Control.publish(id), state}
   end
 
   def handle_call({:publish_relay, opts}, _from, state) do
@@ -195,17 +185,13 @@ defmodule Arc.Data.Agent do
   def handle_call({:connect, peer_query}, _from, state) do
     case resolve_entry(state, peer_query) do
       {:ok, [entry]} ->
-        if entry.x25519_public do
-          case establish_session(state.identity, entry, &Session.establish/3) do
-            {:ok, session} ->
-              sessions = Map.put(state.sessions, entry.public_key, session)
-              {:reply, {:ok, entry}, %{state | sessions: sessions}}
+        case Session.establish(state.identity, entry.public_key) do
+          {:ok, session} ->
+            sessions = Map.put(state.sessions, entry.public_key, session)
+            {:reply, {:ok, entry}, %{state | sessions: sessions}}
 
-            {:error, reason} ->
-              {:reply, {:error, reason}, state}
-          end
-        else
-          {:reply, {:error, :no_keyex}, state}
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
         end
 
       {:ok, []} ->
@@ -941,8 +927,7 @@ defmodule Arc.Data.Agent do
 
   defp install_refreshed_relay_session(state, peer_key, {:ok, entry}) do
     with true <- entry.public_key == peer_key or {:error, :peer_mismatch},
-         true <- is_binary(entry.x25519_public) or {:error, :no_keyex},
-         {:ok, session} <- establish_session(state.identity, entry, &Session.establish/3) do
+         {:ok, session} <- Session.establish(state.identity, peer_key) do
       state = %{state | sessions: Map.put(state.sessions, peer_key, session)}
       {:ok, session.session_id, state}
     else
@@ -1562,36 +1547,17 @@ defmodule Arc.Data.Agent do
 
     case Map.get(state.sessions, decoded.src) do
       %Session{version: 1} -> state
-      _ -> ensure_session(state, decoded.src, &Session.establish_v1/3)
+      _ -> ensure_session(state, decoded.src, &Session.establish_v1/2)
     end
   end
 
-  defp ensure_session(state, peer_pk, establish \\ &Session.establish/3) do
-    if Map.has_key?(state.sessions, peer_pk) do
-      state
+  defp ensure_session(state, peer_pk, establish \\ &Session.establish/2) do
+    with false <- Map.has_key?(state.sessions, peer_pk),
+         {:ok, session} <- establish.(state.identity, peer_pk) do
+      %{state | sessions: Map.put(state.sessions, peer_pk, session)}
     else
-      peer_name = Identity.name(peer_pk)
-
-      case resolve_entry(state, peer_name) do
-        {:ok, [entry]} when entry.x25519_public != nil ->
-          case establish_session(state.identity, entry, establish) do
-            {:ok, session} ->
-              %{state | sessions: Map.put(state.sessions, entry.public_key, session)}
-
-            {:error, _} ->
-              state
-          end
-
-        _ ->
-          state
-      end
+      _ -> state
     end
-  end
-
-  defp establish_session(identity, entry, establish) do
-    {:ok, establish.(identity, entry.public_key, entry.x25519_public)}
-  rescue
-    _ -> {:error, :invalid_peer_key}
   end
 
   defp resolve_peer_key(state, peer_query) do

@@ -124,7 +124,8 @@ signed scopes. Automatic refresh preserves the publisher's chosen scope.
 
 `ARC_FEDERATION_V1` frames use the existing length framing. The client
 challenge proves the connecting relay's identity; a fresh challenge and signed
-server response prove the other side and bind its key-exchange material.
+server response prove the other side and bind its X25519 key. Each side
+computes that key from the Ed25519 public key of the other side.
 
 All later controls and forwarded traffic use signed, encrypted ARC packets,
 bound to the particular connection with increasing sequence numbers. Direct

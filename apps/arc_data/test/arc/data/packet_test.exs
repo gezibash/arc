@@ -9,8 +9,7 @@ defmodule Arc.Data.PacketTest do
   setup do
     alice = Identity.generate()
     bob = Identity.generate()
-    {bob_x_pub, _} = Identity.to_x25519(bob)
-    session = Session.establish(alice, bob.public_key, bob_x_pub)
+    {:ok, session} = Session.establish(alice, bob.public_key)
     %{alice: alice, bob: bob, session: session}
   end
 
@@ -106,8 +105,7 @@ defmodule Arc.Data.PacketTest do
   end
 
   test "full encrypt-pack-decode-accept-decrypt roundtrip", %{alice: alice, bob: bob} do
-    {bob_x_pub, _} = Identity.to_x25519(bob)
-    session_a = Session.establish(alice, bob.public_key, bob_x_pub)
+    {:ok, session_a} = Session.establish(alice, bob.public_key)
 
     plaintext = "the quick brown fox"
     {nonce, ciphertext, seq, _} = Session.encrypt(session_a, plaintext)

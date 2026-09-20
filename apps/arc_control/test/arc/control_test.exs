@@ -53,24 +53,6 @@ defmodule Arc.ControlTest do
     end
   end
 
-  describe "publish_keyex/2" do
-    test "publishes X25519 key exchange material" do
-      id = Identity.generate()
-      :ok = Control.publish(id)
-
-      {x_pub, _x_priv} = Identity.to_x25519(id)
-      :ok = Control.publish_keyex(id.public_key, x_pub)
-
-      {:ok, [entry]} = Control.resolve(Identity.name(id))
-      assert entry.x25519_public == x_pub
-    end
-
-    test "returns error for unknown identity" do
-      fake_pk = :crypto.strong_rand_bytes(32)
-      {:error, :not_found} = Control.publish_keyex(fake_pk, <<0::256>>)
-    end
-  end
-
   describe "revoke/1" do
     test "revoked identity no longer resolves" do
       id = Identity.generate()
@@ -83,34 +65,6 @@ defmodule Arc.ControlTest do
     test "returns error for unknown identity" do
       fake_pk = :crypto.strong_rand_bytes(32)
       {:error, :not_found} = Control.revoke(fake_pk)
-    end
-  end
-
-  describe "publish/1 keeps a published keyex" do
-    test "a second publish does not clear x25519_public" do
-      id = Identity.generate()
-      {x_pub, _} = Identity.to_x25519(id)
-
-      :ok = Control.publish(id)
-      :ok = Control.publish_keyex(id.public_key, x_pub)
-      :ok = Control.publish(id)
-
-      {:ok, [entry]} = Control.resolve(Identity.name(id))
-      assert entry.x25519_public == x_pub
-    end
-
-    test "revoke then publish starts active again with the keyex kept" do
-      id = Identity.generate()
-      {x_pub, _} = Identity.to_x25519(id)
-
-      :ok = Control.publish(id)
-      :ok = Control.publish_keyex(id.public_key, x_pub)
-      :ok = Control.revoke(id.public_key)
-      :ok = Control.publish(id)
-
-      {:ok, [entry]} = Control.resolve(Identity.name(id))
-      assert entry.status == :active
-      assert entry.x25519_public == x_pub
     end
   end
 
@@ -136,19 +90,6 @@ defmodule Arc.ControlTest do
       assert entry.status == :revoked
     end
 
-    test "receives keyex events" do
-      {:ok, _} = Control.subscribe(:keyex_published)
-
-      id = Identity.generate()
-      :ok = Control.publish(id)
-
-      {x_pub, _} = Identity.to_x25519(id)
-      :ok = Control.publish_keyex(id.public_key, x_pub)
-
-      assert_receive {:arc_control, {:keyex_published, entry}}
-      assert entry.x25519_public == x_pub
-    end
-
     test ":all receives everything" do
       {:ok, _} = Control.subscribe(:all)
 
@@ -169,24 +110,17 @@ defmodule Arc.ControlTest do
       :ok = Control.publish(alice)
       :ok = Control.publish(bob)
 
-      # Both publish key exchange material
-      {alice_x_pub, alice_x_priv} = Identity.to_x25519(alice)
-      {bob_x_pub, bob_x_priv} = Identity.to_x25519(bob)
-
-      :ok = Control.publish_keyex(alice.public_key, alice_x_pub)
-      :ok = Control.publish_keyex(bob.public_key, bob_x_pub)
-
-      # Alice resolves Bob by petname
+      # Each side resolves the other and derives the X25519 key from the
+      # Ed25519 public key. No key exchange record is published.
       {:ok, [bob_entry]} = Control.resolve(Identity.name(bob))
-      assert bob_entry.x25519_public == bob_x_pub
-
-      # Bob resolves Alice by short name
       {:ok, [alice_entry]} = Control.resolve(Identity.short_name(alice))
-      assert alice_entry.x25519_public == alice_x_pub
+      {:ok, bob_x_pub} = Identity.public_key_to_x25519(bob_entry.public_key)
+      {:ok, alice_x_pub} = Identity.public_key_to_x25519(alice_entry.public_key)
 
-      # Both derive the same shared secret
-      shared_alice = :crypto.compute_key(:ecdh, bob_entry.x25519_public, alice_x_priv, :x25519)
-      shared_bob = :crypto.compute_key(:ecdh, alice_entry.x25519_public, bob_x_priv, :x25519)
+      {_, alice_x_priv} = Identity.to_x25519(alice)
+      {_, bob_x_priv} = Identity.to_x25519(bob)
+      shared_alice = :crypto.compute_key(:ecdh, bob_x_pub, alice_x_priv, :x25519)
+      shared_bob = :crypto.compute_key(:ecdh, alice_x_pub, bob_x_priv, :x25519)
       assert shared_alice == shared_bob
     end
   end

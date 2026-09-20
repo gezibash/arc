@@ -77,16 +77,15 @@ defmodule Arc.Data.ToolboxTest do
   describe "pubkey and seal filters" do
     setup do
       bob = Arc.Identity.generate()
-      {bob_x, _} = Arc.Identity.to_x25519(bob)
       nokey = Arc.Identity.generate()
       me = Arc.Identity.generate()
 
       entries = %{
         Arc.Identity.name(bob) => [
-          %{public_key: bob.public_key, x25519_public: bob_x, name: "bob"}
+          %{public_key: bob.public_key, name: "bob"}
         ],
         Arc.Identity.name(nokey) => [
-          %{public_key: nokey.public_key, x25519_public: nil, name: "nokey"}
+          %{public_key: nokey.public_key, name: "nokey"}
         ]
       }
 
@@ -126,12 +125,29 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.open_tokens(token, me) == "note"
     end
 
-    test "seal fails when the target has no keyex", %{nokey: nokey, context: ctx} do
-      name = Arc.Identity.name(nokey)
+    test "seal needs only the public key", %{nokey: nokey, context: ctx} do
+      values = %{"to" => Arc.Identity.name(nokey), "body" => "no directory"}
 
-      # The error names the resolved entry, "nokey" in the stub resolver.
-      assert {:error, {:no_keyex, "nokey"}} =
-               Toolbox.render_template("{{body|seal:to}}", %{"to" => name, "body" => "x"}, ctx)
+      assert {:ok, token} = Toolbox.render_template("{{body|seal:to}}", values, ctx)
+      assert Toolbox.open_tokens(token, nokey) == "no directory"
+    end
+
+    test "seal:to a bare hex key works without a resolver", %{bob: bob} do
+      values = %{"to" => Arc.Identity.encode_public_key(bob), "body" => "offline"}
+
+      assert {:ok, token} = Toolbox.render_template("{{body|seal:to}}", values, %{})
+      assert Toolbox.open_tokens(token, bob) == "offline"
+    end
+
+    test "seal rejects a key with no curve point" do
+      small_order = String.duplicate("0", 64)
+
+      assert {:error, {:invalid_public_key, ^small_order}} =
+               Toolbox.render_template(
+                 "{{body|seal:to}}",
+                 %{"to" => small_order, "body" => "x"},
+                 %{}
+               )
     end
 
     test "seal without a target is a template error" do
@@ -149,10 +165,9 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.open_tokens(token, bob) == "stdin body"
 
       carol = Arc.Identity.generate()
-      {carol_x, _} = Arc.Identity.to_x25519(carol)
 
       resolve = fn
-        "carol" -> {:ok, [%{public_key: carol.public_key, x25519_public: carol_x, name: "carol"}]}
+        "carol" -> {:ok, [%{public_key: carol.public_key, name: "carol"}]}
         other -> ctx.resolve.(other)
       end
 
