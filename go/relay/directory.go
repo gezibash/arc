@@ -136,11 +136,31 @@ func (r *Relay) resolve(from *conn, requestID string, request map[string]any) {
 	}
 
 	matching := r.match(func(held *record) bool { return held.entry.Matches(query) })
-	if len(matching) > 2 {
-		matching = matching[:2]
+	entries := recordsOf(matching)
+
+	// A citizen of a partner answers when no citizen here does.
+	cached := r.catalog.matching(func(entry *announce.Entry) bool { return entry.Matches(query) })
+	for _, held := range cached {
+		if len(entries) >= 2 {
+			break
+		}
+		if !holdsKey(matching, held.entry.PublicKey) {
+			entries = append(entries, held.entry.Record)
+		}
 	}
 
-	r.reply(from, requestID, map[string]any{"ok": true, "entries": recordsOf(matching)})
+	if len(entries) > 2 {
+		entries = entries[:2]
+	}
+
+	answer := map[string]any{"ok": true, "entries": entries}
+	if len(cached) > 0 {
+		answer["cached"] = true
+	}
+	if r.catalog.partial() {
+		answer["partial"] = true
+	}
+	r.reply(from, requestID, answer)
 }
 
 func (r *Relay) search(from *conn, requestID string, request map[string]any) {
@@ -158,6 +178,24 @@ func (r *Relay) search(from *conn, requestID string, request map[string]any) {
 
 	matching := r.match(func(held *record) bool {
 		return len(held.entry.Capabilities) > 0 && held.entry.SearchMatch(query)
+	})
+
+	// The catalog holds what the partners of this relay offer.
+	cached := r.catalog.matching(func(entry *announce.Entry) bool {
+		return len(entry.Capabilities) > 0 && entry.SearchMatch(query)
+	})
+	for _, held := range cached {
+		if !holdsKey(matching, held.entry.PublicKey) {
+			matching = append(matching, &record{
+				entry:     held.entry,
+				expiresAt: held.expiresAt,
+				cursor:    hex.EncodeToString(held.entry.PublicKey),
+			})
+		}
+	}
+
+	sort.Slice(matching, func(left, right int) bool {
+		return matching[left].cursor < matching[right].cursor
 	})
 	total := len(matching)
 
@@ -183,12 +221,19 @@ func (r *Relay) search(from *conn, requestID string, request map[string]any) {
 		next = page[len(page)-1].cursor
 	}
 
-	r.reply(from, requestID, map[string]any{
+	answer := map[string]any{
 		"ok":      true,
 		"entries": recordsOf(page),
 		"next":    next,
 		"total":   total,
-	})
+	}
+	if len(cached) > 0 {
+		answer["cached"] = true
+	}
+	if r.catalog.partial() {
+		answer["partial"] = true
+	}
+	r.reply(from, requestID, answer)
 }
 
 func (r *Relay) observe(from *conn, requestID string, request map[string]any) {
@@ -271,6 +316,16 @@ func fit(page []*record, requestID string, total int) []*record {
 		page = page[:len(page)-1]
 	}
 	return page
+}
+
+// holdsKey says whether a list already names a citizen.
+func holdsKey(records []*record, publicKey []byte) bool {
+	for _, held := range records {
+		if string(held.entry.PublicKey) == string(publicKey) {
+			return true
+		}
+	}
+	return false
 }
 
 func recordsOf(records []*record) []any {

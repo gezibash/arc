@@ -11,6 +11,7 @@ mise run go.conformance   # the Go client against an Elixir relay
 mise run go.provider      # the Go provider under the Elixir runtime
 mise run go.relay         # Elixir clients against the Go relay
 mise run go.cli           # the whole stack in Go: relay, citizen, provider, caller
+mise run go.federation    # a Go relay federating with an Elixir relay
 ```
 
 ## 1. Purpose
@@ -190,7 +191,7 @@ the root of the repository.
 | 2 | `client`: connect, announce, discover, request | Done. A Go client talks to the Elixir relay. |
 | 3 | `provider`, and the exec provider | Done. The Elixir `arc serve` runs the Go provider. |
 | 4 | `relay`: sessions, directory, routes | Done. An Elixir client talks to the Go relay. |
-| 5 | Federation, direct connections | Two Go relays federate. The Elixir relay federates with a Go relay. |
+| 5 | Federation, direct connections | Federation is done. Two Go relays federate, and a Go relay federates with an Elixir relay. Direct connections between citizens are open. |
 | 6 | `cmd/arc`: the command surface of today | The CLI tests of the Elixir suite pass against the Go binary. |
 | 7 | The remaining providers, and MCP | The providers are done: exec, dm, sqlite, files, releases, agora and journal. MCP is open. |
 

@@ -16,7 +16,7 @@ import (
 // interleave. The queue bounds how far one slow reader may fall behind: when
 // the queue is full, the relay drops the packet and keeps serving the others.
 type conn struct {
-	socket    net.Conn
+	socket    net.Conn //nolint:structcheck // the federation reads it
 	publicKey []byte
 	log       *slog.Logger
 

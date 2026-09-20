@@ -49,6 +49,12 @@ type Options struct {
 	// Log receives what the relay drops and why. The default is the standard
 	// logger.
 	Log *slog.Logger
+	// Peers are the relays that this operator approved. A relay without
+	// peers serves its own citizens only.
+	Peers []Peer
+	// Transit lets traffic of other relays pass through this one. It is off
+	// by default, and it never widens what a publisher signed.
+	Transit bool
 }
 
 // Relay is one running relay.
@@ -62,9 +68,13 @@ type Relay struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	federation *federation
+	catalog    *catalog
+
 	mu        sync.RWMutex
 	routes    map[string]*conn
 	directory map[string]*record
+	paths     map[string]*conversation
 
 	group sync.WaitGroup
 }
@@ -98,10 +108,21 @@ func Listen(ctx context.Context, opts Options) (*Relay, error) {
 		cancel:    cancel,
 		routes:    map[string]*conn{},
 		directory: map[string]*record{},
+		paths:     map[string]*conversation{},
 	}
+
+	held, err := newFederation(relay, opts.Peers)
+	if err != nil {
+		cancel()
+		listener.Close()
+		return nil, err
+	}
+	relay.federation = held
+	relay.catalog = newCatalog(relay)
 
 	relay.group.Add(1)
 	go relay.accept()
+	held.start()
 
 	return relay, nil
 }
@@ -115,6 +136,7 @@ func (r *Relay) PublicKey() []byte { return r.identity.PublicKey }
 // Close stops the relay and every connection.
 func (r *Relay) Close() error {
 	r.cancel()
+	r.federation.stop()
 	err := r.listener.Close()
 
 	r.mu.Lock()
@@ -189,6 +211,10 @@ func (r *Relay) serve(socket net.Conn) {
 			r.directoryControl(connection, control)
 			continue
 		}
+		if control, ok := isFederationFrame(payload); ok {
+			r.federation.inbound(connection, control)
+			continue
+		}
 		r.route(connection, payload)
 	}
 }
@@ -250,7 +276,10 @@ func (r *Relay) route(from *conn, raw []byte) {
 	r.mu.RUnlock()
 
 	if destination == nil {
-		r.drop(raw, "no route")
+		// A citizen of another relay may still be reachable over a partner.
+		if !r.carryAway(decoded, raw) {
+			r.drop(raw, "no route")
+		}
 		return
 	}
 	if !destination.send(raw) {

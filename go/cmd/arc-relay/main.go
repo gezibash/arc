@@ -8,11 +8,14 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/gezibash/arc/go/identity"
@@ -29,15 +32,40 @@ func main() {
 	store := flag.String("store", "", "the directory of ARC (default ~/.config/arc)")
 	maxFrame := flag.Uint("max-frame-bytes", 0, "the largest frame that the relay accepts, or 0 for any size")
 	generate := flag.Bool("generate", false, "make the identity when the store does not hold it")
+	transit := flag.Bool("transit", false, "let the traffic of partner relays pass through this one")
+
+	var peers peerList
+	flag.Var(&peers, "peer", "a partner relay, as <public key hex>@host:port. Repeat for more.")
 	flag.Parse()
 
-	if err := run(*address, *key, *store, uint32(*maxFrame), *generate); err != nil {
+	if err := run(*address, *key, *store, uint32(*maxFrame), *generate, *transit, peers); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(address, key, storeDir string, maxFrame uint32, generate bool) error {
+// peerList reads one --peer flag for each partner.
+type peerList []relay.Peer
+
+func (p *peerList) String() string { return "" }
+
+// Set reads "<public key hex>@host:port".
+func (p *peerList) Set(value string) error {
+	key, address, found := strings.Cut(value, "@")
+	if !found || address == "" {
+		return errors.New("a peer reads as <public key hex>@host:port")
+	}
+
+	raw, err := hex.DecodeString(strings.ToLower(key))
+	if err != nil || len(raw) != 32 {
+		return errors.New("a peer key holds 64 characters of hex")
+	}
+
+	*p = append(*p, relay.Peer{PublicKey: raw, Address: address})
+	return nil
+}
+
+func run(address, key, storeDir string, maxFrame uint32, generate, transit bool, peers []relay.Peer) error {
 	keys, err := openStore(storeDir)
 	if err != nil {
 		return err
@@ -56,6 +84,8 @@ func run(address, key, storeDir string, maxFrame uint32, generate bool) error {
 		Address:       address,
 		MaxFrameBytes: maxFrame,
 		Version:       version,
+		Peers:         peers,
+		Transit:       transit,
 		Log:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	})
 	if err != nil {
