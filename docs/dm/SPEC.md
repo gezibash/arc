@@ -229,7 +229,7 @@ Push delivery is not in Phase 1, see section 14.
 
 ## 12. Runtime
 
-- Language: Elixir. The bundle at `go/cmd/dm-provider` is a small Mix project with
+- Language: Go. The bundle at `go/cmd/dm-provider` holds the source, the manifest and the Arcfile, with
   the same `Arcfile`, `manifest.json`, and `run.sh` shape as the journal.
 - The stdio loop runs in the main process. There is no background job in
   Phase 1.

@@ -1,17 +1,21 @@
 # ARC in Go
 
-Status: phases 1 to 4, 6 and the providers of phase 7 are done. ARC runs end to end in Go. The code is in `go/`. This plan describes a port of
-ARC from Elixir to Go, as packages that other people import.
+Status: the port is done, except the host service and the TCP hole punch. ARC
+runs end to end in Go, and Go now holds the root of the repository. The Elixir
+tree moved to `elixir/`. It serves nothing. It proves the port, and then it
+goes. This plan describes the port from Elixir to Go, as packages that other
+people import.
 
 ```bash
-mise run go.test    # the Go tests
-mise run go.lint    # gofmt and go vet
-mise run vectors    # write the shared vectors again
-mise run go.conformance   # the Go client against an Elixir relay
-mise run go.provider      # the Go provider under the Elixir runtime
-mise run go.relay         # Elixir clients against the Go relay
-mise run go.cli           # the whole stack in Go: relay, citizen, provider, caller
-mise run go.federation    # a Go relay federating with an Elixir relay
+mise run test               # the tests
+mise run lint               # gofmt and go vet
+mise run cli                # the whole stack in Go: relay, citizen, provider, caller
+
+mise run vectors            # write the shared vectors again
+mise run proof.client       # the Go client against an Elixir relay
+mise run proof.provider     # the Go provider under the Elixir runtime
+mise run proof.relay        # Elixir clients against the Go relay
+mise run proof.federation   # a Go relay federating with an Elixir relay
 ```
 
 ## 1. Purpose
@@ -55,7 +59,7 @@ therefore about 45000 lines, with about 25000 lines of tests.
 
 - **The hot upgrade of a running relay.** BEAM replaces code under live
   connections. Go does not. A relay restarts, and its clients reconnect. The
-  update engine in `apps/arc_cli/lib/arc/cli/update` becomes a smaller
+  update engine in `elixir/elixir/apps/arc_cli/lib/arc/cli/update` becomes a smaller
   program: download, verify, replace the binary, restart.
 - **Live introspection of a running node.** A relay operator reads logs and
   metrics instead of a remote shell.
@@ -178,12 +182,12 @@ The vectors live in `test/vectors/*.json`. Both implementations read them. A
 change to a vector is a change to the protocol, and needs a version.
 
 `scripts/write-vectors.exs` writes the file from the Elixir code. The Go suite
-reads it in `go/internal/vectors`. The Elixir suite reads it in
-`apps/arc_data/test/arc/data/vectors_test.exs`. The file holds one identity set,
+reads it in `internal/vectors`. The Elixir suite reads it in
+`elixir/apps/arc_data/test/arc/data/vectors_test.exs`. The file holds one identity set,
 the key derivations, one sealed box, and one session with one packet of that
 session.
 
-The module path is `github.com/gezibash/arc/go`, because the Elixir code holds
+The module path is `github.com/gezibash/arc`, because the Elixir code holds
 the root of the repository.
 
 ## 6. Order of work

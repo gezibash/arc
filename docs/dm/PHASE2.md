@@ -289,7 +289,7 @@ impossible.
 **Now.** An exec provider replies on stdout with `reply` or `error` lines
 tied to a request id. `Arc.Data.Agent` can emit an event to any peer
 (C5), but only from an in-VM handler. The exec handler
-(`apps/arc_data/lib/arc/data/handler/exec.ex`) has no stdout op for it.
+(`elixir/apps/arc_data/lib/arc/data/handler/exec.ex`) has no stdout op for it.
 
 **Required.** A new stdout line:
 

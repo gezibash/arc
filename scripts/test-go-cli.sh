@@ -25,7 +25,7 @@ trap cleanup EXIT
 say() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 
-cd "$root/go"
+cd "$root"
 go build -o "$work/arc" ./cmd/arc
 go build -o "$work/arc-relay" ./cmd/arc-relay
 go build -o "$work/exec-provider" ./cmd/exec-provider
@@ -70,7 +70,12 @@ say "the machine holds four identities"
 arc join "$relay_address" --pubkey "$relay_key" > /dev/null
 say "the citizen joined the relay and pinned its key"
 
-arc status | grep -q "state    running" || fail "the relay does not report that it runs"
+# The relay may still be registering the join.
+for _ in $(seq 1 25); do
+  arc status | grep -q "state    running" && break
+  sleep 0.2
+done
+arc status | grep -q "state    running" || fail "the relay does not report that it runs: $(arc status)"
 say "arc status reads the relay"
 
 # The provider grants the caller, and nobody else.
@@ -80,7 +85,7 @@ JSON
 mkdir -p "$work/jobs"
 
 EXEC_CONFIG="$work/exec.json" arc serve \
-  "exec://$work/exec-provider?manifest=$root/go/cmd/exec-provider/manifest.json" \
+  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \
   > "$work/serve.log" 2>"$work/serve.err" &
 serve_pid=$!
 
@@ -134,7 +139,7 @@ say "a citizen without a grant is refused"
 caller keys gen > /dev/null 2>&1 || true
 
 EXEC_CONFIG="$work/exec.json" arc --key "$echo_name" serve \
-  "exec://$work/echo-provider?manifest=$root/go/citizen/testdata/echo/cli-manifest.json" \
+  "exec://$work/echo-provider?manifest=$root/citizen/testdata/echo/cli-manifest.json" \
   > "$work/echo.log" 2>"$work/echo.err" &
 echo_pid=$!
 
@@ -211,7 +216,7 @@ dm_name="$(head -1 "$work/dm.txt")"
 dm_key="$(tail -1 "$work/dm.txt")"
 
 DM_ROOT="$work/dm" arc --key "$dm_name" serve \
-  "exec://$work/dm-provider?manifest=$root/go/cmd/dm-provider/manifest.json" \
+  "exec://$work/dm-provider?manifest=$root/cmd/dm-provider/manifest.json" \
   > "$work/dm.log" 2>"$work/dm.err" &
 dm_pid=$!
 

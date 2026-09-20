@@ -21,7 +21,7 @@ work:
 
 **Module:** new `Arc.Identity.SealedBox` in `apps/arc_identity`.
 
-**Now:** `Arc.Data.Session.establish/3` (`apps/arc_data/lib/arc/data/session.ex:35-56`)
+**Now:** `Arc.Data.Session.establish/3` (`elixir/apps/arc_data/lib/arc/data/session.ex:35-56`)
 is the only key agreement. It needs both parties' long-term keys and a live
 session. HKDF and ChaCha20-Poly1305 are inlined there. No `seal`, `open`,
 or `box` symbol exists anywhere in `apps/` or `providers/`.
@@ -66,7 +66,7 @@ mirror the style of `session_test.exs`):
 
 ## C2. Publish and resolve the X25519 key
 
-**Module:** `Arc.CLI.Control` (`apps/arc_cli/lib/arc/cli/control.ex`),
+**Module:** `Arc.CLI.Control` (`elixir/apps/arc_cli/lib/arc/cli/control.ex`),
 `Arc.Control.Local` (`apps/arc_control/lib/arc/control/local.ex`).
 
 **Now:**
@@ -95,14 +95,14 @@ mirror the style of `session_test.exs`):
 
 - `apps/arc_control/test/arc/control_test.exs`: publish, publish_keyex,
   publish again, resolve still returns the keyex.
-- `apps/arc_cli/test/arc/cli_test.exs`: `arc publish` output contains
+- `elixir/apps/arc_cli/test/arc/cli_test.exs`: `arc publish` output contains
   `keyex: published`; `arc resolve` output contains the hex key.
 
 ## C3. Template filters that need the network and the identity
 
-**Module:** `Arc.Data.Toolbox` (`apps/arc_data/lib/arc/data/toolbox.ex`),
-`Arc.CLI.Tools` (`apps/arc_cli/lib/arc/cli/tools.ex`),
-`Arc.Data.InterfaceManifest` (`apps/arc_data/lib/arc/data/interface_manifest.ex`).
+**Module:** `Arc.Data.Toolbox` (`elixir/apps/arc_data/lib/arc/data/toolbox.ex`),
+`Arc.CLI.Tools` (`elixir/apps/arc_cli/lib/arc/cli/tools.ex`),
+`Arc.Data.InterfaceManifest` (`elixir/apps/arc_data/lib/arc/data/interface_manifest.ex`).
 
 **Now:**
 
@@ -250,7 +250,7 @@ no `version` command (`cli.ex:61-77`).
   entry lists C1 to C7 and the DM provider.
 - Add `arc version`. It prints `arc <umbrella version> (<git short sha>)`.
   The escript embeds the sha at build time with a `mix escript.build`
-  alias in `apps/arc_cli/mix.exs`. If the sha is unavailable, print
+  alias in `elixir/apps/arc_cli/mix.exs`. If the sha is unavailable, print
   `unknown`.
 - Add `version` to `@bare_commands` and to the help text.
 
