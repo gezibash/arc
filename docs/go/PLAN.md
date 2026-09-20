@@ -1,7 +1,13 @@
 # ARC in Go
 
-Status: proposed. No Go code exists. This plan describes a port of ARC from
-Elixir to Go, as packages that other people import.
+Status: phase 1 is done. The code is in `go/`. This plan describes a port of
+ARC from Elixir to Go, as packages that other people import.
+
+```bash
+mise run go.test    # the Go tests
+mise run go.lint    # gofmt and go vet
+mise run vectors    # write the shared vectors again
+```
 
 ## 1. Purpose
 
@@ -153,11 +159,20 @@ Shared test vectors hold the parts that must not drift:
 The vectors live in `test/vectors/*.json`. Both implementations read them. A
 change to a vector is a change to the protocol, and needs a version.
 
+`scripts/write-vectors.exs` writes the file from the Elixir code. The Go suite
+reads it in `go/internal/vectors`. The Elixir suite reads it in
+`apps/arc_data/test/arc/data/vectors_test.exs`. The file holds one identity set,
+the key derivations, one sealed box, and one session with one packet of that
+session.
+
+The module path is `github.com/gezibash/arc/go`, because the Elixir code holds
+the root of the repository.
+
 ## 6. Order of work
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
-| 1 | `identity`, `sealedbox`, `session`, `packet` | The shared vectors pass. |
+| 1 | `identity`, `sealedbox`, `session`, `packet` | Done. The shared vectors pass. |
 | 2 | `client`: connect, announce, discover, request | A Go client talks to the Elixir relay. |
 | 3 | `provider`, and the exec provider | The Elixir `arc serve` runs the Go provider. |
 | 4 | `relay`: sessions, directory, routes | An Elixir client talks to the Go relay. |

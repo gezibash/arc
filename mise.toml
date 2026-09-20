@@ -1,6 +1,7 @@
 [tools]
 erlang = "28"
 elixir = "1.19.5-otp-28"
+go = "1.27.1"
 
 [env]
 _.path = ["bin"]
@@ -64,6 +65,21 @@ run = "mix escript.build"
 description = "Build the prod release (bundled runtime) into _build/prod/rel/arc_runtime"
 run = "mix release arc_runtime --overwrite"
 env = { MIX_ENV = "prod" }
+
+[tasks."go.test"]
+description = "Run the Go tests"
+dir = "go"
+run = "go test ./..."
+raw = true
+
+[tasks."go.lint"]
+description = "Format check and vet the Go packages"
+dir = "go"
+run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
+
+[tasks.vectors]
+description = "Write the shared protocol vectors that both implementations read"
+run = "mix run --no-start scripts/write-vectors.exs"
 
 [tasks.clean]
 description = "Clean build artifacts"
