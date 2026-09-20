@@ -6,6 +6,7 @@
 package vectors
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -53,13 +54,21 @@ type Session struct {
 	Packet          string `json:"packet"`
 }
 
+// Announcement holds one signed announcement and the time to check it at.
+type Announcement struct {
+	SignerSeed string         `json:"signer_seed"`
+	Now        int64          `json:"now"`
+	Record     map[string]any `json:"record"`
+}
+
 // File holds every vector of one version.
 type File struct {
-	Version    int        `json:"version"`
-	Identities []Identity `json:"identities"`
-	HKDF       []HKDF     `json:"hkdf"`
-	SealedBox  SealedBox  `json:"sealed_box"`
-	Session    Session    `json:"session"`
+	Version      int          `json:"version"`
+	Identities   []Identity   `json:"identities"`
+	HKDF         []HKDF       `json:"hkdf"`
+	SealedBox    SealedBox    `json:"sealed_box"`
+	Session      Session      `json:"session"`
+	Announcement Announcement `json:"announcement"`
 }
 
 // Load reads the vectors. It fails the test when the file is missing, because
@@ -73,8 +82,13 @@ func Load(t *testing.T) File {
 		t.Fatalf("read vectors: %v. Run: mix run --no-start scripts/write-vectors.exs", err)
 	}
 
+	// The numbers of a record keep their digits, because a signature covers
+	// the canonical form of the record that arrived.
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+
 	var file File
-	if err := json.Unmarshal(data, &file); err != nil {
+	if err := decoder.Decode(&file); err != nil {
 		t.Fatalf("decode vectors: %v", err)
 	}
 	return file

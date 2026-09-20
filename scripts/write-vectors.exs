@@ -5,6 +5,7 @@
 # A change to a vector is a change to the protocol. See docs/go/PLAN.md.
 
 alias Arc.Data.Packet
+alias Arc.Data.RelayAnnouncement
 alias Arc.Data.Session
 alias Arc.Identity
 alias Arc.Identity.HKDF
@@ -63,11 +64,36 @@ responder = recipient
 message = "one packet, two implementations"
 {nonce, ciphertext, seq, _session} = Session.encrypt(session, message)
 timestamp = 1_735_689_600_000
+timestamp_seconds = div(timestamp, 1000)
 
 packet =
   Packet.encode(initiator, responder.public_key, session.session_id, seq, nonce, ciphertext,
     ts: timestamp,
     ek: session.ek_pub
+  )
+
+# An announcement signs the canonical JSON of its own record. A different
+# canonical form gives a different signature, so this record pins the encoder
+# of every implementation.
+announcement =
+  RelayAnnouncement.create(
+    initiator,
+    [
+      %{
+        "id" => "exec",
+        "kind" => "tool",
+        "scheme" => "exec",
+        "title" => "Run a command",
+        "summary" => "Runs one command, and returns the output.",
+        "invocation_mode" => "request",
+        "release_version" => "0.6.0",
+        "channel" => "stable",
+        "detail_path" => "/capabilities/exec"
+      },
+      %{"id" => "dm"}
+    ],
+    now: timestamp_seconds,
+    ttl: 180
   )
 
 vectors = %{
@@ -79,6 +105,11 @@ vectors = %{
     "recipient_seed" => hd(seeds),
     "plaintext" => plaintext,
     "sealed" => Base.encode16(sealed, case: :lower)
+  },
+  "announcement" => %{
+    "signer_seed" => Enum.at(seeds, 3),
+    "now" => timestamp_seconds,
+    "record" => announcement
   },
   "session" => %{
     "version" => 2,

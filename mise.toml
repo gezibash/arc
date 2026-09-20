@@ -77,6 +77,11 @@ description = "Format check and vet the Go packages"
 dir = "go"
 run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
 
+[tasks."go.conformance"]
+description = "Run the Go client against an Elixir relay"
+run = "mix run scripts/test-go-client.exs"
+raw = true
+
 [tasks.vectors]
 description = "Write the shared protocol vectors that both implementations read"
 run = "mix run --no-start scripts/write-vectors.exs"

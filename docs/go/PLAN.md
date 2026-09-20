@@ -1,12 +1,13 @@
 # ARC in Go
 
-Status: phase 1 is done. The code is in `go/`. This plan describes a port of
+Status: phases 1 and 2 are done. The code is in `go/`. This plan describes a port of
 ARC from Elixir to Go, as packages that other people import.
 
 ```bash
 mise run go.test    # the Go tests
 mise run go.lint    # gofmt and go vet
 mise run vectors    # write the shared vectors again
+mise run go.conformance   # the Go client against an Elixir relay
 ```
 
 ## 1. Purpose
@@ -69,6 +70,8 @@ The module is `github.com/gezibash/arc`. Each package holds one concept.
 | Package | Contents | Public? |
 | --- | --- | --- |
 | `identity` | Seeds, Ed25519 keys, the X25519 conversion, petnames, the key store | Yes |
+| `announce` | The signed announcement that a relay directory holds | Yes |
+| `frame` | The request and response frame of the handler protocol | Yes |
 | `sealedbox` | Seal to a public key, open with an identity | Yes |
 | `session` | The version 2 session, its ephemeral key, and its packet key | Yes |
 | `packet` | Framing, the header, the sequence, and the replay guard | Yes |
@@ -77,7 +80,8 @@ The module is `github.com/gezibash/arc`. Each package holds one concept.
 | `client` | Connect to a relay, announce, discover, request, listen | Yes |
 | `provider` | The provider runtime, the interface, the configuration helpers, and jobs | Yes |
 | `relay` | The relay server, its directory, and federation | Yes |
-| `internal/wire` | Shared encoding that no other module needs | No |
+| `internal/wire` | The relay framing and the handshake | No |
+| `internal/canonical` | The deterministic JSON that a signature covers | No |
 
 Binaries live under `cmd`:
 
@@ -173,7 +177,7 @@ the root of the repository.
 | Phase | Scope | Proof |
 | --- | --- | --- |
 | 1 | `identity`, `sealedbox`, `session`, `packet` | Done. The shared vectors pass. |
-| 2 | `client`: connect, announce, discover, request | A Go client talks to the Elixir relay. |
+| 2 | `client`: connect, announce, discover, request | Done. A Go client talks to the Elixir relay. |
 | 3 | `provider`, and the exec provider | The Elixir `arc serve` runs the Go provider. |
 | 4 | `relay`: sessions, directory, routes | An Elixir client talks to the Go relay. |
 | 5 | Federation, direct connections | Two Go relays federate. The Elixir relay federates with a Go relay. |
