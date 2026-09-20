@@ -206,8 +206,8 @@ merge.
 | --- | --- |
 | The protocol changes during the port. | Freeze the wire format first. Land protocol changes in Elixir, then port them. |
 | A panic stops a relay. | Every goroutine that serves a connection recovers and logs. One connection never stops the process. |
-| The SQLite provider needs the authorizer with its arguments. | `mattn/go-sqlite3` gives the full callback, and needs cgo. A pure Go driver removes cgo. Its support for the authorizer is unknown. Check before phase 7. |
-| cgo breaks the static binary. | Keep cgo out of `cmd/arc` and the relay. Only the SQLite provider needs it. |
+| The SQLite provider needs the authorizer with its arguments. | Answered. `zombiezen.com/go/sqlite` is pure Go and gives a typed authorizer. It does not name the function of an OpFunction action, so the provider leans on SQLite itself, which refuses to load an extension. A test proves it. |
+| cgo breaks the static binary. | Answered. No package of the port needs cgo, the SQLite provider included. |
 | The port stalls half finished. | Each phase ships a binary that does one job. A stall leaves working parts, not a broken tree. |
 
 ## 9. Open questions
