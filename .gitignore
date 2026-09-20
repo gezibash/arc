@@ -1,36 +1,14 @@
 # What the Go build writes.
 /bin/
 
-# The directory Mix will write compiled artifacts to.
-/elixir/_build/
-
-# If you run "mix test --cover", coverage assets end up here.
-/elixir/cover/
-
-# The directory Mix downloads your dependencies sources to.
-/elixir/deps/
-
-# Where third-party dependencies like ExDoc output generated docs.
-/elixir/doc/
-
 # Temporary files, for example, from tests.
 /tmp/
 
 # Machine-local Docker Compose settings.
 /.env
 
-# If the VM crashes, it generates a dump, let's ignore it too.
-erl_crash.dump
-
-# Also ignore archive artifacts (built via "mix archive.build").
-*.ez
-
 # Identity keyrings (contain secrets)
 .arc/
-
-# The Elixir escript.
-/elixir/apps/arc_cli/arc
-/elixir/apps/arc_cli/arc_cli
 
 # Project skills are tracked even though the global ignore hides .claude/
 !.claude/

@@ -1,12 +1,8 @@
 [tools]
 go = "1.27.1"
-erlang = "28"
-elixir = "1.19.5-otp-28"
 
 [env]
 _.path = ["bin"]
-
-# Go is the implementation. These tasks build, test and run it.
 
 [tasks.build]
 description = "Build every command into bin/"
@@ -33,69 +29,3 @@ depends = ["lint", "test"]
 description = "Run the whole of ARC in Go: relay, citizen, provider, caller"
 run = "bash scripts/test-go-cli.sh"
 raw = true
-
-# The proofs. Each one runs the Go implementation against the Elixir one,
-# which stays in elixir/ for that purpose only.
-
-[tasks."proof.client"]
-description = "Run the Go client against an Elixir relay"
-dir = "elixir"
-run = "mix run scripts/test-go-client.exs"
-raw = true
-
-[tasks."proof.provider"]
-description = "Run the Go exec provider under the Elixir runtime"
-dir = "elixir"
-run = "mix run scripts/test-go-provider.exs"
-raw = true
-
-[tasks."proof.relay"]
-description = "Run Elixir clients against the Go relay"
-dir = "elixir"
-run = "mix run scripts/test-go-relay.exs"
-raw = true
-
-[tasks."proof.federation"]
-description = "Federate a Go relay with an Elixir relay"
-dir = "elixir"
-run = "mix run scripts/test-go-federation.exs"
-raw = true
-
-[tasks.vectors]
-description = "Write the shared protocol vectors that both implementations read"
-dir = "elixir"
-run = "mix run --no-start scripts/write-vectors.exs"
-
-# The Elixir tree. It serves nothing. It proves the port, and then it goes.
-
-[tasks."elixir.deps"]
-description = "Fetch the Elixir dependencies"
-dir = "elixir"
-run = "mix deps.get"
-
-[tasks."elixir.compile"]
-description = "Compile the Elixir apps"
-dir = "elixir"
-run = "mix compile"
-
-[tasks."elixir.test"]
-description = "Run the Elixir tests"
-dir = "elixir"
-run = "mix test"
-raw = true
-
-[tasks."elixir.check"]
-description = "Lint, audit, dialyzer and test the Elixir tree"
-dir = "elixir"
-run = "mix check"
-
-[tasks."elixir.arc"]
-description = "Run the Elixir arc CLI"
-dir = "elixir"
-run = "mix run --no-start -e \"Arc.CLI.main(System.argv())\" --"
-raw = true
-
-[tasks."elixir.iex"]
-description = "Start the Elixir shell"
-dir = "elixir"
-run = "iex -S mix"

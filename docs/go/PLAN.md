@@ -1,21 +1,14 @@
 # ARC in Go
 
 Status: the port is done, except the host service and the TCP hole punch. ARC
-runs end to end in Go, and Go now holds the root of the repository. The Elixir
-tree moved to `elixir/`. It serves nothing. It proves the port, and then it
-goes. This plan describes the port from Elixir to Go, as packages that other
-people import.
+runs end to end in Go. Go holds the repository, and the Elixir tree is gone.
+This plan records the port, and section 5 records the proofs that it passed.
 
 ```bash
-mise run test               # the tests
-mise run lint               # gofmt and go vet
-mise run cli                # the whole stack in Go: relay, citizen, provider, caller
-
-mise run vectors            # write the shared vectors again
-mise run proof.client       # the Go client against an Elixir relay
-mise run proof.provider     # the Go provider under the Elixir runtime
-mise run proof.relay        # Elixir clients against the Go relay
-mise run proof.federation   # a Go relay federating with an Elixir relay
+mise run test    # the tests
+mise run lint    # gofmt and go vet
+mise run build   # every command into bin/
+mise run cli     # the whole stack: relay, citizen, provider, caller
 ```
 
 ## 1. Purpose
@@ -59,7 +52,7 @@ therefore about 45000 lines, with about 25000 lines of tests.
 
 - **The hot upgrade of a running relay.** BEAM replaces code under live
   connections. Go does not. A relay restarts, and its clients reconnect. The
-  update engine in `elixir/elixir/apps/arc_cli/lib/arc/cli/update` becomes a smaller
+  update engine in `arc_cli/lib/arc/cli/update` of the Elixir tree becomes a smaller
   program: download, verify, replace the binary, restart.
 - **Live introspection of a running node.** A relay operator reads logs and
   metrics instead of a remote shell.
@@ -159,17 +152,21 @@ func (c *Client) Discover(ctx context.Context, query string) ([]capability.Summa
 
 ## 5. Two implementations, one protocol
 
-The Elixir code keeps running while the Go code grows. The wire format is the
-contract between them.
+The Elixir code ran beside the Go code for the whole port. The wire format
+was the contract between them. A harness ran both directions at each step,
+and every check passed at commit `2204d44`, which is the last commit that
+held both implementations:
 
-A conformance harness runs both directions for each step:
-
-| Check | Meaning |
+| Check | Result |
 | --- | --- |
-| Go client, Elixir relay | The Go packets and announcements are valid. |
-| Elixir client, Go relay | The Go relay answers the packets of today. |
-| Go provider, Elixir `arc serve` | The provider protocol matches. |
-| Go client, Go relay | The Go code is complete on its own. |
+| Go client, Elixir relay | Passed. The Go packets and announcements are valid. |
+| Elixir clients, Go relay | Passed. The Go relay answers the packets of today. |
+| Go provider, Elixir `arc serve` | Passed. The provider protocol matches. |
+| Go relay, Elixir relay, federated | Passed. A Go client reached an Elixir citizen across two relays. |
+| Go client, Go relay | Passed. `mise run cli`, which still runs. |
+
+The Elixir tree went at the commit after that one. Only `mise run cli`
+remains, because it needs nothing else.
 
 Shared test vectors hold the parts that must not drift:
 
@@ -178,17 +175,12 @@ Shared test vectors hold the parts that must not drift:
 - A signed relay announcement, and its canonical bytes.
 - A capability package, and its hash.
 
-The vectors live in `test/vectors/*.json`. Both implementations read them. A
-change to a vector is a change to the protocol, and needs a version.
+The vectors live in `test/vectors/identity.json`. The Elixir implementation
+wrote that file, and Go reads it in `internal/vectors`. Nothing generates it
+now, so it is a fixture. A change to a vector is a change to the protocol,
+and needs a version. See `test/vectors/README.md`.
 
-`scripts/write-vectors.exs` writes the file from the Elixir code. The Go suite
-reads it in `internal/vectors`. The Elixir suite reads it in
-`elixir/apps/arc_data/test/arc/data/vectors_test.exs`. The file holds one identity set,
-the key derivations, one sealed box, and one session with one packet of that
-session.
-
-The module path is `github.com/gezibash/arc`, because the Elixir code holds
-the root of the repository.
+The module path is `github.com/gezibash/arc`.
 
 ## 6. Order of work
 
