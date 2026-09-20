@@ -61,6 +61,15 @@ type Announcement struct {
 	Record     map[string]any `json:"record"`
 }
 
+// Package holds one capability package, and the signature of it.
+type Package struct {
+	Path        string         `json:"path"`
+	SignerSeed  string         `json:"signer_seed"`
+	PackageHash string         `json:"package_hash"`
+	Signature   string         `json:"signature"`
+	Signed      map[string]any `json:"signed"`
+}
+
 // File holds every vector of one version.
 type File struct {
 	Version      int          `json:"version"`
@@ -69,6 +78,7 @@ type File struct {
 	SealedBox    SealedBox    `json:"sealed_box"`
 	Session      Session      `json:"session"`
 	Announcement Announcement `json:"announcement"`
+	Packages     []Package    `json:"packages"`
 }
 
 // Load reads the vectors. It fails the test when the file is missing, because

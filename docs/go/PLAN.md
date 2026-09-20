@@ -1,6 +1,6 @@
 # ARC in Go
 
-Status: phases 1 to 4 are done. The code is in `go/`. This plan describes a port of
+Status: phases 1 to 4 and 6 are done. ARC runs end to end in Go. The code is in `go/`. This plan describes a port of
 ARC from Elixir to Go, as packages that other people import.
 
 ```bash
@@ -10,6 +10,7 @@ mise run vectors    # write the shared vectors again
 mise run go.conformance   # the Go client against an Elixir relay
 mise run go.provider      # the Go provider under the Elixir runtime
 mise run go.relay         # Elixir clients against the Go relay
+mise run go.cli           # the whole stack in Go: relay, citizen, provider, caller
 ```
 
 ## 1. Purpose
@@ -77,7 +78,9 @@ The module is `github.com/gezibash/arc`. Each package holds one concept.
 | `sealedbox` | Seal to a public key, open with an identity | Yes |
 | `session` | The version 2 session, its ephemeral key, and its packet key | Yes |
 | `packet` | Framing, the header, the sequence, and the replay guard | Yes |
-| `capability` | The manifest, the signed capability package, and grants | Yes |
+| `capability` | The manifest, the signed capability package, and its interfaces | Yes |
+| `citizen` | The serving citizen: the provider process, the sessions, and the manifest | Yes |
+| `relays` | The pinned relay of this machine | Yes |
 | `control` | The local control plane: publish, resolve, revoke | Yes |
 | `client` | Connect to a relay, announce, discover, request, listen | Yes |
 | `provider` | The provider runtime, the interface, the configuration helpers, and jobs | Yes |
@@ -89,7 +92,7 @@ Binaries live under `cmd`:
 
 | Binary | Purpose |
 | --- | --- |
-| `cmd/arc` | The command line tool |
+| `cmd/arc` | The command line tool. keys, join, status, serve, call, discover, resolve. |
 | `cmd/arc-relay` | A relay, for a server or a container. Done. |
 | `cmd/exec-provider` | The exec provider |
 | `cmd/dm-provider` | The DM provider |

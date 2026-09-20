@@ -92,6 +92,11 @@ description = "Run Elixir clients against the Go relay"
 run = "mix run scripts/test-go-relay.exs"
 raw = true
 
+[tasks."go.cli"]
+description = "Run the whole of ARC in Go: relay, citizen, provider, caller"
+run = "bash scripts/test-go-cli.sh"
+raw = true
+
 [tasks.vectors]
 description = "Write the shared protocol vectors that both implementations read"
 run = "mix run --no-start scripts/write-vectors.exs"
