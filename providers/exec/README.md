@@ -23,6 +23,7 @@ that user.
 | `citizen/citizen-up` | The start script. The caller runs it to wake the citizen. |
 | `citizen/serve` | Runs `arc serve` for this bundle as a plain process. |
 | `citizen/lease` | Holds the machine awake. One case for each platform. |
+| `citizen/notify-dm` | Sends the result of a finished job to its owner as a direct message. |
 | `arc-exec` | The caller wrapper. It wakes the citizen, then sends the request. |
 
 ## Requirements
@@ -65,6 +66,13 @@ Do these steps on the citizen machine.
 
    Use `--platform sprite` on a Fly.io Sprite. Use `--platform none` on a
    machine that never pauses. The script prints the public key of the citizen.
+
+   Add `--notify-dm` to send the result of each finished job to its owner as
+   a direct message. Install the DM tool on the citizen first:
+
+   ```sh
+   arc install <dm-provider-public-key> primary --trust
+   ```
 
 5. Start the citizen one time to test the configuration:
 
@@ -158,6 +166,7 @@ arc request 'exec+arc://<citizen-public-key>/' --body '{"argv":["uname","-a"]}'
 | `limits.timeout_ms` | Time limit for `run`. Default 60 seconds. Maximum 115 seconds. |
 | `limits.job_timeout_ms` | Time limit for a job. Default 1 hour. Maximum 24 hours. |
 | `lease` | The `hold` and `release` commands, and `interval_ms`. `init` writes it for a platform that pauses. |
+| `notify` | The `argv` of a command that runs when a job ends, and an optional `timeout_ms`. `{owner}` becomes the caller key. The result goes to standard input. |
 | `jobs_dir` | The directory for job output. Default `~/.arc/exec/jobs`. |
 
 The provider does not start if the configuration is not valid.
@@ -174,7 +183,5 @@ mise exec -- python -m unittest discover -s tests -v
 
 - The provider does not delete old jobs. Delete old directories in
   `jobs_dir` by hand.
-- The job result does not go to a mailbox yet. The caller reads it with
-  `--status`.
 - The provider sees every command and all output. It is not a private-compute
   boundary.

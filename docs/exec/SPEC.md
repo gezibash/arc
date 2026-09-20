@@ -2,7 +2,7 @@
 
 Status: proposed. Phases 1 and 3a of section 18 exist in `providers/exec`:
 the provider (section 8), the start script (section 10.4), the lease
-(section 11), jobs (sections 12.1 and 12.2), and the wrapper `arc-exec`. The
+(section 11), jobs (sections 12.1 to 12.3), and the wrapper `arc-exec`. The
 other sections describe work that does not exist yet.
 
 ## 1. Purpose
@@ -404,16 +404,54 @@ The `status` reply is UTF-8 JSON:
   default is `~/.arc/exec/jobs`. The provider does not delete old jobs.
 - The wake flow of section 10.2 applies to `start` and to `status`.
 
-### 12.3 Result in the mailbox (not implemented)
+### 12.3 Result to the caller
 
-1. When the job ends, the provider sends a sealed DM to the caller's mailbox.
-   The DM holds the job ID, the exit code, and the end of the output.
-2. The provider sends the DM first. Then it releases the lease.
-3. The caller reads the mailbox when it is active. The caller does not need
-   to be online when the job ends.
+When a job ends, the provider runs the notify command of the operator. The
+operator adds a `notify` object to `EXEC_CONFIG`:
 
-The mailbox provider runs on a long-running server. The relay does not
-store the result.
+```json
+{
+  "notify": {
+    "argv": ["/home/sprite/exec-provider/citizen/notify-dm", "{owner}"],
+    "timeout_ms": 30000
+  }
+}
+```
+
+Rules:
+
+- If the configuration has no `notify` object, the provider runs no command.
+- In `argv`, the provider replaces `{owner}` with the public key of the
+  caller that started the job.
+- The provider writes the `status` reply of the job to the standard input of
+  the command.
+- The provider runs the command before it releases the lease. The machine
+  stays awake until the caller has the result.
+- If the command fails, the provider writes the error to its log. The state
+  of the job does not change.
+- The default timeout is 30 seconds. The maximum is 300 seconds.
+
+### 12.4 Result in the mailbox
+
+The script `citizen/notify-dm` sends the result to the mailbox of the caller:
+
+```sh
+arc dm send <owner-public-key>
+```
+
+The DM body is the `status` reply of the job. The DM is sealed to the key of
+the caller before it leaves the machine.
+
+Requirements:
+
+- The mailbox provider runs on a long-running server. The relay does not
+  store the result.
+- The citizen installs the DM tool one time:
+  `arc install <dm-provider-public-key> primary --trust`.
+- `citizen/init --notify-dm` writes the `notify` object for this script.
+
+The caller reads the mailbox when it is active. The caller does not need to
+be online when the job ends.
 
 ## 13. SSH access to a machine that pauses
 
@@ -530,7 +568,7 @@ token_env = "SPRITES_TOKEN"
 | 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `providers/exec/citizen/`, the `lease` object, and `providers/exec/arc-exec`. |
 | 2 | Wake hooks and the `asleep` state in `arc request`. |
 | 3a | Asynchronous jobs: `start`, `status`, and `arc-exec --start`, `--status`, `--wait`. Done. |
-| 3b | The job result in the mailbox (section 12.3). |
+| 3b | The notify command (section 12.3) and the DM script (section 12.4). |
 | 4 | Wake URL and signed dormant records on the relay. |
 
 ## 19. Verified

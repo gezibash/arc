@@ -192,6 +192,67 @@ class ExecProviderTest(unittest.TestCase):
         self.assertEqual("internal_error", self.error(ALICE, {"action": "start", "argv": ["definitely-not-a-command"]}, lease=lease))
         self.assertEqual(["hold", "release"], calls)
 
+    def test_notify_receives_the_result_when_a_job_ends(self):
+        sink = self.root / "notified.json"
+        self.write_config({
+            "grants": [ALICE],
+            "cwd": str(self.root),
+            "jobs_dir": str(self.root / "jobs"),
+            "notify": {"argv": ["bash", "-c", f'{{ echo "$1"; cat; }} > {sink}', "notify", "{owner}"]},
+        })
+        job = self.reply({"action": "start", "script": "echo hello; exit 2"})["job"]
+        self.wait_for_job(job)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not sink.exists():
+            time.sleep(0.05)
+        owner, body = sink.read_text().split("\n", 1)
+        self.assertEqual(ALICE, owner, "{owner} in argv becomes the caller key")
+        result = json.loads(body)
+        self.assertEqual((job, "done", 2, "hello\n"), (result["job"], result["state"], result["exit"], result["stdout"]))
+
+    def test_notify_runs_before_the_lease_ends(self):
+        calls = []
+        lease = provider.Lease(provider.LeaseConfig(["hold"], ["release"], 60_000), run=lambda argv: calls.append(argv[0]))
+        self.write_config({
+            "grants": [ALICE],
+            "cwd": str(self.root),
+            "jobs_dir": str(self.root / "jobs"),
+            "notify": {"argv": ["bash", "-c", "cat > /dev/null; echo notify >> " + str(self.root / "order")]},
+        })
+        job = self.reply({"action": "start", "argv": ["true"]}, lease=lease)["job"]
+        self.wait_for_job(job)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and calls[-1] != "release":
+            time.sleep(0.05)
+        self.assertEqual("notify\n", (self.root / "order").read_text())
+        self.assertEqual(["hold", "release"], calls)
+
+    def test_notify_failure_is_logged_not_raised(self):
+        self.write_config({
+            "grants": [ALICE],
+            "cwd": str(self.root),
+            "jobs_dir": str(self.root / "jobs"),
+            "notify": {"argv": ["definitely-not-a-command"]},
+        })
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            job = self.reply({"action": "start", "argv": ["true"]})["job"]
+            status = self.wait_for_job(job)
+            time.sleep(0.2)
+        self.assertEqual("done", status["state"])
+        self.assertIn("notify failed for job", stderr.getvalue())
+
+    def test_notify_config_is_validated(self):
+        base = {"grants": [ALICE], "cwd": str(self.root)}
+        cases = [
+            {"notify": {"timeout_ms": 5_000}},
+            {"notify": {"argv": []}},
+            {"notify": {"argv": ["true"], "timeout_ms": 999}},
+            {"notify": {"argv": ["true"], "surprise": 1}},
+        ]
+        for bad in cases:
+            with self.subTest(notify=bad), self.assertRaises(provider.ProviderError):
+                self.write_config(dict(base, **bad))
+
     def test_unknown_action_is_rejected(self):
         self.assertEqual("action must be run, start, or status", self.error(ALICE, {"action": "kill", "argv": ["true"]}))
 

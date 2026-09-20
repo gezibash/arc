@@ -1,0 +1,17 @@
+#!/bin/sh
+# Send the result of a finished job to its owner as an ARC direct message.
+# The provider runs this script with the owner key as the argument and the
+# result of the job on standard input. See docs/exec/SPEC.md, section 12.3.
+#
+# The citizen must have the DM tool installed:
+#   arc install <dm-provider-public-key> primary --trust
+set -eu
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+set -a
+. "$here/citizen.env"
+set +a
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
+owner=${1:?usage: notify-dm <owner-public-key>}
+exec arc dm send "$owner"

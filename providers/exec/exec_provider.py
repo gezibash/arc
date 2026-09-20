@@ -10,6 +10,10 @@ The body field ``action`` selects the operation:
   run     run the command and reply with its result (the default)
   start   start the command as a job and reply with its ID at once
   status  reply with the state and the output of one job
+
+When a job ends, the provider runs the operator's notify command, if the
+configuration has one. The result of the job goes to its standard input. This
+sends the result to the caller, for example as an ARC direct message.
 """
 
 from __future__ import annotations
@@ -69,11 +73,18 @@ class LeaseConfig:
 
 
 @dataclass(frozen=True)
+class NotifyConfig:
+    argv: list[str]
+    timeout_ms: int
+
+
+@dataclass(frozen=True)
 class Config:
     grants: frozenset[str]
     cwd: Path
     limits: dict[str, int]
     lease: LeaseConfig | None = None
+    notify: NotifyConfig | None = None
     jobs_dir: Path = Path.home() / ".arc" / "exec" / "jobs"
 
 
@@ -95,7 +106,7 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         raise ProviderError("EXEC_CONFIG is not valid JSON") from None
-    if not isinstance(data, dict) or set(data) - {"grants", "cwd", "limits", "lease", "jobs_dir"}:
+    if not isinstance(data, dict) or set(data) - {"grants", "cwd", "limits", "lease", "notify", "jobs_dir"}:
         raise ProviderError("EXEC_CONFIG has unknown fields")
 
     grants = data.get("grants")
@@ -126,6 +137,7 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
         cwd=Path(raw_cwd),
         limits=limits,
         lease=parse_lease(data.get("lease")),
+        notify=parse_notify(data.get("notify")),
         jobs_dir=Path(raw_jobs),
     )
 
@@ -143,6 +155,40 @@ def parse_lease(raw: Any) -> LeaseConfig | None:
     if not isinstance(interval, int) or isinstance(interval, bool) or not 1_000 <= interval <= 3_600_000:
         raise ProviderError("lease.interval_ms must be an integer from 1000 to 3600000")
     return LeaseConfig(hold=raw["hold"], release=raw["release"], interval_ms=interval)
+
+
+def parse_notify(raw: Any) -> NotifyConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"argv", "timeout_ms"} or "argv" not in raw:
+        raise ProviderError("notify must have argv and an optional timeout_ms")
+    argv = raw["argv"]
+    if not isinstance(argv, list) or not argv or not all(isinstance(part, str) for part in argv):
+        raise ProviderError("notify.argv must be a non-empty list of strings")
+    timeout = raw.get("timeout_ms", 30_000)
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1_000 <= timeout <= 300_000:
+        raise ProviderError("notify.timeout_ms must be an integer from 1000 to 300000")
+    return NotifyConfig(argv=argv, timeout_ms=timeout)
+
+
+def run_notify(config: Config, owner: str, result: dict[str, Any]) -> None:
+    """Tell the caller that a job ended. {owner} in argv becomes the caller key."""
+    argv = [part.replace("{owner}", owner) for part in config.notify.argv]
+    body = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    try:
+        finished = subprocess.run(
+            argv,
+            input=body,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=config.notify.timeout_ms / 1000,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"notify failed for job {result['job']}: {error}", file=sys.stderr, flush=True)
+        return
+    if finished.returncode != 0:
+        detail = finished.stderr.decode("utf-8", errors="replace").strip()
+        print(f"notify exited {finished.returncode} for job {result['job']}: {detail}", file=sys.stderr, flush=True)
 
 
 def run_lease_command(argv: list[str]) -> None:
@@ -349,6 +395,10 @@ def start_job(config: Config, caller: str, command: Command, lease: Any) -> dict
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
             write_status(directory, dict(status, state="done", exit=process.returncode, timed_out=timed_out, ended_at=now()))
+            # The notify command runs before the lease ends, so the machine
+            # stays awake until the caller has the result.
+            if config.notify:
+                run_notify(config, caller, job_status(config, caller, job))
 
     threading.Thread(target=wait, daemon=True).start()
     return {"job": job, "state": "running"}
