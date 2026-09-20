@@ -80,8 +80,20 @@ func update(command *cobra.Command, apply bool) error {
 		return err
 	}
 
-	verified, err := release.Verify(document, release.Expect{Publisher: publisher, Channel: channel})
+	// A citizen remembers the newest document that it accepted, so that an
+	// older signed document cannot hold it on an old release.
+	checkpoint := &release.Checkpoint{Dir: held.keys.Dir}
+
+	expect, err := checkpoint.Read(publisher, channel)
 	if err != nil {
+		return err
+	}
+
+	verified, err := release.Verify(document, expect)
+	if err != nil {
+		return err
+	}
+	if err := checkpoint.Write(publisher, verified); err != nil {
 		return err
 	}
 
