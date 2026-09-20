@@ -71,6 +71,8 @@ agent instructions.
   [discovery](../discovery/SPEC.md). The relay cannot show a paused citizen.
 - `arc request` does not wake a peer and does not wait for a peer to connect.
 - `arc serve` does not detect a pause of its machine.
+- `arc serve` connects to the relay one time. After a failed first
+  connection it keeps running, and every announcement fails.
 - A request timeout does not prove that the command did not run. The caller
   must not retry an arbitrary command automatically.
 
@@ -306,7 +308,8 @@ machine. It does these steps:
 3. If not, the script stops the old `arc serve` process group. Then it starts
    a new `arc serve` as a plain process.
 4. The start script waits until the relay has the announcement of the
-   citizen. Then it exits with status 0.
+   citizen. It reads the relay directory with the probe identity. Then it
+   exits with status 0.
 5. If the relay has no announcement after 20 seconds, the start script
    deletes the lease. Then it exits with status 1.
 
@@ -316,6 +319,18 @@ safe. The provider refreshes the lease again in 60 seconds or less
 
 If no request arrives, the lease expires after 120 seconds. Then the machine
 pauses.
+
+The citizen machine holds two identities:
+
+- The citizen identity serves the capability.
+- The probe identity reads the relay directory for the readiness check.
+
+A relay keeps one connection for each identity. A query with the citizen key
+replaces the relay connection of `arc serve`, and the announcement of the
+citizen goes away. `citizen/init` creates the probe identity.
+
+`arc serve` connects to the relay one time, at startup. After a wake the
+network needs a moment, so `citizen/serve` waits for the relay first.
 
 ## 11. Lease in the provider
 
