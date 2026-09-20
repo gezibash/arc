@@ -82,6 +82,11 @@ description = "Run the Go client against an Elixir relay"
 run = "mix run scripts/test-go-client.exs"
 raw = true
 
+[tasks."go.provider"]
+description = "Run the Go exec provider under the Elixir runtime"
+run = "mix run scripts/test-go-provider.exs"
+raw = true
+
 [tasks.vectors]
 description = "Write the shared protocol vectors that both implementations read"
 run = "mix run --no-start scripts/write-vectors.exs"
