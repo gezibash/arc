@@ -12,7 +12,7 @@ import (
 )
 
 func serveCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "serve <uri>",
 		Short: "Serve a provider over the relay",
 		Long: "The address names the provider program and its manifest:\n\n" +
@@ -22,6 +22,10 @@ func serveCommand() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: serve,
 	}
+
+	command.Flags().String("direct-policy", "",
+		"a file of rules that let a named peer carry a conversation off the relay")
+	return command
 }
 
 func serve(command *cobra.Command, args []string) error {
@@ -33,11 +37,14 @@ func serve(command *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	policy, _ := command.Flags().GetString("direct-policy")
+
 	serving, err := citizen.Serve(ctx, citizen.Options{
 		Identity:       held.me,
 		Relay:          held.relay.Address,
 		RelayPublicKey: held.relay.Pin,
 		Serve:          args[0],
+		DirectPolicy:   policy,
 		Log:            stderrLog(),
 	})
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/go/client"
+	"github.com/gezibash/arc/go/direct"
 	"github.com/gezibash/arc/go/identity"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +28,8 @@ func callCommand() *cobra.Command {
 	command.Flags().String("capability", "primary", "the capability to call")
 	command.Flags().Int("timeout", 30, "how many seconds to wait for the answer")
 	command.Flags().Bool("manifest", false, "show what the citizen offers, and call nothing")
+	command.Flags().String("direct-policy", "",
+		"a file of rules that let this conversation leave the relay")
 	return command
 }
 
@@ -61,12 +64,26 @@ func call(command *cobra.Command, args []string) error {
 		return write(summary)
 	}
 
+	capabilityID, _ := command.Flags().GetString("capability")
+
+	// With a policy of the owner, the conversation leaves the relay before
+	// the call.
+	if policy, _ := command.Flags().GetString("direct-policy"); policy != "" {
+		rules, err := direct.LoadPolicy(policy)
+		if err != nil {
+			return err
+		}
+
+		peers.Direct(rules, stderrLog())
+		if err := peers.Promote(ctx, args[0], capabilityID); err != nil {
+			return fmt.Errorf("the conversation did not leave the relay: %w", err)
+		}
+	}
+
 	body, err := requestBody(command, args)
 	if err != nil {
 		return err
 	}
-
-	capabilityID, _ := command.Flags().GetString("capability")
 	answer, err := peers.Call(ctx, args[0], body, capabilityID)
 	if err != nil {
 		return err

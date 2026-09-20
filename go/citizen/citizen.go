@@ -17,6 +17,7 @@ import (
 	"github.com/gezibash/arc/go/announce"
 	"github.com/gezibash/arc/go/capability"
 	"github.com/gezibash/arc/go/client"
+	"github.com/gezibash/arc/go/direct"
 	"github.com/gezibash/arc/go/frame"
 	"github.com/gezibash/arc/go/identity"
 	"github.com/gezibash/arc/go/packet"
@@ -45,6 +46,10 @@ type Options struct {
 	// Serve is the URI of the provider:
 	// exec:///path/to/runtime?manifest=/path/to/capability.json
 	Serve string
+	// DirectPolicy is the file that names the peers that may carry a
+	// conversation off the relay, and the addresses to use. Without it,
+	// every conversation stays on the relay.
+	DirectPolicy string
 	// Log receives what the citizen drops and why.
 	Log *slog.Logger
 }
@@ -59,10 +64,13 @@ type Citizen struct {
 	capID    string
 	maxBytes int
 
+	direct *direct.Manager
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
+	carriers map[string]*direct.Conn
 	sessions map[string]*session.Session
 	guard    map[string]uint64
 	waiting  map[string]*pending
@@ -131,9 +139,19 @@ func Serve(ctx context.Context, opts Options) (*Citizen, error) {
 		maxBytes: requestLimit(pkg),
 		ctx:      ctx,
 		cancel:   cancel,
+		carriers: map[string]*direct.Conn{},
 		sessions: map[string]*session.Session{},
 		guard:    map[string]uint64{},
 		waiting:  map[string]*pending{},
+	}
+
+	if opts.DirectPolicy != "" {
+		rules, err := direct.LoadPolicy(opts.DirectPolicy)
+		if err != nil {
+			serving.Close()
+			return nil, err
+		}
+		serving.direct = direct.NewManager(opts.Identity, rules, serving.sendControl, opts.Log)
 	}
 
 	if err := serving.announce(); err != nil {
@@ -158,6 +176,9 @@ func (c *Citizen) Done() <-chan struct{} { return c.ctx.Done() }
 // Close stops the provider and leaves the relay.
 func (c *Citizen) Close() error {
 	c.cancel()
+	if c.direct != nil {
+		c.direct.Close()
+	}
 	c.relay.Close()
 	err := c.runtime.stop()
 	c.group.Wait()
@@ -298,6 +319,15 @@ func (c *Citizen) handlePacket(raw []byte) {
 		c.log.Debug("a frame did not decode", "error", err)
 		return
 	}
+
+	// A peer that asks to carry this conversation off the relay says so in
+	// an event of its own.
+	if c.direct != nil && message.Type == frame.Event && message.Meta["topic"] == direct.Topic {
+		c.direct.Control(decoded.Src, decoded.SessionID, message.Body)
+		c.watchCarrier(decoded.Src)
+		return
+	}
+
 	if message.Type != frame.Request {
 		return
 	}
@@ -450,7 +480,63 @@ func (c *Citizen) fail(peer, requestID []byte, code, message string) {
 	c.send(peer, body)
 }
 
-// send encrypts one frame to a peer, and gives the packet to the relay.
+// sendControl carries one message of a direct route to a peer, over the
+// relay, as an event of its own.
+func (c *Citizen) sendControl(peer, body []byte) error {
+	event, err := frame.EncodeEvent(direct.Topic, body, nil)
+	if err != nil {
+		return err
+	}
+
+	c.send(peer, event)
+	return nil
+}
+
+// watchCarrier reads the packets of a carrier once a route stands, and
+// answers them as if they had come over the relay.
+func (c *Citizen) watchCarrier(peer []byte) {
+	go func() {
+		// The negotiation takes a moment. Look for the carrier until it
+		// stands or the attempt ends.
+		deadline := time.Now().Add(direct.AttemptLimit + time.Second)
+
+		for time.Now().Before(deadline) {
+			carrier := c.direct.CarrierFor(peer)
+			if carrier == nil {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+
+			c.mu.Lock()
+			if c.carriers[string(peer)] == carrier {
+				c.mu.Unlock()
+				return
+			}
+			c.carriers[string(peer)] = carrier
+			c.mu.Unlock()
+
+			for {
+				select {
+				case raw, ok := <-carrier.Packets():
+					if !ok {
+						c.mu.Lock()
+						if c.carriers[string(peer)] == carrier {
+							delete(c.carriers, string(peer))
+						}
+						c.mu.Unlock()
+						return
+					}
+					c.handlePacket(raw)
+				case <-c.ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+}
+
+// send encrypts one frame to a peer, and gives the packet to the relay, or
+// to the carrier of that peer when one stands.
 func (c *Citizen) send(peer, body []byte) {
 	talk, err := c.sessionFor(peer)
 	if err != nil {
@@ -469,6 +555,17 @@ func (c *Citizen) send(peer, body []byte) {
 	if err != nil {
 		c.log.Error("the reply did not encode", "error", err)
 		return
+	}
+
+	// A conversation that left the relay answers on its carrier.
+	c.mu.Lock()
+	carrier := c.carriers[string(peer)]
+	c.mu.Unlock()
+
+	if carrier != nil {
+		if err := carrier.Send(raw); err == nil {
+			return
+		}
 	}
 
 	if err := c.relay.SendPacket(raw); err != nil {

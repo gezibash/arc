@@ -82,6 +82,7 @@ The module is `github.com/gezibash/arc`. Each package holds one concept.
 | `capability` | The manifest, the signed capability package, and its interfaces | Yes |
 | `citizen` | The serving citizen: the provider process, the sessions, and the manifest | Yes |
 | `relays` | The pinned relay of this machine | Yes |
+| `direct` | The carrier that two citizens hold between themselves, and the rules that allow it | Yes |
 | `control` | The local control plane: publish, resolve, revoke | Yes |
 | `client` | Connect to a relay, announce, discover, request, listen | Yes |
 | `provider` | The provider runtime, the interface, the configuration helpers, and jobs | Yes |
@@ -191,7 +192,7 @@ the root of the repository.
 | 2 | `client`: connect, announce, discover, request | Done. A Go client talks to the Elixir relay. |
 | 3 | `provider`, and the exec provider | Done. The Elixir `arc serve` runs the Go provider. |
 | 4 | `relay`: sessions, directory, routes | Done. An Elixir client talks to the Go relay. |
-| 5 | Federation, direct connections | Federation is done. Two Go relays federate, and a Go relay federates with an Elixir relay. Direct connections between citizens are open. |
+| 5 | Federation, direct connections | Done. Two Go relays federate, and a Go relay federates with an Elixir relay. A conversation leaves the relay and outlives it. The TCP hole punch of the Elixir release is not ported. |
 | 6 | `cmd/arc`: the command surface of today | The CLI tests of the Elixir suite pass against the Go binary. |
 | 7 | The remaining providers, and MCP | The providers are done: exec, dm, sqlite, files, releases, agora and journal. MCP is open. |
 

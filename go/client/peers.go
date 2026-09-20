@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/go/capability"
+	"github.com/gezibash/arc/go/direct"
 	"github.com/gezibash/arc/go/frame"
 	"github.com/gezibash/arc/go/identity"
 	"github.com/gezibash/arc/go/packet"
@@ -96,9 +98,12 @@ type Peers struct {
 	client *Client
 	me     *identity.Identity
 
+	direct *direct.Manager
+
 	mu       sync.Mutex
 	sessions map[string]*session.Session
 	waiting  map[string]chan *frame.Frame
+	carriers map[string]*direct.Conn
 
 	events chan *Event
 	once   sync.Once
@@ -118,6 +123,7 @@ func (c *Client) Peers() *Peers {
 		me:       c.me,
 		sessions: map[string]*session.Session{},
 		waiting:  map[string]chan *frame.Frame{},
+		carriers: map[string]*direct.Conn{},
 		events:   make(chan *Event, 32),
 	}
 
@@ -127,6 +133,107 @@ func (c *Client) Peers() *Peers {
 
 // Events returns the frames that arrive without a request.
 func (p *Peers) Events() <-chan *Event { return p.events }
+
+// Direct gives this caller the rules of its owner, so a conversation may
+// leave the relay. Without them every packet travels the relay.
+func (p *Peers) Direct(rules []direct.Rule, log *slog.Logger) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.direct = direct.NewManager(p.me, rules, p.sendControl, log)
+}
+
+// Promote asks a peer to carry one conversation off the relay. The signed
+// package of the capability names what the conversation is, and both sides
+// sign the same scope into the binding of the carrier.
+func (p *Peers) Promote(ctx context.Context, address string, capabilityID string) error {
+	p.mu.Lock()
+	manager := p.direct
+	p.mu.Unlock()
+
+	if manager == nil {
+		return direct.ErrNoRule
+	}
+
+	target, err := ParseAddress(address)
+	if err != nil {
+		return err
+	}
+	if capabilityID == "" {
+		capabilityID = "primary"
+	}
+
+	pkg, err := p.Detail(ctx, target.Key, capabilityID)
+	if err != nil {
+		return err
+	}
+
+	fields, _ := pkg["capability"].(map[string]any)
+	invocation, _ := fields["invocation"].(map[string]any)
+
+	talk, err := p.session(target.Key)
+	if err != nil {
+		return err
+	}
+
+	scope := map[string]any{
+		"version":      1,
+		"caller":       p.me.EncodePublicKey(),
+		"provider":     hex.EncodeToString(target.Key),
+		"capability":   capabilityID,
+		"scheme":       target.Scheme,
+		"path":         target.Path,
+		"package_hash": pkg["package_hash"],
+		"method":       invocation["method"],
+		"session":      hex.EncodeToString(talk.ID),
+		"ek":           hex.EncodeToString(talk.EphemeralPublic),
+	}
+
+	route, err := manager.Offer(ctx, target.Key, scope, talk.ID)
+	if err != nil {
+		return err
+	}
+
+	carrier := manager.Carrier(target.Key, capabilityID, target.Scheme, target.Path)
+	if carrier == nil {
+		return direct.ErrClosed
+	}
+
+	p.mu.Lock()
+	p.carriers[string(target.Key)] = carrier
+	p.mu.Unlock()
+
+	go p.readCarrier(target.Key, carrier)
+
+	_ = route
+	return nil
+}
+
+// sendControl carries one message of a direct route to a peer over the
+// relay, as an event of its own.
+func (p *Peers) sendControl(peer, body []byte) error {
+	event, err := frame.EncodeEvent(direct.Topic, body, nil)
+	if err != nil {
+		return err
+	}
+	return p.send(peer, event)
+}
+
+// readCarrier reads the packets of a carrier, and answers them as if they
+// had come over the relay.
+func (p *Peers) readCarrier(peer []byte, carrier *direct.Conn) {
+	defer func() {
+		p.mu.Lock()
+		if p.carriers[string(peer)] == carrier {
+			delete(p.carriers, string(peer))
+		}
+		p.mu.Unlock()
+	}()
+
+	for raw := range carrier.Packets() {
+		p.handlePacket(raw)
+	}
+}
 
 // Request sends one request to a peer, and waits for the answer.
 func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, body []byte) (*frame.Frame, error) {
@@ -163,6 +270,17 @@ func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, b
 		defer cancel()
 	}
 
+	// A conversation that left the relay does not end when the relay
+	// connection does, so only a request on the relay watches it.
+	p.mu.Lock()
+	onRelay := p.carriers[string(peer)] == nil
+	p.mu.Unlock()
+
+	var relayEnded <-chan struct{}
+	if onRelay {
+		relayEnded = p.client.Done()
+	}
+
 	select {
 	case answer := <-answers:
 		if answer.Type == frame.Error {
@@ -171,7 +289,7 @@ func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, b
 		return answer, nil
 	case <-ctx.Done():
 		return nil, ErrNoAnswer
-	case <-p.client.Done():
+	case <-relayEnded:
 		return nil, p.client.Err()
 	}
 }
@@ -252,7 +370,8 @@ func (p *Peers) document(ctx context.Context, peer []byte, path string) (map[str
 	return document, nil
 }
 
-// send encrypts one frame to a peer and gives it to the relay.
+// send encrypts one frame to a peer. A conversation that left the relay
+// travels its carrier, and every other one travels the relay.
 func (p *Peers) send(peer, body []byte) error {
 	talk, err := p.session(peer)
 	if err != nil {
@@ -268,6 +387,16 @@ func (p *Peers) send(peer, body []byte) error {
 		packet.WithEphemeralKey(talk.EphemeralPublic))
 	if err != nil {
 		return err
+	}
+
+	p.mu.Lock()
+	carrier := p.carriers[string(peer)]
+	p.mu.Unlock()
+
+	if carrier != nil {
+		if err := carrier.Send(raw); err == nil {
+			return nil
+		}
 	}
 	return p.client.SendPacket(raw)
 }
@@ -298,20 +427,28 @@ func (p *Peers) read() {
 	defer p.once.Do(func() { close(p.events) })
 
 	for raw := range p.client.Packets() {
+		p.handlePacket(raw)
+	}
+}
+
+// handlePacket reads one packet, whichever way it arrived.
+func (p *Peers) handlePacket(raw []byte) {
+	{
 		decoded, err := packet.Decode(raw)
 		if err != nil {
-			continue
+			return
 		}
 
 		p.mu.Lock()
 		talk, ok := p.sessions[string(decoded.Src)]
+		manager := p.direct
 		p.mu.Unlock()
 
 		if !ok {
 			// The peer spoke first. Join the session that it names.
 			joined, err := session.Accept(p.me, decoded.Src, decoded.EphemeralPublic, decoded.SessionID)
 			if err != nil {
-				continue
+				return
 			}
 			talk = joined
 
@@ -325,16 +462,23 @@ func (p *Peers) read() {
 			// A reply of another session, or another key. Join and try once.
 			joined, joinErr := session.Accept(p.me, decoded.Src, decoded.EphemeralPublic, decoded.SessionID)
 			if joinErr != nil {
-				continue
+				return
 			}
 			if plaintext, err = joined.Decrypt(decoded.Nonce, decoded.Ciphertext); err != nil {
-				continue
+				return
 			}
 		}
 
 		message, err := frame.Decode(plaintext)
 		if err != nil {
-			continue
+			return
+		}
+
+		// A peer that answers about a direct route says so in an event of
+		// its own.
+		if manager != nil && message.Type == frame.Event && message.Meta["topic"] == direct.Topic {
+			manager.Control(decoded.Src, decoded.SessionID, message.Body)
+			return
 		}
 
 		key := hex.EncodeToString(message.RequestID)
@@ -346,7 +490,7 @@ func (p *Peers) read() {
 
 		if waiting != nil {
 			waiting <- message
-			continue
+			return
 		}
 
 		select {
