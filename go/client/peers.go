@@ -294,6 +294,12 @@ func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, b
 	}
 }
 
+// SendFrame sends one frame to a peer, and waits for nothing. An event
+// travels this way.
+func (p *Peers) SendFrame(peer, body []byte) error {
+	return p.send(peer, body)
+}
+
 // Manifest asks a peer for the summary of what it offers.
 func (p *Peers) Manifest(ctx context.Context, peer []byte) (map[string]any, error) {
 	return p.document(ctx, peer, capability.SummaryPath)

@@ -98,6 +98,11 @@ func root() *cobra.Command {
 		callCommand(),
 		discoverCommand(),
 		resolveCommand(),
+		infoCapabilityCommand(),
+		sendCommand(),
+		listenCommand(),
+		publishCommand(),
+		listsCommand(),
 	)
 	return command
 }

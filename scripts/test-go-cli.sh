@@ -58,8 +58,12 @@ caller_key="$(tail -1 "$work/caller.txt")"
 arc keys gen > "$work/stranger.txt"
 stranger_name="$(head -1 "$work/stranger.txt")"
 
+arc keys gen > "$work/echo.txt"
+echo_name="$(head -1 "$work/echo.txt")"
+echo_key="$(tail -1 "$work/echo.txt")"
+
 arc keys use "$provider_name" > /dev/null
-say "the machine holds three identities"
+say "the machine holds four identities"
 
 arc join "$relay_address" --pubkey "$relay_key" > /dev/null
 say "the citizen joined the relay and pinned its key"
@@ -127,9 +131,7 @@ say "a citizen without a grant is refused"
 # A capability with a command line becomes a command of arc.
 caller keys gen > /dev/null 2>&1 || true
 
-echo_key="$(arc --key "$provider_name" keys list | awk -v name="$provider_name" '$2 == name {print $3}')"
-
-EXEC_CONFIG="$work/exec.json" arc --key "$provider_name" serve \
+EXEC_CONFIG="$work/exec.json" arc --key "$echo_name" serve \
   "exec://$work/echo-provider?manifest=$root/go/citizen/testdata/echo/cli-manifest.json" \
   > "$work/echo.log" 2>"$work/echo.err" &
 echo_pid=$!
@@ -141,7 +143,7 @@ done
 grep -q "serves on" "$work/echo.log" || fail "the echo citizen did not serve: $(cat "$work/echo.err")"
 say "a second citizen serves a capability with a command line"
 
-caller install "$provider_key" --yes > "$work/install.txt" 2>&1 ||
+caller install "$echo_key" --yes > "$work/install.txt" 2>&1 ||
   fail "the install failed: $(cat "$work/install.txt")"
 grep -q "arc echo" "$work/install.txt" || fail "the install does not name the command: $(cat "$work/install.txt")"
 say "arc install saves the signed capability as a command"
@@ -166,5 +168,43 @@ caller tool remove echo | grep -q "removed echo" || fail "the command was not re
 say "arc trust list and arc tool remove answer"
 
 kill "$echo_pid" 2>/dev/null || true
+
+# One citizen listens, and another sends it a message. A third identity
+# takes this, because one identity holds one route at a time.
+stranger_key="$(arc --key "$stranger_name" whoami | sed -n 2p)"
+arc --key "$stranger_name" listen > "$work/listen.log" 2>&1 &
+listen_pid=$!
+
+for _ in $(seq 1 50); do
+  grep -q "listens on" "$work/listen.log" 2>/dev/null && break
+  sleep 0.1
+done
+grep -q "listens on" "$work/listen.log" || fail "the citizen did not listen: $(cat "$work/listen.log")"
+
+caller send "$stranger_key" "a message from the other citizen" | grep -q "sent to" ||
+  fail "the message was not sent"
+
+for _ in $(seq 1 50); do
+  grep -q "a message from the other citizen" "$work/listen.log" && break
+  sleep 0.1
+done
+grep -q "a message from the other citizen" "$work/listen.log" ||
+  fail "the message did not arrive: $(cat "$work/listen.log")"
+say "arc send and arc listen carry a message between two citizens"
+
+kill "$listen_pid" 2>/dev/null || true
+
+caller info "$provider_key" | grep -q "exec+arc://$provider_key" || fail "arc info is wrong"
+say "arc info reads the signed capability of a citizen"
+
+arc --key "$stranger_name" publish > /dev/null || fail "the identity did not publish"
+caller resolve "$stranger_name" | grep -q "on this machine" ||
+  fail "the identity of this machine does not resolve"
+say "arc publish and arc resolve answer without the relay"
+
+caller lists add dm friends "$provider_key" | grep -q "$provider_key" || fail "the list was not saved"
+caller lists ls dm | grep -q friends || fail "the list is not shown"
+caller lists rm dm friends | grep -q "removed dm/friends" || fail "the list was not removed"
+say "arc lists keeps a set of peers"
 
 printf '\nARC runs end to end in Go\n'

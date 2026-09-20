@@ -184,6 +184,21 @@ func resolve(command *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A citizen of this machine answers without a relay.
+	if plane, err := controlStore(command); err == nil {
+		if entries, err := plane.Resolve(args[0]); err == nil && len(entries) > 0 {
+			asJSON, _ := command.Flags().GetBool("json")
+			if asJSON {
+				return write(entries)
+			}
+
+			for _, entry := range entries {
+				fmt.Printf("%s\n  %s\n  on this machine\n", entry.Name, entry.PublicKey)
+			}
+			return nil
+		}
+	}
+
 	ctx, cancel := deadline(30)
 	defer cancel()
 

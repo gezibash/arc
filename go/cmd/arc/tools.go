@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/go/client"
+	"github.com/gezibash/arc/go/control"
 	"github.com/gezibash/arc/go/identity"
 	"github.com/gezibash/arc/go/toolbox"
 	"github.com/spf13/cobra"
@@ -371,22 +373,27 @@ func runInstalled(name string, argv []string) (bool, error) {
 
 	peers := connection.Peers()
 
+	saved, err := listStore(command)
+	if err != nil {
+		return true, err
+	}
+
 	context := toolbox.Context{
 		Identity: held.me,
 		Resolve: func(query string) ([][]byte, error) {
-			entries, err := connection.Resolve(ctx, query)
-			if err != nil {
-				return nil, err
-			}
-
-			var keys [][]byte
-			for _, entry := range entries {
-				raw, err := hex.DecodeString(text(entry["public_key"]))
-				if err == nil {
-					keys = append(keys, raw)
+			// A name may stand for a list of this command.
+			if members := saved.Members(name, query); len(members) > 0 {
+				var keys [][]byte
+				for _, member := range members {
+					found, err := lookUp(ctx, held, connection, member)
+					if err != nil {
+						return nil, err
+					}
+					keys = append(keys, found...)
 				}
+				return keys, nil
 			}
-			return keys, nil
+			return lookUp(ctx, held, connection, query)
 		},
 	}
 
@@ -472,6 +479,40 @@ func readArcFlags(command *cobra.Command, name string, argv []string) ([]string,
 		rest = append(rest, argument)
 	}
 	return rest, nil
+}
+
+// lookUp reads one citizen: a key, a name of this machine, or a name that
+// the relay answers.
+func lookUp(ctx context.Context, held *settings, connection *client.Client, query string) ([][]byte, error) {
+	if key, err := peerKey(query); err == nil {
+		return [][]byte{key}, nil
+	}
+
+	plane := &control.Store{Dir: held.keys.Dir}
+	if entries, err := plane.Resolve(query); err == nil {
+		var keys [][]byte
+		for _, entry := range entries {
+			if key, err := entry.Key(); err == nil {
+				keys = append(keys, key)
+			}
+		}
+		if len(keys) > 0 {
+			return keys, nil
+		}
+	}
+
+	entries, err := connection.Resolve(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	var keys [][]byte
+	for _, entry := range entries {
+		if key, err := hex.DecodeString(text(entry["public_key"])); err == nil {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
 }
 
 // installedCommand holds the flags that every installed command takes.
