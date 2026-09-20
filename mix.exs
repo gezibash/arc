@@ -47,7 +47,6 @@ defmodule Arc.MixProject do
           arc_data: :permanent,
           arc_storage: :permanent,
           arc_net: :permanent,
-          arc_mcp: :permanent
         ],
         include_executables_for: [:unix],
         strip_beams: true,

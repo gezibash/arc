@@ -9,23 +9,7 @@ defmodule Arc.CLIDiscoveryTest do
     Arc.Control.Local.reset()
     System.delete_env("ARC_KEY")
 
-    mount_dir =
-      Path.join(System.tmp_dir!(), "arc_cli_mounts_#{System.unique_integer([:positive])}")
-
-    old_mount_dir = Application.get_env(:arc_mcp, :dynamic_tool_registry_dir)
-    Application.put_env(:arc_mcp, :dynamic_tool_registry_dir, mount_dir)
-
-    on_exit(fn ->
-      System.delete_env("ARC_KEY")
-
-      if old_mount_dir do
-        Application.put_env(:arc_mcp, :dynamic_tool_registry_dir, old_mount_dir)
-      else
-        Application.delete_env(:arc_mcp, :dynamic_tool_registry_dir)
-      end
-
-      File.rm_rf!(mount_dir)
-    end)
+    on_exit(fn -> System.delete_env("ARC_KEY") end)
 
     :ok
   end
@@ -71,122 +55,8 @@ defmodule Arc.CLIDiscoveryTest do
     refute output =~ "#{Identity.name(hello_id)}/primary [service/hello]"
   end
 
-  test "arc mount add and ls manage an identity-scoped task working set" do
-    client_id = persist_cli_identity()
-    server_id = Identity.generate()
-    {runtime_path, manifest_path} = hello_provider_paths()
 
-    File.chmod!(runtime_path, 0o755)
 
-    {:ok, server} =
-      Agent.start_link(
-        server_id,
-        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
-      )
-
-    :ok = Agent.publish(server)
-
-    on_exit(fn ->
-      Arc.CLI.TestTeardown.stop(server)
-      KeyStore.remove(Identity.name(client_id))
-    end)
-
-    add_output =
-      ExUnit.CaptureIO.capture_io(fn ->
-        Arc.CLI.main(["mount", "demo", "add", Identity.name(server_id), "primary"])
-      end)
-
-    list_output =
-      ExUnit.CaptureIO.capture_io(fn ->
-        Arc.CLI.main(["mount", "demo", "ls"])
-      end)
-
-    assert add_output =~ "Mounted demo: #{Identity.name(server_id)}/primary [service/hello]"
-    assert list_output =~ "Owner: #{Identity.name(client_id)}"
-    assert list_output =~ "Task: demo"
-    assert list_output =~ "Mounted: 1"
-    assert list_output =~ "#{Identity.name(server_id)}/primary [service/hello]"
-    assert list_output =~ "Invocation: RAW /"
-  end
-
-  test "arc mount ls only shows mounts for the active identity" do
-    first_client = persist_cli_identity()
-    server_id = Identity.generate()
-    {runtime_path, manifest_path} = hello_provider_paths()
-
-    File.chmod!(runtime_path, 0o755)
-
-    {:ok, server} =
-      Agent.start_link(
-        server_id,
-        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
-      )
-
-    :ok = Agent.publish(server)
-
-    second_client = Identity.generate()
-    :ok = KeyStore.save(second_client)
-
-    on_exit(fn ->
-      Arc.CLI.TestTeardown.stop(server)
-      KeyStore.remove(Identity.name(first_client))
-      KeyStore.remove(Identity.name(second_client))
-    end)
-
-    ExUnit.CaptureIO.capture_io(fn ->
-      Arc.CLI.main(["mount", "demo", "add", Identity.name(server_id), "primary"])
-    end)
-
-    System.put_env("ARC_KEY", Identity.name(second_client))
-
-    list_output =
-      ExUnit.CaptureIO.capture_io(fn ->
-        Arc.CLI.main(["mount", "demo", "ls"])
-      end)
-
-    assert list_output =~ "Owner: #{Identity.name(second_client)}"
-    assert list_output =~ "Mounted: 0"
-    refute list_output =~ "#{Identity.name(server_id)}/primary"
-  end
-
-  test "arc mount call invokes the mounted capability instead of manual send" do
-    client_id = persist_cli_identity()
-    server_id = Identity.generate()
-    {runtime_path, manifest_path} = hello_provider_paths()
-
-    File.chmod!(runtime_path, 0o755)
-
-    {:ok, server} =
-      Agent.start_link(
-        server_id,
-        serve: "exec://#{runtime_path}?manifest=#{URI.encode_www_form(manifest_path)}"
-      )
-
-    :ok = Agent.publish(server)
-
-    on_exit(fn ->
-      Arc.CLI.TestTeardown.stop(server)
-      KeyStore.remove(Identity.name(client_id))
-    end)
-
-    ExUnit.CaptureIO.capture_io(fn ->
-      Arc.CLI.main(["mount", "demo", "add", Identity.name(server_id), "primary"])
-    end)
-
-    call_output =
-      ExUnit.CaptureIO.capture_io(fn ->
-        Arc.CLI.main([
-          "mount",
-          "demo",
-          "call",
-          Identity.name(server_id),
-          "primary",
-          "GET /"
-        ])
-      end)
-
-    assert call_output =~ "provider hello"
-  end
 
   defp persist_cli_identity do
     identity = Identity.generate()

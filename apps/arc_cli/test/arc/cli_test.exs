@@ -32,7 +32,6 @@ defmodule Arc.CLITest do
     assert output =~ "status"
     assert output =~ "tool"
     assert output =~ "info"
-    assert output =~ "mcp"
     assert output =~ "version"
   end
 

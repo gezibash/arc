@@ -42,7 +42,6 @@ This plan serves three goals:
 | `arc_cli` | 10939 | 9227 |
 | `arc_data` | 10049 | 4350 |
 | `arc_net` | 9031 | 5599 |
-| `arc_mcp` | 1660 | 905 |
 | `arc_identity` | 705 | 665 |
 | `arc_provider` | 419 | 332 |
 | `arc_control` | 243 | 128 |
@@ -197,7 +196,7 @@ the root of the repository.
 | 4 | `relay`: sessions, directory, routes | Done. An Elixir client talks to the Go relay. |
 | 5 | Federation, direct connections | Done. Two Go relays federate, and a Go relay federates with an Elixir relay. A conversation leaves the relay and outlives it. The TCP hole punch of the Elixir release is not ported. |
 | 6 | `cmd/arc`: the command surface of today | Done, except the host and the update engine. keys, join, status, serve, call, discover, resolve, info, send, listen, publish, lists, install, tool, trust, and the commands that an install adds. |
-| 7 | The remaining providers, and MCP | The providers are done: exec, dm, sqlite, files, releases, agora and journal. MCP is open. |
+| 7 | The remaining providers | Done: exec, dm, sqlite, files, releases, agora and journal. MCP is deprecated, and does not go to Go. |
 
 Each phase is one pull request. A phase that does not pass its proof does not
 merge.

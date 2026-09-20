@@ -36,7 +36,6 @@ defmodule Arc.CLI.MixProject do
       {:arc_identity, in_umbrella: true},
       {:arc_control, in_umbrella: true},
       {:arc_data, in_umbrella: true},
-      {:arc_mcp, in_umbrella: true},
       {:arc_net, in_umbrella: true},
       {:arc_storage, in_umbrella: true},
       {:toml_elixir, "~> 3.1"}

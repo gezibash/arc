@@ -15,7 +15,6 @@ defmodule Arc.CLI do
     "update" => Arc.CLI.Update,
     "service" => Arc.CLI.Update.Service,
     "relay" => Arc.CLI.Relay,
-    "mcp" => Arc.CLI.MCP,
     "lists" => Arc.CLI.Lists,
     "cache" => Arc.CLI.Cache,
     "request" => Arc.CLI.ProtocolRequest
@@ -29,7 +28,6 @@ defmodule Arc.CLI do
     "tool" => Arc.CLI.Tools,
     "trust" => Arc.CLI.Tools,
     "discover" => Arc.CLI.Agent,
-    "mount" => Arc.CLI.Agent,
     "send" => Arc.CLI.Agent,
     "info" => Arc.CLI.Agent,
     "listen" => Arc.CLI.Agent,
@@ -71,7 +69,7 @@ defmodule Arc.CLI do
   defp pop_opt([], _flag, acc), do: {nil, Enum.reverse(acc)}
 
   # Applies to every relay connection this process opens or accepts:
-  # `arc relay`, `arc host start`, `arc mcp`, and the agent commands.
+  # `arc relay`, `arc host start`, and the agent commands.
   defp configure_frame_cap(value) do
     case Arc.Net.configure_frame_cap(value) do
       {:error, :invalid} ->
@@ -118,7 +116,6 @@ defmodule Arc.CLI do
 
   defp ensure_started do
     Application.ensure_all_started(:arc_data)
-    Application.ensure_all_started(:arc_mcp)
     Application.ensure_all_started(:arc_net)
   end
 
@@ -150,8 +147,6 @@ defmodule Arc.CLI do
       trust <subcommand>          Manage trusted remote signers
       discover [query]            Search remote capability summaries
                                  (--limit N and --after CURSOR page relay results)
-      mount <task> ...            Manage task-scoped mounted capabilities
-      mcp <task>                  Serve mounted capabilities as MCP tools over local Streamable HTTP
       send <to> <message>         Send a message (waits for reply)
       request <uri> ...          Send an opaque body to a scheme+arc:// service
       info <peer> [capability]    Fetch remote capability summary or one detail view

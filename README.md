@@ -15,8 +15,7 @@ changes of software or host. People and programs use the same foundation.
 Today, ARC carries signed, end-to-end encrypted messages. Relays route
 packets by public key without seeing their contents.
 
-`arc` is one binary. It runs a client, a relay, a capability provider, or
-an MCP server.
+`arc` is one binary. It runs a client, a relay, or a capability provider.
 
 ## Install
 
@@ -258,9 +257,12 @@ by both operators; ARC does not open router ports or perform NAT traversal.
 | `relay [--port PORT] [--key NAME]` | Run a relay |
 | `serve <target>` | Serve a provider bundle with live request logs |
 | `discover [query]`, `info <peer>`, `install <peer> <id>` | Find and install remote capabilities |
-| `mount <task> ...`, `mcp <task>` | Expose mounted capabilities as MCP tools |
 | `trust`, `tool`, `lists`, `cache` | Signers, installed tools, peer lists, sealed cache |
 | `version` | Print version and build commit |
+
+`mount` and `mcp` are deprecated. They serve capabilities as MCP tools. They
+stay in the Elixir build, and they do not go to Go. Install a capability as a
+command instead: `arc install <peer>`.
 
 Installed tools run as native subcommands, for example `arc dm inbox` after
 `arc install <peer> dm`. `arc help` prints the full list with every option

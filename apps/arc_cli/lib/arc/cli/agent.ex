@@ -16,7 +16,6 @@ defmodule Arc.CLI.Agent do
   alias Arc.Host.Token
   alias Arc.Identity
   alias Arc.Identity.KeyStore
-  alias Arc.MCP.DynamicToolRegistry
 
   def run(args) do
     {relay_pubkey, args} = pop_opt(args, "--relay-pubkey")
@@ -107,82 +106,6 @@ defmodule Arc.CLI.Agent do
       end,
       opts
     )
-  end
-
-  defp dispatch(["mount", task, "add", peer, capability_id | _], opts) do
-    with_agent(
-      fn agent, id ->
-        case CapabilityDiscovery.fetch_detail(agent, peer, capability_id) do
-          {:ok, detail} ->
-            case DynamicToolRegistry.mount(id, task, detail) do
-              {:ok, mount} ->
-                print_mount_added(task, mount)
-
-              {:error, {:mount_limit_exceeded, limit}} ->
-                error("mount failed: task '#{task}' already has #{limit} mounted capabilities")
-
-              {:error, reason} ->
-                error("mount failed: #{inspect(reason)}")
-            end
-
-          {:error, {:remote, code, message}} ->
-            error("mount failed: #{code}: #{message}")
-
-          {:error, reason} ->
-            error("mount failed: #{inspect(reason)}")
-        end
-      end,
-      opts
-    )
-  end
-
-  defp dispatch(["mount", task, "ls" | _], _opts) do
-    with_identity(fn id ->
-      case DynamicToolRegistry.list(id, task) do
-        {:ok, mounts} -> print_mounts(id, task, mounts)
-        {:error, reason} -> error("mount ls failed: #{inspect(reason)}")
-      end
-    end)
-  end
-
-  defp dispatch(["mount", task, "call", peer, capability_id | input_parts], opts) do
-    with_agent(
-      fn agent, id ->
-        with {:ok, mount} <- DynamicToolRegistry.get(id, task, peer, capability_id),
-             {:ok, built} <- mounted_call_input(mount, input_parts, id),
-             {:ok, reply} <-
-               CapabilityInvocation.invoke(agent, mount, built.input,
-                 invocation_override: built.invocation
-               ),
-             {:ok, verified} <- Toolbox.finish_reply(reply, built) do
-          if Map.has_key?(built, :agora),
-            do: IO.puts(verified.text),
-            else: print_message(verified)
-        else
-          {:error, :not_found} ->
-            error("mount call failed: #{peer}/#{capability_id} is not mounted in task '#{task}'")
-
-          {:error, {:remote, code, message}} ->
-            error("mount call failed: #{code}: #{message}")
-
-          {:error, reason} ->
-            error("mount call failed: #{inspect(reason)}")
-        end
-      end,
-      opts
-    )
-  end
-
-  defp dispatch(["mount", task, "rm", peer, capability_id | _], _opts) do
-    with_identity(fn id ->
-      case DynamicToolRegistry.unmount(id, task, peer, capability_id) do
-        :ok ->
-          IO.puts("Unmounted #{task}: #{peer}/#{capability_id}")
-
-        {:error, reason} ->
-          error("mount rm failed: #{inspect(reason)}")
-      end
-    end)
   end
 
   defp dispatch(["info", to], opts) do
@@ -294,7 +217,6 @@ defmodule Arc.CLI.Agent do
 
     Commands:
       discover [query]       Search remote capability summaries
-      mount <task> ...       Manage task-scoped mounted capabilities
       send <to> <message>    Send a message (waits for reply)
       info <peer> [id]       Fetch remote capability summary or detail
       listen                 Listen for incoming messages
@@ -314,12 +236,6 @@ defmodule Arc.CLI.Agent do
       /path/to/bundle-dir
       /path/to/bundle-dir/Arcfile
       exec:///path/to/runtime?manifest=/abs/path/to/manifest.(json|toml)
-
-    Mount commands:
-      mount <task> add <peer> <id>
-      mount <task> ls
-      mount <task> call <peer> <id> [input]
-      mount <task> rm <peer> <id>
     """)
   end
 
@@ -416,18 +332,6 @@ defmodule Arc.CLI.Agent do
         drain_serve_events()
     after
       0 -> :ok
-    end
-  end
-
-  defp mounted_call_input(mount, argv, identity) do
-    if Arc.Data.Agora.enabled?(mount["capability"] || %{}) do
-      Toolbox.build_invocation(mount, argv, %{identity: identity})
-    else
-      {:ok,
-       %{
-         input: Enum.join(argv, " "),
-         invocation: get_in(mount, ["capability", "invocation"]) || %{}
-       }}
     end
   end
 
@@ -624,7 +528,6 @@ defmodule Arc.CLI.Agent do
     IO.puts("  #{title}")
     print_discovery_summary(capability["summary"] || "")
     IO.puts("  Expand: arc info #{provider_query} #{id}")
-    IO.puts("  Mount:  arc mount <task> add #{provider_query} #{id}")
     print_discovery_install(capability, provider_query, id)
   end
 
