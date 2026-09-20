@@ -220,10 +220,10 @@ journal replies with one JSON object per line on stdout:
 
 ## 12. Runtime
 
-- Language: Go. The bundle at `go/cmd/journal-provider` holds the source, the manifest and the Arcfile.
-- `run.sh` builds an escript on first start and runs it. Build output goes to
+- Language: Go. The bundle at `cmd/journal-provider` holds the source, the manifest and the Arcfile.
+- `run.sh` builds the binary on first start and runs it. Build output goes to
   stderr so stdout stays a clean JSON stream.
-- One OTP supervisor runs the index job and the push job. The stdio loop runs
+- One goroutine runs the index job and the push job. The stdio loop runs
   in the main process.
 - The journal shells out to `git` and `qmd`. `git` must be on `PATH`. If
   `qmd` is absent, `search` returns `search_unavailable` and all else works.

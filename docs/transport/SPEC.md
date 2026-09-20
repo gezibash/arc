@@ -72,7 +72,7 @@ bodies. A protocol provider can use a normal text body or opt into binary bytes:
 From the repository root, with an active citizen key:
 
 ```sh
-mise run arc -- request 'sqlite+arc://<provider-public-key>/main' \
+arc request 'sqlite+arc://<provider-public-key>/main' \
   --body '{"sql":"SELECT name FROM sqlite_schema WHERE type = ?","params":["table"]}' \
   --relay 127.0.0.1:7331 --relay-pubkey '<relay-public-key>'
 ```
@@ -89,10 +89,10 @@ default output is the response body on standard output, with no added newline.
 `--output PATH` writes a new file and refuses to overwrite an existing one.
 Output failures after a completed request do not undo provider changes.
 
-The Elixir API is `Arc.Data.Protocol.request(agent, uri, body, opts)`. The caller
-owns the citizen agent and its delivery policy. Success returns
-`{:ok, %{body: binary, meta: map}}`. The API consumes only replies matching both
-the provider key and the generated request ID; unrelated inbox messages remain.
+The Go API is `client.Peers().Request(ctx, peer, meta, body)`. The caller owns
+the connection and its delivery policy. Success returns the reply, which holds
+a body and its meta. The call reads only the reply that matches both the
+provider key and the generated request ID. Other messages stay where they are.
 
 ## Binary boundary
 
@@ -177,11 +177,8 @@ replay. [Promotion](PROMOTION.md), [path selection](PATHS.md), and
 ## Validation
 
 ```sh
-mise exec -- mix test apps/arc_data/test/arc/data/protocol_test.exs \
-  apps/arc_data/test/arc/data/binary_provider_test.exs \
-  apps/arc_data/test/arc/data/handler/exec_test.exs \
-  apps/arc_cli/test/arc/cli_protocol_test.exs
+go test ./client/... ./provider/... ./citizen/...
 ```
 
-See [SQLite provider](../../go/cmd/sqlite-provider/README.md) for its independent tests
+See [SQLite provider](../../cmd/sqlite-provider/README.md) for its independent tests
 and [federation](../federation/SPEC.md) for operator routing policy.

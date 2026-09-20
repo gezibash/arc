@@ -90,7 +90,7 @@ arc journal edit <project>/<notebook>/<page> --if-rev <rev from read> --find "ol
 Record a KPI. KPIs live outside the page and never rewrite history:
 
 ```bash
-arc journal kpi set arc/journal tests_passing 23 --ref 80b5777 --note "mix test"
+arc journal kpi set arc/journal tests_passing 23 --ref 80b5777 --note "go test"
 arc journal kpi log arc/journal tests_passing
 arc journal kpi latest arc/journal
 ```
@@ -145,9 +145,9 @@ nohup env ARC_KEY=<provider key name> bin/arc relay --port 7411 > ~/.arc/journal
 ```
 
 ```bash
-nohup env ARC_KEY=<provider key name> JOURNAL_ROOT=$HOME/.arc/journal bin/arc serve go/cmd/journal-provider --relay 127.0.0.1:7411 > ~/.arc/journal/serve.log 2>&1 &
+nohup env ARC_KEY=<provider key name> JOURNAL_ROOT=$HOME/.arc/journal bin/arc serve cmd/journal-provider --relay 127.0.0.1:7411 > ~/.arc/journal/serve.log 2>&1 &
 ```
 
-The first `serve` builds the escript. Wait for `arc journal ls` to answer.
+The first `serve` builds the binary. Wait for `arc journal ls` to answer.
 The data lives in `~/.arc/journal/repo`. The spec is in
 `docs/journal/SPEC.md` in the ARC repo.

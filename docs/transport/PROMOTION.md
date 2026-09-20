@@ -74,7 +74,7 @@ never causes an application request to be replayed.
 dials. Either citizen can open the connection regardless of application roles.
 Keep the working route while checking alternatives and choose reliability before
 latency. The implemented profile has no automatic alternative ranking. The
-selected [carrier](CARRIER.md) is Erlang/OTP TLS over TCP.
+selected [carrier](CARRIER.md) is TLS over TCP.
 
 ```mermaid
 stateDiagram-v2
@@ -158,8 +158,8 @@ Late packets cannot recreate retired contexts just because their signature is
 valid. Context creation, replay state, and tombstones need strict resource bounds.
 Existing unpromoted sessions keep their current behavior.
 
-[Agent](../../apps/arc_data/lib/arc/data/agent.ex) tracks direct request and
-reply routes by peer, request ID, and route generation. [Protocol](../../apps/arc_data/lib/arc/data/protocol.ex)
+[The direct manager](../../direct/manager.go) tracks direct request and reply
+routes by peer, request ID, and route generation. [The client](../../client/peers.go)
 waits for the matching generation, so a relay reply cannot satisfy a direct
 request and a retired direct generation cannot dispatch a late frame.
 
@@ -275,7 +275,7 @@ confidential execution on an untrusted host.
 
 ## Carrier work still required
 
-[The carrier decision](CARRIER.md) selects Erlang/OTP TLS over TCP for the first
+[The carrier decision](CARRIER.md) selects TLS over TCP for the first
 implementation, with ARC relay negotiation and explicit reachable listeners.
 Neither-side-reachable cases remain on relays. Release packaging and identity
 binding still need the documented adoption checks. The carrier must

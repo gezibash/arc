@@ -240,7 +240,7 @@ arc request 'sqlite+arc://<provider-public-key>/main' \
 
 Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY`, or explicitly choose `--local`.
 The [shared request transport](docs/transport/SPEC.md) preserves opaque bodies;
-the [SQLite provider](go/cmd/sqlite-provider/README.md) supplies database access with
+the [SQLite provider](cmd/sqlite-provider/README.md) supplies database access with
 operator-defined citizen grants. Continuous native protocol streams are future work.
 
 Relay delivery is the default. A provider and citizen may opt into the bounded
@@ -259,10 +259,6 @@ by both operators; ARC does not open router ports or perform NAT traversal.
 | `discover [query]`, `info <peer>`, `install <peer> <id>` | Find and install remote capabilities |
 | `trust`, `tool`, `lists`, `cache` | Signers, installed tools, peer lists, sealed cache |
 | `version` | Print version and build commit |
-
-`mount` and `mcp` are deprecated. They serve capabilities as MCP tools. They
-stay in the Elixir build, and they do not go to Go. Install a capability as a
-command instead: `arc install <peer>`.
 
 Installed tools run as native subcommands, for example `arc dm inbox` after
 `arc install <peer> dm`. `arc help` prints the full list with every option
@@ -284,19 +280,20 @@ and apply withdrawals; they do not promise a complete view of the network.
 
 ## Development
 
-Needs Elixir 1.19.5 on OTP 28. [mise](https://mise.jdx.dev) installs both
+ARC is written in Go. [mise](https://mise.jdx.dev) installs the toolchain
 from `mise.toml`.
 
 ```bash
 mise install
-mise run build
+mise run build   # every command into bin/
 mise run test
-mise run check
+mise run lint
+mise run cli     # the whole stack: relay, citizen, provider, caller
 ```
 
-`mise run arc -- <command>` runs the CLI from source. `mise run release`
-builds a release with the bundled runtime into
-`_build/prod/rel/arc_runtime`.
+`mise run build` writes `bin/arc` and one binary for each provider. The
+module is `github.com/gezibash/arc`, so a program that wants a client
+imports `github.com/gezibash/arc/client`.
 
 ## Docs
 

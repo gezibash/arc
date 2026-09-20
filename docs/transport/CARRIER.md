@@ -1,35 +1,28 @@
-# First direct carrier: Erlang/OTP TLS over TCP
+# First direct carrier: TLS over TCP
 
 ## Decision
 
-Use Erlang/OTP's built-in `:ssl` application for the first
-[optional direct promotion](PROMOTION.md) carrier. Carry bounded ARC packets over
-TLS over TCP, with ARC relays retaining discovery, consent, and permission
-renewal. Mutual hole-punch consent permits a bounded attempt when no configured
-listener is reachable; unsuccessful attempts keep the existing ARC relay path.
+Use TLS 1.3 over TCP for the first [optional direct promotion](PROMOTION.md)
+carrier. Carry bounded ARC packets over that connection. ARC relays keep
+discovery, consent, and permission renewal. Mutual hole-punch consent permits
+a bounded attempt when no configured listener is reachable. An attempt that
+does not succeed keeps the existing ARC relay path.
 
-This revises the earlier WebRTC-first choice after considering its additional
-native build dependencies. It selects a smaller initial reachability scope rather
-than introducing another language toolchain. WebRTC can remain a future optional
-carrier for browser peers or broader traversal requirements.
+This replaces an earlier WebRTC-first choice, which needed native build
+dependencies. The carrier takes a smaller reachability scope instead of a
+second toolchain. WebRTC can remain a later optional carrier, for browser
+peers or for wider traversal.
 
-The first direct request/reply carrier is implemented. It is enabled only by
-matching local policy files described in [direct request/reply](DIRECT.md).
-It does not change the relay-first default or provide a general transport tunnel.
+The first request/reply carrier is built. Matching local policy files enable
+it, as [direct request/reply](DIRECT.md) describes. It does not change the
+relay-first default, and it is not a general transport tunnel.
 
 ## Dependency impact
 
-The previously proposed `ex_sctp` package explicitly requires Rust to compile;
-see its [installation documentation](https://ex-sctp.hexdocs.pm/readme.html).
-That introduces a build toolchain and a compiled native component to package.
-A correctly packaged release could run without a Rust compiler on the citizen's
-machine, but the native component would still be an ARC dependency. Shipping a
-binary does not remove that maintenance and release burden.
-
-The choice uses [OTP's TLS implementation](https://www.erlang.org/docs/28/apps/ssl/ssl.html).
-It introduces no third-party transport package or new language toolchain. OTP
-already has native crypto components; this is reuse of that platform, not a
-claim that all networking or cryptography is pure Elixir.
+The carrier uses the `crypto/tls` package of the Go standard library. It adds
+no third-party transport package, no native component, and no second
+toolchain. Each end pins the certificate of the other by its SHA-256 hash,
+and proves its identity with a signature over exported keying material.
 
 ## Reachability scope
 
@@ -81,7 +74,7 @@ sqlite+arc://<provider-public-key>/main
 ```
 
 The direct connection carries existing signed/encrypted ARC packets in newly
-admitted route contexts. It is not a raw database port or Erlang distribution
+admitted route contexts. It is not a raw database port or a runtime
 connection. Providers continue receiving calls through the same ARC handler.
 Humans using the local Agora interface can keep relying on their local ARC
 process. Direct browser networking would require a separate compatible carrier

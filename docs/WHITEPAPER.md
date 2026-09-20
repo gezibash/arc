@@ -26,9 +26,8 @@ This whitepaper describes both the current implementation and the design intent 
 - Session establishment — ECDH, HKDF-SHA256, ChaCha20-Poly1305 encryption
 - Packet format — signed headers, encrypted payloads, replay prevention
 - Relay mesh — TCP relay nodes with route sharding and telemetry
-- Agent model — BEAM processes as agents, with handler and capability system
-- CLI — key management, publish, resolve, serve, relay, discover, host, trust, tools, MCP
-- MCP integration — task-scoped tool projection from mounted capabilities
+- Agent model — a keypair is an agent, with a handler and a capability system
+- CLI — key management, publish, resolve, serve, relay, discover, trust, tools, update
 - Capability system — manifests, signed packages, discovery, provider bundles
 - Protocol request client — `<scheme>+arc://<provider-key>/<resource>` through
   relays or explicit local mode, including a real SQLite query provider;
@@ -36,13 +35,12 @@ This whitepaper describes both the current implementation and the design intent 
 
 **Not yet implemented:**
 - TUN interface (`arc0`), `.arc` DNS resolver, `10.64.0.0/10` address space
-- Direct connection promotion (STUN, hole-punching)
+- Hole punching for a direct connection (the policy path is implemented)
 - Storage backends (SQLite, Postgres, S3)
 - Blockchain control plane adapters (Hedera, Ethereum, Solana, Nostr)
 - Native protocol bridges and continuous byte streams (Git helpers, browser
   proxies, etc.); the implemented URI client currently uses bounded request/reply
 - Group messaging
-- Binary distribution via Burrito
 
 Sections describing unimplemented features represent design intent.
 
@@ -175,11 +173,11 @@ This is the entirety of what ARC requires from a control plane. Five operations.
 
 ### Layer 2 — Data Plane
 
-The data plane is the live routing layer. It handles message delivery between agents, session key management, presence, and relay. It is built on the BEAM virtual machine (Elixir/Erlang) — not because Elixir is fashionable, but because BEAM was built by Ericsson in the 1980s to solve exactly this problem.
+The data plane is the live routing layer. It handles message delivery between agents, session key management, presence, and relay. It is written in Go, and it ships as one static binary with no runtime beside it.
 
-Ericsson needed a runtime that could handle millions of concurrent isolated processes, where a failure in one process cannot cascade to others, and where software can be updated without downtime. They were building telephone switches. The constraints were: someone could die if a call drops. BEAM is what they built.
+A relay holds one goroutine for each connection and one for each route. A connection that fails takes nothing else down: the relay drops its routes and keeps serving every other citizen. Nothing in the routing path is shared mutable state that one citizen can corrupt for another.
 
-In ARC, a BEAM process *is* an agent. Not a simulation of an agent. Not a thread pretending to be an agent. The execution model and the domain model are the same thing. This is why agent-to-agent messaging in ARC is approximately 200 lines of code, where equivalent systems in Node or Go require thousands.
+An agent is not a process of the runtime. An agent is a keypair. That is the whole identity model, and it is why an agent can move between machines, outlive the program that served it, and be reached by anyone who knows its public key.
 
 The data plane is chain-agnostic. Once a session key is established via the control plane, all routing is pure message passing. The data plane does not know what chain bootstrapped the session. It does not care.
 
@@ -475,7 +473,7 @@ An LLM endpoint that speaks ARC can be invoked by any agent on the network that 
 
 A sandboxed shell that speaks ARC gives any authorized agent a compute environment — with a full audit trail, every session attributable to a keypair, every command logged and signed.
 
-The proxy primitive makes this accessible without writing a line of Elixir:
+The proxy primitive makes this accessible without writing a line of code:
 
 ```bash
 arc serve http://localhost:3000     # your REST API is now on ARC
@@ -572,18 +570,15 @@ ARC guarantees:
 
 ## 12. The Binary
 
-ARC is designed to ship as a single binary — no runtime, no Docker, no dependencies. Cross-platform via Burrito (Elixir's release bundler):
+ARC ships as a single binary — no runtime, no Docker, no dependencies. Each release carries one static binary per platform:
 
 ```
-macos_arm    darwin/aarch64
-macos_x86    darwin/x86_64
-linux_x86    linux/x86_64
-windows      windows/x86_64
+darwin/arm64
+linux/amd64
+linux/arm64
 ```
 
-The binary would contain the full ARC runtime — BEAM VM, control plane adapter, data plane router, proxy, keyring management, and CLI. Install it and you are on the network.
-
-Binary distribution is not yet implemented. ARC currently runs from source via `mix` or as an escript.
+The binary holds the control plane adapter, the data plane router, the key store, and the CLI. Install it and you are on the network. `arc update` replaces it with a release that the publisher signed.
 
 ```bash
 # become a participant
@@ -602,18 +597,24 @@ arc relay
 arc ssh shell+arc://zim
 ```
 
-### MCP Interface
+### Installed commands
 
-AI agents consume ARC via a thin MCP (Model Context Protocol) server. The MCP layer is a translation interface only — no business logic, no state, no chain knowledge. It exposes arc capabilities as tools that any MCP-compatible AI agent can call:
+An agent consumes ARC by installing a capability as a command. `arc install
+<peer>` reads the signed capability of that citizen, asks the owner about the
+signer once, and then adds the command to `arc`:
 
 ```
-identity.current()           who am I
-identity.resolve(name)       who is zim
-mesh.send_dm(to, message)    send a message
-arc.serve(upstream)          put my service on ARC
-arc.connect(uri)             connect to an ARC URI
-arc.info(uri)                what does this identity serve
+arc install <peer>           read the signed capability, and add its command
+arc dm send <peer> "hello"   the command that the capability declared
+arc whoami                   who am I
+arc resolve zim              who is zim
+arc serve <directory>        put my service on ARC
+arc info <peer>              what does this citizen serve
 ```
+
+There is no second server to run, and no tool registry to keep. The
+capability says what its command line looks like, and the signature says who
+authored it.
 
 ---
 
@@ -621,7 +622,7 @@ arc.info(uri)                what does this identity serve
 
 ARC is designed to federate to billions of participants without central coordination.
 
-The data plane federates via cluster bridges — persistent connections between regional BEAM clusters. Within a cluster, Horde handles process registry and routing transparently across nodes. Between clusters, bridge processes route messages to the correct cluster before local delivery.
+The data plane federates relay to relay. Two relays that name each other open one connection, prove their identities, and share signed service catalogs. A message for a citizen of the other relay carries a signed route that begins at the sending partner and ends at the signed home, within a hop limit. An operator in the middle carries traffic onward only after saying so.
 
 The control plane federates via provider bridging — a local resolver that queries multiple providers in sequence. An agent on Hedera is reachable from an Ethereum node via the bridge resolver. No cross-chain transaction required. No interoperability layer needed. The identity is the pubkey — it is the same on every chain.
 
@@ -679,7 +680,7 @@ ARC is a place for agents to live.
 | Agent | Any participant on ARC — human, program, or AI — identified by a keypair |
 | Arc scheme | A URI scheme of the form `<proto>+arc://<identity>` identifying a capability |
 | Control plane | The external trust layer responsible for identity registration, resolution, and revocation |
-| Data plane | The BEAM relay mesh responsible for live message routing |
+| Data plane | The relay mesh responsible for live message routing |
 | Identity | A seed-derived Ed25519 keypair. The seed is the identity |
 | Keyring | Local configuration mapping filesystem paths to identities |
 | Promotion | The process of transitioning from relay to direct connection |
@@ -705,7 +706,7 @@ Regardless of provider, ARC defines logical topics that each adapter must implem
 
 | Topic | Purpose | Write frequency |
 |---|---|---|
-| `arc.node.registry` | Elixir node peering and topology | On boot, low |
+| `arc.node.registry` | Relay peering and topology | On boot, low |
 | `arc.node.revocation` | Compromised node announcements | Rare |
 | `arc.agent.registry` | Agent identity and pubkey publication | On boot, on rotation |
 | `arc.agent.keyex` | Ephemeral key exchange events | Per new session |

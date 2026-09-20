@@ -214,7 +214,7 @@ Res publica: the public thing. It belongs to you because it belongs to no one.
 
 ## Where it stands, honestly
 
-The identity system, the encrypted sessions, the relay mesh, the agent model, the command line, and the MCP integration are built and running today.
+The identity system, the encrypted sessions, the relay mesh, the agent model, and the command line are built and running today.
 
 The virtual network interface, direct peer to peer promotion, storage backends, blockchain name anchors, and group messaging are design intent. The technical whitepaper lists each one and does not blur the line.
 

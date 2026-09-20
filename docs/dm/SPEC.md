@@ -7,7 +7,7 @@ or public key. The provider stores the message in the recipient's mailbox.
 The recipient reads the mailbox at any time. Both parties keep a full history
 of every thread.
 
-DM is a standalone provider bundle at `go/cmd/dm-provider`. It depends on core
+DM is a standalone provider bundle at `cmd/dm-provider`. It depends on core
 changes C1 to C3 in `docs/dm/CORE.md`: a sealed box, X25519 key
 publication through the CLI, and template filters that seal and open
 message bodies. The provider stores ciphertext only. The whitepaper requires
@@ -229,14 +229,14 @@ Push delivery is not in Phase 1, see section 14.
 
 ## 12. Runtime
 
-- Language: Go. The bundle at `go/cmd/dm-provider` holds the source, the manifest and the Arcfile, with
+- Language: Go. The bundle at `cmd/dm-provider` holds the source, the manifest and the Arcfile, with
   the same `Arcfile`, `manifest.json`, and `run.sh` shape as the journal.
 - The stdio loop runs in the main process. There is no background job in
   Phase 1.
 - Configuration comes from environment variables:
   - `DM_ROOT`: data directory. Default `~/.arc/dm`.
   - `DM_MAX_BODY`: sealed body cap in bytes. Default `98304`.
-- The provider key is the identity that runs `arc serve go/cmd/dm-provider`.
+- The provider key is the identity that runs `arc serve cmd/dm-provider`.
   Citizens install it with `arc install <provider key> primary`.
 - One provider process owns a `DM_ROOT`. Two processes on one root race
   the `usage` counter and lose updates. Give a second `arc serve` its own
@@ -250,7 +250,7 @@ host operator cannot read a message. Only the holder of the recipient's key
 can open the recipient's copy, and only the sender can open the sender's
 copy.
 
-The sealed box is `Arc.Identity.SealedBox` (CORE.md C1): an ephemeral
+The sealed box is the `sealedbox` package (CORE.md C1): an ephemeral
 X25519 key per message, HKDF-SHA256 with info `arc-sealed-v1`, and
 ChaCha20-Poly1305. The CLI applies it through the `seal` filter and opens
 replies through the `open` output filter (CORE.md C3).

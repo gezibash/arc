@@ -1,6 +1,6 @@
 # Exec: remote commands and wakeable citizens on ARC
 
-Status: proposed. Phases 1 and 3a of section 18 exist in `go/cmd/exec-provider`:
+Status: proposed. Phases 1 and 3a of section 18 exist in `cmd/exec-provider`:
 the provider (section 8), the start script (section 10.4), the lease
 (section 11), jobs (sections 12.1 to 12.3), and the wrapper `arc-exec`. The
 other sections describe work that does not exist yet.
@@ -58,7 +58,7 @@ agent instructions.
   The exec runtime verifies the signature first.
 - The relay forwards ciphertext. It cannot read commands or output.
 - The exec runtime supports request/reply, long-lived streams, and events
-  that a provider starts. See `Arc.Data.Handler.Exec`.
+  that a provider starts. See `provider/command.go`.
 - `arc request` waits up to 120 seconds for one reply.
 - A DM mailbox stores sealed messages for a key that is offline. See
   [DM](../dm/SPEC.md).
@@ -157,7 +157,7 @@ about 50 USD for each month.
 
 ## 8. Command request (prototype)
 
-The provider bundle is `go/cmd/exec-provider`. Its scheme is `exec`. Its method is
+The provider bundle is `cmd/exec-provider`. Its scheme is `exec`. Its method is
 `EXEC`.
 
 ```sh
@@ -385,7 +385,7 @@ The body field `action` selects the operation. The method stays `EXEC`.
 
 ```sh
 arc request 'exec+arc://<citizen-public-key>/' \
-  --body '{"action":"start","script":"cd ~/arc && mix test"}'
+  --body '{"action":"start","script":"cd ~/arc && go test ./..."}'
 arc request 'exec+arc://<citizen-public-key>/' \
   --body '{"action":"status","job":"01a0bb786e86-6325d28e"}'
 ```
@@ -580,7 +580,7 @@ token_env = "SPRITES_TOKEN"
 | Phase | Scope |
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
-| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `go/cmd/exec-provider/citizen/`, the `lease` object, and `go/cmd/exec-provider/arc-exec`. |
+| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `cmd/exec-provider/citizen/`, the `lease` object, and `cmd/exec-provider/arc-exec`. |
 | 2 | Wake hooks and the `asleep` state in `arc request`. |
 | 3a | Asynchronous jobs: `start`, `status`, and `arc-exec --start`, `--status`, `--wait`. Done. |
 | 3b | The notify command (section 12.3) and the DM script (section 12.4). |

@@ -34,16 +34,16 @@ Example chain A–B–C:
 
 ```bash
 # A approves B.
-mise run arc -- relay --key <relay-A-key-name> --port 7331 \
+arc relay --key <relay-A-key-name> --port 7331 \
   --peer <relay-B-public-key-hex>@relay-b.example.com:7331
 
 # B approves A and C, and explicitly allows traffic between partners.
-mise run arc -- relay --key <relay-B-key-name> --port 7331 --transit \
+arc relay --key <relay-B-key-name> --port 7331 --transit \
   --peer <relay-A-public-key-hex>@relay-a.example.com:7331 \
   --peer <relay-C-public-key-hex>@relay-c.example.com:7331
 
 # C approves B.
-mise run arc -- relay --key <relay-C-key-name> --port 7331 \
+arc relay --key <relay-C-key-name> --port 7331 \
   --peer <relay-B-public-key-hex>@relay-b.example.com:7331
 ```
 
@@ -83,16 +83,16 @@ A listener publishes an identity, not a storage capability.
 # Provider on C:
 export ARC_RELAY='relay-c.example.com:7331'
 export ARC_RELAY_PUBKEY='<relay-C-public-key-hex>'
-mise run arc -- serve go/cmd/files-provider --federate-network
+arc serve cmd/files-provider --federate-network
 
 # Citizen on A, in a separate shell or machine:
 export ARC_RELAY='relay-a.example.com:7331'
 export ARC_RELAY_PUBKEY='<relay-A-public-key-hex>'
-mise run arc -- discover files
-mise run arc -- info <provider-public-key-hex> primary
-mise run arc -- install <provider-public-key-hex> primary
-mise run arc -- files put ./report.pdf
-mise run arc -- files get <file-id> --output ./restored.pdf
+arc discover files
+arc info <provider-public-key-hex> primary
+arc install <provider-public-key-hex> primary
+arc files put ./report.pdf
+arc files get <file-id> --output ./restored.pdf
 ```
 
 Citizens need no publication opt-in to call a shared service or receive its
@@ -328,25 +328,17 @@ bounded task scheduling, and rejection of late results after peer departure.
 The lifecycle tests also verify that stopping a federation manager cancels an
 outbound handshake and closes its socket without waiting for the peer timeout.
 
-To diagnose an integration child that fails to shut down, enable the test-only
-stack sampler. It prints function names and arities, not process state or keys:
+To diagnose a test that hangs, run it with the race detector and a timeout.
+The stack dump names the goroutine that did not finish:
 
 ```bash
-ARC_TEST_SHUTDOWN_DIAGNOSTICS=1 mise exec -- mix test \
-  apps/arc_cli/test/arc/cli_catalog_federation_test.exs
+go test -race -timeout 60s -run Federation ./relay/...
 ```
-
-The catalog harness sends one shutdown request and uses a fixed deadline;
-additional child output does not extend that deadline. Timeout reports retain
-the child output for diagnosis.
 
 Unit and socket tests cover signed scopes, route/home binding, malformed
 paths, loop and budget limits, downstream partial replies, private return
 permissions, local connection replacement, expiry, and peer departure.
 
 ```bash
-mise exec -- mix test apps/arc_net/test/arc/net/network_federation_directory_test.exs \
-  apps/arc_net/test/arc/net/network_federation_routing_test.exs \
-  apps/arc_net/test/arc/net/relay/federation_route_test.exs \
-  apps/arc_cli/test/arc/cli_network_federation_test.exs
+go test ./relay/...
 ```
