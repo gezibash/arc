@@ -3,7 +3,8 @@ defmodule Arc.Data.Session do
   Encrypted session between two agents.
 
   Session establishment, version 2:
-    1. The responder publishes an X25519 public key via the control plane.
+    1. The initiator computes the responder's X25519 public key from the
+       responder's Ed25519 public key. See `Arc.Identity.public_key_to_x25519/1`.
     2. The initiator generates an ephemeral X25519 keypair per session and
        derives shared = ECDH(ephemeral_priv, responder_x25519_pub).
     3. Session key = HKDF-SHA256(shared, salt: ephemeral_pub, info: "arc-session-v2").
@@ -44,16 +45,19 @@ defmodule Arc.Data.Session do
   defstruct [:peer_public_key, :session_key, :session_id, :seq, :my_identity, :ek_pub, :version]
 
   @doc """
-  Start a version 2 session as the initiator. Needs the peer's Ed25519
-  public key and published X25519 public key. Generates an ephemeral key
-  that every packet of this session carries in its header.
+  Start a version 2 session as the initiator from the peer's Ed25519 public
+  key. Generates an ephemeral key that every packet of this session carries
+  in its header.
   """
-  @spec establish(Identity.t(), Identity.public_key(), binary()) :: t()
-  def establish(
-        %Identity{} = my_identity,
-        <<peer_ed_pub::binary-size(32)>>,
-        <<peer_x25519_pub::binary-size(32)>>
-      ) do
+  @spec establish(Identity.t(), Identity.public_key()) ::
+          {:ok, t()} | {:error, :invalid_public_key}
+  def establish(%Identity{} = my_identity, <<peer_ed_pub::binary-size(32)>>) do
+    with {:ok, peer_x25519_pub} <- Identity.public_key_to_x25519(peer_ed_pub) do
+      {:ok, establish_v2(my_identity, peer_ed_pub, peer_x25519_pub)}
+    end
+  end
+
+  defp establish_v2(my_identity, peer_ed_pub, peer_x25519_pub) do
     {ek_pub, ek_priv} = :crypto.generate_key(:ecdh, :x25519)
     shared_secret = :crypto.compute_key(:ecdh, peer_x25519_pub, ek_priv, :x25519)
 
@@ -97,12 +101,15 @@ defmodule Arc.Data.Session do
   Version 1 session from both long-term keys. Deprecated. Kept so packets
   from a peer on the previous release still decrypt.
   """
-  @spec establish_v1(Identity.t(), Identity.public_key(), binary()) :: t()
-  def establish_v1(
-        %Identity{} = my_identity,
-        <<peer_ed_pub::binary-size(32)>>,
-        <<peer_x25519_pub::binary-size(32)>>
-      ) do
+  @spec establish_v1(Identity.t(), Identity.public_key()) ::
+          {:ok, t()} | {:error, :invalid_public_key}
+  def establish_v1(%Identity{} = my_identity, <<peer_ed_pub::binary-size(32)>>) do
+    with {:ok, peer_x25519_pub} <- Identity.public_key_to_x25519(peer_ed_pub) do
+      {:ok, v1_session(my_identity, peer_ed_pub, peer_x25519_pub)}
+    end
+  end
+
+  defp v1_session(my_identity, peer_ed_pub, peer_x25519_pub) do
     {_my_x_pub, my_x_priv} = Identity.to_x25519(my_identity)
     shared_secret = :crypto.compute_key(:ecdh, peer_x25519_pub, my_x_priv, :x25519)
 

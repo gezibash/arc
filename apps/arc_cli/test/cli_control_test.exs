@@ -17,32 +17,22 @@ defmodule Arc.CLI.ControlTest do
       KeyStore.remove(Identity.name(id))
     end)
 
-    {x_pub, _} = Identity.to_x25519(id)
-    %{id: id, x_hex: Base.encode16(x_pub, case: :lower)}
+    %{id: id}
   end
 
-  test "publish publishes the identity and the keyex", %{id: id, x_hex: x_hex} do
+  test "publish publishes the identity", %{id: id} do
     output = capture_io(fn -> Arc.CLI.main(["publish"]) end)
 
-    assert output =~ "keyex:      published"
-    assert output =~ x_hex
-
-    {:ok, [entry]} = Arc.Control.resolve(Identity.name(id))
-    assert Base.encode16(entry.x25519_public, case: :lower) == x_hex
+    assert output =~ "public_key: #{Identity.encode_public_key(id)}"
+    refute output =~ "keyex"
+    assert {:ok, [_entry]} = Arc.Control.resolve(Identity.name(id))
   end
 
-  test "resolve prints the x25519 key", %{id: id, x_hex: x_hex} do
+  test "resolve prints the public key and no key exchange", %{id: id} do
     capture_io(fn -> Arc.CLI.main(["publish"]) end)
     output = capture_io(fn -> Arc.CLI.main(["resolve", Identity.name(id)]) end)
 
-    assert output =~ "x25519:     #{x_hex}"
-  end
-
-  test "resolve prints none when no keyex is published", %{id: id} do
-    :ok = Arc.Control.publish(id)
-    output = capture_io(fn -> Arc.CLI.main(["resolve", Identity.name(id)]) end)
-
-    assert output =~ "keyex:      none"
-    assert output =~ "x25519:     none"
+    assert output =~ "public_key: #{Identity.encode_public_key(id)}"
+    refute output =~ "x25519"
   end
 end

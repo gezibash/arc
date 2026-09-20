@@ -16,6 +16,16 @@ All notable changes to ARC are recorded here. The format follows
   record. `seal:to` computes the recipient key from the Ed25519 public key.
   A DM to a citizen on a different host no longer needs a shared control
   directory.
+- Sessions compute the X25519 key of the peer from its Ed25519 public key.
+
+### Removed
+
+- **Breaking:** the key exchange record. `Control.publish_keyex/2` and the
+  `x25519_public` field of control plane entries and relay announcements are
+  gone. `arc publish` and `arc resolve` print no `keyex` or `x25519` lines.
+  Relays and clients of this version reject announcements from earlier
+  versions, and the reverse. Upgrade them together.
+- The `has_key_exchange` field of the host `resolve` operation.
 
 ### Added
 

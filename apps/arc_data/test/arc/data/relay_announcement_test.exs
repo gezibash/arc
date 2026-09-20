@@ -161,9 +161,8 @@ defmodule Arc.Data.RelayAnnouncementTest do
     injected = Map.put(announcement, "name", Identity.name(second))
     assert {:error, :invalid_announcement} = RelayAnnouncement.verify(injected, now: @now)
 
-    {other_x25519, _} = Identity.to_x25519(second)
-    swapped = Map.put(announcement, "x25519_public", Identity.encode_public_key(other_x25519))
-    assert {:error, :invalid_announcement} = RelayAnnouncement.verify(swapped, now: @now)
+    extra = Map.put(announcement, "x25519_public", String.duplicate("0", 64))
+    assert {:error, :invalid_announcement} = RelayAnnouncement.verify(extra, now: @now)
   end
 
   test "enforces signed times, record bounds, and strict capability fields" do

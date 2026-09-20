@@ -31,7 +31,6 @@ defmodule Arc.Data.AgentTest do
 
       {:ok, [entry]} = Arc.Control.resolve(Identity.name(id))
       assert entry.public_key == id.public_key
-      assert entry.x25519_public != nil
     end
 
     test "cannot start a second registered agent for the same identity" do
@@ -100,16 +99,15 @@ defmodule Arc.Data.AgentTest do
       assert {:error, :not_found} = Agent.connect(agent, "nobody-here-00000000")
     end
 
-    test "connect to peer without keyex returns error" do
+    test "connect needs only the published identity" do
       alice_id = Identity.generate()
       bob_id = Identity.generate()
 
       {:ok, alice} = Agent.start_link(alice_id)
+      :ok = Arc.Control.publish(bob_id)
 
-      # Publish bob directly to control plane without keyex
-      Arc.Control.publish(bob_id)
-
-      assert {:error, :no_keyex} = Agent.connect(alice, Identity.name(bob_id))
+      assert {:ok, entry} = Agent.connect(alice, Identity.name(bob_id))
+      assert entry.public_key == bob_id.public_key
     end
   end
 
@@ -323,15 +321,12 @@ defmodule Arc.Data.AgentTest do
     test "rejects replayed packet with same seq/session_id" do
       alice_id = Identity.generate()
       bob_id = Identity.generate()
-      {bob_x_pub, _} = Identity.to_x25519(bob_id)
 
       {:ok, bob} = Agent.start_link(bob_id)
       :ok = Agent.publish(bob)
       :ok = Arc.Control.publish(alice_id)
-      {alice_x_pub, _alice_x_priv} = Identity.to_x25519(alice_id)
-      :ok = Arc.Control.publish_keyex(alice_id.public_key, alice_x_pub)
 
-      session = Session.establish(alice_id, bob_id.public_key, bob_x_pub)
+      {:ok, session} = Session.establish(alice_id, bob_id.public_key)
       {nonce, ciphertext, seq, _session} = Session.encrypt(session, "replay-test")
 
       packet =
@@ -360,15 +355,12 @@ defmodule Arc.Data.AgentTest do
     test "accepts a v1 packet from a peer on the previous release" do
       alice_id = Identity.generate()
       bob_id = Identity.generate()
-      {bob_x_pub, _} = Identity.to_x25519(bob_id)
 
       {:ok, bob} = Agent.start_link(bob_id)
       :ok = Agent.publish(bob)
       :ok = Arc.Control.publish(alice_id)
-      {alice_x_pub, _} = Identity.to_x25519(alice_id)
-      :ok = Arc.Control.publish_keyex(alice_id.public_key, alice_x_pub)
 
-      session = Session.establish_v1(alice_id, bob_id.public_key, bob_x_pub)
+      {:ok, session} = Session.establish_v1(alice_id, bob_id.public_key)
       {nonce, ciphertext, seq, _} = Session.encrypt(session, "from-v1")
 
       packet =
@@ -415,15 +407,12 @@ defmodule Arc.Data.AgentTest do
     test "rejects stale packet outside clock skew window" do
       alice_id = Identity.generate()
       bob_id = Identity.generate()
-      {bob_x_pub, _} = Identity.to_x25519(bob_id)
 
       {:ok, bob} = Agent.start_link(bob_id)
       :ok = Agent.publish(bob)
       :ok = Arc.Control.publish(alice_id)
-      {alice_x_pub, _alice_x_priv} = Identity.to_x25519(alice_id)
-      :ok = Arc.Control.publish_keyex(alice_id.public_key, alice_x_pub)
 
-      session = Session.establish(alice_id, bob_id.public_key, bob_x_pub)
+      {:ok, session} = Session.establish(alice_id, bob_id.public_key)
       {nonce, ciphertext, seq, _session} = Session.encrypt(session, "stale-test")
       stale_ts = System.system_time(:millisecond) - 300_000
 

@@ -204,8 +204,8 @@ defmodule Arc.CLI.Update.Observer do
   defp match_relay_key(_actual, _expected), do: {:error, :relay_key_mismatch}
 
   defp establish(sender, receiver) do
-    {receiver_x25519, _} = Identity.to_x25519(receiver)
-    Session.establish(sender, receiver.public_key, receiver_x25519)
+    {:ok, session} = Session.establish(sender, receiver.public_key)
+    session
   end
 
   defp wait_for_routes(relay, alice_key, bob_key) do

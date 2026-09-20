@@ -93,41 +93,6 @@ defmodule Arc.CLIRelayModeTest do
 
   def forwarded(_event, _measurements, _metadata, parent), do: send(parent, :forwarded)
 
-  test "a signed unusable peer key fails without killing the client", ctx do
-    identity = Identity.generate()
-    peer = Identity.generate()
-    {:ok, client} = Agent.start_link(identity)
-    on_exit(fn -> Arc.CLI.TestTeardown.stop(client) end)
-
-    for id <- [identity, peer] do
-      assert :ok = Arc.Net.connect_relay(~c"127.0.0.1", ctx.port, id, ctx.pin)
-    end
-
-    assert :ok = Agent.publish_relay(client)
-
-    unsigned =
-      Arc.Data.RelayAnnouncement.create(peer, [])
-      |> Map.delete("signature")
-      |> Map.put("x25519_public", String.duplicate("0", 64))
-
-    # All fields here are scalars or the empty capability list. Independently
-    # encode the public format so this remains a valid signature test.
-    body =
-      unsigned
-      |> Enum.sort()
-      |> Enum.map(fn {key, value} -> [json(key), ":", json(value)] end)
-      |> Enum.intersperse(",")
-      |> then(&IO.iodata_to_binary(["{", &1, "}"]))
-
-    signature =
-      Identity.sign(peer, "arc-relay-announcement-v1\n" <> body) |> Base.encode16(case: :lower)
-
-    record = Map.put(unsigned, "signature", signature)
-    assert :ok = Arc.Net.announce(peer.public_key, record)
-    assert {:error, :invalid_peer_key} = Agent.connect(client, Identity.name(peer))
-    assert Process.alive?(client)
-  end
-
   test "direct federation opt-in binds the live announcement to its relay", ctx do
     identity = Identity.generate()
     {:ok, agent} = Agent.start_link(identity)
@@ -160,6 +125,4 @@ defmodule Arc.CLIRelayModeTest do
     assert Arc.Data.RelayAnnouncement.federatable?(entry, ctx.pin)
     assert Agent.info(agent).relay_federation == :network
   end
-
-  defp json(value), do: value |> :json.encode() |> IO.iodata_to_binary()
 end

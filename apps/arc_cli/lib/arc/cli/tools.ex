@@ -1257,8 +1257,8 @@ defmodule Arc.CLI.Tools do
   defp seal_error(target, {:resolve, value, reason}),
     do: "cannot seal to #{target}: #{value} #{reason}"
 
-  defp seal_error(target, {:no_keyex, value}),
-    do: "cannot seal to #{target}: #{value} has no published X25519 key"
+  defp seal_error(target, {:invalid_public_key, value}),
+    do: "cannot seal to #{target}: #{value} is not a valid public key"
 
   defp seal_error(target, reason), do: "cannot seal to #{target}: #{inspect(reason)}"
 

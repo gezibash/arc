@@ -77,16 +77,15 @@ defmodule Arc.Data.ToolboxTest do
   describe "pubkey and seal filters" do
     setup do
       bob = Arc.Identity.generate()
-      {bob_x, _} = Arc.Identity.to_x25519(bob)
       nokey = Arc.Identity.generate()
       me = Arc.Identity.generate()
 
       entries = %{
         Arc.Identity.name(bob) => [
-          %{public_key: bob.public_key, x25519_public: bob_x, name: "bob"}
+          %{public_key: bob.public_key, name: "bob"}
         ],
         Arc.Identity.name(nokey) => [
-          %{public_key: nokey.public_key, x25519_public: nil, name: "nokey"}
+          %{public_key: nokey.public_key, name: "nokey"}
         ]
       }
 
@@ -126,7 +125,7 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.open_tokens(token, me) == "note"
     end
 
-    test "seal needs no published keyex", %{nokey: nokey, context: ctx} do
+    test "seal needs only the public key", %{nokey: nokey, context: ctx} do
       values = %{"to" => Arc.Identity.name(nokey), "body" => "no directory"}
 
       assert {:ok, token} = Toolbox.render_template("{{body|seal:to}}", values, ctx)
@@ -166,10 +165,9 @@ defmodule Arc.Data.ToolboxTest do
       assert Toolbox.open_tokens(token, bob) == "stdin body"
 
       carol = Arc.Identity.generate()
-      {carol_x, _} = Arc.Identity.to_x25519(carol)
 
       resolve = fn
-        "carol" -> {:ok, [%{public_key: carol.public_key, x25519_public: carol_x, name: "carol"}]}
+        "carol" -> {:ok, [%{public_key: carol.public_key, name: "carol"}]}
         other -> ctx.resolve.(other)
       end
 

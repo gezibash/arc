@@ -506,7 +506,6 @@ defmodule Arc.Net.Federation do
               stage: :proof_sent,
               client_nonce: client_nonce,
               server_nonce: server_nonce,
-              peer_x: entry.x25519_public,
               channel: channel(client_nonce, server_nonce),
               received_seq: nil,
               session: nil
@@ -541,6 +540,7 @@ defmodule Arc.Net.Federation do
          {:ok, proof} <- decode_hex(proof_hex, 64),
          {:ok, entry} <- RelayAnnouncement.verify(announcement),
          true <- entry.public_key == peer_pk,
+         {:ok, peer_x} <- Identity.public_key_to_x25519(peer_pk),
          true <-
            Identity.verify(
              peer_pk,
@@ -549,12 +549,11 @@ defmodule Arc.Net.Federation do
                peer_pk,
                link.client_nonce,
                server_nonce,
-               entry.x25519_public
+               peer_x
              ),
              proof
-           ) do
-      session = Session.establish(state.identity, peer_pk, entry.x25519_public)
-
+           ),
+         {:ok, session} <- Session.establish(state.identity, peer_pk) do
       link = %{
         link
         | stage: :ready,

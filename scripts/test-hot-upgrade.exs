@@ -455,13 +455,9 @@ defmodule Arc.HotUpgrade.Proof do
   end
 
   defp establish_channels(alice, bob) do
-    {bob_x25519, _} = Identity.to_x25519(bob)
-    {alice_x25519, _} = Identity.to_x25519(alice)
-
-    %{
-      alice_to_bob: Session.establish(alice, bob.public_key, bob_x25519),
-      bob_to_alice: Session.establish(bob, alice.public_key, alice_x25519)
-    }
+    {:ok, alice_to_bob} = Session.establish(alice, bob.public_key)
+    {:ok, bob_to_alice} = Session.establish(bob, alice.public_key)
+    %{alice_to_bob: alice_to_bob, bob_to_alice: bob_to_alice}
   end
 
   defp assert_bidirectional(alice_socket, bob_socket, alice, bob, channels, phase) do

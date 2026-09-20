@@ -118,7 +118,7 @@ defmodule Arc.Net.Relay.FederationRoute do
   defp signed_record_shape?(record) do
     Map.keys(record) |> Enum.all?(&is_binary/1) and
       Enum.all?(
-        ~w(version public_key x25519_public capabilities issued_at expires_at signature),
+        ~w(version public_key capabilities issued_at expires_at signature),
         &Map.has_key?(record, &1)
       )
   end

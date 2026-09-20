@@ -609,7 +609,7 @@ defmodule Arc.Data.Toolbox do
   # A full hex public key stands on its own for `pubkey` and for `seal`.
   defp bare_hex_entry(<<hex::binary-size(64)>> = value, reason) do
     case Base.decode16(hex, case: :mixed) do
-      {:ok, pk} -> {:ok, %{public_key: pk, x25519_public: nil, name: value}}
+      {:ok, pk} -> {:ok, %{public_key: pk, name: value}}
       :error -> {:error, {:resolve, value, reason}}
     end
   end

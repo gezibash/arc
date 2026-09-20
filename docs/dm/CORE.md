@@ -295,13 +295,20 @@ secret. Only the recipient could compute the matching public key.
 - `seal:to` computes the recipient key from the resolved Ed25519 public key.
   It does not read `x25519_public` from the control plane entry. A full hex
   public key needs no entry.
-- Sessions continue to use the X25519 key that the peer announces or
-  publishes. Each side uses its own secret with the key of the other side, so
-  a session between versions still agrees on one shared secret.
+- Sessions compute the X25519 key of the peer from its Ed25519 public key.
+- The key exchange record is removed. `Control.publish_keyex/2` and the
+  `x25519_public` field of a control plane entry do not exist. A relay
+  announcement has no `x25519_public` field. `arc publish` and
+  `arc resolve` print no key exchange lines.
 
-**Breaking change:** data that an earlier version sealed does not open. This
-includes DMs, private files, and the local sealed cache. There is no fallback
-to the old key.
+**Breaking changes:**
+
+- Data that an earlier version sealed does not open. This includes DMs,
+  private files, and the local sealed cache. There is no fallback to the old
+  key.
+- A relay announcement from an earlier version has an `x25519_public` field.
+  This version rejects it. An earlier version rejects an announcement from
+  this version. Upgrade relays and clients together.
 
 **Tests:**
 

@@ -42,8 +42,6 @@ defmodule Arc.Net.RelayHandlerTest do
 
   defp publish_identity(id) do
     :ok = Arc.Control.publish(id)
-    {x_pub, _} = Identity.to_x25519(id)
-    :ok = Arc.Control.publish_keyex(id.public_key, x_pub)
   end
 
   defp relay_connect(port, identity) do
@@ -62,8 +60,8 @@ defmodule Arc.Net.RelayHandlerTest do
   end
 
   defp client_session(client_id, server_id) do
-    {server_x_pub, _} = Identity.to_x25519(server_id)
-    Session.establish(client_id, server_id.public_key, server_x_pub)
+    {:ok, session} = Session.establish(client_id, server_id.public_key)
+    session
   end
 
   defp send_request(sock, session, client_id, server_id, body, meta \\ %{}) do
