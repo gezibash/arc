@@ -28,7 +28,8 @@ cd "$root/go"
 go build -o "$work/arc" ./cmd/arc
 go build -o "$work/arc-relay" ./cmd/arc-relay
 go build -o "$work/exec-provider" ./cmd/exec-provider
-say "the three binaries build"
+go build -o "$work/echo-provider" ./citizen/testdata/echo
+say "the binaries build"
 
 arc() { "$work/arc" --store "$work" "$@"; }
 
@@ -122,5 +123,48 @@ if arc --key "$stranger_name" call "exec+arc://$provider_key/" '{"argv":["echo",
 fi
 grep -q "access_denied" "$work/denied.txt" || fail "the refusal is not access_denied: $(cat "$work/denied.txt")"
 say "a citizen without a grant is refused"
+
+# A capability with a command line becomes a command of arc.
+caller keys gen > /dev/null 2>&1 || true
+
+echo_key="$(arc --key "$provider_name" keys list | awk -v name="$provider_name" '$2 == name {print $3}')"
+
+EXEC_CONFIG="$work/exec.json" arc --key "$provider_name" serve \
+  "exec://$work/echo-provider?manifest=$root/go/citizen/testdata/echo/cli-manifest.json" \
+  > "$work/echo.log" 2>"$work/echo.err" &
+echo_pid=$!
+
+for _ in $(seq 1 50); do
+  grep -q "serves on" "$work/echo.log" 2>/dev/null && break
+  sleep 0.1
+done
+grep -q "serves on" "$work/echo.log" || fail "the echo citizen did not serve: $(cat "$work/echo.err")"
+say "a second citizen serves a capability with a command line"
+
+caller install "$provider_key" --yes > "$work/install.txt" 2>&1 ||
+  fail "the install failed: $(cat "$work/install.txt")"
+grep -q "arc echo" "$work/install.txt" || fail "the install does not name the command: $(cat "$work/install.txt")"
+say "arc install saves the signed capability as a command"
+
+caller tool list | grep -q "echo ->" || fail "the command is not listed"
+say "arc tool list names it"
+
+caller echo hello world > "$work/echo-reply.txt" 2>&1 ||
+  fail "the command failed: $(cat "$work/echo-reply.txt")"
+grep -q "ECHO / hello world" "$work/echo-reply.txt" ||
+  fail "the command answered $(cat "$work/echo-reply.txt")"
+say "arc echo runs the capability of the other citizen"
+
+caller echo twice --from ada "the words" > "$work/echo-twice.txt" 2>&1 ||
+  fail "the subcommand failed: $(cat "$work/echo-twice.txt")"
+grep -q "ada says the words" "$work/echo-twice.txt" ||
+  fail "the subcommand answered $(cat "$work/echo-twice.txt")"
+say "a subcommand renders its template"
+
+caller trust list | grep -q allowed || fail "the signer is not trusted"
+caller tool remove echo | grep -q "removed echo" || fail "the command was not removed"
+say "arc trust list and arc tool remove answer"
+
+kill "$echo_pid" 2>/dev/null || true
 
 printf '\nARC runs end to end in Go\n'

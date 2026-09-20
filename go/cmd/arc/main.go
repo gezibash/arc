@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -20,10 +21,56 @@ import (
 var version = "dev"
 
 func main() {
-	if err := root().Execute(); err != nil {
+	command := root()
+
+	// A name that arc does not hold may be a capability that this citizen
+	// installed.
+	if name, ok := firstName(os.Args[1:]); ok && !holds(command, name) {
+		ran, err := runInstalled(name, os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "arc:", err)
+			os.Exit(1)
+		}
+		if ran {
+			return
+		}
+	}
+
+	if err := command.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "arc:", err)
 		os.Exit(1)
 	}
+}
+
+// firstName reads the first word of the line that names a command. The
+// flags of arc itself may stand before it.
+func firstName(args []string) (string, bool) {
+	takesValue := map[string]bool{
+		"--relay": true, "--relay-pubkey": true, "--key": true, "--store": true,
+	}
+
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+
+		if strings.HasPrefix(argument, "-") {
+			if takesValue[argument] {
+				index++
+			}
+			continue
+		}
+		return argument, true
+	}
+	return "", false
+}
+
+// holds says whether arc itself answers to a name.
+func holds(command *cobra.Command, name string) bool {
+	for _, child := range command.Commands() {
+		if child.Name() == name || child.HasAlias(name) {
+			return true
+		}
+	}
+	return name == "help" || name == "completion"
 }
 
 func root() *cobra.Command {
@@ -40,6 +87,9 @@ func root() *cobra.Command {
 	command.PersistentFlags().String("store", "", "the directory of ARC (default ~/.config/arc)")
 
 	command.AddCommand(
+		installCommand(),
+		toolCommand(),
+		trustCommand(),
 		keysCommand(),
 		whoamiCommand(),
 		joinCommand(),

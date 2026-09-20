@@ -117,6 +117,7 @@ func status(command *cobra.Command, _ []string) error {
 	return nil
 }
 
+// write prints one value as JSON.
 func write(value any) error {
 	out, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
