@@ -70,15 +70,23 @@ type Package struct {
 	Signed      map[string]any `json:"signed"`
 }
 
+// ReleaseChannel holds one signed channel document.
+type ReleaseChannel struct {
+	PublisherSeed string         `json:"publisher_seed"`
+	Now           int64          `json:"now"`
+	Document      map[string]any `json:"document"`
+}
+
 // File holds every vector of one version.
 type File struct {
-	Version      int          `json:"version"`
-	Identities   []Identity   `json:"identities"`
-	HKDF         []HKDF       `json:"hkdf"`
-	SealedBox    SealedBox    `json:"sealed_box"`
-	Session      Session      `json:"session"`
-	Announcement Announcement `json:"announcement"`
-	Packages     []Package    `json:"packages"`
+	Version        int            `json:"version"`
+	Identities     []Identity     `json:"identities"`
+	HKDF           []HKDF         `json:"hkdf"`
+	SealedBox      SealedBox      `json:"sealed_box"`
+	Session        Session        `json:"session"`
+	Announcement   Announcement   `json:"announcement"`
+	Packages       []Package      `json:"packages"`
+	ReleaseChannel ReleaseChannel `json:"release_channel"`
 }
 
 // Load reads the vectors. It fails the test when the file is missing, because

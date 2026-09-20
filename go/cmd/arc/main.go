@@ -103,6 +103,7 @@ func root() *cobra.Command {
 		listenCommand(),
 		publishCommand(),
 		listsCommand(),
+		updateCommand(),
 	)
 	return command
 }
