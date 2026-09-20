@@ -77,6 +77,19 @@ func (r Request) Path() string {
 	return path
 }
 
+// Events writes a message that no request asked for. ARC sends it to the
+// citizen that the event names.
+type Events interface {
+	// Emit sends one event to a citizen, named by its public key in hex.
+	Emit(to, topic, body string, meta map[string]any) error
+}
+
+// WantsEvents is a handler that sends events. Run gives it the writer before
+// it serves the first request.
+type WantsEvents interface {
+	SetEvents(events Events)
+}
+
 // Handler answers one request. Several requests run at one time, so a handler
 // must be safe for several goroutines.
 type Handler interface {
@@ -136,6 +149,9 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 	}
 
 	runtime := &runtime{handler: handler, options: opts, out: bufio.NewWriter(opts.Out)}
+	if wants, ok := handler.(WantsEvents); ok {
+		wants.SetEvents(runtime)
+	}
 	return runtime.run(ctx)
 }
 
@@ -235,6 +251,21 @@ func (r *runtime) call(ctx context.Context, request Request) (reply string, err 
 	return r.handler.HandleRequest(ctx, request)
 }
 
+// Emit writes one event line. ARC reads the citizen out of "to".
+func (r *runtime) Emit(to, topic, body string, meta map[string]any) error {
+	if meta == nil {
+		meta = map[string]any{}
+	}
+
+	line, err := json.Marshal(map[string]any{
+		"op": "event", "to": to, "topic": topic, "meta": meta, "body": body,
+	})
+	if err != nil {
+		return err
+	}
+	return r.writeLine(line)
+}
+
 // answer writes one line. One writer holds the lock, so two answers never
 // interleave on one line.
 func (r *runtime) answer(requestID any, reply string, err error) {
@@ -252,15 +283,19 @@ func (r *runtime) answer(requestID any, reply string, err error) {
 		fmt.Fprintf(r.options.Log, "provider: the answer does not encode: %v\n", marshalErr)
 		return
 	}
+	if err := r.writeLine(line); err != nil {
+		fmt.Fprintf(r.options.Log, "provider: the answer did not reach ARC: %v\n", err)
+	}
+}
 
+// writeLine writes one line under the lock, so two answers never share a line.
+func (r *runtime) writeLine(line []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.out.Write(line)
 	r.out.WriteByte('\n')
-	if flushErr := r.out.Flush(); flushErr != nil {
-		fmt.Fprintf(r.options.Log, "provider: the answer did not reach ARC: %v\n", flushErr)
-	}
+	return r.out.Flush()
 }
 
 // safeError keeps the detail of an unexpected error out of the answer. The
