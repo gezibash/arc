@@ -1,6 +1,6 @@
 # ARC in Go
 
-Status: phases 1 to 3 are done. The code is in `go/`. This plan describes a port of
+Status: phases 1 to 4 are done. The code is in `go/`. This plan describes a port of
 ARC from Elixir to Go, as packages that other people import.
 
 ```bash
@@ -9,6 +9,7 @@ mise run go.lint    # gofmt and go vet
 mise run vectors    # write the shared vectors again
 mise run go.conformance   # the Go client against an Elixir relay
 mise run go.provider      # the Go provider under the Elixir runtime
+mise run go.relay         # Elixir clients against the Go relay
 ```
 
 ## 1. Purpose
@@ -89,7 +90,7 @@ Binaries live under `cmd`:
 | Binary | Purpose |
 | --- | --- |
 | `cmd/arc` | The command line tool |
-| `cmd/arc-relay` | A relay, for a server or a container |
+| `cmd/arc-relay` | A relay, for a server or a container. Done. |
 | `cmd/exec-provider` | The exec provider |
 | `cmd/dm-provider` | The DM provider |
 
@@ -180,7 +181,7 @@ the root of the repository.
 | 1 | `identity`, `sealedbox`, `session`, `packet` | Done. The shared vectors pass. |
 | 2 | `client`: connect, announce, discover, request | Done. A Go client talks to the Elixir relay. |
 | 3 | `provider`, and the exec provider | Done. The Elixir `arc serve` runs the Go provider. |
-| 4 | `relay`: sessions, directory, routes | An Elixir client talks to the Go relay. |
+| 4 | `relay`: sessions, directory, routes | Done. An Elixir client talks to the Go relay. |
 | 5 | Federation, direct connections | Two Go relays federate. The Elixir relay federates with a Go relay. |
 | 6 | `cmd/arc`: the command surface of today | The CLI tests of the Elixir suite pass against the Go binary. |
 | 7 | The remaining providers, and MCP | Each provider answers its own test suite. |

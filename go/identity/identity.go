@@ -53,7 +53,13 @@ func FromSeed(seed []byte) (*Identity, error) {
 	return &Identity{Seed: append([]byte(nil), seed...), PublicKey: public, secretKey: secret}, nil
 }
 
-// FromSeedHex derives an identity from a seed in hexadecimal.
+// EncodeSeed returns the seed in hexadecimal. It is the secret of the
+// identity, and belongs only in the key store.
+func (id *Identity) EncodeSeed() string {
+	return hex.EncodeToString(id.Seed)
+}
+
+// FromSeedHex builds an identity from a seed in hex.
 func FromSeedHex(value string) (*Identity, error) {
 	seed, err := hex.DecodeString(value)
 	if err != nil {
