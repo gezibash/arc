@@ -35,6 +35,8 @@ from typing import Any
 
 PUBLIC_KEY = re.compile(r"^[0-9a-f]{64}$")
 JOB_ID = re.compile(r"^[0-9a-f]{12}-[0-9a-f]{8}$")
+# A job whose process ended without a recorded result is lost after this time.
+LOST_GRACE_S = 5
 
 
 class ProviderError(Exception):
@@ -431,8 +433,11 @@ def job_status(config: Config, caller: str, job: str) -> dict[str, Any]:
     if status.get("owner") != caller:
         raise RequestError("not_found")
     if status["state"] == "running" and not pid_alive(status["pid"]):
-        # The process ended, but no provider recorded the result.
-        status["state"] = "lost"
+        # The provider writes the result just after the process ends. Report
+        # "lost" only when no result arrived inside that window.
+        written = (directory / "status.json").stat().st_mtime
+        if time.time() - written > LOST_GRACE_S:
+            status["state"] = "lost"
 
     # The end of the output matters most for a long job. Return the tails.
     limit = config.limits["output_bytes"]

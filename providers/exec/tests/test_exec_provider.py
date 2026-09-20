@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -174,7 +175,14 @@ class ExecProviderTest(unittest.TestCase):
             (directory / name).write_bytes(b"")
         dead = subprocess.Popen(["true"])
         dead.wait()
-        (directory / "status.json").write_text(json.dumps({"owner": ALICE, "state": "running", "pid": dead.pid, "started_at": "x"}))
+        status = directory / "status.json"
+        status.write_text(json.dumps({"owner": ALICE, "state": "running", "pid": dead.pid, "started_at": "x"}))
+
+        # Inside the grace window the job still reads as running.
+        self.assertEqual("running", self.reply({"action": "status", "job": "000000000001-00000000"})["state"])
+
+        old = time.time() - provider.LOST_GRACE_S - 1
+        os.utime(status, (old, old))
         self.assertEqual("lost", self.reply({"action": "status", "job": "000000000001-00000000"})["state"])
 
     def test_job_holds_the_lease_until_it_ends(self):
@@ -202,12 +210,21 @@ class ExecProviderTest(unittest.TestCase):
         })
         job = self.reply({"action": "start", "script": "echo hello; exit 2"})["job"]
         self.wait_for_job(job)
+        # The notify command writes the file after the job ends. Wait for a
+        # complete record, not only for the file.
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not sink.exists():
-            time.sleep(0.05)
-        owner, body = sink.read_text().split("\n", 1)
+        owner, result = None, None
+        while time.monotonic() < deadline and result is None:
+            if sink.exists() and "\n" in (text := sink.read_text()):
+                owner, body = text.split("\n", 1)
+                try:
+                    result = json.loads(body)
+                except json.JSONDecodeError:
+                    pass
+            if result is None:
+                time.sleep(0.05)
+        self.assertIsNotNone(result, "notify wrote no result")
         self.assertEqual(ALICE, owner, "{owner} in argv becomes the caller key")
-        result = json.loads(body)
         self.assertEqual((job, "done", 2, "hello\n"), (result["job"], result["state"], result["exit"], result["stdout"]))
 
     def test_notify_runs_before_the_lease_ends(self):

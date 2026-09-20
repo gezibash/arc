@@ -385,7 +385,7 @@ The `status` reply is UTF-8 JSON:
 | --- | --- |
 | `running` | The process runs. |
 | `done` | The process ended. The reply has `exit`, `timed_out`, and `ended_at`. |
-| `lost` | The process ended, but no provider recorded the result. The provider stopped during the job. |
+| `lost` | The process ended, but no provider recorded the result within 5 seconds. The provider stopped during the job. |
 
 ### 12.2 Rules
 
