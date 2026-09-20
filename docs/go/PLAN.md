@@ -1,0 +1,197 @@
+# ARC in Go
+
+Status: proposed. No Go code exists. This plan describes a port of ARC from
+Elixir to Go, as packages that other people import.
+
+## 1. Purpose
+
+Today ARC is one program. A person who wants a citizen, a provider, or a relay
+installs the ARC release. That release carries its own Erlang runtime.
+
+In Go, ARC becomes a set of packages and a few small binaries:
+
+```go
+import "github.com/gezibash/arc/provider"
+import "github.com/gezibash/arc/client"
+```
+
+A person writes a provider in 50 lines, builds one static binary, and copies
+it to any machine. Nothing else is installed.
+
+This plan serves three goals:
+
+1. A citizen machine needs one file, and no language runtime.
+2. Another person builds on ARC without this repository.
+3. One language covers the core, the providers, and the tools.
+
+## 2. Size
+
+| Part | Elixir lines | Tests |
+| --- | --- | --- |
+| `arc_cli` | 10939 | 9227 |
+| `arc_data` | 10049 | 4350 |
+| `arc_net` | 9031 | 5599 |
+| `arc_mcp` | 1660 | 905 |
+| `arc_identity` | 705 | 665 |
+| `arc_provider` | 419 | 332 |
+| `arc_control` | 243 | 128 |
+| `arc_storage` | 38 | 9 |
+| Providers | 5865 | included above |
+
+Go needs about 1.3 times the lines of Elixir for the same work. The port is
+therefore about 45000 lines, with about 25000 lines of tests.
+
+## 3. What this port drops
+
+- **The hot upgrade of a running relay.** BEAM replaces code under live
+  connections. Go does not. A relay restarts, and its clients reconnect. The
+  update engine in `apps/arc_cli/lib/arc/cli/update` becomes a smaller
+  program: download, verify, replace the binary, restart.
+- **Live introspection of a running node.** A relay operator reads logs and
+  metrics instead of a remote shell.
+- **Supervision trees.** A goroutine that panics takes the process down unless
+  the code recovers. Each long-running goroutine needs an explicit recover and
+  restart.
+
+CAUTION: Do not start this port while the wire format changes every week. Each
+change then lands two times, in two languages.
+
+## 4. Packages
+
+The module is `github.com/gezibash/arc`. Each package holds one concept.
+
+| Package | Contents | Public? |
+| --- | --- | --- |
+| `identity` | Seeds, Ed25519 keys, the X25519 conversion, petnames, the key store | Yes |
+| `sealedbox` | Seal to a public key, open with an identity | Yes |
+| `session` | The version 2 session, its ephemeral key, and its packet key | Yes |
+| `packet` | Framing, the header, the sequence, and the replay guard | Yes |
+| `capability` | The manifest, the signed capability package, and grants | Yes |
+| `control` | The local control plane: publish, resolve, revoke | Yes |
+| `client` | Connect to a relay, announce, discover, request, listen | Yes |
+| `provider` | The provider runtime, the interface, the configuration helpers, and jobs | Yes |
+| `relay` | The relay server, its directory, and federation | Yes |
+| `internal/wire` | Shared encoding that no other module needs | No |
+
+Binaries live under `cmd`:
+
+| Binary | Purpose |
+| --- | --- |
+| `cmd/arc` | The command line tool |
+| `cmd/arc-relay` | A relay, for a server or a container |
+| `cmd/exec-provider` | The exec provider |
+| `cmd/dm-provider` | The DM provider |
+
+### 4.1 The provider interface
+
+```go
+package provider
+
+type Request struct {
+    From      string
+    Method    string
+    Path      string
+    Body      []byte
+    RequestID any
+}
+
+type Provider interface {
+    HandleRequest(ctx context.Context, r Request) ([]byte, error)
+}
+
+// Run reads events from in and writes replies to out until in closes.
+func Run(ctx context.Context, p Provider, opts ...Option) error
+```
+
+A provider in full:
+
+```go
+type echo struct{}
+
+func (echo) HandleRequest(_ context.Context, r provider.Request) ([]byte, error) {
+    return r.Body, nil
+}
+
+func main() {
+    provider.Run(context.Background(), echo{})
+}
+```
+
+### 4.2 The client interface
+
+```go
+package client
+
+func Dial(ctx context.Context, relay string, pin identity.PublicKey, me *identity.Identity) (*Client, error)
+
+func (c *Client) Request(ctx context.Context, uri string, body []byte) ([]byte, error)
+func (c *Client) Serve(ctx context.Context, bundle string) error
+func (c *Client) Discover(ctx context.Context, query string) ([]capability.Summary, error)
+```
+
+## 5. Two implementations, one protocol
+
+The Elixir code keeps running while the Go code grows. The wire format is the
+contract between them.
+
+A conformance harness runs both directions for each step:
+
+| Check | Meaning |
+| --- | --- |
+| Go client, Elixir relay | The Go packets and announcements are valid. |
+| Elixir client, Go relay | The Go relay answers the packets of today. |
+| Go provider, Elixir `arc serve` | The provider protocol matches. |
+| Go client, Go relay | The Go code is complete on its own. |
+
+Shared test vectors hold the parts that must not drift:
+
+- An identity from a seed, its public key, and its X25519 key.
+- A sealed box, and the plain text that it holds.
+- A signed relay announcement, and its canonical bytes.
+- A capability package, and its hash.
+
+The vectors live in `test/vectors/*.json`. Both implementations read them. A
+change to a vector is a change to the protocol, and needs a version.
+
+## 6. Order of work
+
+| Phase | Scope | Proof |
+| --- | --- | --- |
+| 1 | `identity`, `sealedbox`, `session`, `packet` | The shared vectors pass. |
+| 2 | `client`: connect, announce, discover, request | A Go client talks to the Elixir relay. |
+| 3 | `provider`, and the exec provider | The Elixir `arc serve` runs the Go provider. |
+| 4 | `relay`: sessions, directory, routes | An Elixir client talks to the Go relay. |
+| 5 | Federation, direct connections | Two Go relays federate. The Elixir relay federates with a Go relay. |
+| 6 | `cmd/arc`: the command surface of today | The CLI tests of the Elixir suite pass against the Go binary. |
+| 7 | The remaining providers, and MCP | Each provider answers its own test suite. |
+
+Each phase is one pull request. A phase that does not pass its proof does not
+merge.
+
+## 7. What ARC keeps
+
+- The wire format, byte for byte.
+- The identity model: the seed is the identity, and the public key is the
+  address.
+- `Arcfile`, `manifest.json`, and the grant model of each provider.
+- The specs in `docs/`. They describe the protocol, not the language.
+
+## 8. Risks
+
+| Risk | Answer |
+| --- | --- |
+| The protocol changes during the port. | Freeze the wire format first. Land protocol changes in Elixir, then port them. |
+| A panic stops a relay. | Every goroutine that serves a connection recovers and logs. One connection never stops the process. |
+| The SQLite provider needs the authorizer with its arguments. | `mattn/go-sqlite3` gives the full callback, and needs cgo. A pure Go driver removes cgo. Its support for the authorizer is unknown. Check before phase 7. |
+| cgo breaks the static binary. | Keep cgo out of `cmd/arc` and the relay. Only the SQLite provider needs it. |
+| The port stalls half finished. | Each phase ships a binary that does one job. A stall leaves working parts, not a broken tree. |
+
+## 9. Open questions
+
+- Does the Go module live in this repository, or in its own? One repository
+  keeps the specs and the vectors next to both implementations.
+- Which implementation owns the specs when they disagree?
+- Does the Elixir code stay after the port, as a second implementation, or
+  does it go?
+- Does `cmd/arc` keep every command of today, or only the commands that a
+  citizen and a provider need?
