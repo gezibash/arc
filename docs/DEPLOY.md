@@ -1,8 +1,9 @@
 # Deploy Arc
 
 Arc ships as one release per platform. Each release holds one static binary
-for each command, so the target machine needs no runtime and no library. The
-same binary runs a relay, a client, or a provider.
+for each command, so the target machine needs no runtime and no library.
+`arc` is the client, `arc-relay` runs a relay, and each provider has its own
+binary.
 
 ## Get a release
 
@@ -47,11 +48,12 @@ State lives in `~/.config/arc` (keys, control plane, tools) and
 ## Build a release locally
 
 ```bash
-mise run release
-_build/prod/rel/arc_runtime/bin/arc version
+mise run build
+bin/arc version
 ```
 
-A release runs only on the OS and CPU that built it.
+The build writes one binary for each command into `bin/`. To build for
+another OS or CPU, set `GOOS` and `GOARCH`.
 
 ## Run a relay
 
@@ -68,17 +70,19 @@ to permit onward discovery and traffic.
    arc keys gen
    ```
 
-   The command prints the generated key name, for example
+   The command prints the key name, then the public key. An example name is
    `ardent-volta-c4476157`.
 
 2. Start the relay with that key name:
 
    ```bash
-   ARC_RELAY_KEY=ardent-volta-c4476157 arc relay --port 7331
+   arc-relay --key ardent-volta-c4476157
    ```
 
-   Without `ARC_RELAY_KEY` the relay uses a new key on every start, and
-   every client must re-pin it.
+   The relay listens on port 7331. To use another address, add
+   `--address`, for example `--address :7400`. Without `--key`, the relay
+   uses the active identity: `ARC_KEY`, then `./arc.key`, then the default
+   key.
 
    The relay prints its public key. Give that key to clients.
 
@@ -93,9 +97,7 @@ Wants=network-online.target
 [Service]
 User=arc
 Environment=HOME=/var/lib/arc
-Environment=ARC_RELAY_KEY=<key name>
-Environment=ARC_RELAY_PORT=7331
-ExecStart=/opt/arc/bin/arc relay
+ExecStart=/opt/arc/bin/arc-relay --key <key name> --address :7331
 Restart=always
 RestartSec=2
 
@@ -108,24 +110,24 @@ as that user, then `systemctl enable --now arc-relay`.
 
 ## Run a relay with Docker
 
-The image `ghcr.io/gezibash/arc` runs `arc relay` by default. It supports
+The image `ghcr.io/gezibash/arc` runs `arc-relay` by default. It supports
 `linux/amd64` and `linux/arm64`.
 
 First generate the relay key in a volume. The command prints the key
-name.
+name, then the public key. The first key in the volume becomes its default
+key.
 
 ```bash
 docker volume create arc-relay
-docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest keys gen
+docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest arc keys gen
 ```
 
-Then start the relay with that key name:
+Then start the relay. It uses the default key of the volume:
 
 ```bash
 docker run -d --name arc-relay \
   -p 7331:7331 \
   -v arc-relay:/home/arc/.config/arc \
-  -e ARC_RELAY_KEY=<key name> \
   ghcr.io/gezibash/arc:latest
 ```
 
@@ -135,8 +137,8 @@ Read the relay public key from the logs:
 docker logs arc-relay
 ```
 
-Any other command works through the same image, for example
-`docker run --rm ghcr.io/gezibash/arc:latest version`.
+Any other command works through the same image. Name the command, for
+example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 
 ## Run a local relay with journal, DMs and Agora
 
@@ -147,9 +149,9 @@ docker compose up -d --build --wait
 docker compose run --rm -T info
 ```
 
-This builds a local image with the released ARC runtime and the journal, DM and
+This builds a local image from this checkout, with the journal, DM and
 Agora providers. Each service keeps its identity in its own volume; provider data is
-persistent. The relay binds to `127.0.0.1:7331`. Install ARC v0.3.1 on your host
+persistent. The relay binds to `127.0.0.1:7331`. Install ARC v0.7.0 on your host
 and use its ordinary `arc` commands to connect. Agent keys stay on the host.
 
 See [the local Compose guide](../docker/local/README.md) for agent setup,

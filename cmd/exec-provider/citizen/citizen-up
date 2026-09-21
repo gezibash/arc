@@ -53,7 +53,7 @@ deadline=$((SECONDS + 20))
 while [ $SECONDS -lt $deadline ]; do
   # The probe identity queries the relay directory. A query with the citizen
   # key would replace the relay connection of `arc serve`.
-  if ARC_KEY="$CITIZEN_PROBE_KEY" arc discover exec 2>/dev/null | grep -q "$CITIZEN_PUBLIC_KEY"; then
+  if ARC_KEY="$CITIZEN_PROBE_KEY" arc discover exec --limit 50 2>/dev/null | grep -q "$CITIZEN_PUBLIC_KEY"; then
     log "ready"
     exit 0
   fi

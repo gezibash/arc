@@ -7,7 +7,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/ ./cmd/...
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/...
 
 # Runtime stage: the binaries and the certificates, and nothing else.
 FROM debian:bookworm-slim AS runtime
@@ -31,6 +32,7 @@ WORKDIR /home/arc
 # $HOME/.arc. Mount a volume there to keep the relay identity across runs.
 VOLUME ["/home/arc/.config/arc"]
 
+# The image runs a relay with the default identity of the volume. To run
+# another command, name it: docker run IMAGE arc keys gen
 EXPOSE 7331
-ENTRYPOINT ["arc"]
-CMD ["relay"]
+CMD ["arc-relay"]

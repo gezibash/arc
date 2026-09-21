@@ -13,12 +13,8 @@ umask 077
 config_dir=/home/arc/.config/arc
 dm_name_file="$config_dir/dm_key_name"
 
-key_name() {
-  ARC_KEY=$1 arc keys show | awk '$1 == "name:" {print $2}'
-}
-
 key_public() {
-  ARC_KEY=$1 arc keys show | awk '$1 == "public_key:" {print $2}'
+  arc --key "$1" whoami | sed -n 2p
 }
 
 # The relay keeps the identity that its pin names. Generate it one time.
@@ -28,7 +24,7 @@ if [ -z "${ARC_RELAY_KEY:-}" ]; then
 fi
 
 if [ ! -f "$dm_name_file" ]; then
-  arc keys gen | awk '$1 == "name:" {print $2}' > "$dm_name_file"
+  arc keys gen | sed -n 1p > "$dm_name_file"
 fi
 dm_key=$(cat "$dm_name_file")
 
@@ -37,7 +33,7 @@ dm_public=$(key_public "$dm_key")
 echo "relay $relay_public"
 echo "dm $dm_public"
 
-arc relay --key "$ARC_RELAY_KEY" --port 7331 &
+arc-relay --key "$ARC_RELAY_KEY" --address :7331 &
 relay_pid=$!
 
 # The provider fails to announce until the relay accepts connections.

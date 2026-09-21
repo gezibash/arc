@@ -101,6 +101,7 @@ jobs:
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
+          build-args: VERSION=${{ needs.version.outputs.version }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max

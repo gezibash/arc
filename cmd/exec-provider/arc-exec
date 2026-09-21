@@ -2,7 +2,7 @@
 """Run one command on an exec citizen. Wake the citizen first when needed.
 
 This is the caller side of docs/exec/SPEC.md, section 10.2, as a wrapper
-around `arc request`. It needs Python 3.11 or newer for tomllib.
+around `arc call`. It needs Python 3.11 or newer for tomllib.
 
   arc-exec <citizen-public-key> --script 'git status'
   arc-exec <citizen-public-key> -- uname -a
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -95,15 +96,15 @@ def main() -> int:
         log(args.verbose, "citizen ready")
 
     if args.status:
-        return show(finished(request(args, {"action": "status", "job": args.status}, 15_000)))
+        return show(finished(request(args, {"action": "status", "job": args.status}, 15)))
 
     body = {"script": args.script} if args.script else {"argv": args.argv}
     if args.timeout_ms is not None:
         body["timeout_ms"] = args.timeout_ms
     if not (args.start or args.wait):
-        return show(request(args, body, min((args.timeout_ms or 60_000) + 5_000, 120_000)))
+        return show(request(args, body, min(math.ceil((args.timeout_ms or 60_000) / 1000) + 5, 120)))
 
-    job = request(args, dict(body, action="start"), 15_000)["job"]
+    job = request(args, dict(body, action="start"), 15)["job"]
     if args.start:
         print(job)
         return 0
@@ -111,15 +112,15 @@ def main() -> int:
     print(f"arc-exec: job {job}", file=sys.stderr)
     while True:
         time.sleep(POLL_S)
-        status = request(args, {"action": "status", "job": job}, 15_000)
+        status = request(args, {"action": "status", "job": job}, 15)
         if status["state"] != "running":
             return show(finished(status))
 
 
-def request(args: argparse.Namespace, body: dict, timeout_ms: int) -> dict:
+def request(args: argparse.Namespace, body: dict, timeout_s: int) -> dict:
     log(args.verbose, f"sending {body.get('action', 'run')} request")
     reply = subprocess.run(
-        ["arc", "request", f"exec+arc://{args.citizen}/", "--timeout", str(timeout_ms), "--body", json.dumps(body)],
+        ["arc", "call", "--timeout", str(timeout_s), f"exec+arc://{args.citizen}/", json.dumps(body)],
         capture_output=True,
         text=True,
     )
@@ -129,7 +130,7 @@ def request(args: argparse.Namespace, body: dict, timeout_ms: int) -> dict:
     log(args.verbose, "reply received")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     (STATE_DIR / args.citizen).touch()
-    # `arc request` prints the reply body as the last line.
+    # `arc call` prints the reply body as the last line.
     return json.loads(reply.stdout.strip().splitlines()[-1])
 
 

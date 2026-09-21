@@ -39,7 +39,7 @@ Other ways to install:
   [releases page](https://github.com/gezibash/arc/releases), unpack, and
   link `arc/bin/arc` into your PATH. If a browser downloaded it on macOS,
   run `xattr -dr com.apple.quarantine <unpacked dir>` first.
-- **Docker.** `docker run --rm ghcr.io/gezibash/arc:latest version`.
+- **Docker.** `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 - **From source.** See [Development](#development).
 
 Check it works:
@@ -57,7 +57,7 @@ arc keys gen
 arc publish
 ```
 
-`keys gen` prints the key name. `publish` records the identity in the
+`keys gen` prints the key name, then the public key. `publish` records the identity in the
 control plane so others can find it. Look an identity up by name, petname,
 or public key prefix:
 
@@ -87,13 +87,13 @@ its own identity without exposing private key material:
 
 ```sh
 printf '%s\n' 'EXISTING-KEY-NAME' > arc.key
-arc keys show
+arc whoami
 ```
 
 Use a one-command override when needed:
 
 ```sh
-ARC_KEY=EXISTING-KEY-NAME arc keys show
+ARC_KEY=EXISTING-KEY-NAME arc whoami
 ```
 
 An absent selector falls through to the next location. An empty, unreadable,
@@ -200,24 +200,23 @@ its public key, so give it a persistent key.
    arc keys gen
    ```
 
-2. Start the relay with that key.
+2. Start the relay with that key. `arc-relay` is a separate binary in the
+   release.
 
    ```bash
-   ARC_RELAY_KEY=<key name> arc relay --port 7331
+   arc-relay --key <key name>
    ```
 
 The relay prints its public key on start. Hand that key and the address to
-your clients. Without `ARC_RELAY_KEY` the relay makes a new key every
-start, and every client must re-pin it.
+your clients. Without `--key`, the relay uses the active identity.
 
-With Docker:
+With Docker, the image runs `arc-relay` with the default key of the volume:
 
 ```bash
 docker volume create arc-relay
-docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest keys gen
+docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest arc keys gen
 docker run -d --name arc-relay -p 7331:7331 \
   -v arc-relay:/home/arc/.config/arc \
-  -e ARC_RELAY_KEY=<key name> \
   ghcr.io/gezibash/arc:latest
 docker logs arc-relay
 ```
@@ -227,18 +226,18 @@ and the release process.
 
 For a local relay with persistent journal, DM and Agora providers, run
 `docker compose up -d --build --wait`. The [local Compose guide](docker/local/README.md)
-covers connecting installed ARC v0.6.0 with each agent's own identity.
+covers connecting installed ARC v0.7.0 with each agent's own identity.
 
 ## Commands
 
 Send requests to identity-addressed services through your configured relay:
 
 ```sh
-arc request 'sqlite+arc://<provider-public-key>/main' \
-  --body '{"sql":"SELECT 1 AS n"}'
+arc call 'sqlite+arc://<provider-public-key>/main' \
+  '{"sql":"SELECT 1 AS n"}'
 ```
 
-Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY`, or explicitly choose `--local`.
+Join a relay with `arc join`, or set `ARC_RELAY` and `ARC_RELAY_PUBKEY`.
 The [shared request transport](docs/transport/SPEC.md) preserves opaque bodies;
 the [SQLite provider](cmd/sqlite-provider/README.md) supplies database access with
 operator-defined citizen grants. Continuous native protocol streams are future work.
@@ -250,18 +249,19 @@ by both operators; ARC does not open router ports or perform NAT traversal.
 
 | Command | What it does |
 | --- | --- |
-| `keys gen`, `keys ls`, `keys use`, `keys show`, `keys rm` | Manage identities |
+| `keys gen`, `keys list`, `keys use`, `keys remove`, `whoami` | Manage identities |
 | `publish`, `resolve <query>` | Publish and look up identities |
 | `send <to> <msg>`, `listen` | Message a peer, wait for messages |
-| `request <scheme+arc://provider-key/resource> ...` | Send opaque request bodies through a relay or explicit local mode |
-| `relay [--port PORT] [--key NAME]` | Run a relay |
+| `call <scheme+arc://provider-key/resource> [body]` | Send an opaque request body through a relay |
 | `serve <target>` | Serve a provider bundle with live request logs |
-| `discover [query]`, `info <peer>`, `install <peer> <id>` | Find and install remote capabilities |
+| `discover [query]`, `info <peer>`, `install <peer> [capability]` | Find and install remote capabilities |
 | `trust`, `tool`, `lists`, `cache` | Signers, installed tools, peer lists, sealed cache |
 | `version` | Print version and build commit |
 
+The separate binary `arc-relay [--address ADDR] [--key NAME]` runs a relay.
+
 Installed tools run as native subcommands, for example `arc dm inbox` after
-`arc install <peer> dm`. `arc help` prints the full list with every option
+`arc install <peer>`. `arc help` prints the full list with every option
 and environment variable.
 
 With a relay configured, running providers announce their services to that

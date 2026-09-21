@@ -18,7 +18,8 @@ that user.
 
 | File | Purpose |
 | --- | --- |
-| `exec_provider.py` | The provider. Python 3.12, standard library only. |
+| `*.go` | The provider, in Go. An ARC release holds its binary, `exec-provider`. |
+| `run.sh` | Runs the binary that `EXEC_PROVIDER` names. Without it, builds the provider from this checkout. |
 | `citizen/init` | Writes `citizen.env` and `config.json` for one machine. |
 | `citizen/citizen-up` | The start script. The caller runs it to wake the citizen. |
 | `citizen/serve` | Runs `arc serve` for this bundle as a plain process. |
@@ -28,8 +29,8 @@ that user.
 
 ## Requirements
 
-- On the citizen machine: `arc`, `mise`, `bash`, and a copy of this
-  directory.
+- On the citizen machine: `arc` and `exec-provider` from an ARC release,
+  `bash`, and a copy of this directory. The machine needs no Go toolchain.
 - On the caller: `arc` and Python 3.11 or newer.
 - A relay on a machine that does not pause. The citizen and the caller use
   the same relay.
@@ -38,16 +39,16 @@ that user.
 
 Do these steps on the citizen machine.
 
-1. Copy this directory to the machine, for example to `~/exec-provider`.
-2. Install the Python runtime of the bundle:
+1. Install ARC. The release puts `exec-provider` in the same directory as
+   `arc`:
 
    ```sh
-   cd ~/exec-provider
-   mise trust
-   mise install
+   curl -fsSL https://raw.githubusercontent.com/gezibash/arc/main/install.sh | sh
    ```
 
-3. Make a key for the citizen. Record the name that the command prints:
+2. Copy this directory to the machine, for example to `~/exec-provider`.
+3. Make a key for the citizen. The command prints the name, then the public
+   key. Record the name:
 
    ```sh
    arc keys gen
@@ -67,11 +68,15 @@ Do these steps on the citizen machine.
    Use `--platform sprite` on a Fly.io Sprite. Use `--platform none` on a
    machine that never pauses. The script prints the public key of the citizen.
 
+   The script finds `exec-provider` in the directory of `arc`, and writes its
+   path to `citizen.env`. To use another binary, set `EXEC_PROVIDER` before
+   you run the script.
+
    Add `--notify-dm` to send the result of each finished job to its owner as
    a direct message. Install the DM tool on the citizen first:
 
    ```sh
-   arc install <dm-provider-public-key> primary --trust
+   arc install <dm-provider-public-key> --yes
    ```
 
 5. Start the citizen one time to test the configuration:
@@ -147,10 +152,10 @@ body is UTF-8 JSON. The body field `action` selects the operation:
 | `start` | The same fields as `run` | `job` and `state` |
 | `status` | `job` | `state`, the output, and the result after the job ends |
 
-Without `arc-exec`, send a request with `arc request`:
+Without `arc-exec`, send a request with `arc call`:
 
 ```sh
-arc request 'exec+arc://<citizen-public-key>/' --body '{"argv":["uname","-a"]}'
+arc call 'exec+arc://<citizen-public-key>/' '{"argv":["uname","-a"]}'
 ```
 
 ## Configuration
@@ -173,10 +178,10 @@ The provider does not start if the configuration is not valid.
 
 ## Tests
 
-From this provider directory:
+From the repository root:
 
 ```sh
-mise exec -- python -m unittest discover -s tests -v
+go test ./cmd/exec-provider
 ```
 
 ## Limits
