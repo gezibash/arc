@@ -38,3 +38,27 @@ jobs:
           go-version: "1.27.1"
           cache: true
       - run: bash scripts/test-go-cli.sh
+
+  delivery:
+    name: Delivery proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: true
+      - run: bash scripts/test-delivery.sh
+
+  interface:
+    name: Interface proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: true
+      - run: bash scripts/test-interface.sh
