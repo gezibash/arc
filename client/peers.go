@@ -251,7 +251,7 @@ func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, b
 
 	waker := p.client.waker
 	if waker != nil {
-		if err := waker.Wake(ctx, peer); err != nil {
+		if err := waker.Wake(ctx, peer, p.Online); err != nil {
 			return nil, err
 		}
 	}
@@ -311,6 +311,30 @@ func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, b
 	case <-relayEnded:
 		return nil, p.client.Err()
 	}
+}
+
+// Online asks the relay whether the peer has a current announcement. The
+// relay answers for its own citizens, and for the citizens that its partners
+// share. A peer on a direct carrier is there, and needs no question.
+func (p *Peers) Online(ctx context.Context, peer []byte) (bool, error) {
+	p.mu.Lock()
+	carrier := p.carriers[string(peer)]
+	p.mu.Unlock()
+	if carrier != nil {
+		return true, nil
+	}
+
+	key := hex.EncodeToString(peer)
+	entries, err := p.client.Resolve(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if found, _ := entry["public_key"].(string); strings.EqualFold(found, key) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // SendFrame sends one frame to a peer, and waits for nothing. An event

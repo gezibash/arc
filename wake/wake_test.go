@@ -39,11 +39,19 @@ func configure(t *testing.T, text string) (*wake.Waker, string) {
 		t.Fatal(err)
 	}
 
-	waker, err := wake.Load(path, filepath.Join(dir, wake.StateDirName))
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	return waker, dir
+	return wake.Load(path, filepath.Join(dir, wake.StateDirName)), dir
+}
+
+// asked is a presence check that answers the same, and counts its questions.
+type asked struct {
+	answer bool
+	err    error
+	times  int
+}
+
+func (a *asked) online(context.Context, []byte) (bool, error) {
+	a.times++
+	return a.answer, a.err
 }
 
 // hook gives the configuration of one hook that runs a shell script.
@@ -67,16 +75,13 @@ func runs(t *testing.T, marker string) int {
 
 func TestAMissingFileGivesNoHooks(t *testing.T) {
 	dir := t.TempDir()
-	waker, err := wake.Load(filepath.Join(dir, wake.FileName), filepath.Join(dir, wake.StateDirName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	waker := wake.Load(filepath.Join(dir, wake.FileName), filepath.Join(dir, wake.StateDirName))
 
 	key := citizen(t)
 	if waker.Has(key) {
 		t.Error("a waker without a file has a hook")
 	}
-	if err := waker.Wake(context.Background(), key); err != nil {
+	if err := waker.Wake(context.Background(), key, nil); err != nil {
 		t.Errorf("a citizen without a hook: %v", err)
 	}
 }
@@ -96,7 +101,7 @@ func TestLoadReadsTheHomeDirectoryInArgv(t *testing.T) {
 	}
 
 	waker, _ := configure(t, fmt.Sprintf("[wake.%q]\nkind = \"command\"\nargv = [\"~/bin/wake-me\"]\n", hex.EncodeToString(key)))
-	if err := waker.Wake(context.Background(), key); err != nil {
+	if err := waker.Wake(context.Background(), key, nil); err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if runs(t, marker) != 1 {
@@ -104,26 +109,115 @@ func TestLoadReadsTheHomeDirectoryInArgv(t *testing.T) {
 	}
 }
 
-func TestLoadRefusesABadConfiguration(t *testing.T) {
-	key := hex.EncodeToString(citizen(t))
-
+// A file that is not valid may hold the hook of any citizen, so every
+// request reports it. Nothing else fails: the file does not stop arc.
+func TestABadFileFailsEveryRequest(t *testing.T) {
 	for name, text := range map[string]string{
 		"a key that is not hex": "[wake.\"not-a-key\"]\nkind = \"command\"\nargv = [\"true\"]\n",
 		"a short key":           "[wake.\"abcd\"]\nkind = \"command\"\nargv = [\"true\"]\n",
-		"another kind":          fmt.Sprintf("[wake.%q]\nkind = \"https\"\nargv = [\"true\"]\n", key),
-		"no argv":               fmt.Sprintf("[wake.%q]\nkind = \"command\"\n", key),
 		"not TOML":              "[wake\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, wake.FileName)
-			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := wake.Load(path, dir); err == nil {
-				t.Error("the configuration loaded")
+			waker, dir := configure(t, text)
+
+			err := waker.Wake(context.Background(), citizen(t), (&asked{answer: true}).online)
+			if err == nil || !strings.Contains(err.Error(), filepath.Join(dir, wake.FileName)) {
+				t.Errorf("err = %v, and it must name the file", err)
 			}
 		})
+	}
+}
+
+// A hook that this arc cannot run fails the requests to its citizen, and no
+// other request.
+func TestAHookThatCannotRunFailsOnlyItsCitizen(t *testing.T) {
+	for name, entry := range map[string]string{
+		"another kind": "kind = \"https\"\nurl = \"https://example.invalid/wake\"\n",
+		"no argv":      "kind = \"command\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			sleeper := citizen(t)
+			waker, _ := configure(t, fmt.Sprintf("[wake.%q]\n%s", hex.EncodeToString(sleeper), entry))
+
+			err := waker.Wake(context.Background(), sleeper, nil)
+			if !errors.Is(err, wake.ErrFailed) || !strings.Contains(err.Error(), identity.Name(sleeper)) {
+				t.Errorf("the citizen of the hook: %v", err)
+			}
+			if waker.State(sleeper, false) != wake.Asleep {
+				t.Errorf("state = %s: the citizen still pauses", waker.State(sleeper, false))
+			}
+
+			if err := waker.Wake(context.Background(), citizen(t), (&asked{answer: true}).online); err != nil {
+				t.Errorf("another citizen: %v", err)
+			}
+		})
+	}
+}
+
+func TestACitizenWithoutAHookMustBeOnline(t *testing.T) {
+	waker, _ := configure(t, "")
+	key := citizen(t)
+
+	err := waker.Wake(context.Background(), key, (&asked{answer: false}).online)
+	if !errors.Is(err, wake.ErrPeerOffline) || !strings.Contains(err.Error(), identity.Name(key)) {
+		t.Errorf("an absent citizen: %v, and it must be peer_offline", err)
+	}
+
+	if err := waker.Wake(context.Background(), key, (&asked{answer: true}).online); err != nil {
+		t.Errorf("an online citizen: %v", err)
+	}
+}
+
+// The question to the relay is a help. Without an answer, the request goes
+// out as it would without a waker.
+func TestARelayThatCannotAnswerLetsTheRequestGo(t *testing.T) {
+	waker, _ := configure(t, "")
+
+	check := &asked{err: errors.New("the relay did not answer")}
+	if err := waker.Wake(context.Background(), citizen(t), check.online); err != nil {
+		t.Errorf("err = %v", err)
+	}
+	if check.times != 1 {
+		t.Errorf("the relay was asked %d times", check.times)
+	}
+}
+
+func TestAnAnswerSparesTheQuestionToTheRelay(t *testing.T) {
+	waker, _ := configure(t, "")
+	key := citizen(t)
+	waker.Answered(key)
+
+	check := &asked{answer: false}
+	if err := waker.Wake(context.Background(), key, check.online); err != nil {
+		t.Errorf("err = %v", err)
+	}
+	if check.times != 0 {
+		t.Errorf("the relay was asked about a citizen that answered a moment ago")
+	}
+}
+
+func TestStateNamesThePresence(t *testing.T) {
+	sleeper, other := citizen(t), citizen(t)
+	waker, _ := configure(t, hook(sleeper, "true"))
+
+	for _, check := range []struct {
+		key       []byte
+		announced bool
+		want      string
+	}{
+		{sleeper, true, wake.Online},
+		{sleeper, false, wake.Asleep},
+		{other, true, wake.Online},
+		{other, false, wake.Offline},
+	} {
+		if got := waker.State(check.key, check.announced); got != check.want {
+			t.Errorf("State(%s, %v) = %s, want %s", identity.Name(check.key), check.announced, got, check.want)
+		}
+	}
+
+	citizens := waker.Citizens()
+	if len(citizens) != 1 || string(citizens[0]) != string(sleeper) {
+		t.Errorf("Citizens() = %d keys, want the one with a hook", len(citizens))
 	}
 }
 
@@ -137,7 +231,7 @@ func TestWakeRunsTheHookOnceAndThenFindsTheCitizenFresh(t *testing.T) {
 	}
 
 	for range 3 {
-		if err := waker.Wake(context.Background(), key); err != nil {
+		if err := waker.Wake(context.Background(), key, nil); err != nil {
 			t.Fatalf("wake: %v", err)
 		}
 	}
@@ -153,7 +247,7 @@ func TestAnAnswerSkipsTheHook(t *testing.T) {
 	waker, _ := configure(t, hook(key, "echo woke >> '"+marker+"'"))
 	waker.Answered(key)
 
-	if err := waker.Wake(context.Background(), key); err != nil {
+	if err := waker.Wake(context.Background(), key, nil); err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if runs(t, marker) != 0 {
@@ -170,11 +264,8 @@ func TestTheNextProcessSeesTheAnswer(t *testing.T) {
 	first, dir := configure(t, text)
 	first.Answered(key)
 
-	second, err := wake.Load(filepath.Join(dir, wake.FileName), filepath.Join(dir, wake.StateDirName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := second.Wake(context.Background(), key); err != nil {
+	second := wake.Load(filepath.Join(dir, wake.FileName), filepath.Join(dir, wake.StateDirName))
+	if err := second.Wake(context.Background(), key, nil); err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if runs(t, marker) != 0 {
@@ -197,7 +288,7 @@ func TestAnOldAnswerRunsTheHook(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := waker.Wake(context.Background(), key); err != nil {
+	if err := waker.Wake(context.Background(), key, nil); err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if runs(t, marker) != 1 {
@@ -209,7 +300,7 @@ func TestAHookThatFailsGivesWakeFailed(t *testing.T) {
 	key := citizen(t)
 	waker, _ := configure(t, hook(key, "echo 'the sprite is gone' >&2; exit 3"))
 
-	err := waker.Wake(context.Background(), key)
+	err := waker.Wake(context.Background(), key, nil)
 	if !errors.Is(err, wake.ErrFailed) {
 		t.Fatalf("err = %v, and it must be wake_failed", err)
 	}
@@ -220,7 +311,7 @@ func TestAHookThatFailsGivesWakeFailed(t *testing.T) {
 	}
 
 	// A failed wake leaves the citizen asleep.
-	if err := waker.Wake(context.Background(), key); !errors.Is(err, wake.ErrFailed) {
+	if err := waker.Wake(context.Background(), key, nil); !errors.Is(err, wake.ErrFailed) {
 		t.Errorf("the second wake: %v", err)
 	}
 }
@@ -229,7 +320,7 @@ func TestAHookThatDoesNotStartGivesWakeFailed(t *testing.T) {
 	key := citizen(t)
 	waker, _ := configure(t, fmt.Sprintf("[wake.%q]\nkind = \"command\"\nargv = [\"/no/such/program\"]\n", hex.EncodeToString(key)))
 
-	if err := waker.Wake(context.Background(), key); !errors.Is(err, wake.ErrFailed) {
+	if err := waker.Wake(context.Background(), key, nil); !errors.Is(err, wake.ErrFailed) {
 		t.Errorf("err = %v, and it must be wake_failed", err)
 	}
 }
@@ -243,7 +334,7 @@ func TestASlowHookGivesWakeTimeout(t *testing.T) {
 	waker.Timeout = 300 * time.Millisecond
 
 	started := time.Now()
-	err := waker.Wake(context.Background(), key)
+	err := waker.Wake(context.Background(), key, nil)
 	if !errors.Is(err, wake.ErrTimeout) {
 		t.Fatalf("err = %v, and it must be wake_timeout", err)
 	}
@@ -260,6 +351,27 @@ func TestASlowHookGivesWakeTimeout(t *testing.T) {
 		syscall.Kill(child, syscall.SIGKILL)
 		t.Error("the program that the hook started outlived the timeout")
 	}
+	if !strings.Contains(err.Error(), "did not end in 300ms") {
+		t.Errorf("the error %q does not name the wake limit", err)
+	}
+}
+
+// A request that ends before the wake limit ends the wake too. The error
+// names the time that the hook had, and not the wake limit.
+func TestATimeoutNamesTheDeadlineOfTheRequest(t *testing.T) {
+	key := citizen(t)
+	waker, _ := configure(t, hook(key, "sleep 5"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+
+	err := waker.Wake(ctx, key, nil)
+	if !errors.Is(err, wake.ErrTimeout) {
+		t.Fatalf("err = %v, and it must be wake_timeout", err)
+	}
+	if !strings.Contains(err.Error(), "did not end in 400ms") {
+		t.Errorf("the error %q does not name the deadline of the request", err)
+	}
 }
 
 // A hook may start the citizen and leave it running. Its exit decides.
@@ -270,7 +382,7 @@ func TestAHookThatLeavesAProgramBehindSucceeds(t *testing.T) {
 	waker, _ := configure(t, hook(key, "sleep 30 & echo $! > '"+pidFile+"'"))
 
 	started := time.Now()
-	if err := waker.Wake(context.Background(), key); err != nil {
+	if err := waker.Wake(context.Background(), key, nil); err != nil {
 		t.Fatalf("wake: %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
@@ -295,7 +407,7 @@ func TestTwoRequestsAtOnceRunTheHookOnce(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if err := waker.Wake(context.Background(), key); err != nil {
+			if err := waker.Wake(context.Background(), key, nil); err != nil {
 				t.Errorf("wake: %v", err)
 			}
 		}()

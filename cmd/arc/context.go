@@ -57,19 +57,20 @@ func open(command *cobra.Command, needRelay bool) (*settings, error) {
 	return held, nil
 }
 
-// dial joins the relay as the active identity. The wake hooks of the store
-// wake a citizen that pauses before each request to it.
+// dial joins the relay as the active identity. Before each request, the
+// wake flow of the store wakes a citizen that pauses, and refuses a citizen
+// that is not there.
 func (s *settings) dial(ctx context.Context) (*client.Client, error) {
-	waker, err := wake.Load(filepath.Join(s.keys.Dir, wake.FileName), filepath.Join(s.keys.Dir, wake.StateDirName))
-	if err != nil {
-		return nil, err
-	}
-
 	return client.Dial(ctx, s.relay.Address, client.Options{
 		Identity:       s.me,
 		RelayPublicKey: s.relay.Pin,
-		Waker:          waker,
+		Waker:          s.waker(),
 	})
+}
+
+// waker reads the wake hooks of the store.
+func (s *settings) waker() *wake.Waker {
+	return wake.Load(filepath.Join(s.keys.Dir, wake.FileName), filepath.Join(s.keys.Dir, wake.StateDirName))
 }
 
 func keyStore(dir string) (*identity.Store, error) {

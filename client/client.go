@@ -66,13 +66,15 @@ type Options struct {
 	Waker Waker
 }
 
-// Waker makes a paused citizen ready for a request. The wake package runs
-// the wake hooks of the caller. The wake counts toward the deadline of the
-// request.
+// Waker runs the wake flow of the caller before a request: it wakes a
+// citizen that pauses, and refuses a citizen that is not there. The wake
+// package holds the flow of the exec spec. The wake counts toward the
+// deadline of the request.
 type Waker interface {
 	// Wake returns when the citizen is ready to answer, or with the reason
-	// it is not.
-	Wake(ctx context.Context, citizen []byte) error
+	// it is not. Online asks the relay whether the citizen has a current
+	// announcement.
+	Wake(ctx context.Context, citizen []byte, online func(context.Context, []byte) (bool, error)) error
 	// Answered records an answer from the citizen. An answer proves that
 	// the citizen is awake.
 	Answered(citizen []byte)
