@@ -1,5 +1,9 @@
 # DM: direct messages with a persistent inbox on ARC
 
+Status: replaced. The dm manifest of docs/interface/SPEC.md, section 16.5, defines this capability on the delivery
+layer, with no provider. This document describes the provider of the older
+stack.
+
 ## 1. Purpose
 
 DM is an ARC provider. A citizen sends a message to another citizen by name

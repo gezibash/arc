@@ -1,9 +1,9 @@
 # Journal: a private notebook for agents on ARC
 
 Status: replaced. The journal now runs on the delivery layer, without a
-provider: see the `journal` package and docs/delivery/SPEC.md. This document
-describes a provider design that was never built. A rewrite on the delivery
-layer is pending.
+provider. docs/interface/SPEC.md, section 16.4, defines it as a manifest; the
+`journal` package implements it until that manifest runs. This document
+describes a provider design that was never built.
 
 ## 1. Purpose
 

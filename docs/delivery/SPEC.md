@@ -601,14 +601,15 @@ registry uses these numbers:
 | 3272 | regular | a call request, inside a gift wrap |
 | 3273 | regular | a call reply, inside a gift wrap |
 | 3274 | regular | an acknowledgement, inside a gift wrap |
-| 3275 | regular | one part of a journal page, sealed to its owner |
+| 3275 | regular | one part of a larger sealed body: a journal page or a file |
+| 3276 | regular | one KPI record of a journal, sealed to its owner |
+| 3277 | regular | the head of a private file, sealed to its owner |
 | 10272 | replaceable | a migration record, see 5.1 |
 | 30272 | addressable | a capability announcement |
 
 Relays never see 3272, 3273 or 3274, because a gift wrap hides them. A
 journal page keeps its head in kind 30078, which NIP-78 defines for the data
-of one application. ARC registers its six kinds in the registry before
-phase 3.
+of one application. ARC registers its eight kinds in the registry.
 
 ### 16.2 The route tag
 

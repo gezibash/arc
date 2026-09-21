@@ -1,5 +1,9 @@
 # Private files: an ARC storage provider
 
+Status: replaced. The files manifest of docs/interface/SPEC.md, section 16.7, defines this capability on the delivery
+layer, with no provider. This document describes the provider of the older
+stack.
+
 ## 1. Purpose and current scope
 
 The `cmd/files-provider` bundle stores immutable encrypted files for ARC citizens.
