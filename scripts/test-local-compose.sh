@@ -86,14 +86,16 @@ read_after_restart() {
   shift 2
   local attempt output
 
+  # A provider that is not connected never answers, so each attempt waits
+  # 5 seconds, not the default 30.
   for attempt in $(seq 1 20); do
-    if output="$(client_as "$agent_key" "$command" "$@")"; then
+    if output="$(client_as "$agent_key" "$command" "$@" --timeout 5)"; then
       printf '%s\n' "$output"
       return
     fi
 
     if (( attempt == 20 )); then
-      fail "${command} did not answer after restart"
+      fail "arc ${command} $1 did not answer after restart"
     fi
 
     sleep 1
