@@ -15,7 +15,8 @@ changes of software or host. People and programs use the same foundation.
 Today, ARC carries signed, end-to-end encrypted messages. Relays route
 packets by public key without seeing their contents.
 
-`arc` is one binary. It runs a client, a relay, or a capability provider.
+`arc` is the client. It also serves capability providers. `arc-relay` is a
+separate program that runs a relay.
 
 ## Install
 
@@ -57,9 +58,9 @@ arc keys gen
 arc publish
 ```
 
-`keys gen` prints the key name, then the public key. `publish` records the identity in the
-control plane so others can find it. Look an identity up by name, petname,
-or public key prefix:
+`keys gen` prints the key name, then the public key. `publish` records the
+identity in the control plane of this machine, so other local commands find
+it by name. Look an identity up by name, petname, or public key prefix:
 
 ```bash
 arc resolve <name>
@@ -132,62 +133,54 @@ arc listen
 arc send <peer> "hello"
 ```
 
-`send` waits for the reply. The relay operator gives you the address and
-the public key. To run your own, see the next section.
+`send` returns when the message leaves for the relay. The relay does not
+keep a message for a peer that is not connected. Add `--wait` to wait for an
+answer. The relay operator gives you the address and the public key. To run
+your own relay, see [Run a relay](#run-a-relay).
 
-State lives in `~/.config/arc` (keys, control plane, tools) and `~/.arc`
-(cache). Back up `~/.config/arc/keys`.
+State lives in `~/.config/arc`: keys, relay pins, the control plane,
+installed tools, and the sealed cache. Providers keep their data under
+`~/.arc` by default. Back up `~/.config/arc/keys`.
 
 ## Check your status
 
 ```sh
 arc status
-arc status --format json
+arc status --json
 arc status --relay localhost:7331 --relay-pubkey <relay-public-key>
-arc host status
 ```
 
-`arc status` queries the relay saved by `arc join`, overridden by `ARC_RELAY`
-and `ARC_RELAY_PUBKEY` or explicit flags. It prints the relay's own version, uptime, public key,
-and onward federation setting. `--json` is an alias for `--format json`.
-No selected citizen is required, and existing citizen connections stay intact.
+`arc status` asks the relay about itself. It prints the relay address, and
+the state, version, uptime and public key of the relay. `--json` prints the
+answer of the relay as JSON.
 
-A running relay response does not imply that your citizen has a persistent
-connection. Use `arc host status` for the local host. Status uses ARC's own
-interfaces regardless of how the service is deployed. Older relays must be
-upgraded to support the new status query.
-See [status behavior](docs/status/SPEC.md) for exact states and exit codes.
+The relay comes from `--relay` and `--relay-pubkey`, then from `ARC_RELAY`
+and `ARC_RELAY_PUBKEY`, then from the relay that `arc join` saved. An answer
+shows that the relay runs. It does not show that your citizen has a
+connection. See [status behavior](docs/status/SPEC.md) for the fields and
+the exit status.
 
 ### Update
 
-`arc update` searches the relay you joined for a release provider, verifies
-the signed release channel against a publisher key you trust, and replaces
-this installation when a newer release is available:
+`arc update` reads the signed release channel from a citizen that serves
+releases. It verifies the signature of the publisher. If the channel names a
+newer release, `apply` replaces this program:
 
 ```bash
-arc update --publisher PUBLISHER_KEY   # first run: trust and remember the publisher
-arc update                              # later runs: search the relay and install
-arc update check                        # report only; nothing is downloaded
-arc update status                       # local settings, no network
+arc update --provider PROVIDER_KEY         # read the channel and report
+arc update check --provider PROVIDER_KEY   # the same
+arc update apply --provider PROVIDER_KEY   # download, verify, replace this program
 ```
 
-The command connects as your active key, like every other relay command.
-The publisher key is remembered under `~/.config/arc/update/`, separately
-from the relay pin; a different key is refused until you pass
-`--replace-publisher`. Channel metadata and the archive travel only through
-the relay, with no HTTP fallback, and the replaced release stays at
-`~/.local/share/arc.previous` until the next update. `--source` names one
-`releases+arc://` provider instead of searching, and `--channel beta` follows
-prereleases. No official publisher key or channel is provisioned yet, so this
-currently works against a channel you publish yourself; see
-[updating a local installation](docs/updates/OPERATIONS.md#updating-a-local-installation).
+`ARC_RELEASES` can name the provider instead of `--provider`. If another key
+signs the channel, name that key with `--publisher` or
+`ARC_RELEASE_PUBLISHER`. The channel and the archive travel through the
+relay. `apply` keeps the old program as `<program>.previous`, and
+`--channel beta` reads the beta channel. No official channel exists yet,
+and ARC has no command that publishes one. See
+[updating an installation](docs/updates/OPERATIONS.md).
 
-The experimental [managed relay updater](docs/updates/OPERATIONS.md) adds
-`arc update status|check|apply --socket PATH` for a running relay service.
-Checks notify; an operator starts each hot installation. It requires a
-prepared native base and an explicitly supported upgrade package. Existing
-releases are not automatically hot-upgradeable. See the
-[update policy and qualification gates](docs/updates/SPEC.md).
+To update a relay, replace the `arc-relay` binary and restart the relay.
 
 ## Run a relay
 
@@ -260,19 +253,23 @@ by both operators; ARC does not open router ports or perform NAT traversal.
 
 The separate binary `arc-relay [--address ADDR] [--key NAME]` runs a relay.
 
+The relay keeps one connection for each identity. Give each provider its own
+identity. While `arc serve` runs, do not run other commands as its identity:
+the relay then drops the connection of the provider.
+
 Installed tools run as native subcommands, for example `arc dm inbox` after
-`arc install <peer>`. `arc help` prints the full list with every option
-and environment variable.
+`arc install <peer>`. `arc help` lists the commands and the global options.
+`arc <command> --help` shows the options of one command.
 
 With a relay configured, running providers announce their services to that
 relay. `arc discover files` searches its local service catalog, and `info`/`install`
 can reach a provider from another machine without shared local identity files.
 The relay and clients must support [relay discovery](docs/discovery/SPEC.md).
 Discovery covers the same relay and opted-in providers across approved partners.
-[Relay federation](docs/federation/SPEC.md) uses mutual `relay --peer`
+[Relay federation](docs/federation/SPEC.md) uses mutual `arc-relay --peer`
 configuration. Providers choose direct sharing with `serve --federate`, or
 wider sharing with `serve --federate-network`. Intermediate operators enable
-`relay --transit` to carry discovery and encrypted traffic onward. Partners
+`arc-relay --transit` to carry discovery and encrypted traffic onward. Partners
 synchronize signed service catalogs in the background. Once synchronized,
 searches and known full-key lookups use the connected relay's cache. Cold
 searches and unresolved identities retain bounded live lookup. Catalogs expire

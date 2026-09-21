@@ -17,10 +17,10 @@ export ARC_KEY=<writer key name>
 export ARC_RELAY=127.0.0.1:7411
 ```
 
-`ARC_KEY` is the name of a local key that writes. `arc keys ls` lists the
+`ARC_KEY` is the name of a local key that writes. `arc keys list` lists the
 names. Set it to the key that the project ACL allows. `ARC_RELAY` is the relay
-that the journal provider listens on. If `ARC_RELAY` is not set, put `--relay 127.0.0.1:7411`
-directly after `journal`. The CLI rejects `--relay` after the subcommand.
+that the journal provider listens on. If `ARC_RELAY` is not set, add
+`--relay 127.0.0.1:7411` to the command line.
 
 Test the connection:
 
@@ -28,11 +28,14 @@ Test the connection:
 arc journal ls
 ```
 
-If the call fails with `:not_found`, the provider is not running. See
-"Start the provider" below.
-
-If a `write` fails with `missing body`, the installed tool is a stale
-snapshot of the manifest. Run `arc tool update journal` and retry.
+- If the call fails with `client: the peer did not answer` after 30 seconds,
+  the provider is not running. See "Start the provider" below.
+- If `arc` reports `no public key is pinned for 127.0.0.1:7411`, run
+  `arc join 127.0.0.1:7411` once.
+- If `arc` reports `unknown command "journal"`, install the tool:
+  `arc install <journal provider public key> --yes`.
+- If `arc` reports that the provider `serves another version now`, install
+  the tool again with the same command.
 
 ## Address model
 
@@ -128,7 +131,8 @@ large or local files.
 
 Errors are one word, then optional detail: `forbidden`, `conflict`,
 `not_found`, `too_large`, `invalid_address`, `invalid_number`,
-`unknown_command`, `search_unavailable`.
+`unknown_command`, `search_unavailable`. `arc` prints them after
+`client: the peer answered provider_error:`.
 
 - `forbidden`: the key is not on the project ACL. The project owner adds it
   with `arc journal acl <project> add <hex pubkey>`.
@@ -136,17 +140,32 @@ Errors are one word, then optional detail: `forbidden`, `conflict`,
 
 ## Start the provider
 
-Run these from the ARC repo root when `arc journal ls` returns `:not_found`.
-The provider key is the key that owns the journal projects. The `Identity:`
-line in `~/.arc/journal/serve.log` names the key from the last run:
+Run these from the ARC repo root when `arc journal ls` fails with
+`client: the peer did not answer`. If `bin/` is empty, run `mise run build`
+first. The provider key is the key that owns the journal projects. The line
+`<key name> serves on 127.0.0.1:7411` in `~/.arc/journal/serve.log` names the
+key from the last run.
+
+Start the relay:
 
 ```bash
-nohup env ARC_KEY=<provider key name> bin/arc relay --port 7411 > ~/.arc/journal/relay.log 2>&1 &
+nohup env ARC_KEY=<provider key name> bin/arc-relay --address 127.0.0.1:7411 > ~/.arc/journal/relay.log 2>&1 &
 ```
+
+Pin the key of the relay. If the pin is already there, this changes nothing:
+
+```bash
+ARC_KEY=<provider key name> bin/arc join 127.0.0.1:7411
+```
+
+Start the provider:
 
 ```bash
 nohup env ARC_KEY=<provider key name> JOURNAL_ROOT=$HOME/.arc/journal bin/arc serve cmd/journal-provider --relay 127.0.0.1:7411 > ~/.arc/journal/serve.log 2>&1 &
 ```
+
+Do not run other `arc` commands as the provider key while the provider
+runs. The relay keeps one connection for each key, so it drops the provider.
 
 The first `serve` builds the binary. Wait for `arc journal ls` to answer.
 The data lives in `~/.arc/journal/repo`. The spec is in

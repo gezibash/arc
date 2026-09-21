@@ -1,7 +1,8 @@
-// Package wake wakes citizens whose machines pause.
+// Package wake runs the wake flow of a caller: it wakes citizens whose
+// machines pause, and it refuses a request to a citizen that is not there.
 //
-// A caller keeps one wake hook for each such citizen in wake.toml, in the
-// directory of ARC. The hook has the role that ProxyCommand has in
+// A caller keeps one wake hook for each citizen that pauses, in wake.toml in
+// the directory of ARC. The hook has the role that ProxyCommand has in
 // ~/.ssh/config: it runs a local program that wakes the machine, and exits 0
 // when the citizen is ready.
 //
@@ -9,9 +10,10 @@
 //	kind = "command"
 //	argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
 //
-// Before a request to the citizen, the caller runs the hook, unless the
-// citizen answered or woke less than Fresh ago. See docs/exec/SPEC.md,
-// section 10.
+// Before a request to a citizen with a hook, the caller runs the hook, unless
+// the citizen answered or woke less than Fresh ago. A citizen without a hook
+// must have a current announcement on the relay. See docs/exec/SPEC.md,
+// sections 9 and 10.
 package wake
 
 import (
@@ -22,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,7 +38,7 @@ import (
 const FileName = "wake.toml"
 
 // StateDirName is the directory, beside FileName, that keeps the time of the
-// last answer of each citizen.
+// last answer of each citizen with a hook.
 const StateDirName = "wake"
 
 const (
@@ -49,13 +52,27 @@ const (
 	MaxFileBytes = 64 * 1024
 )
 
-// The errors of a wake. Their text is the code that the exec spec names.
+// The errors of the wake flow. Their text is the code that the exec spec
+// names.
 var (
-	// ErrFailed reports a hook that did not start, or that exited with a
-	// status other than 0.
+	// ErrFailed reports a hook that did not start, that exited with a status
+	// other than 0, or that this caller cannot run.
 	ErrFailed = errors.New("wake_failed")
 	// ErrTimeout reports a hook that did not end in time.
 	ErrTimeout = errors.New("wake_timeout")
+	// ErrPeerOffline reports a citizen without a hook that has no current
+	// announcement on the relay.
+	ErrPeerOffline = errors.New("peer_offline")
+)
+
+// The presence states of a citizen, as a caller sees it (spec section 9).
+const (
+	// Online: the relay has a current announcement of the citizen.
+	Online = "online"
+	// Asleep: no current announcement, and the caller keeps a hook.
+	Asleep = "asleep"
+	// Offline: no current announcement, and no hook.
+	Offline = "offline"
 )
 
 // stderrLimit caps the output of a hook that an error keeps.
@@ -67,12 +84,18 @@ type Hook struct {
 	Argv []string `toml:"argv"`
 }
 
-// Waker runs the wake hooks of one caller.
+// Waker runs the wake flow of one caller.
 type Waker struct {
 	// Timeout bounds one wake. Zero means DefaultTimeout.
 	Timeout time.Duration
 
+	// problem makes the whole configuration unusable, for example a file
+	// that is not TOML. Each wake reports it.
+	problem error
+	// hooks holds the argv of each hook, and broken the reason that the
+	// hook of a citizen cannot run.
 	hooks    map[string][]string
+	broken   map[string]error
 	stateDir string
 
 	mu    sync.Mutex
@@ -82,10 +105,16 @@ type Waker struct {
 
 // Load reads the wake configuration at path. A missing file gives a waker
 // without hooks. The waker keeps the time of the last answer of each citizen
-// in stateDir, so that the next process sees it too.
-func Load(path, stateDir string) (*Waker, error) {
+// with a hook in stateDir, so that the next process sees it too.
+//
+// Load always gives a waker. A configuration that cannot work fails the
+// requests that need it, and nothing else: a hook of an unknown kind fails
+// the requests to its citizen, and a file that is not valid fails every
+// request, because it may hold the hook of any citizen.
+func Load(path, stateDir string) *Waker {
 	waker := &Waker{
 		hooks:    map[string][]string{},
+		broken:   map[string]error{},
 		stateDir: stateDir,
 		awake:    map[string]time.Time{},
 		locks:    map[string]*sync.Mutex{},
@@ -93,62 +122,125 @@ func Load(path, stateDir string) (*Waker, error) {
 
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return waker, nil
+		return waker
 	}
-	if err != nil {
-		return nil, err
-	}
-	if info.Size() > MaxFileBytes {
-		return nil, fmt.Errorf("wake: %s is over %d bytes", path, MaxFileBytes)
+	if err == nil && info.Size() > MaxFileBytes {
+		err = fmt.Errorf("the file is over %d bytes", MaxFileBytes)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+	var data []byte
+	if err == nil {
+		data, err = os.ReadFile(path)
 	}
 
 	var held struct {
 		Wake map[string]Hook `toml:"wake"`
 	}
-	if err := toml.Unmarshal(data, &held); err != nil {
-		return nil, fmt.Errorf("wake: %s: %w", path, err)
+	if err == nil {
+		err = toml.Unmarshal(data, &held)
+	}
+
+	if err == nil {
+		for key := range held.Wake {
+			citizen, decodeErr := hex.DecodeString(key)
+			if decodeErr != nil || len(citizen) != identity.SeedBytes {
+				err = fmt.Errorf("%q is not a public key of 64 characters of hex", key)
+				break
+			}
+		}
+	}
+	if err != nil {
+		waker.problem = fmt.Errorf("wake: %s: %w", path, err)
+		return waker
 	}
 
 	home, _ := os.UserHomeDir()
 	for key, hook := range held.Wake {
-		citizen, err := hex.DecodeString(key)
-		if err != nil || len(citizen) != identity.SeedBytes {
-			return nil, fmt.Errorf("wake: %s: %q is not a public key of 64 characters of hex", path, key)
-		}
-		if hook.Kind != "command" {
-			return nil, fmt.Errorf("wake: %s: the hook of %s has the kind %q, and only \"command\" works", path, identity.Name(citizen), hook.Kind)
-		}
-		if len(hook.Argv) == 0 || hook.Argv[0] == "" {
-			return nil, fmt.Errorf("wake: %s: the hook of %s has no argv", path, identity.Name(citizen))
-		}
+		citizen, _ := hex.DecodeString(key)
+		name := identity.Name(citizen)
 
-		argv := make([]string, len(hook.Argv))
-		for index, part := range hook.Argv {
-			argv[index] = expandHome(part, home)
+		switch {
+		case hook.Kind != "command":
+			waker.broken[string(citizen)] = fmt.Errorf("%w: the hook of %s has the kind %q, and this arc runs only the kind \"command\"", ErrFailed, name, hook.Kind)
+		case len(hook.Argv) == 0 || hook.Argv[0] == "":
+			waker.broken[string(citizen)] = fmt.Errorf("%w: the hook of %s has no argv", ErrFailed, name)
+		default:
+			argv := make([]string, len(hook.Argv))
+			for index, part := range hook.Argv {
+				argv[index] = expandHome(part, home)
+			}
+			waker.hooks[string(citizen)] = argv
 		}
-		waker.hooks[string(citizen)] = argv
 	}
-	return waker, nil
+	return waker
 }
 
-// Has says whether the caller keeps a hook for the citizen.
+// Has says whether the caller keeps a hook for the citizen. A hook that
+// cannot run counts, because the citizen is still one that pauses.
 func (w *Waker) Has(citizen []byte) bool {
 	_, ok := w.hooks[string(citizen)]
-	return ok
+	_, broken := w.broken[string(citizen)]
+	return ok || broken
 }
 
-// Wake makes the citizen ready. Without a hook it returns at once, and the
-// request goes out as it would without a waker. With a hook, it runs the hook
-// unless the citizen answered or woke less than Fresh ago. Exit status 0 of
-// the hook means that the citizen is ready.
-func (w *Waker) Wake(ctx context.Context, citizen []byte) error {
+// Citizens gives the citizens with a hook, in the order of their keys.
+func (w *Waker) Citizens() [][]byte {
+	keys := make([]string, 0, len(w.hooks)+len(w.broken))
+	for key := range w.hooks {
+		keys = append(keys, key)
+	}
+	for key := range w.broken {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	citizens := make([][]byte, len(keys))
+	for index, key := range keys {
+		citizens[index] = []byte(key)
+	}
+	return citizens
+}
+
+// State gives the presence state of a citizen: Online when the relay has a
+// current announcement of it, Asleep when it has none and the caller keeps a
+// hook, and Offline otherwise.
+func (w *Waker) State(citizen []byte, announced bool) string {
+	switch {
+	case announced:
+		return Online
+	case w.Has(citizen):
+		return Asleep
+	}
+	return Offline
+}
+
+// Wake makes the citizen ready for a request (spec section 10.2).
+//
+// A citizen with a hook: Wake runs the hook, unless the citizen answered or
+// woke less than Fresh ago. Exit status 0 of the hook means that the citizen
+// is ready.
+//
+// A citizen without a hook: Wake asks online whether the relay has a current
+// announcement of it, and gives ErrPeerOffline when the relay has none. A
+// citizen that answered less than Fresh ago needs no question. When online
+// is nil or cannot answer, the request goes out as it would without a waker.
+func (w *Waker) Wake(ctx context.Context, citizen []byte, online func(context.Context, []byte) (bool, error)) error {
+	if w.problem != nil {
+		return w.problem
+	}
+	if err, broken := w.broken[string(citizen)]; broken {
+		return err
+	}
+
 	argv, ok := w.hooks[string(citizen)]
 	if !ok {
+		if online == nil || w.fresh(citizen) {
+			return nil
+		}
+		announced, err := online(ctx, citizen)
+		if err == nil && !announced {
+			return fmt.Errorf("%w: %s has no current announcement on the relay, and this machine keeps no wake hook for it", ErrPeerOffline, identity.Name(citizen))
+		}
 		return nil
 	}
 
@@ -169,13 +261,9 @@ func (w *Waker) Wake(ctx context.Context, citizen []byte) error {
 	return nil
 }
 
-// Answered records that the citizen answered now. A citizen without a hook
-// leaves no record.
+// Answered records that the citizen answered now. Only a citizen with a hook
+// leaves a record for the next process.
 func (w *Waker) Answered(citizen []byte) {
-	if !w.Has(citizen) {
-		return
-	}
-
 	now := time.Now()
 	w.mu.Lock()
 	w.awake[string(citizen)] = now
@@ -183,7 +271,7 @@ func (w *Waker) Answered(citizen []byte) {
 
 	// The record is a help, and never a condition: a caller that cannot
 	// write it wakes the citizen again next time.
-	if w.stateDir == "" || os.MkdirAll(w.stateDir, 0o700) != nil {
+	if !w.Has(citizen) || w.stateDir == "" || os.MkdirAll(w.stateDir, 0o700) != nil {
 		return
 	}
 	_ = os.WriteFile(w.stamp(citizen), []byte(now.UTC().Format(time.RFC3339Nano)), 0o600)
@@ -194,7 +282,7 @@ func (w *Waker) fresh(citizen []byte) bool {
 	last, ok := w.awake[string(citizen)]
 	w.mu.Unlock()
 
-	if !ok && w.stateDir != "" {
+	if !ok && w.Has(citizen) && w.stateDir != "" {
 		data, err := os.ReadFile(w.stamp(citizen))
 		if err == nil {
 			last, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
@@ -210,6 +298,13 @@ func (w *Waker) run(ctx context.Context, citizen []byte, argv []string) error {
 	timeout := w.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
+	}
+
+	// The request may end sooner than the wake limit. The error then names
+	// the time that the hook had.
+	limit := timeout
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < limit {
+		limit = time.Until(deadline)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -234,7 +329,7 @@ func (w *Waker) run(ctx context.Context, citizen []byte, argv []string) error {
 		return nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("%w: the hook of %s did not end in %s", ErrTimeout, name, timeout)
+		return fmt.Errorf("%w: the hook of %s did not end in %s", ErrTimeout, name, limit.Round(100*time.Millisecond))
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
