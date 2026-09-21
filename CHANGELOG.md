@@ -6,21 +6,29 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-21
+
+`arc` wakes a citizen whose machine pauses, and it says at once when a
+citizen is not there. This completes phase 2 of `docs/exec/SPEC.md`. Only the
+caller needs this version. A citizen on 0.7.0 works with it.
+
 ### Added
 
 - `arc` wakes a citizen whose machine pauses. Before a request to the
   citizen, it runs the wake hook of the citizen from `wake.toml` in the
-  directory of ARC. After an answer, it skips the hook for 30 seconds. A hook
-  that exits with a status other than 0 stops the request with
-  `wake_failed`. A hook that runs longer than 30 seconds stops it with
-  `wake_timeout`.
+  directory of ARC. After an answer, it skips the hook for 30 seconds.
+- A hook that exits with a status other than 0 stops the request with
+  `wake_failed`. A hook that does not end in 30 seconds, or before the
+  deadline of the request, stops it with `wake_timeout`.
+- A hook that this `arc` cannot run, for example of a kind other than
+  `command`, fails only the requests to its citizen. A `wake.toml` that is
+  not valid fails every request, and no other command.
 - A request to a citizen without a wake hook needs a current announcement of
   the citizen on the relay. Without one, the request stops at once with
   `peer_offline`. Before, it waited for the timeout.
 - `arc resolve` shows the presence state of each citizen: `online`,
   `asleep` (no announcement, and a wake hook), or `offline`. It finds a
-  citizen that sleeps by the name or the key of its wake hook. With these
-  states, phase 2 of `docs/exec/SPEC.md` is complete.
+  citizen that sleeps by the name or the key of its wake hook.
 - The `wake` package runs the wake flow. The `client` package takes a waker
   as `Options.Waker`, so every request of a library user follows the flow,
   and `Peers.Online` asks the relay about one citizen.
@@ -29,12 +37,16 @@ All notable changes to ARC are recorded here. The format follows
 
 - `arc-exec` leaves the wake to `arc`. It no longer reads `wake.toml` or
   `ARC_WAKE_CONFIG`, and it needs Python 3.9 or newer instead of 3.11.
-- A wake configuration that cannot work fails only the requests that need
-  it. A hook of a kind other than `command` fails the requests to its
-  citizen. A file that is not valid fails every request. Before, both
-  stopped every command that joins a relay, `arc status` included.
-- A wake that the deadline of the request ends names the time that the hook
-  had. Before, it named the wake limit of 30 seconds.
+
+### Removed
+
+- The traversal lab, its results, and the tests and tools that needed the
+  Elixir implementation. The results stay at the `v0.5.2` tag.
+
+### Fixed
+
+- The relay of the Fly.io image reports its release version. Build the image
+  with `--build-arg VERSION=X.Y.Z`. Before, the relay reported `dev`.
 
 ## [0.7.0] - 2026-09-21
 

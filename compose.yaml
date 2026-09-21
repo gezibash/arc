@@ -1,7 +1,7 @@
 name: arc-local
 
 x-service: &service
-  image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.7.0}
+  image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.8.0}
   pull_policy: never
   init: true
   restart: unless-stopped
@@ -69,7 +69,7 @@ services:
 
   # Print public settings for the installed ARC client on the host.
   info:
-    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.7.0}
+    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.8.0}
     pull_policy: never
     profiles: [tools]
     command: [info]
