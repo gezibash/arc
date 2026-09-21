@@ -31,9 +31,10 @@ type Values map[string]any
 
 // Flags are the flags of every command.
 type Flags struct {
-	JSON  bool
-	Later bool
-	Help  bool
+	JSON   bool
+	Later  bool
+	Help   bool
+	DryRun bool
 }
 
 // Resolver turns what a citizen typed into a public key: 64 hex characters,
@@ -84,6 +85,9 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 			continue
 		case "later":
 			flags.Later = true
+			continue
+		case "dry-run":
+			flags.DryRun = true
 			continue
 		case "h", "help":
 			flags.Help = true

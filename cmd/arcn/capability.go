@@ -92,7 +92,7 @@ func serve(command *cobra.Command, args []string) error {
 		}
 	}
 
-	sess, err := open(command)
+	sess, err := openSecret(command)
 	if err != nil {
 		return err
 	}
@@ -265,7 +265,7 @@ func installCmd() *cobra.Command {
 
 			fmt.Printf("%s offers %s (%s)\n  %s\n  %s\n", offer.Name(), offer.Title, offer.ID, offer.Summary, offer.Provider.Hex())
 			if m := offer.Manifest; m != nil {
-				fmt.Printf("  a %s with %d commands, interface version %d\n", m.Shape, len(m.Commands), m.Interface)
+				fmt.Print(iface.Describe(m))
 			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
 				fmt.Print("Trust this provider? [y/N] ")
@@ -331,7 +331,7 @@ func callCmd() *cobra.Command {
 	command.AddCommand(&cobra.Command{
 		Use: "results", Short: "Show your store-and-forward calls, and their replies", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			sess, err := open(command)
+			sess, err := openSecret(command)
 			if err != nil {
 				return err
 			}
@@ -363,7 +363,7 @@ func callCmd() *cobra.Command {
 }
 
 func callCapability(command *cobra.Command, args []string) error {
-	sess, err := open(command)
+	sess, err := openSecret(command)
 	if err != nil {
 		return err
 	}
@@ -435,15 +435,21 @@ func callCapability(command *cobra.Command, args []string) error {
 // mail on, as NIP-17 defines. It also publishes the private relay list of
 // NIP-37, which names the relays that hold the citizen's drafts.
 func publishRelayList(ctx context.Context, sess *session) {
-	list, err := mail.RelayList(sess.key, sess.urls, nostr.Now())
-	if err != nil {
-		return
+	var lists []nostr.Event
+	if !sess.remote {
+		list, err := mail.RelayList(sess.key, sess.urls, nostr.Now())
+		if err != nil {
+			return
+		}
+		lists = append(lists, list)
 	}
 	private, err := draft.RelayList(ctx, sess.keyer, sess.urls, nostr.Now())
 	if err != nil {
-		return
+		fmt.Fprintf(os.Stderr, "the private relay list was not signed: %v\n", err)
+	} else {
+		lists = append(lists, private)
 	}
-	for _, event := range []nostr.Event{list, private} {
+	for _, event := range lists {
 		_, sent, _ := sess.node.Publish(ctx, event, sess.relays)
 		for _, s := range sent {
 			if s.Err != nil {
@@ -465,7 +471,7 @@ func announceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sess, err := open(command)
+			sess, err := openSecret(command)
 			if err != nil {
 				return err
 			}

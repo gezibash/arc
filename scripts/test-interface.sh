@@ -1,5 +1,5 @@
 #!/bin/bash
-# The proofs of phases A, B and C of docs/interface/SPEC.md. Two providers announce
+# The proofs of phases A to D of docs/interface/SPEC.md. Two providers announce
 # manifests of interface version 1. A caller installs them, and runs their
 # commands as commands of arcn, with no code for them in arcn.
 #
@@ -15,6 +15,7 @@ cleanup() {
   [ -n "${exec_pid:-}" ] && kill "$exec_pid" 2>/dev/null || true
   [ -n "${sqlite_pid:-}" ] && kill "$sqlite_pid" 2>/dev/null || true
   [ -n "${board_pid:-}" ] && kill "$board_pid" 2>/dev/null || true
+  [ -n "${bunker_pid:-}" ] && kill "$bunker_pid" 2>/dev/null || true
   # A process started from the work directory must not outlive it.
   pkill -f "$work/" 2>/dev/null || true
   sleep 0.2
@@ -239,4 +240,64 @@ bob agora feed | grep "no posts" > /dev/null || fail "the removed post still sho
 go test -count=1 -run 'NIP29' ./delivery/groups/ > "$work/nip29.txt" 2>&1 || fail "NIP-29: $(cat "$work/nip29.txt")"
 say "only the admin removes the post, and the post opens in a NIP-29 client"
 
-printf 'phase C holds: private kinds, NIP-29 groups, direct messages and Agora\n'
+printf 'phase C holds: private kinds, NIP-29 groups, direct messages and Agora\n\n'
+
+# Phase D: what a capability can do stays what the citizen agreed to, and a
+# key can be sealed, or held by a remote signer.
+sed 's/"kind": 14, "visibility": "private"}/"kind": 14, "visibility": "private"}, "profile": {"kind": 0, "visibility": "public"}/' \
+  "$root/manifests/dm.json" > "$work/dm-profile.json"
+if laptop announce "$work/dm-profile.json" > /dev/null 2> "$work/reserved.txt"; then fail "a manifest named a reserved kind"; fi
+grep "reserved" "$work/reserved.txt" > /dev/null || fail "the refusal was $(cat "$work/reserved.txt")"
+say "a manifest that names a reserved kind does not announce"
+
+sed 's/"kind": 14, "visibility": "private"}/"kind": 14, "visibility": "private"}, "note": {"kind": 1, "visibility": "public"}/' \
+  "$root/manifests/dm.json" > "$work/dm-note.json"
+sleep 1
+laptop announce "$work/dm-note.json" > /dev/null
+if bob dm inbox > /dev/null 2> "$work/consent.txt"; then fail "a new kind ran without consent"; fi
+grep "changed what dm can do" "$work/consent.txt" > /dev/null && grep "kind 1 (note)" "$work/consent.txt" > /dev/null ||
+  fail "the refusal was $(cat "$work/consent.txt")"
+bob install "$caller_key" dm --yes > "$work/reinstall.txt"
+grep "posted in public, signed by you" "$work/reinstall.txt" > /dev/null || fail "install did not show the new kind: $(cat "$work/reinstall.txt")"
+bob dm inbox | grep "meet at noon" > /dev/null || fail "the inbox after consent: $(bob dm inbox)"
+say "a new version that adds a public kind stops until the citizen installs again"
+
+laptop journal write hrs/notes/draft --dry-run < /dev/null > "$work/dry.txt" 2> /dev/null
+grep '"kind": 30023' "$work/dry.txt" > /dev/null || fail "the dry run showed $(cat "$work/dry.txt")"
+[ -z "$(laptop journal read hrs/notes/draft)" ] || fail "a dry run wrote the page"
+say "--dry-run shows the event, and signs nothing"
+
+ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" key new --encrypt > "$work/sealed.txt"
+head -c 10 "$work/sealed/key" | grep "ncryptsec1" > /dev/null || fail "the key file is not an ncryptsec"
+[ "$(ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" key show)" = "$(cat "$work/sealed.txt")" ] ||
+  fail "the passphrase did not open the key"
+if ARCN_PASSPHRASE=wrong "$work/arcn" --home "$work/sealed" key show > /dev/null 2>&1; then fail "a wrong passphrase opened the key"; fi
+say "a key sealed with a passphrase opens with it, and not without it"
+
+# An agent signs through its owner's bunker, and holds no secret key.
+owner() { "$work/arcn" --home "$work/owner" "$@"; }
+agent() { "$work/arcn" --home "$work/agent" "$@"; }
+owner key new > /dev/null
+owner_key="$(owner key show | tail -1)"
+owner key bunker --relay "$url" --allow-kind 11 > "$work/bunker.log" 2>&1 &
+bunker_pid=$!
+for _ in $(seq 1 50); do grep "bunker://" "$work/bunker.log" > /dev/null 2>&1 && break; sleep 0.1; done
+uri="$(grep "^bunker://" "$work/bunker.log")"
+[ -n "$uri" ] || fail "the bunker did not start: $(cat "$work/bunker.log")"
+agent key use "$uri" > "$work/agent.txt" || fail "the agent could not use the bunker: $(cat "$work/agent.txt")"
+[ "$(tail -1 "$work/agent.txt")" = "$owner_key" ] || fail "the agent is $(cat "$work/agent.txt"), not the owner"
+grep -r "$(cat "$work/owner/key")" "$work/agent" > /dev/null 2>&1 && fail "the agent holds the owner's secret key"
+agent relay add "$url" 2> /dev/null
+agent install "$caller_key" agora --yes > /dev/null
+say "an agent signs as its owner through a bunker, and holds no secret key"
+
+agent agora post --title "From the agent" signed remotely 2> /dev/null || fail "the agent could not post"
+bob agora feed | grep "From the agent" > /dev/null || fail "the agent's post is not on the board: $(bob agora feed)"
+bob agora feed | grep "$(owner key show | head -1)" > /dev/null || fail "the post does not name the owner"
+agent_post="$(bob agora feed | grep -o 'nevent1[a-z0-9]*' | head -1)"
+if agent agora reply "$agent_post" not allowed > /dev/null 2> "$work/refused-kind.txt"; then fail "the bunker signed a kind it does not allow"; fi
+grep "does not sign kind 1111" "$work/refused-kind.txt" > /dev/null || fail "the refusal was $(cat "$work/refused-kind.txt")"
+if agent journal ls > /dev/null 2>&1; then fail "a journal ran without the secret key"; fi
+say "the bunker signs the kinds its owner allows, and refuses the rest"
+
+printf 'phase D holds: reserved kinds, consent, dry runs, sealed keys, and remote signers\n'

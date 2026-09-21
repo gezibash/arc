@@ -223,6 +223,9 @@ type Install struct {
 	Name     string `json:"name"`
 	// As is the name that runs a capability of interface version 1.
 	As string `json:"as,omitempty"`
+	// Consent is what the citizen agreed to at install: the kinds and the
+	// group relay of the manifest.
+	Consent *iface.Consent `json:"consent,omitempty"`
 }
 
 // Installs is the list of trusted capabilities, in one file.
@@ -255,6 +258,10 @@ func (i Installs) Add(offer Offer, as string) error {
 		return err
 	}
 	entry := Install{Provider: offer.Provider.Hex(), ID: offer.ID, Name: offer.Name(), As: as}
+	if offer.Manifest != nil {
+		consent := iface.ConsentOf(offer.Manifest)
+		entry.Consent = &consent
+	}
 	for _, e := range list {
 		if as != "" && e.As == as && (e.Provider != entry.Provider || e.ID != entry.ID) {
 			return fmt.Errorf("catalog: %s already runs a capability of %s; choose another name with --as", as, e.Name)

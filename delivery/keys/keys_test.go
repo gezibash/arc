@@ -1,9 +1,13 @@
 package keys_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"fiatjaf.com/nostr/nip19"
 
 	"github.com/gezibash/arc/delivery/keys"
 )
@@ -62,5 +66,39 @@ func TestLoadRefusesAFileOthersCanRead(t *testing.T) {
 func TestLoadWithoutAFile(t *testing.T) {
 	if _, err := keys.Load(filepath.Join(t.TempDir(), "nothing")); err != keys.ErrNotFound {
 		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAKeyFileHoldsHexNsecOrNcryptsec(t *testing.T) {
+	k := keys.Generate()
+	if got, err := keys.Parse(nip19.EncodeNsec(k.Secret)); err != nil || got.Public != k.Public {
+		t.Errorf("nsec: %v", err)
+	}
+	sealed, err := keys.Encrypt(k, "correct horse")
+	if err != nil || !strings.HasPrefix(sealed, "ncryptsec1") {
+		t.Fatalf("encrypt: %q %v", sealed, err)
+	}
+	if _, err := keys.Parse(sealed); !errors.Is(err, keys.ErrEncrypted) {
+		t.Errorf("an ncryptsec parsed without its passphrase: %v", err)
+	}
+	if got, err := keys.Decrypt(sealed, "correct horse"); err != nil || got.Public != k.Public {
+		t.Errorf("decrypt: %v", err)
+	}
+	if _, err := keys.Decrypt(sealed, "wrong"); err == nil {
+		t.Error("a wrong passphrase opened the key")
+	}
+	if _, err := keys.Parse("bunker://" + k.Public.Hex() + "?relay=wss://r"); !errors.Is(err, keys.ErrRemote) {
+		t.Errorf("a bunker URI parsed as a key: %v", err)
+	}
+	if _, err := keys.Encrypt(k, ""); err == nil {
+		t.Error("an empty passphrase sealed the key")
+	}
+
+	path := filepath.Join(t.TempDir(), "key")
+	if err := keys.Write(path, sealed); err != nil {
+		t.Fatal(err)
+	}
+	if text, err := keys.Read(path); err != nil || text != sealed {
+		t.Errorf("read back %q %v", text, err)
 	}
 }

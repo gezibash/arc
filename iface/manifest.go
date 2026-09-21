@@ -321,6 +321,9 @@ func (m *Manifest) check() error {
 		if !slices.Contains(visibilities, kind.Visibility) {
 			return fmt.Errorf("kind %s: the visibility %q must be public, sealed, private or group", name, kind.Visibility)
 		}
+		if err := checkReserved(name, kind); err != nil {
+			return err
+		}
 		grouped = grouped || kind.Visibility == "group"
 	}
 	if grouped && (m.Group == nil || m.Group.Relay == "" || m.Group.ID == "") {
@@ -377,7 +380,7 @@ func (m *Manifest) checkCommand(c Command) error {
 		if !slices.Contains(argTypes, a.Type) && a.Kind != "switch" {
 			return fmt.Errorf("argument %s: the type %q does not exist", a.Name, a.Type)
 		}
-		if a.Name == "json" || a.Name == "later" || a.Name == "help" {
+		if a.Name == "json" || a.Name == "later" || a.Name == "help" || a.Name == "dry_run" {
 			return fmt.Errorf("argument %s: every command has --%s", a.Name, a.Name)
 		}
 		switch {

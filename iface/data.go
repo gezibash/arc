@@ -232,6 +232,10 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	k := r.env.Keyer()
 	var events []nostr.Event
 	ids := slices.Clone(keep)
+	if r.flags.DryRun {
+		// Show the event without the parts, which would need signing.
+		rest, ids = nil, nil
+	}
 	for _, text := range rest {
 		part, err := draft.Part(r.ctx, k, d, text, now)
 		if err != nil {
@@ -255,7 +259,12 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		}
 	}
 
-	inner := nostr.Event{Kind: nostr.Kind(kind.Kind), CreatedAt: now, Tags: tags, Content: head}
+	inner := nostr.Event{Kind: nostr.Kind(kind.Kind), CreatedAt: now, Tags: tags, Content: head, PubKey: r.env.Me()}
+	if r.flags.DryRun {
+		return nil, r.dryRun(map[string]any{
+			"draft": d, "sealed": true, "parts": len(rest), "event": unsignedOf(inner),
+		})
+	}
 	wrap, err := draft.Wrap(r.ctx, k, d, inner, now)
 	if err != nil {
 		return nil, err
@@ -358,6 +367,9 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 		return nil, err
 	}
 
+	if r.flags.DryRun {
+		return nil, r.dryRun(map[string]any{"delete": coordinate, "events": 1 + len(history)})
+	}
 	now := nostr.Now()
 	if now <= wraps[0].CreatedAt {
 		now = wraps[0].CreatedAt + 1
@@ -713,6 +725,10 @@ func (r *run) publishPrivate(p *Publish) ([]*entry, error) {
 		return nil, errors.New("a recipient must come from a key argument")
 	}
 	kind := nostr.Kind(r.kindOf(p.Kind).Kind)
+	if r.flags.DryRun {
+		rumor := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), Content: content, Tags: tags, PubKey: r.env.Me()}
+		return nil, r.dryRun(map[string]any{"to": pk.Hex(), "sealed": true, "event": unsignedOf(rumor)})
+	}
 	if err := r.env.SendPrivate(r.ctx, pk, kind, content, tags); err != nil {
 		return nil, err
 	}
@@ -745,7 +761,10 @@ func (r *run) publishPlain(p *Publish) ([]*entry, error) {
 		}
 		tags = append(nostr.Tags{{"d", d}}, tags...)
 	}
-	event := nostr.Event{Kind: nostr.Kind(r.kindOf(p.Kind).Kind), CreatedAt: nostr.Now(), Content: content, Tags: tags}
+	event := nostr.Event{Kind: nostr.Kind(r.kindOf(p.Kind).Kind), CreatedAt: nostr.Now(), Content: content, Tags: tags, PubKey: r.env.Me()}
+	if r.flags.DryRun {
+		return nil, r.dryRun(map[string]any{"relays": relays, "event": unsignedOf(event)})
+	}
 	if err := r.env.Keyer().SignEvent(r.ctx, &event); err != nil {
 		return nil, err
 	}
@@ -918,4 +937,18 @@ func (r *run) queryPrivate(q *Query) ([]*entry, error) {
 		}
 	}
 	return out, nil
+}
+
+// unsignedOf shows an event that nobody has signed.
+func unsignedOf(e nostr.Event) map[string]any {
+	return map[string]any{"pubkey": e.PubKey.Hex(), "created_at": e.CreatedAt, "kind": e.Kind, "tags": e.Tags, "content": e.Content}
+}
+
+// dryRun writes what a command would sign, and signs nothing.
+func (r *run) dryRun(what map[string]any) error {
+	encoder := json.NewEncoder(r.stdio.Out)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	fmt.Fprintln(r.stdio.Err, "dry run: nothing is signed or sent")
+	return encoder.Encode(what)
 }

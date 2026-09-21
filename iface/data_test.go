@@ -385,3 +385,62 @@ func TestThreadOrdersReplies(t *testing.T) {
 		t.Errorf("the thread is %v", order)
 	}
 }
+
+func TestADryRunSignsNothing(t *testing.T) {
+	alice, bob := pair(t)
+	out := alice.must("journal", "secret text\n", "write", page, "--dry-run")
+	if !strings.Contains(out, `"kind": 30023`) || !strings.Contains(out, "secret text") {
+		t.Errorf("the dry run shows %q", out)
+	}
+	if n := len(alice.env.store.Query(nostr.Filter{})); n != 0 {
+		t.Errorf("a dry run stored %d events", n)
+	}
+	alice.must("dm", "", "send", "--dry-run", bob.env.me.Public().Hex(), "hi")
+	alice.must("agora", "", "post", "--dry-run", "hello")
+	if len(alice.env.net.inbox) != 0 || len(alice.env.net.relays) != 0 {
+		t.Errorf("a dry run sent something: %d inboxes, relays %v", len(alice.env.net.inbox), alice.env.net.relays)
+	}
+	alice.must("journal", "real\n", "write", page)
+	alice.must("journal", "", "delete", page, "--dry-run")
+	if got := alice.must("journal", "", "read", page); got != "real\n" {
+		t.Errorf("a dry run of delete deleted: %q", got)
+	}
+}
+
+func TestReservedKindsAndConsent(t *testing.T) {
+	base := `{"interface": 1, "id": "x", "shape": "data", "title": "X", "formats": {},
+	 "kinds": {"k": {"kind": KIND, "visibility": "VIS"}},
+	 "commands": [{"path": ["q"], "summary": "s", "action": {"query": {"kinds": ["k"]}}}]}`
+	make := func(kind, vis string) string {
+		return strings.NewReplacer("KIND", kind, "VIS", vis).Replace(base)
+	}
+	for _, c := range []struct{ kind, vis, want string }{
+		{"0", "public", "reserved"}, {"3", "public", "reserved"}, {"31234", "sealed", "reserved"},
+		{"24133", "public", "reserved"}, {"39000", "public", "group state"}, {"9005", "public", "must be group"},
+	} {
+		if _, err := Parse([]byte(make(c.kind, c.vis))); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("kind %s %s: got %v", c.kind, c.vis, err)
+		}
+	}
+
+	old, _ := Parse([]byte(make("30023", "sealed")))
+	consent := ConsentOf(old)
+	if got := consent.Changes(old); len(got) != 0 {
+		t.Errorf("the same manifest needs consent again: %v", got)
+	}
+	louder, _ := Parse([]byte(make("30023", "public")))
+	if got := consent.Changes(louder); len(got) != 1 || !strings.Contains(got[0], "public now") {
+		t.Errorf("a louder kind: %v", got)
+	}
+	other, _ := Parse([]byte(make("30024", "sealed")))
+	if got := consent.Changes(other); len(got) != 1 || !strings.Contains(got[0], "30024") {
+		t.Errorf("a new kind: %v", got)
+	}
+	quieter := ConsentOf(louder)
+	if got := quieter.Changes(old); len(got) != 0 {
+		t.Errorf("a quieter kind needs consent: %v", got)
+	}
+	if d := Describe(louder); !strings.Contains(d, "posted in public") || !strings.Contains(d, "post under your name") {
+		t.Errorf("describe: %s", d)
+	}
+}

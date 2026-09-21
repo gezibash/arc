@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip19"
+	"fiatjaf.com/nostr/nip49"
 	"github.com/gezibash/arc/identity"
 )
 
@@ -67,28 +69,95 @@ func Save(path string, k Key) error {
 	return err
 }
 
-// Load reads a key file. It refuses a file that other users can read, because
-// the secret key is then no longer secret.
-func Load(path string) (Key, error) {
+// Errors of what a key file holds.
+var (
+	// ErrEncrypted says that the file holds an ncryptsec of NIP-49, which
+	// needs its passphrase.
+	ErrEncrypted = errors.New("keys: the key is encrypted with a passphrase")
+	// ErrRemote says that the file names a remote signer of NIP-46.
+	ErrRemote = errors.New("keys: the key is on a remote signer")
+)
+
+// Read returns what a key file holds. It refuses a file that other users can
+// read, because the secret key is then no longer secret.
+func Read(path string) (string, error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Key{}, ErrNotFound
+		return "", ErrNotFound
 	}
 	if err != nil {
-		return Key{}, err
+		return "", err
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return Key{}, fmt.Errorf("%w: %s", ErrOpenMode, path)
+		return "", fmt.Errorf("%w: %s", ErrOpenMode, path)
 	}
-
 	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
+// Parse reads a secret key as 64 hex characters, or as an nsec of NIP-19.
+func Parse(text string) (Key, error) {
+	switch {
+	case strings.HasPrefix(text, "ncryptsec1"):
+		return Key{}, ErrEncrypted
+	case strings.HasPrefix(text, "bunker://"):
+		return Key{}, ErrRemote
+	case strings.HasPrefix(text, "nsec1"):
+		prefix, value, err := nip19.Decode(text)
+		if err != nil || prefix != "nsec" {
+			return Key{}, errors.New("keys: the nsec does not decode")
+		}
+		return FromSecret(value.(nostr.SecretKey)), nil
+	}
+	secret, err := nostr.SecretKeyFromHex(text)
+	if err != nil {
+		return Key{}, errors.New("keys: the file holds no valid secret key")
+	}
+	return FromSecret(secret), nil
+}
+
+// Load reads a key file that holds the secret key itself.
+func Load(path string) (Key, error) {
+	text, err := Read(path)
 	if err != nil {
 		return Key{}, err
 	}
-
-	secret, err := nostr.SecretKeyFromHex(strings.TrimSpace(string(body)))
+	k, err := Parse(text)
 	if err != nil {
-		return Key{}, fmt.Errorf("keys: %s holds no valid secret key", path)
+		return Key{}, fmt.Errorf("%w: %s", err, path)
+	}
+	return k, nil
+}
+
+// Encrypt seals a secret key with a passphrase, as an ncryptsec of NIP-49.
+func Encrypt(k Key, passphrase string) (string, error) {
+	if passphrase == "" {
+		return "", errors.New("keys: the passphrase is empty")
+	}
+	return nip49.Encrypt(k.Secret, passphrase, 16, nip49.ClientDoesNotTrackThisData)
+}
+
+// Decrypt opens an ncryptsec with its passphrase.
+func Decrypt(text, passphrase string) (Key, error) {
+	secret, err := nip49.Decrypt(text, passphrase)
+	if err != nil {
+		return Key{}, errors.New("keys: the passphrase does not open the key")
 	}
 	return FromSecret(secret), nil
+}
+
+// Write replaces what a key file holds, at once: it writes a new file that
+// only its owner can read, then renames it over the old one.
+func Write(path, text string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	temp := path + ".new"
+	if err := os.WriteFile(temp, []byte(text+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temp, path)
 }

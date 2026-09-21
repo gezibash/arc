@@ -66,12 +66,29 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 	}
 	defer sess.close()
 
+	// Ask for the newest announcement first, so a new version meets the
+	// consent check at once.
+	sess.node.Pull(command.Context(), nostr.Filter{
+		Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}, Tags: nostr.TagMap{"d": {install.ID}},
+	}, sess.relays)
 	offer, err := findOffer(command.Context(), sess, provider, install.ID)
 	if err != nil {
 		return err
 	}
 	if offer.Manifest == nil {
 		return fmt.Errorf("%s predates interface version 1: call it with arcn call %s", name, offer.Name())
+	}
+	// A new version of the manifest can do no more than the citizen agreed
+	// to, until they agree again.
+	var changes []string
+	if install.Consent == nil {
+		changes = []string{"this install records no consent"}
+	} else {
+		changes = install.Consent.Changes(offer.Manifest)
+	}
+	if len(changes) > 0 {
+		return fmt.Errorf("the author changed what %s can do:\n  %s\nto agree, install it again: arcn install %s %s --as %s",
+			name, strings.Join(changes, "\n  "), install.Provider, install.ID, name)
 	}
 
 	env := &cliEnv{sess: sess, installs: installs}
@@ -117,6 +134,9 @@ func (e *cliEnv) Me() nostr.PubKey { return e.sess.key.Public }
 func (e *cliEnv) Name(pk nostr.PubKey) string { return identity.Name(pk[:]) }
 
 func (e *cliEnv) Keyed(info []byte, input string) (string, error) {
+	if e.sess.remote {
+		return "", errors.New("keyed values need the secret key; a NIP-46 signer cannot compute them")
+	}
 	return iface.KeyedValue(e.sess.key.Secret, info, input)
 }
 
@@ -283,12 +303,18 @@ func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter, urls []string) 
 
 // SendPrivate seals a private event through the mail layer.
 func (e *cliEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+	if e.sess.mail == nil {
+		return errRemote("a private event")
+	}
 	_, err := e.sess.mail.SendRumor(ctx, to, kind, content, tags)
 	return err
 }
 
 // Private syncs the mail with every relay, and reads the private events.
 func (e *cliEnv) Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
+	if e.sess.mail == nil {
+		return nil, errRemote("reading private events")
+	}
 	for _, t := range e.sess.relays {
 		if _, err := e.sess.mail.Sync(ctx, t); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
@@ -299,6 +325,9 @@ func (e *cliEnv) Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event
 
 // Call sends one request: live over a relay, or later through the outbox.
 func (e *cliEnv) Call(ctx context.Context, provider nostr.PubKey, request iface.CallRequest, later bool) (iface.CallResult, error) {
+	if e.sess.remote {
+		return iface.CallResult{}, errRemote("a call")
+	}
 	r := call.Request{Capability: request.Capability, Method: request.Method, Path: request.Path, Body: request.Body}
 	if later {
 		if _, err := e.sess.mail.Request(ctx, provider, r); err != nil {

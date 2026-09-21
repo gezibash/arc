@@ -1,7 +1,7 @@
 # Capability interface, version 1
 
-Status: phases A, B and C are built, see section 18. Phase D is proposed.
-`arcn` runs them, and `mise run interface` proves them. This interface replaces the command
+Status: phases A to D are built, see section 18. `arcn` runs them, and
+`mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
 
@@ -501,6 +501,7 @@ the citizen's identity, or core makes them itself:
 | 9734, 9735 | Zaps. |
 | 10002, 10013, 10050 | Relay lists. |
 | 10272, 30272 | Migration records and announcements. |
+| 39000 to 39009 | The state of a NIP-29 group, which only its relay signs. |
 | 13194, 23194, 23195 | Wallet connect. |
 | 22242, 24133, 27235 | Authentication and remote signing. |
 
@@ -534,6 +535,15 @@ A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
 | `ncryptsec` | The secret key, encrypted with a passphrase. Core asks for the passphrase. |
 | `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
 
+`arcn key new --encrypt` and `arcn key encrypt` seal a key with a passphrase.
+Core reads the passphrase from `ARCN_PASSPHRASE`, or asks on the terminal.
+
+`arcn key bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
+and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
+and NIP-42 authentication for relays. `arcn key use <uri>` makes a home that
+signs through it. That home has no mail, no calls, and no keyed values, because
+each of them needs the secret key on the machine.
+
 ## 14. Install and dispatch
 
 `arc install <author> [capability]` reads the announcement, verifies it, shows
@@ -546,8 +556,10 @@ commands.
 
 A new version of a manifest replaces the old one when its author announces
 it. If the new version publishes a kind that the old one did not, makes a kind
-more visible, or names another group relay, core asks the citizen again before
-it runs a command.
+more visible, or names another group relay, core stops each command of it,
+and says what changed, until the citizen installs it again. Core fetches the
+author's newest announcement before each command, so it sees a new version at
+once. Visibility grows in this order: sealed, private, group, public.
 
 ## 15. Versions
 
@@ -855,7 +867,7 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
 | B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
-| D | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
+| D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
 
 ## 19. Limits of this design
 
@@ -868,6 +880,8 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 - **Rollback on a fresh machine.** A query asks every relay of the citizen's
   NIP-37 list, and keeps the newest version. If every relay serves an old
   version, a machine that never saw the newer one cannot tell.
+- **A remote signer decrypts for its client.** `--allow-kind` limits what the
+  bunker signs, and not what it decrypts.
 - **A private event goes to one recipient.** NIP-17 allows a message to
   several, and this arc refuses it.
 - **The group relay is a subset of NIP-29.** It hosts open and restricted
