@@ -210,13 +210,19 @@ func (p *Peers) Promote(ctx context.Context, address string, capabilityID string
 }
 
 // sendControl carries one message of a direct route to a peer over the
-// relay, as an event of its own.
+// relay, as an event of its own. It never takes the carrier: the peer reads
+// the carrier only after the route stands.
 func (p *Peers) sendControl(peer, body []byte) error {
 	event, err := frame.EncodeEvent(direct.Topic, body, nil)
 	if err != nil {
 		return err
 	}
-	return p.send(peer, event)
+
+	raw, err := p.seal(peer, event)
+	if err != nil {
+		return err
+	}
+	return p.client.SendPacket(raw)
 }
 
 // readCarrier reads the packets of a carrier, and answers them as if they
@@ -379,18 +385,7 @@ func (p *Peers) document(ctx context.Context, peer []byte, path string) (map[str
 // send encrypts one frame to a peer. A conversation that left the relay
 // travels its carrier, and every other one travels the relay.
 func (p *Peers) send(peer, body []byte) error {
-	talk, err := p.session(peer)
-	if err != nil {
-		return err
-	}
-
-	nonce, ciphertext, seq, err := talk.Encrypt(body)
-	if err != nil {
-		return err
-	}
-
-	raw, err := packet.Encode(p.me, peer, talk.ID, seq, nonce, ciphertext,
-		packet.WithEphemeralKey(talk.EphemeralPublic))
+	raw, err := p.seal(peer, body)
 	if err != nil {
 		return err
 	}
@@ -405,6 +400,22 @@ func (p *Peers) send(peer, body []byte) error {
 		}
 	}
 	return p.client.SendPacket(raw)
+}
+
+// seal encrypts one frame to a peer, and returns the packet.
+func (p *Peers) seal(peer, body []byte) ([]byte, error) {
+	talk, err := p.session(peer)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce, ciphertext, seq, err := talk.Encrypt(body)
+	if err != nil {
+		return nil, err
+	}
+
+	return packet.Encode(p.me, peer, talk.ID, seq, nonce, ciphertext,
+		packet.WithEphemeralKey(talk.EphemeralPublic))
 }
 
 func (p *Peers) session(peer []byte) (*session.Session, error) {
