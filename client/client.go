@@ -61,6 +61,21 @@ type Options struct {
 	RelayPublicKey []byte
 	// DialTimeout bounds the TCP connect and the handshake.
 	DialTimeout time.Duration
+	// Waker wakes a citizen whose machine may pause, before a request goes
+	// to it. Without one, every request goes out at once.
+	Waker Waker
+}
+
+// Waker makes a paused citizen ready for a request. The wake package runs
+// the wake hooks of the caller. The wake counts toward the deadline of the
+// request.
+type Waker interface {
+	// Wake returns when the citizen is ready to answer, or with the reason
+	// it is not.
+	Wake(ctx context.Context, citizen []byte) error
+	// Answered records an answer from the citizen. An answer proves that
+	// the citizen is awake.
+	Answered(citizen []byte)
 }
 
 // Client is one connection to one relay.
@@ -68,6 +83,7 @@ type Client struct {
 	conn     net.Conn
 	me       *identity.Identity
 	relayKey []byte
+	waker    Waker
 
 	packets chan []byte
 	done    chan struct{}
@@ -129,6 +145,7 @@ func Dial(ctx context.Context, address string, opts Options) (*Client, error) {
 		conn:     conn,
 		me:       opts.Identity,
 		relayKey: relayKey,
+		waker:    opts.Waker,
 		packets:  make(chan []byte, PacketBuffer),
 		done:     make(chan struct{}),
 		pending:  map[string]chan map[string]any{},

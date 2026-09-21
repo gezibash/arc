@@ -141,6 +141,57 @@ fi
 grep -q "access_denied" "$work/denied.txt" || fail "the refusal is not access_denied: $(cat "$work/denied.txt")"
 say "a citizen without a grant is refused"
 
+# A citizen whose machine paused. The caller keeps a wake hook for it, and
+# arc runs the hook before the request, the way ssh runs a ProxyCommand.
+kill "$serve_pid"
+wait "$serve_pid" 2>/dev/null || true
+
+cat > "$work/wake-exec" <<SCRIPT
+#!/bin/sh
+# The start script of the citizen: serve again, and exit 0 when ready.
+echo woke >> "$work/woke"
+EXEC_CONFIG="$work/exec.json" "$work/arc" --store "$work" serve \\
+  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \\
+  > "$work/serve-woken.log" 2>"$work/serve-woken.err" < /dev/null &
+for _ in \$(seq 1 50); do
+  grep -q "serves on" "$work/serve-woken.log" 2>/dev/null && exit 0
+  sleep 0.1
+done
+exit 1
+SCRIPT
+chmod +x "$work/wake-exec"
+
+sleeper_key="$(tail -1 "$work/stranger.txt")"
+cat > "$work/wake.toml" <<TOML
+[wake."$provider_key"]
+kind = "command"
+argv = ["$work/wake-exec"]
+
+[wake."$sleeper_key"]
+kind = "command"
+argv = ["sh", "-c", "echo 'no such machine' >&2; exit 3"]
+TOML
+
+caller call "exec+arc://$provider_key/" '{"argv":["echo","woken"]}' > "$work/woken.json" 2>"$work/woken.err" ||
+  fail "the call did not wake the citizen: $(cat "$work/woken.err")"
+grep -q "woken" "$work/woken.json" || fail "the woken citizen answered $(cat "$work/woken.json")"
+[ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran $(wc -l < "$work/woke") times"
+say "arc runs the wake hook, and the woken citizen answers"
+
+caller call "exec+arc://$provider_key/" '{"argv":["echo","again"]}' > /dev/null || fail "the second call failed"
+[ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran again for a citizen that answered a moment ago"
+say "arc skips the hook of a citizen that answered a moment ago"
+
+if caller call "exec+arc://$sleeper_key/" '{"argv":["true"]}' 2>"$work/wake-failed.txt"; then
+  fail "a call went out after its wake hook failed"
+fi
+grep -q "wake_failed" "$work/wake-failed.txt" || fail "the failure is not wake_failed: $(cat "$work/wake-failed.txt")"
+grep -q "no such machine" "$work/wake-failed.txt" || fail "the failure hides the hook: $(cat "$work/wake-failed.txt")"
+say "a wake hook that fails stops the call with wake_failed"
+
+# Later calls reach the woken citizen without a hook.
+rm "$work/wake.toml"
+
 # A capability with a command line becomes a command of arc.
 caller keys gen > /dev/null 2>&1 || true
 
