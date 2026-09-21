@@ -589,8 +589,8 @@ func (j *Journal) openPart(tag string, event nostr.Event) (string, error) {
 }
 
 // Tail writes the page, then each piece of text that is appended to it, until
-// the context ends. When someone rewrites the page, Tail says so and writes
-// the new text from its start.
+// the context ends or the relay ends the watch. When someone rewrites the
+// page, Tail says so and writes the new text from its start.
 func (j *Journal) Tail(ctx context.Context, address string, live transport.Live, w io.Writer) error {
 	tag, err := j.tag(address)
 	if err != nil {
@@ -623,7 +623,10 @@ func (j *Journal) Tail(ctx context.Context, address string, live transport.Live,
 		}
 		written = page.Bytes()
 	}
-	return ctx.Err()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return errors.New("journal: the relay ended the watch")
 }
 
 // partsFrom returns the parts that hold text at or after an offset, and the

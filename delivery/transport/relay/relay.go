@@ -109,7 +109,12 @@ func stored(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) ([]nost
 	var out []nostr.Event
 	for {
 		select {
-		case event := <-sub.Events:
+		case event, ok := <-sub.Events:
+			// The library closes Events when the subscription ends, for
+			// example when the relay goes away.
+			if !ok {
+				return out, errors.New("the relay ended the query before its stored events")
+			}
 			out = append(out, event)
 		case <-sub.EndOfStoredEvents:
 			return out, nil
@@ -181,7 +186,8 @@ type discard struct{}
 func (discard) Publish(context.Context, nostr.Event) error { return nil }
 
 // Watch sends the stored events that match the filter, then each new one as
-// it arrives, until the context ends.
+// it arrives. It closes the channel when the context ends, or when the relay
+// ends the subscription.
 func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error) {
 	conn, err := r.connect(ctx)
 	if err != nil {
@@ -205,7 +211,12 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 
 		for {
 			select {
-			case event := <-sub.Events:
+			case event, ok := <-sub.Events:
+				// A closed channel means that the subscription ended. Reading
+				// on would return empty events at once, forever.
+				if !ok {
+					return
+				}
 				select {
 				case out <- event:
 				case <-ctx.Done():

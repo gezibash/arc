@@ -18,6 +18,12 @@ cleanup() {
   for held in "${relay_pid:-}" "${serve_pid:-}" "${echo_pid:-}" "${dm_pid:-}" "${listen_pid:-}" "${app_pid:-}"; do
     [ -n "$held" ] && kill "$held" 2>/dev/null || true
   done
+  # A process started from the work directory must not outlive it. A shell
+  # function started with & gives $! as a subshell, and kill then misses the
+  # real process, so stop everything that runs from the work directory.
+  pkill -f "$work/" 2>/dev/null || true
+  sleep 0.2
+  pkill -9 -f "$work/" 2>/dev/null || true
   [ -n "$keep" ] && printf 'work: %s\n' "$work" || rm -rf "$work"
 }
 trap cleanup EXIT
@@ -84,7 +90,7 @@ cat > "$work/exec.json" <<JSON
 JSON
 mkdir -p "$work/jobs"
 
-EXEC_CONFIG="$work/exec.json" arc serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc" --store "$work" serve \
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \
   > "$work/serve.log" 2>"$work/serve.err" &
 serve_pid=$!
@@ -138,7 +144,7 @@ say "a citizen without a grant is refused"
 # A capability with a command line becomes a command of arc.
 caller keys gen > /dev/null 2>&1 || true
 
-EXEC_CONFIG="$work/exec.json" arc --key "$echo_name" serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc" --store "$work" --key "$echo_name" serve \
   "exec://$work/echo-provider?manifest=$root/citizen/testdata/echo/cli-manifest.json" \
   > "$work/echo.log" 2>"$work/echo.err" &
 echo_pid=$!
@@ -179,7 +185,7 @@ kill "$echo_pid" 2>/dev/null || true
 # One citizen listens, and another sends it a message. A third identity
 # takes this, because one identity holds one route at a time.
 stranger_key="$(arc --key "$stranger_name" whoami | sed -n 2p)"
-arc --key "$stranger_name" listen > "$work/listen.log" 2>&1 &
+"$work/arc" --store "$work" --key "$stranger_name" listen > "$work/listen.log" 2>&1 &
 listen_pid=$!
 
 for _ in $(seq 1 50); do
@@ -215,7 +221,7 @@ arc keys gen > "$work/dm.txt"
 dm_name="$(head -1 "$work/dm.txt")"
 dm_key="$(tail -1 "$work/dm.txt")"
 
-DM_ROOT="$work/dm" arc --key "$dm_name" serve \
+DM_ROOT="$work/dm" "$work/arc" --store "$work" --key "$dm_name" serve \
   "exec://$work/dm-provider?manifest=$root/cmd/dm-provider/manifest.json" \
   > "$work/dm.log" 2>"$work/dm.err" &
 dm_pid=$!
@@ -286,7 +292,7 @@ arc keys gen > "$work/app.txt"
 app_name="$(head -1 "$work/app.txt")"
 app_key="$(tail -1 "$work/app.txt")"
 
-arc --key "$app_name" serve "$work/hello-app" > "$work/app.log" 2>"$work/app.err" &
+"$work/arc" --store "$work" --key "$app_name" serve "$work/hello-app" > "$work/app.log" 2>"$work/app.err" &
 app_pid=$!
 
 for _ in $(seq 1 50); do

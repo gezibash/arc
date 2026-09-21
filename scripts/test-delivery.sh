@@ -13,6 +13,12 @@ keep="${ARC_KEEP_WORK:-}"
 cleanup() {
   [ -n "${relay_pid:-}" ] && kill "$relay_pid" 2>/dev/null || true
   [ -n "${tail_pid:-}" ] && kill "$tail_pid" 2>/dev/null || true
+  # A process started from the work directory must not outlive it. A shell
+  # function started with & gives $! as a subshell, and kill then misses the
+  # real process, so stop everything that runs from the work directory.
+  pkill -f "$work/" 2>/dev/null || true
+  sleep 0.2
+  pkill -9 -f "$work/" 2>/dev/null || true
   [ -n "$keep" ] && printf 'work: %s\n' "$work" || rm -rf "$work"
 }
 trap cleanup EXIT
@@ -107,7 +113,7 @@ got="$("$work/arcn" --home "$work/phone" journal read hrs/data/big --lines 1500:
 say "a range of two lines reads on a machine that held nothing"
 
 # Tail streams what is appended.
-b journal tail hrs/log/live > "$work/tail.txt" 2>&1 &
+"$work/arcn" --home "$work/desktop" journal tail hrs/log/live > "$work/tail.txt" 2>&1 &
 tail_pid=$!
 sleep 0.5
 a journal append hrs/log/live first note > /dev/null

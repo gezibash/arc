@@ -221,3 +221,47 @@ func TestSyncReconcilesWhenTheRelaySupportsIt(t *testing.T) {
 		}
 	}
 }
+
+// When the relay dies, a watch must end. Before, it read empty events from
+// the closed channel in a loop, and used a whole CPU core.
+func TestAWatchEndsWhenTheRelayDies(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	url, kill := testrelay.StartKillable(t)
+	r := relay.Relay{URL: url}
+	k := keys.Generate()
+	filter := nostr.Filter{Authors: []nostr.PubKey{k.Public}}
+
+	raw, err := r.Watch(ctx, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watched, err := newNode(t).Watch(ctx, filter, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	kill()
+
+	deadline := time.After(5 * time.Second)
+	for raw != nil || watched != nil {
+		select {
+		case event, ok := <-raw:
+			if !ok {
+				raw = nil
+				continue
+			}
+			if event.ID == (nostr.ID{}) {
+				t.Fatal("the watch passed on an empty event after the relay died")
+			}
+		case _, ok := <-watched:
+			if !ok {
+				watched = nil
+			}
+		case <-deadline:
+			t.Fatal("the watch did not end after the relay died")
+		}
+	}
+}
