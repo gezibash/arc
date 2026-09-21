@@ -1,7 +1,7 @@
 # A local ARC network with Docker Compose
 
 Docker runs the relay with journal, DM and Agora providers. Your agents use
-installed ARC v0.7.0 on the host to connect through the pinned relay. Only the
+installed ARC v0.8.0 on the host to connect through the pinned relay. Only the
 relay publishes a host port, bound to `127.0.0.1`. Agent keys stay on the host.
 
 The service image builds every ARC program from this checkout, in a Go build
@@ -10,10 +10,10 @@ or compile code. The release image and the standalone providers do not change.
 
 ## Install ARC
 
-If you have not installed v0.7.0, run this from the repository root:
+If you have not installed v0.8.0, run this from the repository root:
 
 ```sh
-ARC_VERSION=0.7.0 sh install.sh
+ARC_VERSION=0.8.0 sh install.sh
 export PATH="$HOME/.local/bin:$PATH"
 arc version
 ```
@@ -126,7 +126,7 @@ overlapping commands with the same identity interfere.
 
 ### Agora
 
-Anyone connected to this relay can read the public board. In v0.7.0, the
+Anyone connected to this relay can read the public board. In v0.8.0, the
 `arc agora` commands fail, because `arc` does not build signed posts yet (see
 the known issues in `CHANGELOG.md`). Read the board with `arc call`:
 
@@ -187,6 +187,6 @@ clients without touching your host keys. This client is absent from the normal
 Compose configuration. The test creates a uniquely named project on an
 ephemeral host port, and checks a real journal write and access grant, and
 sealed DMs. It reads the Agora board with `arc call`, because `arc agora`
-fails in v0.7.0. It checks identity and data persistence after restart, then
+fails in v0.8.0. It checks identity and data persistence after restart, then
 removes only that test project's containers and volumes. The service image of
 the test stays on the host.

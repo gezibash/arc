@@ -48,6 +48,11 @@ caller needs this version. A citizen on 0.7.0 works with it.
 - The relay of the Fly.io image reports its release version. Build the image
   with `--build-arg VERSION=X.Y.Z`. Before, the relay reported `dev`.
 
+### Known issues
+
+- `arc` refuses the `private_file`, `sealed_file` and `agora` inputs, so
+  `arc files` and `arc agora` fail.
+
 ## [0.7.0] - 2026-09-21
 
 ARC is a Go module. A release holds one static binary for each command, and a
