@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gezibash/arc/announce"
+	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/internal/canonical"
 	"github.com/gezibash/arc/internal/wire"
 )
@@ -136,6 +138,57 @@ func (r *Relay) resolve(from *conn, requestID string, request map[string]any) {
 	}
 
 	matching := r.match(func(held *record) bool { return held.entry.Matches(query) })
+	key, fullKey := fullPublicKey(query)
+
+	// A full key that this relay or a fresh catalog holds needs no lookup,
+	// and a relay without partners has no one to ask.
+	if len(r.federation.approved()) == 0 || (fullKey && (len(matching) > 0 || r.catalog.find(key) != nil)) {
+		r.resolveFromCatalog(from, requestID, query, matching)
+		return
+	}
+
+	// A name, a prefix, or a key that no one here knows asks the partners.
+	// The lookup runs apart from the connection, which keeps reading.
+	if !r.lookups.begin() {
+		r.refuse(from, requestID, "federation_unavailable")
+		return
+	}
+	go func() {
+		defer r.lookups.end()
+
+		result := r.liveLookup("resolve", query)
+		r.catalog.install(result)
+
+		entries := recordsOf(matching)
+		found := fullKey && len(matching) > 0
+		for _, held := range result.sorted() {
+			if holdsKey(matching, held.entry.PublicKey) {
+				continue
+			}
+			entries = append(entries, held.entry.Record)
+			found = found || (fullKey && string(held.entry.PublicKey) == string(key))
+		}
+		if len(entries) > 2 {
+			entries = entries[:2]
+		}
+
+		// A branch that did not answer could hold another citizen of that
+		// name, so a partial lookup settles only a full key that it found.
+		if result.partial && !found {
+			r.refuse(from, requestID, "federation_unavailable")
+			return
+		}
+
+		answer := map[string]any{"ok": true, "entries": entries, "cached": false}
+		if result.partial {
+			answer["partial"] = true
+		}
+		r.reply(from, requestID, answer)
+	}()
+}
+
+// resolveFromCatalog answers a resolve from this relay and the catalog.
+func (r *Relay) resolveFromCatalog(from *conn, requestID, query string, matching []*record) {
 	entries := recordsOf(matching)
 
 	// A citizen of a partner answers when no citizen here does.
@@ -176,6 +229,35 @@ func (r *Relay) search(from *conn, requestID string, request map[string]any) {
 		return
 	}
 
+	limit := DefaultDirectoryLimit
+	if given, ok := whole(request["limit"]); ok && given > 0 {
+		limit = min(given, MaxDirectoryLimit)
+	}
+
+	// A synchronized catalog answers alone. A cold one asks the partners at
+	// once, apart from the connection.
+	approved := len(r.federation.approved())
+	if approved == 0 || !r.catalog.cold(approved) {
+		r.searchPage(from, requestID, query, after, limit, nil)
+		return
+	}
+
+	if !r.lookups.begin() {
+		r.searchPage(from, requestID, query, after, limit, nil)
+		return
+	}
+	go func() {
+		defer r.lookups.end()
+
+		result := r.liveLookup("search", query)
+		r.catalog.install(result)
+		r.searchPage(from, requestID, query, after, limit, &result)
+	}()
+}
+
+// searchPage answers one page of a search from this relay, the catalog, and
+// a live lookup when one ran.
+func (r *Relay) searchPage(from *conn, requestID, query, after string, limit int, live *outcome) {
 	matching := r.match(func(held *record) bool {
 		return len(held.entry.Capabilities) > 0 && held.entry.SearchMatch(query)
 	})
@@ -194,6 +276,18 @@ func (r *Relay) search(from *conn, requestID string, request map[string]any) {
 		}
 	}
 
+	if live != nil {
+		for _, found := range live.sorted() {
+			if !holdsKey(matching, found.entry.PublicKey) {
+				matching = append(matching, &record{
+					entry:     found.entry,
+					expiresAt: time.Unix(found.entry.ExpiresAt, 0),
+					cursor:    hex.EncodeToString(found.entry.PublicKey),
+				})
+			}
+		}
+	}
+
 	sort.Slice(matching, func(left, right int) bool {
 		return matching[left].cursor < matching[right].cursor
 	})
@@ -203,11 +297,6 @@ func (r *Relay) search(from *conn, requestID string, request map[string]any) {
 		for len(matching) > 0 && matching[0].cursor <= after {
 			matching = matching[1:]
 		}
-	}
-
-	limit := DefaultDirectoryLimit
-	if given, ok := whole(request["limit"]); ok && given > 0 {
-		limit = min(given, MaxDirectoryLimit)
 	}
 
 	page := matching
@@ -227,13 +316,25 @@ func (r *Relay) search(from *conn, requestID string, request map[string]any) {
 		"next":    next,
 		"total":   total,
 	}
-	if len(cached) > 0 {
+	switch {
+	case live != nil:
+		answer["cached"] = false
+	case len(cached) > 0:
 		answer["cached"] = true
 	}
-	if r.catalog.partial() {
+	if r.catalog.partial() || (live != nil && live.partial) {
 		answer["partial"] = true
 	}
 	r.reply(from, requestID, answer)
+}
+
+// fullPublicKey reads a query that is a whole public key.
+func fullPublicKey(query string) ([]byte, bool) {
+	if len(query) != 2*identity.SeedBytes {
+		return nil, false
+	}
+	key, err := hex.DecodeString(strings.ToLower(query))
+	return key, err == nil
 }
 
 func (r *Relay) observe(from *conn, requestID string, request map[string]any) {

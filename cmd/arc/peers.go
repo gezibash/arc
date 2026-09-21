@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gezibash/arc/announce"
+	"github.com/gezibash/arc/citizen"
 	"github.com/gezibash/arc/client"
 	"github.com/gezibash/arc/control"
 	"github.com/gezibash/arc/frame"
@@ -167,6 +169,7 @@ func listenCommand() *cobra.Command {
 	}
 
 	command.Flags().Bool("json", false, "write each message as JSON")
+	federationFlags(command)
 	return command
 }
 
@@ -187,14 +190,41 @@ func listen(command *cobra.Command, _ []string) error {
 	}
 	defer connection.Close()
 
+	// A listener announces its identity, with no capability, so that
+	// another citizen finds it by name. It renews the announcement before
+	// it expires.
+	scope := reach(command)
+	present := func() error {
+		record, err := announce.Create(held.me, nil, announce.Options{
+			Federation: scope, RelayPublicKey: held.relay.Pin,
+		})
+		if err != nil {
+			return err
+		}
+		announcing, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return connection.Announce(announcing, record)
+	}
+	if err := present(); err != nil {
+		return fmt.Errorf("the listener did not announce itself: %w", err)
+	}
+
 	fmt.Printf("%s listens on %s\n%s\n",
 		held.me.Name(), held.relay.Address, held.me.EncodePublicKey())
 
 	peers := connection.Peers()
 	asJSON, _ := command.Flags().GetBool("json")
 
+	renew := time.NewTicker(citizen.AnnounceEvery)
+	defer renew.Stop()
+
 	for {
 		select {
+		case <-renew.C:
+			if err := present(); err != nil {
+				fmt.Fprintln(os.Stderr, "the announcement did not renew:", err)
+			}
+
 		case event, ok := <-peers.Events():
 			if !ok {
 				return connection.Err()

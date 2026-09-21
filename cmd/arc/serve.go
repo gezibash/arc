@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gezibash/arc/announce"
 	"github.com/gezibash/arc/bundle"
 	"github.com/gezibash/arc/citizen"
 	"github.com/spf13/cobra"
@@ -28,7 +29,28 @@ func serveCommand() *cobra.Command {
 
 	command.Flags().String("direct-policy", "",
 		"a file of rules that let a named peer carry a conversation off the relay")
+	federationFlags(command)
 	return command
+}
+
+// federationFlags adds the flags that choose how far an announcement
+// travels. Without them, it stays on the relay.
+func federationFlags(command *cobra.Command) {
+	command.Flags().Bool("federate", false, "share the announcement with the partners of the relay")
+	command.Flags().Bool("federate-network", false,
+		"share the announcement across the relays that pass traffic on")
+	command.MarkFlagsMutuallyExclusive("federate", "federate-network")
+}
+
+// reach reads the federation flags.
+func reach(command *cobra.Command) announce.Federation {
+	if network, _ := command.Flags().GetBool("federate-network"); network {
+		return announce.Network
+	}
+	if direct, _ := command.Flags().GetBool("federate"); direct {
+		return announce.Direct
+	}
+	return announce.Local
 }
 
 func serve(command *cobra.Command, args []string) error {
@@ -56,6 +78,7 @@ func serve(command *cobra.Command, args []string) error {
 		RelayPublicKey: held.relay.Pin,
 		Serve:          address,
 		DirectPolicy:   policy,
+		Federation:     reach(command),
 		Log:            stderrLog(),
 	})
 	if err != nil {

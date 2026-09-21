@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc serve` and `arc listen` take `--federate` or `--federate-network`.
+  With `--federate`, the direct partners of the relay find the citizen. With
+  `--federate-network`, the wider network finds it where transit allows. The
+  two flags are mutually exclusive.
+- `arc listen` announces the citizen when it connects, and again every 150
+  seconds. `arc resolve` and `arc send` find a listener by name.
+- A relay with partners asks them live when its catalog is cold, or when it
+  does not hold a name or a public key. The lookup carries an id, a path and a
+  budget of 64. Each relay runs at most 32 lookups and asks at most 16
+  partners for each.
+
+### Changed
+
+- A lookup by name or prefix that did not reach every partner fails with
+  `federation_unavailable`. Before, it returned its entries with
+  `partial: true`.
+
 ## [0.8.0] - 2026-09-21
 
 `arc` wakes a citizen whose machine pauses, and it says at once when a

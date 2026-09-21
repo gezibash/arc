@@ -51,6 +51,10 @@ type Options struct {
 	// conversation off the relay, and the addresses to use. Without it,
 	// every conversation stays on the relay.
 	DirectPolicy string
+	// Federation is how far the announcement travels: announce.Local (the
+	// empty value) stays on the relay, announce.Direct reaches its partners,
+	// and announce.Network crosses relays that allow transit.
+	Federation announce.Federation
 	// Log receives what the citizen drops and why.
 	Log *slog.Logger
 }
@@ -64,6 +68,9 @@ type Citizen struct {
 	log      *slog.Logger
 	capID    string
 	maxBytes int
+
+	federation announce.Federation
+	relayKey   []byte
 
 	direct *direct.Manager
 
@@ -131,19 +138,21 @@ func Serve(ctx context.Context, opts Options) (*Citizen, error) {
 	}
 
 	serving := &Citizen{
-		me:       opts.Identity,
-		pkg:      pkg,
-		runtime:  provider,
-		relay:    relay,
-		log:      opts.Log,
-		capID:    capID,
-		maxBytes: requestLimit(pkg),
-		ctx:      ctx,
-		cancel:   cancel,
-		carriers: map[string]*direct.Conn{},
-		sessions: map[string]*session.Session{},
-		guard:    map[string]uint64{},
-		waiting:  map[string]*pending{},
+		me:         opts.Identity,
+		pkg:        pkg,
+		runtime:    provider,
+		relay:      relay,
+		log:        opts.Log,
+		capID:      capID,
+		maxBytes:   requestLimit(pkg),
+		federation: opts.Federation,
+		relayKey:   opts.RelayPublicKey,
+		ctx:        ctx,
+		cancel:     cancel,
+		carriers:   map[string]*direct.Conn{},
+		sessions:   map[string]*session.Session{},
+		guard:      map[string]uint64{},
+		waiting:    map[string]*pending{},
 	}
 
 	if opts.DirectPolicy != "" {
@@ -242,7 +251,9 @@ func (c *Citizen) announce() error {
 		})
 	}
 
-	record, err := announce.Create(c.me, capabilities, announce.Options{})
+	record, err := announce.Create(c.me, capabilities, announce.Options{
+		Federation: c.federation, RelayPublicKey: c.relayKey,
+	})
 	if err != nil {
 		return err
 	}

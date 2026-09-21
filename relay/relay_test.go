@@ -346,7 +346,11 @@ func TestOneCitizenHoldsOneRoute(t *testing.T) {
 	bob, first := citizen(t, server)
 
 	// Bob joins again from another machine. The new connection takes the route.
+	// A round trip on it shows that the relay registered it.
 	second := join(t, server, bob)
+	if _, err := second.Status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	talk, err := session.Establish(alice, bob.PublicKey)
 	if err != nil {

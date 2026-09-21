@@ -81,9 +81,10 @@ reaches another citizen needs a relay. Without one, the command fails with
 fall back to local identity records or file mailboxes.
 
 The `publish` and `resolve` control-plane commands still operate on the local
-control store. Network presence is announced automatically by connected
-agents (`serve`, `listen`, discovery, and tool calls); there is no need to copy
-control-store files between machines.
+control store. `arc serve` and `arc listen` announce the citizen when they
+connect, and again every 150 seconds. A one-shot command, for example
+`arc discover` or `arc call`, does not announce. You do not copy control-store
+files between machines.
 
 ## Transport and bootstrap
 

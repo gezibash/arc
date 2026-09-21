@@ -247,10 +247,12 @@ network.
 
 Searches are asynchronous at each relay. They have at most 32 concurrent local
 jobs, at most 16 peer branches per job, and decreasing per-hop deadlines.
-The client directory timeout for search/lookup is 10 seconds, and the citizen
-connect call allows 11 seconds for that result; announcements retain their
-2-second timeout. Recursive caller or peer departure cancels owned work.
-A failed branch cannot reinstall stale routes or erase successful branches.
+The origin waits 8 seconds for its partners. Each further hop waits
+0.8 seconds less, and never less than 1 second. The client directory timeout
+for search and lookup is 10 seconds. Announcements keep their 2-second timeout.
+If the caller or a partner leaves, the lookup runs until its deadline, and the
+relay drops the reply. A failed branch cannot install routes or remove the
+routes of a branch that succeeded.
 
 ## Routed delivery and private replies
 

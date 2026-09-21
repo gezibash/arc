@@ -69,6 +69,10 @@ type catalog struct {
 	mu      sync.Mutex
 	imports map[string]map[string]*imported
 	views   map[string]*peerView
+	// live holds the paths that a live lookup found, by public key. They
+	// serve the router until their record expires, and go with the link of
+	// the partner that gave them.
+	live map[string]*imported
 }
 
 func newCatalog(r *Relay) *catalog {
@@ -80,6 +84,7 @@ func newCatalog(r *Relay) *catalog {
 		epoch:   hex.EncodeToString(seed),
 		imports: map[string]map[string]*imported{},
 		views:   map[string]*peerView{},
+		live:    map[string]*imported{},
 	}
 }
 
@@ -92,12 +97,59 @@ func (c *catalog) peerUp(peer []byte) {
 	go c.follow(peer)
 }
 
-// forget drops the view of a partner that left.
+// forget drops the view of a partner that left, and the paths of lookups
+// that it answered.
 func (c *catalog) forget(peer []byte) {
 	c.mu.Lock()
 	delete(c.imports, string(peer))
 	delete(c.views, string(peer))
+	for key, held := range c.live {
+		if string(held.peer) == string(peer) {
+			delete(c.live, key)
+		}
+	}
 	c.mu.Unlock()
+}
+
+// install keeps the paths that a live lookup found, so that a call to one of
+// its publishers finds the way. A path of a partner whose link ended by now
+// is not kept.
+func (c *catalog) install(result outcome) {
+	now := time.Now()
+
+	// The links are read before the catalog locks, so the two locks never
+	// wait for one another.
+	ready := map[string]bool{}
+	for _, found := range result.hits {
+		if found.peer != nil {
+			_, err := c.relay.federation.readyLink(found.peer)
+			ready[string(found.peer)] = err == nil
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key, found := range result.hits {
+		if found.peer == nil || !ready[string(found.peer)] {
+			continue
+		}
+
+		expires := time.Unix(found.entry.ExpiresAt, 0)
+		if limit := now.Add(CatalogLife); expires.After(limit) {
+			expires = limit
+		}
+		c.live[key] = &imported{entry: found.entry, peer: found.peer, path: found.path, expiresAt: expires}
+	}
+}
+
+// cold says whether the catalog cannot answer a search alone: a partner that
+// the operator approved has no view here, or a view is not complete.
+func (c *catalog) cold(approved int) bool {
+	c.mu.Lock()
+	views := len(c.views)
+	c.mu.Unlock()
+	return views < approved || c.partial()
 }
 
 // follow asks one partner until its link ends.
@@ -410,6 +462,15 @@ func (c *catalog) find(publicKey []byte) *imported {
 			continue
 		}
 		if best == nil || len(held.path) < len(best.path) {
+			best = held
+		}
+	}
+
+	if held, there := c.live[string(publicKey)]; there {
+		switch {
+		case held.expiresAt.Before(now):
+			delete(c.live, string(publicKey))
+		case best == nil || len(held.path) < len(best.path):
 			best = held
 		}
 	}
