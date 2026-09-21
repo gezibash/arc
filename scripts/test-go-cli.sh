@@ -189,8 +189,22 @@ grep -q "wake_failed" "$work/wake-failed.txt" || fail "the failure is not wake_f
 grep -q "no such machine" "$work/wake-failed.txt" || fail "the failure hides the hook: $(cat "$work/wake-failed.txt")"
 say "a wake hook that fails stops the call with wake_failed"
 
+caller resolve "$provider_key" | grep -q "^  online$" || fail "the serving citizen is not online: $(caller resolve "$provider_key")"
+caller resolve "$sleeper_key" | grep -q "^  asleep" || fail "a citizen with a hook and no announcement is not asleep: $(caller resolve "$sleeper_key")"
+caller resolve --json "$sleeper_key" | grep -q '"state": "asleep"' || fail "the JSON has no state: $(caller resolve --json "$sleeper_key")"
+say "arc resolve shows a citizen online, and a citizen with a hook asleep"
+
 # Later calls reach the woken citizen without a hook.
 rm "$work/wake.toml"
+
+caller resolve "$sleeper_key" | grep -q "^  offline$" || fail "a citizen without a hook or an announcement is not offline: $(caller resolve "$sleeper_key")"
+started=$SECONDS
+if caller call "exec+arc://$sleeper_key/" '{"argv":["true"]}' 2>"$work/offline.txt"; then
+  fail "a call to a citizen that is not there succeeded"
+fi
+grep -q "peer_offline" "$work/offline.txt" || fail "the failure is not peer_offline: $(cat "$work/offline.txt")"
+[ $((SECONDS - started)) -lt 5 ] || fail "peer_offline took $((SECONDS - started)) seconds"
+say "a call to a citizen that is not there fails at once with peer_offline"
 
 # A capability with a command line becomes a command of arc.
 caller keys gen > /dev/null 2>&1 || true

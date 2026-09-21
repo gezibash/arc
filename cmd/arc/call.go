@@ -10,6 +10,7 @@ import (
 	"github.com/gezibash/arc/client"
 	"github.com/gezibash/arc/direct"
 	"github.com/gezibash/arc/identity"
+	"github.com/gezibash/arc/wake"
 	"github.com/spf13/cobra"
 )
 
@@ -158,7 +159,7 @@ func discover(command *cobra.Command, args []string) error {
 	}
 
 	for _, entry := range page.Entries {
-		show(entry)
+		show(entry, "")
 	}
 	if page.Next != "" {
 		fmt.Printf("\n%d citizens in all\n", page.Total)
@@ -213,22 +214,73 @@ func resolve(command *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A citizen that pauses has no announcement while it sleeps. The wake
+	// hooks of this machine still name it.
+	waker := held.waker()
+	asleep := sleepers(waker, args[0], entries)
+
 	if asJSON, _ := command.Flags().GetBool("json"); asJSON {
+		for _, entry := range entries {
+			entry["state"] = wake.Online
+		}
+		for _, key := range asleep {
+			entries = append(entries, map[string]any{
+				"public_key": hex.EncodeToString(key),
+				"name":       identity.Name(key),
+				"state":      wake.Asleep,
+			})
+		}
 		return write(entries)
 	}
-	if len(entries) == 0 {
+
+	if len(entries) == 0 && len(asleep) == 0 {
+		if key, err := hex.DecodeString(args[0]); err == nil && len(key) == identity.SeedBytes {
+			fmt.Printf("%s\n  %s\n  %s\n", identity.Name(key), hex.EncodeToString(key), wake.Offline)
+			return nil
+		}
 		fmt.Printf("no citizen answers to %s\n", args[0])
 		return nil
 	}
 
 	for _, entry := range entries {
-		show(entry)
+		show(entry, wake.Online)
+	}
+	for _, key := range asleep {
+		fmt.Printf("%s\n  %s\n  %s: arc wakes it with its wake hook\n", identity.Name(key), hex.EncodeToString(key), waker.State(key, false))
 	}
 	return nil
 }
 
-// show writes one announcement for a person to read.
-func show(entry map[string]any) {
+// sleepers gives the citizens with a wake hook that the query names, and
+// that the relay does not announce. The query matches the way the relay
+// matches: the petname, the short name, or the start of the key.
+func sleepers(waker *wake.Waker, query string, entries []map[string]any) [][]byte {
+	query = strings.ToLower(query)
+	if query == "" {
+		return nil
+	}
+
+	announced := map[string]bool{}
+	for _, entry := range entries {
+		if key, ok := entry["public_key"].(string); ok {
+			announced[strings.ToLower(key)] = true
+		}
+	}
+
+	var found [][]byte
+	for _, key := range waker.Citizens() {
+		text := hex.EncodeToString(key)
+		named := query == strings.ToLower(identity.Name(key)) || query == strings.ToLower(identity.ShortName(key))
+		if (named || strings.HasPrefix(text, query)) && !announced[text] {
+			found = append(found, key)
+		}
+	}
+	return found
+}
+
+// show writes one announcement for a person to read. A state, when given,
+// follows the key.
+func show(entry map[string]any, state string) {
 	key, _ := entry["public_key"].(string)
 	raw, err := hex.DecodeString(key)
 	if err != nil {
@@ -236,6 +288,9 @@ func show(entry map[string]any) {
 	}
 
 	fmt.Printf("%s\n  %s\n", identity.Name(raw), key)
+	if state != "" {
+		fmt.Printf("  %s\n", state)
+	}
 
 	capabilities, _ := entry["capabilities"].([]any)
 	for _, item := range capabilities {
