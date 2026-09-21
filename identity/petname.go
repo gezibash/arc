@@ -40,5 +40,3 @@ func parts(publicKey []byte) (adjective, noun, suffix string, ok bool) {
 	digest := blake3.Sum256(publicKey)
 	return adjectives[digest[0]], nouns[digest[1]], hex.EncodeToString(digest[2:6]), true
 }
-
-//go:generate sh -c "cd ../.. && python3 scripts/generate-petname-words.py"

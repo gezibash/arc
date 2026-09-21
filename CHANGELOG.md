@@ -278,7 +278,7 @@ changes modules other than `Arc.Net.Relay`.
   endpoint can accept the connection; both owners can opt into TCP hole punching.
 - A reproducible cloud traversal lab with recorded successful direct routes,
   relay fallback, permission expiry, and interrupted-write behavior. See
-  [verification results](docs/transport/VERIFICATION-2026-09-16.md). Home and
+  [verification results](https://github.com/gezibash/arc/blob/v0.5.2/docs/transport/VERIFICATION-2026-09-16.md). Home and
   mobile networks remain unverified.
 
 ### Changed

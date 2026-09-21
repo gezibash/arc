@@ -1,7 +1,7 @@
 // Package vectors reads the shared protocol vectors.
 //
 // The file test/vectors/identity.json holds values that every ARC
-// implementation must produce. The Elixir suite reads the same file. A change
+// implementation must produce. It is a fixture: nothing generates it. A change
 // to a vector is a change to the protocol.
 package vectors
 

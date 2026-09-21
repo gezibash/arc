@@ -28,7 +28,7 @@ most `262144` raw bytes.
 Serve the bundle with the normal ARC provider flow:
 
 ```sh
-bin/arc serve go/cmd/releases-provider --relay relay.example:7331 --relay-pubkey <relay-key>
+arc serve cmd/releases-provider --relay relay.example:7331 --relay-pubkey <relay-key>
 ```
 
 The provider is public and read-only. Publication authority stays with the
@@ -73,35 +73,10 @@ The chunk reply is:
 string. Other bad offsets, lengths, paths, and malformed JSON fail as
 `invalid_request`. Missing artifacts fail as `not_found`.
 
-## Local source and staging client
-
-`Arc.CLI.Update.Source` consumes either a relay-backed source:
-
-```elixir
-{:arc, citizen_agent, "releases+arc://<provider-key>/releases"}
-```
-
-or an explicitly selected offline directory:
-
-```elixir
-{:local, "/absolute/release-root"}
-```
-
-`channel/3` bounds metadata to `262144` bytes. `stage_archive/5` consumes a
-known lower-case digest and byte length, writes chunks into a caller-prepared
-staging directory, checks the final SHA-256, and creates the final filename only
-when verification succeeds. Existing destinations are never overwritten. ARC
-sources use `Arc.Data.Protocol` and therefore the citizen agent's configured
-relay route; this helper has no HTTP transport, direct fallback, or implicit
-local fallback.
-
 ## Tests
 
-```sh
-cd go/cmd/releases-provider
-mise exec -- mix test
+From the repository root:
 
-cd /Users/zim/Work/arc
-mise exec -- mix test apps/arc_cli/test/arc/update_source_test.exs
-mise exec -- mix test apps/arc_cli/test/arc/update_source_relay_test.exs
+```sh
+go test ./cmd/releases-provider
 ```

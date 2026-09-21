@@ -133,9 +133,9 @@ A command that takes longer than 115 seconds must run as a job. A job
 continues after the caller disconnects:
 
 ```sh
-arc-exec <citizen-public-key> --start --script 'cd ~/arc && mix test'
+arc-exec <citizen-public-key> --start --script 'cd ~/arc && go test ./...'
 arc-exec <citizen-public-key> --status <job>
-arc-exec <citizen-public-key> --wait --script 'cd ~/arc && mix test'
+arc-exec <citizen-public-key> --wait --script 'cd ~/arc && go test ./...'
 ```
 
 `--status` exits with status 75 while the job runs. After the job ends, it
