@@ -1,0 +1,28 @@
+{
+  "interface": 1, "id": "files", "shape": "data",
+  "title": "Files", "summary": "Private files, sealed to your own key.",
+  "kinds": {"file": {"kind": 1063, "visibility": "sealed"}},
+  "formats": {
+    "list": {"record": "{{tags.d}}\t{{tags.alt}}\t{{tags.size}} bytes\t{{created|date}}", "empty": "no files"},
+    "put":  {"record": "{{tags.d}}"}
+  },
+  "commands": [
+    {"path": ["put"], "summary": "Store a file",
+     "args": [{"name": "file", "kind": "positional", "type": "file", "required": true}],
+     "action": {"publish": {"kind": "file", "d": "{{file.sha256|keyed:file}}", "revise": "replace", "content": "{{file}}",
+                            "tags": [["d", "{{file.sha256}}"], ["alt", "{{file.name}}"], ["m", "{{file.type}}"],
+                                     ["x", "{{file.sha256}}"], ["size", "{{file.size}}"]]}},
+     "output": {"format": "put"}},
+    {"path": ["list"], "summary": "List your files",
+     "action": {"query": {"kinds": ["file"], "authors": "me"}},
+     "output": {"open": {"parse": "text"}, "sort": {"field": "created", "order": "desc"}, "format": "list"}},
+    {"path": ["get"], "summary": "Write one file back to disk",
+     "args": [{"name": "id", "kind": "positional", "type": "text", "required": true},
+              {"name": "output", "kind": "option", "type": "path", "required": true}],
+     "action": {"query": {"kinds": ["file"], "authors": "me", "d": "{{id|keyed:file}}", "limit": 1}},
+     "output": {"open": {"parse": "text"}, "join": {}, "save": {"field": "text", "to": "{{output}}", "decode": "base64", "sha256": "{{tags.x}}"}}},
+    {"path": ["delete"], "summary": "Delete a file",
+     "args": [{"name": "id", "kind": "positional", "type": "text", "required": true}],
+     "action": {"delete": {"kind": "file", "d": "{{id|keyed:file}}"}}}
+  ]
+}

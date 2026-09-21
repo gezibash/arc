@@ -316,14 +316,13 @@ trusted compute broker.
 
 | Existing building block | Reuse and boundary |
 | --- | --- |
-| [Keypair identity](../../apps/arc_identity/lib/arc/identity.ex) | Owner signatures and guest identities; key ownership alone says nothing about protected execution |
-| [Capability packages](../../apps/arc_data/lib/arc/data/capability_package.ex) and [discovery](../../apps/arc_data/lib/arc/data/capability_manifest.ex) | Signed provider advertisements and existing detail lookup; evidence-profile advertisement needs an explicit schema design |
-| [Interface manifests](../../apps/arc_data/lib/arc/data/interface_manifest.ex) | Existing provider-installed command and stream descriptions; security decisions cannot be delegated to arbitrary provider-authored templates |
-| [Execution adapter](../../apps/arc_data/lib/arc/data/handler/exec.ex) | Can host public orchestration; its ordinary process and plaintext input/output are not a protected boundary |
-| [ARC sessions](../../apps/arc_data/lib/arc/data/session.ex) | Encrypted transport; no attestation binding today, and the current version documents exposure of past sessions if the responder's long-term key is compromised |
-| [Sealed boxes](../../apps/arc_identity/lib/arc/identity/sealed_box.ex) | Existing encryption building block for recipient-held data; not a storage format, sender authorization, freshness proof, or guest verifier |
-| [Host tokens](../../apps/arc_data/lib/arc/host/token.ex) | Local delegation; not the signed, portable run grants defined here |
-| [Sandbox fixture](../../test/fixtures/providers/sandbox-provider.exs) | Tests request and stream plumbing; creates no isolated or confidential machine |
+| [Keypair identity](../../identity/identity.go) | Owner signatures and guest identities; key ownership alone says nothing about protected execution |
+| [Capability packages](../../capability/package.go) and [discovery](../../capability/manifest.go) | Signed provider advertisements and existing detail lookup; evidence-profile advertisement needs an explicit schema design |
+| [Interface manifests](../../capability/interfaces.go) | Existing provider-installed command and stream descriptions; security decisions cannot be delegated to arbitrary provider-authored templates |
+| [Execution adapter](../../cmd/exec-provider/main.go) | Can host public orchestration; its ordinary process and plaintext input/output are not a protected boundary |
+| [ARC sessions](../../session/session.go) | Encrypted transport; no attestation binding today, and the current version documents exposure of past sessions if the responder's long-term key is compromised |
+| [Sealed boxes](../../sealedbox/sealedbox.go) | Existing encryption building block for recipient-held data; not a storage format, sender authorization, freshness proof, or guest verifier |
+| [Provider grants](../../provider/config.go) | Local authorization by public key; not the signed, portable run grants defined here |
 
 The private-environment implementation MUST supply the missing verifier,
 protected endpoint, policy enforcement, grant format, key-release controller,

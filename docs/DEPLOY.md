@@ -1,8 +1,8 @@
 # Deploy Arc
 
-Arc ships as one release per platform. Each release contains the Erlang
-runtime, so the target machine does not need Erlang or Elixir. The same
-release runs a relay, a client, or the MCP server.
+Arc ships as one release per platform. Each release holds one static binary
+for each command, so the target machine needs no runtime and no library. The
+same binary runs a relay, a client, or a provider.
 
 ## Get a release
 
@@ -172,8 +172,7 @@ command.
 
 ## Cut a release
 
-1. Set `version` in `mix.exs` and each `apps/*/mix.exs`, and update the local
-   Compose image references and installation examples.
+1. Update the local Compose image references and the installation examples.
 2. Commit, then tag and push:
 
    ```bash
@@ -181,6 +180,7 @@ command.
    git push origin vX.Y.Z
    ```
 
-The `Release` workflow refuses a tag that does not match the version in
-`mix.exs`. It builds the three tarballs, pushes the image, and creates
-the GitHub release with checksums.
+The tag carries the version, and the build writes it into each binary. The
+`Release` workflow refuses a tag that is not `vX.Y.Z`. It cross-compiles the
+three tarballs, pushes the image, and creates the GitHub release with
+checksums.

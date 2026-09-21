@@ -1,256 +1,147 @@
-# Live updates and release channels
+# Updates and release channels
 
 ## Status and boundary
 
-This document defines the channel and rollout policy. The experimental
-[managed relay implementation](OPERATIONS.md) provides `arc update`, signed
-metadata verification and a release provider. `arc update` without `--socket`
-replaces a local installation with a complete archive fetched through the
-configured relay; it is a full replacement, not a hot upgrade, and follows the
-same channel, publisher and distribution rules. Official signed channels and
-automatic application are not enabled. The accompanying isolated proof
-exercises a supported application upgrade and downgrade; it does not establish
-that every ARC release can be hot-upgraded.
+This document defines the channel and rollout policy. The
+[operations guide](OPERATIONS.md) describes the commands.
 
-ARC currently ships complete `mix release` archives. Its installer replaces the
-installation directory. Running services are started by the CLI; the relay and
-its connection processes are not all children of an upgrade-aware application
-supervision tree. There are no authored production `.appup`/`relup` packages.
-An explicitly prepared upgrade-capable native base must be installed before channel-driven
-live updates are enabled. Do not use the current installer on the running
-release tree as an update mechanism.
+`arc update` replaces the program on this machine with one that the publisher
+signed. It reads a channel document from a citizen that serves releases,
+checks the signature, picks the release for this platform, downloads the
+archive, checks its hash, and swaps the binary. The old binary stays beside
+the new one as `<name>.previous`.
 
-## Run the isolated proof
+ARC does not hot-upgrade. A running service keeps its old program in memory
+until it restarts. An update therefore needs a restart to take effect, and
+the operator chooses when. Official signed channels and automatic application
+are not enabled.
+
+## Run the proof
 
 ```sh
-mise exec -- mix run --no-start scripts/test-hot-upgrade.exs
+go test ./release/...
 ```
 
-The [proof fixture](../../test/fixtures/upgrades/README.md) constructs synthetic
-old/new application packages from the real relay source and exercises
-`release_handler.upgrade_app/2` and `downgrade_app/3`. Both fixtures explicitly
-support the state migration and start the relay under a static application
-supervisor. The proof checks code behavior and a reversible state field, sends
-encrypted, sequenced traffic during each migration, and preserves the listener,
-route tables, acceptors, shards, and existing connection processes.
-
-The accept loop now lives in the separate `Arc.Net.Relay.Acceptor` module.
-Previously it retained old `Arc.Net.Relay` code after an upgrade, preventing a
-clean soft purge. This extraction prepares a future base; it does not change
-already-running processes from an older installation. Changes to the acceptor
-itself, federation processes, and external providers are outside this proof.
-
-The test barriers establish that traffic passes during each transition. They do
-not measure maximum throughput or establish a latency guarantee. This proof is
-part of CI. A separate managed lifecycle proof builds a native base and synthetic
-candidate, installs through the operator commands, observes existing connections,
-and confirms permanent boot selection by restarting and querying relay status:
-
-```sh
-mise exec -- mix run --no-start scripts/test-managed-update.exs
-```
-
-That proof uses an explicitly local release source. Process interruption is
-covered by a separate native proof:
-
-```sh
-mise exec -- mix run --no-start scripts/test-update-recovery.exs
-```
-
-It kills only owned disposable services at durable update phases, including the
-gap between boot commitment and the success record. Restart verifies the chosen
-release through public relay status, and interrupted mutations remain blocked.
-A corrupt artifact is rejected without changing the boot choice; after repair,
-an explicit operator retry succeeds. Fault barriers are compiled only into test
-releases, not enabled by production configuration. This checks process death,
-not host power loss, packaged downgrade, or arbitrary migration rollback.
-
-The native proof also supports `--federation`: metadata and artifact retrieval
-cross an approved partner link, while a sequenced encrypted event stream runs
-throughout the update. It asserts exact delivery and unchanged citizen and
-partner connection identities, then verifies permanent restart. Source tests
-separately cover multiple federation edges and denial/interruption cases.
-These tests use local isolated relays and synthetic releases, not a deployed
-multi-machine network or real production migration.
+The tests cover the signature domain, a changed document, an expired
+document, a replayed sequence, platform selection, a wrong hash, a short
+download, an archive that escapes its directory, and a program that does not
+start after the swap. One test verifies a channel document that the Elixir
+implementation signed, which pins the canonical encoding.
 
 ## User contract
 
 A service follows a channel selected by its operator. A channel says which
-releases the publisher recommends; it does not grant permission to execute them.
-Each running service has its own policy. Updating a local CLI installation must
-not implicitly update a configured remote relay or every federated partner.
+releases the publisher recommends. It does not grant permission to run them.
+Each running service has its own policy. Updating a local CLI installation
+must not update a configured remote relay, or any federated partner.
 
-The intended outcomes are:
+The outcomes are:
 
 - `up_to_date`: the selected channel has no newer eligible release.
 - `available`: a compatible update is ready for an operator decision.
-- `scheduled`: an opted-in automatic update is waiting for its rollout window.
-- `applying`: one update is running; concurrent attempts are rejected.
-- `observing`: code has changed and runtime health is being checked.
-- `current`: the new release passed checks and is committed as the boot default.
-- `restart_required`: the newer release cannot preserve this running service.
-- `blocked`: metadata, compatibility, storage, or health checks prevent updating.
+- `applying`: one update is running. Another attempt is refused.
+- `restart_required`: the program is replaced, and the service still runs the
+  old one.
+- `blocked`: metadata, platform, storage, or a failed check prevents updating.
 
-A short pause in affected processes is allowed. Deliberately closing a citizen
-socket, reconnecting on their behalf, restarting the node, or replaying an
-application request is not a successful hot update. Report failures explicitly.
-A hot-update failure is not a promise that connections can always be preserved.
+Report every failure explicitly. Deliberately closing a citizen socket,
+reconnecting on their behalf, or replaying an application request is not a
+successful update.
 
 ## Channel selection
 
-Initial channels are `stable` and `beta`. `stable` is the default and contains
-only promoted final releases. `beta` also permits prereleases. Nightly builds
-are outside the initial policy. Promotion changes a channel reference to an
-immutable tested artifact; it must not rebuild different bytes under a version.
+The channels are `stable` and `beta`. `stable` is the default, and holds
+promoted final releases only. `beta` also permits prereleases. Nightly builds
+are outside this policy. Promotion changes a channel reference to an
+immutable tested artifact. It must not rebuild different bytes under one
+version.
 
-The operator can pin an exact release, which disables automatic advancement.
-Changing a channel clears no pin implicitly. A selected channel and its last
-verified state persist across restart; they are service configuration, separate
-from citizen identity selection. Switching from beta to stable never silently
-downgrades the running service. If stable is older, report the situation and
-require an explicit supported downgrade decision.
+The operator can pin an exact release, which stops automatic advancement.
+A change of channel clears no pin. A selected channel and its last verified
+state survive a restart. They are service configuration, separate from the
+selection of a citizen identity. A move from beta to stable never silently
+downgrades a service. If stable is older, report that, and require an
+explicit decision.
 
-Show both the channel's latest release and the newest eligible release for the
-installed base. Never label an old installation globally up-to-date merely
-because the latest release needs a restart. If an upgrade requires intermediate
-versions, each edge must be explicitly supported and independently verified.
-Do not infer compatibility from semantic version numbers alone.
+Show both the latest release of the channel and the newest release that this
+platform can run. Never call an old installation up to date because the
+latest release needs a restart.
 
-## Automatic rollout policy
+## Rollout policy
 
-The selected initial policy is `notify`: checking may report availability, but
-the operator starts every update. Selecting or changing a channel never applies
-an update by itself. `auto_hot` below is a design for a later, separately enabled
-mode; it is not part of the initial rollout. Neither mode grants automatic
-restart permission. Package staging is also subject to an operator's
-download/storage policy; selecting a channel alone does not imply background
-bandwidth usage in a CLI that has no resident service.
+The policy is `notify`. A check may report that a release is available. The
+operator starts every update. To select or change a channel applies nothing
+by itself, and grants no permission to restart.
 
-Before `auto_hot` can apply an update, all of these must hold:
-
-- The manifest belongs to the selected channel and trusted publisher.
-- The exact source build, target build, operating system, architecture, and
-  runtime combination have a declared, tested upgrade path.
-- The upgrade uses the existing Erlang runtime and preserves the protocol and
-  state required by already-connected citizens and federation partners.
-- The release is admitted by the local version pin, maintenance window, and
-  rollout cohort. Fleet membership does not override an operator's settings.
-- Download verification and local preflight pass. No other update is running.
-- A tested recovery path exists and the service meets its pre-update health
-  requirements. Snapshotting metadata must not expose citizen keys or content.
-
-Roll out first to explicitly designated canaries. Wider cohorts advance only
-when the publisher marks the same artifact eligible and operators' own rules
-allow it. Use per-service jitter to avoid simultaneous updates across partners.
-An operator can pause or revoke eligibility at any time before application.
-Do not change a running update mid-migration based on a newly fetched manifest.
-An interrupted or failed update blocks automatic retries until its outcome has
-been reconciled. Never loop through failures or force-purge processes to advance.
+Roll out first to designated canaries. A wider group advances only when the
+publisher marks the same artifact eligible, and the rules of the operator
+allow it. An operator can pause or revoke eligibility at any time before
+application. A failed update blocks automatic retries until its outcome is
+reconciled. Never loop through failures to advance.
 
 ## Distribution and trust
 
-Normal network discovery, channel metadata, and package transfer go through ARC
-providers over the configured relay, following the existing federation sharing
-rules. A local package may be supplied explicitly for offline operation. A
-first installation remains a bootstrap operation. GitHub may produce or store
-artifacts, but the future updater must not silently bypass the selected relay to
-fetch them. Large artifacts need bounded chunked transfer with verified final
-length and digest; ordinary bounded request/reply limits still apply.
+Discovery, channel metadata and package transfer go through ARC providers
+over the configured relay, and follow the federation sharing rules. A local
+package may be supplied for offline operation. A first installation is a
+bootstrap operation. GitHub may build or store artifacts, but the updater
+must not bypass the selected relay to fetch them. A large artifact moves in
+bounded chunks, with a verified final length and digest.
 
-Trust is pinned to a release publisher, separately from the chosen relay or
-provider. Hosting or forwarding an artifact does not grant publishing authority.
-The publisher signs versioned channel metadata with domain-separated signatures
-and an unambiguous canonical encoding. The metadata binds at least:
+Trust is pinned to a release publisher, separately from the relay or the
+provider. To host or forward an artifact grants no publishing authority. The
+publisher signs the channel document with a domain-separated signature over
+a canonical encoding: the domain is `ARC-RELEASE-CHANNEL-V<schema>` followed
+by one zero byte, and then the canonical JSON of the unsigned document.
 
-- Channel, publisher, monotonic publication sequence, and expiry.
-- Immutable release/build identity, target platform, byte length, and digest.
-- Exact supported source builds and runtime versions.
-- Upgrade and downgrade plan digests, compatibility requirements, and whether
-  restart is required.
+The document binds:
+
+- Channel, publisher, a monotonic publication sequence, and an expiry.
+- An immutable release identity, the target platform, the byte length, and
+  the digest of each artifact.
+- Whether a restart is required.
 - Rollout eligibility and withdrawal state.
 
-The eventual wire specification must freeze the encoding and signature domain
-before interoperability is claimed. Persist the highest accepted sequence;
-reject replayed metadata, expired metadata, and unexplained key changes. Cache
-expiration cannot authorize an automatic update. Clock uncertainty or an
-unavailable relay leaves the current service running. Resume partial downloads
-only against the same immutable digest. Archive extraction must reject escaping
-paths and links before writing to a staging directory.
+Keep the highest accepted sequence. Refuse a replayed document, an expired
+document, and an unexplained change of key. An expired cache authorizes no
+update. An uncertain clock or an unreachable relay leaves the service
+running. Resume a partial download only against the same digest. Archive
+extraction must refuse a path that escapes the staging directory, and refuse
+a link.
 
-Keep signing keys out of artifacts and public status. Publisher-key rotation
-requires an explicit trust transition; an arbitrary new provider cannot rotate
-it. A rollback uses an already verified retained artifact and an operator or
-pre-authorized recovery decision, not stale channel metadata.
+Keep signing keys out of artifacts and out of public status. Rotation of a
+publisher key needs an explicit trust transition. An arbitrary new provider
+cannot rotate it. A rollback uses a retained verified artifact and an
+operator decision, not stale channel metadata.
 
-## Applying a live update
+## Applying an update
 
-Retain the current release in its own versioned directory. Stage the candidate
-beside it; never overwrite modules that an existing process might still load.
-Use OTP's release handling and authored application/release upgrade plans.
-Changes to process state need explicit, versioned forward and reverse migrations.
+The program downloads the archive to a staging file, checks its length and
+its digest, and reads one program out of it. It writes the candidate beside
+the target as `<name>.new`, runs it once with `--version` to prove that it
+starts, and only then renames it over the target. The old binary becomes
+`<name>.previous`. A failed rename puts the old binary back.
 
-The base deployment must provide a writable, persistent release store and boot
-from the committed release selection. Read-only or externally managed installs
-must report that they cannot apply in place. An external deployment manager
-replacing the installation can otherwise restore its own older image regardless
-of an in-memory upgrade. Integrate that boot contract explicitly; do not inspect
-or rewrite deployment-platform configuration from the generic updater.
+A read-only or externally managed installation must report that it cannot
+apply in place. An external deployment manager that replaces the
+installation would otherwise restore its own older image. Do not inspect or
+rewrite the configuration of a deployment platform from the updater.
 
-Preflight the exact plan. Reject runtime restarts, process-killing purges, and
-unsupported process or supervisor changes for the hot-only path. A signature
-establishes publisher authority, not the correctness of an upgrade script.
-The release pipeline must independently exercise every supported version edge.
+A signature establishes publisher authority, not the correctness of a
+release. The release pipeline must exercise every supported platform.
 
-After application, observe application-level traffic and inspect the same
-pre-existing connections. A process answering status is insufficient evidence.
-Only after the observation period succeeds should the release be made permanent
-for the next boot. Persist the update journal outside either version directory.
-
-Recovery is conditional: apply a downgrade only if its preconditions still hold
-and the backward migration is tested. External side effects and durable schema
-changes may make rollback unsafe. If safe hot recovery is unavailable, report a
-blocked/failed update and require operator intervention. OTP can reboot after
-certain release-handler failures; production planning must account for that.
-Do not advertise an unconditional no-disconnect guarantee on failure.
-
-A runtime upgrade, native-library incompatibility, or external provider runtime
-change is a separate operation unless that exact transition has been proven.
-Hot-loading ARC's Elixir code does not upgrade a Python SQLite provider, change
-a container image, or reload arbitrary external executables.
+Replacing the ARC binary does not change a container image, and does not
+reload an external program that a provider runs.
 
 ## Administrative surface
 
-The initial local `arc update` interface is described in [OPERATIONS.md](OPERATIONS.md).
-It must show the
-service being controlled, running versus staged versions, selected channel, pin,
-automatic mode, compatibility reason, and last outcome. Public `arc status`
-remains read-only. Knowing a relay address or connecting as a citizen does not
-grant update authority.
+The local `arc update` interface is described in
+[OPERATIONS.md](OPERATIONS.md). It must show the program being replaced, the
+running version, the selected channel, any pin, and the last outcome. Public
+`arc status` stays read-only. To know a relay address, or to connect as a
+citizen, grants no update authority.
 
-Initially, mutating controls should require the service's local protected
-administrative interface. Any later remote control must use explicit operator
-authorization over ARC, with a distinct scope for update operations. Federation
-partners never inherit this authority. Background checks must not turn a public
-status call into an automatic update trigger.
-
-## Evidence required before shipping automatic hot updates
-
-The isolated proof is a first gate. Production readiness additionally requires:
-
-- Actual packaged base-to-candidate installation through `install_release`,
-  commitment with `make_permanent`, and a restart that boots the chosen version.
-- Supported downgrade edges, failure injection around each durable update phase,
-  and recovery from interruption without losing the previous bootable release.
-- Signed-channel verification, replay/expiry/withdrawal checks, key-rotation tests,
-  bounded transfer, and archive validation.
-- Continuous encrypted traffic on existing citizen and federation connections,
-  with unchanged connection identity, ordering, and no duplicate delivery.
-- Real durable state migrations, overload and slow-peer tests, and upgrade
-  coverage for all affected supervised and special processes.
-
-## References
-
-- [Elixir release documentation](https://mix.hexdocs.pm/Mix.Tasks.Release.html)
-- [OTP release handling](https://www.erlang.org/doc/system/release_handling.html)
-- [OTP application upgrade API](https://www.erlang.org/doc/apps/sasl/release_handler.html)
-- [OTP state and supervisor migration examples](https://www.erlang.org/doc/system/appup_cookbook.html)
+Any later remote control must use explicit operator authorization over ARC,
+with its own scope for update operations. Federation partners never inherit
+that authority. A background check must not turn a public status call into
+an update.

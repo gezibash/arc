@@ -39,18 +39,18 @@ export ARC_RELAY_PUBKEY='<relay-public-key-hex>'
 With a provider identity active, run:
 
 ```bash
-mise run arc -- serve providers/files
+arc serve cmd/files-provider
 ```
 
 The running provider announces its signed identity and file-storage summary.
 With a different citizen identity active on another computer:
 
 ```bash
-mise run arc -- discover files
-mise run arc -- info <provider-public-key> primary
-mise run arc -- install <provider-public-key> primary
-mise run arc -- files put ./report.pdf
-mise run arc -- files get <file-id> --output ./restored.pdf
+arc discover files
+arc info <provider-public-key> primary
+arc install <provider-public-key> primary
+arc files put ./report.pdf
+arc files get <file-id> --output ./restored.pdf
 ```
 
 The existing install trust decision still applies. The citizen verifies the
@@ -68,7 +68,7 @@ lookup. Known incomplete views are marked partial. A cache can still lag a
 distant provider change; partial=false is not a network-wide census.
 
 Search replies include `cached: true` when served locally from the synchronized
-catalog and `cached: false` for live federation results. `Arc.Net.discover_via_relay`
+catalog and `cached: false` for live federation results. `client.Peers().Discover`
 exposes this as `cached?`. Older local-only replies may omit the field.
 
 The relay can run on the same computer for local use. Until the separate
@@ -105,7 +105,7 @@ contents never belong in an announcement or directory query.
 
 ## Signed announcement
 
-`Arc.Data.RelayAnnouncement` owns the interoperable record format. The default
+The `announce` package owns the interoperable record format. The default
 local announcement is version 1; direct federation uses signed version 2,
 and explicit network sharing uses signed version 3. These extensions are
 described in the federation spec:
@@ -176,5 +176,5 @@ requests, then disconnects the transport and verifies that resident peers and
 local control entries cannot satisfy the request.
 
 ```bash
-mix test apps/arc_cli/test/arc/cli_relay_discovery_test.exs apps/arc_cli/test/arc/cli_relay_mode_test.exs
+go test ./relay/... ./client/...
 ```

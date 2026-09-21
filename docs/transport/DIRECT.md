@@ -72,8 +72,8 @@ list the peer's permitted public address in `dial`. They can omit `listen`
 entirely. Existing rules without the flag keep their previous behavior.
 
 ARC then makes short-lived outbound and inbound attempts using the same local
-TCP source port. The OTP carrier keeps fixed TLS client and server roles during
-simultaneous active and passive attempts. This uses Erlang/OTP TCP and TLS only;
+TCP source port. The carrier keeps fixed TLS client and server roles during
+simultaneous active and passive attempts. This uses TCP and TLS only;
 it adds no service or runtime dependency. It does not configure a router, create
 a port mapping, publish an address, or expose a general listener.
 
@@ -104,8 +104,8 @@ arc request 'sqlite+arc://<provider-public-key>/main' \
 ```
 
 The one-shot `arc request` process exits after its reply, so it cannot retain a
-direct route for later commands. A long-running `Arc.Data.Agent` that makes
-repeated `Arc.Data.Protocol.request/4` calls can retain an admitted route until
+direct route for later commands. A long-running client that makes repeated
+`Peers().Request` calls can retain an admitted route until
 its lease ends.
 
 ## What the connection proves
@@ -118,7 +118,7 @@ requires an ARC identity proof bound to the negotiated context before ARC frames
 are admitted. A reachable IP address or a successful TLS socket alone does not
 authorize a request.
 
-The carrier is Erlang/OTP TLS over TCP. It uses the existing Erlang runtime and
+The carrier is TLS over TCP, from the Go standard library. It uses
 does not add a Rust toolchain or a WebRTC dependency. This first profile makes no
 automatic latency ranking or speed claim; a matching policy is an explicit route
 selection request.

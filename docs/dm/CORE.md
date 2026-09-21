@@ -1,11 +1,26 @@
 # Core changes for DM
 
+Status: every item here is built. The plan was written against the Elixir
+implementation, which is gone, so each module name below names code that no
+longer exists. The Go packages hold this work now:
+
+| Item | Where it lives |
+| --- | --- |
+| C1 sealed box | `sealedbox/` |
+| C2 control plane | `control/` |
+| C3 toolbox and command lines | `toolbox/`, `capability/interfaces.go` |
+| C4 session keys | `session/` |
+| C5 frame types | `frame/` |
+| C6, C7 identity and petnames | `identity/` |
+
+The reasoning is kept because it says why each item is needed, and the
+whitepaper commitments below still bind the code.
+
 This document lists every change to ARC core that the DM provider needs.
 The DM provider spec is `docs/dm/SPEC.md`. Each item names the module, the
-current behaviour with a file reference, the required behaviour, and the
-tests that prove it. Items are ordered by dependency. C1 to C3 block DM
-Phase 1. C4, C6, and C7 ship in the same release. C5 reserves a frame type
-for Phase 3.
+behaviour it replaced, the required behaviour, and the tests that prove it.
+Items are ordered by dependency. C1 to C3 blocked DM Phase 1. C4, C6, and C7
+shipped in the same release. C5 reserves a frame type for Phase 3.
 
 The whitepaper (`docs/WHITEPAPER.md`) makes two commitments that bind this
 work:

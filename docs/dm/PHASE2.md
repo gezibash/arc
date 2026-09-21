@@ -180,7 +180,7 @@ The home screen (A1).
 `send --attach <path>` and `fetch <id> <name>` (A2, A3).
 
 - **CLI.** The file is sealed to each recipient and to the sender with
-  `Arc.Identity.SealedBox` and sent as base64 in the request body after
+  the `sealedbox` package and sent as base64 in the request body after
   the message tokens. Each attachment is one line per recipient:
   `attach:<name>:<sealed-v1 token>`. 16 MiB cap on the plaintext, the
   same budget as the journal.
@@ -277,7 +277,7 @@ impossible.
 
 - **CLI.** An opt-in cache at `~/.arc/dm/cache/<my pk>/<id>.json`, holding
   the opened body and metadata. Every cache file is sealed to the owner's
-  own key with `Arc.Identity.SealedBox`, so the cache on disk is
+  own key with the `sealedbox` package, so the cache on disk is
   ciphertext too. `arc dm cache on|off|clear`. Default off. With the
   cache on, `conversations` previews and `search` read from it, and
   `open` only fetches ids newer than the cache.
@@ -287,9 +287,9 @@ impossible.
 ### C8. Exec providers can emit events
 
 **Now.** An exec provider replies on stdout with `reply` or `error` lines
-tied to a request id. `Arc.Data.Agent` can emit an event to any peer
+tied to a request id. A citizen can emit an event to any peer
 (C5), but only from an in-VM handler. The exec handler
-(`apps/arc_data/lib/arc/data/handler/exec.ex`) has no stdout op for it.
+(`cmd/exec-provider/main.go`) has no stdout op for it.
 
 **Required.** A new stdout line:
 
@@ -301,7 +301,7 @@ The exec handler turns it into `Handler.emit_event/3` and the agent sends
 it. The line needs no request id. A malformed line is logged and dropped.
 The journal and dm providers document the op in their READMEs.
 
-**Tests.** `exec_test.exs`: a fixture runtime prints an event line; the
+**Tests.** `cmd/exec-provider/exec_test.go`: a fixture runtime prints an event line; the
 observer sees it sent to `to`.
 
 ### C9. Output filters: chain, `petnames`, `preview`, `conversation`
@@ -313,12 +313,12 @@ observer sees it sent to `to`.
 - `output.filter` accepts a list: `["open", "petnames"]`, applied in
   order. A string still works.
 - `petnames` replaces every 64-hex public key in the output with its
-  petname. `Arc.Identity.name/1` is deterministic, so this needs no
+  petname. `identity.Name` is deterministic, so this needs no
   lookup. `--hex` on any command disables it.
 - `preview:<n>` truncates the text after the last tab on each line to `n`
   characters, on one line, with `…`.
 - `conversation` renders `thread --bodies` lines as A2. It lives in
-  `Arc.CLI.Render.Conversation`. It reads the line format, so the format
+  `toolbox.Conversation`. It reads the line format, so the format
   is now part of the provider's interface and must not change without a
   manifest version bump.
 
@@ -410,7 +410,7 @@ through a local relay with three persona keys before its commit.
 
 Deviations from the plan above:
 
-- The `conversation` and `markdown` renderers live in `Arc.Data.Render`,
+- The `conversation` and `markdown` renderers live in `toolbox/filters.go`,
   not the CLI app, because the output filter pipeline runs in `arc_data`.
 - Attachments are capped at 4 MiB of plaintext, not 16 MiB, so a message
   to several peers stays inside the 64 MiB request line.

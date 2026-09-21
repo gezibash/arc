@@ -1,70 +1,41 @@
 [tools]
-erlang = "28"
-elixir = "1.19.5-otp-28"
+go = "1.27.1"
 
 [env]
 _.path = ["bin"]
 
-[tasks.deps]
-description = "Fetch dependencies"
-run = "mix deps.get"
-
-[tasks.compile]
-description = "Compile all apps"
-run = "mix compile"
-
 [tasks.build]
-description = "Fetch deps and compile"
-depends = ["deps", "compile"]
+description = "Build every command into bin/"
+run = "go build -o bin/ ./cmd/..."
 
 [tasks.test]
-description = "Run all tests"
-run = "mix test"
+description = "Run the tests"
+run = "go test ./..."
 raw = true
-
-[tasks.fmt]
-description = "Format code"
-run = "mix format"
-
-[tasks."fmt.check"]
-description = "Check formatting"
-run = "mix format --check-formatted"
 
 [tasks.lint]
-description = "Format check, warnings-as-errors compile, credo, xref"
-run = "mix lint"
+description = "Check the formatting and vet the packages"
+run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
 
-[tasks.audit]
-description = "Unused lock entries, retired packages, advisories"
-run = "mix audit"
-
-[tasks.dialyzer]
-description = "Dialyzer type analysis (PLT cached in _build/plts)"
-run = "mix dialyzer"
+[tasks.fmt]
+description = "Format the code"
+run = "gofmt -w ."
 
 [tasks.check]
-description = "Full check pipeline: lint, audit, dialyzer, test"
-run = "mix check"
+description = "Lint and test"
+depends = ["lint", "test"]
 
-[tasks.iex]
-description = "Start interactive shell"
-run = "iex -S mix"
-
-[tasks.arc]
-description = "Run the arc CLI"
-run = "mix run --no-start -e \"Arc.CLI.main(System.argv())\" --"
+[tasks.cli]
+description = "Run the whole of ARC in Go: relay, citizen, provider, caller"
+run = "bash scripts/test-go-cli.sh"
 raw = true
 
-[tasks.escript]
-description = "Build the arc escript binary"
-dir = "apps/arc_cli"
-run = "mix escript.build"
+[tasks.delivery]
+description = "Prove phase 1 of the delivery layer: relay, USB stick, refusal, parts, tail"
+run = "bash scripts/test-delivery.sh"
+raw = true
 
-[tasks.release]
-description = "Build the prod release (bundled runtime) into _build/prod/rel/arc_runtime"
-run = "mix release arc_runtime --overwrite"
-env = { MIX_ENV = "prod" }
-
-[tasks.clean]
-description = "Clean build artifacts"
-run = "mix clean"
+[tasks.interface]
+description = "Prove phases A to D of the capability interface"
+run = "bash scripts/test-interface.sh"
+raw = true

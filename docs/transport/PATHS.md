@@ -2,7 +2,7 @@
 
 ## Status and objective
 
-This extends the [connection lifecycle](PROMOTION.md) and [OTP TLS
+This extends the [connection lifecycle](PROMOTION.md) and [TLS
 carrier](CARRIER.md). The first direct profile implements explicit reverse
 dialing, nomination from local policy, and an optional best-effort TCP
 hole-punch attempt. Broader pathfinding remains design work.
@@ -137,9 +137,9 @@ at multiple home relays is outside this initial plan.
 
 ## Implemented first profile and remaining gaps
 
-- [Transport](../../apps/arc_net/lib/arc/net/transport.ex) owns one pinned relay
+- [The client](../../client/client.go) owns one pinned relay
   connection per identity and schedules bounded reconnect attempts after loss.
-- [TransportManager](../../apps/arc_net/lib/arc/net/transport_manager.ex) pools that
+- [The direct manager](../../direct/manager.go) pools that
   single transport by identity; it has no configured backup-relay set.
 - Relay-backed work can be unavailable while that transport reconnects. The
   separate local mailbox path is not a remote-recovery mechanism.

@@ -1,8 +1,14 @@
 # Private files: an ARC storage provider
 
+Status: replaced. The files manifest of docs/interface/SPEC.md, section 16.7, defines this capability on the delivery
+layer, with no provider. This document describes the provider of the older
+stack.
+
 ## 1. Purpose and current scope
 
-The `providers/files` bundle stores immutable encrypted files for ARC citizens.
+The `cmd/files-provider` bundle stores immutable encrypted files for ARC citizens.
+The provider is built. The client side is not: `arc` does not yet build the
+`private_file` input, so the `arc files` commands fail before they send.
 The trusted ARC client encrypts both the basename and the raw file bytes to
 the active citizen before invoking the provider. The provider stores signed
 encrypted envelopes and never needs the citizen's secret key.
@@ -30,19 +36,19 @@ workflow. `<provider-key-name>` and `<provider-public-key>` below are values
 from that identity, not literal names to copy.
 
 ```bash
-mise run arc -- keys gen
-ARC_KEY=<provider-key-name> mise run arc -- serve providers/files
+arc keys gen
+ARC_KEY=<provider-key-name> arc serve cmd/files-provider
 ```
 
 `serve` reads the bundle's `Arcfile` and runs `run.sh`. The script builds the
-standalone Elixir escript when needed. Use a separate terminal with the
-citizen's own active identity to install and use the service:
+provider binary when needed. Use a separate terminal with the citizen's own
+active identity to install and use the service:
 
 ```bash
-mise run arc -- install <provider-public-key> primary
-mise run arc -- files put ./report.pdf
-mise run arc -- files list
-mise run arc -- files get <returned-file-id> --output ./restored-report.pdf
+arc install <provider-public-key> primary
+arc files put ./report.pdf
+arc files list
+arc files get <returned-file-id> --output ./restored-report.pdf
 ```
 
 Installation uses the existing provider trust prompt. These commands do not
@@ -183,24 +189,22 @@ listing. Backups and replication are not implemented here.
 
 | Location | Responsibility |
 | --- | --- |
-| [Provider bundle](../../providers/files/Arcfile) | Runtime launch recipe |
-| [Manifest](../../providers/files/manifest.json) | Installed commands and private-file interface version |
-| [Trusted client](../../apps/arc_cli/lib/arc/cli/private_file.ex) | Encryption, signatures, reply verification, safe binary output |
-| [CLI integration](../../apps/arc_cli/lib/arc/cli/tools.ex) | Resolve the active identity and invoke the private-file renderer |
-| [Interface normalization](../../apps/arc_data/lib/arc/data/interface_manifest.ex) | Preserve versioned private-file command descriptions |
-| [Provider tests](../../providers/files/test/files_test.exs) | Storage access, signatures, limits, and protocol errors |
-| [Client tests](../../apps/arc_cli/test/arc/private_file_test.exs) | Binary round trips, tamper detection, recipient isolation, and output-path protection |
+| [Provider bundle](../../cmd/files-provider/Arcfile) | Runtime launch recipe |
+| [Manifest](../../cmd/files-provider/manifest.json) | Installed commands and private-file interface version |
+| [Sealed envelope](../../cmd/files-provider/envelope.go) | Encryption, signatures, and reply verification |
+| Trusted client | Not built in Go. `arc` refuses a `private_file` input with "this command needs a part of arc that is not built yet" |
+| [CLI integration](../../cmd/arc/tools.go) | Resolve the active identity and run the installed command |
+| [Interface normalization](../../capability/interfaces.go) | Preserve versioned private-file command descriptions |
+| [Provider tests](../../cmd/files-provider/files_test.go) | Storage access, signatures, limits, and protocol errors |
 
-Run the provider checks from its directory and the ARC integration checks from
-the repository root:
+Run the provider checks and the integration checks from the repository root:
 
 ```bash
-cd providers/files
-mix test
+go test ./cmd/files-provider/...
 ```
 
 ```bash
-mix test apps/arc_cli/test/arc/private_file_test.exs apps/arc_cli/test/arc/cli_private_files_test.exs apps/arc_data/test/arc/data/interface_manifest_test.exs apps/arc_cli/test/arc/cli_tools_test.exs
+go test ./toolbox/... ./capability/...
 ```
 
 The tests use generated identities and temporary data. A local round trip is

@@ -1,0 +1,13 @@
+{
+  "interface": 1, "id": "sqlite", "shape": "service",
+  "title": "SQLite", "summary": "Answers SQL for the citizens that it grants.",
+  "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576},
+  "kinds": {},
+  "formats": {"rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}},
+  "commands": [
+    {"path": [], "summary": "Run SQL",
+     "args": [{"name": "sql", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"call": {"class": "live", "body": "{\"sql\": {{sql|join|json}}}"}},
+     "output": {"open": {"parse": "json"}, "format": "rows"}}
+  ]
+}

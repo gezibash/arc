@@ -43,7 +43,7 @@ federated relay coordination is a subsequent, distinct experiment.
 
 ## Evidence before application tests
 
-- Record operating system, kernel, Erlang/OTP and Elixir versions.
+- Record the operating system, the kernel, and the Go toolchain version.
 - Verify ordinary outbound connections to the relay work.
 - Verify an unsolicited inbound connection fails before coordination. A
   permanently forwarded port would invalidate a hole-punching claim.

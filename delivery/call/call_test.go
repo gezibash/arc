@@ -1,0 +1,199 @@
+package call_test
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/delivery/call"
+	"github.com/gezibash/arc/delivery/keys"
+	"github.com/gezibash/arc/delivery/mail"
+	"github.com/gezibash/arc/delivery/node"
+	"github.com/gezibash/arc/delivery/private"
+	"github.com/gezibash/arc/delivery/store"
+	"github.com/gezibash/arc/delivery/testrelay"
+	"github.com/gezibash/arc/delivery/transport"
+	"github.com/gezibash/arc/delivery/transport/file"
+	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/provider/host"
+)
+
+var echoBinary string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "arc-call-test")
+	if err != nil {
+		panic(err)
+	}
+	echoBinary = filepath.Join(dir, "echo")
+	build := exec.Command("go", "build", "-o", echoBinary, "../../citizen/testdata/echo")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+// provider starts the echo provider, and returns its server.
+func provider(t *testing.T, k keys.Key) *call.Server {
+	t.Helper()
+	process, err := host.Start(echoBinary, nil, []string{"ARC_PUBLIC_KEY=" + k.Public.Hex()}, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { process.Stop() })
+	return call.NewServer(k, "primary", process, 64*1024, quiet)
+}
+
+func TestALiveCallOverARelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := relay.Relay{URL: testrelay.Start(t)}
+	serving := keys.Generate()
+	server := provider(t, serving)
+	go server.ServeLive(ctx, r)
+	time.Sleep(200 * time.Millisecond)
+
+	caller := keys.Generate()
+	reply, rtt, err := call.Live(ctx, caller, serving.Public, call.Request{
+		Capability: "primary", Method: "ECHO", Path: "/", Body: "hello",
+	}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Body != "ECHO / hello" || reply.Err != "" {
+		t.Errorf("reply = %+v", reply)
+	}
+	if rtt <= 0 || rtt > 5*time.Second {
+		t.Errorf("the round trip took %v", rtt)
+	}
+	t.Logf("live round trip over a local relay: %v", rtt)
+}
+
+func TestTheProviderSeesTheCallerAsFrom(t *testing.T) {
+	ctx := context.Background()
+	serving := keys.Generate()
+	server := provider(t, serving)
+	caller := keys.Generate()
+
+	rumor := call.RequestRumor(caller, serving.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/", Body: "x"}, time.Now())
+	reply, err := server.Handle(ctx, rumor)
+	if err != nil || reply.Body != "ECHO / x" {
+		t.Fatalf("reply = %+v, %v", reply, err)
+	}
+
+	// The same request again is refused: a relay cannot replay it.
+	if _, err := server.Handle(ctx, rumor); err != call.ErrDuplicate {
+		t.Errorf("a second handle gave %v, want ErrDuplicate", err)
+	}
+}
+
+func TestAStaleLiveRequestIsRefused(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := relay.Relay{URL: testrelay.Start(t)}
+	serving := keys.Generate()
+	go provider(t, serving).ServeLive(ctx, r)
+	time.Sleep(200 * time.Millisecond)
+
+	// A request written ten minutes ago, as a relay replaying it would send.
+	caller := keys.Generate()
+	old := call.RequestRumor(caller, serving.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/", Body: "old"}, time.Now().Add(-10*time.Minute))
+	wrap, err := private.Wrap(caller, serving.Public, old, private.RelayForm, private.LiveWrapKind, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	short, stop := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer stop()
+	_, err = r.Exchange(short, wrap, nostr.Filter{Kinds: []nostr.Kind{private.LiveWrapKind}, Tags: nostr.TagMap{"p": {caller.Public.Hex()}}},
+		func(nostr.Event) bool { return true })
+	if err == nil {
+		t.Error("the provider answered a request outside the live window")
+	}
+}
+
+func TestACallToAnotherCapabilityIsRefused(t *testing.T) {
+	serving := keys.Generate()
+	rumor := call.RequestRumor(keys.Generate(), serving.Public, call.Request{Capability: "other", Body: "x"}, time.Now())
+	reply, err := provider(t, serving).Handle(context.Background(), rumor)
+	if err != nil || !strings.HasPrefix(reply.Err, "unknown_capability") {
+		t.Errorf("reply = %+v, %v", reply, err)
+	}
+}
+
+// citizen is a node with mail, for store-and-forward calls.
+type citizen struct {
+	key  keys.Key
+	mail *mail.Mail
+}
+
+func newCitizen(t *testing.T, relays ...transport.Transport) citizen {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	k := keys.Generate()
+	m, err := mail.Open(dir, k, &node.Node{Store: s}, relays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Close() })
+	return citizen{key: k, mail: m}
+}
+
+func (c citizen) sync(t *testing.T, tr transport.Transport) mail.Report {
+	t.Helper()
+	report, err := c.mail.Sync(context.Background(), tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+// The proof of phase 3: a store-and-forward call crosses the courier path.
+func TestAStoreAndForwardCallCrossesACourier(t *testing.T) {
+	alice, carol, service := newCitizen(t), newCitizen(t), newCitizen(t)
+	service.mail.OnRequest = provider(t, service.key).Handle
+	first, second := file.Dir{Path: t.TempDir()}, file.Dir{Path: t.TempDir()}
+
+	if _, err := alice.mail.Request(context.Background(), service.key.Public, call.Request{
+		Capability: "primary", Method: "ECHO", Path: "/", Body: "by hand",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	alice.sync(t, first)
+	carol.sync(t, first)
+	carol.sync(t, second)
+
+	if got := service.sync(t, second); got.Answered != 1 {
+		t.Fatalf("the provider answered %d calls", got.Answered)
+	}
+	service.sync(t, second)
+	carol.sync(t, second)
+	carol.sync(t, first)
+
+	if got := alice.sync(t, first); got.Replies != 1 {
+		t.Fatalf("alice got %d replies", got.Replies)
+	}
+	out := alice.mail.Outbox()
+	if len(out) != 1 || out[0].State(time.Now()) != "delivered" || out[0].Reply.Body != "ECHO / by hand" {
+		t.Errorf("alice's outbox: %+v", out)
+	}
+}

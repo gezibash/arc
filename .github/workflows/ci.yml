@@ -13,116 +13,52 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  MIX_ENV: test
-  OTP_VERSION: "28"
-  ELIXIR_VERSION: "1.19.5"
-
 jobs:
-  lint:
-    name: Lint and audit
+  go:
+    name: Build, lint and test
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
+      - uses: actions/setup-go@v5
         with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: mix-${{ env.MIX_ENV }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: mix-${{ env.MIX_ENV }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-      - run: mix deps.get
-      - run: mix lint
-      - run: mix audit
+          go-version: "1.27.1"
+          cache: true
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./...
 
-  test:
-    name: Test
+  cli:
+    name: ARC end to end in Go
     runs-on: ubuntu-24.04
-    env:
-      MISE_ERLANG_COMPILE: "false"
-      MISE_ERLANG_PRECOMPILED_OS: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install test and SQLite provider runtimes
-        uses: jdx/mise-action@v4
+      - uses: actions/setup-go@v5
         with:
-          version: 2026.9.9
-          working_directory: providers/sqlite
-      - uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: mix-${{ env.MIX_ENV }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: mix-${{ env.MIX_ENV }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-      - run: mix deps.get
-      - name: Test SQLite provider
-        working-directory: providers/sqlite
-        run: mise exec -- python -m unittest discover -s tests -v
-      - name: Test exec provider
-        working-directory: providers/exec
-        run: |
-          mise trust
-          mise exec -- python -m unittest discover -s tests -v
-      - run: mix test --warnings-as-errors
-      - name: Prove relay application hot upgrade and downgrade
-        run: |
-          mix format --check-formatted scripts/test-hot-upgrade.exs
-          mix run --no-start scripts/test-hot-upgrade.exs
-      - name: Prove managed relay update and permanent restart
-        run: |
-          mix format --check-formatted scripts/test-managed-update.exs scripts/support/*.exs scripts/test-update-recovery.exs scripts/prepare-hot-base.exs scripts/build-hot-release.exs
-          mix run --no-start scripts/test-managed-update.exs
-      - name: Prove managed update crash recovery
-        run: mix run --no-start scripts/test-update-recovery.exs
-      - name: Prove managed update through federation
-        run: mix run --no-start scripts/test-managed-update.exs --federation
+          go-version: "1.27.1"
+          cache: true
+      - run: bash scripts/test-go-cli.sh
 
-  dialyzer:
-    name: Dialyzer
+  delivery:
+    name: Delivery proofs
     runs-on: ubuntu-24.04
-    env:
-      MIX_ENV: dev
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
+      - uses: actions/setup-go@v5
         with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: mix-dev-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: mix-dev-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-      - run: mix deps.get
-      - run: mix dialyzer --format github
+          go-version: "1.27.1"
+          cache: true
+      - run: bash scripts/test-delivery.sh
 
-  release:
-    name: Release smoke test
+  interface:
+    name: Interface proofs
     runs-on: ubuntu-24.04
-    env:
-      MIX_ENV: prod
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
+      - uses: actions/setup-go@v5
         with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: mix-prod-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: mix-prod-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-      - run: mix deps.get --only prod
-      - run: mix release arc_runtime --overwrite
-      - run: _build/prod/rel/arc_runtime/bin/arc version
-      - run: _build/prod/rel/arc_runtime/bin/arc keys gen
-      - run: _build/prod/rel/arc_runtime/bin/arc status --help
+          go-version: "1.27.1"
+          cache: true
+      - run: bash scripts/test-interface.sh

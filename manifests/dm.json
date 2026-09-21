@@ -1,0 +1,24 @@
+{
+  "interface": 1, "id": "dm", "shape": "data",
+  "title": "Direct messages", "summary": "Private messages, as NIP-17 defines.",
+  "kinds": {"message": {"kind": 14, "visibility": "private"}},
+  "formats": {
+    "inbox": {"record": "{{created|time}}  {{author|name}}\n{{content|indent}}", "empty": "no messages"}
+  },
+  "commands": [
+    {"path": ["send"], "summary": "Send a message",
+     "args": [{"name": "to", "kind": "positional", "type": "key", "required": true},
+              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"publish": {"kind": "message", "to": ["{{to}}"], "content": "{{text}}", "tags": [["p", "{{to}}"]]}}},
+    {"path": ["inbox"], "summary": "Show the messages you received",
+     "action": {"query": {"kinds": ["message"], "authors": "any"}},
+     "output": {"open": {"parse": "text"}, "where": [{"field": "author", "not": "{{me}}"}],
+                "sort": {"field": "created", "order": "asc"}, "format": "inbox"}},
+    {"path": ["open"], "summary": "Show one conversation",
+     "args": [{"name": "peer", "kind": "positional", "type": "key", "required": true}],
+     "action": {"query": {"kinds": ["message"], "authors": "any"}},
+     "output": {"open": {"parse": "text"},
+                "where": [{"any": [{"field": "author", "is": "{{peer}}"}, {"field": "tags.p", "is": "{{peer}}"}]}],
+                "sort": {"field": "created", "order": "asc"}, "format": "inbox"}}
+  ]
+}

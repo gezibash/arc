@@ -1,7 +1,7 @@
 # SQLite over ARC
 
-The real provider lives in `providers/sqlite`. Its [provider contract and operator
-configuration](../../providers/sqlite/README.md) are the source for supported
+The real provider lives in `cmd/sqlite-provider`. Its [provider contract and operator
+configuration](../../cmd/sqlite-provider/README.md) are the source for supported
 queries and limits. It uses the [shared request transport](../transport/SPEC.md)
 and advertises the `sqlite` scheme.
 
@@ -22,6 +22,4 @@ and unsafe SQLite controls are denied. A lost reply after commit remains an
 uncertain outcome at the transport layer and is never retried automatically.
 
 This is a query service backed by SQLite, not a network filesystem for `.db`
-files or a change to the stock SQLite client. It does not replace `arc_storage`.
-The older `test/fixtures/providers/sqlite-provider.exs` remains a simulated
-provider fixture and is not used as the real database engine.
+files or a change to the stock SQLite client.

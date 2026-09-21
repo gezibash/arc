@@ -1,11 +1,9 @@
-_build
-deps
 bin
+elixir
 .arc
 .claude
 .github
 docs
+outputs
 tmp
-cover
-erl_crash.dump
 *.tar.gz
