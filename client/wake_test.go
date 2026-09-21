@@ -16,6 +16,7 @@ import (
 	"github.com/gezibash/arc/client"
 	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/relay"
+	"github.com/gezibash/arc/wake"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -32,7 +33,7 @@ type sleeper struct {
 	answers int
 }
 
-func (s *sleeper) Wake(_ context.Context, _ []byte) error {
+func (s *sleeper) Wake(_ context.Context, _ []byte, _ func(context.Context, []byte) (bool, error)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -55,9 +56,9 @@ func (s *sleeper) Answered(_ []byte) {
 	s.answers++
 }
 
-// asleep starts a relay and a caller with a waker. The citizen does not
-// serve until the waker wakes it.
-func asleep(t *testing.T) (*sleeper, *client.Peers, []byte) {
+// world starts a relay and a caller with the waker. Serve makes a citizen
+// serve the echo provider on the relay.
+func world(t *testing.T, waker client.Waker) (*client.Peers, func(*identity.Identity) error) {
 	t.Helper()
 
 	relayIdentity, _ := identity.Generate()
@@ -80,8 +81,7 @@ func asleep(t *testing.T) (*sleeper, *client.Peers, []byte) {
 		t.Fatal(err)
 	}
 
-	me, _ := identity.Generate()
-	waker := &sleeper{start: func() error {
+	serve := func(me *identity.Identity) error {
 		serving, err := citizen.Serve(context.Background(), citizen.Options{
 			Identity:       me,
 			Relay:          server.Addr().String(),
@@ -94,7 +94,7 @@ func asleep(t *testing.T) (*sleeper, *client.Peers, []byte) {
 		}
 		t.Cleanup(func() { serving.Close() })
 		return nil
-	}}
+	}
 
 	caller, _ := identity.Generate()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -110,7 +110,18 @@ func asleep(t *testing.T) (*sleeper, *client.Peers, []byte) {
 	}
 	t.Cleanup(func() { connection.Close() })
 
-	return waker, connection.Peers(), me.PublicKey
+	return connection.Peers(), serve
+}
+
+// asleep gives a caller whose citizen serves only after the wake.
+func asleep(t *testing.T) (*sleeper, *client.Peers, []byte) {
+	t.Helper()
+
+	me, _ := identity.Generate()
+	waker := &sleeper{}
+	peers, serve := world(t, waker)
+	waker.start = func() error { return serve(me) }
+	return waker, peers, me.PublicKey
 }
 
 // The citizen serves nothing until the wake, so the call can only succeed
@@ -158,5 +169,59 @@ func TestAFailedWakeStopsTheRequest(t *testing.T) {
 	defer waker.mu.Unlock()
 	if waker.answers != 0 {
 		t.Errorf("answers = %d, and nothing answered", waker.answers)
+	}
+}
+
+func TestOnlineAsksTheRelay(t *testing.T) {
+	me, _ := identity.Generate()
+	peers, serve := world(t, nil)
+	ctx := context.Background()
+
+	online, err := peers.Online(ctx, me.PublicKey)
+	if err != nil || online {
+		t.Fatalf("before it serves: online = %v, err = %v", online, err)
+	}
+
+	if err := serve(me); err != nil {
+		t.Fatal(err)
+	}
+	online, err = peers.Online(ctx, me.PublicKey)
+	if err != nil || !online {
+		t.Errorf("while it serves: online = %v, err = %v", online, err)
+	}
+}
+
+// With the waker of the wake package, a request to a citizen that is not
+// there ends at once with peer_offline. Without it, the request waits for an
+// answer that never comes.
+func TestARequestToAnAbsentCitizenIsPeerOffline(t *testing.T) {
+	dir := t.TempDir()
+	waker := wake.Load(filepath.Join(dir, wake.FileName), filepath.Join(dir, wake.StateDirName))
+	peers, serve := world(t, waker)
+
+	absent, _ := identity.Generate()
+	started := time.Now()
+	_, err := peers.Request(context.Background(), absent.PublicKey, map[string]any{"method": "GET", "path": "/"}, nil)
+	if !errors.Is(err, wake.ErrPeerOffline) {
+		t.Fatalf("err = %v, and it must be peer_offline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Errorf("peer_offline took %s", elapsed)
+	}
+
+	// The same caller reaches a citizen that serves.
+	present, _ := identity.Generate()
+	if err := serve(present); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	answer, err := peers.Call(ctx, "echo+arc://"+hex.EncodeToString(present.PublicKey)+"/hi", []byte("x"), "")
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if string(answer.Body) != "ECHO /hi x" {
+		t.Errorf("body = %q", answer.Body)
 	}
 }

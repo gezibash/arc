@@ -13,15 +13,28 @@ All notable changes to ARC are recorded here. The format follows
   directory of ARC. After an answer, it skips the hook for 30 seconds. A hook
   that exits with a status other than 0 stops the request with
   `wake_failed`. A hook that runs longer than 30 seconds stops it with
-  `wake_timeout`. This is phase 2 of `docs/exec/SPEC.md`, without the
-  `asleep` presence state.
-- The `wake` package runs the hooks. The `client` package takes a waker as
-  `Options.Waker`, so every request of a library user can wake its peer.
+  `wake_timeout`.
+- A request to a citizen without a wake hook needs a current announcement of
+  the citizen on the relay. Without one, the request stops at once with
+  `peer_offline`. Before, it waited for the timeout.
+- `arc resolve` shows the presence state of each citizen: `online`,
+  `asleep` (no announcement, and a wake hook), or `offline`. It finds a
+  citizen that sleeps by the name or the key of its wake hook. With these
+  states, phase 2 of `docs/exec/SPEC.md` is complete.
+- The `wake` package runs the wake flow. The `client` package takes a waker
+  as `Options.Waker`, so every request of a library user follows the flow,
+  and `Peers.Online` asks the relay about one citizen.
 
 ### Changed
 
 - `arc-exec` leaves the wake to `arc`. It no longer reads `wake.toml` or
   `ARC_WAKE_CONFIG`, and it needs Python 3.9 or newer instead of 3.11.
+- A wake configuration that cannot work fails only the requests that need
+  it. A hook of a kind other than `command` fails the requests to its
+  citizen. A file that is not valid fails every request. Before, both
+  stopped every command that joins a relay, `arc status` included.
+- A wake that the deadline of the request ends names the time that the hook
+  had. Before, it named the wake limit of 30 seconds.
 
 ## [0.7.0] - 2026-09-21
 

@@ -114,13 +114,18 @@ the time.
 
    The wake follows these rules:
 
-   - If there is no wake hook, `arc` sends the request at once.
+   - If there is no wake hook, the citizen must have a current announcement
+     on the relay. If it has none, the request stops at once with
+     `peer_offline`.
    - After an answer from the citizen, `arc` skips the hook for 30 seconds.
      A citizen that answered did not pause.
    - If the hook exits with a status other than 0, the request stops with
      `wake_failed`. If the hook runs longer than 30 seconds, the request
      stops with `wake_timeout`.
    - The wake counts toward the `--timeout` of `arc call`.
+
+   `arc resolve <citizen>` shows the state of the citizen: `online`,
+   `asleep` (no announcement, and a wake hook), or `offline`.
 
 2. Join the relay of the citizen:
 
