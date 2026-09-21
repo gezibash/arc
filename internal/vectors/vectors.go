@@ -130,12 +130,12 @@ func Load(t *testing.T) File {
 
 	path, err := find()
 	if err != nil {
-		t.Fatalf("%v. Run: mise run vectors", err)
+		t.Fatalf("%v", err)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read vectors: %v. Run: mise run vectors", err)
+		t.Fatalf("read vectors: %v", err)
 	}
 
 	// The numbers of a record keep their digits, because a signature covers
