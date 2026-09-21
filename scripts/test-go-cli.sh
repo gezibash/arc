@@ -72,10 +72,10 @@ say "the citizen joined the relay and pinned its key"
 
 # The relay may still be registering the join.
 for _ in $(seq 1 25); do
-  arc status | grep -q "state    running" && break
+  arc status | grep "state    running" > /dev/null && break
   sleep 0.2
 done
-arc status | grep -q "state    running" || fail "the relay does not report that it runs: $(arc status)"
+arc status | grep "state    running" > /dev/null || fail "the relay does not report that it runs: $(arc status)"
 say "arc status reads the relay"
 
 # The provider grants the caller, and nobody else.
@@ -100,16 +100,16 @@ say "the citizen serves the exec provider"
 caller() { arc --key "$caller_name" "$@"; }
 
 for _ in $(seq 1 50); do
-  caller resolve "$provider_key" | grep -q "$provider_key" && break
+  caller resolve "$provider_key" | grep "$provider_key" > /dev/null && break
   sleep 0.2
 done
-caller resolve "$provider_key" | grep -q "exec+arc://$provider_key" || fail "the directory does not hold the citizen"
+caller resolve "$provider_key" | grep "exec+arc://$provider_key" > /dev/null || fail "the directory does not hold the citizen"
 say "arc resolve finds the citizen and its capability"
 
-caller discover "command" | grep -q "$provider_key" || fail "the search found nothing"
+caller discover "command" | grep "$provider_key" > /dev/null || fail "the search found nothing"
 say "arc discover finds the capability"
 
-caller call "exec+arc://$provider_key/" --manifest | grep -q '"scheme": "exec"' || fail "the manifest is wrong"
+caller call "exec+arc://$provider_key/" --manifest | grep '"scheme": "exec"' > /dev/null || fail "the manifest is wrong"
 say "arc call --manifest reads the signed capability"
 
 caller call "exec+arc://$provider_key/" '{"argv":["echo","hello from go"]}' > "$work/reply.json"
@@ -155,7 +155,7 @@ caller install "$echo_key" --yes > "$work/install.txt" 2>&1 ||
 grep -q "arc echo" "$work/install.txt" || fail "the install does not name the command: $(cat "$work/install.txt")"
 say "arc install saves the signed capability as a command"
 
-caller tool list | grep -q "echo ->" || fail "the command is not listed"
+caller tool list | grep "echo ->" > /dev/null || fail "the command is not listed"
 say "arc tool list names it"
 
 caller echo hello world > "$work/echo-reply.txt" 2>&1 ||
@@ -170,8 +170,8 @@ grep -q "ada says the words" "$work/echo-twice.txt" ||
   fail "the subcommand answered $(cat "$work/echo-twice.txt")"
 say "a subcommand renders its template"
 
-caller trust list | grep -q allowed || fail "the signer is not trusted"
-caller tool remove echo | grep -q "removed echo" || fail "the command was not removed"
+caller trust list | grep allowed > /dev/null || fail "the signer is not trusted"
+caller tool remove echo | grep "removed echo" > /dev/null || fail "the command was not removed"
 say "arc trust list and arc tool remove answer"
 
 kill "$echo_pid" 2>/dev/null || true
@@ -188,7 +188,7 @@ for _ in $(seq 1 50); do
 done
 grep -q "listens on" "$work/listen.log" || fail "the citizen did not listen: $(cat "$work/listen.log")"
 
-caller send "$stranger_key" "a message from the other citizen" | grep -q "sent to" ||
+caller send "$stranger_key" "a message from the other citizen" | grep "sent to" > /dev/null ||
   fail "the message was not sent"
 
 for _ in $(seq 1 50); do
@@ -201,11 +201,11 @@ say "arc send and arc listen carry a message between two citizens"
 
 kill "$listen_pid" 2>/dev/null || true
 
-caller info "$provider_key" | grep -q "exec+arc://$provider_key" || fail "arc info is wrong"
+caller info "$provider_key" | grep "exec+arc://$provider_key" > /dev/null || fail "arc info is wrong"
 say "arc info reads the signed capability of a citizen"
 
 arc --key "$stranger_name" publish > /dev/null || fail "the identity did not publish"
-caller resolve "$stranger_name" | grep -q "on this machine" ||
+caller resolve "$stranger_name" | grep "on this machine" > /dev/null ||
   fail "the identity of this machine does not resolve"
 say "arc publish and arc resolve answer without the relay"
 
@@ -262,23 +262,23 @@ grep -q "sealed-v1:" "$work/dm-raw.txt" || fail "--raw opened the body anyway"
 say "--raw prints the answer as the provider wrote it"
 
 # The cache keeps a copy of each record, sealed to the reader.
-arc --key "$stranger_name" cache on dm | grep -q "the cache of dm is on" || fail "the cache did not turn on"
+arc --key "$stranger_name" cache on dm | grep "the cache of dm is on" > /dev/null || fail "the cache did not turn on"
 arc --key "$stranger_name" dm open "$caller_key" > /dev/null 2>&1
-arc --key "$stranger_name" cache status dm | grep -q "the cache of dm is on and holds 1 records" ||
+arc --key "$stranger_name" cache status dm | grep "the cache of dm is on and holds 1 records" > /dev/null ||
   fail "the cache kept nothing: $(arc --key "$stranger_name" cache status dm)"
 
-arc --key "$stranger_name" cache search dm "sealed hello" | grep -q "a sealed hello" ||
+arc --key "$stranger_name" cache search dm "sealed hello" | grep "a sealed hello" > /dev/null ||
   fail "the cache did not answer the search"
 grep -rl "a sealed hello" "$work/cache" > /dev/null 2>&1 &&
   fail "the cache holds the plain text"
 say "arc cache keeps the records sealed, and searches them"
 
-arc --key "$stranger_name" cache clear dm | grep -q "removed 1 records" || fail "the cache did not clear"
-arc --key "$stranger_name" cache off dm | grep -q "the cache of dm is off" || fail "the cache did not turn off"
+arc --key "$stranger_name" cache clear dm | grep "removed 1 records" > /dev/null || fail "the cache did not clear"
+arc --key "$stranger_name" cache off dm | grep "the cache of dm is off" > /dev/null || fail "the cache did not turn off"
 say "arc cache clears and turns off"
 
 # A bundle is a provider that lives in a directory.
-arc apps init "$work/hello-app" | grep -q "wrote a bundle" || fail "arc apps init wrote nothing"
+arc apps init "$work/hello-app" | grep "wrote a bundle" > /dev/null || fail "arc apps init wrote nothing"
 [ -x "$work/hello-app/run.sh" ] || fail "the runtime is not executable"
 say "arc apps init writes a bundle"
 
@@ -306,9 +306,9 @@ say "the bundle answers through its own command"
 kill "$app_pid" 2>/dev/null || true
 kill "$dm_pid" 2>/dev/null || true
 
-caller lists add dm friends "$provider_key" | grep -q "$provider_key" || fail "the list was not saved"
-caller lists ls dm | grep -q friends || fail "the list is not shown"
-caller lists rm dm friends | grep -q "removed dm/friends" || fail "the list was not removed"
+caller lists add dm friends "$provider_key" | grep "$provider_key" > /dev/null || fail "the list was not saved"
+caller lists ls dm | grep friends > /dev/null || fail "the list is not shown"
+caller lists rm dm friends | grep "removed dm/friends" > /dev/null || fail "the list was not removed"
 say "arc lists keeps a set of peers"
 
 printf '\nARC runs end to end in Go\n'
