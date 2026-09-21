@@ -146,6 +146,9 @@ func checkD(me nostr.PubKey, d string) error {
 	if d == "" {
 		return errors.New("the d tag of the draft is empty")
 	}
+	if strings.HasPrefix(d, "arc-") {
+		return fmt.Errorf("the d tag %q starts with arc-, which core keeps for itself", d)
+	}
 	if n := len(draft.Coordinate(me, d)); n > MaxTag {
 		return fmt.Errorf("the d tag %q is too long: relays index a coordinate of at most %d characters, and this one has %d", d, MaxTag, n)
 	}
@@ -474,7 +477,8 @@ func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
 			fmt.Fprintf(r.stdio.Err, "left out %s: %v\n", event.ID.Hex()[:8], err)
 			continue
 		}
-		if opened.Deleted {
+		// Core keeps its own drafts under d tags that start with arc-.
+		if opened.Deleted || strings.HasPrefix(opened.D, "arc-") {
 			continue
 		}
 		name := r.kindName(q.Kinds, opened.Event.Kind)

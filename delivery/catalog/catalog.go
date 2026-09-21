@@ -50,7 +50,7 @@ func (o Offer) Name() string { return identity.Name(o.Provider[:]) }
 
 // Announce makes the announcement of one capability package. The package is
 // the normalized manifest; its capability id becomes the d tag.
-func Announce(k keys.Key, pkg map[string]any, at nostr.Timestamp) (nostr.Event, error) {
+func Announce(k keys.Signer, pkg map[string]any, at nostr.Timestamp) (nostr.Event, error) {
 	fields, _ := pkg["capability"].(map[string]any)
 	id, _ := fields["id"].(string)
 	if id == "" {
@@ -68,7 +68,7 @@ func Announce(k keys.Key, pkg map[string]any, at nostr.Timestamp) (nostr.Event, 
 	}
 
 	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
-	if err := event.Sign(k.Secret); err != nil {
+	if err := k.Sign(&event); err != nil {
 		return nostr.Event{}, err
 	}
 	return event, nil
@@ -76,7 +76,7 @@ func Announce(k keys.Key, pkg map[string]any, at nostr.Timestamp) (nostr.Event, 
 
 // AnnounceManifest makes the announcement of one manifest of interface
 // version 1. Its id becomes the d tag.
-func AnnounceManifest(k keys.Key, data []byte, at nostr.Timestamp) (nostr.Event, error) {
+func AnnounceManifest(k keys.Signer, data []byte, at nostr.Timestamp) (nostr.Event, error) {
 	m, err := iface.Parse(data)
 	if err != nil {
 		return nostr.Event{}, err
@@ -87,7 +87,7 @@ func AnnounceManifest(k keys.Key, data []byte, at nostr.Timestamp) (nostr.Event,
 	}
 	tags := nostr.Tags{{"d", m.ID}, {"t", m.ID}, {"t", m.Shape}}
 	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
-	if err := event.Sign(k.Secret); err != nil {
+	if err := k.Sign(&event); err != nil {
 		return nostr.Event{}, err
 	}
 	return event, nil

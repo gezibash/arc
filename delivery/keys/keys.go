@@ -13,6 +13,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
+	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip49"
 	"github.com/gezibash/arc/identity"
 )
@@ -160,4 +161,40 @@ func Write(path, text string) error {
 		return err
 	}
 	return os.Rename(temp, path)
+}
+
+// Signer is a citizen who signs and seals: with the secret key on this
+// machine, as Key does, or through a remote signer of NIP-46. The mail layer
+// and calls need nothing more.
+type Signer interface {
+	PublicKey() nostr.PubKey
+	// Sign sets the author, the ID and the signature of an event.
+	Sign(event *nostr.Event) error
+	// Encrypt and Decrypt use NIP-44 with another citizen.
+	Encrypt(plaintext string, to nostr.PubKey) (string, error)
+	Decrypt(ciphertext string, from nostr.PubKey) (string, error)
+}
+
+// PublicKey is the address of the citizen.
+func (k Key) PublicKey() nostr.PubKey { return k.Public }
+
+// Sign signs an event with the secret key.
+func (k Key) Sign(event *nostr.Event) error { return event.Sign(k.Secret) }
+
+// Encrypt seals text to another citizen with NIP-44.
+func (k Key) Encrypt(plaintext string, to nostr.PubKey) (string, error) {
+	conversation, err := nip44.GenerateConversationKey(to, k.Secret)
+	if err != nil {
+		return "", err
+	}
+	return nip44.Encrypt(plaintext, conversation)
+}
+
+// Decrypt opens text that another citizen sealed with NIP-44.
+func (k Key) Decrypt(ciphertext string, from nostr.PubKey) (string, error) {
+	conversation, err := nip44.GenerateConversationKey(from, k.Secret)
+	if err != nil {
+		return "", err
+	}
+	return nip44.Decrypt(ciphertext, conversation)
 }

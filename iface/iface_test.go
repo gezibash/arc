@@ -186,7 +186,11 @@ func (f *fakeEnv) Private(_ context.Context, kinds []nostr.Kind) ([]nostr.Event,
 	return out, nil
 }
 func (f *fakeEnv) Keyed(info []byte, input string) (string, error) {
-	return KeyedValue(f.me, info, input)
+	root, err := KeyedRoot(f.me)
+	if err != nil {
+		return "", err
+	}
+	return KeyedValue(root, info, input)
 }
 func (f *fakeEnv) Name(pk nostr.PubKey) string { return "petname-" + pk.Hex()[:4] }
 func (f *fakeEnv) Call(_ context.Context, _ nostr.PubKey, r CallRequest, later bool) (CallResult, error) {
@@ -345,7 +349,7 @@ func TestAValueCannotReachTheTerminal(t *testing.T) {
 }
 
 func TestKeyedValuesDifferByCapability(t *testing.T) {
-	secret := nostr.Generate()
+	secret, _ := KeyedRoot(nostr.Generate())
 	author := nostr.Generate().Public()
 	a, _ := KeyedValue(secret, keyedInfo(author, "journal", "page"), "hrs/a/b")
 	again, _ := KeyedValue(secret, keyedInfo(author, "journal", "page"), "hrs/a/b")

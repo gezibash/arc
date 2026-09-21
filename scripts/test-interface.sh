@@ -279,7 +279,10 @@ owner() { "$work/arcn" --home "$work/owner" "$@"; }
 agent() { "$work/arcn" --home "$work/agent" "$@"; }
 owner key new > /dev/null
 owner_key="$(owner key show | tail -1)"
-owner key bunker --relay "$url" --allow-kind 11 > "$work/bunker.log" 2>&1 &
+# The owner allows posts, drafts and their parts, seals, and relay lists;
+# not replies.
+owner key bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
+  --allow-kind 13 --allow-kind 10050 --allow-kind 10013 > "$work/bunker.log" 2>&1 &
 bunker_pid=$!
 for _ in $(seq 1 50); do grep "bunker://" "$work/bunker.log" > /dev/null 2>&1 && break; sleep 0.1; done
 uri="$(grep "^bunker://" "$work/bunker.log")"
@@ -288,7 +291,9 @@ agent key use "$uri" > "$work/agent.txt" || fail "the agent could not use the bu
 [ "$(tail -1 "$work/agent.txt")" = "$owner_key" ] || fail "the agent is $(cat "$work/agent.txt"), not the owner"
 grep -r "$(cat "$work/owner/key")" "$work/agent" > /dev/null 2>&1 && fail "the agent holds the owner's secret key"
 agent relay add "$url" 2> /dev/null
-agent install "$caller_key" agora --yes > /dev/null
+for capability in agora journal dm; do
+  agent install "$caller_key" $capability --yes > /dev/null || fail "the agent did not install $capability"
+done
 say "an agent signs as its owner through a bunker, and holds no secret key"
 
 agent agora post --title "From the agent" signed remotely 2> /dev/null || fail "the agent could not post"
@@ -297,7 +302,22 @@ bob agora feed | grep "$(owner key show | head -1)" > /dev/null || fail "the pos
 agent_post="$(bob agora feed | grep -o 'nevent1[a-z0-9]*' | head -1)"
 if agent agora reply "$agent_post" not allowed > /dev/null 2> "$work/refused-kind.txt"; then fail "the bunker signed a kind it does not allow"; fi
 grep "does not sign kind 1111" "$work/refused-kind.txt" > /dev/null || fail "the refusal was $(cat "$work/refused-kind.txt")"
-if agent journal ls > /dev/null 2>&1; then fail "a journal ran without the secret key"; fi
 say "the bunker signs the kinds its owner allows, and refuses the rest"
+
+printf 'written by the agent\n' | agent journal write ops/agent/notes 2> "$work/agent-journal.txt" ||
+  fail "the agent could not write a page: $(cat "$work/agent-journal.txt")"
+[ "$(agent journal read ops/agent/notes)" = "written by the agent" ] || fail "the agent read $(agent journal read ops/agent/notes)"
+owner relay add "$url" 2> /dev/null
+owner install "$caller_key" journal --yes > /dev/null
+[ "$(owner journal read ops/agent/notes)" = "written by the agent" ] ||
+  fail "the owner, with the key, read $(owner journal read ops/agent/notes)"
+say "an agent keeps a journal through the bunker, and its owner reads the same page with the key"
+
+agent dm send "$bob_key" hello from the agent 2> /dev/null || fail "the agent could not send a message"
+bob dm inbox | grep "hello from the agent" > /dev/null || fail "bob's inbox: $(bob dm inbox)"
+bob dm inbox | grep "$(owner key show | head -1)" > /dev/null || fail "the message does not come from the owner"
+bob dm send "$owner_key" hello agent 2> /dev/null
+agent dm inbox | grep "hello agent" > /dev/null || fail "the agent's inbox: $(agent dm inbox 2>&1)"
+say "an agent sends and reads direct messages through the bunker"
 
 printf 'phase D holds: reserved kinds, consent, dry runs, sealed keys, and remote signers\n'

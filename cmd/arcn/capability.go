@@ -92,7 +92,7 @@ func serve(command *cobra.Command, args []string) error {
 		}
 	}
 
-	sess, err := openSecret(command)
+	sess, err := open(command)
 	if err != nil {
 		return err
 	}
@@ -108,15 +108,15 @@ func serve(command *cobra.Command, args []string) error {
 	}
 	defer process.Stop()
 
-	server := call.NewServer(sess.key, id, process, limit, log)
+	server := call.NewServer(sess.signer, id, process, limit, log)
 	sess.mail.OnRequest = server.Handle
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	announcement, err := catalog.Announce(sess.key, pkg, nostr.Now())
+	announcement, err := catalog.Announce(sess.signer, pkg, nostr.Now())
 	if versionOne != nil {
-		announcement, err = catalog.AnnounceManifest(sess.key, versionOne, nostr.Now())
+		announcement, err = catalog.AnnounceManifest(sess.signer, versionOne, nostr.Now())
 	}
 	if err != nil {
 		return err
@@ -331,7 +331,7 @@ func callCmd() *cobra.Command {
 	command.AddCommand(&cobra.Command{
 		Use: "results", Short: "Show your store-and-forward calls, and their replies", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			sess, err := openSecret(command)
+			sess, err := open(command)
 			if err != nil {
 				return err
 			}
@@ -363,7 +363,7 @@ func callCmd() *cobra.Command {
 }
 
 func callCapability(command *cobra.Command, args []string) error {
-	sess, err := openSecret(command)
+	sess, err := open(command)
 	if err != nil {
 		return err
 	}
@@ -436,11 +436,10 @@ func callCapability(command *cobra.Command, args []string) error {
 // NIP-37, which names the relays that hold the citizen's drafts.
 func publishRelayList(ctx context.Context, sess *session) {
 	var lists []nostr.Event
-	if !sess.remote {
-		list, err := mail.RelayList(sess.key, sess.urls, nostr.Now())
-		if err != nil {
-			return
-		}
+	list, err := mail.RelayList(sess.signer, sess.urls, nostr.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "the relay list was not signed: %v\n", err)
+	} else {
 		lists = append(lists, list)
 	}
 	private, err := draft.RelayList(ctx, sess.keyer, sess.urls, nostr.Now())
@@ -471,13 +470,13 @@ func announceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sess, err := openSecret(command)
+			sess, err := open(command)
 			if err != nil {
 				return err
 			}
 			defer sess.close()
 
-			announcement, err := catalog.AnnounceManifest(sess.key, data, nostr.Now())
+			announcement, err := catalog.AnnounceManifest(sess.signer, data, nostr.Now())
 			if err != nil {
 				return err
 			}

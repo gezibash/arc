@@ -99,7 +99,7 @@ type carried struct {
 
 // Mail is the mail of one citizen on one machine.
 type Mail struct {
-	key    keys.Key
+	key    keys.Signer
 	node   *node.Node
 	db     *bbolt.DB
 	relays []transport.Transport
@@ -112,7 +112,7 @@ type Mail struct {
 
 // Open opens the mail state in a directory. The relays are where new mail is
 // sent at once.
-func Open(dir string, k keys.Key, n *node.Node, relays []transport.Transport) (*Mail, error) {
+func Open(dir string, k keys.Signer, n *node.Node, relays []transport.Transport) (*Mail, error) {
 	db, err := bbolt.Open(filepath.Join(dir, "mail.db"), 0o600, &bbolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("mail: %w", err)
@@ -145,7 +145,7 @@ func (m *Mail) Send(ctx context.Context, to nostr.PubKey, text string) (Outgoing
 // SendRumor seals a private event of any kind to a citizen, as Send does
 // with a message.
 func (m *Mail) SendRumor(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) (Outgoing, error) {
-	if to == m.key.Public {
+	if to == m.key.PublicKey() {
 		return Outgoing{}, errors.New("mail: a message to yourself belongs in the journal")
 	}
 	switch kind {
@@ -262,14 +262,14 @@ func (m *Mail) Sync(ctx context.Context, t transport.Transport) (Report, error) 
 	m.expire()
 
 	carrier, isCarrier := t.(transport.Carrier)
-	mine := private.RouteTags(m.key.Public, m.now())
+	mine := private.RouteTags(m.key.PublicKey(), m.now())
 
 	var filters []nostr.Filter
 	if isCarrier {
 		filters = []nostr.Filter{{Kinds: []nostr.Kind{private.WrapKind}}}
 	} else {
 		filters = []nostr.Filter{
-			{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {m.key.Public.Hex()}}},
+			{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {m.key.PublicKey().Hex()}}},
 			{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"w": mine}},
 		}
 	}
@@ -302,7 +302,7 @@ func (m *Mail) take(ctx context.Context, wrap nostr.Event, mine []string, isCarr
 		return nil
 	}
 
-	if forMe(wrap, m.key.Public, mine) {
+	if forMe(wrap, m.key.PublicKey(), mine) {
 		return m.open(ctx, wrap, report)
 	}
 	if isCarrier {
@@ -586,7 +586,7 @@ func (m *Mail) Inbox() []Message {
 	seen := map[string]bool{}
 
 	for _, seal := range m.node.Store.Query(nostr.Filter{Kinds: []nostr.Kind{private.SealKind}}) {
-		if seal.PubKey == m.key.Public {
+		if seal.PubKey == m.key.PublicKey() {
 			continue
 		}
 		rumor, err := private.OpenSeal(m.key, seal)
@@ -618,7 +618,7 @@ func (m *Mail) Rumors(kinds []nostr.Kind) []nostr.Event {
 	}
 
 	for _, seal := range m.node.Store.Query(nostr.Filter{Kinds: []nostr.Kind{private.SealKind}}) {
-		if seal.PubKey == m.key.Public {
+		if seal.PubKey == m.key.PublicKey() {
 			continue
 		}
 		if rumor, err := private.OpenSeal(m.key, seal); err == nil {
@@ -703,13 +703,16 @@ func (m *Mail) replyOf(o Outgoing) call.Reply {
 const RelayListKind nostr.Kind = 10050
 
 // RelayList makes the list of relays where this citizen reads its mail.
-func RelayList(k keys.Key, urls []string, at nostr.Timestamp) (nostr.Event, error) {
+func RelayList(k keys.Signer, urls []string, at nostr.Timestamp) (nostr.Event, error) {
 	tags := nostr.Tags{}
 	for _, url := range urls {
 		tags = append(tags, nostr.Tag{"relay", url})
 	}
 	event := nostr.Event{Kind: RelayListKind, CreatedAt: at, Tags: tags}
-	return event, event.Sign(k.Secret)
+	if err := k.Sign(&event); err != nil {
+		return nostr.Event{}, err
+	}
+	return event, nil
 }
 
 // inboxRelays returns the relays where a citizen reads its mail, from its

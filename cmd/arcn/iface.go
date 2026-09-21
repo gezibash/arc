@@ -127,6 +127,7 @@ func builtinName(root *cobra.Command, name string) bool {
 type cliEnv struct {
 	sess     *session
 	installs catalog.Installs
+	root     []byte
 }
 
 func (e *cliEnv) Me() nostr.PubKey { return e.sess.key.Public }
@@ -134,10 +135,19 @@ func (e *cliEnv) Me() nostr.PubKey { return e.sess.key.Public }
 func (e *cliEnv) Name(pk nostr.PubKey) string { return identity.Name(pk[:]) }
 
 func (e *cliEnv) Keyed(info []byte, input string) (string, error) {
-	if e.sess.remote {
-		return "", errors.New("keyed values need the secret key; a NIP-46 signer cannot compute them")
+	if e.root == nil {
+		// The root draft appears only once the citizen uses keyed values,
+		// so a citizen who never does leaves no signed event behind.
+		if !e.sess.remote {
+			publishKeyedRoot(context.Background(), e.sess)
+		}
+		root, err := keyedRoot(context.Background(), e.sess)
+		if err != nil {
+			return "", err
+		}
+		e.root = root
 	}
-	return iface.KeyedValue(e.sess.key.Secret, info, input)
+	return iface.KeyedValue(e.root, info, input)
 }
 
 // ResolveKey reads 64 hex characters, an npub, an nprofile, a NIP-05 name,
@@ -303,18 +313,12 @@ func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter, urls []string) 
 
 // SendPrivate seals a private event through the mail layer.
 func (e *cliEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
-	if e.sess.mail == nil {
-		return errRemote("a private event")
-	}
 	_, err := e.sess.mail.SendRumor(ctx, to, kind, content, tags)
 	return err
 }
 
 // Private syncs the mail with every relay, and reads the private events.
 func (e *cliEnv) Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
-	if e.sess.mail == nil {
-		return nil, errRemote("reading private events")
-	}
 	for _, t := range e.sess.relays {
 		if _, err := e.sess.mail.Sync(ctx, t); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
@@ -325,9 +329,6 @@ func (e *cliEnv) Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event
 
 // Call sends one request: live over a relay, or later through the outbox.
 func (e *cliEnv) Call(ctx context.Context, provider nostr.PubKey, request iface.CallRequest, later bool) (iface.CallResult, error) {
-	if e.sess.remote {
-		return iface.CallResult{}, errRemote("a call")
-	}
 	r := call.Request{Capability: request.Capability, Method: request.Method, Path: request.Path, Body: request.Body}
 	if later {
 		if _, err := e.sess.mail.Request(ctx, provider, r); err != nil {
@@ -351,7 +352,7 @@ func liveCall(ctx context.Context, sess *session, provider nostr.PubKey, request
 	var failures []string
 	for _, t := range sess.relays {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
-		reply, rtt, err := call.Live(ctx, sess.key, provider, request, t.(relay.Relay))
+		reply, rtt, err := call.Live(ctx, sess.signer, provider, request, t.(relay.Relay))
 		cancel()
 		if err == nil {
 			return reply, rtt, t.Name(), nil

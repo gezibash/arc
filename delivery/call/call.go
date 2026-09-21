@@ -45,7 +45,7 @@ type Request struct {
 }
 
 // RequestRumor makes the rumor of a request.
-func RequestRumor(me keys.Key, provider nostr.PubKey, r Request, now time.Time) nostr.Event {
+func RequestRumor(me keys.Signer, provider nostr.PubKey, r Request, now time.Time) nostr.Event {
 	return private.Rumor(me, RequestKind, r.Body, nostr.Tags{
 		{"p", provider.Hex()},
 		{"capability", r.Capability},
@@ -77,7 +77,7 @@ type Reply struct {
 }
 
 // ReplyRumor makes the rumor of a reply to a request.
-func ReplyRumor(me keys.Key, request nostr.Event, reply Reply, now time.Time) nostr.Event {
+func ReplyRumor(me keys.Signer, request nostr.Event, reply Reply, now time.Time) nostr.Event {
 	status, body := "ok", reply.Body
 	if reply.Err != "" {
 		status, body = "error", reply.Err
@@ -99,7 +99,7 @@ func ReadReply(rumor nostr.Event) (string, Reply) {
 
 // Live makes one live call over a relay, and returns the reply and the time
 // that the round trip took.
-func Live(ctx context.Context, me keys.Key, provider nostr.PubKey, r Request, exchange Exchanger) (Reply, time.Duration, error) {
+func Live(ctx context.Context, me keys.Signer, provider nostr.PubKey, r Request, exchange Exchanger) (Reply, time.Duration, error) {
 	now := time.Now()
 	rumor := RequestRumor(me, provider, r, now)
 
@@ -109,7 +109,7 @@ func Live(ctx context.Context, me keys.Key, provider nostr.PubKey, r Request, ex
 	}
 
 	var reply Reply
-	answers := nostr.Filter{Kinds: []nostr.Kind{private.LiveWrapKind}, Tags: nostr.TagMap{"p": {me.Public.Hex()}}}
+	answers := nostr.Filter{Kinds: []nostr.Kind{private.LiveWrapKind}, Tags: nostr.TagMap{"p": {me.PublicKey().Hex()}}}
 	start := time.Now()
 
 	_, err = exchange.Exchange(ctx, wrap, answers, func(answer nostr.Event) bool {
@@ -142,7 +142,7 @@ type Exchanger interface {
 // Server passes requests to a provider program, and matches its answers to
 // them.
 type Server struct {
-	key        keys.Key
+	key        keys.Signer
 	capability string
 	process    *host.Process
 	maxBytes   int
@@ -155,7 +155,7 @@ type Server struct {
 }
 
 // NewServer serves one capability with a running provider program.
-func NewServer(k keys.Key, capability string, process *host.Process, maxBytes int, log *slog.Logger) *Server {
+func NewServer(k keys.Signer, capability string, process *host.Process, maxBytes int, log *slog.Logger) *Server {
 	s := &Server{
 		key: k, capability: capability, process: process, maxBytes: maxBytes, log: log,
 		waiting: map[string]chan map[string]any{}, seen: map[string]time.Time{},
@@ -273,7 +273,7 @@ func (s *Server) forget(id string) {
 func (s *Server) ServeLive(ctx context.Context, relay transport.Live) error {
 	requests, err := relay.Watch(ctx, nostr.Filter{
 		Kinds: []nostr.Kind{private.LiveWrapKind},
-		Tags:  nostr.TagMap{"p": {s.key.Public.Hex()}},
+		Tags:  nostr.TagMap{"p": {s.key.PublicKey().Hex()}},
 	})
 	if err != nil {
 		return err

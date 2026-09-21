@@ -199,7 +199,8 @@ A keyed value names something without revealing it. A journal page, for
 example, is found by a keyed value of its address:
 
 ```text
-key   = HKDF-SHA256(ikm = secret key, salt = "",
+root  = HKDF-SHA256(ikm = secret key, salt = "", info = "arc-keyed-root-v1", length = 32)
+key   = HKDF-SHA256(ikm = root, salt = "",
                     info = "arc-keyed-v1" || 0x00 || hex(author) || 0x00 || capability id || 0x00 || purpose,
                     length = 32)
 value = base64url(first 16 bytes of HMAC-SHA256(key, input)), without padding
@@ -215,9 +216,18 @@ two values together. Core keys the words of such a list apart, so `a+bc` and
 `ab+c` differ.
 
 The key depends on the author and the capability id. One capability therefore
-cannot compute the keyed values of another. A citizen who signs through a
-NIP-46 remote signer does not hold the secret key: core then asks the signer
-for the HMAC, and fails the command when the signer cannot give it.
+cannot compute the keyed values of another.
+
+A machine that signs through a NIP-46 remote signer does not hold the secret
+key, and cannot derive the root. A machine with the key therefore seals the
+root to the citizen's own key, as a NIP-37 draft, when it first computes a
+keyed value or starts a bunker. A citizen who never uses keyed values leaves
+no such draft. The draft's `d` tag is
+`arc-keyed-root`, and its event inside has kind 30078 and the root as hex.
+The machine that signs remotely fetches that draft, and asks the signer to
+open it. The root follows from the key, so every machine with the key makes
+the same draft. A `d` tag of a manifest cannot start with `arc-`, and a query
+leaves out these drafts.
 
 ## 7. Actions
 
@@ -541,8 +551,9 @@ Core reads the passphrase from `ARCN_PASSPHRASE`, or asks on the terminal.
 `arcn key bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
 and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
 and NIP-42 authentication for relays. `arcn key use <uri>` makes a home that
-signs through it. That home has no mail, no calls, and no keyed values, because
-each of them needs the secret key on the machine.
+signs through it. That home seals and opens mail, makes calls, and reads the
+keyed root, all through the signer. The bunker publishes the keyed root to its
+relay when it starts.
 
 ## 14. Install and dispatch
 
@@ -892,5 +903,8 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
   a time. A `tail` holds it, so a second command on the same home waits.
 - **Each read asks the relays.** A query fetches from every relay before it
   reads the store, so a slow relay makes every read slow.
-- **Keyed values need the secret key, or a signer that computes them.** A NIP-46
-  signer that does not offer this cannot run a capability that uses `keyed`.
+- **A remote signer needs the keyed root first.** A machine with the key must
+  run once, and reach a relay or a stick that the remote machine reads, before
+  the remote machine can use a capability that uses `keyed`.
+- **Each seal and each opened message is one request to the signer.** Mail
+  over a remote signer is as slow as the round trips to it.

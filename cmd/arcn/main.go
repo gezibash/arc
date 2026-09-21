@@ -313,6 +313,8 @@ type session struct {
 	// remote says that a NIP-46 signer holds the secret key. The key then
 	// holds the public key alone.
 	remote bool
+	// signer signs and seals for the mail layer and for calls.
+	signer keys.Signer
 }
 
 func open(command *cobra.Command) (*session, error) {
@@ -335,32 +337,15 @@ func open(command *cobra.Command) (*session, error) {
 		return nil, err
 	}
 
-	sess := &session{key: k, node: &node.Node{Store: s}, urls: urls, keyer: id.keyer, remote: id.remote}
+	sess := &session{key: k, node: &node.Node{Store: s}, urls: urls, keyer: id.keyer, remote: id.remote, signer: id.signer}
 	for _, url := range urls {
 		sess.relays = append(sess.relays, relay.Relay{URL: url, Signer: sess.keyer})
 	}
 
-	// The mail layer seals with the secret key itself, so a remote signer
-	// has no mail.
-	if !sess.remote {
-		sess.mail, err = mail.Open(filepath.Join(dir, "store"), k, sess.node, sess.relays)
-		if err != nil {
-			s.Close()
-			return nil, err
-		}
-	}
-	return sess, nil
-}
-
-// openSecret opens a session that needs the secret key on this machine.
-func openSecret(command *cobra.Command) (*session, error) {
-	sess, err := open(command)
+	sess.mail, err = mail.Open(filepath.Join(dir, "store"), sess.signer, sess.node, sess.relays)
 	if err != nil {
+		s.Close()
 		return nil, err
-	}
-	if sess.remote {
-		sess.close()
-		return nil, errRemote(command.CommandPath())
 	}
 	return sess, nil
 }
@@ -370,9 +355,7 @@ func errRemote(what string) error {
 }
 
 func (s *session) close() {
-	if s.mail != nil {
-		s.mail.Close()
-	}
+	s.mail.Close()
 	s.node.Store.Close()
 }
 
@@ -406,7 +389,7 @@ func messageCommand() *cobra.Command {
 				return errors.New("a message holds 1 to 32768 bytes")
 			}
 
-			sess, err := openSecret(command)
+			sess, err := open(command)
 			if err != nil {
 				return err
 			}
@@ -427,7 +410,7 @@ func messageCommand() *cobra.Command {
 	inbox := &cobra.Command{
 		Use: "inbox", Short: "List the messages you received", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			sess, err := openSecret(command)
+			sess, err := open(command)
 			if err != nil {
 				return err
 			}
@@ -450,7 +433,7 @@ func messageCommand() *cobra.Command {
 	outbox := &cobra.Command{
 		Use: "outbox", Short: "List the messages you sent, and whether they arrived", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			sess, err := openSecret(command)
+			sess, err := open(command)
 			if err != nil {
 				return err
 			}
@@ -521,9 +504,6 @@ func syncCommand() *cobra.Command {
 					fmt.Printf("%s: announcements received %d\n", t.Name(), offers.Received)
 				}
 
-				if sess.mail == nil {
-					continue
-				}
 				mails, err := sess.mail.Sync(command.Context(), t)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)

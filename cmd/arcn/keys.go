@@ -20,8 +20,10 @@ import (
 	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip46"
+	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/iface"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -31,6 +33,7 @@ import (
 type signerIdentity struct {
 	key    keys.Key
 	keyer  nostr.Keyer
+	signer keys.Signer
 	remote bool
 }
 
@@ -53,13 +56,13 @@ func loadIdentity(ctx context.Context, dir string) (signerIdentity, error) {
 		if err != nil {
 			return signerIdentity{}, err
 		}
-		return signerIdentity{key: k, keyer: keyer.NewPlainKeySigner(k.Secret)}, nil
+		return signerIdentity{key: k, keyer: keyer.NewPlainKeySigner(k.Secret), signer: k}, nil
 	}
 	k, err := keys.Parse(text)
 	if err != nil {
 		return signerIdentity{}, err
 	}
-	return signerIdentity{key: k, keyer: keyer.NewPlainKeySigner(k.Secret)}, nil
+	return signerIdentity{key: k, keyer: keyer.NewPlainKeySigner(k.Secret), signer: k}, nil
 }
 
 // remoteIdentity connects to a NIP-46 signer. This machine keeps a key of its
@@ -100,7 +103,8 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 		if r.err != nil {
 			return signerIdentity{}, r.err
 		}
-		return signerIdentity{key: keys.Key{Public: r.pk}, keyer: timed{r.signer}, remote: true}, nil
+		remote := timed{r.signer}
+		return signerIdentity{key: keys.Key{Public: r.pk}, keyer: remote, signer: remoteSigner{r.pk, remote}, remote: true}, nil
 	case <-time.After(15 * time.Second):
 		return signerIdentity{}, errors.New("the remote signer did not answer in 15 seconds")
 	}
@@ -291,6 +295,21 @@ func serveBunker(command *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// A machine that signs through this bunker reads the keyed root from
+	// the bunker's relay.
+	sess, err := open(command)
+	if err != nil {
+		return err
+	}
+	rootRelay := relay.Relay{URL: url, Signer: sess.keyer}
+	publishKeyedRoot(command.Context(), sess)
+	for _, wrap := range sess.node.Store.Query(rootFilter(sess.key.Public)) {
+		if err := rootRelay.Send(command.Context(), wrap); err != nil {
+			fmt.Fprintf(os.Stderr, "the keyed root did not reach %s: %v\n", url, err)
+		}
+	}
+	sess.close()
+
 	signer := nip46.NewStaticKeySigner(id.key.Secret)
 	authorized := map[nostr.PubKey]bool{}
 	signer.AuthorizeRequest = func(_ bool, from nostr.PubKey, given string) bool {
@@ -409,4 +428,73 @@ func (t timed) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
 	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
 	defer cancel()
 	return t.Keyer.GetPublicKey(ctx)
+}
+
+// remoteSigner lets the mail layer and calls seal and sign through NIP-46.
+type remoteSigner struct {
+	pk    nostr.PubKey
+	keyer nostr.Keyer
+}
+
+func (r remoteSigner) PublicKey() nostr.PubKey { return r.pk }
+
+func (r remoteSigner) Sign(event *nostr.Event) error {
+	return r.keyer.SignEvent(context.Background(), event)
+}
+
+func (r remoteSigner) Encrypt(plaintext string, to nostr.PubKey) (string, error) {
+	return r.keyer.Encrypt(context.Background(), plaintext, to)
+}
+
+func (r remoteSigner) Decrypt(ciphertext string, from nostr.PubKey) (string, error) {
+	return r.keyer.Decrypt(context.Background(), ciphertext, from)
+}
+
+// rootFilter matches the draft that holds a citizen's keyed root.
+func rootFilter(me nostr.PubKey) nostr.Filter {
+	return nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {iface.KeyedRootD}}}
+}
+
+// publishKeyedRoot seals the keyed root to this citizen's own key, once, so
+// that a machine that signs through NIP-46 can read it. The root follows
+// from the secret key, so every machine with the key makes the same one.
+func publishKeyedRoot(ctx context.Context, sess *session) {
+	if len(sess.node.Store.Query(rootFilter(sess.key.Public))) > 0 {
+		return
+	}
+	root, err := iface.KeyedRoot(sess.key.Secret)
+	if err != nil {
+		return
+	}
+	inner := nostr.Event{Kind: iface.KeyedRootKind, CreatedAt: nostr.Now(), Content: hex.EncodeToString(root),
+		Tags: nostr.Tags{{"d", iface.KeyedRootD}}}
+	wrap, err := draft.Wrap(ctx, sess.keyer, iface.KeyedRootD, inner, nostr.Now())
+	if err != nil {
+		return
+	}
+	sess.node.Publish(ctx, wrap, sess.relays)
+}
+
+// keyedRoot is the root of this citizen's keyed values. A machine with the
+// key derives it. A machine that signs through NIP-46 opens the draft that
+// holds it, through the signer.
+func keyedRoot(ctx context.Context, sess *session) ([]byte, error) {
+	if !sess.remote {
+		return iface.KeyedRoot(sess.key.Secret)
+	}
+	filter := rootFilter(sess.key.Public)
+	sess.node.Pull(ctx, filter, sess.relays)
+	wraps := sess.node.Store.Query(filter)
+	if len(wraps) == 0 {
+		return nil, errors.New("no keyed root yet: run any arcn command on a machine that holds the key, then sync")
+	}
+	opened, err := draft.Open(ctx, sess.keyer, wraps[0])
+	if err != nil {
+		return nil, fmt.Errorf("the keyed root does not open: %w", err)
+	}
+	root, err := hex.DecodeString(opened.Event.Content)
+	if err != nil || len(root) != 32 || opened.Event.Kind != iface.KeyedRootKind {
+		return nil, errors.New("the keyed root draft holds no root")
+	}
+	return root, nil
 }
