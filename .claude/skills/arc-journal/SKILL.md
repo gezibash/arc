@@ -30,8 +30,9 @@ arc journal ls
 
 - If the call fails with `client: the peer did not answer` after 30 seconds,
   the provider is not running. See "Start the provider" below.
-- If `arc` reports `no public key is pinned for 127.0.0.1:7411`, run
-  `arc join 127.0.0.1:7411` once.
+- If `arc` reports `no public key is pinned for 127.0.0.1:7411`, pin the key
+  that the relay printed when it started:
+  `arc join 127.0.0.1:7411 --relay-pubkey "$(awk '{print $3; exit}' ~/.arc/journal/relay.log)"`.
 - If `arc` reports `unknown command "journal"`, install the tool:
   `arc install <journal provider public key> --yes`.
 - If `arc` reports that the provider `serves another version now`, install
@@ -152,10 +153,11 @@ Start the relay:
 nohup env ARC_KEY=<provider key name> bin/arc-relay --address 127.0.0.1:7411 > ~/.arc/journal/relay.log 2>&1 &
 ```
 
-Pin the key of the relay. If the pin is already there, this changes nothing:
+Pin the key that the relay printed when it started. If the pin is already
+there, this changes nothing:
 
 ```bash
-ARC_KEY=<provider key name> bin/arc join 127.0.0.1:7411
+ARC_KEY=<provider key name> bin/arc join 127.0.0.1:7411 --relay-pubkey "$(awk '{print $3; exit}' ~/.arc/journal/relay.log)"
 ```
 
 Start the provider:

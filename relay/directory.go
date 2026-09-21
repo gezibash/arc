@@ -268,7 +268,7 @@ func (r *Relay) status(from *conn, requestID string, request map[string]any) {
 			"version":            r.options.Version,
 			"public_key":         hex.EncodeToString(r.identity.PublicKey),
 			"uptime_seconds":     int(time.Since(r.started).Seconds()),
-			"federation_transit": false,
+			"federation_transit": r.options.Transit,
 		},
 	})
 }

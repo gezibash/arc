@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // DefaultPort is the port of a relay that names none.
@@ -105,6 +106,15 @@ func (s *Store) Remember(address, pin string) error {
 		return err
 	}
 
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		return err
+	}
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	document, err := s.Load()
 	if err != nil {
 		return err
@@ -121,15 +131,30 @@ func (s *Store) Remember(address, pin string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
-		return err
-	}
 
 	temporary := s.Path() + ".tmp"
 	if err := os.WriteFile(temporary, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(temporary, s.Path())
+}
+
+// lock holds relays.json.lock for one read and one write, so that two joins
+// at the same time never lose a change. The operating system releases the
+// lock when the process ends, so a crash leaves no stale lock.
+func (s *Store) lock() (func(), error) {
+	file, err := os.OpenFile(filepath.Join(s.Dir, "relays.json.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return func() {
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+	}, nil
 }
 
 // Selection is the relay that a command uses.

@@ -1,26 +1,33 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"strings"
 
+	"github.com/gezibash/arc/client"
+	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/relays"
 	"github.com/spf13/cobra"
 )
 
 func joinCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "join <host:port>",
-		Short: "Remember a relay and pin its public key",
-		Long: "Join asks the relay for its public key, shows it, and saves it.\n" +
-			"A relay that later answers with another key is refused.",
+	return &cobra.Command{
+		Use:   "join <host[:port]>",
+		Short: "Pin the key of a relay, and make it the default relay",
+		Long: "Join asks the relay for its public key and shows it. It saves the key\n" +
+			"only after you type yes. With --relay-pubkey, it checks the relay\n" +
+			"against that key and asks nothing. A relay that later answers with\n" +
+			"another key is refused. On a machine with no key, join makes one.",
 		Args: cobra.ExactArgs(1),
 		RunE: join,
 	}
-
-	command.Flags().String("pubkey", "", "the public key to pin, when it is known already")
-	return command
 }
 
 func join(command *cobra.Command, args []string) error {
@@ -35,42 +42,141 @@ func join(command *cobra.Command, args []string) error {
 		return err
 	}
 
-	pin, _ := command.Flags().GetString("pubkey")
-	me, err := activeIdentity(keys, "")
+	// A selector that names no key fails the join before any relay is asked,
+	// and join never picks another identity in its place.
+	makeKey, err := needsFirstKey(keys)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := deadline(15)
+	store := &relays.Store{Dir: keys.Dir}
+	document, err := store.Load()
+	if err != nil {
+		return err
+	}
+
+	// The pin comes from --relay-pubkey, then from an earlier join of this
+	// address. Only a relay with no pin needs a question.
+	pin, _ := command.Flags().GetString("relay-pubkey")
+	if pin != "" {
+		if pin, err = relays.NormalizePin(pin); err != nil {
+			return err
+		}
+	}
+	saved := document.Relays[address]
+	if pin != "" && saved != "" && pin != saved {
+		return fmt.Errorf("%s is pinned to %s, and --relay-pubkey names another key: joining never changes a pin", address, saved)
+	}
+	if pin == "" {
+		pin = saved
+	}
+
+	ctx, cancel := deadline(30)
 	defer cancel()
 
-	// The handshake proves the key of the relay. A pin that the user gave
-	// must match it.
-	held := &settings{keys: keys, relays: &relays.Store{Dir: keys.Dir}, me: me}
-	held.relay = &relays.Selection{Address: address}
-	if pin != "" {
-		key, err := relays.NormalizePin(pin)
+	if pin == "" {
+		found, err := relayKey(ctx, address, nil)
 		if err != nil {
 			return err
 		}
-		if held.relay.Pin, err = hex.DecodeString(key); err != nil {
+		if !trusted(address, found, os.Stdin) {
+			return errors.New("the relay key is not trusted, and nothing was saved")
+		}
+		pin = hex.EncodeToString(found)
+	}
+
+	// The handshake proves that the relay holds the pinned key.
+	raw, _ := hex.DecodeString(pin)
+	if _, err := relayKey(ctx, address, raw); err != nil {
+		return err
+	}
+	if err := store.Remember(address, pin); err != nil {
+		return err
+	}
+	fmt.Printf("joined %s\n%s\n", address, pin)
+
+	if makeKey {
+		me, err := keys.Generate()
+		if err != nil {
 			return err
 		}
+		if err := keys.SetDefault(me.Name()); err != nil {
+			return err
+		}
+		fmt.Printf("made the identity %s\n%s\n", me.Name(), me.EncodePublicKey())
 	}
 
-	connection, err := held.dial(ctx)
+	warnOverrides(address, pin)
+	return nil
+}
+
+// needsFirstKey says whether join makes the first key of this machine. That
+// is so only when no selector is there and the store holds no key.
+func needsFirstKey(keys *identity.Store) (bool, error) {
+	_, _, err := keys.Active()
+	if !errors.Is(err, identity.ErrNoDefault) {
+		return false, err
+	}
+
+	held, err := keys.List()
 	if err != nil {
-		return err
+		return false, err
+	}
+	if len(held) > 0 {
+		return false, errors.New("the store holds keys, and none is selected: pick one with arc keys use NAME")
+	}
+	return true, nil
+}
+
+// relayKey joins the relay with a temporary identity, and returns the key
+// that it presents. With a pin, the handshake refuses any other key. The
+// temporary identity never replaces the route of a running citizen.
+func relayKey(ctx context.Context, address string, pin []byte) ([]byte, error) {
+	probe, err := identity.Generate()
+	if err != nil {
+		return nil, err
+	}
+
+	connection, err := client.Dial(ctx, address, client.Options{Identity: probe, RelayPublicKey: pin})
+	if err != nil {
+		return nil, err
 	}
 	defer connection.Close()
+	return connection.RelayPublicKey(), nil
+}
 
-	found := hex.EncodeToString(connection.RelayPublicKey())
-	if err := held.relays.Remember(address, found); err != nil {
-		return err
+// trusted shows the key of a relay, and asks for an explicit yes.
+func trusted(address string, key []byte, input io.Reader) bool {
+	fmt.Printf("relay  %s\nkey    %s  (%s)\n", address, hex.EncodeToString(key), identity.Name(key))
+	fmt.Print("Compare the key with the one that the operator gave you. Type yes to trust it: ")
+
+	answer, _ := bufio.NewReader(input).ReadString('\n')
+
+	// A terminal echoes the answer and its newline. Other input does not.
+	if file, ok := input.(*os.File); !ok || !isTerminal(file) {
+		fmt.Println()
 	}
+	return strings.EqualFold(strings.TrimSpace(answer), "yes")
+}
 
-	fmt.Printf("joined %s\n%s\n", address, found)
-	return nil
+func isTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// warnOverrides reports settings of the shell that hide the relay that join
+// saved. Join does not change them.
+func warnOverrides(address, pin string) {
+	if given := os.Getenv("ARC_RELAY"); given != "" {
+		if normal, err := relays.NormalizeAddress(given); err != nil || normal != address {
+			fmt.Fprintf(os.Stderr, "ARC_RELAY is %s, so commands in this shell use it, not %s. Unset it to use the relay that you joined.\n", given, address)
+		}
+	}
+	if given := os.Getenv("ARC_RELAY_PUBKEY"); given != "" {
+		if normal, err := relays.NormalizePin(given); err != nil || normal != pin {
+			fmt.Fprintln(os.Stderr, "ARC_RELAY_PUBKEY pins another key, so commands in this shell use it. Unset it to use the key that you joined.")
+		}
+	}
 }
 
 func statusCommand() *cobra.Command {
@@ -86,7 +192,9 @@ func statusCommand() *cobra.Command {
 }
 
 func status(command *cobra.Command, _ []string) error {
-	held, err := open(command, true)
+	// Status asks with a temporary identity. It reads no selector, needs no
+	// key, and never replaces the route of a citizen.
+	held, err := openAnonymous(command)
 	if err != nil {
 		return err
 	}
