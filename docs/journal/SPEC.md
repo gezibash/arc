@@ -1,25 +1,145 @@
-# Journal: a scientific notebook for agents on ARC
+# Journal: a private notebook for agents on ARC
+
+Status: proposed. The provider in `cmd/journal-provider` implements an earlier
+design. That design stores plain text in Git and searches with qmd. Section
+18 describes how an owner moves from it.
 
 ## 1. Purpose
 
-The journal is an ARC provider. Agents write research notes, attach files, and
-record KPIs. Each agent identifies with its ARC keypair. The journal stores
-pages as markdown files in a git repository and indexes them with qmd.
+The journal is a private notebook. An agent writes research notes, attaches
+files, and records KPIs. Only the agent that wrote an entry can read it.
 
-The journal is a standalone provider bundle. It does not change ARC core.
+The provider stores entries and returns them. It cannot read them. The
+client, which is `arc` on the owner's machine, does all work that needs the
+content: rendering, listing, search, and KPI summaries.
 
-## 2. Identity and access
+The journal needs no other program. The provider and the client are Go code
+in this module. Neither one runs Git, qmd, or a database server.
 
-- The ARC exec runtime gives the caller's public key in the `from` field of
-  each request. The journal uses this key as the author of every write.
-- A project has an `ACL` file. The file lists one public key per line.
-- The first key that creates a project becomes the owner. The owner can edit
-  the `ACL` file through the `acl` command.
-- If the caller's key is not in the project `ACL`, the journal rejects writes
-  with `error: forbidden`.
-- Reads are open to all keys in the `ACL`. Public read is not in v1.
+## 2. Scope
 
-## 3. Address model
+A journal belongs to one owner. The owner is one ARC identity. The journal of
+an owner is the set of entries that the owner signed.
+
+These are out of scope:
+
+- Sharing a journal, or a part of it, with another identity.
+- Public read access.
+- Semantic search. Search is keyword search only.
+- Hard deletion of entries from the provider.
+- Recovery of a lost key.
+
+## 3. Terms
+
+| Term | Meaning |
+| --- | --- |
+| owner | The identity that writes and reads one journal. |
+| client | The `arc` program of the owner. |
+| provider | The citizen that stores entries for many owners. |
+| entry | One signed, sealed envelope that the provider stores. |
+| page revision | An entry of kind `page`. It holds one version of a page. |
+| KPI record | An entry of kind `kpi`. It holds one measured value. |
+| stream | All entries that have one stream ID. |
+| head | The newest page revision of one page stream. |
+| rev | The SHA-256 hash of one entry, as lower-case hex. |
+| sequence | The position of an entry in the log of its owner. |
+| cursor | The highest sequence that the client holds. |
+
+## 4. What the provider can and cannot do
+
+The design assumes that the provider can be hostile. The provider holds only
+entries, and each entry is sealed and signed.
+
+| The provider does this | Result | Defense |
+| --- | --- | --- |
+| Reads an entry | It sees ciphertext only. | The body is sealed to the owner. |
+| Changes an entry | The signature fails on the client. | The owner signs every entry. |
+| Adds an entry of its own | The signature fails on the client. | Only the owner's key signs. |
+| Moves an entry to another page | The signature fails on the client. | The signature covers the stream ID. |
+| Serves an old head as new | The client stops the sync. | A page revision must name the held head as parent. |
+| Serves one entry twice | The client stops the sync. | The client refuses a rev that it holds. |
+| Serves a different entry under a rev | The client stops the sync. | The hash of the entry must be its rev. |
+| Hides an entry in the middle of the log | The client stops the sync. | Sequences must have no gap. |
+| Hides an entry that this client wrote | The client stops the sync. | The log must reach each sequence that `put` returned. |
+| Shows two machines different logs | The client stops the sync later. | See the note below. |
+| Deletes all entries | The data is gone from the provider. | Each synced client holds a full copy. |
+
+A provider can show two machines of the owner different logs. It can also
+hide the newest entries of one machine from another. In both cases, each
+machine sees a consistent history. The split becomes visible when one machine
+syncs an entry that the other machine wrote after the split. That entry names
+a parent that the first machine does not hold as its head.
+
+The provider learns this metadata:
+
+- The owner's public key.
+- The kind of each entry: page revision or KPI record.
+- The number of streams, and the number of entries in each stream.
+- The number of attachments.
+- The size of each entry and each attachment.
+- The time at which each entry arrived.
+
+The provider does not learn addresses, titles, tags, page text, KPI names,
+KPI values, attachment names, attachment bytes, or links.
+
+## 5. Keys
+
+The client derives one key from the owner's seed:
+
+```text
+id_key = HKDF-SHA256(ikm = seed, salt = "", info = "arc-journal-v1 id", length = 32)
+```
+
+The client uses `id_key` to turn a name into a stream ID. The provider never
+sees the name.
+
+```text
+page stream ID = hex(HMAC-SHA256(id_key, "page" || 0x00 || address))
+KPI stream ID  = hex(HMAC-SHA256(id_key, "kpi"  || 0x00 || project "/" notebook))
+```
+
+Each machine that holds the seed derives the same IDs. The owner therefore
+uses the same journal from each machine.
+
+The client seals each body to the owner's own public key with the sealed box
+of the `sealedbox` package. The client signs each entry with the owner's
+Ed25519 key.
+
+If the owner loses the seed, the journal cannot be read. Nothing recovers it.
+
+## 6. The entry
+
+An entry is one JSON object:
+
+```json
+{
+  "version": 1,
+  "kind": "page",
+  "stream": "<stream ID, 64 hex>",
+  "parent": "<rev of the previous head, or empty>",
+  "author": "<owner public key, 64 hex>",
+  "body": "<base64 of the sealed body>",
+  "signature": "<base64 of the Ed25519 signature>"
+}
+```
+
+Rules:
+
+- `kind` is `page` or `kpi`.
+- `parent` is empty for the first revision of a page. A KPI record has an
+  empty `parent`.
+- The signature covers the domain `ARC-JOURNAL-ENTRY-V1`, then one zero byte,
+  then the canonical JSON of every field except `signature`.
+- Canonical JSON is the encoding of `internal/canonical`: sorted keys, no
+  spaces, and numbers with their digits kept.
+- The rev of an entry is the SHA-256 hash of the canonical JSON of the whole
+  entry, with `signature` included.
+- The sealed box uses a new ephemeral key for each body. Two entries with the
+  same text therefore have different revs.
+
+## 7. Pages
+
+### 7.1 Address
 
 Every page has an address: `<project>/<notebook>/<page>`.
 
@@ -27,244 +147,342 @@ Every page has an address: `<project>/<notebook>/<page>`.
 - `notebook`: a topic inside the project. Example: `ablations`.
 - `page`: one document. Example: `2026-09-11-lr-sweep`.
 
-Each segment must match `[a-z0-9][a-z0-9-_.]*`. The journal rejects other
+Each segment must match `[a-z0-9][a-z0-9-_.]*`. The client refuses other
 characters.
 
-## 4. Storage layout
+### 7.2 Body
 
-All data lives under `JOURNAL_ROOT`. The default is `~/.arc/journal`.
-
-```
-JOURNAL_ROOT/
-  repo/                                  git repository
-    projects/<project>/ACL
-    projects/<project>/<notebook>/<page>.md
-    projects/<project>/<notebook>/kpi.jsonl
-  blobs/<sha256>                         attachments, content addressed
-  .qmd/                                  search index, derived, not backed up
-```
-
-Rules:
-
-- The journal makes one git commit per write. The commit author is the
-  caller's public key.
-- Attachments are not in git. The journal stores them in `blobs/` and
-  references them by hash from the page.
-- The `.qmd` index is derived data. The journal rebuilds it from `repo/`.
-
-## 5. Page format
-
-A page is a markdown file with YAML frontmatter.
+The sealed body of a page revision is a Markdown file with YAML frontmatter:
 
 ```markdown
 ---
+address: hrs/ablations/2026-09-11-lr-sweep
 title: LR sweep on HRS
 created: 2026-09-11T14:02:11Z
-author: 9f3a...c1        # public key, hex
 updated: 2026-09-11T15:40:00Z
 tags: [ablation, lr]
 refs:
   - github: owner/repo@df62851
-  - commit: df62851
 attachments:
   - name: plot.png
-    sha256: 4a1c...
+    blob: 4a1c...        # SHA-256 of the sealed bytes, which the provider stores
+    sha256: 9e0f...      # SHA-256 of the plain bytes
     bytes: 88112
 links:
   - name: run-dir
     uri: file:///Users/zim/runs/lr-sweep
-    host: 9f3a...c1        # public key of the machine that owns the path
-  - name: checkpoint
-    uri: s3://hrs-runs/lr-sweep/ckpt-1200.pt
-    sha256: 7be0...
+    host: 9f3a...c1      # public key of the machine that owns the path
 ---
 
-Body in markdown.
+Body in Markdown.
 ```
 
-The journal owns `created`, `author`, `updated`, `attachments`, and `links`.
-Callers own `title`, `tags`, and `refs`.
+The client owns `address`, `created`, `updated`, `attachments`, and `links`.
+The owner sets `title`, `tags`, and `refs`.
 
-## 6. Revisions and concurrency
+The client needs `address` to list pages. A stream ID does not reveal it.
 
-- Every read returns `rev`, the short git SHA of the last commit that touched
-  the page.
-- `write` and `edit` accept `--if-rev <rev>`. If the current `rev` differs,
-  the journal rejects the write with `error: conflict` and returns the current
-  `rev`.
-- `append` never checks `rev`. It adds text to the end of the page.
-- Callers that edit prose must use `--if-rev`. Callers that add notes must use
-  `append`.
-
-## 7. KPIs
-
-KPIs are not page edits. KPIs live in `kpi.jsonl` in each notebook.
-
-One line per record:
-
-```json
-{"t":"2026-09-11T15:40:00Z","by":"9f3a...c1","key":"auc","value":0.871,"ref":"df62851","note":"lr=3e-4"}
-```
-
-- `kpi set` appends one line. The journal never rewrites the file.
-- `kpi log` returns the records for one key in time order.
-- `kpi latest` returns the last record for each key in the notebook.
-- If a page contains the line `<!-- kpi: auc -->`, `read` replaces it with the
-  latest value on output. The file on disk does not change.
-
-## 8. Attachments
-
-- `attach` sends the file body as base64 in `--base64`. The journal hashes
-  the body, stores it in `blobs/`, and adds an entry to the page frontmatter.
-- v1 caps attachments at 16 MiB. If the body is larger, the journal rejects
-  the request with `error: too_large`. The cap is a storage budget: blobs
-  live outside git and v1 does not back them up. It is not a transport limit.
-  The ARC exec port reads provider reply lines up to 64 MiB, so a `fetch` of
-  the largest blob, 21.4 MiB as base64, fits on one line.
-- A `fetch` reply that crosses a relay is one frame. The relay frame cap is
-  unbounded by default. If an operator lowers it with `--max-frame-bytes` or
-  `ARC_RELAY_MAX_FRAME_BYTES`, the relay advertises the cap at connect time
-  and the sending side fails a too-large `fetch` locally with
-  `frame_too_large`. The connection stays open.
-- `fetch` returns the blob body as base64 by hash.
-
-### Links
+### 7.3 Links
 
 A link records where a file lives. The journal stores no bytes for a link.
 
-- `link` adds one entry to `links` in the page frontmatter.
-- `uri` is any URI: `file://`, `https://`, `s3://`, `arc://`, or a
-  `github:` reference.
-- If the URI scheme is `file://`, the journal sets `host` to the caller's
-  public key. The path is only valid on that host.
-- If the caller passes `--sha256`, the journal stores it. The journal does not
+- `uri` is any URI: `file://`, `https://`, `s3://`, `arc://`, or a `github:`
+  reference.
+- If the URI scheme is `file://`, the client sets `host` to the owner's public
+  key. The path is valid on that host only.
+- If the owner gives `--sha256`, the client stores it. The client does not
   verify it.
-- `read` returns links as they are stored. The journal never follows a link.
-- If the caller needs the bytes later, the caller resolves the link. A host
-  that serves its files as an ARC capability makes `arc://` links resolvable
-  by any agent with access.
+- The client never follows a link.
 
-## 9. Search
+### 7.4 Deletion
 
-- The journal runs `qmd search <query>` for the `search` command. This is
-  BM25 and needs no model.
-- If the caller passes `--deep`, the journal runs `qmd query <query>`.
-- The journal scopes the search with `--project` and `--notebook` filters
-  applied to the returned paths.
-- After each commit, a background job runs `qmd update`. Writes do not wait
-  for the index.
+To delete a page, write a revision with an empty body and the tag `deleted`.
+The client hides a page with that tag from `ls` and `search`. The provider
+keeps every revision.
 
-## 10. Commands
+## 8. Revisions and concurrency
 
-The manifest exposes a CLI interface with namespace `journal`. Each command
-maps to one request line on the wire.
+The provider keeps one head for each page stream. It accepts a page revision
+only if `parent` is the current head.
+
+- If `parent` is not the current head, the provider refuses the entry with
+  `conflict`, and returns the current head.
+- `write` and `edit` send the head that the owner last read as `parent`.
+  `--if-rev` names that head explicitly.
+- `append` reads the head, adds the text, and writes. If the provider answers
+  `conflict`, the client syncs and tries again. The client tries three times,
+  then reports `conflict`.
+
+The provider checks `parent` without reading the body. Concurrency control
+therefore works on ciphertext.
+
+## 9. KPIs
+
+A KPI record is an entry of kind `kpi`. Its sealed body is one JSON object:
+
+```json
+{"t":"2026-09-11T15:40:00Z","key":"auc","value":0.871,"ref":"df62851","note":"lr=3e-4"}
+```
+
+- The KPI stream ID names the notebook, as section 5 shows.
+- `kpi set` adds one KPI record. Nothing changes a KPI record after that.
+- The client orders the KPI records of a stream by sequence, not by `t`. The
+  client does not trust the clock of a machine to give order.
+- `kpi log` returns the records for one key in sequence order.
+- `kpi latest` returns the last record for each key of the notebook.
+- If a page contains the line `<!-- kpi: auc -->`, `read` shows the latest
+  value in its place. The page itself does not change.
+
+## 10. Attachments
+
+An attachment is a blob. The client seals the file to the owner, and the
+provider stores the sealed bytes. The blob ID is the SHA-256 hash of the
+sealed bytes.
+
+The client uses the hash of the sealed bytes, not the plain bytes. A hash of
+the plain bytes lets a provider confirm that a known file is in a journal.
+
+Every request and every reply must stay under 1 MiB, because the ARC client
+refuses a larger request body. The client therefore moves a blob in chunks:
+
+1. `blob begin <blob ID> <bytes>` opens an upload.
+2. `blob chunk <blob ID> <offset>` sends one chunk as base64 in the body. A
+   chunk holds at most 512 KiB of sealed bytes.
+3. `blob commit <blob ID>` asks the provider to check the length and the hash.
+   If both match, the provider keeps the blob. If not, it discards the upload.
+
+To read a blob, the client sends `blob get <blob ID> <offset>` for each chunk.
+Then it checks the hash of the sealed bytes, opens them, and checks the
+`sha256` of the plain bytes against the page.
+
+The largest attachment is 16 MiB of plain bytes.
+
+## 11. Search
+
+The client searches. The provider holds nothing that it can search.
+
+1. The client syncs.
+2. The client opens the head of each page stream in memory.
+3. The client ranks the pages with BM25, with `k1 = 1.2` and `b = 0.75`.
+4. The client drops each page with the tag `deleted`.
+5. The client returns the address, the score, and one matching line of each
+   page.
+
+Tokens are lower-case runs of Unicode letters and digits. The title counts as
+part of the body.
+
+The client writes no plain text to disk. It opens the pages again for each
+search. The design target is a few thousand pages. A sealed index on disk is a
+later step.
+
+## 12. Sync and the local copy
+
+The client keeps a copy of the owner's entries:
+
+```text
+~/.config/arc/journal/<owner hex>/
+  provider              the public key of the provider in use
+  <provider hex>/
+    cursor              the highest sequence that the client holds
+    written             the highest sequence that `put` returned to this client
+    heads.json          stream ID -> rev of the held head
+    entries/<rev>       one entry, exactly as the provider sent it
+    blobs/<blob ID>     sealed attachment bytes, when fetched
+```
+
+Every entry on disk is sealed. The copy holds no address and no text in the
+clear.
+
+Each command that reads syncs first:
+
+1. The client sends `since <cursor>`.
+2. For each new sequence, the client fetches the entry with `get <rev>`.
+3. The client checks each entry, in sequence order.
+4. If every entry passes, the client stores them and moves the cursor.
+
+The checks are:
+
+- The sequences start at `cursor + 1` and have no gap.
+- The log reaches the sequence in `written`.
+- The SHA-256 hash of each entry is the rev that the log names.
+- The signature is valid, and `author` is the owner.
+- The client does not hold the rev already.
+- For a page revision, `parent` is the head that the client holds for that
+  stream. For a new stream, `parent` is empty.
+
+If one check fails, the client stores nothing from that sync and reports
+`untrusted_log` with the sequence and the check. The client does not repair
+the log.
+
+## 13. The provider
+
+### 13.1 Storage
+
+The provider uses plain files. It needs no database.
+
+```text
+<root>/
+  <owner hex>/
+    log                     one line per entry: <sequence> <kind> <stream ID> <rev>
+    heads/<stream ID>       the rev of the head of one page stream
+    entries/<rev>           one entry
+    blobs/<blob ID>         one sealed attachment
+    uploads/<blob ID>       a blob while its chunks arrive
+```
+
+The provider writes each file to a temporary name, then renames it. It holds
+one lock for each owner while it checks a head, stores an entry, and adds a
+log line.
+
+### 13.2 Checks on `put`
+
+The provider refuses an entry unless all of these are true:
+
+- The entry is valid JSON with the fields of section 6, and no other field.
+- `author` is the caller, which is the `from` key of the request.
+- The signature is valid.
+- For a page revision, `parent` is the current head of its stream.
+- The owner stays under the byte quota after the entry.
+
+The provider cannot read the body. It checks only the envelope.
+
+### 13.3 Configuration
+
+`JOURNAL_CONFIG` must name an absolute path to a JSON file:
+
+```json
+{
+  "root": "/var/lib/arc-journal",
+  "grants": ["<public key, 64 hex>"],
+  "max_bytes": 1073741824
+}
+```
+
+- `grants` lists the identities that can keep a journal on this provider. It
+  must hold at least one key. If a caller is not in the list, the provider
+  refuses with `forbidden`.
+- `max_bytes` caps the entries and blobs of one owner. The default is 1 GiB.
+- If `JOURNAL_CONFIG` is not set, or the file is not valid, the provider does
+  not start.
+
+## 14. Provider commands
+
+The provider uses the request line format of every ARC provider. The first
+line of `message` is the command. The text after the first newline is the
+request body.
+
+| Command | Body | Reply |
+| --- | --- | --- |
+| `put` | one entry | `rev <rev> sequence <n>` |
+| `get <rev>` | none | one entry |
+| `head <stream ID>` | none | a rev, or `not_found` |
+| `since <sequence> [--limit n]` | none | one line per entry: `<sequence> <kind> <stream ID> <rev>` |
+| `blob begin <blob ID> <bytes>` | none | `ok` |
+| `blob chunk <blob ID> <offset>` | base64 chunk | `ok <bytes received>` |
+| `blob commit <blob ID>` | none | `ok`, or `invalid_blob` |
+| `blob get <blob ID> <offset>` | none | base64 chunk |
+| `usage` | none | `entries <n> bytes <n> max <n>` |
+
+`since` returns at most 1,000 lines. The default is 1,000.
+
+A request always acts on the journal of its caller. No command names an
+owner. One owner therefore cannot address the journal of another.
+
+Errors are one word, then optional detail:
+
+| Error | Meaning |
+| --- | --- |
+| `forbidden` | The caller is not in `grants`, or `author` is not the caller. |
+| `conflict` | `parent` is not the current head. The detail is the current head. |
+| `bad_signature` | The signature does not verify. |
+| `invalid_entry` | The entry does not have the fields of section 6. |
+| `invalid_blob` | The length or the hash of an upload does not match. |
+| `not_found` | No entry, head, or blob has that name. |
+| `too_large` | A chunk or an entry is over its limit. |
+| `quota_exceeded` | The owner is at `max_bytes`. |
+| `unknown_command` | The command does not exist. |
+
+## 15. Client commands
 
 | Command | Purpose |
-|---|---|
-| `ls [<project>[/<notebook>]]` | List projects, notebooks, or pages. One line each. |
-| `read <addr> [--lines a:b]` | Return a page or a line range with `rev`. |
-| `write <addr> [--title t] [--tags a,b] [--if-rev r] [--body <text>]` | Replace the page body with the request body, or with `--body`. Create if absent. |
-| `append <addr> <text>` | Add text to the end of the page. |
-| `edit <addr> --if-rev r --find s --replace t` | Replace one string in the body. |
-| `attach <addr> --name <n> --base64 <b>` | Store a blob and link it. |
-| `link <addr> <uri> [--name n] [--sha256 h]` | Record a reference. Store no bytes. |
-| `fetch <sha256>` | Return a blob body. |
-| `kpi set <project>/<notebook> <key> <value> [--ref r] [--note n]` | Append a record. |
-| `kpi log <project>/<notebook> <key>` | Return the history of one key. |
-| `kpi latest <project>/<notebook>` | Return the last value of each key. |
-| `search <query> [--project p] [--notebook n] [--deep]` | Search pages. |
-| `acl <project> add\|rm\|ls [pubkey]` | Edit or list the project ACL. Owner only for add and rm. |
-| `history <addr>` | List revisions of a page. |
+| --- | --- |
+| `arc journal use <provider>` | Select the provider for this owner. |
+| `arc journal status` | Show the provider, the cursor, and the usage. |
+| `arc journal ls [<project>[/<notebook>]]` | List projects, notebooks, or pages, with titles. |
+| `arc journal read <addr> [--lines a:b]` | Show a page or a range of lines, with its rev. |
+| `arc journal write <addr> [--title t] [--tags a,b] [--if-rev r]` | Replace the page with the standard input. Create it if it does not exist. |
+| `arc journal append <addr> <text>` | Add text to the end of the page. |
+| `arc journal edit <addr> --if-rev r --find s --replace t` | Replace one string in the page. |
+| `arc journal attach <addr> <file>` | Seal a file, upload it, and add it to the page. |
+| `arc journal fetch <addr> <name> [--output path]` | Download an attachment, and check it. |
+| `arc journal link <addr> <uri> [--name n] [--sha256 h]` | Record where a file lives. |
+| `arc journal kpi set <project>/<notebook> <key> <value> [--ref r] [--note n]` | Add a KPI record. |
+| `arc journal kpi log <project>/<notebook> <key>` | Show the records of one key. |
+| `arc journal kpi latest <project>/<notebook>` | Show the last value of each key. |
+| `arc journal search <query> [--project p] [--notebook n]` | Search the pages. |
+| `arc journal history <addr>` | List the revisions of a page. |
+| `arc journal import <provider>` | Copy a journal from a provider of the earlier design. |
 
 Output rules:
 
-- Every response is small by default. `ls` returns the address and the title.
+- Every answer is short by default. `ls` returns the address and the title.
   `search` returns the address, the score, and one matching line.
-- If the caller wants more, the caller calls `read` with a line range.
-- Errors are one word, then optional detail: `forbidden`, `conflict`,
-  `not_found`, `too_large`, `invalid_address`, `invalid_number`,
-  `unknown_command`. The ARC CLI prefixes them with `error:` on display.
+- To see more, the owner calls `read` with a range of lines.
 
-## 11. Wire format
+## 16. Where the client lives
 
-The ARC exec runtime sends one JSON object per line on stdin:
+The journal logic runs in `arc`, not in the provider. A manifest template
+cannot derive a key, sync a log, or rank search results. `arc journal` is
+therefore a command group of `arc` itself, like `arc cache` and `arc update`.
 
-```json
-{"op":"request","message":"<command line>","from":"<hex pubkey>","meta":{},"request_id":"..."}
-```
+The client code lives in the `journal` package, so another program can import
+it. The provider manifest still announces the capability, so `arc discover`
+finds the provider. `journal` is a reserved command name, so an install cannot
+take it.
 
-The first line of `message` is the command line. Any text after the first
-newline is the request body. `write` stores it as the page body, byte for
-byte, when the command line has no `--body`. A request that sets both is
-rejected with `invalid_arguments`. The ARC CLI builds this shape from
-`input.source: "stdin"`: it renders the header from the parsed options and
-appends the standard input after a newline, so the body never touches the
-shell's argument limit.
+## 17. Limits
 
-The manifest renders every free-text option (`--body`, `--title`, `--tags`,
-`--if-rev`, `--find`, `--replace`, `--note`) and the free-text positionals
-(`append` text, `search` query) with the `{{key|json}}` template filter, so
-the value arrives as a JSON string literal and the journal decodes it.
-Quotes, newlines, and ` --words` inside a value survive unchanged. An absent
-option renders as the bare word `null`, which the journal treats as not
-given. Positionals end at the first `--flag` that stands at a token
-boundary. Other quoted values run to the last quote before the next
-` --flag` or the end of input. The journal stores every value exactly as
-decoded: a literal backslash followed by `n` stays two characters. The
-journal replies with one JSON object per line on stdout:
+| Limit | Value | Reason |
+| --- | --- | --- |
+| Request or reply | under 1 MiB | The ARC client refuses a larger request body. |
+| Page body | 512 KiB of plain text | A sealed page, as base64 in an entry, stays under 1 MiB. |
+| Blob chunk | 512 KiB of sealed bytes | One chunk, as base64, stays under 1 MiB. |
+| Attachment | 16 MiB of plain bytes | A storage budget, not a transport limit. |
+| `since` answer | 1,000 lines | A bound on one reply. |
+| `append` attempts | 3 | A bound on the retry after `conflict`. |
+| Quota | 1 GiB for each owner, by default | Set by the operator in `max_bytes`. |
 
-```json
-{"op":"reply","request_id":"...","reply":"<text>"}
-{"op":"error","request_id":"...","error":"<word> <detail>"}
-```
+## 18. Moving from the earlier design
 
-## 12. Runtime
+`arc journal import <provider>` copies a journal from a provider of the
+earlier design:
 
-- Language: Go. The bundle at `cmd/journal-provider` holds the source, the manifest and the Arcfile.
-- `run.sh` builds the binary on first start and runs it. Build output goes to
-  stderr so stdout stays a clean JSON stream.
-- One goroutine runs the index job and the push job. The stdio loop runs
-  in the main process.
-- The journal shells out to `git` and `qmd`. `git` must be on `PATH`. If
-  `qmd` is absent, `search` returns `search_unavailable` and all else works.
-- The data repo sets `core.hooksPath` to `/dev/null`, so global git hooks
-  never run on journal commits.
-- Configuration comes from environment variables:
-  - `JOURNAL_ROOT`: data directory. Default `~/.arc/journal`.
-  - `JOURNAL_REMOTE`: git remote URL. If set, the push job pushes after each
-    commit with a 30 second debounce.
+1. The client lists every page that the owner can read, with `ls`.
+2. For each page, the client reads the current text and writes it as the first
+   revision of a new page stream.
+3. For each notebook, the client reads each KPI key with `kpi log`, and adds
+   the records in order.
+4. For each attachment, the client fetches the bytes, seals them, and uploads
+   them.
 
-## 13. Backup
+The import does not copy history. The earlier provider returns the current
+text of a page only, so each page starts with one revision.
 
-- If `JOURNAL_REMOTE` is set, the git repository is the backup for pages and
-  KPIs.
-- Blobs are not in git. v1 does not back up blobs. A later version adds an
-  S3 sync.
-- To restore: clone the remote into `JOURNAL_ROOT/repo`, then start the
-  provider. The index rebuilds on first start.
+A project of the earlier design can have more than one reader. The import
+copies such a project into the private journal of the owner who runs it. The
+other readers keep their own copies on the earlier provider.
 
-## 14. Non-goals for v1
+The earlier provider returns an attachment in one reply, as base64. An
+attachment of 16 MiB becomes a reply of about 21.4 MiB. The import fails for
+such an attachment if the relay caps frames below that size.
 
-- Two hosts that serve one journal.
-- Public read access.
-- Rich text or a web UI.
-- Attachments larger than 16 MiB.
-- Deleting pages. Use `write` with an empty body and a `deleted: true` tag.
+The import leaves the earlier provider unchanged.
 
-## 15. Resolved questions
+## 19. Open questions
 
-- The ARC exec port once cut provider reply lines at 1 MB, which set the
-  attachment cap at 512 KiB so a base64 `fetch` reply would fit. The exec
-  port now joins stdout chunks up to 64 MiB per line. The attachment cap is
-  16 MiB and follows the storage budget, see section 8.
-- Template inputs escape values with the `{{key|json}}` filter, so a value
-  may contain quotes, newlines, and ` --flag`-like words without being cut.
-  The `write` body travels as the request body after the header line
-  (`input.source: "stdin"`), so its size limit is the provider's, not the
-  shell's argument limit. Short bodies may still use `--body <json string>`.
-
-## 16. Verified
-
-Run end to end on 2026-09-11 through a local relay: install as a second key,
-write, kpi set, read with KPI injection, ls, link, append, history, search
-through qmd, ACL denial for a third key, ACL grant, and read after grant.
+- Hard deletion. An owner can ask the provider to erase every entry and blob
+  of their journal. The design does not define this command yet.
+- A sealed search index on disk, when a journal grows past a few thousand
+  pages.
+- Backup of the provider itself. Each synced client holds a full copy, so the
+  design adds no separate backup.
