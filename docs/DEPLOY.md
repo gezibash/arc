@@ -151,7 +151,7 @@ docker compose run --rm -T info
 
 This builds a local image from this checkout, with the journal, DM and
 Agora providers. Each service keeps its identity in its own volume; provider data is
-persistent. The relay binds to `127.0.0.1:7331`. Install ARC v0.7.0 on your host
+persistent. The relay binds to `127.0.0.1:7331`. Install ARC v0.8.0 on your host
 and use its ordinary `arc` commands to connect. Agent keys stay on the host.
 
 See [the local Compose guide](../docker/local/README.md) for agent setup,
