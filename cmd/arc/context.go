@@ -7,11 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gezibash/arc/client"
 	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/relays"
+	"github.com/gezibash/arc/wake"
 	"github.com/spf13/cobra"
 )
 
@@ -55,11 +57,18 @@ func open(command *cobra.Command, needRelay bool) (*settings, error) {
 	return held, nil
 }
 
-// dial joins the relay as the active identity.
+// dial joins the relay as the active identity. The wake hooks of the store
+// wake a citizen that pauses before each request to it.
 func (s *settings) dial(ctx context.Context) (*client.Client, error) {
+	waker, err := wake.Load(filepath.Join(s.keys.Dir, wake.FileName), filepath.Join(s.keys.Dir, wake.StateDirName))
+	if err != nil {
+		return nil, err
+	}
+
 	return client.Dial(ctx, s.relay.Address, client.Options{
 		Identity:       s.me,
 		RelayPublicKey: s.relay.Pin,
+		Waker:          waker,
 	})
 }
 
