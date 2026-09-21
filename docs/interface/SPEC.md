@@ -10,7 +10,7 @@ A capability tells `arc` which commands it adds, and what each command does.
 The capability says this in its manifest. The manifest names primitives, and
 core runs them. The manifest holds no code.
 
-Two rules follow:
+Three rules follow:
 
 - **A new capability needs a manifest, and nothing in core.** The primitives
   are the same for every capability. A journal, a board, and a file store are
@@ -18,6 +18,10 @@ Two rules follow:
 - **A manifest cannot make a citizen's key do anything outside the
   primitives.** Core owns every primitive. A provider cannot run code on the
   caller's machine.
+- **Where Nostr has a standard, ARC uses it.** A journal page is a NIP-37
+  draft of a NIP-23 article, a direct message is NIP-17, and a board is a
+  NIP-29 group. A Nostr client that knows these NIPs opens ARC data. ARC
+  defines its own kinds only where no NIP fits.
 
 This interface runs on the delivery layer of docs/delivery/SPEC.md. Every
 datum is a signed event, so signing and verification are not primitives: the
@@ -41,10 +45,11 @@ author.
 | manifest | The JSON document that defines a capability. |
 | author | The citizen who signs the announcement of a manifest. For a service, this is the provider. |
 | command | One entry that the manifest adds to `arc`. |
-| action | What a command does: call, publish, query, or watch. |
+| action | What a command does: call, publish, delete, query, or watch. |
 | record | One item that the output pipeline works on. |
 | pipeline | The output primitives of a command, in their fixed order. |
 | kind name | A name that a manifest gives to one event kind, in its `kinds` section. |
+| draft | A NIP-37 draft wrap: an event of kind 31234 whose content is another event, sealed to its author. |
 
 ## 4. The manifest
 
@@ -56,8 +61,7 @@ author.
   "summary": "A private notebook, sealed to your own key.",
   "shape": "data",
   "kinds": {
-    "head": {"kind": 30078, "visibility": "sealed"},
-    "part": {"kind": 3275, "visibility": "sealed"}
+    "page": {"kind": 30023, "visibility": "sealed"}
   },
   "formats": { },
   "commands": [ ]
@@ -71,24 +75,42 @@ author.
 | `title`, `summary` | Shown by `discover` and at install. |
 | `shape` | `service` or `data`. |
 | `kinds` | Every kind that the commands publish or read, by name. See 4.1. |
-| `service` | For a service: the default method, path, and body limit. See 4.2. |
+| `group` | For a capability with group kinds: the relay that hosts the group, and the group id. See 4.2. |
+| `service` | For a service: the default method, path, and body limit. See 4.3. |
 | `formats` | Named ways to show records. See section 10. |
-| `commands` | The commands. See 4.3. |
+| `commands` | The commands. See 4.4. |
 
-### 4.1 Kinds
+### 4.1 Kinds and visibility
 
-Each entry names one event kind and its visibility:
+Each entry names one event kind and its visibility. The visibility decides the
+NIP that carries the event, and the relays that it goes to. A manifest never
+names relays.
 
-| Visibility | Meaning |
-| --- | --- |
-| `public` | The content is readable by everyone. |
-| `sealed` | The content is sealed to the author's own key with NIP-44. The event is signed and public; its content is not. |
-| `private` | The event is a rumor inside a gift wrap, for named recipients, as NIP-59 defines. The mail layer carries it. |
+| Visibility | Carried as | Goes to |
+| --- | --- | --- |
+| `public` | The event itself, as its NIP defines. | The citizen's NIP-65 write relays. |
+| `sealed` | A NIP-37 draft. The event is sealed to the citizen's own key with NIP-44, and the draft carries `["-"]`, the NIP-70 tag, so only the citizen can publish it to a relay. | The relays of the citizen's NIP-37 list, kind 10013. |
+| `private` | A rumor inside a NIP-59 gift wrap, through the mail layer. | Each recipient's NIP-17 list, kind 10050, and couriers. |
+| `group` | The event, with an `h` tag that names the group, and `["-"]`. | The relay of the group, see 4.2. |
 
 A command can publish only kinds that the manifest names here. Section 12
 lists the kinds that no manifest can name.
 
-### 4.2 Service
+A sealed kind is the kind of the event inside the draft. A journal page, for
+example, is a kind 30023 article inside a kind 31234 draft. The draft's `k`
+tag names 30023, as NIP-37 requires.
+
+### 4.2 Group
+
+```json
+"group": {"relay": "wss://board.example", "id": "agora"}
+```
+
+The group is a NIP-29 group. Its relay enforces who may post, and applies the
+moderation of the group's admins. The citizen who runs that relay can
+announce a different relay or id in a new version of the manifest.
+
+### 4.3 Service
 
 ```json
 "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576}
@@ -96,7 +118,7 @@ lists the kinds that no manifest can name.
 
 A command of a service can override the method and the path.
 
-### 4.3 Commands
+### 4.4 Commands
 
 ```json
 {
@@ -126,7 +148,8 @@ is the capability's name alone. Every command has exactly one action.
 | --- | --- |
 | `text` | Any text. A variadic text joins its words with one space. |
 | `integer` | A whole number. |
-| `key` | A citizen. Core resolves 64 hex characters, a petname of this machine, or an installed name, to a public key. |
+| `key` | A citizen. Core resolves 64 hex characters, an `npub` or `nprofile` of NIP-19, a NIP-05 name, a petname of this machine, or an installed name, to a public key. |
+| `event` | An event. Core resolves 64 hex characters, or a `note`, `nevent` or `naddr` of NIP-19. |
 | `file` | A local path that core reads. |
 | `path` | A local path that core writes to. It must not exist. |
 | `address` | Text that must match the argument's `pattern`. |
@@ -134,6 +157,10 @@ is the capability's name alone. Every command has exactly one action.
 | `stdin` | The standard input. A command has at most one. |
 
 An argument can set `"required": true`, and a `"default"`.
+
+Core shows keys as `npub` and events as `nevent`, as NIP-19 defines. It shows
+a citizen's name from their kind 0 profile when it holds one, and the petname
+otherwise.
 
 ## 6. Templates
 
@@ -146,8 +173,7 @@ to right.
 | `json` | The value as a JSON literal. An absent value is `null`. |
 | `hex` | The value as lower-case hex. |
 | `keyed:<purpose>` | An HMAC of the value, as 64 hex characters. See 6.1. |
-| `coord:<kind name>` | The coordinate of an addressable event of this citizen: `<kind>:<own public key>:<value>`. |
-| `event_author` | The author of the event whose ID is the value. Core reads the event from the store, then from the transports, and fails the command when it finds none. |
+| `event_author` | The author of the event that the value names. Core reads the event from the store, then from the transports, and fails the command when it finds none. |
 | `default:<text>` | The text, when the value is absent. |
 
 Each template also knows these names:
@@ -164,14 +190,16 @@ A keyed value names something without revealing it. A journal page, for
 example, is found by a keyed value of its address:
 
 ```text
-key   = HKDF-SHA256(ikm = seed, salt = "",
+key   = HKDF-SHA256(ikm = secret key, salt = "",
                     info = "arc-keyed-v1" || 0x00 || author || 0x00 || capability id || 0x00 || purpose,
                     length = 32)
 value = hex(HMAC-SHA256(key, input))
 ```
 
 The key depends on the author and the capability id. One capability therefore
-cannot compute the keyed values of another.
+cannot compute the keyed values of another. A citizen who signs through a
+NIP-46 remote signer does not hold the secret key: core then asks the signer
+for the HMAC, and fails the command when the signer cannot give it.
 
 ## 7. Actions
 
@@ -195,63 +223,86 @@ docs/delivery/SPEC.md section 11.4 defines.
 | `method`, `path` | Override the service defaults. |
 | `body` | A template, `{{stdin}}`, or `{{file}}` for a `file` argument. |
 
-The reply becomes one record. The output pipeline says how to read it.
+The reply becomes one record. A reply larger than one event travels as parts,
+as 7.2.2 defines.
 
 ### 7.2 publish
 
-`publish` makes one event, signs it, and sends it.
+`publish` makes one event, signs it, and sends it where its visibility says.
 
 ```json
 "publish": {
-  "kind": "head",
+  "kind": "page",
   "d": "{{address|keyed:page}}",
-  "content": {"json": {"address": "{{address}}", "title": "{{title}}"}},
-  "tags": [["t", "journal"]],
-  "parts": {"kind": "part", "from": "{{stdin}}", "size": 32768, "max": 256},
-  "to": ["{{recipient}}"],
-  "relays": "own"
+  "content": "{{body}}",
+  "tags": [["title", "{{title}}"]],
+  "revise": "replace",
+  "to": ["{{recipient}}"]
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | A kind name from `kinds`. The visibility comes from there. |
-| `d` | For an addressable kind, the `d` tag. |
-| `content` | A template for text, or `{"json": ...}` for an object whose values are templates. |
-| `tags` | Tags, whose values are templates. |
-| `parts` | Split a large body into part events. See 7.2.1. |
-| `to` | For a private kind: the recipients, as `key` arguments. The author keeps a copy in its own seal. |
-| `relays` | `own`, the citizen's relays, or `author`, the relays that the capability's author lists in NIP-65. Private events also go to each recipient's NIP-17 relay list. |
+| `kind` | A kind name from `kinds`. |
+| `d` | For an addressable kind, or for any sealed kind, the `d` tag. For a sealed kind, the draft carries it. |
+| `content` | A template for text, or `{"json": ...}` for an object whose values are templates. A `stdin` or `file` argument can supply it. |
+| `tags` | Tags, whose values are templates. A tag whose value is empty is left out. |
+| `revise` | For a sealed kind: `replace` or `append`. See 7.2.1. |
+| `to` | For a private kind: the recipients, as `key` arguments. |
 
-A private event goes through the mail layer. It waits in the outbox, travels
-with couriers, and is acknowledged, as docs/delivery/SPEC.md section 10
-defines.
+#### 7.2.1 Revisions of a sealed event
 
-#### 7.2.1 Parts
+A sealed event is a NIP-37 draft, so it can change. Each publish of a draft
+also publishes a checkpoint, kind 1234, whose `a` tag names the draft and whose
+content is that revision, sealed to the citizen. The checkpoints are the
+history of the draft, as NIP-37 defines.
 
-A relay caps the size of one event, so a large body travels as parts:
+- `replace` makes the new content the whole of the event.
+- `append` reads the current draft, adds the new content at its end, and
+  publishes the result. It reads from the store first, then from the relays of
+  the citizen's NIP-37 list.
 
-1. Core reads the body a part at a time, and cuts each part at a line end, at
-   most `size` bytes. A line longer than a part is cut inside the line.
-2. Core publishes each part as an event of the part kind, with an `a` tag that
-   names the coordinate of the main event.
-3. Core publishes the main event last. Its content gains a field `parts`: the
-   IDs of the parts, in order, with the bytes and lines of each.
+#### 7.2.2 Content larger than one event
 
-A reader therefore never sees a main event whose parts were not sent. The
-default `size` is 32768, so a sealed part stays under the 64 KiB limit of
-common relays. The default `max` is 256 parts.
+A relay caps the size of one event. Content of at most 32 KiB travels inside
+the event itself, so a Nostr client reads it whole. Longer content travels in
+parts:
 
-### 7.3 query
+1. The event holds the first 32 KiB, cut at a line end.
+2. Core publishes the rest in parts of at most 32 KiB, as events of kind 3275.
+   Each part is sealed to the citizen, carries `["-"]`, and names the event's
+   coordinate or ID in its `a` or `e` tag.
+3. The event gains a tag `parts` that lists the IDs of the parts in order.
+   Core publishes the parts first, and the event last.
+
+A Nostr client that does not know kind 3275 reads the first 32 KiB. A page of
+at most 32 KiB is therefore a plain NIP-37 draft. A body holds at most 256
+parts.
+
+### 7.3 delete
+
+`delete` asks relays to remove events, as NIP-09 defines. It can name only the
+citizen's own events of kinds that the manifest names.
+
+```json
+"delete": {"kind": "page", "d": "{{address|keyed:page}}"}
+```
+
+For a sealed kind, core publishes the draft with blank content, which NIP-37
+reads as deleted. It then publishes a kind 5 request with an `a` tag for the
+draft, `e` tags for its checkpoints and parts, and a `k` tag for each kind. A
+relay therefore drops every version, as NIP-09 defines.
+
+### 7.4 query
 
 `query` reads events from the store, and first asks the transports for any
 that the store lacks.
 
 ```json
 "query": {
-  "kinds": ["head"],
+  "kinds": ["page"],
   "authors": "me",
-  "tags": {"d": "{{address|keyed:page}}"},
+  "d": "{{address|keyed:page}}",
   "limit": 1
 }
 ```
@@ -260,16 +311,21 @@ that the store lacks.
 | --- | --- |
 | `kinds` | Kind names from `kinds`. |
 | `authors` | `me`, `author`, `any`, or a template that names a `key` argument. |
-| `tags` | Tag filters, whose values are templates. An empty value drops the filter. |
-| `ids` | A template that names event IDs. |
+| `d` | The `d` tag, or for a sealed kind, the `d` tag of the draft. |
+| `tags` | Other tag filters, whose values are templates. An empty value drops the filter. |
+| `ids` | A template that names events. |
+| `history` | For a sealed kind: read the checkpoints of the draft, oldest first, instead of the draft. |
 | `since`, `until`, `limit` | As NIP-01 defines. |
 
-Each value in a query can be a template.
+Each value can be a template. A query asks every relay that the visibility
+names, and keeps the newest version of each replaceable event, as NIP-01
+defines. The store never goes back to an older version that it has seen.
 
+A query of a sealed kind reads the drafts, and filters them by their `k` tag.
 A query of a private kind reads the messages that this citizen received and
 sent, from their seals.
 
-### 7.4 watch
+### 7.5 watch
 
 `watch` is a query that stays open. It runs the pipeline on each event that
 matches, first on the stored events, then on each new one as it arrives. It
@@ -289,9 +345,10 @@ fields:
 | `tags` | The first value of each tag, by tag name. |
 | `content` | The content, after `open`. |
 
-`open` adds the fields of parsed content. `join` adds `text`. A reply to a call
-becomes one record whose `content` is the reply, and whose `error` is set when
-the provider refused.
+For a sealed kind, the record is the event inside the draft. `open` adds the
+fields of parsed content. `join` puts the whole content in `text`. A reply to a
+call becomes one record whose `content` is the reply, and whose `error` is set
+when the provider refused.
 
 ## 9. The output pipeline
 
@@ -300,19 +357,20 @@ the order in the manifest:
 
 | Order | Primitive | What it does |
 | --- | --- | --- |
-| 1 | `open` | Opens sealed content and private events, and parses content as `text`, `json`, or `frontmatter` into fields. |
-| 2 | `join` | Joins the parts of each record into `text`. See 9.1. |
+| 1 | `open` | Opens drafts and private events, and parses content as `text`, `json`, or `frontmatter` into fields. |
+| 2 | `join` | Puts the whole content of each record in `text`, parts included. See 9.1. |
 | 3 | `where` | Keeps records whose fields match. |
 | 4 | `latest` | Keeps the newest record for each value of a field. |
 | 5 | `rank` | Orders records by BM25 against a query, over named fields. |
 | 6 | `thread` | Orders records as replies, by a field that names the parent. |
 | 7 | `sort`, `limit` | Orders by a field, and cuts. |
-| 8 | `save` | Writes a field to a `path` argument, instead of showing it. |
-| 9 | `format` | Shows each record with a named format, see section 10. |
+| 8 | `tail` | In a watch: shows only what each new version adds. See 9.3. |
+| 9 | `save` | Writes a field to a `path` argument, instead of showing it. |
+| 10 | `format` | Shows each record with a named format, see section 10. |
 
 ```json
 "output": {
-  "open": {"parse": "json"},
+  "open": {"parse": "text"},
   "join": {"lines": "{{lines}}"},
   "format": "page"
 }
@@ -320,13 +378,9 @@ the order in the manifest:
 
 ### 9.1 join
 
-`join` needs records with a `parts` field. For each record, it:
-
-1. Fetches the listed parts from the store, then from the transports.
-2. Adds each part that names the record's coordinate in its `a` tag, and is
-   newer than the record, in time order. An append therefore needs no rewrite
-   of the main event.
-3. Opens each part, and writes its text in order.
+For each record, `join` writes the content inside the event, then the content
+of each part that its `parts` tag lists, in order. It fetches the parts from
+the store, then from the transports.
 
 If a listed part is missing, `join` stops after the text before it, and
 reports the missing part. With `lines`, `join` fetches only the parts that hold
@@ -336,7 +390,7 @@ part as it arrives.
 ### 9.2 where, latest, rank, thread, sort
 
 ```json
-"where":  [{"field": "address", "prefix": "{{path}}"}, {"field": "tags.t", "lacks": "deleted"}],
+"where":  [{"field": "tags.t", "lacks": "deleted"}, {"field": "address", "prefix": "{{path}}"}],
 "latest": {"by": "key"},
 "rank":   {"query": "{{query}}", "fields": ["title", "text"], "limit": 20},
 "thread": {"parent": "tags.e"},
@@ -344,10 +398,18 @@ part as it arrives.
 ```
 
 A condition whose value template is empty is dropped, so an optional argument
-can narrow a query or leave it whole.
+can narrow a query or leave it whole. `any` holds conditions of which one must
+match.
 
 `rank` uses BM25 with `k1 = 1.2` and `b = 0.75`, over lower-case runs of
 Unicode letters and digits. It adds a field `score`.
+
+### 9.3 tail
+
+In a watch, `tail` compares each new version of a record with the version
+that it showed before. When the new text starts with the old text, `tail`
+shows only what follows it. Otherwise it shows a line that says the record was
+rewritten, and then the whole new text.
 
 ## 10. Formats
 
@@ -368,8 +430,9 @@ A format renders records as text:
 | `empty` | Shown when there is no record. |
 | `table` | Shows a record's rows as aligned columns, instead of `record`. |
 
-Format templates have these helpers: `time`, `date`, `petname`, `short`,
-`indent`, `truncate:n`, and `default:<text>`.
+Format templates have these helpers: `time`, `date`, `name`, `npub`, `nevent`,
+`short`, `indent`, `truncate:n`, and `default:<text>`. `name` shows a citizen's
+profile name, or their petname.
 
 Core removes every control character except newline and tab from each value
 before it shows it. A value from an event cannot move the cursor, or change
@@ -380,30 +443,36 @@ the terminal.
 | Flag | Meaning |
 | --- | --- |
 | `--json` | Writes each record as one JSON object on one line, after the pipeline and before `format`. Agents read this. |
-| `--dry-run` | For `publish`: writes each event that core would sign, and signs nothing. |
+| `--dry-run` | For `publish` and `delete`: writes each event that core would sign, and signs nothing. |
 | `--later` | For a live `call`: waits in the outbox instead. |
 
 ## 12. Security
 
 **Install shows what a capability can do.** Before a citizen trusts a
-capability, `arc install` shows its author, its shape, and each kind that it
-publishes, with the visibility of each. A capability that publishes a public
-kind can publish under the citizen's name, and the install says so.
+capability, `arc install` shows its author, its shape, each kind that it
+publishes with its visibility, and its group relay if it has one. A capability
+that publishes a public or group kind can post under the citizen's name, and
+the install says so.
 
-**Some kinds are reserved.** No manifest can name these kinds, because they
-speak for the citizen's identity, or move its control:
+**Some kinds are reserved.** No manifest can name these kinds. They speak for
+the citizen's identity, or core makes them itself:
 
 | Kind | Why |
 | --- | --- |
 | 0, 3 | Profile and follows. |
-| 5 | Deletion of other events. |
-| 13, 1059, 21059 | Seals and gift wraps. Only the mail layer makes them. |
-| 3272, 3273, 3274 | Calls and acknowledgements. Only core makes them. |
+| 5 | Deletion. Core makes it, for `delete` only. |
+| 13, 1059, 21059 | Seals and gift wraps. The mail layer makes them. |
+| 62 | Request to vanish. |
+| 1234, 31234, 3275 | Checkpoints, drafts, and parts. Core makes them for sealed kinds. |
+| 3272, 3273, 3274 | Calls and acknowledgements. Core makes them. |
 | 9734, 9735 | Zaps. |
-| 10002, 10050 | Relay lists. |
+| 10002, 10013, 10050 | Relay lists. |
 | 10272, 30272 | Migration records and announcements. |
 | 13194, 23194, 23195 | Wallet connect. |
 | 22242, 24133, 27235 | Authentication and remote signing. |
+
+The kinds 9000 to 9020, which NIP-29 defines for moderation, can have only the
+visibility `group`. The group's relay decides whether the citizen may act.
 
 **Recipients come from the citizen.** A private event goes only to keys that
 the citizen typed as `key` arguments, and to the citizen's own seal. No value
@@ -413,12 +482,26 @@ from an event or a reply can add a recipient.
 its path as a `file` argument. Core writes a file only to a `path` argument
 that does not exist, and never replaces a file.
 
+**Sealed data stays with its author.** Every draft, checkpoint and part
+carries the NIP-70 tag, so a relay accepts it only from its author after NIP-42
+authentication. Nobody else can publish an old version of it again.
+
 **Keyed values stay inside a capability.** See 6.1.
 
 **A reply is data.** Core never runs, opens, or follows what a reply or an
 event holds.
 
-## 13. Install and dispatch
+## 13. Keys
+
+A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
+
+| Source | Meaning |
+| --- | --- |
+| `nsec` | The secret key, in a file that only its owner can read. |
+| `ncryptsec` | The secret key, encrypted with a passphrase. Core asks for the passphrase. |
+| `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
+
+## 14. Install and dispatch
 
 `arc install <author> [capability]` reads the announcement, verifies it, shows
 what section 12 requires, and asks the citizen once. The capability's name is
@@ -429,29 +512,30 @@ with the longest matching path, and runs it. `arc help <name>` lists the
 commands.
 
 A new version of a manifest replaces the old one when its author announces
-it. If the new version publishes a kind that the old one did not, or makes a
-kind more visible, core asks the citizen again before it runs a command.
+it. If the new version publishes a kind that the old one did not, makes a kind
+more visible, or names another group relay, core asks the citizen again before
+it runs a command.
 
-## 14. Versions
+## 15. Versions
 
 This interface is version 1. Core refuses a manifest of a later version, and
 says which version it would need. A new primitive, or a new field with a new
 meaning, comes in a new version. The older stack's interfaces, versions 1 to
 4, do not run on the delivery layer.
 
-## 15. What leaves core
+## 16. What leaves core
 
 | Today | In version 1 |
 | --- | --- |
-| The `journal` package | The journal manifest, over `publish`, `query`, `watch`, parts and `join`. |
-| The direct-message renderers and cache in `toolbox` | The dm manifest, over private kinds and the mail layer. |
-| The `agora` input source | The agora manifest, over public kinds 11 and 1111. |
-| The `private_file` and `sealed_file` inputs | The files manifest, over sealed parts. |
+| The `journal` package | The journal manifest: NIP-37 drafts of NIP-23 articles. |
+| The direct-message renderers and cache in `toolbox` | The dm manifest: NIP-17. |
+| The `agora` input source | The agora manifest: a NIP-29 group, with NIP-7D threads and NIP-22 comments. |
+| The `private_file` and `sealed_file` inputs | The files manifest: NIP-37 drafts of NIP-94 file metadata. |
 | The `seal`, `pubkey` and `shell` filters | `key` arguments, private kinds, and `json`. |
 
-## 16. The capabilities in version 1
+## 17. The capabilities in version 1
 
-### 16.1 exec
+### 17.1 exec
 
 ```json
 {
@@ -480,7 +564,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 }
 ```
 
-### 16.2 sqlite
+### 17.2 sqlite
 
 ```json
 {
@@ -498,7 +582,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 }
 ```
 
-### 16.3 releases
+### 17.3 releases
 
 ```json
 {
@@ -519,25 +603,31 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 `arc update` keeps calling the releases provider itself, because it replaces
 `arc` and verifies what it installs.
 
-### 16.4 journal
+### 17.4 journal
 
-A page is a head of kind 30078 and parts of kind 3275, all sealed to the
-owner. An append is one more part. A KPI record is an event of kind 3276.
+A page is a NIP-23 article, kind 30023, inside a NIP-37 draft. The article's
+`d` tag is the page address, sealed inside the draft; the draft's `d` tag is a
+keyed value of the address. A client that knows NIP-37 opens the page as a
+draft article. The checkpoints of the draft are the history of the page.
+
+A KPI series is one draft per notebook and key, around an event of kind 30078,
+which NIP-78 defines for the data of one application. The draft holds the
+latest value, and its checkpoints hold every value before it.
 
 ```json
 {
   "interface": 1, "id": "journal", "shape": "data",
   "title": "Journal", "summary": "A private notebook, sealed to your own key.",
   "kinds": {
-    "head": {"kind": 30078, "visibility": "sealed"},
-    "part": {"kind": 3275, "visibility": "sealed"},
-    "kpi":  {"kind": 3276, "visibility": "sealed"}
+    "page": {"kind": 30023, "visibility": "sealed"},
+    "kpi":  {"kind": 30078, "visibility": "sealed"}
   },
   "formats": {
-    "page": {"record": "{{text}}"},
-    "list": {"record": "{{address}}\t{{title}}\t{{created|date}}", "empty": "no pages"},
-    "hits": {"record": "{{address}}\t{{score}}\t{{title}}", "empty": "no results"},
-    "kpi":  {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
+    "page":    {"record": "{{text}}"},
+    "list":    {"record": "{{tags.d}}\t{{tags.title}}\t{{created|date}}", "empty": "no pages"},
+    "hits":    {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}", "empty": "no results"},
+    "history": {"record": "{{created|time}}\t{{text|truncate:80}}", "empty": "no revisions"},
+    "kpi":     {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
   },
   "commands": [
     {"path": ["write"], "summary": "Replace a page with the standard input",
@@ -545,52 +635,66 @@ owner. An append is one more part. A KPI record is an event of kind 3276.
                "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"},
               {"name": "title", "kind": "option", "type": "text"},
               {"name": "body", "kind": "positional", "type": "stdin"}],
-     "action": {"publish": {"kind": "head", "d": "{{address|keyed:page}}",
-                            "content": {"json": {"address": "{{address}}", "title": "{{title}}"}},
-                            "parts": {"kind": "part", "from": "{{body}}"}}}},
+     "action": {"publish": {"kind": "page", "d": "{{address|keyed:page}}", "revise": "replace", "content": "{{body}}",
+                            "tags": [["d", "{{address}}"], ["title", "{{title}}"]]}}},
     {"path": ["append"], "summary": "Add text to the end of a page",
      "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
                "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"},
               {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "part", "content": "{{text}}\n",
-                            "tags": [["a", "{{address|keyed:page|coord:head}}"]]}}},
+     "action": {"publish": {"kind": "page", "d": "{{address|keyed:page}}", "revise": "append", "content": "{{text}}\n",
+                            "tags": [["d", "{{address}}"]]}}},
     {"path": ["read"], "summary": "Show a page, or a range of its lines",
      "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
                "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"},
               {"name": "lines", "kind": "option", "type": "lines"}],
-     "action": {"query": {"kinds": ["head"], "authors": "me", "tags": {"d": "{{address|keyed:page}}"}, "limit": 1}},
-     "output": {"open": {"parse": "json"}, "join": {"lines": "{{lines}}"}, "format": "page"}},
+     "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "limit": 1}},
+     "output": {"open": {"parse": "text"}, "join": {"lines": "{{lines}}"}, "format": "page"}},
     {"path": ["tail"], "summary": "Show each text as it is appended",
      "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
                "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"}],
-     "action": {"watch": {"kinds": ["part"], "authors": "me", "tags": {"a": "{{address|keyed:page|coord:head}}"}}},
-     "output": {"open": {"parse": "text"}, "format": "page"}},
+     "action": {"watch": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
+     "output": {"open": {"parse": "text"}, "join": {}, "tail": {}, "format": "page"}},
+    {"path": ["history"], "summary": "List the revisions of a page",
+     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
+               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"}],
+     "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
+     "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}},
     {"path": ["ls"], "summary": "List the pages",
      "args": [{"name": "prefix", "kind": "positional", "type": "text"}],
-     "action": {"query": {"kinds": ["head"], "authors": "me"}},
-     "output": {"open": {"parse": "json"}, "where": [{"field": "address", "prefix": "{{prefix}}"}],
-                "sort": {"field": "address", "order": "asc"}, "format": "list"}},
+     "action": {"query": {"kinds": ["page"], "authors": "me"}},
+     "output": {"open": {"parse": "text"}, "where": [{"field": "tags.d", "prefix": "{{prefix}}"}],
+                "sort": {"field": "tags.d", "order": "asc"}, "format": "list"}},
     {"path": ["search"], "summary": "Search the pages",
      "args": [{"name": "query", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"query": {"kinds": ["head"], "authors": "me"}},
-     "output": {"open": {"parse": "json"}, "join": {},
-                "rank": {"query": "{{query}}", "fields": ["title", "text"], "limit": 20}, "format": "hits"}},
+     "action": {"query": {"kinds": ["page"], "authors": "me"}},
+     "output": {"open": {"parse": "text"}, "join": {},
+                "rank": {"query": "{{query}}", "fields": ["tags.title", "text"], "limit": 20}, "format": "hits"}},
+    {"path": ["delete"], "summary": "Delete a page and its history",
+     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
+               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"}],
+     "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}},
     {"path": ["kpi", "set"], "summary": "Record one measured value",
      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true},
               {"name": "key", "kind": "positional", "type": "text", "required": true},
               {"name": "value", "kind": "positional", "type": "text", "required": true},
               {"name": "note", "kind": "option", "type": "text"}],
-     "action": {"publish": {"kind": "kpi", "tags": [["k", "{{notebook|keyed:kpi}}"]],
+     "action": {"publish": {"kind": "kpi", "d": "{{notebook|keyed:kpi}}{{key|keyed:kpi}}", "revise": "replace",
+                            "tags": [["d", "{{key}}"], ["notebook", "{{notebook}}"]],
                             "content": {"json": {"key": "{{key}}", "value": "{{value}}", "note": "{{note}}"}}}}},
     {"path": ["kpi", "latest"], "summary": "Show the last value of each key",
      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
-     "action": {"query": {"kinds": ["kpi"], "authors": "me", "tags": {"k": "{{notebook|keyed:kpi}}"}}},
-     "output": {"open": {"parse": "json"}, "latest": {"by": "key"}, "format": "kpi"}}
+     "action": {"query": {"kinds": ["kpi"], "authors": "me"}},
+     "output": {"open": {"parse": "json"}, "where": [{"field": "tags.notebook", "is": "{{notebook}}"}], "format": "kpi"}},
+    {"path": ["kpi", "log"], "summary": "Show every value of one key",
+     "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true},
+              {"name": "key", "kind": "positional", "type": "text", "required": true}],
+     "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook|keyed:kpi}}{{key|keyed:kpi}}", "history": true}},
+     "output": {"open": {"parse": "json"}, "format": "kpi"}}
   ]
 }
 ```
 
-### 16.5 dm
+### 17.5 dm
 
 ```json
 {
@@ -598,14 +702,13 @@ owner. An append is one more part. A KPI record is an event of kind 3276.
   "title": "Direct messages", "summary": "Private messages, as NIP-17 defines.",
   "kinds": {"message": {"kind": 14, "visibility": "private"}},
   "formats": {
-    "inbox": {"record": "{{created|time}}  {{author|petname}}\n{{content|indent}}", "empty": "no messages"}
+    "inbox": {"record": "{{created|time}}  {{author|name}}\n{{content|indent}}", "empty": "no messages"}
   },
   "commands": [
     {"path": ["send"], "summary": "Send a message",
      "args": [{"name": "to", "kind": "positional", "type": "key", "required": true},
               {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "message", "to": ["{{to}}"], "content": "{{text}}",
-                            "tags": [["p", "{{to}}"]]}}},
+     "action": {"publish": {"kind": "message", "to": ["{{to}}"], "content": "{{text}}", "tags": [["p", "{{to}}"]]}}},
     {"path": ["inbox"], "summary": "Show the messages you received",
      "action": {"query": {"kinds": ["message"], "authors": "any"}},
      "output": {"open": {"parse": "text"}, "where": [{"field": "author", "not": "{{me}}"}],
@@ -620,11 +723,12 @@ owner. An append is one more part. A KPI record is an event of kind 3276.
 }
 ```
 
-### 16.6 agora
+### 17.6 agora
 
-A board is one announcement. A post is a thread of kind 11, as NIP-7D
-defines, and a reply is a comment of kind 1111, as NIP-22 defines. Each names
-the board with an `a` tag, and goes to the relays of the board's author.
+A board is a NIP-29 group. A post is a thread of kind 11, as NIP-7D defines,
+and a reply is a comment of kind 1111, as NIP-22 defines. The group's relay
+decides who may post, and its admins moderate. Any client that knows NIP-29
+opens the board.
 
 A reply here answers the post itself, so the post is both the root and the
 parent. NIP-22 needs both scopes: `E`, `K` and `P` for the root, and `e`, `k`
@@ -634,95 +738,102 @@ and `p` for the parent.
 {
   "interface": 1, "id": "agora", "shape": "data",
   "title": "Agora", "summary": "A public board of signed posts and replies.",
+  "group": {"relay": "wss://board.example", "id": "agora"},
   "kinds": {
-    "post":  {"kind": 11, "visibility": "public"},
-    "reply": {"kind": 1111, "visibility": "public"}
+    "post":   {"kind": 11, "visibility": "group"},
+    "reply":  {"kind": 1111, "visibility": "group"},
+    "remove": {"kind": 9005, "visibility": "group"}
   },
   "formats": {
-    "feed": {"record": "{{id|short}}  {{author|petname}}  {{created|time}}\n{{content|truncate:240|indent}}", "empty": "no posts"}
+    "feed": {"record": "{{id|nevent}}  {{author|name}}  {{created|time}}\n{{tags.title}}\n{{content|truncate:240|indent}}", "empty": "no posts"}
   },
   "commands": [
     {"path": ["post"], "summary": "Publish one post",
-     "args": [{"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "post", "content": "{{text}}", "relays": "author",
-                            "tags": [["a", "30272:{{author}}:agora"]]}}},
-    {"path": ["reply"], "summary": "Reply to a post",
-     "args": [{"name": "root", "kind": "positional", "type": "text", "required": true},
+     "args": [{"name": "title", "kind": "option", "type": "text"},
               {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "reply", "content": "{{text}}", "relays": "author",
+     "action": {"publish": {"kind": "post", "content": "{{text}}", "tags": [["title", "{{title}}"]]}}},
+    {"path": ["reply"], "summary": "Reply to a post",
+     "args": [{"name": "root", "kind": "positional", "type": "event", "required": true},
+              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"publish": {"kind": "reply", "content": "{{text}}",
                             "tags": [["E", "{{root}}", "", "{{root|event_author}}"], ["K", "11"], ["P", "{{root|event_author}}"],
-                                     ["e", "{{root}}", "", "{{root|event_author}}"], ["k", "11"], ["p", "{{root|event_author}}"],
-                                     ["a", "30272:{{author}}:agora"]]}}},
+                                     ["e", "{{root}}", "", "{{root|event_author}}"], ["k", "11"], ["p", "{{root|event_author}}"]]}}},
     {"path": ["feed"], "summary": "Show the newest posts",
      "args": [{"name": "limit", "kind": "option", "type": "integer", "default": "20"}],
-     "action": {"query": {"kinds": ["post"], "authors": "any", "tags": {"a": "30272:{{author}}:agora"}, "limit": "{{limit}}"}},
+     "action": {"query": {"kinds": ["post"], "authors": "any", "limit": "{{limit}}"}},
      "output": {"sort": {"field": "created", "order": "desc"}, "format": "feed"}},
     {"path": ["thread"], "summary": "Show the replies to a post",
-     "args": [{"name": "root", "kind": "positional", "type": "text", "required": true}],
+     "args": [{"name": "root", "kind": "positional", "type": "event", "required": true}],
      "action": {"query": {"kinds": ["reply"], "authors": "any", "tags": {"E": "{{root}}"}}},
-     "output": {"thread": {"parent": "tags.e"}, "format": "feed"}}
+     "output": {"thread": {"parent": "tags.e"}, "format": "feed"}},
+    {"path": ["remove"], "summary": "Remove a post from the board, if you are its admin",
+     "args": [{"name": "id", "kind": "positional", "type": "event", "required": true}],
+     "action": {"publish": {"kind": "remove", "tags": [["e", "{{id}}"]]}}}
   ]
 }
 ```
 
-### 16.7 files
+### 17.7 files
 
-A file is a head of kind 3277 and parts of kind 3275, all sealed to the owner.
-The head holds the name, the size, and the SHA-256 hash of the file.
+A file is a NIP-94 file metadata event, kind 1063, inside a NIP-37 draft. The
+metadata holds the name, the media type, the size, and the SHA-256 hash, in
+the tags that NIP-94 defines. The bytes travel as the content, and in parts
+past 32 KiB, as 7.2.2 defines.
 
 ```json
 {
   "interface": 1, "id": "files", "shape": "data",
   "title": "Files", "summary": "Private files, sealed to your own key.",
-  "kinds": {
-    "file": {"kind": 3277, "visibility": "sealed"},
-    "part": {"kind": 3275, "visibility": "sealed"}
-  },
+  "kinds": {"file": {"kind": 1063, "visibility": "sealed"}},
   "formats": {
-    "list": {"record": "{{id|short}}\t{{name}}\t{{size}} bytes\t{{created|date}}", "empty": "no files"},
-    "put":  {"record": "{{id}}"}
+    "list": {"record": "{{tags.d}}\t{{tags.alt}}\t{{tags.size}} bytes\t{{created|date}}", "empty": "no files"},
+    "put":  {"record": "{{tags.d}}"}
   },
   "commands": [
     {"path": ["put"], "summary": "Store a file",
      "args": [{"name": "file", "kind": "positional", "type": "file", "required": true}],
-     "action": {"publish": {"kind": "file",
-                            "content": {"json": {"name": "{{file.name}}", "size": "{{file.size}}", "sha256": "{{file.sha256}}"}},
-                            "parts": {"kind": "part", "from": "{{file}}", "size": 32768, "max": 256}}},
+     "action": {"publish": {"kind": "file", "d": "{{file.sha256}}", "revise": "replace", "content": "{{file}}",
+                            "tags": [["d", "{{file.sha256}}"], ["alt", "{{file.name}}"], ["m", "{{file.type}}"],
+                                     ["x", "{{file.sha256}}"], ["size", "{{file.size}}"]]}},
      "output": {"format": "put"}},
     {"path": ["list"], "summary": "List your files",
      "action": {"query": {"kinds": ["file"], "authors": "me"}},
-     "output": {"open": {"parse": "json"}, "sort": {"field": "created", "order": "desc"}, "format": "list"}},
+     "output": {"open": {"parse": "text"}, "sort": {"field": "created", "order": "desc"}, "format": "list"}},
     {"path": ["get"], "summary": "Write one file back to disk",
      "args": [{"name": "id", "kind": "positional", "type": "text", "required": true},
               {"name": "output", "kind": "option", "type": "path", "required": true}],
-     "action": {"query": {"kinds": ["file"], "authors": "me", "ids": "{{id}}"}},
-     "output": {"open": {"parse": "json"}, "join": {}, "save": {"field": "text", "to": "{{output}}", "sha256": "{{sha256}}"}}}
+     "action": {"query": {"kinds": ["file"], "authors": "me", "d": "{{id}}", "limit": 1}},
+     "output": {"open": {"parse": "text"}, "join": {}, "save": {"field": "text", "to": "{{output}}", "sha256": "{{tags.x}}"}}},
+    {"path": ["delete"], "summary": "Delete a file",
+     "args": [{"name": "id", "kind": "positional", "type": "text", "required": true}],
+     "action": {"delete": {"kind": "file", "d": "{{id}}"}}}
   ]
 }
 ```
 
-A `file` argument offers `name`, `size`, and `sha256` to templates. `save`
-checks the SHA-256 hash of what it writes against the head, and refuses a
-mismatch.
+A `file` argument offers `name`, `type`, `size`, and `sha256` to templates.
+Its bytes go into the content as base64. `save` decodes them, checks the
+SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 
-## 17. Phases
+## 18. Phases
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
-| A | The manifest reader, arguments, templates, `call`, and `format`. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
-| B | `publish` and `query` with public and sealed kinds, parts, `open`, `join`, `where`, `sort`, `save`. files and the journal in version 1. | A journal page and a file cross a relay and a USB stick, through manifests only. The `journal` package is gone. |
-| C | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-7D client. |
-| D | Install consent, reserved kinds, `--dry-run`, `--json`. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. |
+| A | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
+| B | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
+| C | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
+| D | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
 
-## 18. Open questions
+## 19. Limits of this design
 
-- **Rollback of sealed data.** A relay can serve an older head of a journal
-  page. Version 1 keeps the newest head that the store holds, and does not
-  detect an older one that a fresh machine sees first.
-- **Deletion.** A data capability cannot delete events, because kind 5 is
-  reserved. A later version can add a deletion that names only the
-  capability's own kinds.
-- **Board moderation.** An Agora board shows every post that names it. A
-  board author cannot remove a post yet.
-- **Large replies.** A call reply travels as one event. A reply larger than
-  the relay limit needs parts, as `publish` has.
+- **Parts are ARC's own.** No NIP carries private content larger than one
+  event. A Nostr client reads the first 32 KiB of a longer page, and no more.
+- **NIP-37 is a draft.** Like NIP-17, it can still change. ARC follows its
+  text as of this document.
+- **The `k` tag of a draft is public.** A relay learns that a draft holds an
+  article, a KPI series, or a file, but not its content or its address.
+- **Rollback on a fresh machine.** A query asks every relay of the citizen's
+  NIP-37 list, and keeps the newest version. If every relay serves an old
+  version, a machine that never saw the newer one cannot tell.
+- **Keyed values need the secret key, or a signer that computes them.** A NIP-46
+  signer that does not offer this cannot run a capability that uses `keyed`.
