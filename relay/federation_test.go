@@ -257,6 +257,25 @@ func TestAPacketCrossesOneLink(t *testing.T) {
 	}
 }
 
+// A partner opens its link again after the link breaks.
+func TestALinkComesBackAfterItBreaks(t *testing.T) {
+	relays := chain(t, 2)
+	dialer, answerer := relays[0], relays[1]
+
+	waitFor(t, "the link stands", func() bool {
+		return dialer.LinkTo(answerer.PublicKey()) != nil &&
+			answerer.LinkTo(dialer.PublicKey()) != nil
+	})
+
+	broken := dialer.LinkTo(answerer.PublicKey())
+	broken.Close()
+
+	waitFor(t, "the link stands again", func() bool {
+		held := dialer.LinkTo(answerer.PublicKey())
+		return held != nil && held != broken
+	})
+}
+
 // A citizen that shares only with its own relay stays there.
 func TestALocalCitizenStaysHome(t *testing.T) {
 	relays := chain(t, 2)
