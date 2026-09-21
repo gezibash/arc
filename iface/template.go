@@ -33,7 +33,7 @@ type filter struct {
 	arg  string
 }
 
-var placeholderName = regexp.MustCompile(`^[a-z_][a-z0-9_]*(\.[a-z0-9_]+)*$`)
+var placeholderName = regexp.MustCompile(`^[a-z_][a-z0-9_]*(\.[a-z0-9_]+)*(\+[a-z_][a-z0-9_]*(\.[a-z0-9_]+)*)*$`)
 
 // filters are the filters that a template can use, and whether each one
 // takes an argument.
@@ -65,8 +65,10 @@ func compile(text string, known func(string) bool) (*template, error) {
 		if err != nil {
 			return nil, err
 		}
-		if known != nil && !known(strings.SplitN(p.name, ".", 2)[0]) {
-			return nil, fmt.Errorf("the template names %q, which is not an argument", p.name)
+		for _, name := range strings.Split(p.name, "+") {
+			if known != nil && !known(strings.SplitN(name, ".", 2)[0]) {
+				return nil, fmt.Errorf("the template names %q, which is not an argument", name)
+			}
 		}
 		t.parts = append(t.parts, p)
 		text = text[start+end+2:]
@@ -169,7 +171,17 @@ func (t *template) value(s scope, h helpers) (any, error) {
 }
 
 func (p part) value(s scope, h helpers) (any, error) {
-	value := s.lookup(p.name)
+	var value any
+	if names := strings.Split(p.name, "+"); len(names) > 1 {
+		// {{a+b}} is the list of the values of a and b.
+		list := make([]string, len(names))
+		for i, name := range names {
+			list[i] = str(s.lookup(name))
+		}
+		value = list
+	} else {
+		value = s.lookup(p.name)
+	}
 	for _, f := range p.filters {
 		var err error
 		if value, err = apply(f, value, h); err != nil {
@@ -205,6 +217,10 @@ func apply(f filter, value any, h helpers) (any, error) {
 	case "keyed":
 		if value == nil {
 			return nil, nil
+		}
+		if list, ok := value.([]string); ok {
+			// The words of a list are keyed apart, so a+b and ab differ.
+			return h.keyed(f.arg, strings.Join(list, "\x00"))
 		}
 		return h.keyed(f.arg, str(value))
 	case "event_author":

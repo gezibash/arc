@@ -6,7 +6,7 @@ import (
 	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,9 +21,11 @@ import (
 // Env is what a command needs from the citizen's machine.
 type Env interface {
 	Resolver
+	Store
 	// Me is the citizen's public key.
 	Me() nostr.PubKey
-	// Keyed returns HMAC-SHA256(HKDF-SHA256(secret key, info), input) as hex.
+	// Keyed returns the first 16 bytes of HMAC-SHA256(HKDF-SHA256(secret
+	// key, info), input), as unpadded base64url.
 	// KeyedValue computes it from a secret key.
 	Keyed(info []byte, input string) (string, error)
 	// EventAuthor returns the author of the event that ref names.
@@ -66,7 +68,7 @@ func KeyedValue(secret [32]byte, info []byte, input string) (string, error) {
 	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(input))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16]), nil
 }
 
 // keyedInfo is the HKDF info of one purpose of one capability.
@@ -86,6 +88,10 @@ type run struct {
 	values  Values
 	flags   Flags
 	stdio   Stdio
+	// missing is the first part that join could not find.
+	missing error
+	// seen is the last text that tail showed, by draft.
+	seen map[string]string
 }
 
 func (r *run) keyed(purpose, input string) (string, error) {
@@ -164,18 +170,23 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	}
 
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio}
-	records, err := r.act()
+	if command.Action.Watch != nil {
+		return r.watch(command.Action.Watch)
+	}
+	entries, err := r.act()
 	if err != nil {
 		return err
 	}
-	if records == nil {
+	if entries == nil {
 		return nil
 	}
-	records, err = r.pipeline(records)
-	if err != nil {
+	if r.streamable() {
+		return r.stream(entries)
+	}
+	if err := r.show(entries); err != nil {
 		return err
 	}
-	return r.write(records, stdio.Out)
+	return r.missing
 }
 
 func hasPositional(c *Command) bool {
@@ -187,25 +198,27 @@ func hasPositional(c *Command) bool {
 	return false
 }
 
-// act runs the action. It returns no records when there is nothing to show.
-func (r *run) act() ([]Record, error) {
+// act runs the action. It returns no entries when there is nothing to show.
+func (r *run) act() ([]*entry, error) {
 	a := r.command.Action
 	switch {
 	case a.Call != nil:
 		return r.call(a.Call)
 	case a.Publish != nil:
-		return nil, errors.New("this arc does not run publish yet: it comes in phase B of the interface")
+		entries, err := r.publish(a.Publish)
+		if err != nil || r.command.Output.Format == "" {
+			return nil, err
+		}
+		return entries, nil
 	case a.Delete != nil:
-		return nil, errors.New("this arc does not run delete yet: it comes in phase B of the interface")
+		return r.remove(a.Delete)
 	case a.Query != nil:
-		return nil, errors.New("this arc does not run query yet: it comes in phase B of the interface")
-	case a.Watch != nil:
-		return nil, errors.New("this arc does not run watch yet: it comes in phase C of the interface")
+		return r.query(a.Query)
 	}
 	return nil, errors.New("the command has no action")
 }
 
-func (r *run) call(c *Call) ([]Record, error) {
+func (r *run) call(c *Call) ([]*entry, error) {
 	service := r.in.Manifest.Service
 	request := CallRequest{Capability: r.in.Manifest.ID, Method: service.Method, Path: service.Path}
 	var err error
@@ -242,29 +255,7 @@ func (r *run) call(c *Call) ([]Record, error) {
 	if result.Err != "" {
 		return nil, fmt.Errorf("the provider refused: %s", result.Err)
 	}
-	return []Record{{"content": result.Body}}, nil
-}
-
-// pipeline runs the output primitives, in their fixed order.
-func (r *run) pipeline(records []Record) ([]Record, error) {
-	o := r.command.Output
-	for name, set := range map[string]bool{
-		"join": o.Join != nil, "where": o.Where != nil, "latest": o.Latest != nil,
-		"rank": o.Rank != nil, "thread": o.Thread != nil, "sort": o.Sort != nil,
-		"limit": o.Limit != 0, "tail": o.Tail != nil, "save": o.Save != nil,
-	} {
-		if set {
-			return nil, fmt.Errorf("this arc does not run %s yet: it comes in a later phase of the interface", name)
-		}
-	}
-	if o.Open != nil {
-		for _, record := range records {
-			if err := open(record, o.Open.Parse); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return records, nil
+	return []*entry{{rec: Record{"content": result.Body}}}, nil
 }
 
 // fixed are the fields that parsed content cannot replace.
@@ -321,11 +312,22 @@ func frontmatter(content string) (map[string]any, string) {
 	return fields, body
 }
 
-// write shows the records: as JSON lines, with a format, or as their content.
-func (r *run) write(records []Record, out io.Writer) error {
+// write shows the records: as JSON lines, with a format, or as their
+// content. A command with save writes files instead, and shows only its
+// format.
+func (r *run) write(entries []*entry, out io.Writer) error {
+	if r.command.Output.Save != nil {
+		if err := r.save(entries); err != nil {
+			return err
+		}
+	}
 	w := bufio.NewWriter(out)
 	defer w.Flush()
 
+	records := make([]Record, len(entries))
+	for i, e := range entries {
+		records[i] = e.rec
+	}
 	if r.flags.JSON {
 		encoder := json.NewEncoder(w)
 		encoder.SetEscapeHTML(false)
@@ -339,8 +341,15 @@ func (r *run) write(records []Record, out io.Writer) error {
 
 	name := r.command.Output.Format
 	if name == "" {
+		if r.command.Output.Save != nil {
+			return nil
+		}
 		for _, record := range records {
-			line(w, sanitize(str(record["content"])))
+			text, ok := record["text"]
+			if !ok {
+				text = record["content"]
+			}
+			line(w, sanitize(str(text)))
 		}
 		return nil
 	}
@@ -371,12 +380,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 		return err
 	}
 	for _, record := range records {
-		s := func(name string) (any, bool) {
-			if value, ok := record[name]; ok {
-				return value, true
-			}
-			return r.scope(name)
-		}
+		s := r.recordScope(record)
 		if f.Table != nil {
 			table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows))
 			continue

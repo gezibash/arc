@@ -1,5 +1,5 @@
 #!/bin/bash
-# The proof of phase A of docs/interface/SPEC.md. Two providers announce
+# The proofs of phases A and B of docs/interface/SPEC.md. Two providers announce
 # manifests of interface version 1. A caller installs them, and runs their
 # commands as commands of arcn, with no code for them in arcn.
 #
@@ -121,4 +121,65 @@ caller exec run --later echo later 2> "$work/later.txt"
 grep "queued" "$work/later.txt" > /dev/null || fail "--later did not queue: $(cat "$work/later.txt")"
 say "--later queues a live call in the outbox"
 
-printf 'phase A holds: manifests, arguments, templates, call, format\n'
+printf 'phase A holds: manifests, arguments, templates, call, format\n\n'
+
+# Phase B: sealed data. The journal and the files are manifests, with no
+# code for them in arcn. Two machines hold one key.
+laptop() { caller "$@"; }
+desktop() { "$work/arcn" --home "$work/desktop" "$@"; }
+mkdir -p "$work/desktop"
+cp "$work/caller/key" "$work/desktop/key"
+desktop relay add "$url"
+
+laptop announce "$root/manifests/journal.json" > /dev/null
+laptop announce "$root/manifests/files.json" > /dev/null
+for machine in laptop desktop; do
+  $machine install "$caller_key" journal --yes > /dev/null || fail "$machine did not install the journal"
+  $machine install "$caller_key" files --yes > /dev/null || fail "$machine did not install the files"
+done
+say "two machines install the journal and the files from their author"
+
+printf 'auc 0.871\n' | laptop journal write hrs/ablations/lr-sweep --title "LR sweep"
+laptop journal append hrs/ablations/lr-sweep next: try warmup
+[ "$(desktop journal read hrs/ablations/lr-sweep)" = "$(printf 'auc 0.871\nnext: try warmup')" ] ||
+  fail "the desktop read $(desktop journal read hrs/ablations/lr-sweep)"
+desktop journal ls | grep "hrs/ablations/lr-sweep	LR sweep" > /dev/null || fail "ls shows $(desktop journal ls)"
+say "a page that is written and appended on one machine reads on the other"
+
+[ "$(desktop journal history hrs/ablations/lr-sweep | grep -c '^20')" = 2 ] ||
+  fail "the history is $(desktop journal history hrs/ablations/lr-sweep)"
+desktop journal search warmup | grep "^hrs/ablations/lr-sweep" > /dev/null || fail "search found nothing"
+say "the page has two revisions, and search finds it"
+
+laptop journal kpi set hrs auc 0.85
+laptop journal kpi set hrs auc 0.87 --note warmup
+desktop journal kpi latest hrs | grep "auc	0.87	warmup" > /dev/null || fail "kpi latest shows $(desktop journal kpi latest hrs)"
+[ "$(desktop journal kpi log hrs auc | wc -l | tr -d ' ')" = 2 ] || fail "kpi log shows $(desktop journal kpi log hrs auc)"
+say "a KPI keeps its last value and its log"
+
+head -c 200000 /dev/urandom > "$work/weights.bin"
+id="$(laptop files put "$work/weights.bin")"
+desktop files list | grep "weights.bin	200000 bytes" > /dev/null || fail "files list shows $(desktop files list)"
+desktop files get "$id" --output "$work/weights-back.bin" 2> /dev/null
+cmp -s "$work/weights.bin" "$work/weights-back.bin" || fail "the file came back changed"
+say "a binary file of 200000 bytes crosses the relay in parts, and its hash checks"
+
+# A stick made before the delete must not bring the page back.
+laptop sync --dir "$work/old-stick" > /dev/null
+laptop journal delete hrs/ablations/lr-sweep
+[ -z "$(desktop journal read hrs/ablations/lr-sweep)" ] || fail "the desktop still reads the deleted page"
+desktop sync --dir "$work/old-stick" > /dev/null 2>&1
+[ -z "$(desktop journal read hrs/ablations/lr-sweep)" ] || fail "an old stick brought the deleted page back"
+desktop journal history hrs/ablations/lr-sweep | grep "no revisions" > /dev/null || fail "the history outlived the delete"
+say "delete removes the page and its history, and an old stick does not bring it back"
+
+# With no relay, the page crosses a stick.
+laptop relay rm "$url"
+desktop relay rm "$url"
+printf 'carried by hand\n' | laptop journal write hrs/notes/offline
+laptop sync --dir "$work/stick" > /dev/null
+desktop sync --dir "$work/stick" > /dev/null
+[ "$(desktop journal read hrs/notes/offline)" = "carried by hand" ] || fail "the stick did not carry the page"
+say "with no relay, a page crosses a USB stick"
+
+printf 'phase B holds: drafts, checkpoints, parts, delete, the journal and the files\n'

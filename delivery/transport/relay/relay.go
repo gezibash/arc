@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,10 @@ const Timeout = 15 * time.Second
 // Relay is one relay, by its WebSocket URL.
 type Relay struct {
 	URL string
+	// Signer answers the NIP-42 challenge of a relay, when one is set. A
+	// relay accepts a protected event, NIP-70, only from its author after
+	// this authentication.
+	Signer nostr.Signer
 }
 
 // Name says which relay this is.
@@ -49,10 +54,34 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	}
 	defer conn.Close()
 
-	if err := conn.Publish(ctx, event); err != nil {
+	err = conn.Publish(ctx, event)
+	if err != nil && strings.Contains(err.Error(), "auth-required") && r.Signer != nil {
+		err = r.authenticate(ctx, conn)
+		if err == nil {
+			err = conn.Publish(ctx, event)
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 	return nil
+}
+
+// authenticate answers the relay's challenge. The challenge can arrive just
+// after the refusal that asked for it, so authenticate waits for it briefly.
+func (r Relay) authenticate(ctx context.Context, conn *nostr.Relay) error {
+	var err error
+	for range 20 {
+		if err = conn.Auth(ctx, r.Signer.SignEvent); err == nil || !strings.Contains(err.Error(), "no challenge") {
+			return err
+		}
+		select {
+		case <-time.After(25 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 // Fetch returns every stored event that matches the filter. A relay caps how

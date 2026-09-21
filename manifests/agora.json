@@ -1,0 +1,36 @@
+{
+  "interface": 1, "id": "agora", "shape": "data",
+  "title": "Agora", "summary": "A public board of signed posts and replies.",
+  "group": {"relay": "wss://board.example", "id": "agora"},
+  "kinds": {
+    "post":   {"kind": 11, "visibility": "group"},
+    "reply":  {"kind": 1111, "visibility": "group"},
+    "remove": {"kind": 9005, "visibility": "group"}
+  },
+  "formats": {
+    "feed": {"record": "{{id|nevent}}  {{author|name}}  {{created|time}}\n{{tags.title}}\n{{content|truncate:240|indent}}", "empty": "no posts"}
+  },
+  "commands": [
+    {"path": ["post"], "summary": "Publish one post",
+     "args": [{"name": "title", "kind": "option", "type": "text"},
+              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"publish": {"kind": "post", "content": "{{text}}", "tags": [["title", "{{title}}"]]}}},
+    {"path": ["reply"], "summary": "Reply to a post",
+     "args": [{"name": "root", "kind": "positional", "type": "event", "required": true},
+              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"publish": {"kind": "reply", "content": "{{text}}",
+                            "tags": [["E", "{{root}}", "", "{{root|event_author}}"], ["K", "11"], ["P", "{{root|event_author}}"],
+                                     ["e", "{{root}}", "", "{{root|event_author}}"], ["k", "11"], ["p", "{{root|event_author}}"]]}}},
+    {"path": ["feed"], "summary": "Show the newest posts",
+     "args": [{"name": "limit", "kind": "option", "type": "integer", "default": "20"}],
+     "action": {"query": {"kinds": ["post"], "authors": "any", "limit": "{{limit}}"}},
+     "output": {"sort": {"field": "created", "order": "desc"}, "format": "feed"}},
+    {"path": ["thread"], "summary": "Show the replies to a post",
+     "args": [{"name": "root", "kind": "positional", "type": "event", "required": true}],
+     "action": {"query": {"kinds": ["reply"], "authors": "any", "tags": {"E": "{{root}}"}}},
+     "output": {"thread": {"parent": "tags.e"}, "format": "feed"}},
+    {"path": ["remove"], "summary": "Remove a post from the board, if you are its admin",
+     "args": [{"name": "id", "kind": "positional", "type": "event", "required": true}],
+     "action": {"publish": {"kind": "remove", "tags": [["e", "{{id}}"]]}}}
+  ]
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -14,6 +15,7 @@ import (
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/catalog"
+	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
@@ -168,6 +170,86 @@ func (e *cliEnv) EventAuthor(ctx context.Context, ref string) (nostr.PubKey, err
 		return found[0].PubKey, nil
 	}
 	return nostr.PubKey{}, fmt.Errorf("no store and no relay holds the event %s", ref)
+}
+
+func (e *cliEnv) Keyer() nostr.Keyer { return e.sess.keyer }
+
+// Publish keeps each event, then sends it to every relay. An event that a
+// relay did not take stays in the store, and the next sync sends it.
+func (e *cliEnv) Publish(ctx context.Context, events []nostr.Event) error {
+	unsent := map[string]error{}
+	for _, event := range events {
+		result, sent, err := e.sess.node.Publish(ctx, event, e.sess.relays)
+		if err != nil {
+			return err
+		}
+		if result.Outcome == store.Refused {
+			return fmt.Errorf("the store refused the event: %s", result.Reason)
+		}
+		for _, s := range sent {
+			if s.Err != nil && unsent[s.Transport] == nil {
+				unsent[s.Transport] = s.Err
+			}
+		}
+	}
+	for name, err := range unsent {
+		fmt.Fprintf(os.Stderr, "not sent to %s: %v\nit waits in the store; arcn sync sends it\n", name, err)
+	}
+	return nil
+}
+
+// Fetch asks the relays for what matches, keeps it, and reads the store. A
+// filter of IDs asks only for the events that the store lacks.
+func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter) ([]nostr.Event, error) {
+	if filter.IDs != nil {
+		// An empty list of IDs matches nothing. A relay would read it as no
+		// condition, and send everything.
+		if len(filter.IDs) == 0 {
+			return nil, nil
+		}
+		found, err := e.sess.node.Obtain(ctx, filter.IDs, e.sess.relays)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]nostr.Event, 0, len(found))
+		for _, event := range found {
+			out = append(out, event)
+		}
+		return out, nil
+	}
+	if _, errs := e.sess.node.Pull(ctx, filter, e.sess.relays); len(errs) > 0 && len(errs) == len(e.sess.relays) {
+		fmt.Fprintf(os.Stderr, "no relay answered, so this shows what this machine holds: %v\n", errs[0])
+	}
+	return e.sess.node.Store.Query(filter), nil
+}
+
+// Watch passes on new events from every relay, until all of them end.
+func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error) {
+	if len(e.sess.relays) == 0 {
+		return nil, errors.New("no relay to watch: add one with arcn relay add")
+	}
+	out := make(chan nostr.Event)
+	var wg sync.WaitGroup
+	for _, t := range e.sess.relays {
+		in, err := e.sess.node.Watch(ctx, filter, t.(relay.Relay))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for event := range in {
+				select {
+				case out <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() { wg.Wait(); close(out) }()
+	return out, nil
 }
 
 // Call sends one request: live over a relay, or later through the outbox.

@@ -514,7 +514,14 @@ to the provider's read relays.
 
 Some data belongs to one citizen only, such as a private journal. The citizen
 seals it to its own key, and syncs it between its own nodes and its chosen
-relays. No provider takes part.
+relays. No provider takes part. The data is a NIP-37 draft, and
+`delivery/draft` makes it. See docs/interface/SPEC.md, section 7.2.
+
+A relay takes a draft only from its author, because the draft carries the
+NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay with
+the citizen's key. The store applies a NIP-09 deletion of an author to the
+events of that author, and refuses them after that, so a stick or a relay
+cannot bring a deleted event back.
 
 ## 12. Abuse limits
 
@@ -562,8 +569,9 @@ relays. No provider takes part.
 Each phase ends with its proof. A phase that does not pass its proof does not
 merge.
 
-Phases 1 and 2 are built: the packages under `delivery/`, the journal in
-`journal/`, and the command `arcn`. `mise run delivery` runs both proofs.
+Phases 1 and 2 are built: the packages under `delivery/` and the command
+`arcn`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
+journal manifest of the capability interface.
 Phase 2 adds `delivery/private` for gift wraps and route tags, and
 `delivery/mail` for the outbox, acknowledgements and couriers. Sync compares
 sets with Negentropy when a relay lists NIP-77 in its information document,
@@ -574,12 +582,11 @@ and `delivery/call` for both classes of call. A live call subscribes, waits
 until the relay has taken the subscription, and only then sends, all on one
 connection, because a relay never stores the ephemeral reply. On a local relay,
 a live call to `exec` takes about 10 ms for the round trip. `arcn call` calls
-a capability with a raw body. The command lines that a manifest declares wait
-for the capability interface to be rewritten: no provider that remains needs
-them, because direct messages, the journal and Agora need no provider now. The journal adds
-one thing that the phase names: a page travels as parts of at most 32 KiB, so
-it fits the event limit of common relays, a read fetches only the parts that
-it needs, and `arcn journal tail` streams text as it is appended.
+a capability with a raw body. The capability interface, docs/interface/SPEC.md,
+now declares the commands of a capability. The journal adds one thing that
+the phase names: a page travels as parts of at most 32 KiB, so it fits the
+event limit of common relays, and `arcn journal tail` streams text as it is
+appended.
 
 | Phase | Scope | Proof |
 | --- | --- | --- |

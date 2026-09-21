@@ -5,12 +5,16 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/nip19"
+	"github.com/gezibash/arc/delivery/store"
 )
 
 // specManifests are the manifests of section 17 of the spec.
@@ -85,11 +89,15 @@ func TestParseRefusesWhatVersionOneDoesNotDefine(t *testing.T) {
 
 // fakeEnv answers calls with a fixed reply, and records the request.
 type fakeEnv struct {
-	me      nostr.SecretKey
-	reply   CallResult
-	request CallRequest
-	later   bool
-	calls   int
+	me    nostr.SecretKey
+	store *store.Store
+	live  chan nostr.Event
+	// fetchedIDs counts the events that fetches by ID asked for.
+	fetchedIDs int
+	reply      CallResult
+	request    CallRequest
+	later      bool
+	calls      int
 }
 
 func (f *fakeEnv) ResolveKey(_ context.Context, text string) (nostr.PubKey, error) {
@@ -101,7 +109,33 @@ func (f *fakeEnv) ResolveKey(_ context.Context, text string) (nostr.PubKey, erro
 	}
 	return nostr.PubKey{}, errors.New("unknown key " + text)
 }
-func (f *fakeEnv) Me() nostr.PubKey { return f.me.Public() }
+func (f *fakeEnv) Me() nostr.PubKey   { return f.me.Public() }
+func (f *fakeEnv) Keyer() nostr.Keyer { return keyer.NewPlainKeySigner(f.me) }
+func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event) error {
+	for _, event := range events {
+		result, err := f.store.Save(event)
+		if err != nil {
+			return err
+		}
+		if result.Outcome == store.Refused {
+			return errors.New(result.Reason)
+		}
+		if f.live != nil {
+			f.live <- event
+		}
+	}
+	return nil
+}
+func (f *fakeEnv) Fetch(_ context.Context, filter nostr.Filter) ([]nostr.Event, error) {
+	f.fetchedIDs += len(filter.IDs)
+	return f.store.Query(filter), nil
+}
+func (f *fakeEnv) Watch(context.Context, nostr.Filter) (<-chan nostr.Event, error) {
+	if f.live == nil {
+		return nil, errors.New("no relay to watch")
+	}
+	return f.live, nil
+}
 func (f *fakeEnv) Keyed(info []byte, input string) (string, error) {
 	return KeyedValue(f.me, info, input)
 }
@@ -271,7 +305,7 @@ func TestKeyedValuesDifferByCapability(t *testing.T) {
 	again, _ := KeyedValue(secret, keyedInfo(author, "journal", "page"), "hrs/a/b")
 	other, _ := KeyedValue(secret, keyedInfo(author, "files", "page"), "hrs/a/b")
 	purpose, _ := KeyedValue(secret, keyedInfo(author, "journal", "kpi"), "hrs/a/b")
-	if a != again || len(a) != 64 {
+	if a != again || len(a) != 22 {
 		t.Errorf("a keyed value is not stable: %s %s", a, again)
 	}
 	if a == other || a == purpose {
@@ -339,5 +373,41 @@ func TestAVariadicKeepsItsFlags(t *testing.T) {
 	}
 	if env.request.Body != `{"argv": ["sh","-c","echo --x"]}` {
 		t.Errorf("the body is %s", env.request.Body)
+	}
+}
+
+// The manifest files in the repository are the manifests of the spec.
+func TestTheManifestFilesAreTheSpec(t *testing.T) {
+	spec := specManifests(t)
+	paths, _ := filepath.Glob("../manifests/*.json")
+	providers, _ := filepath.Glob("../cmd/*-provider/interface.json")
+	paths = append(paths, providers...)
+	if len(paths) != 7 {
+		t.Fatalf("found %d manifest files, want 7", len(paths))
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := Parse(data)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if !reflect.DeepEqual(m, spec[m.ID]) {
+			t.Errorf("%s is not the manifest of the spec", path)
+		}
+	}
+}
+
+func TestKeyedListsKeepTheirWordsApart(t *testing.T) {
+	env := &fakeEnv{me: nostr.Generate()}
+	r := &run{env: env, in: Installed{Manifest: &Manifest{ID: "x"}}, values: Values{"a": "ab", "b": "c", "c": "a", "d": "bc"}}
+	one, _ := compile("{{a+b|keyed:p}}", nil)
+	two, _ := compile("{{c+d|keyed:p}}", nil)
+	x, _ := one.render(r.scope, r, false)
+	y, _ := two.render(r.scope, r, false)
+	if x == y || len(x) != 22 {
+		t.Errorf("ab+c and a+bc key to %s and %s", x, y)
 	}
 }

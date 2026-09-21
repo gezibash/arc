@@ -6,12 +6,14 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -109,11 +111,15 @@ func (s *Store) Save(event nostr.Event) (Result, error) {
 	if s.Has(event.ID) {
 		return Result{Outcome: Duplicate}, nil
 	}
+	if s.deleted(event) {
+		return Result{Outcome: Refused, Reason: "its author deleted it"}, nil
+	}
 
 	if event.Kind.IsReplaceable() || event.Kind.IsAddressable() {
 		if _, err := s.backend.ReplaceEvent(event); err != nil {
 			return Result{}, fmt.Errorf("store: %w", err)
 		}
+		s.settle(event)
 		// The backend keeps the newer version without saying so. Look.
 		if !s.Has(event.ID) {
 			return Result{Outcome: Superseded}, nil
@@ -128,7 +134,102 @@ func (s *Store) Save(event nostr.Event) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("store: %w", err)
 	}
+	if event.Kind == nostr.KindDeletion {
+		s.applyDeletion(event)
+	}
 	return Result{Outcome: Stored}, nil
+}
+
+// deleted says whether a stored deletion request of the event's author, kind
+// 5 of NIP-09, names the event. A request names an event by its ID, or an
+// addressable event by its coordinate and every version up to its own time.
+// A deleted event therefore does not come back from a stick or a relay.
+func (s *Store) deleted(event nostr.Event) bool {
+	if event.Kind == nostr.KindDeletion {
+		return false
+	}
+	byID := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{event.PubKey},
+		Tags: nostr.TagMap{"e": {event.ID.Hex()}}}
+	for range s.backend.QueryEvents(byID, 1) {
+		return true
+	}
+	if !event.Kind.IsAddressable() {
+		return false
+	}
+	coordinate := fmt.Sprintf("%d:%s:%s", event.Kind, event.PubKey.Hex(), event.Tags.GetD())
+	byAddress := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{event.PubKey},
+		Tags: nostr.TagMap{"a": {coordinate}}, Since: event.CreatedAt}
+	for range s.backend.QueryEvents(byAddress, 1) {
+		return true
+	}
+	return false
+}
+
+// applyDeletion removes the events of its author that a deletion request
+// names.
+func (s *Store) applyDeletion(request nostr.Event) {
+	var doomed []nostr.ID
+	for _, tag := range request.Tags {
+		if len(tag) < 2 {
+			continue
+		}
+		var filter nostr.Filter
+		switch tag[0] {
+		case "e":
+			id, err := nostr.IDFromHex(tag[1])
+			if err != nil {
+				continue
+			}
+			filter = nostr.Filter{IDs: []nostr.ID{id}}
+		case "a":
+			parts := strings.SplitN(tag[1], ":", 3)
+			kind, err := strconv.Atoi(parts[0])
+			if len(parts) != 3 || err != nil {
+				continue
+			}
+			filter = nostr.Filter{Kinds: []nostr.Kind{nostr.Kind(kind)}, Tags: nostr.TagMap{"d": {parts[2]}}, Until: request.CreatedAt}
+		default:
+			continue
+		}
+		filter.Authors = []nostr.PubKey{request.PubKey}
+		for event := range s.backend.QueryEvents(filter, MaxQuery) {
+			// A query by ID ignores the authors, so check the author here.
+			if event.PubKey == request.PubKey && event.Kind != nostr.KindDeletion {
+				doomed = append(doomed, event.ID)
+			}
+		}
+	}
+	for _, id := range doomed {
+		_ = s.backend.DeleteEvent(id)
+	}
+}
+
+// settle keeps one version of a replaceable or addressable event: the
+// newest, and of two at the same time, the one with the lower ID, as NIP-01
+// defines. The backend keeps both versions of a tie.
+func (s *Store) settle(event nostr.Event) {
+	filter := nostr.Filter{Kinds: []nostr.Kind{event.Kind}, Authors: []nostr.PubKey{event.PubKey}}
+	if event.Kind.IsAddressable() {
+		filter.Tags = nostr.TagMap{"d": {event.Tags.GetD()}}
+	}
+	var versions []nostr.Event
+	for version := range s.backend.QueryEvents(filter, MaxQuery) {
+		versions = append(versions, version)
+	}
+	if len(versions) < 2 {
+		return
+	}
+	winner := versions[0]
+	for _, v := range versions[1:] {
+		if v.CreatedAt > winner.CreatedAt || v.CreatedAt == winner.CreatedAt && bytes.Compare(v.ID[:], winner.ID[:]) < 0 {
+			winner = v
+		}
+	}
+	for _, v := range versions {
+		if v.ID != winner.ID {
+			_ = s.backend.DeleteEvent(v.ID)
+		}
+	}
 }
 
 // Has says whether the store keeps an event.

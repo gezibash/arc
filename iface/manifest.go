@@ -244,6 +244,7 @@ type Save struct {
 	Field  string `json:"field"`
 	To     string `json:"to"`
 	SHA256 string `json:"sha256,omitempty"`
+	Decode string `json:"decode,omitempty"`
 }
 
 // The words that a manifest can use.
@@ -433,6 +434,9 @@ func (m *Manifest) checkCommand(c Command) error {
 		if err := m.checkKind(a.Publish.Kind); err != nil {
 			return err
 		}
+		if m.Kinds[a.Publish.Kind].Visibility == "sealed" && a.Publish.D == "" {
+			return errors.New("a publish of a sealed kind needs a d tag")
+		}
 		if a.Publish.Revise != "" && a.Publish.Revise != "replace" && a.Publish.Revise != "append" {
 			return fmt.Errorf("revise %q must be replace or append", a.Publish.Revise)
 		}
@@ -499,6 +503,19 @@ func (m *Manifest) checkCommand(c Command) error {
 	}
 	if o.Sort != nil && o.Sort.Order != "" && o.Sort.Order != "asc" && o.Sort.Order != "desc" {
 		return fmt.Errorf("sort order %q must be asc or desc", o.Sort.Order)
+	}
+	if o.Save != nil {
+		if o.Save.Decode != "" && o.Save.Decode != "base64" {
+			return fmt.Errorf("save decodes base64, not %q", o.Save.Decode)
+		}
+		for _, t := range []string{o.Save.To, o.Save.SHA256} {
+			if _, err := compile(t, nil); err != nil {
+				return err
+			}
+		}
+	}
+	if o.Tail != nil && a.Watch == nil {
+		return errors.New("tail works only in a watch")
 	}
 	var conds func([]Cond) error
 	conds = func(list []Cond) error {

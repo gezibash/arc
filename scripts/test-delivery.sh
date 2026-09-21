@@ -51,6 +51,14 @@ say "two machines hold one key, and separate stores"
 a relay add "$url"
 b relay add "$url"
 
+# The journal is a manifest of interface version 1. Its author announces it,
+# and each machine installs it by trusting that author.
+a announce "$root/manifests/journal.json" > /dev/null
+author="$(a key show | tail -1)"
+a install "$author" journal --yes > /dev/null
+b install "$author" journal --yes > /dev/null
+say "both machines install the journal"
+
 # Through a relay.
 printf 'auc 0.871\nnext: try warmup\n' | a journal write hrs/ablations/lr-sweep --title "LR sweep" > /dev/null
 b sync > /dev/null
@@ -82,17 +90,17 @@ a sync --dir "$work/stick2" > /dev/null
 changed=0
 for name in $(ls "$work/stick2/events" | grep -vxF -f "$work/before.txt"); do
   f="$work/stick2/events/$name"
-  if grep '"kind":3275' "$f" > /dev/null; then
+  if grep '"kind":31234' "$f" > /dev/null; then
     sed -i.bak 's/"content":"\([^"]\)/"content":"X\1/' "$f"
     rm -f "$f.bak"
     changed=1
   fi
 done
-[ "$changed" = 1 ] || fail "found no part of the new page to change"
+[ "$changed" = 1 ] || fail "found no draft of the new page to change"
 b sync --dir "$work/stick2" > /dev/null 2> "$work/refused.txt" || true
 grep -q "refused" "$work/refused.txt" || fail "the changed event was not refused: $(cat "$work/refused.txt")"
-if b journal read hrs/ablations/tamper > /dev/null 2>&1; then
-  fail "the desktop read a page with a changed part"
+if b journal read hrs/ablations/tamper 2> /dev/null | grep "the real text" > /dev/null; then
+  fail "the desktop read a changed page"
 fi
 say "a changed event is refused, and the page does not read"
 
@@ -100,7 +108,7 @@ say "a changed event is refused, and the page does not read"
 a relay add "$url"
 b relay add "$url"
 for i in $(seq 1 3000); do printf 'line %05d %090d\n' "$i" 0; done > "$work/big.txt"
-a journal write hrs/data/big < "$work/big.txt" | grep "parts" > /dev/null || fail "the large page was not written"
+a journal write hrs/data/big < "$work/big.txt" || fail "the large page was not written"
 [ "$(b journal read hrs/data/big | wc -l | tr -d ' ')" = 3000 ] || fail "the large page did not read back whole"
 b journal read hrs/data/big > "$work/big-back.txt"
 cmp -s "$work/big.txt" "$work/big-back.txt" || fail "the large page came back changed"
@@ -110,6 +118,7 @@ say "a large page of $(wc -c < "$work/big.txt" | tr -d ' ') bytes crosses the re
 rm "$work/phone/key"
 cp "$work/laptop/key" "$work/phone/key"
 "$work/arcn" --home "$work/phone" relay add "$url"
+"$work/arcn" --home "$work/phone" install "$author" journal --yes > /dev/null
 got="$("$work/arcn" --home "$work/phone" journal read hrs/data/big --lines 1500:1501)"
 [ "$got" = "$(sed -n '1500,1501p' "$work/big.txt")" ] || fail "the range read gave $got"
 say "a range of two lines reads on a machine that held nothing"

@@ -1,7 +1,7 @@
 # Capability interface, version 1
 
-Status: phase A is built, see section 18. The rest is proposed. `arcn`
-runs it, and `mise run interface` proves it. This interface replaces the command
+Status: phases A and B are built, see section 18. The rest is proposed.
+`arcn` runs them, and `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
 
@@ -174,7 +174,7 @@ to right.
 | `json` | The value as a JSON literal. An absent value is `null`. |
 | `hex` | The value as lower-case hex. |
 | `join` | A list as one text: its words, joined by one space. `{{argv\|json}}` writes a JSON array, and `{{sql\|join\|json}}` writes one JSON string. |
-| `keyed:<purpose>` | An HMAC of the value, as 64 hex characters. See 6.1. |
+| `keyed:<purpose>` | An HMAC of the value, as 22 characters. See 6.1. |
 | `event_author` | The author of the event that the value names. Core reads the event from the store, then from the transports, and fails the command when it finds none. |
 | `default:<text>` | The text, when the value is absent. |
 
@@ -195,8 +195,17 @@ example, is found by a keyed value of its address:
 key   = HKDF-SHA256(ikm = secret key, salt = "",
                     info = "arc-keyed-v1" || 0x00 || hex(author) || 0x00 || capability id || 0x00 || purpose,
                     length = 32)
-value = hex(HMAC-SHA256(key, input))
+value = base64url(first 16 bytes of HMAC-SHA256(key, input)), without padding
 ```
+
+A keyed value has 22 characters. A relay indexes a tag value of at most 100
+characters, and a checkpoint or a part names its draft by a coordinate of 71
+characters and the `d` tag. A `d` tag therefore has at most 29 characters, and
+core refuses a longer one.
+
+A placeholder can name several values: `{{notebook+key|keyed:kpi}}` keys the
+two values together. Core keys the words of such a list apart, so `a+bc` and
+`ab+c` differ.
 
 The key depends on the author and the capability id. One capability therefore
 cannot compute the keyed values of another. A citizen who signs through a
@@ -274,8 +283,9 @@ parts:
 2. Core publishes the rest in parts of at most 32 KiB, as events of kind 3275.
    Each part is sealed to the citizen, carries `["-"]`, and names the event's
    coordinate or ID in its `a` or `e` tag.
-3. The event gains a tag `parts` that lists the IDs of the parts in order.
-   Core publishes the parts first, and the event last.
+3. The event gains a tag `parts` that lists the IDs of the parts in order,
+   and a tag `lines` that gives the number of line ends in the content and in
+   each part. Core publishes the parts first, and the event last.
 
 A Nostr client that does not know kind 3275 reads the first 32 KiB. A page of
 at most 32 KiB is therefore a plain NIP-37 draft. A body holds at most 256
@@ -292,8 +302,15 @@ citizen's own events of kinds that the manifest names.
 
 For a sealed kind, core publishes the draft with blank content, which NIP-37
 reads as deleted. It then publishes a kind 5 request with an `a` tag for the
-draft, `e` tags for its checkpoints and parts, and a `k` tag for each kind. A
-relay therefore drops every version, as NIP-09 defines.
+draft, an `e` tag for the current version of the draft and for each checkpoint
+and part, and a `k` tag for each kind. The request is one second older than
+the blank draft, so it removes every older version, and the blank draft stays.
+A relay and the store therefore drop every version, as NIP-09 defines. The
+store also refuses each of these events after the request, so a stick made
+before the delete does not bring the page back.
+
+A new version of a draft is always newer than the version before it, by at
+least one second, so it replaces that version.
 
 ### 7.4 query
 
@@ -316,7 +333,7 @@ that the store lacks.
 | `d` | The `d` tag, or for a sealed kind, the `d` tag of the draft. |
 | `tags` | Other tag filters, whose values are templates. An empty value drops the filter. |
 | `ids` | A template that names events. |
-| `history` | For a sealed kind: read the checkpoints of the draft, oldest first, instead of the draft. |
+| `history` | For a sealed kind: read the checkpoints of the draft, oldest first, instead of the draft. Core first reads the deletion requests of the draft, so the store drops the checkpoints of a deleted draft. |
 | `since`, `until`, `limit` | As NIP-01 defines. |
 
 Each value can be a template. A query asks every relay that the visibility
@@ -329,7 +346,8 @@ sent, from their seals.
 
 ### 7.5 watch
 
-`watch` is a query that stays open. It runs the pipeline on each event that
+`watch` is a query that stays open. Phase B runs it for sealed kinds, which
+the journal's `tail` needs. It runs the pipeline on each event that
 matches, first on the stored events, then on each new one as it arrives. It
 ends when the citizen stops it, or when every relay ends the subscription.
 
@@ -385,8 +403,8 @@ of each part that its `parts` tag lists, in order. It fetches the parts from
 the store, then from the transports.
 
 If a listed part is missing, `join` stops after the text before it, and
-reports the missing part. With `lines`, `join` fetches only the parts that hold
-those lines. When `join` is the last primitive before `format`, it writes each
+reports the missing part. With `lines`, `join` reads the `lines` tag, and
+fetches only the parts that hold those lines. When `join` is the last primitive before `format`, it writes each
 part as it arrives.
 
 ### 9.2 where, latest, rank, thread, sort
@@ -631,7 +649,7 @@ latest value, and its checkpoints hold every value before it.
     "page":    {"record": "{{text}}"},
     "list":    {"record": "{{tags.d}}\t{{tags.title}}\t{{created|date}}", "empty": "no pages"},
     "hits":    {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}", "empty": "no results"},
-    "history": {"record": "{{created|time}}\t{{text|truncate:80}}", "empty": "no revisions"},
+    "history": {"record": "{{created|time}}\n{{text|truncate:200|indent}}", "empty": "no revisions"},
     "kpi":     {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
   },
   "commands": [
@@ -683,7 +701,7 @@ latest value, and its checkpoints hold every value before it.
               {"name": "key", "kind": "positional", "type": "text", "required": true},
               {"name": "value", "kind": "positional", "type": "text", "required": true},
               {"name": "note", "kind": "option", "type": "text"}],
-     "action": {"publish": {"kind": "kpi", "d": "{{notebook|keyed:kpi}}{{key|keyed:kpi}}", "revise": "replace",
+     "action": {"publish": {"kind": "kpi", "d": "{{notebook+key|keyed:kpi}}", "revise": "replace",
                             "tags": [["d", "{{key}}"], ["notebook", "{{notebook}}"]],
                             "content": {"json": {"key": "{{key}}", "value": "{{value}}", "note": "{{note}}"}}}}},
     {"path": ["kpi", "latest"], "summary": "Show the last value of each key",
@@ -693,7 +711,7 @@ latest value, and its checkpoints hold every value before it.
     {"path": ["kpi", "log"], "summary": "Show every value of one key",
      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true},
               {"name": "key", "kind": "positional", "type": "text", "required": true}],
-     "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook|keyed:kpi}}{{key|keyed:kpi}}", "history": true}},
+     "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook+key|keyed:kpi}}", "history": true}},
      "output": {"open": {"parse": "json"}, "format": "kpi"}}
   ]
 }
@@ -797,7 +815,7 @@ past 32 KiB, as 7.2.2 defines.
   "commands": [
     {"path": ["put"], "summary": "Store a file",
      "args": [{"name": "file", "kind": "positional", "type": "file", "required": true}],
-     "action": {"publish": {"kind": "file", "d": "{{file.sha256}}", "revise": "replace", "content": "{{file}}",
+     "action": {"publish": {"kind": "file", "d": "{{file.sha256|keyed:file}}", "revise": "replace", "content": "{{file}}",
                             "tags": [["d", "{{file.sha256}}"], ["alt", "{{file.name}}"], ["m", "{{file.type}}"],
                                      ["x", "{{file.sha256}}"], ["size", "{{file.size}}"]]}},
      "output": {"format": "put"}},
@@ -807,11 +825,11 @@ past 32 KiB, as 7.2.2 defines.
     {"path": ["get"], "summary": "Write one file back to disk",
      "args": [{"name": "id", "kind": "positional", "type": "text", "required": true},
               {"name": "output", "kind": "option", "type": "path", "required": true}],
-     "action": {"query": {"kinds": ["file"], "authors": "me", "d": "{{id}}", "limit": 1}},
-     "output": {"open": {"parse": "text"}, "join": {}, "save": {"field": "text", "to": "{{output}}", "sha256": "{{tags.x}}"}}},
+     "action": {"query": {"kinds": ["file"], "authors": "me", "d": "{{id|keyed:file}}", "limit": 1}},
+     "output": {"open": {"parse": "text"}, "join": {}, "save": {"field": "text", "to": "{{output}}", "decode": "base64", "sha256": "{{tags.x}}"}}},
     {"path": ["delete"], "summary": "Delete a file",
      "args": [{"name": "id", "kind": "positional", "type": "text", "required": true}],
-     "action": {"delete": {"kind": "file", "d": "{{id}}"}}}
+     "action": {"delete": {"kind": "file", "d": "{{id|keyed:file}}"}}}
   ]
 }
 ```
@@ -825,7 +843,7 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 | Phase | Scope | Proof |
 | --- | --- | --- |
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
-| B | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
+| B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
 | C | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
 | D | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
 
@@ -840,5 +858,9 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 - **Rollback on a fresh machine.** A query asks every relay of the citizen's
   NIP-37 list, and keeps the newest version. If every relay serves an old
   version, a machine that never saw the newer one cannot tell.
+- **One process per home.** The store is one file that one process opens at
+  a time. A `tail` holds it, so a second command on the same home waits.
+- **Each read asks the relays.** A query fetches from every relay before it
+  reads the store, so a slow relay makes every read slow.
 - **Keyed values need the secret key, or a signer that computes them.** A NIP-46
   signer that does not offer this cannot run a capability that uses `keyed`.

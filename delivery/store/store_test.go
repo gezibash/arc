@@ -109,3 +109,58 @@ func TestNeverKeepsEphemeralOrExpiredEvents(t *testing.T) {
 		t.Errorf("an expired event gave %v, want refused", r.Outcome)
 	}
 }
+
+func TestADeletionRemovesAndKeepsOut(t *testing.T) {
+	s := open(t)
+	k, other := keys.Generate(), keys.Generate()
+
+	note := signed(t, k, 1, 100, "a")
+	theirs := signed(t, other, 1, 100, "b")
+	draft := signed(t, k, 31234, 100, "v1", nostr.Tag{"d", "x"})
+	save(t, s, note)
+	save(t, s, theirs)
+	save(t, s, draft)
+
+	request := signed(t, k, nostr.KindDeletion, 200, "",
+		nostr.Tag{"e", note.ID.Hex()}, nostr.Tag{"e", theirs.ID.Hex()},
+		nostr.Tag{"a", "31234:" + k.Public.Hex() + ":x"})
+	if got := save(t, s, request); got.Outcome != store.Stored {
+		t.Fatalf("the request was %s", got.Outcome)
+	}
+
+	if s.Has(note.ID) || s.Has(draft.ID) {
+		t.Error("a deleted event is still kept")
+	}
+	if !s.Has(theirs.ID) {
+		t.Error("a request deleted the event of another author")
+	}
+
+	// The deleted events do not come back.
+	if got := save(t, s, note); got.Outcome != store.Refused {
+		t.Errorf("the deleted note came back: %s", got.Outcome)
+	}
+	if got := save(t, s, draft); got.Outcome != store.Refused {
+		t.Errorf("the deleted draft came back: %s", got.Outcome)
+	}
+	// A newer version of the coordinate is not deleted.
+	if got := save(t, s, signed(t, k, 31234, 201, "v2", nostr.Tag{"d", "x"})); got.Outcome != store.Stored {
+		t.Errorf("a newer version was %s", got.Outcome)
+	}
+}
+
+func TestATieKeepsTheLowerID(t *testing.T) {
+	s := open(t)
+	k := keys.Generate()
+	a := signed(t, k, 30000, 100, "a", nostr.Tag{"d", "x"})
+	b := signed(t, k, 30000, 100, "b", nostr.Tag{"d", "x"})
+	save(t, s, a)
+	save(t, s, b)
+	got := s.Query(nostr.Filter{Kinds: []nostr.Kind{30000}})
+	winner := a
+	if string(b.ID[:]) < string(a.ID[:]) {
+		winner = b
+	}
+	if len(got) != 1 || got[0].ID != winner.ID {
+		t.Errorf("the store keeps %d versions", len(got))
+	}
+}

@@ -3,15 +3,13 @@
 //
 //	arcn key new | show
 //	arcn relay add <url> | rm <url> | ls | serve
-//	arcn journal write | append | read | ls | tail
 //	arcn message send | inbox | outbox
-//	arcn serve | discover | install | call
+//	arcn serve | announce | discover | install | call
 //	arcn sync [--dir <path>]
 //	arcn <capability> <command...>
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -29,7 +27,9 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
+	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/khatru"
+	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
@@ -38,7 +38,6 @@ import (
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/identity"
-	"github.com/gezibash/arc/journal"
 	"github.com/spf13/cobra"
 )
 
@@ -63,8 +62,8 @@ func root() *cobra.Command {
 		SilenceErrors:      true,
 	}
 	command.PersistentFlags().String("home", "", "the directory of arcn (ARCN_HOME, default ~/.config/arc/next)")
-	command.AddCommand(keyCommand(), relayCommand(), journalCommand(), messageCommand(),
-		serveCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand())
+	command.AddCommand(keyCommand(), relayCommand(), messageCommand(),
+		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand())
 	command.SetHelpCommand(helpCommand(command))
 	return command
 }
@@ -295,6 +294,7 @@ type session struct {
 	mail   *mail.Mail
 	relays []transport.Transport
 	urls   []string
+	keyer  nostr.Keyer
 }
 
 func open(command *cobra.Command) (*session, error) {
@@ -316,9 +316,9 @@ func open(command *cobra.Command) (*session, error) {
 		return nil, err
 	}
 
-	sess := &session{key: k, node: &node.Node{Store: s}, urls: urls}
+	sess := &session{key: k, node: &node.Node{Store: s}, urls: urls, keyer: keyer.NewPlainKeySigner(k.Secret)}
 	for _, url := range urls {
-		sess.relays = append(sess.relays, relay.Relay{URL: url})
+		sess.relays = append(sess.relays, relay.Relay{URL: url, Signer: sess.keyer})
 	}
 
 	sess.mail, err = mail.Open(filepath.Join(dir, "store"), k, sess.node, sess.relays)
@@ -332,152 +332,6 @@ func open(command *cobra.Command) (*session, error) {
 func (s *session) close() {
 	s.mail.Close()
 	s.node.Store.Close()
-}
-
-func (s *session) journal() (*journal.Journal, error) {
-	return journal.New(s.key, s.node, s.relays)
-}
-
-func journalCommand() *cobra.Command {
-	command := &cobra.Command{Use: "journal", Short: "A private notebook, sealed to your own key"}
-
-	write := &cobra.Command{
-		Use: "write <project/notebook/page>", Short: "Replace a page with the standard input", Args: cobra.ExactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
-			sess, j, err := openJournal(command)
-			if err != nil {
-				return err
-			}
-			defer sess.close()
-
-			title, _ := command.Flags().GetString("title")
-			page, err := j.Write(command.Context(), args[0], title, bufio.NewReader(os.Stdin))
-			if err != nil {
-				return err
-			}
-			fmt.Printf("wrote %s: %d parts, %d bytes\n", page.Address, len(page.Parts), page.Bytes())
-			reportUnsent(j)
-			return nil
-		},
-	}
-	write.Flags().String("title", "", "the title of the page")
-
-	appendCmd := &cobra.Command{
-		Use: "append <project/notebook/page> [text...]", Short: "Add text to the end of a page", Args: cobra.MinimumNArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
-			sess, j, err := openJournal(command)
-			if err != nil {
-				return err
-			}
-			defer sess.close()
-
-			var text io.Reader = bufio.NewReader(os.Stdin)
-			if len(args) > 1 {
-				text = strings.NewReader(strings.Join(args[1:], " ") + "\n")
-			}
-			page, err := j.Append(command.Context(), args[0], text)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("appended to %s: %d parts, %d bytes\n", page.Address, len(page.Parts), page.Bytes())
-			reportUnsent(j)
-			return nil
-		},
-	}
-
-	readCmd := &cobra.Command{
-		Use: "read <project/notebook/page>", Short: "Write a page, or a range of its lines", Args: cobra.ExactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
-			sess, j, err := openJournal(command)
-			if err != nil {
-				return err
-			}
-			defer sess.close()
-
-			value, _ := command.Flags().GetString("lines")
-			lines, err := journal.ParseLines(value)
-			if err != nil {
-				return err
-			}
-			_, err = j.Read(command.Context(), args[0], lines, os.Stdout)
-			return err
-		},
-	}
-	readCmd.Flags().String("lines", "", "a range of lines, as a:b, a: or :b")
-
-	ls := &cobra.Command{
-		Use: "ls", Short: "List the pages", Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			sess, j, err := openJournal(command)
-			if err != nil {
-				return err
-			}
-			defer sess.close()
-
-			pages, unreadable := j.List()
-			if len(pages) == 0 {
-				fmt.Println("no pages: sync first, or write one")
-			}
-			for _, page := range pages {
-				fmt.Printf("%s\t%s\t%d bytes\t%s\n", page.Address, page.Title, page.Bytes(), page.Updated.Format("2006-01-02 15:04"))
-			}
-			if unreadable > 0 {
-				fmt.Fprintf(os.Stderr, "%d heads did not open with this key\n", unreadable)
-			}
-			return nil
-		},
-	}
-
-	tail := &cobra.Command{
-		Use: "tail <project/notebook/page>", Short: "Write a page, then each text appended to it", Args: cobra.ExactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
-			sess, j, err := openJournal(command)
-			if err != nil {
-				return err
-			}
-			defer sess.close()
-
-			url, _ := command.Flags().GetString("relay")
-			if url == "" {
-				if len(sess.urls) == 0 {
-					return errors.New("tail needs a relay: add one with arcn relay add <url>")
-				}
-				url = sess.urls[0]
-			}
-
-			ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			if err := j.Tail(ctx, args[0], relay.Relay{URL: url}, os.Stdout); !errors.Is(err, context.Canceled) {
-				return err
-			}
-			return nil
-		},
-	}
-	tail.Flags().String("relay", "", "the relay to watch (default the first relay)")
-
-	command.AddCommand(write, appendCmd, readCmd, ls, tail)
-	return command
-}
-
-// reportUnsent tells the citizen which relays did not get the write. The
-// write is safe in the store either way.
-func reportUnsent(j *journal.Journal) {
-	for name, err := range j.Unsent() {
-		fmt.Fprintf(os.Stderr, "not sent to %s: %v\nthe page is saved here; run arcn sync later\n", name, err)
-	}
-}
-
-func openJournal(command *cobra.Command) (*session, *journal.Journal, error) {
-	sess, err := open(command)
-	if err != nil {
-		return nil, nil, err
-	}
-	j, err := sess.journal()
-	if err != nil {
-		sess.close()
-		return nil, nil, err
-	}
-	return sess, j, nil
 }
 
 func messageCommand() *cobra.Command {
@@ -586,11 +440,12 @@ func syncCommand() *cobra.Command {
 			"that directory: a USB stick, a shared folder, or a disk you carry.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			sess, j, err := openJournal(command)
+			sess, err := open(command)
 			if err != nil {
 				return err
 			}
 			defer sess.close()
+			sealed := sealedFilter(sess.key.Public)
 
 			targets := sess.relays
 			if dir, _ := command.Flags().GetString("dir"); dir != "" {
@@ -602,13 +457,13 @@ func syncCommand() *cobra.Command {
 
 			failed := false
 			for _, t := range targets {
-				report, err := sess.node.Sync(command.Context(), j.Filter(), t)
+				report, err := sess.node.Sync(command.Context(), sealed, t)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
 					failed = true
 					continue
 				}
-				fmt.Printf("%s: journal received %d, sent %d, already held %d\n",
+				fmt.Printf("%s: sealed data received %d, sent %d, already held %d\n",
 					report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
 				for _, reason := range report.Refused {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
@@ -644,4 +499,13 @@ func syncCommand() *cobra.Command {
 	}
 	command.Flags().String("dir", "", "sync with this directory instead of the relays")
 	return command
+}
+
+// sealedFilter matches what a citizen seals to their own key: drafts, their
+// checkpoints and parts, deletion requests, and the private relay list.
+func sealedFilter(me nostr.PubKey) nostr.Filter {
+	return nostr.Filter{
+		Kinds:   []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, nostr.KindDeletion, draft.RelayListKind},
+		Authors: []nostr.PubKey{me},
+	}
 }

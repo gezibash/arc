@@ -20,6 +20,7 @@ import (
 	"github.com/gezibash/arc/citizen"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/catalog"
+	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
@@ -431,16 +432,60 @@ func callCapability(command *cobra.Command, args []string) error {
 }
 
 // publishRelayList tells other citizens which relays this citizen reads its
-// mail on, as NIP-17 defines.
+// mail on, as NIP-17 defines. It also publishes the private relay list of
+// NIP-37, which names the relays that hold the citizen's drafts.
 func publishRelayList(ctx context.Context, sess *session) {
 	list, err := mail.RelayList(sess.key, sess.urls, nostr.Now())
 	if err != nil {
 		return
 	}
-	_, sent, _ := sess.node.Publish(ctx, list, sess.relays)
-	for _, s := range sent {
-		if s.Err != nil {
-			fmt.Fprintf(os.Stderr, "the relay list did not reach %s: %v\n", s.Transport, s.Err)
+	private, err := draft.RelayList(ctx, sess.keyer, sess.urls, nostr.Now())
+	if err != nil {
+		return
+	}
+	for _, event := range []nostr.Event{list, private} {
+		_, sent, _ := sess.node.Publish(ctx, event, sess.relays)
+		for _, s := range sent {
+			if s.Err != nil {
+				fmt.Fprintf(os.Stderr, "the relay list did not reach %s: %v\n", s.Transport, s.Err)
+			}
 		}
+	}
+}
+
+func announceCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "announce <manifest.json>",
+		Short: "Announce a capability of interface version 1 as its author",
+		Long: "A data capability has no provider. Its author announces its manifest,\n" +
+			"and citizens install it by trusting that author.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				return err
+			}
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.close()
+
+			announcement, err := catalog.AnnounceManifest(sess.key, data, nostr.Now())
+			if err != nil {
+				return err
+			}
+			if _, sent, err := sess.node.Publish(command.Context(), announcement, sess.relays); err != nil {
+				return err
+			} else {
+				for _, s := range sent {
+					if s.Err != nil {
+						fmt.Fprintf(os.Stderr, "not sent to %s: %v\n", s.Transport, s.Err)
+					}
+				}
+			}
+			fmt.Printf("announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.key.Name(), sess.key.Public.Hex())
+			return nil
+		},
 	}
 }
