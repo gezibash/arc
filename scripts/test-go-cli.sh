@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs the whole of ARC in Go: the relay, the citizen, the provider and the
-# caller. Nothing here needs Elixir.
+# caller.
 #
-#     mise run go.cli
+#     mise run cli
 set -euo pipefail
 
 # The test stands on its own: the relay of the machine, the key of the shell

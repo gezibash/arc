@@ -1,5 +1,5 @@
-// Code generated from apps/arc_identity/lib/arc/identity/petname.ex.
-// Run: mise exec -- go generate ./identity
+// The word lists of petnames. A petname is an index into these lists, so a
+// change to one word changes the name of every key that uses it.
 
 package identity
 

@@ -1,7 +1,7 @@
 // Package vectors reads the shared protocol vectors.
 //
 // The file test/vectors/identity.json holds values that every ARC
-// implementation must produce. The Elixir suite reads the same file. A change
+// implementation must produce. It is a fixture: nothing generates it. A change
 // to a vector is a change to the protocol.
 package vectors
 
@@ -130,12 +130,12 @@ func Load(t *testing.T) File {
 
 	path, err := find()
 	if err != nil {
-		t.Fatalf("%v. Run: mise run vectors", err)
+		t.Fatalf("%v", err)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read vectors: %v. Run: mise run vectors", err)
+		t.Fatalf("read vectors: %v", err)
 	}
 
 	// The numbers of a record keep their digits, because a signature covers

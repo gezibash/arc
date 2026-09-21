@@ -7,13 +7,6 @@ public database names to absolute local paths and grants each ARC public key a
 
 ## Configure
 
-Install the provider's pinned Python runtime before serving it:
-
-```sh
-cd go/cmd/sqlite-provider
-mise install
-```
-
 `SQLITE_CONFIG` is required and must be an absolute path to a regular JSON
 file. The provider refuses to start without valid configuration.
 
@@ -52,27 +45,24 @@ export SQLITE_CONFIG=/absolute/path/sqlite.json
 From the repository root, serve the bundle with ARC's normal provider flow:
 
 ```sh
-ARC_KEY=<provider-key> mise run arc -- serve go/cmd/sqlite-provider
+ARC_KEY=<provider-key> arc serve cmd/sqlite-provider
 ```
 
-Configure `ARC_RELAY` and `ARC_RELAY_PUBKEY` for the provider and citizen. To
-share through onward relay partners, add `--federate-network` to `serve`.
-Then use the active citizen identity:
+The provider and the citizen use the same relay. Join it with `arc join`, or
+set `ARC_RELAY` and `ARC_RELAY_PUBKEY`. Then call the provider as the active
+citizen identity:
 
 ```sh
-mise run arc -- request 'sqlite+arc://<provider-public-key>/main' \
-  --body '{"sql":"SELECT 1 AS n"}'
+arc call 'sqlite+arc://<provider-public-key>/main' \
+  '{"sql":"SELECT 1 AS n"}'
 ```
-
-For explicitly local operation, run the provider without relay configuration
-and add `--local` to `request`. The query goes through the same provider contract.
 
 ## Tests
 
-From this provider directory:
+From the repository root:
 
 ```sh
-mise exec -- python -m unittest discover -s tests -v
+go test ./cmd/sqlite-provider
 ```
 
 ## Request protocol
