@@ -1,7 +1,7 @@
 # Only the smoke test adds this client. Normal agents use installed ARC.
 services:
   client:
-    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.6.0}
+    image: ${ARC_LOCAL_IMAGE:-${COMPOSE_PROJECT_NAME:-arc-local}-services:0.7.0}
     pull_policy: never
     profiles: [tools]
     init: true

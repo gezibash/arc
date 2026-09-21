@@ -6,7 +6,69 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-21
+
+ARC is a Go module. A release holds one static binary for each command, and a
+citizen machine needs no language runtime. `arc` runs the relay protocol of
+earlier versions. `arcn` runs the delivery layer on Nostr events.
+
+### Changed
+
+- **Breaking:** Go replaces the Elixir implementation. The release tarballs
+  and the image hold Go binaries.
+- **Breaking:** the relay is the binary `arc-relay`. Start it with
+  `arc-relay --key NAME --address :7331`. The image runs `arc-relay` by
+  default. To run another command in the image, name it, for example
+  `docker run IMAGE arc keys gen`.
+- **Breaking:** `arc call ADDRESS [BODY]` replaces
+  `arc request ADDRESS --body BODY`. `--timeout` counts seconds.
+- **Breaking:** `arc whoami` replaces `arc keys show`. `arc keys gen` prints
+  the name and the public key on two lines. `arc keys list` and
+  `arc keys remove` replace `arc keys ls` and `arc keys rm`.
+- The exec citizen runs the `exec-provider` binary of a release, so the
+  machine needs no Go toolchain. `citizen/init` finds the binary next to `arc`
+  and writes `EXEC_PROVIDER` to `citizen.env`. `arc-exec` sends each request
+  with `arc call`.
+- `citizen/citizen-up` looks for its own announcement in up to 50 exec
+  citizens. Before, it looked in 10.
+
+### Added
+
+- The delivery layer, in `delivery/` and the `arcn` command. Every datum is a
+  signed Nostr event. A relay or a directory, such as a USB stick, carries the
+  events. See `docs/delivery/SPEC.md`.
+- Version 1 of the capability interface. A capability is a JSON manifest of
+  primitives. Seven providers use it: exec, sqlite, releases, journal, dm,
+  agora and files. See `docs/interface/SPEC.md`.
+
+### Removed
+
+- **Breaking:** the MCP server, `arc mcp` and `arc mount`.
+- **Breaking:** the hot upgrade of a running relay. To update a relay, replace
+  the binary and restart the relay.
+- **Breaking:** `arc host`.
+- The TCP hole punch of direct connections.
+
+### Fixed
+
+- Two races made the direct route and federation tests fail under load. A
+  control message now always travels on the relay. A lock for each federation
+  link covers the encryption and the write. A relay drops the link of a
+  partner connection that ended.
+- The image, the Fly.io entrypoint, the local Compose stack and the exec
+  citizen scripts called `arc relay`, `arc keys show` or `arc request`. The
+  Go `arc` does not have these commands. The local relay health check used
+  the Erlang runtime.
+- The image reports its release version. Before, it reported `dev`.
+
+### Known issues
+
+- `arc` refuses the `private_file`, `sealed_file` and `agora` inputs, so
+  `arc files` and `arc agora` fail.
+
 ## [0.6.0] - 2026-09-20
+
+No release was published for this version.
 
 A relay and its clients must run the same version. This release changes the
 relay announcement and the key exchange, so a mixed network does not work.

@@ -13,9 +13,12 @@
 # --cwd       the default directory for commands. The default is $HOME.
 # --notify-dm when a job ends, send the result to its owner as a direct
 #             message. The citizen must have the DM tool installed.
+#
+# The provider is the exec-provider binary next to the arc binary, where an
+# ARC release installs it. Set EXEC_PROVIDER to use another binary.
 set -eu
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 key='' relay='' relay_pubkey='' platform=none cwd=$HOME notify_dm=0 grants=()
 while [ $# -gt 0 ]; do
@@ -39,15 +42,19 @@ done
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 export PATH="$HOME/.local/bin:$PATH"
-public_key=$(ARC_KEY=$key arc keys show | awk '/public_key:/ {print $2}')
+command -v arc >/dev/null || { echo "init: arc is not on the PATH" >&2; exit 1; }
+public_key=$(arc --key "$key" whoami 2>/dev/null | sed -n 2p)
 [[ $public_key =~ ^[0-9a-f]{64}$ ]] || { echo "init: no ARC key named $key" >&2; exit 1; }
+
+provider=${EXEC_PROVIDER:-$(dirname "$(readlink -f "$(command -v arc)")")/exec-provider}
+[ -x "$provider" ] || { echo "init: $provider is not a program. Install ARC with install.sh, or set EXEC_PROVIDER." >&2; exit 1; }
 
 # The readiness check needs a second identity. A relay keeps one connection
 # for each identity, so a query with the citizen key would replace the
 # connection of `arc serve` and remove its announcement.
 probe=$(grep '^CITIZEN_PROBE_KEY=' "$here/citizen.env" 2>/dev/null | cut -d= -f2 || true)
-if [ -z "$probe" ] || ! ARC_KEY="$probe" arc keys show >/dev/null 2>&1; then
-  probe=$(arc keys gen | awk '$1 == "name:" {print $2}')
+if [ -z "$probe" ] || ! arc --key "$probe" whoami >/dev/null 2>&1; then
+  probe=$(arc keys gen | sed -n 1p)
 fi
 
 cat > "$here/citizen.env" <<EOF
@@ -55,6 +62,7 @@ ARC_KEY=$key
 ARC_RELAY=$relay
 ARC_RELAY_PUBKEY=$relay_pubkey
 EXEC_CONFIG=$here/config.json
+EXEC_PROVIDER=$provider
 CITIZEN_PUBLIC_KEY=$public_key
 CITIZEN_PLATFORM=$platform
 CITIZEN_PROBE_KEY=$probe

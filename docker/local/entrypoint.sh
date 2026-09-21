@@ -25,9 +25,9 @@ prepare_identity() {
     done
     arc keys gen >/dev/null
   fi
-  identity=$(arc keys show)
-  identity_name=$(printf '%s\n' "$identity" | awk '$1 == "name:" {print $2}')
-  identity_public=$(printf '%s\n' "$identity" | awk '$1 == "public_key:" {print $2}')
+  identity=$(arc whoami)
+  identity_name=$(printf '%s\n' "$identity" | sed -n 1p)
+  identity_public=$(printf '%s\n' "$identity" | sed -n 2p)
   case "$identity_name" in ''|*[!a-z0-9-]*) fail "Could not read active identity name." ;; esac
   printf '%s\n' "$identity_public" > /home/arc/public/public_key.tmp
   public_key /home/arc/public/public_key.tmp >/dev/null
@@ -43,7 +43,7 @@ configure_relay() {
 case "${1:-}" in
   relay)
     prepare_identity
-    exec arc relay --key "$identity_name" --port 7331
+    exec arc-relay --key "$identity_name" --address :7331
     ;;
   journal|dm|agora|releases)
     provider=$1

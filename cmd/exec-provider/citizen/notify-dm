@@ -4,7 +4,7 @@
 # result of the job on standard input. See docs/exec/SPEC.md, section 12.3.
 #
 # The citizen must have the DM tool installed:
-#   arc install <dm-provider-public-key> primary --trust
+#   arc install <dm-provider-public-key> --yes
 set -eu
 
 here=$(cd "$(dirname "$0")/.." && pwd)
