@@ -1,6 +1,7 @@
 #!/bin/bash
-# The proof of phase 1 of docs/delivery/SPEC.md. Two homes stand in for two
-# machines of one citizen: they hold the same key and separate stores.
+# The proofs of phases 1 and 2 of docs/delivery/SPEC.md. In phase 1, two homes
+# stand in for two machines of one citizen: they hold the same key and
+# separate stores. In phase 2, three citizens hold three keys.
 #
 #     mise run delivery
 set -euo pipefail
@@ -115,4 +116,50 @@ for _ in $(seq 1 50); do grep -q "second note" "$work/tail.txt" 2>/dev/null && b
 [ "$(cat "$work/tail.txt")" = "$(printf 'first note\nsecond note')" ] || fail "tail wrote $(cat "$work/tail.txt")"
 say "tail streams each note as it is appended"
 
-printf '\nphase 1 holds: relay, USB stick, refusal, parts, and tail\n'
+printf 'phase 1 holds: relay, USB stick, refusal, parts, and tail\n\n'
+
+# Phase 2: a message reaches an offline recipient through a third machine
+# that carries a USB stick. Nobody has a relay.
+alice() { "$work/arcn" --home "$work/alice" "$@"; }
+carol() { "$work/arcn" --home "$work/carol" "$@"; }
+bob() { "$work/arcn" --home "$work/bob" "$@"; }
+
+alice key new > /dev/null
+carol key new > /dev/null
+bob key new > "$work/bob.txt"
+bob_key="$(tail -1 "$work/bob.txt")"
+alice_key="$(alice key show | tail -1)"
+say "three citizens hold three keys"
+
+alice message send "$bob_key" "meet at the river at noon" | grep "queued" > /dev/null || fail "alice could not queue the message"
+alice sync --dir "$work/stick-a" > /dev/null
+carol sync --dir "$work/stick-a" | grep "carried 1" > /dev/null || fail "carol did not carry the message"
+carol message inbox | grep "no messages" > /dev/null || fail "carol could read mail that was not hers"
+carol sync --dir "$work/stick-b" > /dev/null
+say "carol carries a sealed message that she cannot read"
+
+grep -r -l -e "$bob_key" -e "$alice_key" -e "river" "$work/stick-a" "$work/stick-b" > /dev/null &&
+  fail "a stick names a citizen or holds the text"
+say "the sticks name neither citizen and hold no text"
+
+bob sync --dir "$work/stick-b" | grep "mail received 1" > /dev/null || fail "bob did not receive the message"
+bob message inbox | grep "meet at the river at noon" > /dev/null || fail "bob's inbox: $(bob message inbox)"
+bob message inbox | grep "$(alice key show | head -1)" > /dev/null || fail "the message does not name alice"
+say "bob receives it, and the seal proves that alice wrote it"
+
+bob sync --dir "$work/stick-b" > /dev/null
+carol sync --dir "$work/stick-b" > /dev/null
+carol sync --dir "$work/stick-a" > /dev/null
+alice sync --dir "$work/stick-a" | grep "delivered 1" > /dev/null || fail "the acknowledgement did not come back"
+alice message outbox | grep "delivered" > /dev/null || fail "alice's outbox: $(alice message outbox)"
+say "bob's acknowledgement comes back the same way, and clears alice's outbox"
+
+# The same message over a relay.
+alice relay add "$url"
+bob relay add "$url"
+alice message send "$bob_key" "and over the relay" > /dev/null
+bob sync | grep "mail received 1" > /dev/null || fail "bob did not receive over the relay"
+alice sync | grep "delivered 1" > /dev/null || fail "the acknowledgement did not cross the relay"
+say "a message and its acknowledgement cross a relay"
+
+printf 'phase 2 holds: couriers, route tags, acknowledgements, and the outbox\n'

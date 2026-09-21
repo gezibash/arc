@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"fiatjaf.com/nostr"
@@ -50,6 +51,37 @@ func (d Dir) Send(_ context.Context, event nostr.Event) error {
 	return os.Rename(temporary, path)
 }
 
+// SendHops writes one event with a hop limit beside it, in events/<id>.hops.
+// When two couriers write the same event, the larger limit stays. A reader
+// clamps what it reads, so a forged limit cannot spread an event further.
+func (d Dir) SendHops(ctx context.Context, event nostr.Event, hops int) error {
+	if err := d.Send(ctx, event); err != nil {
+		return err
+	}
+
+	path := filepath.Join(d.events(), event.ID.Hex()+".hops")
+	if held, ok := readHops(path); ok && held >= hops {
+		return nil
+	}
+	temporary := path + ".new"
+	if err := os.WriteFile(temporary, []byte(strconv.Itoa(hops)+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
+}
+
+func readHops(path string) (int, bool) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	hops, err := strconv.Atoi(strings.TrimSpace(string(body)))
+	if err != nil || hops < 0 {
+		return 0, false
+	}
+	return hops, true
+}
+
 // Fetch reads every event in the directory that matches the filter. A file
 // that does not parse counts as unreadable. The store verifies the rest.
 func (d Dir) Fetch(_ context.Context, filter nostr.Filter) (transport.Batch, error) {
@@ -80,6 +112,12 @@ func (d Dir) Fetch(_ context.Context, filter nostr.Filter) (transport.Batch, err
 		}
 		if filter.Matches(event) {
 			batch.Events = append(batch.Events, event)
+			if hops, ok := readHops(filepath.Join(d.events(), event.ID.Hex()+".hops")); ok {
+				if batch.Hops == nil {
+					batch.Hops = map[nostr.ID]int{}
+				}
+				batch.Hops[event.ID] = hops
+			}
 		}
 	}
 	return batch, nil

@@ -4,6 +4,7 @@
 //	arcn key new | show
 //	arcn relay add <url> | rm <url> | ls | serve
 //	arcn journal write | append | read | ls | tail
+//	arcn message send | inbox | outbox
 //	arcn sync [--dir <path>]
 package main
 
@@ -22,15 +23,19 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
+	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/delivery/keys"
+	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/journal"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +55,7 @@ func root() *cobra.Command {
 		SilenceErrors: true,
 	}
 	command.PersistentFlags().String("home", "", "the directory of arcn (ARCN_HOME, default ~/.config/arc/next)")
-	command.AddCommand(keyCommand(), relayCommand(), journalCommand(), syncCommand())
+	command.AddCommand(keyCommand(), relayCommand(), journalCommand(), messageCommand(), syncCommand())
 	return command
 }
 
@@ -227,6 +232,8 @@ func serveCommand() *cobra.Command {
 			rl := khatru.NewRelay()
 			rl.Log = log.New(io.Discard, "", 0)
 			rl.UseEventstore(db, 500)
+			rl.Negentropy = true
+			rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
 
 			listener, err := net.Listen("tcp", listen)
 			if err != nil {
@@ -254,6 +261,7 @@ func serveCommand() *cobra.Command {
 type session struct {
 	key    keys.Key
 	node   *node.Node
+	mail   *mail.Mail
 	relays []transport.Transport
 	urls   []string
 }
@@ -281,10 +289,19 @@ func open(command *cobra.Command) (*session, error) {
 	for _, url := range urls {
 		sess.relays = append(sess.relays, relay.Relay{URL: url})
 	}
+
+	sess.mail, err = mail.Open(filepath.Join(dir, "store"), k, sess.node, sess.relays)
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
 	return sess, nil
 }
 
-func (s *session) close() { s.node.Store.Close() }
+func (s *session) close() {
+	s.mail.Close()
+	s.node.Store.Close()
+}
 
 func (s *session) journal() (*journal.Journal, error) {
 	return journal.New(s.key, s.node, s.relays)
@@ -432,6 +449,104 @@ func openJournal(command *cobra.Command) (*session, *journal.Journal, error) {
 	return sess, j, nil
 }
 
+func messageCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "message",
+		Short: "Private messages, carried by relays or by hand",
+		Long: "A message waits in the outbox until its recipient acknowledges it.\n" +
+			"arcn sync moves it: through relays, or through a directory that\n" +
+			"someone carries. A machine that carries a directory also carries\n" +
+			"other citizens' mail, which it cannot read.",
+	}
+
+	send := &cobra.Command{
+		Use: "send <public key> [text...]", Short: "Send a message", Args: cobra.MinimumNArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			to, err := nostr.PubKeyFromHex(args[0])
+			if err != nil {
+				return errors.New("a recipient is 64 characters of hex, as arcn key show prints it")
+			}
+
+			text := strings.Join(args[1:], " ")
+			if text == "" {
+				body, err := io.ReadAll(io.LimitReader(os.Stdin, 32*1024+1))
+				if err != nil {
+					return err
+				}
+				text = strings.TrimRight(string(body), "\n")
+			}
+			if text == "" || len(text) > 32*1024 {
+				return errors.New("a message holds 1 to 32768 bytes")
+			}
+
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.close()
+
+			out, err := sess.mail.Send(command.Context(), to, text)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("queued for %s until %s\n", identity.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
+			if len(sess.relays) == 0 {
+				fmt.Println("no relays: run arcn sync --dir <path> to hand it to a courier")
+			}
+			return nil
+		},
+	}
+
+	inbox := &cobra.Command{
+		Use: "inbox", Short: "List the messages you received", Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.close()
+
+			msgs := sess.mail.Inbox()
+			if len(msgs) == 0 {
+				fmt.Println("no messages: run arcn sync")
+			}
+			for _, m := range msgs {
+				fmt.Printf("%s  %s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), identity.Name(m.From[:]), m.Text)
+			}
+			if n := sess.mail.Carrying(); n > 0 {
+				fmt.Printf("\ncarrying %d sealed messages for other citizens\n", n)
+			}
+			return nil
+		},
+	}
+
+	outbox := &cobra.Command{
+		Use: "outbox", Short: "List the messages you sent, and whether they arrived", Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.close()
+
+			out := sess.mail.Outbox()
+			if len(out) == 0 {
+				fmt.Println("no messages sent")
+			}
+			now := time.Now()
+			for _, o := range out {
+				to, _ := nostr.PubKeyFromHex(o.To)
+				fmt.Printf("%s  to %s  %s, sent %d times\n  %s\n",
+					o.Created.Local().Format("2006-01-02 15:04"), identity.Name(to[:]), o.State(now), o.Attempts, o.Text)
+			}
+			return nil
+		},
+	}
+
+	command.AddCommand(send, inbox, outbox)
+	return command
+}
+
 func syncCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "sync",
@@ -462,7 +577,7 @@ func syncCommand() *cobra.Command {
 					failed = true
 					continue
 				}
-				fmt.Printf("%s: received %d, sent %d, already held %d\n",
+				fmt.Printf("%s: journal received %d, sent %d, already held %d\n",
 					report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
 				for _, reason := range report.Refused {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
@@ -472,6 +587,18 @@ func syncCommand() *cobra.Command {
 				}
 				for _, err := range report.SendFailed {
 					fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
+				}
+
+				mails, err := sess.mail.Sync(command.Context(), t)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
+					failed = true
+					continue
+				}
+				fmt.Printf("%s: mail received %d, delivered %d, carried %d, sent %d\n",
+					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
+				for _, reason := range mails.Refused {
+					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
 				}
 			}
 			if failed {

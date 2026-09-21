@@ -8,6 +8,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -136,6 +137,18 @@ func (s *Store) Has(id nostr.ID) bool {
 		return true
 	}
 	return false
+}
+
+// QueryEvents lets the store stand as a nostr.Querier, for Negentropy.
+func (s *Store) QueryEvents(filter nostr.Filter) iter.Seq[nostr.Event] {
+	events := s.Query(filter)
+	return func(yield func(nostr.Event) bool) {
+		for _, event := range events {
+			if !yield(event) {
+				return
+			}
+		}
+	}
 }
 
 // Query returns the events that match a filter, newest first. It leaves out

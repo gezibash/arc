@@ -3,12 +3,17 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
+	"sync"
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip11"
+	"fiatjaf.com/nostr/nip77"
 	"github.com/gezibash/arc/delivery/transport"
 )
 
@@ -115,6 +120,65 @@ func stored(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) ([]nost
 		}
 	}
 }
+
+// Reconcile compares the relay's events for a filter with a local set, with
+// Negentropy, as NIP-77 defines. It does so only when the relay says in its
+// information document that it supports NIP-77. A relay that does not know
+// the protocol can stay silent, and a sync would then wait until its timeout.
+func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Querier) ([]nostr.ID, []nostr.ID, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+
+	info, err := nip11.Fetch(ctx, r.URL)
+	if err != nil || !supports(info.SupportedNIPs, 77) {
+		return nil, nil, false, nil
+	}
+
+	var mu sync.Mutex
+	var need, give []nostr.ID
+	err = nip77.NegentropySync(ctx, r.URL, filter, local, discard{},
+		func(_ context.Context, dir nip77.Direction) {
+			for id := range dir.Items {
+				mu.Lock()
+				if dir.From == local {
+					give = append(give, id)
+				} else {
+					need = append(need, id)
+				}
+				mu.Unlock()
+			}
+		})
+	if err != nil {
+		return nil, nil, true, fmt.Errorf("relay %s: %w", r.URL, err)
+	}
+	return need, give, true, nil
+}
+
+func supports(nips []any, nip int) bool {
+	for _, n := range nips {
+		switch v := n.(type) {
+		case float64:
+			if int(v) == nip {
+				return true
+			}
+		case int:
+			if v == nip {
+				return true
+			}
+		case json.Number:
+			if v.String() == strconv.Itoa(nip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// discard is a target that turns on the download direction of a sync. The
+// caller fetches and verifies each event itself.
+type discard struct{}
+
+func (discard) Publish(context.Context, nostr.Event) error { return nil }
 
 // Watch sends the stored events that match the filter, then each new one as
 // it arrives, until the context ends.

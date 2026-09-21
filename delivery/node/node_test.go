@@ -2,6 +2,7 @@ package node_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +180,44 @@ func TestWatchPassesOnNewEvents(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("the new event never arrived")
+	}
+}
+
+func TestSyncReconcilesWhenTheRelaySupportsIt(t *testing.T) {
+	syncBoth(t, relay.Relay{URL: testrelay.StartPlain(t)})
+
+	for _, c := range []struct {
+		name       string
+		url        string
+		reconciled bool
+	}{
+		{"a relay with Negentropy", testrelay.Start(t), true},
+		{"a relay without it", testrelay.StartPlain(t), false},
+	} {
+		k := keys.Generate()
+		a, b := newNode(t), newNode(t)
+		r := relay.Relay{URL: c.url}
+		filter := nostr.Filter{Authors: []nostr.PubKey{k.Public}}
+
+		for i := 0; i < 5; i++ {
+			if _, err := a.Store.Save(note(t, k, fmt.Sprintf("note %d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		up, err := a.Sync(context.Background(), filter, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		down, err := b.Sync(context.Background(), filter, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if up.Reconciled != c.reconciled || down.Reconciled != c.reconciled {
+			t.Errorf("%s: reconciled %v and %v, want %v", c.name, up.Reconciled, down.Reconciled, c.reconciled)
+		}
+		if up.Sent != 5 || down.Received != 5 {
+			t.Errorf("%s: sent %d and received %d, want 5 and 5", c.name, up.Sent, down.Received)
+		}
 	}
 }

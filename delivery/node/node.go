@@ -48,6 +48,9 @@ type Report struct {
 	Unreadable int
 	Sent       int
 	SendFailed []error
+	// Reconciled says that the sync compared sets with Negentropy, and did
+	// not fetch every event.
+	Reconciled bool
 }
 
 // Sync reconciles the store with one transport for one filter. It keeps each
@@ -55,6 +58,17 @@ type Report struct {
 // that the store holds and the transport lacks.
 func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transport) (Report, error) {
 	report := Report{Transport: t.Name()}
+
+	if r, ok := t.(transport.Reconciler); ok {
+		need, give, ok, err := r.Reconcile(ctx, filter, n.Store)
+		if err != nil {
+			return report, err
+		}
+		if ok {
+			report.Reconciled = true
+			return report, n.exchange(ctx, t, need, give, &report)
+		}
+	}
 
 	batch, err := t.Fetch(ctx, filter)
 	if err != nil {
@@ -81,6 +95,36 @@ func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transp
 		report.Sent++
 	}
 	return report, nil
+}
+
+// exchange fetches the events that the store needs, and sends the events that
+// the transport needs, a batch at a time.
+func (n *Node) exchange(ctx context.Context, t transport.Transport, need, give []nostr.ID, report *Report) error {
+	const size = 100
+
+	for i := 0; i < len(need); i += size {
+		batch, err := t.Fetch(ctx, nostr.Filter{IDs: need[i:min(i+size, len(need))]})
+		if err != nil {
+			return err
+		}
+		report.Unreadable += batch.Unreadable
+		for _, event := range batch.Events {
+			if err := n.keep(event, report); err != nil {
+				return err
+			}
+		}
+	}
+
+	for i := 0; i < len(give); i += size {
+		for _, event := range n.Store.Query(nostr.Filter{IDs: give[i:min(i+size, len(give))]}) {
+			if err := t.Send(ctx, event); err != nil {
+				report.SendFailed = append(report.SendFailed, err)
+				continue
+			}
+			report.Sent++
+		}
+	}
+	return nil
 }
 
 func (n *Node) keep(event nostr.Event, report *Report) error {

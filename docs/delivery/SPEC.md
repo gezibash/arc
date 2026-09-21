@@ -1,6 +1,6 @@
 # Delivery: ARC over Nostr events, on any transport
 
-Status: phase 1 is built, see section 15. The rest is proposed. The older ARC
+Status: phases 1 and 2 are built, see section 15. The rest is proposed. The older ARC
 code uses its own protocol: Ed25519 keys, live sessions, and routed relays.
 Section 14 lists what changes.
 
@@ -191,8 +191,9 @@ route tag = first 16 bytes of HMAC-SHA256(key = recipient public key,
 
 The node writes the route tag as 32 lower-case hex characters.
 
-- A recipient checks the tags of yesterday, today, and tomorrow. This covers
-  midnight and a small clock error.
+- A recipient checks the tag of each day that a wrap can still be alive on:
+  the last 7 days, today, and tomorrow. Mail on a USB stick can take days, and
+  tomorrow covers a clock that runs ahead.
 - Tags for one recipient on two days do not match. A courier therefore cannot
   link two envelopes to one recipient across days.
 - Any node that already knows the recipient's public key can compute the tag.
@@ -350,13 +351,14 @@ which path it needs.
 The outbox keeps each undelivered event until the recipient acknowledges it.
 
 - It keeps at most 100 events for each recipient.
-- It drops an event after 24 hours, or at its `expiration` tag if that comes
-  first.
-- It sends an event again when a new transport reaches the recipient. It
-  tries at most 8 times.
-- If it drops an event, the node reports the failure to the citizen. The
-  failure never stays silent.
-- It stores each event sealed at rest, under a key that only this node holds.
+- A message lives for 7 days, set in the `expiration` tag of its wraps. After
+  that, the outbox shows it as expired. The failure never stays silent.
+- Each sync gives the wraps to the transport again, and counts the attempt.
+  A relay gets each wrap once. On a live transport, the outbox tries at most
+  8 times.
+- The outbox holds wraps and the sender's own seal, which are ciphertext. The
+  sender reads its own message by opening its seal, because a NIP-44
+  conversation key is the same from both ends.
 
 An acknowledgement is a private event whose rumor has kind 3274. The rumor names
 the delivered rumor with an `e` tag. When the sender receives the
@@ -388,8 +390,26 @@ A node syncs these filters, in this order:
 
 ### 10.4 Couriers
 
-When no transport can deliver a private event now, the router deposits the
-courier form with nearby nodes.
+When no transport can deliver a private event now, other nodes carry its
+courier form. How a courier bounds the spread depends on the transport.
+
+**On a directory.** Anyone who reads a directory gets a copy, so a copy
+budget cannot hold there. A hop limit bounds the spread instead:
+
+- The sender writes the event with a hop limit of 3, in a file beside it.
+- A node carries the event only when the limit it reads is above 0. It keeps
+  the event with the limit one lower, and writes that lower limit.
+- A node reads at most 3, whatever the file says, so a forged limit cannot
+  spread an event further.
+- A node that holds an event with a limit of 0 still writes it. The recipient
+  takes it; no other courier does.
+
+A directory does not say who wrote an event to it, so a courier cannot count
+deposits for each node there. It keeps at most 40 carried events, and drops
+the oldest past that.
+
+**On a mesh link.** Two nodes on a mesh link know each other, so a copy
+budget holds:
 
 - The router deposits each event with at most 3 couriers.
 - Each event carries a copy budget. The budget starts at 4, and is never more
@@ -400,9 +420,14 @@ courier form with nearby nodes.
 - A courier accepts at most 5 events from each contact, and at most 2 from
   any other verified node. It keeps at most 40 carried events, and at most 20
   of those from nodes that are not contacts.
+
+**On both:**
+
 - A courier accepts an event of at most 64 KiB. A larger event moves only over
   relays and files.
-- When a courier meets the recipient, it delivers the event and removes it.
+- On a mesh link, a courier that meets the recipient delivers the event and
+  removes it. On a directory, a courier cannot know who reads it, so the event
+  stays until it expires.
 - A courier that meets a relay can post the courier form there. The recipient
   finds it by route tag.
 
@@ -533,8 +558,12 @@ relays. No provider takes part.
 Each phase ends with its proof. A phase that does not pass its proof does not
 merge.
 
-Phase 1 is built: the packages under `delivery/`, the journal in `journal/`,
-and the command `arcn`. `mise run delivery` runs its proof. The journal adds
+Phases 1 and 2 are built: the packages under `delivery/`, the journal in
+`journal/`, and the command `arcn`. `mise run delivery` runs both proofs.
+Phase 2 adds `delivery/private` for gift wraps and route tags, and
+`delivery/mail` for the outbox, acknowledgements and couriers. Sync compares
+sets with Negentropy when a relay lists NIP-77 in its information document,
+and fetches every event otherwise. The journal adds
 one thing that the phase names: a page travels as parts of at most 32 KiB, so
 it fits the event limit of common relays, a read fetches only the parts that
 it needs, and `arcn journal tail` streams text as it is appended.
