@@ -82,9 +82,38 @@ transport. The delivery layer never reads a private payload.
 - A citizen uses one key on every transport. ARC does not keep a second key
   for the mesh.
 
-If a citizen holds an ARC Ed25519 key, the old key signs a migration record
-that names the new key. The new key publishes that record once. Section 16
-lists the format as an open question.
+### 5.1 Migration from an Ed25519 key
+
+A citizen with an ARC Ed25519 key moves to a new secp256k1 key once. The new
+key publishes a migration record: an event of kind 10272, which is
+replaceable.
+
+```json
+{
+  "kind": 10272,
+  "pubkey": "<new secp256k1 public key>",
+  "content": "",
+  "tags": [
+    ["ed25519", "<old Ed25519 public key, 64 hex>"],
+    ["proof", "<Ed25519 signature, 128 hex>"]
+  ]
+}
+```
+
+The Ed25519 signature covers these bytes:
+
+```text
+"ARC-MIGRATE-V1" || 0x00 || new public key (32 bytes) || old public key (32 bytes)
+```
+
+- The new key signs the event, so the record proves that the citizen holds the
+  new key.
+- The old key signs the proof, so the record proves that the old key agreed.
+- A node that trusted the old key trusts the new key the same way: its
+  petname, its signer trust, and its installed capabilities.
+- If two records name different new keys for one old key, the node trusts
+  neither. It reports both to the citizen, because this means that someone
+  else holds the old key.
 
 ## 6. The unit
 
@@ -145,8 +174,13 @@ forms:
 - **Relay form.** The tag is `p` with the recipient's public key. Standard
   Nostr relays and clients understand this form. Direct messages use it, so
   that ARC direct messages reach any NIP-17 client.
-- **Courier form.** The tag is a route tag. Couriers and mesh nodes use this
-  form, because a route tag does not reveal the recipient's key.
+- **Courier form.** The tag is `w`, with a route tag as its value. Couriers
+  and mesh nodes use this form, because a route tag does not reveal the
+  recipient's key.
+
+The letter `w` is unused in every NIP and in the Nostr kind registry. Relays
+index single-letter tags, so a recipient finds its events with a filter on
+`#w`.
 
 ### 6.4 Route tags
 
@@ -200,12 +234,16 @@ not hold, and writes each event that the directory lacks. A person carries
 the directory between the two nodes.
 
 **Bluetooth LE.** Every node takes both roles at once: central and
-peripheral. A Go node on Linux reaches BlueZ directly for this. The Go
-library `tinygo.org/x/bluetooth` cannot take both roles at once. Section 16
-lists macOS as an open question.
+peripheral. BlueZ supports both roles at once on Linux. ARC builds on the
+Linux backend of `tinygo.org/x/bluetooth`, which reaches BlueZ over D-Bus, and
+extends it to hold a GATT server and a GATT client together. ARC offers the
+change upstream. On macOS, a node is a central only, so it reaches one hop.
+See section 16.
 
-**LoRa.** A node reaches a LoRa radio through Reticulum or Meshtastic.
-Section 16 lists the choice as an open question.
+**LoRa.** A node reaches LoRa through Reticulum. The node connects to a local
+Reticulum instance over TCP, and that instance drives the radio. Reticulum
+moves a payload larger than one radio packet itself, so the node sends each
+compact event whole. See section 16.
 
 ### 7.3 The compact form
 
@@ -242,7 +280,8 @@ The hop limit lives in the frame, not in the event. A mesh node changes it
 without changing the signed event.
 
 A receiver joins fragments by fragment ID. It keeps at most 128 incomplete
-events, and drops an incomplete event after 30 seconds.
+events, and drops an incomplete event after 30 seconds. It refuses an event
+larger than 1 MiB.
 
 ## 8. The node and its store
 
@@ -295,6 +334,17 @@ the router skips it. A citizen sets this policy per transport.
 A live call, a gift wrap of kind 21059, takes only step 1 and step 2. If
 neither delivers now, the call fails, and the router tells the caller.
 
+The size of an event limits its paths:
+
+| Size | Paths |
+| --- | --- |
+| up to 64 KiB | every path, couriers included |
+| up to 1 MiB | relays, files, and sync between mesh neighbours; no couriers |
+| over 1 MiB | relays and files only |
+
+If an event cannot take any path that exists now, the router tells the caller
+which path it needs.
+
 ### 10.2 The outbox
 
 The outbox keeps each undelivered event until the recipient acknowledges it.
@@ -308,7 +358,7 @@ The outbox keeps each undelivered event until the recipient acknowledges it.
   failure never stays silent.
 - It stores each event sealed at rest, under a key that only this node holds.
 
-An acknowledgement is a private event of the ARC kind `ack`. Its rumor names
+An acknowledgement is a private event whose rumor has kind 3274. The rumor names
 the delivered rumor with an `e` tag. When the sender receives the
 acknowledgement, the outbox removes the event. A node does not acknowledge an
 acknowledgement.
@@ -324,6 +374,10 @@ Sync uses the Negentropy protocol that NIP-77 wraps.
   frames of type `sync`.
 - Over a file transport, the node reads the event IDs in the directory, and
   copies what each side lacks.
+
+The khatru relay framework serves NIP-77, and the Go client library supports
+it. Both now live in `fiatjaf.com/nostr`. The strfry relay supports it too.
+ARC uses that one implementation on every transport.
 
 A node syncs these filters, in this order:
 
@@ -383,8 +437,7 @@ A live call over a relay has no forward secrecy. NIP-44 does not give it.
 
 ### 11.1 Announcement
 
-A provider announces a capability with an addressable event of the ARC kind
-`capability`:
+A provider announces a capability with an addressable event of kind 30272:
 
 - The `d` tag is the capability ID.
 - The content is the manifest.
@@ -408,9 +461,8 @@ manifest, as today.
 
 ### 11.4 Calls
 
-A call is a private event. The request is a rumor of the ARC kind `request`.
-The reply is a rumor of the ARC kind `reply`. The reply names the request
-rumor with an `e` tag.
+A call is a private event. The request is a rumor of kind 3272. The reply is
+a rumor of kind 3273. The reply names the request rumor with an `e` tag.
 
 The manifest declares the class of each command:
 
@@ -468,7 +520,7 @@ relays. No provider takes part.
 | `announce` | capability announcement events |
 | `relay` with routes and federation | relays built on khatru, and the NIP-65 outbox model |
 | `client` | the node: store, router, and transports |
-| `direct` | removed from the first version, see section 16 |
+| `direct` | left out of the first version, see section 16 |
 | `citizen` provider runtime | kept: a provider still runs as a process over standard input and output |
 | `capability`, `toolbox`, installed commands | kept; the manifest travels in an announcement |
 | `cmd/dm-provider` | NIP-17 direct messages; no provider needed |
@@ -485,30 +537,75 @@ merge.
 | --- | --- | --- |
 | 1 | Identity, events, the store, the router, and the relay and file transports | Two machines sync a journal through a relay, then through a USB stick. A changed event is refused. |
 | 2 | The outbox, acknowledgements, route tags, couriers, and sync | A message reaches an offline recipient through a third machine that carries a USB stick. |
-| 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. |
+| 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay, and the round-trip time is recorded. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. |
 | 4 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. |
-| 5 | LoRa | A message crosses two LoRa nodes with no internet. |
+| 5 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. |
 
-## 16. Open questions
+## 16. Decisions
 
-- **Kind numbers.** ARC needs kinds for `capability`, `request`, `reply`,
-  and `ack`. Take them from the kind registry before phase 3.
-- **The route tag letter.** Relays index single-letter tags only. Choose a
-  letter that no common NIP uses.
-- **Bluetooth from Go.** Reach BlueZ over D-Bus directly, or extend
-  `tinygo.org/x/bluetooth` so that it takes both roles at once.
-- **macOS.** Go cannot act as a Bluetooth peripheral on macOS today. A macOS
-  node is a one-hop client until someone adds CoreBluetooth peripheral
-  support.
-- **LoRa.** Reticulum carries more media and has a Go implementation.
-  Meshtastic has more hardware in use.
-- **Negentropy support.** Check which relays, and which Go libraries,
-  implement NIP-77.
-- **The direct carrier.** ARC's TLS direct carrier can become a live
-  transport. Decide after phase 4.
-- **The migration record.** Define how an Ed25519 key names its secp256k1
-  successor.
-- **A bitchat bridge.** Direct messages with bitchat users need a bridge,
-  because bitchat's Nostr envelopes are not NIP-17.
-- **The courier size cap.** 64 KiB holds a message, not a manifest or a long
-  page. Decide whether larger events need a courier path.
+### 16.1 Kind numbers
+
+"272" spells ARC on a phone keypad. No NIP and no entry in the Nostr kind
+registry uses these numbers:
+
+| Kind | Class | Use |
+| --- | --- | --- |
+| 3272 | regular | a call request, inside a gift wrap |
+| 3273 | regular | a call reply, inside a gift wrap |
+| 3274 | regular | an acknowledgement, inside a gift wrap |
+| 10272 | replaceable | a migration record, see 5.1 |
+| 30272 | addressable | a capability announcement |
+
+Relays never see 3272, 3273 or 3274, because a gift wrap hides them. ARC
+registers all five in the registry before phase 3.
+
+### 16.2 The route tag
+
+The route tag uses the letter `w`. The letters `b`, `j`, `o` and `w` are unused
+in every NIP. The registry also uses `v`.
+
+### 16.3 Bluetooth from Go
+
+`muka/go-bluetooth` is archived, so ARC does not use it. ARC extends the Linux
+backend of `tinygo.org/x/bluetooth`, which is maintained and reaches BlueZ over
+D-Bus. If the change does not fit that library, ARC calls BlueZ through
+`godbus/dbus` directly.
+
+### 16.4 macOS
+
+A macOS node is a Bluetooth central only in the first version. The
+CoreBluetooth bindings under the Go library aim to cover all of CoreBluetooth,
+which includes the peripheral manager. A spike after phase 4 decides whether a
+macOS node can become a full mesh node.
+
+### 16.5 LoRa
+
+ARC uses Reticulum, not Meshtastic:
+
+- Reticulum is a network stack. It runs over LoRa, serial links, packet radio,
+  TCP, UDP and I2P, and it moves payloads larger than one packet.
+- Meshtastic is firmware for chat radios. Its packets hold 233 bytes, and it
+  runs its own flood. ARC would be a guest on it.
+
+Three Go implementations of Reticulum exist. Only one drives a LoRa radio, and
+one person maintains it. ARC therefore connects to a local Reticulum instance
+over TCP, and does not embed a Go port. The Python instance works today. A Go
+port can replace it later without a change in ARC.
+
+### 16.6 Sync
+
+ARC uses Negentropy from `fiatjaf.com/nostr`, as section 10.3 states. A relay
+without NIP-77 gets a `REQ` with `since`.
+
+### 16.7 Courier size
+
+Couriers keep the 64 KiB cap. Section 10.1 lists the paths for larger events.
+A capability announcement is public, so it moves by sync, not by couriers.
+
+## 17. Deferred work
+
+| Item | Why it waits | When to decide |
+| --- | --- | --- |
+| The TLS direct carrier as a live transport | Relays can carry live calls. | After phase 3, if the recorded round-trip time is too slow. |
+| A full macOS mesh node | It needs a peripheral backend in Go. | After phase 4, see 16.4. |
+| A bridge to bitchat direct messages | bitchat's Nostr envelopes are not NIP-17. Only the citizen's own node can translate them, because translation needs the private key. | When ARC direct messages must reach bitchat users. |
