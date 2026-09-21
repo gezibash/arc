@@ -15,9 +15,10 @@ the request or provider agent.
 
 ## Operator policy
 
-Pass `--direct-policy PATH` to both `arc serve` and `arc request`, together with
-`--relay` and `--relay-pubkey`. The option is unavailable without a configured,
-pinned relay. The file is JSON and has this exact outer shape:
+Pass `--direct-policy PATH` to both `arc serve` and `arc call`. Both commands
+need a configured, pinned relay: `--relay` and `--relay-pubkey`, `ARC_RELAY`
+and `ARC_RELAY_PUBKEY`, or the relay that `arc join` saved. The file is JSON
+and has this exact outer shape:
 
 ```json
 {
@@ -30,7 +31,6 @@ pinned relay. The file is JSON and has this exact outer shape:
       "path": "/main",
       "lease_ms": 30000,
       "dial": ["192.0.2.44"],
-      "hole_punch": true,
       "listen": {"bind": "0.0.0.0", "address": "192.0.2.44", "port": 0}
     }
   ]
@@ -47,8 +47,11 @@ path. A file accepts at most 32 rules and cannot contain duplicate scopes.
 `lease_ms` defaults to 30000 and must be from 1000 through 120000. `dial` holds
 at most four literal IPv4 or IPv6 addresses; host names, wildcard addresses, and
 link-local or multicast addresses are rejected. At least one of `dial` or
-`listen` is required. `hole_punch` defaults to `false`. When set to `true`, the
-same rule must have a nonempty exact `dial` allowlist.
+`listen` is required.
+
+v0.7.0 removed TCP hole punching. A rule can still hold `hole_punch`, but ARC
+does not use it. If `hole_punch` is `true`, the rule must still have a
+nonempty `dial` list.
 
 `listen` is optional. `bind` is the local literal address to bind, `address` is
 the literal address advertised to the peer, and `port` may be 0 so the operating
@@ -56,32 +59,6 @@ system chooses a port. The advertised listener address must appear in the other
 endpoint's `dial` list. ARC does not configure a router or use STUN. For this
 ordinary listener, the operator arranges any required firewall rule and public
 address mapping.
-
-## Optional TCP hole punching
-
-`"hole_punch": true` is a separate, mutual opt-in. It does not broaden a rule's
-peer, resource, or address scope. After both endpoints have accepted the exact
-scope over authenticated relays, each endpoint may ask its own relay for that
-connection's observed source IP address and port. The endpoints exchange those
-observations only inside the authenticated relay conversation. The observed
-address must still be present in the other owner's `dial` list before it becomes
-a candidate.
-
-For this mode, both owners set `"hole_punch": true` in their matching rule and
-list the peer's permitted public address in `dial`. They can omit `listen`
-entirely. Existing rules without the flag keep their previous behavior.
-
-ARC then makes short-lived outbound and inbound attempts using the same local
-TCP source port. The carrier keeps fixed TLS client and server roles during
-simultaneous active and passive attempts. This uses TCP and TLS only;
-it adds no service or runtime dependency. It does not configure a router, create
-a port mapping, publish an address, or expose a general listener.
-
-This is best effort. Endpoint-dependent NATs, restrictive firewalls, and
-operating systems that cannot reuse the port prevent it from working. ARC falls
-back to the existing relay path in those cases. A failed attempt never replays
-an application request. Loopback tests only exercise local carrier mechanics;
-they do not demonstrate traversal across real NATs.
 
 ## Reachable listener setup
 
@@ -97,13 +74,13 @@ arc serve 'exec:///absolute/path/to/runtime?manifest=/absolute/path/to/capabilit
   --relay relay.example:7331 --relay-pubkey '<relay-key>' \
   --direct-policy /absolute/path/to/provider-direct.json
 
-arc request 'sqlite+arc://<provider-public-key>/main' \
-  --body '{"sql":"SELECT 1"}' \
+arc call 'sqlite+arc://<provider-public-key>/main' \
+  '{"sql":"SELECT 1"}' \
   --relay relay.example:7331 --relay-pubkey '<relay-key>' \
   --direct-policy /absolute/path/to/citizen-direct.json
 ```
 
-The one-shot `arc request` process exits after its reply, so it cannot retain a
+The one-shot `arc call` process exits after its reply, so it cannot retain a
 direct route for later commands. A long-running client that makes repeated
 `Peers().Request` calls can retain an admitted route until
 its lease ends.
@@ -118,8 +95,8 @@ requires an ARC identity proof bound to the negotiated context before ARC frames
 are admitted. A reachable IP address or a successful TLS socket alone does not
 authorize a request.
 
-The carrier is TLS over TCP, from the Go standard library. It uses
-does not add a Rust toolchain or a WebRTC dependency. This first profile makes no
+The carrier is TLS over TCP, from the Go standard library. It adds no Rust
+toolchain and no WebRTC dependency. This first profile makes no
 automatic latency ranking or speed claim; a matching policy is an explicit route
 selection request.
 
@@ -140,9 +117,7 @@ relay path is available.
 
 ## First-profile boundaries
 
-- Ordinary direct rules need one reachable listener. Rules with mutual
-  `hole_punch` consent can attempt source-port reuse without a configured
-  listener, but they have no cross-network reachability guarantee.
+- Each direct route needs one reachable listener. ARC does not traverse NAT.
 - There are no configured backup relay sets, address-history scoring, or
   automatic route ranking.
 - ARC does not resume a partially transferred byte stream.

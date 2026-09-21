@@ -24,9 +24,10 @@ catalog.
 
 ## User flow
 
-Use a build containing this protocol on both the relay and clients. From this
-checkout, `mise run arc --` runs the current source CLI. Keep a persistent
-relay identity as described in [deployment](../DEPLOY.md).
+Use a build containing this protocol on both the relay and clients: a release
+of ARC, or this checkout built with `mise run build`, which puts the programs
+in `bin/`. Keep a persistent relay identity as described in
+[deployment](../DEPLOY.md).
 
 In each provider/client shell, set the same chosen relay address and its
 public key. Replace the placeholders with the operator's actual values:
@@ -49,18 +50,20 @@ With a different citizen identity active on another computer:
 arc discover files
 arc info <provider-public-key> primary
 arc install <provider-public-key> primary
-arc files put ./report.pdf
-arc files get <file-id> --output ./restored.pdf
 ```
 
 The existing install trust decision still applies. The citizen verifies the
-signed capability package before installing the commands. File encryption
-still happens locally; see [private files](../files/SPEC.md).
+signed capability package before installing the commands. In v0.7.0, the
+installed `arc files` commands fail, because `arc` does not build the file
+inputs yet (`CHANGELOG.md`, known issues). File encryption still happens
+locally; see [private files](../files/SPEC.md).
 
-`discover` accepts `--limit` (up to fifty providers per page) and `--after`
-using the returned cursor. An empty search lists providers offering services;
-ordinary citizen announcements with no capabilities are excluded. Search
-results and cursors are scoped to the connected relay's current view. Warm
+`discover` accepts `--limit` (default 10, at most 50 providers per page) and
+`--json`. It shows the first page. The `search` request takes the returned
+cursor as `after`, and `client.Client.Search` passes it. An empty search
+lists providers offering services; ordinary citizen announcements with no
+capabilities are excluded. Search results and cursors are scoped to the
+connected relay's current view. Warm
 searches, including empty results and subsequent pages, do not fan out to peers.
 A cold catalog falls back to a bounded live search. Exact full-key lookups use
 fresh cached entries when available; misses and name/prefix lookups retain live
@@ -68,13 +71,14 @@ lookup. Known incomplete views are marked partial. A cache can still lag a
 distant provider change; partial=false is not a network-wide census.
 
 Search replies include `cached: true` when served locally from the synchronized
-catalog and `cached: false` for live federation results. `client.Peers().Discover`
-exposes this as `cached?`. Older local-only replies may omit the field.
+catalog and `cached: false` for live federation results. Older local-only
+replies may omit the field. `client.Client.Search` returns the entries, the
+cursor of the next page, and the total. It does not return `cached`.
 
-The relay can run on the same computer for local use. Until the separate
-default-delivery migration, commands without relay configuration retain the
-older local mode. Once these commands choose a relay, discovery and their
-peer calls do not fall back to local identity records or file mailboxes.
+The relay can run on the same computer for local use. Each command that
+reaches another citizen needs a relay. Without one, the command fails with
+`relays: no relay: join one with arc join`. Discovery and peer calls never
+fall back to local identity records or file mailboxes.
 
 The `publish` and `resolve` control-plane commands still operate on the local
 control store. Network presence is announced automatically by connected
@@ -128,8 +132,8 @@ key.
 
 Records are limited to 8 KiB and eight capability summaries. Receivers reject
 bad signatures, unsupported fields, expired records, and issue times more
-than thirty seconds in the future. Agents refresh announcements every minute.
-Both the relay and the querying client verify records.
+than thirty seconds in the future. Agents refresh announcements every 150
+seconds. Both the relay and the querying client verify records.
 
 The relay accepts announcements only for the authenticated connection's
 identity. Connection replacement, disconnection, and expiration invalidate
@@ -165,16 +169,15 @@ the provider's file list before uploading again.
 
 ## Validation
 
-The test coverage includes signed records and real relay control frames.
-The CLI integration launches provider and citizen in separate operating-system
-processes with distinct local control stores and mailboxes. It exercises
-discovery, signed installation, and private file upload/download through a
-shared relay, and checks that neither child uses a local file mailbox.
-
-The same-process regression checks relay forwarding during capability detail
-requests, then disconnects the transport and verifies that resident peers and
-local control entries cannot satisfy the request.
+The test coverage includes signed records and real relay control frames. The
+relay tests announce and find a record, page a search, refuse an announcement
+for another citizen, and forget a client that leaves:
 
 ```bash
-go test ./relay/... ./client/...
+go test ./announce/... ./relay/...
 ```
+
+`mise run cli` runs `scripts/test-go-cli.sh`. It starts the relay, providers
+and callers as separate operating-system processes. It exercises `resolve`,
+`discover`, `arc call --manifest`, `info` and signed installation through one
+relay.

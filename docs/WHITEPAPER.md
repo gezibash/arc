@@ -164,12 +164,11 @@ A network running on Hedera today can migrate to Ethereum tomorrow. Agents keep 
 ```
 publish_identity(keypair, capabilities) → ref
 resolve_agent(name)                     → pubkey
-publish_keyex(to_id, ephemeral_pubkey)  → ref
 revoke_identity(keypair, reason)        → ref
 subscribe(topic, handler)               → pid
 ```
 
-This is the entirety of what ARC requires from a control plane. Five operations. Any system that implements these five operations is a valid ARC control plane.
+This is the entirety of what ARC requires from a control plane. Four operations. Any system that implements these four operations is a valid ARC control plane. The control plane has no part in key exchange: a peer computes the X25519 key of an agent from its Ed25519 public key.
 
 ### Layer 2 — Data Plane
 
@@ -179,7 +178,7 @@ A relay holds one goroutine for each connection and one for each route. A connec
 
 An agent is not a process of the runtime. An agent is a keypair. That is the whole identity model, and it is why an agent can move between machines, outlive the program that served it, and be reached by anyone who knows its public key.
 
-The data plane is chain-agnostic. Once a session key is established via the control plane, all routing is pure message passing. The data plane does not know what chain bootstrapped the session. It does not care.
+The data plane is chain-agnostic. The control plane resolves identities; the packets of a session carry everything that its key needs. All routing is pure message passing. The data plane does not know which chain resolved the peer. It does not care.
 
 **Scale:**
 
@@ -296,13 +295,14 @@ Keys can be rotated without changing identity. The name record is updated on the
    A queries control plane: resolve("zim")
    → returns B's current pubkey
 
-3. Key Exchange (via control plane)
-   A generates ephemeral X25519 keypair
-   A publishes to agent.keyex: { to: B.id, ephemeral_pub: A_eph_pub }
-   B sees the keyex message
-   Both compute: shared_secret = X25519(A_eph_priv, B_pub)
-                               = X25519(B_priv, A_eph_pub)
-   session_key = HKDF(shared_secret)
+3. Key Agreement (in the packets, session version 2)
+   A computes B's X25519 public key from B's Ed25519 public key
+   A generates an ephemeral X25519 keypair for this session
+   Both compute: shared_secret = X25519(A_eph_priv, B_x25519_pub)
+                               = X25519(B_x25519_priv, A_eph_pub)
+   session_key = HKDF-SHA256(shared_secret, salt: A_eph_pub,
+                             info: "arc-session-v2")
+   Every packet header of the session carries A_eph_pub (field ek)
 
 4. Session Active
    All subsequent messages encrypted with session_key
@@ -310,7 +310,7 @@ Keys can be rotated without changing identity. The name record is updated on the
    Control plane no longer involved
 ```
 
-The control plane is only on the path during session establishment. Once a session key is derived, the control plane is out of the loop entirely. This means:
+The control plane is only on the path during resolution. The key agreement needs no message outside the session's own packets. This means:
 
 - Control plane latency does not affect message latency
 - Control plane downtime does not break active sessions
@@ -327,7 +327,8 @@ The control plane is only on the path during session establishment. Once a sessi
     sid:    session_id,
     seq:    sequence_number,
     ts:     unix_ms,
-    ph:     base64(SHA-256(payload))
+    ph:     base64(SHA-256(payload)),
+    ek:     base64(initiator_ephemeral_x25519_pubkey)
   }
 [64 bytes]  Ed25519 signature over header
 [N bytes]   ChaCha20-Poly1305 encrypted payload
@@ -709,7 +710,6 @@ Regardless of provider, ARC defines logical topics that each adapter must implem
 | `arc.node.registry` | Relay peering and topology | On boot, low |
 | `arc.node.revocation` | Compromised node announcements | Rare |
 | `arc.agent.registry` | Agent identity and pubkey publication | On boot, on rotation |
-| `arc.agent.keyex` | Ephemeral key exchange events | Per new session |
 | `arc.agent.revocation` | Compromised agent or key announcements | Rare |
 | `arc.cluster.routing` | Shard and partition assignments | Operational |
 
