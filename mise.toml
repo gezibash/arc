@@ -29,3 +29,8 @@ depends = ["lint", "test"]
 description = "Run the whole of ARC in Go: relay, citizen, provider, caller"
 run = "bash scripts/test-go-cli.sh"
 raw = true
+
+[tasks.delivery]
+description = "Prove phase 1 of the delivery layer: relay, USB stick, refusal, parts, tail"
+run = "bash scripts/test-delivery.sh"
+raw = true

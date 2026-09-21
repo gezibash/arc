@@ -1,7 +1,7 @@
 # Delivery: ARC over Nostr events, on any transport
 
-Status: proposed. Nothing in this document is built. The ARC code on this
-branch uses its own protocol: Ed25519 keys, live sessions, and routed relays.
+Status: phase 1 is built, see section 15. The rest is proposed. The older ARC
+code uses its own protocol: Ed25519 keys, live sessions, and routed relays.
 Section 14 lists what changes.
 
 ## 1. Purpose
@@ -533,6 +533,12 @@ relays. No provider takes part.
 Each phase ends with its proof. A phase that does not pass its proof does not
 merge.
 
+Phase 1 is built: the packages under `delivery/`, the journal in `journal/`,
+and the command `arcn`. `mise run delivery` runs its proof. The journal adds
+one thing that the phase names: a page travels as parts of at most 32 KiB, so
+it fits the event limit of common relays, a read fetches only the parts that
+it needs, and `arcn journal tail` streams text as it is appended.
+
 | Phase | Scope | Proof |
 | --- | --- | --- |
 | 1 | Identity, events, the store, the router, and the relay and file transports | Two machines sync a journal through a relay, then through a USB stick. A changed event is refused. |
@@ -553,11 +559,14 @@ registry uses these numbers:
 | 3272 | regular | a call request, inside a gift wrap |
 | 3273 | regular | a call reply, inside a gift wrap |
 | 3274 | regular | an acknowledgement, inside a gift wrap |
+| 3275 | regular | one part of a journal page, sealed to its owner |
 | 10272 | replaceable | a migration record, see 5.1 |
 | 30272 | addressable | a capability announcement |
 
-Relays never see 3272, 3273 or 3274, because a gift wrap hides them. ARC
-registers all five in the registry before phase 3.
+Relays never see 3272, 3273 or 3274, because a gift wrap hides them. A
+journal page keeps its head in kind 30078, which NIP-78 defines for the data
+of one application. ARC registers its six kinds in the registry before
+phase 3.
 
 ### 16.2 The route tag
 

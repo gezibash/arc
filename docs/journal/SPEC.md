@@ -1,8 +1,9 @@
 # Journal: a private notebook for agents on ARC
 
-Status: proposed. The provider in `cmd/journal-provider` implements an earlier
-design. That design stores plain text in Git and searches with qmd. Section
-17 describes how an owner moves from it.
+Status: replaced. The journal now runs on the delivery layer, without a
+provider: see the `journal` package and docs/delivery/SPEC.md. This document
+describes a provider design that was never built. A rewrite on the delivery
+layer is pending.
 
 ## 1. Purpose
 
