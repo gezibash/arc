@@ -2,11 +2,11 @@
 
 Status: proposed. The provider in `cmd/journal-provider` implements an earlier
 design. That design stores plain text in Git and searches with qmd. Section
-18 describes how an owner moves from it.
+17 describes how an owner moves from it.
 
 ## 1. Purpose
 
-The journal is a private notebook. An agent writes research notes, attaches
+The journal is a private notebook. An agent writes research notes, links to
 files, and records KPIs. Only the agent that wrote an entry can read it.
 
 The provider stores entries and returns them. It cannot read them. The
@@ -26,6 +26,7 @@ These are out of scope:
 - Sharing a journal, or a part of it, with another identity.
 - Public read access.
 - Semantic search. Search is keyword search only.
+- Storing file bytes. A page links to a file. It never holds the file.
 - Hard deletion of entries from the provider.
 - Recovery of a lost key.
 
@@ -75,12 +76,11 @@ The provider learns this metadata:
 - The owner's public key.
 - The kind of each entry: page revision or KPI record.
 - The number of streams, and the number of entries in each stream.
-- The number of attachments.
-- The size of each entry and each attachment.
+- The size of each entry.
 - The time at which each entry arrived.
 
 The provider does not learn addresses, titles, tags, page text, KPI names,
-KPI values, attachment names, attachment bytes, or links.
+KPI values, or links.
 
 ## 5. Keys
 
@@ -163,11 +163,6 @@ updated: 2026-09-11T15:40:00Z
 tags: [ablation, lr]
 refs:
   - github: owner/repo@df62851
-attachments:
-  - name: plot.png
-    blob: 4a1c...        # SHA-256 of the sealed bytes, which the provider stores
-    sha256: 9e0f...      # SHA-256 of the plain bytes
-    bytes: 88112
 links:
   - name: run-dir
     uri: file:///Users/zim/runs/lr-sweep
@@ -177,14 +172,15 @@ links:
 Body in Markdown.
 ```
 
-The client owns `address`, `created`, `updated`, `attachments`, and `links`.
+The client owns `address`, `created`, `updated`, and `links`.
 The owner sets `title`, `tags`, and `refs`.
 
 The client needs `address` to list pages. A stream ID does not reveal it.
 
 ### 7.3 Links
 
-A link records where a file lives. The journal stores no bytes for a link.
+A link records where a file lives. The journal stores no file bytes. The bytes
+stay where the link points, and the owner keeps them there.
 
 - `uri` is any URI: `file://`, `https://`, `s3://`, `arc://`, or a `github:`
   reference.
@@ -193,6 +189,9 @@ A link records where a file lives. The journal stores no bytes for a link.
 - If the owner gives `--sha256`, the client stores it. The client does not
   verify it.
 - The client never follows a link.
+- A link is part of the sealed page, so the provider never sees it.
+- If a file must stay private, the owner links to a private place. The journal
+  does not protect the file itself.
 
 ### 7.4 Deletion
 
@@ -233,31 +232,7 @@ A KPI record is an entry of kind `kpi`. Its sealed body is one JSON object:
 - If a page contains the line `<!-- kpi: auc -->`, `read` shows the latest
   value in its place. The page itself does not change.
 
-## 10. Attachments
-
-An attachment is a blob. The client seals the file to the owner, and the
-provider stores the sealed bytes. The blob ID is the SHA-256 hash of the
-sealed bytes.
-
-The client uses the hash of the sealed bytes, not the plain bytes. A hash of
-the plain bytes lets a provider confirm that a known file is in a journal.
-
-Every request and every reply must stay under 1 MiB, because the ARC client
-refuses a larger request body. The client therefore moves a blob in chunks:
-
-1. `blob begin <blob ID> <bytes>` opens an upload.
-2. `blob chunk <blob ID> <offset>` sends one chunk as base64 in the body. A
-   chunk holds at most 512 KiB of sealed bytes.
-3. `blob commit <blob ID>` asks the provider to check the length and the hash.
-   If both match, the provider keeps the blob. If not, it discards the upload.
-
-To read a blob, the client sends `blob get <blob ID> <offset>` for each chunk.
-Then it checks the hash of the sealed bytes, opens them, and checks the
-`sha256` of the plain bytes against the page.
-
-The largest attachment is 16 MiB of plain bytes.
-
-## 11. Search
+## 10. Search
 
 The client searches. The provider holds nothing that it can search.
 
@@ -275,7 +250,7 @@ The client writes no plain text to disk. It opens the pages again for each
 search. The design target is a few thousand pages. A sealed index on disk is a
 later step.
 
-## 12. Sync and the local copy
+## 11. Sync and the local copy
 
 The client keeps a copy of the owner's entries:
 
@@ -287,7 +262,6 @@ The client keeps a copy of the owner's entries:
     written             the highest sequence that `put` returned to this client
     heads.json          stream ID -> rev of the held head
     entries/<rev>       one entry, exactly as the provider sent it
-    blobs/<blob ID>     sealed attachment bytes, when fetched
 ```
 
 Every entry on disk is sealed. The copy holds no address and no text in the
@@ -314,7 +288,7 @@ If one check fails, the client stores nothing from that sync and reports
 `untrusted_log` with the sequence and the check. The client does not repair
 the log.
 
-## 13. The provider
+## 12. The provider
 
 ### 13.1 Storage
 
@@ -326,8 +300,6 @@ The provider uses plain files. It needs no database.
     log                     one line per entry: <sequence> <kind> <stream ID> <rev>
     heads/<stream ID>       the rev of the head of one page stream
     entries/<rev>           one entry
-    blobs/<blob ID>         one sealed attachment
-    uploads/<blob ID>       a blob while its chunks arrive
 ```
 
 The provider writes each file to a temporary name, then renames it. It holds
@@ -361,11 +333,11 @@ The provider cannot read the body. It checks only the envelope.
 - `grants` lists the identities that can keep a journal on this provider. It
   must hold at least one key. If a caller is not in the list, the provider
   refuses with `forbidden`.
-- `max_bytes` caps the entries and blobs of one owner. The default is 1 GiB.
+- `max_bytes` caps the entries of one owner. The default is 1 GiB.
 - If `JOURNAL_CONFIG` is not set, or the file is not valid, the provider does
   not start.
 
-## 14. Provider commands
+## 13. Provider commands
 
 The provider uses the request line format of every ARC provider. The first
 line of `message` is the command. The text after the first newline is the
@@ -377,10 +349,6 @@ request body.
 | `get <rev>` | none | one entry |
 | `head <stream ID>` | none | a rev, or `not_found` |
 | `since <sequence> [--limit n]` | none | one line per entry: `<sequence> <kind> <stream ID> <rev>` |
-| `blob begin <blob ID> <bytes>` | none | `ok` |
-| `blob chunk <blob ID> <offset>` | base64 chunk | `ok <bytes received>` |
-| `blob commit <blob ID>` | none | `ok`, or `invalid_blob` |
-| `blob get <blob ID> <offset>` | none | base64 chunk |
 | `usage` | none | `entries <n> bytes <n> max <n>` |
 
 `since` returns at most 1,000 lines. The default is 1,000.
@@ -396,13 +364,12 @@ Errors are one word, then optional detail:
 | `conflict` | `parent` is not the current head. The detail is the current head. |
 | `bad_signature` | The signature does not verify. |
 | `invalid_entry` | The entry does not have the fields of section 6. |
-| `invalid_blob` | The length or the hash of an upload does not match. |
-| `not_found` | No entry, head, or blob has that name. |
-| `too_large` | A chunk or an entry is over its limit. |
+| `not_found` | No entry or head has that name. |
+| `too_large` | An entry is over its limit. |
 | `quota_exceeded` | The owner is at `max_bytes`. |
 | `unknown_command` | The command does not exist. |
 
-## 15. Client commands
+## 14. Client commands
 
 | Command | Purpose |
 | --- | --- |
@@ -413,15 +380,13 @@ Errors are one word, then optional detail:
 | `arc journal write <addr> [--title t] [--tags a,b] [--if-rev r]` | Replace the page with the standard input. Create it if it does not exist. |
 | `arc journal append <addr> <text>` | Add text to the end of the page. |
 | `arc journal edit <addr> --if-rev r --find s --replace t` | Replace one string in the page. |
-| `arc journal attach <addr> <file>` | Seal a file, upload it, and add it to the page. |
-| `arc journal fetch <addr> <name> [--output path]` | Download an attachment, and check it. |
 | `arc journal link <addr> <uri> [--name n] [--sha256 h]` | Record where a file lives. |
 | `arc journal kpi set <project>/<notebook> <key> <value> [--ref r] [--note n]` | Add a KPI record. |
 | `arc journal kpi log <project>/<notebook> <key>` | Show the records of one key. |
 | `arc journal kpi latest <project>/<notebook>` | Show the last value of each key. |
 | `arc journal search <query> [--project p] [--notebook n]` | Search the pages. |
 | `arc journal history <addr>` | List the revisions of a page. |
-| `arc journal import <provider>` | Copy a journal from a provider of the earlier design. |
+| `arc journal import <provider> [--files dir]` | Copy a journal from a provider of the earlier design. |
 
 Output rules:
 
@@ -429,7 +394,7 @@ Output rules:
   `search` returns the address, the score, and one matching line.
 - To see more, the owner calls `read` with a range of lines.
 
-## 16. Where the client lives
+## 15. Where the client lives
 
 The journal logic runs in `arc`, not in the provider. A manifest template
 cannot derive a key, sync a log, or rank search results. `arc journal` is
@@ -440,19 +405,17 @@ it. The provider manifest still announces the capability, so `arc discover`
 finds the provider. `journal` is a reserved command name, so an install cannot
 take it.
 
-## 17. Limits
+## 16. Limits
 
 | Limit | Value | Reason |
 | --- | --- | --- |
 | Request or reply | under 1 MiB | The ARC client refuses a larger request body. |
 | Page body | 512 KiB of plain text | A sealed page, as base64 in an entry, stays under 1 MiB. |
-| Blob chunk | 512 KiB of sealed bytes | One chunk, as base64, stays under 1 MiB. |
-| Attachment | 16 MiB of plain bytes | A storage budget, not a transport limit. |
 | `since` answer | 1,000 lines | A bound on one reply. |
 | `append` attempts | 3 | A bound on the retry after `conflict`. |
 | Quota | 1 GiB for each owner, by default | Set by the operator in `max_bytes`. |
 
-## 18. Moving from the earlier design
+## 17. Moving from the earlier design
 
 `arc journal import <provider>` copies a journal from a provider of the
 earlier design:
@@ -462,8 +425,9 @@ earlier design:
    revision of a new page stream.
 3. For each notebook, the client reads each KPI key with `kpi log`, and adds
    the records in order.
-4. For each attachment, the client fetches the bytes, seals them, and uploads
-   them.
+4. For each attachment, the client fetches the bytes and writes them to a
+   directory that the owner names with `--files <dir>`. Then it replaces the
+   attachment with a `file://` link to that copy.
 
 The import does not copy history. The earlier provider returns the current
 text of a page only, so each page starts with one revision.
@@ -476,12 +440,15 @@ The earlier provider returns an attachment in one reply, as base64. An
 attachment of 16 MiB becomes a reply of about 21.4 MiB. The import fails for
 such an attachment if the relay caps frames below that size.
 
+If the owner does not give `--files`, the import stops before it writes, and
+lists each attachment that it cannot carry.
+
 The import leaves the earlier provider unchanged.
 
-## 19. Open questions
+## 18. Open questions
 
-- Hard deletion. An owner can ask the provider to erase every entry and blob
-  of their journal. The design does not define this command yet.
+- Hard deletion. An owner can ask the provider to erase every entry of their
+  journal. The design does not define this command yet.
 - A sealed search index on disk, when a journal grows past a few thousand
   pages.
 - Backup of the provider itself. Each synced client holds a full copy, so the

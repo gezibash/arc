@@ -192,7 +192,7 @@ The module path is `github.com/gezibash/arc`.
 | 4 | `relay`: sessions, directory, routes | Done. An Elixir client talks to the Go relay. |
 | 5 | Federation, direct connections | Done. Two Go relays federate, and a Go relay federates with an Elixir relay. A conversation leaves the relay and outlives it. The TCP hole punch of the Elixir release is not ported. |
 | 6 | `cmd/arc`: the command surface of today | Done, except the host and the update engine. keys, join, status, serve, call, discover, resolve, info, send, listen, publish, lists, install, tool, trust, and the commands that an install adds. |
-| 7 | The remaining providers | Done: exec, dm, sqlite, files, releases, agora and journal. MCP is deprecated, and does not go to Go. |
+| 7 | The remaining providers | The providers are done: exec, dm, sqlite, files, releases, agora and journal. The client side of two is not: `arc` refuses the `private_file`, `sealed_file` and `agora` inputs, so the `arc files` and `arc agora` commands fail. MCP is deprecated, and does not go to Go. |
 
 Each phase is one pull request. A phase that does not pass its proof does not
 merge.

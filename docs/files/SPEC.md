@@ -3,6 +3,8 @@
 ## 1. Purpose and current scope
 
 The `cmd/files-provider` bundle stores immutable encrypted files for ARC citizens.
+The provider is built. The client side is not: `arc` does not yet build the
+`private_file` input, so the `arc files` commands fail before they send.
 The trusted ARC client encrypts both the basename and the raw file bytes to
 the active citizen before invoking the provider. The provider stores signed
 encrypted envelopes and never needs the citizen's secret key.
@@ -186,7 +188,7 @@ listing. Backups and replication are not implemented here.
 | [Provider bundle](../../cmd/files-provider/Arcfile) | Runtime launch recipe |
 | [Manifest](../../cmd/files-provider/manifest.json) | Installed commands and private-file interface version |
 | [Sealed envelope](../../cmd/files-provider/envelope.go) | Encryption, signatures, and reply verification |
-| [Trusted client](../../toolbox/invoke.go) | The `seal` filter that seals a body to a named citizen |
+| Trusted client | Not built in Go. `arc` refuses a `private_file` input with "this command needs a part of arc that is not built yet" |
 | [CLI integration](../../cmd/arc/tools.go) | Resolve the active identity and run the installed command |
 | [Interface normalization](../../capability/interfaces.go) | Preserve versioned private-file command descriptions |
 | [Provider tests](../../cmd/files-provider/files_test.go) | Storage access, signatures, limits, and protocol errors |
