@@ -7,6 +7,7 @@
 //	arcn message send | inbox | outbox
 //	arcn serve | discover | install | call
 //	arcn sync [--dir <path>]
+//	arcn <capability> <command...>
 package main
 
 import (
@@ -50,14 +51,21 @@ func main() {
 
 func root() *cobra.Command {
 	command := &cobra.Command{
-		Use:           "arcn",
-		Short:         "ARC on signed events, over any transport",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Use:   "arcn",
+		Short: "ARC on signed events, over any transport",
+		Long: "ARC on signed events, over any transport.\n\n" +
+			"An installed capability adds its own commands: arcn <name> <command>.\n" +
+			"arcn help <name> lists them.",
+		Args:               cobra.ArbitraryArgs,
+		DisableFlagParsing: true,
+		RunE:               dispatch,
+		SilenceUsage:       true,
+		SilenceErrors:      true,
 	}
 	command.PersistentFlags().String("home", "", "the directory of arcn (ARCN_HOME, default ~/.config/arc/next)")
 	command.AddCommand(keyCommand(), relayCommand(), journalCommand(), messageCommand(),
 		serveCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand())
+	command.SetHelpCommand(helpCommand(command))
 	return command
 }
 

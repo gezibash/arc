@@ -1,6 +1,7 @@
 # Capability interface, version 1
 
-Status: proposed. Nothing in this document is built. It replaces the command
+Status: phase A is built, see section 18. The rest is proposed. `arcn`
+runs it, and `mise run interface` proves it. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
 
@@ -140,13 +141,13 @@ is the capability's name alone. Every command has exactly one action.
 
 | Kind | Meaning |
 | --- | --- |
-| `positional` | In order. The last positional can set `"variadic": true`. |
+| `positional` | In order. The last positional can set `"variadic": true`. Every word after the first word of a variadic argument belongs to it, flags included. |
 | `option` | `--name value`. |
 | `switch` | `--name`, with no value. |
 
 | Type | Meaning |
 | --- | --- |
-| `text` | Any text. A variadic text joins its words with one space. |
+| `text` | Any text. A variadic text is a list of words. A template shows the list as its words, joined by one space. |
 | `integer` | A whole number. |
 | `key` | A citizen. Core resolves 64 hex characters, an `npub` or `nprofile` of NIP-19, a NIP-05 name, a petname of this machine, or an installed name, to a public key. |
 | `event` | An event. Core resolves 64 hex characters, or a `note`, `nevent` or `naddr` of NIP-19. |
@@ -172,6 +173,7 @@ to right.
 | --- | --- |
 | `json` | The value as a JSON literal. An absent value is `null`. |
 | `hex` | The value as lower-case hex. |
+| `join` | A list as one text: its words, joined by one space. `{{argv\|json}}` writes a JSON array, and `{{sql\|join\|json}}` writes one JSON string. |
 | `keyed:<purpose>` | An HMAC of the value, as 64 hex characters. See 6.1. |
 | `event_author` | The author of the event that the value names. Core reads the event from the store, then from the transports, and fails the command when it finds none. |
 | `default:<text>` | The text, when the value is absent. |
@@ -191,7 +193,7 @@ example, is found by a keyed value of its address:
 
 ```text
 key   = HKDF-SHA256(ikm = secret key, salt = "",
-                    info = "arc-keyed-v1" || 0x00 || author || 0x00 || capability id || 0x00 || purpose,
+                    info = "arc-keyed-v1" || 0x00 || hex(author) || 0x00 || capability id || 0x00 || purpose,
                     length = 32)
 value = hex(HMAC-SHA256(key, input))
 ```
@@ -419,7 +421,7 @@ A format renders records as text:
 "formats": {
   "page": {"record": "{{text}}"},
   "list": {"record": "{{address}}\t{{title}}\t{{created|date}}", "empty": "no pages"},
-  "rows": {"table": {"columns": "columns", "rows": "rows"}}
+  "rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}
 }
 ```
 
@@ -429,6 +431,9 @@ A format renders records as text:
 | `record` | A template shown for each record. |
 | `empty` | Shown when there is no record. |
 | `table` | Shows a record's rows as aligned columns, instead of `record`. |
+
+A template or a table names a field of a record by its path: `tags.d`, or
+`results.0.rows`. A number in a path takes that item of a list, from 0.
 
 Format templates have these helpers: `time`, `date`, `name`, `npub`, `nevent`,
 `short`, `indent`, `truncate:n`, and `default:<text>`. `name` shows a citizen's
@@ -554,7 +559,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
      "output": {"open": {"parse": "json"}, "format": "run"}},
     {"path": ["start"], "summary": "Start a script as a job",
      "args": [{"name": "script", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"call": {"class": "later", "body": "{\"action\": \"start\", \"script\": {{script|json}}}"}},
+     "action": {"call": {"class": "later", "body": "{\"action\": \"start\", \"script\": {{script|join|json}}}"}},
      "output": {"open": {"parse": "json"}, "format": "job"}},
     {"path": ["status"], "summary": "Show a job",
      "args": [{"name": "job", "kind": "positional", "type": "text", "required": true}],
@@ -572,11 +577,11 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
   "title": "SQLite", "summary": "Answers SQL for the citizens that it grants.",
   "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576},
   "kinds": {},
-  "formats": {"rows": {"table": {"columns": "columns", "rows": "rows"}}},
+  "formats": {"rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}},
   "commands": [
     {"path": [], "summary": "Run SQL",
      "args": [{"name": "sql", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"call": {"class": "live", "body": "{\"sql\": {{sql|json}}}"}},
+     "action": {"call": {"class": "live", "body": "{\"sql\": {{sql|join|json}}}"}},
      "output": {"open": {"parse": "json"}, "format": "rows"}}
   ]
 }
@@ -819,7 +824,7 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
-| A | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
+| A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
 | B | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
 | C | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
 | D | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |

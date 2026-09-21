@@ -1,6 +1,7 @@
 package catalog_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -104,10 +105,10 @@ func TestInstalls(t *testing.T) {
 	if installs.Trusted(k.Public, "primary") {
 		t.Error("an offer was trusted before its install")
 	}
-	if err := installs.Add(offer); err != nil {
+	if err := installs.Add(offer, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := installs.Add(offer); err != nil {
+	if err := installs.Add(offer, ""); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := installs.List()
@@ -118,5 +119,55 @@ func TestInstalls(t *testing.T) {
 	key, id, err := installs.Resolve(offer.Name())
 	if err != nil || key != k.Public || id != "primary" {
 		t.Errorf("resolve by name: %v %s %v", key, id, err)
+	}
+}
+
+func TestAnnounceAManifestOfVersionOne(t *testing.T) {
+	k := keys.Generate()
+	data, err := os.ReadFile(filepath.Join("..", "..", "cmd", "exec-provider", "interface.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := catalog.AnnounceManifest(k, data, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer, err := catalog.Read(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offer.Manifest == nil || offer.ID != "exec" || offer.Method != "EXEC" || offer.Path != "/" || len(offer.Manifest.Commands) != 3 {
+		t.Fatalf("offer = %+v", offer)
+	}
+
+	installs := catalog.Installs{Path: filepath.Join(t.TempDir(), "installs.json")}
+	if err := installs.Add(offer, "exec"); err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := installs.Named("exec"); !ok || e.Provider != k.Public.Hex() {
+		t.Errorf("named: %+v %v", e, ok)
+	}
+	if key, id, err := installs.Resolve("exec"); err != nil || key != k.Public || id != "exec" {
+		t.Errorf("resolve: %v %s %v", key, id, err)
+	}
+
+	// Another provider cannot take the same name.
+	other, _ := catalog.AnnounceManifest(keys.Generate(), data, nostr.Now())
+	offer2, _ := catalog.Read(other)
+	if err := installs.Add(offer2, "exec"); err == nil {
+		t.Error("two providers run as one name")
+	}
+	if err := installs.Add(offer2, "exec2"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestRefusesAManifestOfALaterVersion(t *testing.T) {
+	k := keys.Generate()
+	event := nostr.Event{Kind: catalog.Kind, CreatedAt: nostr.Now(), Tags: nostr.Tags{{"d", "x"}},
+		Content: `{"interface": 2, "id": "x"}`}
+	event.Sign(k.Secret)
+	if _, err := catalog.Read(event); err == nil {
+		t.Error("a manifest of version 2 was read")
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/identity"
+	"github.com/gezibash/arc/iface"
 	"github.com/gezibash/arc/provider/host"
 	"github.com/spf13/cobra"
 )
@@ -71,6 +72,24 @@ func serve(command *cobra.Command, args []string) error {
 	}
 	fields, _ := pkg["capability"].(map[string]any)
 	id, _ := fields["id"].(string)
+	limit := maxBody(fields)
+
+	// A manifest of interface version 1 beside the older one replaces it in
+	// the announcement.
+	versionOne, err := os.ReadFile(filepath.Join(filepath.Dir(manifest), "interface.json"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if versionOne != nil {
+		m, err := iface.Parse(versionOne)
+		if err != nil {
+			return err
+		}
+		id = m.ID
+		if m.Service != nil && m.Service.MaxBytes > 0 {
+			limit = m.Service.MaxBytes
+		}
+	}
 
 	sess, err := open(command)
 	if err != nil {
@@ -88,13 +107,16 @@ func serve(command *cobra.Command, args []string) error {
 	}
 	defer process.Stop()
 
-	server := call.NewServer(sess.key, id, process, maxBody(fields), log)
+	server := call.NewServer(sess.key, id, process, limit, log)
 	sess.mail.OnRequest = server.Handle
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	announcement, err := catalog.Announce(sess.key, pkg, nostr.Now())
+	if versionOne != nil {
+		announcement, err = catalog.AnnounceManifest(sess.key, versionOne, nostr.Now())
+	}
 	if err != nil {
 		return err
 	}
@@ -241,6 +263,9 @@ func installCmd() *cobra.Command {
 			}
 
 			fmt.Printf("%s offers %s (%s)\n  %s\n  %s\n", offer.Name(), offer.Title, offer.ID, offer.Summary, offer.Provider.Hex())
+			if m := offer.Manifest; m != nil {
+				fmt.Printf("  a %s with %d commands, interface version %d\n", m.Shape, len(m.Commands), m.Interface)
+			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
 				fmt.Print("Trust this provider? [y/N] ")
 				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -248,14 +273,29 @@ func installCmd() *cobra.Command {
 					return errors.New("not installed")
 				}
 			}
-			if err := installs.Add(offer); err != nil {
+			if offer.Manifest == nil {
+				if err := installs.Add(offer, ""); err != nil {
+					return err
+				}
+				fmt.Printf("installed %s: call it with arcn call %s\n", offer.ID, offer.Name())
+				return nil
+			}
+			as, _ := command.Flags().GetString("as")
+			if as == "" {
+				as = offer.ID
+			}
+			if builtinName(command.Root(), as) {
+				return fmt.Errorf("%s is a command of arcn; choose another name with --as", as)
+			}
+			if err := installs.Add(offer, as); err != nil {
 				return err
 			}
-			fmt.Printf("installed %s: call it with arcn call %s\n", offer.ID, offer.Name())
+			fmt.Printf("installed %s: see arcn help %s\n", as, as)
 			return nil
 		},
 	}
 	command.Flags().Bool("yes", false, "trust the provider without asking")
+	command.Flags().String("as", "", "the name that runs the capability (default: its id)")
 	return command
 }
 
@@ -375,27 +415,19 @@ func callCapability(command *cobra.Command, args []string) error {
 	}
 
 	timeout, _ := command.Flags().GetDuration("timeout")
-	var failures []string
-	for _, t := range sess.relays {
-		ctx, cancel := context.WithTimeout(command.Context(), timeout)
-		reply, rtt, err := call.Live(ctx, sess.key, provider, request, t.(relay.Relay))
-		cancel()
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", t.Name(), err))
-			continue
-		}
-
-		fmt.Fprintf(os.Stderr, "round trip %s via %s\n", rtt.Round(100*time.Microsecond), t.Name())
-		if reply.Err != "" {
-			return fmt.Errorf("the provider refused: %s", reply.Err)
-		}
-		fmt.Print(reply.Body)
-		if !strings.HasSuffix(reply.Body, "\n") {
-			fmt.Println()
-		}
-		return nil
+	reply, rtt, via, err := liveCall(command.Context(), sess, provider, request, timeout)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("no live path to %s:\n  %s\nuse --later to store and forward the call", offer.Name(), strings.Join(failures, "\n  "))
+	fmt.Fprintf(os.Stderr, "round trip %s via %s\n", rtt.Round(100*time.Microsecond), via)
+	if reply.Err != "" {
+		return fmt.Errorf("the provider refused: %s", reply.Err)
+	}
+	fmt.Print(reply.Body)
+	if !strings.HasSuffix(reply.Body, "\n") {
+		fmt.Println()
+	}
+	return nil
 }
 
 // publishRelayList tells other citizens which relays this citizen reads its

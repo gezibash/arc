@@ -1,0 +1,24 @@
+{
+  "interface": 1, "id": "exec", "shape": "service",
+  "title": "Exec", "summary": "Runs commands for the citizens that it grants.",
+  "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576},
+  "kinds": {},
+  "formats": {
+    "run": {"record": "{{stdout}}{{stderr}}"},
+    "job": {"record": "{{job}}\t{{state}}"}
+  },
+  "commands": [
+    {"path": ["run"], "summary": "Run one command",
+     "args": [{"name": "argv", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"call": {"class": "live", "body": "{\"argv\": {{argv|json}}}"}},
+     "output": {"open": {"parse": "json"}, "format": "run"}},
+    {"path": ["start"], "summary": "Start a script as a job",
+     "args": [{"name": "script", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"call": {"class": "later", "body": "{\"action\": \"start\", \"script\": {{script|join|json}}}"}},
+     "output": {"open": {"parse": "json"}, "format": "job"}},
+    {"path": ["status"], "summary": "Show a job",
+     "args": [{"name": "job", "kind": "positional", "type": "text", "required": true}],
+     "action": {"call": {"class": "live", "body": "{\"action\": \"status\", \"job\": {{job|json}}}"}},
+     "output": {"open": {"parse": "json"}, "format": "run"}}
+  ]
+}

@@ -34,3 +34,8 @@ raw = true
 description = "Prove phase 1 of the delivery layer: relay, USB stick, refusal, parts, tail"
 run = "bash scripts/test-delivery.sh"
 raw = true
+
+[tasks.interface]
+description = "Prove phase A of the capability interface: manifests, arguments, call, format"
+run = "bash scripts/test-interface.sh"
+raw = true

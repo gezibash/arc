@@ -1,0 +1,13 @@
+{
+  "interface": 1, "id": "releases", "shape": "service",
+  "title": "Releases", "summary": "Serves signed release channels and their archives.",
+  "service": {"method": "RAW", "path": "/releases", "max_bytes": 4096},
+  "kinds": {},
+  "formats": {"channel": {"record": "{{content}}"}},
+  "commands": [
+    {"path": ["channel"], "summary": "Show a release channel",
+     "args": [{"name": "channel", "kind": "positional", "type": "text", "default": "stable"}],
+     "action": {"call": {"class": "live", "body": "{\"op\": \"channel\", \"channel\": {{channel|json}}}"}},
+     "output": {"format": "channel"}}
+  ]
+}

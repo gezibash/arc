@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/identity"
+	"github.com/gezibash/arc/iface"
 )
 
 // Kind is the kind of a capability announcement.
@@ -38,7 +39,10 @@ type Offer struct {
 	Path   string
 	// Package is the whole manifest, as the provider announced it.
 	Package map[string]any
-	Event   nostr.Event
+	// Manifest is the manifest of interface version 1, when the
+	// announcement holds one. A manifest of the older stack leaves it nil.
+	Manifest *iface.Manifest
+	Event    nostr.Event
 }
 
 // Name is the petname of the provider.
@@ -63,6 +67,25 @@ func Announce(k keys.Key, pkg map[string]any, at nostr.Timestamp) (nostr.Event, 
 		tags = append(tags, nostr.Tag{"t", word})
 	}
 
+	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
+	if err := event.Sign(k.Secret); err != nil {
+		return nostr.Event{}, err
+	}
+	return event, nil
+}
+
+// AnnounceManifest makes the announcement of one manifest of interface
+// version 1. Its id becomes the d tag.
+func AnnounceManifest(k keys.Key, data []byte, at nostr.Timestamp) (nostr.Event, error) {
+	m, err := iface.Parse(data)
+	if err != nil {
+		return nostr.Event{}, err
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		return nostr.Event{}, err
+	}
+	tags := nostr.Tags{{"d", m.ID}, {"t", m.ID}, {"t", m.Shape}}
 	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
 	if err := event.Sign(k.Secret); err != nil {
 		return nostr.Event{}, err
@@ -95,6 +118,9 @@ func Read(event nostr.Event) (Offer, error) {
 	if err := json.Unmarshal([]byte(event.Content), &pkg); err != nil {
 		return Offer{}, errors.New("catalog: the announcement holds no manifest")
 	}
+	if _, ok := pkg["interface"]; ok {
+		return readManifest(event, pkg)
+	}
 	fields, _ := pkg["capability"].(map[string]any)
 	id, _ := fields["id"].(string)
 	if id == "" || id != event.Tags.GetD() {
@@ -109,6 +135,28 @@ func Read(event nostr.Event) (Offer, error) {
 	}
 	if offer.Path == "" {
 		offer.Path = "/"
+	}
+	return offer, nil
+}
+
+// readManifest opens an announcement of interface version 1.
+func readManifest(event nostr.Event, pkg map[string]any) (Offer, error) {
+	m, err := iface.Parse([]byte(event.Content))
+	if err != nil {
+		return Offer{}, fmt.Errorf("catalog: %w", err)
+	}
+	if m.ID != event.Tags.GetD() {
+		return Offer{}, errors.New("catalog: the announcement names another capability than its manifest")
+	}
+	offer := Offer{
+		Provider: event.PubKey, ID: m.ID, Package: pkg, Manifest: m, Event: event,
+		Title: m.Title, Summary: m.Summary, Scheme: m.ID, Path: "/",
+	}
+	if m.Service != nil {
+		offer.Method = strings.ToUpper(m.Service.Method)
+		if m.Service.Path != "" {
+			offer.Path = m.Service.Path
+		}
 	}
 	return offer, nil
 }
@@ -173,6 +221,8 @@ type Install struct {
 	Provider string `json:"provider"`
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	// As is the name that runs a capability of interface version 1.
+	As string `json:"as,omitempty"`
 }
 
 // Installs is the list of trusted capabilities, in one file.
@@ -196,13 +246,20 @@ func (i Installs) List() ([]Install, error) {
 	return out, nil
 }
 
-// Add trusts one offer, or refreshes it when it is already there.
-func (i Installs) Add(offer Offer) error {
+// Add trusts one offer, or refreshes it when it is already there. A
+// capability of interface version 1 runs as the name as, which no other
+// install can hold.
+func (i Installs) Add(offer Offer, as string) error {
 	list, err := i.List()
 	if err != nil {
 		return err
 	}
-	entry := Install{Provider: offer.Provider.Hex(), ID: offer.ID, Name: offer.Name()}
+	entry := Install{Provider: offer.Provider.Hex(), ID: offer.ID, Name: offer.Name(), As: as}
+	for _, e := range list {
+		if as != "" && e.As == as && (e.Provider != entry.Provider || e.ID != entry.ID) {
+			return fmt.Errorf("catalog: %s already runs a capability of %s; choose another name with --as", as, e.Name)
+		}
+	}
 	list = slices.DeleteFunc(list, func(e Install) bool { return e.Provider == entry.Provider && e.ID == entry.ID })
 	list = append(list, entry)
 
@@ -222,6 +279,17 @@ func (i Installs) Trusted(provider nostr.PubKey, id string) bool {
 	return slices.ContainsFunc(list, func(e Install) bool { return e.Provider == provider.Hex() && e.ID == id })
 }
 
+// Named returns the install that runs as a name.
+func (i Installs) Named(as string) (Install, bool) {
+	list, _ := i.List()
+	for _, e := range list {
+		if e.As == as {
+			return e, true
+		}
+	}
+	return Install{}, false
+}
+
 // Resolve reads a provider as 64 hex characters, or as the petname of an
 // installed capability.
 func (i Installs) Resolve(name string) (nostr.PubKey, string, error) {
@@ -230,7 +298,7 @@ func (i Installs) Resolve(name string) (nostr.PubKey, string, error) {
 	}
 	list, _ := i.List()
 	for _, e := range list {
-		if e.Name == name || e.ID == name {
+		if e.As == name || e.Name == name || e.ID == name {
 			key, err := nostr.PubKeyFromHex(e.Provider)
 			return key, e.ID, err
 		}
