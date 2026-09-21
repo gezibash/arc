@@ -1,5 +1,5 @@
 #!/bin/bash
-# The proofs of phases 1 and 2 of docs/delivery/SPEC.md. In phase 1, two homes
+# The proofs of phases 1, 2 and 3 of docs/delivery/SPEC.md. In phase 1, two homes
 # stand in for two machines of one citizen: they hold the same key and
 # separate stores. In phase 2, three citizens hold three keys.
 #
@@ -13,6 +13,7 @@ keep="${ARC_KEEP_WORK:-}"
 cleanup() {
   [ -n "${relay_pid:-}" ] && kill "$relay_pid" 2>/dev/null || true
   [ -n "${tail_pid:-}" ] && kill "$tail_pid" 2>/dev/null || true
+  [ -n "${serve_pid:-}" ] && kill "$serve_pid" 2>/dev/null || true
   # A process started from the work directory must not outlive it. A shell
   # function started with & gives $! as a subshell, and kill then misses the
   # real process, so stop everything that runs from the work directory.
@@ -28,7 +29,8 @@ fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 
 cd "$root"
 go build -o "$work/arcn" ./cmd/arcn
-say "arcn builds"
+go build -o "$work/exec-provider" ./cmd/exec-provider
+say "arcn and the exec provider build"
 
 a() { "$work/arcn" --home "$work/laptop" "$@"; }
 b() { "$work/arcn" --home "$work/desktop" "$@"; }
@@ -168,4 +170,75 @@ bob sync | grep "mail received 1" > /dev/null || fail "bob did not receive over 
 alice sync | grep "delivered 1" > /dev/null || fail "the acknowledgement did not cross the relay"
 say "a message and its acknowledgement cross a relay"
 
-printf 'phase 2 holds: couriers, route tags, acknowledgements, and the outbox\n'
+printf 'phase 2 holds: couriers, route tags, acknowledgements, and the outbox\n\n'
+
+# Phase 3: capabilities. A provider serves exec; a caller finds it, installs
+# it, and calls it live over the relay and by hand through a courier.
+provider() { "$work/arcn" --home "$work/exec" "$@"; }
+caller() { "$work/arcn" --home "$work/caller" "$@"; }
+
+provider key new > /dev/null
+provider relay add "$url"
+provider_key="$(provider key show | tail -1)"
+provider_name="$(provider key show | head -1)"
+caller key new > /dev/null
+caller relay add "$url"
+caller_key="$(caller key show | tail -1)"
+
+mkdir -p "$work/jobs" "$work/stick-p"
+cat > "$work/exec.json" <<JSON
+{"grants": ["$caller_key"], "cwd": "$work", "jobs_dir": "$work/jobs"}
+JSON
+
+EXEC_CONFIG="$work/exec.json" "$work/arcn" --home "$work/exec" serve \
+  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \
+  --sync-dir "$work/stick-p" --interval 1s > "$work/serve.log" 2>&1 &
+serve_pid=$!
+for _ in $(seq 1 50); do grep "serves" "$work/serve.log" > /dev/null 2>&1 && break; sleep 0.1; done
+grep "serves" "$work/serve.log" > /dev/null || fail "the provider did not serve: $(cat "$work/serve.log")"
+say "a provider serves exec through arcn"
+
+caller discover exec | grep "$provider_key" > /dev/null || fail "discover did not find the provider"
+caller install "$provider_key" --yes | grep "installed" > /dev/null || fail "the install failed"
+say "the caller discovers the capability, and installs it"
+
+sleep 0.5
+caller call "$provider_name" '{"argv":["echo","hello live"]}' > "$work/live.txt" 2> "$work/live.err" ||
+  fail "the live call failed: $(cat "$work/live.err")"
+grep "hello live" "$work/live.txt" > /dev/null || fail "the live call answered $(cat "$work/live.txt")"
+rtt="$(sed -n 's/^round trip \([^ ]*\) via.*/\1/p' "$work/live.err")"
+[ -n "$rtt" ] || fail "the live call recorded no round trip"
+say "a live call to exec crosses the relay; round trip $rtt"
+
+"$work/arcn" --home "$work/stranger" key new > /dev/null
+"$work/arcn" --home "$work/stranger" relay add "$url"
+"$work/arcn" --home "$work/stranger" install "$provider_key" --yes > /dev/null
+if "$work/arcn" --home "$work/stranger" call "$provider_name" '{"argv":["echo","x"]}' > /dev/null 2> "$work/denied.txt"; then
+  fail "a caller without a grant ran a command"
+fi
+grep "access_denied" "$work/denied.txt" > /dev/null || fail "the refusal is not access_denied: $(cat "$work/denied.txt")"
+say "a caller without a grant is refused"
+
+# Store and forward: the caller has no relay now, and Carol carries the call.
+caller relay rm "$url"
+caller call "$provider_name" '{"argv":["echo","carried by hand"]}' | grep "queued" > /dev/null ||
+  fail "the call was not queued"
+caller sync --dir "$work/stick-c" > /dev/null
+carol sync --dir "$work/stick-c" > /dev/null
+carol sync --dir "$work/stick-p" > /dev/null
+for _ in $(seq 1 30); do
+  grep "answered store-and-forward calls" "$work/serve.log" > /dev/null && break
+  sleep 0.2
+done
+grep "answered store-and-forward calls" "$work/serve.log" > /dev/null || fail "the provider did not answer the carried call"
+sleep 1.5
+carol sync --dir "$work/stick-p" > /dev/null
+carol sync --dir "$work/stick-c" > /dev/null
+caller sync --dir "$work/stick-c" > /dev/null
+caller call results | grep "reply:.*carried by hand" > /dev/null || fail "the reply did not come back: $(caller call results)"
+say "a store-and-forward call crosses the courier path, and its reply comes back"
+
+go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
+say "an ARC direct message opens in a NIP-17 client, and a NIP-17 message opens in ARC"
+
+printf 'phase 3 holds: announcements, install, live and carried calls, and NIP-17\n'

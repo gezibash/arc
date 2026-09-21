@@ -24,11 +24,13 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/private"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
+	"github.com/gezibash/arc/delivery/transport/relay"
 	"go.etcd.io/bbolt"
 )
 
@@ -50,8 +52,10 @@ var (
 	carryBucket  = []byte("carry")
 )
 
-// Outgoing is one message in the outbox.
+// Outgoing is one message or call in the outbox.
 type Outgoing struct {
+	// Kind is "message", or "request" for a store-and-forward call.
+	Kind      string    `json:"kind"`
 	Rumor     string    `json:"rumor"`
 	To        string    `json:"to"`
 	Seal      string    `json:"seal"`
@@ -59,10 +63,13 @@ type Outgoing struct {
 	Expires   time.Time `json:"expires"`
 	Attempts  int       `json:"attempts"`
 	Delivered time.Time `json:"delivered,omitzero"`
+	// ReplySeal names the seal of the reply to a request.
+	ReplySeal string `json:"reply_seal,omitempty"`
 
-	// Text is the message, opened from the sender's own seal. It is never
-	// stored.
-	Text string `json:"-"`
+	// Text is the message, opened from the sender's own seal, and Reply is
+	// the reply to a request, opened from its seal. Neither is stored.
+	Text  string     `json:"-"`
+	Reply call.Reply `json:"-"`
 }
 
 // State says where a message is.
@@ -97,6 +104,10 @@ type Mail struct {
 	db     *bbolt.DB
 	relays []transport.Transport
 	now    func() time.Time
+
+	// OnRequest answers a store-and-forward call to this citizen. A citizen
+	// that serves no capability leaves it nil, and ignores requests.
+	OnRequest func(ctx context.Context, rumor nostr.Event) (call.Reply, error)
 }
 
 // Open opens the mail state in a directory. The relays are where new mail is
@@ -142,8 +153,27 @@ func (m *Mail) Send(ctx context.Context, to nostr.PubKey, text string) (Outgoing
 	}
 
 	out := Outgoing{
-		Rumor: rumor.ID.Hex(), To: to.Hex(), Seal: seal.ID.Hex(),
+		Kind: "message", Rumor: rumor.ID.Hex(), To: to.Hex(), Seal: seal.ID.Hex(),
 		Created: now.UTC(), Expires: expires.UTC(), Text: text,
+	}
+	return out, m.put(outboxBucket, out.Rumor, out)
+}
+
+// Request queues a store-and-forward call to a provider. The call waits in
+// the outbox until its reply arrives.
+func (m *Mail) Request(ctx context.Context, provider nostr.PubKey, r call.Request) (Outgoing, error) {
+	now := m.now()
+	rumor := call.RequestRumor(m.key, provider, r, now)
+	expires := now.Add(private.MaxAge)
+
+	seal, err := m.post(ctx, provider, rumor, expires, true)
+	if err != nil {
+		return Outgoing{}, err
+	}
+
+	out := Outgoing{
+		Kind: "request", Rumor: rumor.ID.Hex(), To: provider.Hex(), Seal: seal.ID.Hex(),
+		Created: now.UTC(), Expires: expires.UTC(), Text: r.Body,
 	}
 	return out, m.put(outboxBucket, out.Rumor, out)
 }
@@ -174,7 +204,14 @@ func (m *Mail) post(ctx context.Context, to nostr.PubKey, rumor nostr.Event, exp
 			Wrap: wrap.ID.Hex(), Own: true, Courier: form == private.CourierForm,
 			Hops: StartHops, Received: m.now().UTC(), Expires: expires.UTC(), Rumor: rumor.ID.Hex(),
 		}
-		for _, r := range m.relays {
+		targets := m.relays
+		if form == private.RelayForm {
+			targets = append(append([]transport.Transport(nil), m.relays...), m.inboxRelays(ctx, to)...)
+		}
+		for _, r := range targets {
+			if slices.Contains(entry.SentTo, r.Name()) {
+				continue
+			}
 			if r.Send(ctx, wrap) == nil {
 				entry.SentTo = append(entry.SentTo, r.Name())
 			}
@@ -191,6 +228,10 @@ type Report struct {
 	Transport string
 	// Received counts messages for this citizen that arrived.
 	Received int
+	// Answered counts calls to this citizen that it answered.
+	Answered int
+	// Replies counts replies to this citizen's calls that arrived.
+	Replies int
 	// Delivered counts messages of this citizen that the recipient
 	// acknowledged.
 	Delivered int
@@ -292,6 +333,10 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 	switch opened.Rumor.Kind {
 	case AckKind:
 		return m.acknowledged(opened, report)
+	case call.RequestKind:
+		return m.answer(ctx, opened, report)
+	case call.ReplyKind:
+		return m.replied(opened, report)
 	case MessageKind:
 		report.Received++
 		ack := private.Rumor(m.key, AckKind, "", nostr.Tags{{"e", opened.Rumor.ID.Hex()}}, m.now())
@@ -299,6 +344,49 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 		return err
 	}
 	return nil
+}
+
+// answer runs a call to this citizen, and sends the reply back. The reply is
+// this node's own mail from then on, so every sync sends it again until it
+// expires, and a caller whose reply was lost still gets it.
+func (m *Mail) answer(ctx context.Context, opened private.Opened, report *Report) error {
+	if m.OnRequest == nil {
+		return nil
+	}
+	reply, err := m.OnRequest(ctx, opened.Rumor)
+	if errors.Is(err, call.ErrDuplicate) {
+		return nil
+	}
+	if err != nil {
+		reply = call.Reply{Err: err.Error()}
+	}
+
+	rumor := call.ReplyRumor(m.key, opened.Rumor, reply, m.now())
+	if _, err := m.post(ctx, opened.Author(), rumor, m.now().Add(private.MaxAge), false); err != nil {
+		return err
+	}
+	report.Answered++
+	return nil
+}
+
+// replied files the reply to one of this citizen's calls, if the provider
+// that the call went to sent it.
+func (m *Mail) replied(opened private.Opened, report *Report) error {
+	id, _ := call.ReadReply(opened.Rumor)
+
+	var out Outgoing
+	found, err := m.get(outboxBucket, id, &out)
+	if err != nil || !found {
+		return err
+	}
+	if out.Kind != "request" || out.To != opened.Author().Hex() || out.ReplySeal != "" {
+		return nil
+	}
+
+	out.Delivered = m.now().UTC()
+	out.ReplySeal = opened.Seal.ID.Hex()
+	report.Replies++
+	return m.put(outboxBucket, out.Rumor, out)
 }
 
 // acknowledged marks a message delivered, if its recipient sent the
@@ -513,6 +601,7 @@ func (m *Mail) Outbox() []Outgoing {
 			var o Outgoing
 			if json.Unmarshal(v, &o) == nil {
 				o.Text = m.ownText(o)
+				o.Reply = m.replyOf(o)
 				out = append(out, o)
 			}
 			return nil
@@ -540,6 +629,59 @@ func (m *Mail) ownText(o Outgoing) string {
 		return ""
 	}
 	return rumor.Content
+}
+
+func (m *Mail) replyOf(o Outgoing) call.Reply {
+	id, err := nostr.IDFromHex(o.ReplySeal)
+	if err != nil {
+		return call.Reply{}
+	}
+	seals := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{id}})
+	if len(seals) == 0 {
+		return call.Reply{}
+	}
+	rumor, err := private.OpenSeal(m.key, seals[0])
+	if err != nil {
+		return call.Reply{}
+	}
+	_, reply := call.ReadReply(rumor)
+	return reply
+}
+
+// RelayListKind is the kind of the list of relays where a citizen reads its
+// direct messages, as NIP-17 defines.
+const RelayListKind nostr.Kind = 10050
+
+// RelayList makes the list of relays where this citizen reads its mail.
+func RelayList(k keys.Key, urls []string, at nostr.Timestamp) (nostr.Event, error) {
+	tags := nostr.Tags{}
+	for _, url := range urls {
+		tags = append(tags, nostr.Tag{"relay", url})
+	}
+	event := nostr.Event{Kind: RelayListKind, CreatedAt: at, Tags: tags}
+	return event, event.Sign(k.Secret)
+}
+
+// inboxRelays returns the relays where a citizen reads its mail, from its
+// NIP-17 relay list. It looks in the store first, then asks the relays.
+func (m *Mail) inboxRelays(ctx context.Context, to nostr.PubKey) []transport.Transport {
+	filter := nostr.Filter{Kinds: []nostr.Kind{RelayListKind}, Authors: []nostr.PubKey{to}}
+	lists := m.node.Store.Query(filter)
+	if len(lists) == 0 && len(m.relays) > 0 {
+		m.node.Pull(ctx, filter, m.relays)
+		lists = m.node.Store.Query(filter)
+	}
+	if len(lists) == 0 {
+		return nil
+	}
+
+	var out []transport.Transport
+	for _, t := range lists[0].Tags {
+		if len(t) > 1 && t[0] == "relay" {
+			out = append(out, relay.Relay{URL: t[1]})
+		}
+	}
+	return out
 }
 
 // Carrying counts the wraps of other citizens that this node carries.

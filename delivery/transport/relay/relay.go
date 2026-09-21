@@ -126,6 +126,52 @@ func stored(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) ([]nost
 	}
 }
 
+// Exchange sends one event and waits for the first answer that matches. It
+// subscribes, waits until the relay has taken the subscription, and only then
+// sends, all on one connection. An answer to a live call is ephemeral, and a
+// relay never stores it, so a subscription that came after it would miss it.
+func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (nostr.Event, error) {
+	conn, err := r.connect(ctx)
+	if err != nil {
+		return nostr.Event{}, err
+	}
+	defer conn.Close()
+
+	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange"})
+	if err != nil {
+		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
+	}
+	defer sub.Unsub()
+
+	select {
+	case <-sub.EndOfStoredEvents:
+	case reason := <-sub.ClosedReason:
+		return nostr.Event{}, fmt.Errorf("relay %s: the relay closed the subscription: %s", r.URL, reason)
+	case <-ctx.Done():
+		return nostr.Event{}, ctx.Err()
+	}
+
+	if err := conn.Publish(ctx, event); err != nil {
+		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
+	}
+
+	for {
+		select {
+		case answer, ok := <-sub.Events:
+			if !ok {
+				return nostr.Event{}, fmt.Errorf("relay %s: the relay ended the subscription", r.URL)
+			}
+			if match(answer) {
+				return answer, nil
+			}
+		case reason := <-sub.ClosedReason:
+			return nostr.Event{}, fmt.Errorf("relay %s: the relay closed the subscription: %s", r.URL, reason)
+		case <-ctx.Done():
+			return nostr.Event{}, ctx.Err()
+		}
+	}
+}
+
 // Reconcile compares the relay's events for a filter with a local set, with
 // Negentropy, as NIP-77 defines. It does so only when the relay says in its
 // information document that it supports NIP-77. A relay that does not know

@@ -1,6 +1,6 @@
 # Delivery: ARC over Nostr events, on any transport
 
-Status: phases 1 and 2 are built, see section 15. The rest is proposed. The older ARC
+Status: phases 1 to 3 are built, see section 15. The rest is proposed. The older ARC
 code uses its own protocol: Ed25519 keys, live sessions, and routed relays.
 Section 14 lists what changes.
 
@@ -499,6 +499,10 @@ The manifest declares the class of each command:
 A provider keeps the IDs of the requests that it answered, and answers each
 request once.
 
+A call has no acknowledgement. The reply clears the caller's outbox. The
+provider sends its reply again on each sync until the reply expires, so a
+caller whose reply was lost still gets it.
+
 A provider refuses a live request whose rumor is more than 5 minutes old.
 This window applies to live calls only. A store-and-forward call has no
 window, because it can travel for days.
@@ -546,7 +550,7 @@ relays. No provider takes part.
 | `relay` with routes and federation | relays built on khatru, and the NIP-65 outbox model |
 | `client` | the node: store, router, and transports |
 | `direct` | left out of the first version, see section 16 |
-| `citizen` provider runtime | kept: a provider still runs as a process over standard input and output |
+| `citizen` provider runtime | moved to `provider/host`, which both stacks use: a provider still runs as a process over standard input and output |
 | `capability`, `toolbox`, installed commands | kept; the manifest travels in an announcement |
 | `cmd/dm-provider` | NIP-17 direct messages; no provider needed |
 | `cmd/journal-provider` | data that the citizen keeps for itself; no provider needed |
@@ -563,7 +567,16 @@ Phases 1 and 2 are built: the packages under `delivery/`, the journal in
 Phase 2 adds `delivery/private` for gift wraps and route tags, and
 `delivery/mail` for the outbox, acknowledgements and couriers. Sync compares
 sets with Negentropy when a relay lists NIP-77 in its information document,
-and fetches every event otherwise. The journal adds
+and fetches every event otherwise.
+
+Phase 3 adds `delivery/catalog` for announcements, discovery and installs,
+and `delivery/call` for both classes of call. A live call subscribes, waits
+until the relay has taken the subscription, and only then sends, all on one
+connection, because a relay never stores the ephemeral reply. On a local relay,
+a live call to `exec` takes about 10 ms for the round trip. `arcn call` calls
+a capability with a raw body. The command lines that a manifest declares wait
+for the capability interface to be rewritten: no provider that remains needs
+them, because direct messages, the journal and Agora need no provider now. The journal adds
 one thing that the phase names: a page travels as parts of at most 32 KiB, so
 it fits the event limit of common relays, a read fetches only the parts that
 it needs, and `arcn journal tail` streams text as it is appended.
@@ -644,6 +657,6 @@ A capability announcement is public, so it moves by sync, not by couriers.
 
 | Item | Why it waits | When to decide |
 | --- | --- | --- |
-| The TLS direct carrier as a live transport | Relays can carry live calls. | After phase 3, if the recorded round-trip time is too slow. |
+| The TLS direct carrier as a live transport | Relays can carry live calls: about 10 ms for a round trip on a local relay. | After a round trip is measured through a public relay. |
 | A full macOS mesh node | It needs a peripheral backend in Go. | After phase 4, see 16.4. |
 | A bridge to bitchat direct messages | bitchat's Nostr envelopes are not NIP-17. Only the citizen's own node can translate them, because translation needs the private key. | When ARC direct messages must reach bitchat users. |

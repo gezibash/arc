@@ -5,6 +5,7 @@
 //	arcn relay add <url> | rm <url> | ls | serve
 //	arcn journal write | append | read | ls | tail
 //	arcn message send | inbox | outbox
+//	arcn serve | discover | install | call
 //	arcn sync [--dir <path>]
 package main
 
@@ -55,7 +56,8 @@ func root() *cobra.Command {
 		SilenceErrors: true,
 	}
 	command.PersistentFlags().String("home", "", "the directory of arcn (ARCN_HOME, default ~/.config/arc/next)")
-	command.AddCommand(keyCommand(), relayCommand(), journalCommand(), messageCommand(), syncCommand())
+	command.AddCommand(keyCommand(), relayCommand(), journalCommand(), messageCommand(),
+		serveCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand())
 	return command
 }
 
@@ -164,7 +166,11 @@ func relayCommand() *cobra.Command {
 				if !slices.Contains(urls, url) {
 					urls = append(urls, url)
 				}
-				return writeRelays(dir, urls)
+				if err := writeRelays(dir, urls); err != nil {
+					return err
+				}
+				announceRelays(command)
+				return nil
 			},
 		},
 		&cobra.Command{
@@ -178,7 +184,11 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return writeRelays(dir, slices.DeleteFunc(urls, func(u string) bool { return u == args[0] }))
+				if err := writeRelays(dir, slices.DeleteFunc(urls, func(u string) bool { return u == args[0] })); err != nil {
+					return err
+				}
+				announceRelays(command)
+				return nil
 			},
 		},
 		&cobra.Command{
@@ -204,6 +214,19 @@ func relayCommand() *cobra.Command {
 		serveCommand(),
 	)
 	return command
+}
+
+// announceRelays publishes the relay list of this citizen, when it has a key
+// and at least one relay.
+func announceRelays(command *cobra.Command) {
+	sess, err := open(command)
+	if err != nil {
+		return
+	}
+	defer sess.close()
+	if len(sess.relays) > 0 {
+		publishRelayList(command.Context(), sess)
+	}
 }
 
 func serveCommand() *cobra.Command {
@@ -587,6 +610,10 @@ func syncCommand() *cobra.Command {
 				}
 				for _, err := range report.SendFailed {
 					fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
+				}
+
+				if offers, err := sess.node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
+					fmt.Printf("%s: announcements received %d\n", t.Name(), offers.Received)
 				}
 
 				mails, err := sess.mail.Sync(command.Context(), t)
