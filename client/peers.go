@@ -241,10 +241,19 @@ func (p *Peers) readCarrier(peer []byte, carrier *direct.Conn) {
 	}
 }
 
-// Request sends one request to a peer, and waits for the answer.
+// Request sends one request to a peer, and waits for the answer. With a
+// Waker, it wakes the peer first. It sends the request one time, and never
+// again.
 func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, body []byte) (*frame.Frame, error) {
 	if len(body) > MaxBodyBytes {
 		return nil, fmt.Errorf("client: the body is over %d bytes", MaxBodyBytes)
+	}
+
+	waker := p.client.waker
+	if waker != nil {
+		if err := waker.Wake(ctx, peer); err != nil {
+			return nil, err
+		}
 	}
 
 	requestID := frame.NewRequestID()
@@ -289,6 +298,10 @@ func (p *Peers) Request(ctx context.Context, peer []byte, meta map[string]any, b
 
 	select {
 	case answer := <-answers:
+		// Any answer, an error included, proves that the peer is awake.
+		if waker != nil {
+			waker.Answered(peer)
+		}
 		if answer.Type == frame.Error {
 			return answer, &RemoteError{Code: answer.Code(), Message: answer.Message()}
 		}

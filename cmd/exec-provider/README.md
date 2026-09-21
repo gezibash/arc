@@ -25,13 +25,13 @@ that user.
 | `citizen/serve` | Runs `arc serve` for this bundle as a plain process. |
 | `citizen/lease` | Holds the machine awake. One case for each platform. |
 | `citizen/notify-dm` | Sends the result of a finished job to its owner as a direct message. |
-| `arc-exec` | The caller wrapper. It wakes the citizen, then sends the request. |
+| `arc-exec` | The caller wrapper. It sends the request with `arc call`, and exits with the exit code of the command. |
 
 ## Requirements
 
 - On the citizen machine: `arc` and `exec-provider` from an ARC release,
   `bash`, and a copy of this directory. The machine needs no Go toolchain.
-- On the caller: `arc` and Python 3.11 or newer.
+- On the caller: `arc`. `arc-exec` also needs Python 3.9 or newer.
 - A relay on a machine that does not pause. The citizen and the caller use
   the same relay.
 
@@ -91,8 +91,10 @@ the time.
 
 ## Set up a caller
 
-1. Add a wake hook for the citizen to `~/.config/arc/wake.toml`. The hook runs
-   the start script on the citizen machine.
+1. Add a wake hook for the citizen to `wake.toml` in the directory of ARC,
+   by default `~/.config/arc/wake.toml`. The hook runs the start script on
+   the citizen machine. Before each request to the citizen, `arc` runs the
+   hook: `arc call`, the commands that `arc install` adds, and `arc-exec`.
 
    For a Sprite:
 
@@ -110,13 +112,20 @@ the time.
    argv = ["ssh", "<host>", "~/exec-provider/citizen/citizen-up"]
    ```
 
-   If there is no wake hook, `arc-exec` sends the request without a wake.
+   The wake follows these rules:
 
-2. Set the relay for `arc`:
+   - If there is no wake hook, `arc` sends the request at once.
+   - After an answer from the citizen, `arc` skips the hook for 30 seconds.
+     A citizen that answered did not pause.
+   - If the hook exits with a status other than 0, the request stops with
+     `wake_failed`. If the hook runs longer than 30 seconds, the request
+     stops with `wake_timeout`.
+   - The wake counts toward the `--timeout` of `arc call`.
+
+2. Join the relay of the citizen:
 
    ```sh
-   export ARC_RELAY=<relay-host>:7331
-   export ARC_RELAY_PUBKEY=<relay-public-key>
+   arc join <relay-host>:7331 --pubkey <relay-public-key>
    ```
 
 ## Run commands

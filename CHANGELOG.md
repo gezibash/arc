@@ -6,6 +6,23 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc` wakes a citizen whose machine pauses. Before a request to the
+  citizen, it runs the wake hook of the citizen from `wake.toml` in the
+  directory of ARC. After an answer, it skips the hook for 30 seconds. A hook
+  that exits with a status other than 0 stops the request with
+  `wake_failed`. A hook that runs longer than 30 seconds stops it with
+  `wake_timeout`. This is phase 2 of `docs/exec/SPEC.md`, without the
+  `asleep` presence state.
+- The `wake` package runs the hooks. The `client` package takes a waker as
+  `Options.Waker`, so every request of a library user can wake its peer.
+
+### Changed
+
+- `arc-exec` leaves the wake to `arc`. It no longer reads `wake.toml` or
+  `ARC_WAKE_CONFIG`, and it needs Python 3.9 or newer instead of 3.11.
+
 ## [0.7.0] - 2026-09-21
 
 ARC is a Go module. A release holds one static binary for each command, and a

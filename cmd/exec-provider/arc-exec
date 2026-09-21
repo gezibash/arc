@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run one command on an exec citizen. Wake the citizen first when needed.
+"""Run one command on an exec citizen, and exit with its exit code.
 
-This is the caller side of docs/exec/SPEC.md, section 10.2, as a wrapper
-around `arc call`. It needs Python 3.11 or newer for tomllib.
+This is a wrapper around `arc call` for docs/exec/SPEC.md. It needs Python
+3.9 or newer.
 
   arc-exec <citizen-public-key> --script 'git status'
   arc-exec <citizen-public-key> -- uname -a
@@ -13,11 +13,8 @@ around `arc call`. It needs Python 3.11 or newer for tomllib.
 A job keeps running when the caller disconnects. `--status` exits 75 while
 the job runs, and with the job's exit code after it ends.
 
-The wake configuration is ARC_WAKE_CONFIG, or ~/.config/arc/wake.toml:
-
-  [wake."<citizen-public-key>"]
-  kind = "command"
-  argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
+`arc` wakes a citizen that pauses. It runs the wake hook of the citizen from
+wake.toml in the directory of ARC before each request (SPEC section 10).
 """
 
 from __future__ import annotations
@@ -25,19 +22,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import subprocess
 import sys
 import time
-import tomllib
 from datetime import datetime, timezone
-from pathlib import Path
 
-WAKE_TIMEOUT_S = 30
-# The provider releases its lease to 60 seconds after the last command.
-# A reply younger than this proves the machine has not paused.
-FRESH_REPLY_S = 30
-STATE_DIR = Path.home() / ".cache" / "arc" / "exec"
+# The wake counts toward the timeout of `arc call`. A wake takes at most
+# 30 seconds.
+WAKE_S = 30
 POLL_S = 5
 EX_TEMPFAIL = 75
 
@@ -46,18 +38,6 @@ def log(verbose: bool, message: str) -> None:
     if verbose:
         stamp = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
         print(f"{stamp} arc-exec: {message}", file=sys.stderr)
-
-
-def load_hook(citizen: str) -> list[str] | None:
-    path = Path(os.environ.get("ARC_WAKE_CONFIG", Path.home() / ".config" / "arc" / "wake.toml"))
-    if not path.is_file():
-        return None
-    hook = tomllib.loads(path.read_text()).get("wake", {}).get(citizen)
-    if hook is None:
-        return None
-    if hook.get("kind") != "command" or not isinstance(hook.get("argv"), list):
-        sys.exit(f"arc-exec: {path}: wake.{citizen} must have kind = \"command\" and an argv list")
-    return [os.path.expanduser(part) for part in hook["argv"]]
 
 
 def main() -> int:
@@ -76,24 +56,6 @@ def main() -> int:
             parser.error("--status takes no command")
     elif bool(args.script) == bool(args.argv):
         parser.error("give exactly one of --script or an argv after --")
-
-    state = STATE_DIR / args.citizen
-    hook = load_hook(args.citizen)
-    if hook is None:
-        log(args.verbose, "no wake hook, sending without a wake")
-    elif state.exists() and time.time() - state.stat().st_mtime < FRESH_REPLY_S:
-        log(args.verbose, "last reply is fresh, skipping the wake hook")
-    else:
-        log(args.verbose, f"waking: {' '.join(hook)}")
-        try:
-            woke = subprocess.run(hook, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=WAKE_TIMEOUT_S)
-        except subprocess.TimeoutExpired:
-            print("arc-exec: wake_timeout", file=sys.stderr)
-            return 124
-        if woke.returncode != 0:
-            print(f"arc-exec: wake_failed (hook exited {woke.returncode})", file=sys.stderr)
-            return 125
-        log(args.verbose, "citizen ready")
 
     if args.status:
         return show(finished(request(args, {"action": "status", "job": args.status}, 15)))
@@ -120,7 +82,7 @@ def main() -> int:
 def request(args: argparse.Namespace, body: dict, timeout_s: int) -> dict:
     log(args.verbose, f"sending {body.get('action', 'run')} request")
     reply = subprocess.run(
-        ["arc", "call", "--timeout", str(timeout_s), f"exec+arc://{args.citizen}/", json.dumps(body)],
+        ["arc", "call", "--timeout", str(timeout_s + WAKE_S), f"exec+arc://{args.citizen}/", json.dumps(body)],
         capture_output=True,
         text=True,
     )
@@ -128,8 +90,6 @@ def request(args: argparse.Namespace, body: dict, timeout_s: int) -> dict:
         sys.stderr.write(reply.stdout + reply.stderr)
         sys.exit(reply.returncode)
     log(args.verbose, "reply received")
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    (STATE_DIR / args.citizen).touch()
     # `arc call` prints the reply body as the last line.
     return json.loads(reply.stdout.strip().splitlines()[-1])
 
