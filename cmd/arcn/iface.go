@@ -320,8 +320,13 @@ func (e *cliEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Ki
 // Private syncs the mail with every relay, and reads the private events.
 func (e *cliEnv) Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
 	for _, t := range e.sess.relays {
-		if _, err := e.sess.mail.Sync(ctx, t); err != nil {
+		report, err := e.sess.mail.Sync(ctx, t)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
+			continue
+		}
+		if n := len(report.Refused); n > 0 {
+			fmt.Fprintf(os.Stderr, "%s: %d messages did not open: %s\n", t.Name(), n, report.Refused[0])
 		}
 	}
 	return e.sess.mail.Rumors(kinds), nil

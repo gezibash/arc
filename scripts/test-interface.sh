@@ -279,9 +279,10 @@ owner() { "$work/arcn" --home "$work/owner" "$@"; }
 agent() { "$work/arcn" --home "$work/agent" "$@"; }
 owner key new > /dev/null
 owner_key="$(owner key show | tail -1)"
-# The owner allows posts, drafts and their parts, seals, and relay lists;
+# A background process starts directly, not through a shell function, so $!
+# names it and kill reaches it. The owner allows posts, drafts and their parts, seals, and relay lists;
 # not replies.
-owner key bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
+"$work/arcn" --home "$work/owner" key bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
   --allow-kind 13 --allow-kind 10050 --allow-kind 10013 > "$work/bunker.log" 2>&1 &
 bunker_pid=$!
 for _ in $(seq 1 50); do grep "bunker://" "$work/bunker.log" > /dev/null 2>&1 && break; sleep 0.1; done
@@ -313,11 +314,24 @@ owner install "$caller_key" journal --yes > /dev/null
   fail "the owner, with the key, read $(owner journal read ops/agent/notes)"
 say "an agent keeps a journal through the bunker, and its owner reads the same page with the key"
 
+# By default the bunker decrypts only what its owner sealed to themselves:
+# the journal works, and incoming mail stays shut.
 agent dm send "$bob_key" hello from the agent 2> /dev/null || fail "the agent could not send a message"
 bob dm inbox | grep "hello from the agent" > /dev/null || fail "bob's inbox: $(bob dm inbox)"
 bob dm inbox | grep "$(owner key show | head -1)" > /dev/null || fail "the message does not come from the owner"
 bob dm send "$owner_key" hello agent 2> /dev/null
+agent dm inbox > "$work/shut.txt" 2> "$work/shut.err"
+grep "hello agent" "$work/shut.txt" > /dev/null && fail "the bunker opened mail by default"
+grep "decrypts only what its owner sealed" "$work/shut.err" > /dev/null || fail "the agent was not told why: $(cat "$work/shut.err")"
+say "by default the bunker opens the owner's own drafts, and not their mail"
+
+kill "$bunker_pid"
+wait "$bunker_pid" 2> /dev/null || true
+"$work/arcn" --home "$work/owner" key bunker --relay "$url" --decrypt all --allow-kind 13 > "$work/bunker2.log" 2>&1 &
+bunker_pid=$!
+for _ in $(seq 1 50); do grep "bunker://" "$work/bunker2.log" > /dev/null 2>&1 && break; sleep 0.1; done
+[ "$(grep "^bunker://" "$work/bunker2.log")" = "$uri" ] || fail "the bunker URI changed on restart"
 agent dm inbox | grep "hello agent" > /dev/null || fail "the agent's inbox: $(agent dm inbox 2>&1)"
-say "an agent sends and reads direct messages through the bunker"
+say "with --decrypt all, the agent reads its owner's mail, and the URI stays the same"
 
 printf 'phase D holds: reserved kinds, consent, dry runs, sealed keys, and remote signers\n'

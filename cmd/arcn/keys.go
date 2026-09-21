@@ -255,12 +255,15 @@ func bunkerCommand() *cobra.Command {
 		Short: "Sign for others through a relay, as NIP-46 defines",
 		Long: "arcn prints a bunker:// URI. A machine that uses it, such as an agent,\n" +
 			"signs with this citizen's key and never holds it. With --allow-kind,\n" +
-			"the bunker signs only those kinds, and authentication for relays.",
+			"the bunker signs only those kinds, and authentication for relays. By\n" +
+			"default it decrypts only what the owner sealed to themselves, which\n" +
+			"the journal and the files need; mail needs --decrypt all.",
 		Args: cobra.NoArgs,
 		RunE: serveBunker,
 	}
 	command.Flags().String("relay", "", "the relay that carries the requests")
 	command.Flags().StringArray("allow-kind", nil, "a kind that the bunker signs; with none, it signs every kind")
+	command.Flags().String("decrypt", "self", "what the bunker decrypts: none, self (drafts and the keyed root), or all (needed for mail)")
 	return command
 }
 
@@ -268,6 +271,10 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	url, _ := command.Flags().GetString("relay")
 	if url == "" {
 		return errors.New("name the relay with --relay")
+	}
+	decrypt, _ := command.Flags().GetString("decrypt")
+	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
+		return fmt.Errorf("--decrypt is none, self or all, not %q", decrypt)
 	}
 	var allowed []nostr.Kind
 	texts, _ := command.Flags().GetStringArray("allow-kind")
@@ -330,7 +337,7 @@ func serveBunker(command *cobra.Command, _ []string) error {
 		requests, err := r.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindNostrConnect}, Tags: nostr.TagMap{"p": {pk.Hex()}}, Since: nostr.Now()})
 		if err == nil {
 			for request := range requests {
-				response, ok := answer(ctx, &signer, id.key.Secret, request, allowed, log)
+				response, ok := answer(ctx, &signer, id.key.Secret, request, policy{kinds: allowed, decrypt: decrypt}, log)
 				if ok {
 					if err := r.Send(ctx, response); err != nil {
 						log.Warn("the answer did not reach the relay", "error", err)
@@ -351,27 +358,57 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	}
 }
 
-// answer handles one request. A request to sign a kind that the bunker does
-// not allow gets a refusal, and the signer never sees it.
-func answer(ctx context.Context, signer *nip46.StaticKeySigner, secret nostr.SecretKey, request nostr.Event, allowed []nostr.Kind, log *slog.Logger) (nostr.Event, bool) {
-	if len(allowed) > 0 {
-		conversation, err := nip44.GenerateConversationKey(request.PubKey, secret)
-		if err != nil {
-			return nostr.Event{}, false
+// policy is what a bunker does for the machines that use it.
+type policy struct {
+	// kinds are the kinds that it signs; none means every kind.
+	kinds []nostr.Kind
+	// decrypt is none, self or all. Self opens only what the owner sealed
+	// to their own key: drafts, the keyed root, the private relay list.
+	decrypt string
+}
+
+// refusal says why the policy refuses a request, or nothing when it allows
+// it. Authentication for relays is always allowed.
+func (p policy) refusal(req nip46.Request, owner nostr.PubKey) error {
+	switch req.Method {
+	case "sign_event":
+		if len(p.kinds) == 0 || len(req.Params) != 1 {
+			return nil
 		}
-		session := nip46.Session{PublicKey: secret.Public(), ConversationKey: conversation}
-		parsed, err := session.ParseRequest(request)
-		if err == nil && parsed.Method == "sign_event" && len(parsed.Params) == 1 {
-			var event nostr.Event
-			if err := event.UnmarshalJSON([]byte(parsed.Params[0])); err == nil &&
-				event.Kind != nostr.KindClientAuthentication && !slices.Contains(allowed, event.Kind) {
-				log.Info("refused to sign a kind that is not allowed", "kind", event.Kind, "from", request.PubKey.Hex()[:8])
-				_, refusal, err := session.MakeResponse(parsed.ID, request.PubKey, "", fmt.Errorf("the bunker does not sign kind %d", event.Kind))
-				if err != nil || refusal.Sign(secret) != nil {
-					return nostr.Event{}, false
-				}
-				return refusal, true
+		var event nostr.Event
+		if err := event.UnmarshalJSON([]byte(req.Params[0])); err != nil {
+			return nil
+		}
+		if event.Kind != nostr.KindClientAuthentication && !slices.Contains(p.kinds, event.Kind) {
+			return fmt.Errorf("the bunker does not sign kind %d", event.Kind)
+		}
+	case "nip44_decrypt", "nip04_decrypt":
+		switch {
+		case p.decrypt == "none":
+			return errors.New("the bunker does not decrypt")
+		case p.decrypt == "self" && (len(req.Params) == 0 || req.Params[0] != owner.Hex()):
+			return errors.New("the bunker decrypts only what its owner sealed to themselves; mail needs --decrypt all")
+		}
+	}
+	return nil
+}
+
+// answer handles one request. A request that the policy refuses gets a
+// refusal, and the signer never sees it.
+func answer(ctx context.Context, signer *nip46.StaticKeySigner, secret nostr.SecretKey, request nostr.Event, p policy, log *slog.Logger) (nostr.Event, bool) {
+	conversation, err := nip44.GenerateConversationKey(request.PubKey, secret)
+	if err != nil {
+		return nostr.Event{}, false
+	}
+	session := nip46.Session{PublicKey: secret.Public(), ConversationKey: conversation}
+	if parsed, err := session.ParseRequest(request); err == nil {
+		if reason := p.refusal(parsed, secret.Public()); reason != nil {
+			log.Info("refused a request", "method", parsed.Method, "reason", reason, "from", request.PubKey.Hex()[:8])
+			_, refusal, err := session.MakeResponse(parsed.ID, request.PubKey, "", reason)
+			if err != nil || refusal.Sign(secret) != nil {
+				return nostr.Event{}, false
 			}
+			return refusal, true
 		}
 	}
 	_, _, response, err := signer.HandleRequest(ctx, request)

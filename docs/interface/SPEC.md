@@ -550,7 +550,11 @@ Core reads the passphrase from `ARCN_PASSPHRASE`, or asks on the terminal.
 
 `arcn key bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
 and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
-and NIP-42 authentication for relays. `arcn key use <uri>` makes a home that
+and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
+`self`, the default, which opens only what the owner sealed to their own key,
+such as drafts and the keyed root; or `all`, which mail needs, because a gift
+wrap comes from a one-time key that no list can name. The bunker keeps its URI
+when it restarts. `arcn key use <uri>` makes a home that
 signs through it. That home seals and opens mail, makes calls, and reads the
 keyed root, all through the signer. The bunker publishes the keyed root to its
 relay when it starts.
@@ -891,8 +895,11 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 - **Rollback on a fresh machine.** A query asks every relay of the citizen's
   NIP-37 list, and keeps the newest version. If every relay serves an old
   version, a machine that never saw the newer one cannot tell.
-- **A remote signer decrypts for its client.** `--allow-kind` limits what the
-  bunker signs, and not what it decrypts.
+- **Mail over a bunker opens everything.** `--decrypt all` lets the machine
+  that uses the bunker open any ciphertext sealed to the owner, not only mail.
+- **Encryption is not limited.** A bunker encrypts for its client without a
+  rule, because a sealed message also needs a signature, which `--allow-kind`
+  limits.
 - **A private event goes to one recipient.** NIP-17 allows a message to
   several, and this arc refuses it.
 - **The group relay is a subset of NIP-29.** It hosts open and restricted
