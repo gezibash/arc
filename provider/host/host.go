@@ -1,10 +1,10 @@
-// Package citizen runs one serving citizen: it connects to a relay, offers
-// its capability, and passes each request to the provider program.
+// Package host runs a provider program, and speaks to it.
 //
-// This is what "arc serve" does. The provider program speaks newline
-// delimited JSON on its standard input and its standard output, and knows
-// nothing about relays, sessions or packets.
-package citizen
+// A provider program reads newline delimited JSON on its standard input and
+// writes it on its standard output. It knows nothing about relays, sessions
+// or events. Both the ARC citizen and the delivery layer host providers this
+// way, so a provider runs unchanged under either.
+package host
 
 import (
 	"bufio"
@@ -23,8 +23,8 @@ import (
 // a newline must not fill the memory of the citizen.
 const MaxLineBytes = 64 * 1024 * 1024
 
-// runtime is the provider program.
-type runtime struct {
+// Process is one running provider program.
+type Process struct {
 	command *exec.Cmd
 	stdin   io.WriteCloser
 	lines   chan map[string]any
@@ -34,9 +34,9 @@ type runtime struct {
 	closed bool
 }
 
-// startRuntime starts the provider program with the environment that a
-// provider expects.
-func startRuntime(path string, args []string, environment []string, log *slog.Logger) (*runtime, error) {
+// Start starts a provider program, with the environment that a provider
+// expects added to this process's own.
+func Start(path string, args []string, environment []string, log *slog.Logger) (*Process, error) {
 	command := exec.Command(path, args...)
 	command.Env = append(os.Environ(), environment...)
 
@@ -54,10 +54,10 @@ func startRuntime(path string, args []string, environment []string, log *slog.Lo
 	}
 
 	if err := command.Start(); err != nil {
-		return nil, fmt.Errorf("citizen: the provider did not start: %w", err)
+		return nil, fmt.Errorf("host: the provider did not start: %w", err)
 	}
 
-	provider := &runtime{
+	provider := &Process{
 		command: command,
 		stdin:   stdin,
 		lines:   make(chan map[string]any, 64),
@@ -69,8 +69,8 @@ func startRuntime(path string, args []string, environment []string, log *slog.Lo
 	return provider, nil
 }
 
-// send writes one event to the provider.
-func (r *runtime) send(event map[string]any) error {
+// Send writes one event to the provider.
+func (r *Process) Send(event map[string]any) error {
 	line, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (r *runtime) send(event map[string]any) error {
 	defer r.mu.Unlock()
 
 	if r.closed {
-		return errors.New("citizen: the provider is not running")
+		return errors.New("host: the provider is not running")
 	}
 
 	line = append(line, '\n')
@@ -90,7 +90,7 @@ func (r *runtime) send(event map[string]any) error {
 
 // read joins the chunks of one line, and passes each answer on. A line over
 // the cap goes, and the provider keeps running.
-func (r *runtime) read(stdout io.Reader) {
+func (r *Process) read(stdout io.Reader) {
 	defer close(r.lines)
 
 	reader := bufio.NewReaderSize(stdout, 64*1024)
@@ -122,7 +122,7 @@ func (r *runtime) read(stdout io.Reader) {
 	}
 }
 
-func (r *runtime) deliver(line []byte) {
+func (r *Process) deliver(line []byte) {
 	line = []byte(strings.TrimRight(string(line), "\r\n"))
 	if len(line) == 0 {
 		return
@@ -136,8 +136,8 @@ func (r *runtime) deliver(line []byte) {
 	r.lines <- answer
 }
 
-// report passes the standard error of the provider to the log of the citizen.
-func (r *runtime) report(stderr io.Reader) {
+// report passes the standard error of the provider to the log.
+func (r *Process) report(stderr io.Reader) {
 	scanner := bufio.NewScanner(stderr)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -146,8 +146,12 @@ func (r *runtime) report(stderr io.Reader) {
 	}
 }
 
-// stop closes the input of the provider and waits for it to end.
-func (r *runtime) stop() error {
+// Lines returns each answer of the provider. The channel closes when the
+// provider stops.
+func (r *Process) Lines() <-chan map[string]any { return r.lines }
+
+// Stop closes the input of the provider and waits for it to end.
+func (r *Process) Stop() error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()

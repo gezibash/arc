@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/frame"
 	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/packet"
+	"github.com/gezibash/arc/provider/host"
 	"github.com/gezibash/arc/session"
 )
 
@@ -58,7 +59,7 @@ type Options struct {
 type Citizen struct {
 	me       *identity.Identity
 	pkg      map[string]any
-	runtime  *runtime
+	runtime  *host.Process
 	relay    *client.Client
 	log      *slog.Logger
 	capID    string
@@ -113,7 +114,7 @@ func Serve(ctx context.Context, opts Options) (*Citizen, error) {
 		"ARC_PUBLIC_KEY=" + opts.Identity.EncodePublicKey(),
 	}
 
-	provider, err := startRuntime(path, args, environment, opts.Log)
+	provider, err := host.Start(path, args, environment, opts.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,7 @@ func Serve(ctx context.Context, opts Options) (*Citizen, error) {
 	})
 	if err != nil {
 		cancel()
-		provider.stop()
+		provider.Stop()
 		return nil, err
 	}
 
@@ -180,7 +181,7 @@ func (c *Citizen) Close() error {
 		c.direct.Close()
 	}
 	c.relay.Close()
-	err := c.runtime.stop()
+	err := c.runtime.Stop()
 	c.group.Wait()
 	return err
 }
@@ -361,7 +362,7 @@ func (c *Citizen) handlePacket(raw []byte) {
 		"framed":         true,
 	}
 
-	if err := c.runtime.send(event); err != nil {
+	if err := c.runtime.Send(event); err != nil {
 		c.mu.Lock()
 		delete(c.waiting, key)
 		c.mu.Unlock()
@@ -375,7 +376,7 @@ func (c *Citizen) readProvider() {
 
 	for {
 		select {
-		case answer, ok := <-c.runtime.lines:
+		case answer, ok := <-c.runtime.Lines():
 			if !ok {
 				c.log.Error("the provider stopped")
 				c.cancel()
