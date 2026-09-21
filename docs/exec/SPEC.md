@@ -3,8 +3,8 @@
 Status: proposed. Phases 1, 2 and 3a of section 18 exist. `cmd/exec-provider`
 holds the provider (section 8), the start script (section 10.4), the lease
 (section 11), jobs (sections 12.1 to 12.3), and the wrapper `arc-exec`. `arc`
-and the `wake` package run the wake hooks (section 10), without the `asleep`
-state and the `peer_offline` check. The other sections describe work that
+and the `wake` package run the wake flow (section 10), and `arc resolve`
+shows the presence states (section 9). The other sections describe work that
 does not exist yet.
 
 ## 1. Purpose
@@ -73,7 +73,8 @@ agent instructions.
   [discovery](../discovery/SPEC.md). The relay cannot show a paused citizen.
 - `arc call` wakes a peer only through a wake hook of the caller (section 10).
   Without a hook, it does not wake the peer and does not wait for the peer to
-  connect.
+  connect. It fails at once with `peer_offline` when the relay has no current
+  announcement of the peer.
 - `arc serve` does not detect a pause of its machine.
 - `arc serve` connects to the relay one time. If that connection fails or
   ends, `arc serve` exits with status 1.
@@ -226,6 +227,13 @@ A caller sees a citizen in one of three states:
 The caller calculates `asleep` from its own wake configuration. The relay does
 not change.
 
+`arc resolve` prints the state of each citizen on its own line: `online`,
+`asleep: arc wakes it with its wake hook`, or `offline`. `--json` adds the
+field `state`. `arc resolve` finds a citizen that sleeps by the name or the
+key of its wake hook. A full key with no announcement and no hook gives
+`offline`. A program asks the relay about one citizen with
+`client.Peers.Online`.
+
 Note: After a pause, the relay can hold the last announcement until it
 expires. Thus `online` does not prove that the machine is awake.
 
@@ -250,9 +258,11 @@ argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/exec-provid
   no token.
 - Other platforms use the same kind with a different program. ARC does not
   change.
-- `arc` accepts only the `command` kind. If the file holds a hook of another
-  kind, `arc` refuses the file, and each command that connects to the relay
-  fails.
+- `arc` runs only the `command` kind. A hook of another kind, or a hook with
+  an empty `argv`, fails each request to its citizen with `wake_failed`.
+- A file that is not valid TOML, or that has a bad key, fails every request
+  to a citizen. Commands that send no such request, for example `arc status`
+  and `arc discover`, do not read the hooks.
 
 ### 10.2 Wake flow
 
@@ -278,10 +288,17 @@ The default wake timeout is 30 seconds. It includes the time of the wake hook.
 `arc` runs this flow before each request to a citizen: `arc call`, `arc info`,
 `arc install`, and the installed commands. A program that uses the `client`
 package gets the flow through `client.Options.Waker`. The wake counts toward
-the `--timeout` of `arc call`. `arc` keeps the time of the last answer of each
-citizen in the directory `wake/` beside `wake.toml`, so the next `arc` process
-skips the hook too. Step 1 is not built: without a hook, `arc` sends the
-request at once.
+the `--timeout` of `arc call`. If that deadline ends the hook first, the
+`wake_timeout` error names the time that the hook had.
+
+For step 1, `arc` asks the relay for the announcement of the full key. It
+skips the question when the citizen answered less than 30 seconds ago in the
+same process, or when a direct carrier to the citizen exists. If the relay
+cannot answer, `arc` sends the request.
+
+`arc` keeps the time of the last answer of each citizen with a hook in the
+directory `wake/` beside `wake.toml`. Thus the next `arc` process skips that
+hook too.
 
 The wake hook is the only reliable sign that the machine is awake. The relay
 can show `online` for a paused machine (section 9). On an awake machine, the
@@ -597,7 +614,7 @@ token_env = "SPRITES_TOKEN"
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
 | 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `cmd/exec-provider/citizen/`, the `lease` object, and `cmd/exec-provider/arc-exec`. |
-| 2 | Wake hooks in `arc` and in the `client` package. Done: the `wake` package, `wake.toml`, and `client.Options.Waker`. Not built: the `asleep` state (section 9) and `peer_offline` (step 1 of section 10.2). |
+| 2 | Wake hooks and presence states in `arc` and in the `client` package. Done: the `wake` package, `wake.toml`, `client.Options.Waker`, `client.Peers.Online`, `peer_offline` (step 1 of section 10.2), and the states of `arc resolve` (section 9). |
 | 3a | Asynchronous jobs: `start`, `status`, and `arc-exec --start`, `--status`, `--wait`. Done. |
 | 3b | The notify command (section 12.3) and the DM script (section 12.4). |
 | 4 | Wake URL and signed dormant records on the relay. |
