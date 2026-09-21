@@ -30,6 +30,7 @@ import (
 	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/delivery/draft"
+	"github.com/gezibash/arc/delivery/groups"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
@@ -265,6 +266,12 @@ func serveCommand() *cobra.Command {
 			rl.Negentropy = true
 			rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
 
+			if ids, _ := command.Flags().GetStringArray("group"); len(ids) > 0 {
+				if err := hostGroups(command, rl, db, ids); err != nil {
+					return err
+				}
+			}
+
 			listener, err := net.Listen("tcp", listen)
 			if err != nil {
 				return err
@@ -284,7 +291,53 @@ func serveCommand() *cobra.Command {
 	}
 	command.Flags().String("listen", "127.0.0.1:7447", "the address to listen on")
 	command.Flags().String("db", "", "the file that holds the events (default <home>/relay.db)")
+	command.Flags().StringArray("group", nil, "host an open NIP-29 group with this id")
+	command.Flags().StringArray("admin", nil, "a public key that administers the groups")
 	return command
+}
+
+// hostGroups makes the relay host NIP-29 groups. The relay signs the state
+// of each group with its own key, which it keeps in <home>/relay.key.
+func hostGroups(command *cobra.Command, rl *khatru.Relay, db *boltdb.BoltBackend, ids []string) error {
+	dir, err := home(command)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "relay.key")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := keys.Save(path, keys.Generate()); err != nil {
+			return err
+		}
+	}
+	key, err := keys.Load(path)
+	if err != nil {
+		return err
+	}
+
+	var admins []nostr.PubKey
+	texts, _ := command.Flags().GetStringArray("admin")
+	for _, text := range texts {
+		pk, err := nostr.PubKeyFromHex(text)
+		if err != nil {
+			return fmt.Errorf("--admin %q is not a public key", text)
+		}
+		admins = append(admins, pk)
+	}
+
+	hosted, err := groups.Attach(rl, db, key.Secret)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := hosted.Create(id, id, false, admins); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("relay hosts groups %s, signed by %s\n", strings.Join(ids, ", "), key.Public.Hex())
+	return nil
 }
 
 // session is one open store, with the key and the relays of this citizen.

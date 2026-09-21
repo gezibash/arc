@@ -92,3 +92,35 @@ func TestAMessageFollowsTheRecipientsRelayList(t *testing.T) {
 		t.Errorf("bob received %d messages on his own relay", got.Received)
 	}
 }
+
+// The dm manifest sends a rumor of kind 14 with a p tag through SendRumor. A
+// NIP-17 client opens it.
+func TestARumorOfTheDMManifestOpensInANIP17Client(t *testing.T) {
+	ctx := context.Background()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	alice, bob := newCitizen(t, r), newCitizen(t)
+
+	if _, err := alice.mail.SendRumor(ctx, bob.key.Public, 14, "from the manifest", nostr.Tags{{"p", bob.key.Public.Hex()}}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := r.Fetch(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {bob.key.Public.Hex()}}})
+	if err != nil || len(batch.Events) == 0 {
+		t.Fatalf("no wrap for bob: %v", err)
+	}
+	client := keyer.NewPlainKeySigner(bob.key.Secret)
+	rumor, err := nip59.GiftUnwrap(batch.Events[0], func(other nostr.PubKey, ciphertext string) (string, error) {
+		return client.Decrypt(ctx, ciphertext, other)
+	})
+	if err != nil || rumor.Kind != nostr.KindDirectMessage || rumor.Content != "from the manifest" || rumor.PubKey != alice.key.Public {
+		t.Errorf("the NIP-17 client read %+v %v", rumor, err)
+	}
+
+	// Bob's machine reads it back as a rumor, and so does Alice's.
+	bob.sync(t, r)
+	if got := bob.mail.Rumors([]nostr.Kind{14}); len(got) != 1 || got[0].Content != "from the manifest" {
+		t.Errorf("bob's rumors: %+v", got)
+	}
+	if got := alice.mail.Rumors([]nostr.Kind{14}); len(got) != 1 || got[0].PubKey != alice.key.Public {
+		t.Errorf("alice's rumors: %+v", got)
+	}
+}

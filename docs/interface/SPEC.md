@@ -1,6 +1,6 @@
 # Capability interface, version 1
 
-Status: phases A and B are built, see section 18. The rest is proposed.
+Status: phases A, B and C are built, see section 18. Phase D is proposed.
 `arcn` runs them, and `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
@@ -110,6 +110,13 @@ tag names 30023, as NIP-37 requires.
 The group is a NIP-29 group. Its relay enforces who may post, and applies the
 moderation of the group's admins. The citizen who runs that relay can
 announce a different relay or id in a new version of the manifest.
+
+The operator of the relay makes the group and names its admins:
+`arcn relay serve --group agora --admin <key>`. The relay signs the state of
+the group with its own key, and names that key in its NIP-11 document as
+`self`. It refuses an event for a group that does not exist, a post to a
+restricted group from a citizen who is not a member, and a moderation event
+from a citizen who is not an admin. `delivery/groups` holds these rules.
 
 ### 4.3 Service
 
@@ -341,13 +348,16 @@ names, and keeps the newest version of each replaceable event, as NIP-01
 defines. The store never goes back to an older version that it has seen.
 
 A query of a sealed kind reads the drafts, and filters them by their `k` tag.
-A query of a private kind reads the messages that this citizen received and
-sent, from their seals.
+A query of a private kind first syncs the mail with each relay, then reads the
+messages that this citizen received and sent, from their seals. A query of a
+group kind reads the group's relay, and not the store: a post that an admin
+removed does not show, and a query fails when the group's relay does not
+answer.
 
 ### 7.5 watch
 
-`watch` is a query that stays open. Phase B runs it for sealed kinds, which
-the journal's `tail` needs. It runs the pipeline on each event that
+`watch` is a query that stays open. It runs for sealed, public and group
+kinds. It does not run for private kinds yet. It runs the pipeline on each event that
 matches, first on the stored events, then on each new one as it arrives. It
 ends when the citizen stops it, or when every relay ends the subscription.
 
@@ -844,7 +854,7 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 | --- | --- | --- |
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
 | B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
-| C | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
+| C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
 | D | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
 
 ## 19. Limits of this design
@@ -858,6 +868,12 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 - **Rollback on a fresh machine.** A query asks every relay of the citizen's
   NIP-37 list, and keeps the newest version. If every relay serves an old
   version, a machine that never saw the newer one cannot tell.
+- **A private event goes to one recipient.** NIP-17 allows a message to
+  several, and this arc refuses it.
+- **The group relay is a subset of NIP-29.** It hosts open and restricted
+  groups, admins, removal, and join and leave requests. It does not hide the
+  posts of a private group from readers, and has no invite codes or roles
+  other than admin.
 - **One process per home.** The store is one file that one process opens at
   a time. A `tail` holds it, so a second command on the same home waits.
 - **Each read asks the relays.** A query fetches from every relay before it

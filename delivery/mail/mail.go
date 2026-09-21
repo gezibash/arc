@@ -139,12 +139,23 @@ func (m *Mail) Close() error { return m.db.Close() }
 // the relays at once. A relay that fails does not fail the send: the outbox
 // sends the message again on the next sync.
 func (m *Mail) Send(ctx context.Context, to nostr.PubKey, text string) (Outgoing, error) {
+	return m.SendRumor(ctx, to, MessageKind, text, nostr.Tags{{"p", to.Hex()}})
+}
+
+// SendRumor seals a private event of any kind to a citizen, as Send does
+// with a message.
+func (m *Mail) SendRumor(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) (Outgoing, error) {
 	if to == m.key.Public {
 		return Outgoing{}, errors.New("mail: a message to yourself belongs in the journal")
 	}
+	switch kind {
+	case AckKind, call.RequestKind, call.ReplyKind:
+		return Outgoing{}, fmt.Errorf("mail: kind %d belongs to the mail layer", kind)
+	}
 
 	now := m.now()
-	rumor := private.Rumor(m.key, MessageKind, text, nostr.Tags{{"p", to.Hex()}}, now)
+	text := content
+	rumor := private.Rumor(m.key, kind, content, tags, now)
 	expires := now.Add(private.MaxAge)
 
 	seal, err := m.post(ctx, to, rumor, expires, true)
@@ -337,13 +348,13 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 		return m.answer(ctx, opened, report)
 	case call.ReplyKind:
 		return m.replied(opened, report)
-	case MessageKind:
+	default:
+		// A message, or another private kind of a capability.
 		report.Received++
 		ack := private.Rumor(m.key, AckKind, "", nostr.Tags{{"e", opened.Rumor.ID.Hex()}}, m.now())
 		_, err := m.post(ctx, opened.Author(), ack, m.now().Add(private.MaxAge), false)
 		return err
 	}
-	return nil
 }
 
 // answer runs a call to this citizen, and sends the reply back. The reply is
@@ -593,6 +604,42 @@ func (m *Mail) Inbox() []Message {
 	return out
 }
 
+// Rumors returns the private events of some kinds that this citizen
+// received and sent, oldest first. It opens each seal from the store.
+func (m *Mail) Rumors(kinds []nostr.Kind) []nostr.Event {
+	var out []nostr.Event
+	seen := map[nostr.ID]bool{}
+	keep := func(rumor nostr.Event) {
+		if !slices.Contains(kinds, rumor.Kind) || seen[rumor.ID] {
+			return
+		}
+		seen[rumor.ID] = true
+		out = append(out, rumor)
+	}
+
+	for _, seal := range m.node.Store.Query(nostr.Filter{Kinds: []nostr.Kind{private.SealKind}}) {
+		if seal.PubKey == m.key.Public {
+			continue
+		}
+		if rumor, err := private.OpenSeal(m.key, seal); err == nil {
+			keep(rumor)
+		}
+	}
+	_ = m.db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket(outboxBucket).ForEach(func(_, v []byte) error {
+			var o Outgoing
+			if json.Unmarshal(v, &o) == nil {
+				if rumor, ok := m.ownRumor(o); ok {
+					keep(rumor)
+				}
+			}
+			return nil
+		})
+	})
+	sort.Slice(out, func(a, b int) bool { return out[a].CreatedAt < out[b].CreatedAt })
+	return out
+}
+
 // Outbox returns the messages that this citizen sent, oldest first.
 func (m *Mail) Outbox() []Outgoing {
 	var out []Outgoing
@@ -612,23 +659,26 @@ func (m *Mail) Outbox() []Outgoing {
 }
 
 func (m *Mail) ownText(o Outgoing) string {
+	rumor, _ := m.ownRumor(o)
+	return rumor.Content
+}
+
+// ownRumor opens the seal of something that this citizen sent.
+func (m *Mail) ownRumor(o Outgoing) (nostr.Event, bool) {
 	id, err := nostr.IDFromHex(o.Seal)
 	if err != nil {
-		return ""
+		return nostr.Event{}, false
 	}
 	to, err := nostr.PubKeyFromHex(o.To)
 	if err != nil {
-		return ""
+		return nostr.Event{}, false
 	}
 	seals := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{id}})
 	if len(seals) == 0 {
-		return ""
+		return nostr.Event{}, false
 	}
 	rumor, err := private.OpenOwnSeal(m.key, seals[0], to)
-	if err != nil {
-		return ""
-	}
-	return rumor.Content
+	return rumor, err == nil
 }
 
 func (m *Mail) replyOf(o Outgoing) call.Reply {

@@ -28,8 +28,6 @@ type Env interface {
 	// key, info), input), as unpadded base64url.
 	// KeyedValue computes it from a secret key.
 	Keyed(info []byte, input string) (string, error)
-	// EventAuthor returns the author of the event that ref names.
-	EventAuthor(ctx context.Context, ref string) (nostr.PubKey, error)
 	// Name is the name that the citizen knows a key by.
 	Name(nostr.PubKey) string
 	// Call sends one request to a provider. A live call returns the reply. A
@@ -98,12 +96,35 @@ func (r *run) keyed(purpose, input string) (string, error) {
 	return r.env.Keyed(keyedInfo(r.in.Author, r.in.Manifest.ID, purpose), input)
 }
 
+// eventAuthor finds the author of an event: in its coordinate, or by
+// fetching it from the group relay and the citizen's relays.
 func (r *run) eventAuthor(ref string) (string, error) {
-	pk, err := r.env.EventAuthor(r.ctx, ref)
+	if parts := strings.SplitN(ref, ":", 3); len(parts) == 3 {
+		pk, err := nostr.PubKeyFromHex(parts[1])
+		return pk.Hex(), err
+	}
+	id, err := nostr.IDFromHex(ref)
 	if err != nil {
 		return "", err
 	}
-	return pk.Hex(), nil
+	for _, relays := range [][]string{r.groupRelays(), nil} {
+		if relays == nil && r.in.Manifest.Group != nil && len(r.groupRelays()) == 0 {
+			continue
+		}
+		events, err := r.env.Fetch(r.ctx, nostr.Filter{IDs: []nostr.ID{id}}, relays)
+		if err == nil && len(events) > 0 {
+			return events[0].PubKey.Hex(), nil
+		}
+	}
+	return "", fmt.Errorf("no relay holds the event %s", ref)
+}
+
+// groupRelays names the relay of the capability's group, when it has one.
+func (r *run) groupRelays() []string {
+	if g := r.in.Manifest.Group; g != nil {
+		return []string{g.Relay}
+	}
+	return nil
 }
 
 func (r *run) name(key string) string {

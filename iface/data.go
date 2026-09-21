@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/delivery/draft"
 )
 
@@ -17,13 +18,25 @@ import (
 type Store interface {
 	// Keyer signs, and seals to the citizen's own key.
 	Keyer() nostr.Keyer
-	// Publish keeps events and sends them to the citizen's relays, in order.
-	Publish(ctx context.Context, events []nostr.Event) error
-	// Fetch asks the transports for the events that match, keeps them, and
-	// returns every stored event that matches, newest first.
-	Fetch(ctx context.Context, filter nostr.Filter) ([]nostr.Event, error)
-	// Watch passes on each new event that matches, as it arrives.
-	Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error)
+	// Publish keeps events and sends them, in order. With no relays, it sends
+	// them to the citizen's relays, and a relay that fails is reported. With
+	// relays, such as the relay of a group, it sends them there, and fails
+	// when none of them takes an event.
+	Publish(ctx context.Context, events []nostr.Event, relays []string) error
+	// Fetch returns the events that match, newest first. With no relays, it
+	// asks the citizen's relays, keeps what they send, and reads the store.
+	// With relays, it returns what those relays hold now, so an event that a
+	// group removed does not show.
+	Fetch(ctx context.Context, filter nostr.Filter, relays []string) ([]nostr.Event, error)
+	// Watch passes on each new event that matches, as it arrives, from the
+	// citizen's relays or from the relays named.
+	Watch(ctx context.Context, filter nostr.Filter, relays []string) (<-chan nostr.Event, error)
+	// SendPrivate seals a private event to a citizen, and sends it through
+	// the mail layer: relays, couriers and the outbox.
+	SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error
+	// Private syncs the mail, and returns the private events of these kinds
+	// that the citizen received and sent, oldest first.
+	Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error)
 }
 
 // entry is one record, and what the pipeline needs to know about its event.
@@ -51,14 +64,21 @@ func (r *run) kindName(names []string, kind nostr.Kind) string {
 }
 
 func (r *run) sealedOnly(name, action string) error {
-	switch v := r.kindOf(name).Visibility; v {
-	case "sealed":
-		return nil
-	case "private", "group":
-		return fmt.Errorf("this arc does not %s %s kinds yet: they come in phase C of the interface", action, v)
-	default:
-		return fmt.Errorf("this arc does not %s %s kinds yet", action, v)
+	if v := r.kindOf(name).Visibility; v != "sealed" {
+		return fmt.Errorf("this arc does not %s %s kinds", action, v)
 	}
+	return nil
+}
+
+// visibility is the one visibility of the kinds of a query.
+func (r *run) visibility(names []string) (string, error) {
+	v := r.kindOf(names[0]).Visibility
+	for _, name := range names[1:] {
+		if r.kindOf(name).Visibility != v {
+			return "", errors.New("a query reads kinds of one visibility")
+		}
+	}
+	return v, nil
 }
 
 // entryOf makes the record of an opened draft.
@@ -104,7 +124,7 @@ func lineCounts(tags nostr.Tags, parts int) []int {
 // is none. The draft is deleted when the wrap is blank.
 func (r *run) current(d string) (*draft.Draft, error) {
 	me := r.env.Me()
-	wraps, err := r.env.Fetch(r.ctx, nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {d}}})
+	wraps, err := r.env.Fetch(r.ctx, nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {d}}}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -141,10 +161,7 @@ func after(old *draft.Draft, now nostr.Timestamp) nostr.Timestamp {
 	return now
 }
 
-func (r *run) publish(p *Publish) ([]*entry, error) {
-	if err := r.sealedOnly(p.Kind, "publish"); err != nil {
-		return nil, err
-	}
+func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	kind := r.kindOf(p.Kind)
 	d, err := r.template(p.D)
 	if err != nil {
@@ -247,7 +264,7 @@ func (r *run) publish(p *Publish) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := r.env.Publish(r.ctx, append(events, wrap, checkpoint)); err != nil {
+	if err := r.env.Publish(r.ctx, append(events, wrap, checkpoint), nil); err != nil {
 		return nil, err
 	}
 
@@ -326,7 +343,7 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	me := r.env.Me()
 	coordinate := draft.Coordinate(me, d)
 
-	wraps, err := r.env.Fetch(r.ctx, nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {d}}})
+	wraps, err := r.env.Fetch(r.ctx, nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {d}}}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +353,7 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	history, err := r.env.Fetch(r.ctx, nostr.Filter{
 		Kinds: []nostr.Kind{draft.CheckpointKind, draft.PartKind}, Authors: []nostr.PubKey{me},
 		Tags: nostr.TagMap{"a": {coordinate}},
-	})
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +381,7 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	if err := k.SignEvent(r.ctx, &request); err != nil {
 		return nil, err
 	}
-	if err := r.env.Publish(r.ctx, []nostr.Event{blank, request}); err != nil {
+	if err := r.env.Publish(r.ctx, []nostr.Event{blank, request}, nil); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -460,7 +477,7 @@ func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
 	return out
 }
 
-func (r *run) query(q *Query) ([]*entry, error) {
+func (r *run) querySealed(q *Query) ([]*entry, error) {
 	filter, err := r.filter(q)
 	if err != nil {
 		return nil, err
@@ -473,11 +490,11 @@ func (r *run) query(q *Query) ([]*entry, error) {
 		// A deletion removes checkpoints that this machine may hold. Learn
 		// of it first, so the store drops them.
 		deletions := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: filter.Authors, Tags: nostr.TagMap{"a": filter.Tags["a"]}}
-		if _, err := r.env.Fetch(r.ctx, deletions); err != nil {
+		if _, err := r.env.Fetch(r.ctx, deletions, nil); err != nil {
 			return nil, err
 		}
 	}
-	events, err := r.env.Fetch(r.ctx, filter)
+	events, err := r.env.Fetch(r.ctx, filter, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -490,30 +507,58 @@ func (r *run) query(q *Query) ([]*entry, error) {
 
 // watch shows what a query holds now, then each new version as it arrives.
 func (r *run) watch(q *Query) error {
-	filter, err := r.filter(q)
+	visibility, err := r.visibility(q.Kinds)
 	if err != nil {
 		return err
 	}
-	events, err := r.env.Fetch(r.ctx, filter)
-	if err != nil {
-		return err
+	var filter nostr.Filter
+	var relays []string
+	var stored []*entry
+	switch visibility {
+	case "sealed":
+		if filter, err = r.filter(q); err != nil {
+			return err
+		}
+		events, err := r.env.Fetch(r.ctx, filter, nil)
+		if err != nil {
+			return err
+		}
+		if len(events) > 0 && q.D != "" {
+			events = events[:1]
+		}
+		stored = r.openAll(q, events)
+		slices.Reverse(stored)
+	case "public", "group":
+		if filter, relays, err = r.plainFilter(q, visibility); err != nil {
+			return err
+		}
+		events, err := r.env.Fetch(r.ctx, filter, relays)
+		if err != nil {
+			return err
+		}
+		stored = r.plainAll(q, events)
+		slices.Reverse(stored)
+	default:
+		return errors.New("this arc does not watch private kinds yet: run the query again, or sync")
 	}
-	if len(events) > 0 && q.D != "" {
-		events = events[:1]
-	}
-	stored := r.openAll(q, events)
-	slices.Reverse(stored)
 	if err := r.show(stored); err != nil {
 		return err
 	}
 
 	filter.Since = nostr.Now()
-	live, err := r.env.Watch(r.ctx, filter)
+	filter.Limit = 0
+	live, err := r.env.Watch(r.ctx, filter, relays)
 	if err != nil {
 		return err
 	}
 	for event := range live {
-		if err := r.show(r.openAll(q, []nostr.Event{event})); err != nil {
+		var entries []*entry
+		if visibility == "sealed" {
+			entries = r.openAll(q, []nostr.Event{event})
+		} else {
+			entries = r.plainAll(q, []nostr.Event{event})
+		}
+		if err := r.show(entries); err != nil {
 			return err
 		}
 	}
@@ -546,7 +591,7 @@ func (r *run) partTexts(ids []string) ([]string, error) {
 		}
 		want = append(want, parsed)
 	}
-	events, err := r.env.Fetch(r.ctx, nostr.Filter{IDs: want})
+	events, err := r.env.Fetch(r.ctx, nostr.Filter{IDs: want}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -613,4 +658,264 @@ func (r *run) joinedLines(e *entry, lines string) (string, error) {
 	}
 	shift := pickedStart - 1
 	return selectLines(b.String(), fmt.Sprintf("%d:%d", max(first-shift, 1), last-shift)), err
+}
+
+func (r *run) publish(p *Publish) ([]*entry, error) {
+	switch r.kindOf(p.Kind).Visibility {
+	case "sealed":
+		return r.publishSealed(p)
+	case "private":
+		return r.publishPrivate(p)
+	default:
+		return r.publishPlain(p)
+	}
+}
+
+// tagsOf renders the tags of a publish, and leaves out a tag whose value is
+// empty.
+func (r *run) tagsOf(p *Publish) (nostr.Tags, error) {
+	tags := nostr.Tags{}
+	for _, tag := range p.Tags {
+		rendered := nostr.Tag{tag[0]}
+		for _, value := range tag[1:] {
+			text, err := r.template(value)
+			if err != nil {
+				return nil, err
+			}
+			rendered = append(rendered, text)
+		}
+		if len(rendered) > 1 && rendered[1] != "" {
+			tags = append(tags, rendered)
+		}
+	}
+	return tags, nil
+}
+
+// publishPrivate seals the event to each recipient, through the mail layer.
+func (r *run) publishPrivate(p *Publish) ([]*entry, error) {
+	content, err := r.content(p.Content)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := r.tagsOf(p)
+	if err != nil {
+		return nil, err
+	}
+	if len(p.To) != 1 {
+		return nil, errors.New("a private event goes to one recipient in this arc")
+	}
+	to, err := r.template(p.To[0])
+	if err != nil {
+		return nil, err
+	}
+	pk, err := nostr.PubKeyFromHex(to)
+	if err != nil {
+		return nil, errors.New("a recipient must come from a key argument")
+	}
+	kind := nostr.Kind(r.kindOf(p.Kind).Kind)
+	if err := r.env.SendPrivate(r.ctx, pk, kind, content, tags); err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(r.stdio.Err, "sealed for %s; it travels with the next sync if no relay took it\n", r.env.Name(pk))
+	return nil, nil
+}
+
+// publishPlain signs a public event, or an event of the group, and sends it.
+func (r *run) publishPlain(p *Publish) ([]*entry, error) {
+	content, err := r.content(p.Content)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := r.tagsOf(p)
+	if err != nil {
+		return nil, err
+	}
+	var relays []string
+	if r.kindOf(p.Kind).Visibility == "group" {
+		// NIP-29: the h tag names the group, and the NIP-70 tag keeps the
+		// event on the group's relay.
+		g := r.in.Manifest.Group
+		tags = append(nostr.Tags{{"h", g.ID}, {"-"}}, tags...)
+		relays = []string{g.Relay}
+	}
+	if p.D != "" {
+		d, err := r.template(p.D)
+		if err != nil {
+			return nil, err
+		}
+		tags = append(nostr.Tags{{"d", d}}, tags...)
+	}
+	event := nostr.Event{Kind: nostr.Kind(r.kindOf(p.Kind).Kind), CreatedAt: nostr.Now(), Content: content, Tags: tags}
+	if err := r.env.Keyer().SignEvent(r.ctx, &event); err != nil {
+		return nil, err
+	}
+	if err := r.env.Publish(r.ctx, []nostr.Event{event}, relays); err != nil {
+		return nil, err
+	}
+	fmt.Fprintln(r.stdio.Err, nip19.EncodeNevent(event.ID, relays, event.PubKey))
+	return []*entry{plainEntry(event, p.Kind)}, nil
+}
+
+// plainEntry makes the record of a signed event, or of a rumor.
+func plainEntry(event nostr.Event, name string) *entry {
+	tags := map[string]any{}
+	for _, tag := range event.Tags {
+		if len(tag) >= 2 {
+			if _, seen := tags[tag[0]]; !seen {
+				tags[tag[0]] = tag[1]
+			}
+		}
+	}
+	return &entry{rec: Record{
+		"id": event.ID.Hex(), "kind": name, "author": event.PubKey.Hex(),
+		"created": int64(event.CreatedAt), "tags": tags, "content": event.Content,
+	}}
+}
+
+// plainAll makes the records of events that a query found.
+func (r *run) plainAll(q *Query, events []nostr.Event) []*entry {
+	out := []*entry{}
+	for _, event := range events {
+		if name := r.kindName(q.Kinds, event.Kind); name != "" {
+			out = append(out, plainEntry(event, name))
+		}
+	}
+	return out
+}
+
+// authors reads the authors of a query: nil means any.
+func (r *run) authors(q *Query) ([]nostr.PubKey, error) {
+	switch q.Authors {
+	case "", "any":
+		return nil, nil
+	case "me":
+		return []nostr.PubKey{r.env.Me()}, nil
+	case "author":
+		return []nostr.PubKey{r.in.Author}, nil
+	}
+	text, err := r.template(q.Authors)
+	if err != nil {
+		return nil, err
+	}
+	if text == "" {
+		return nil, nil
+	}
+	pk, err := nostr.PubKeyFromHex(text)
+	if err != nil {
+		return nil, fmt.Errorf("the authors of a query must be a key, not %q", text)
+	}
+	return []nostr.PubKey{pk}, nil
+}
+
+// plainFilter builds the filter of a query of public or group kinds, and
+// names the relays to ask.
+func (r *run) plainFilter(q *Query, visibility string) (nostr.Filter, []string, error) {
+	filter := nostr.Filter{Tags: nostr.TagMap{}}
+	for _, name := range q.Kinds {
+		filter.Kinds = append(filter.Kinds, nostr.Kind(r.kindOf(name).Kind))
+	}
+	var err error
+	if filter.Authors, err = r.authors(q); err != nil {
+		return filter, nil, err
+	}
+	for name, template := range q.Tags {
+		value, err := r.template(template)
+		if err != nil {
+			return filter, nil, err
+		}
+		if value != "" {
+			filter.Tags[name] = []string{value}
+		}
+	}
+	if d, err := r.template(q.D); err != nil {
+		return filter, nil, err
+	} else if d != "" {
+		filter.Tags["d"] = []string{d}
+	}
+	if ids, err := r.template(q.IDs); err != nil {
+		return filter, nil, err
+	} else if ids != "" {
+		for _, word := range strings.Fields(ids) {
+			id, err := nostr.IDFromHex(word)
+			if err != nil {
+				return filter, nil, fmt.Errorf("%q is not an event ID", word)
+			}
+			filter.IDs = append(filter.IDs, id)
+		}
+	}
+	limit, err := r.limitOf(q)
+	if err != nil {
+		return filter, nil, err
+	}
+	filter.Limit = limit
+	var relays []string
+	if visibility == "group" {
+		filter.Tags["h"] = []string{r.in.Manifest.Group.ID}
+		relays = []string{r.in.Manifest.Group.Relay}
+	}
+	return filter, relays, nil
+}
+
+func (r *run) query(q *Query) ([]*entry, error) {
+	visibility, err := r.visibility(q.Kinds)
+	if err != nil {
+		return nil, err
+	}
+	switch visibility {
+	case "sealed":
+		return r.querySealed(q)
+	case "private":
+		return r.queryPrivate(q)
+	}
+	filter, relays, err := r.plainFilter(q, visibility)
+	if err != nil {
+		return nil, err
+	}
+	events, err := r.env.Fetch(r.ctx, filter, relays)
+	if err != nil {
+		return nil, err
+	}
+	out := r.plainAll(q, events)
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// queryPrivate reads the private events that the citizen received and sent.
+func (r *run) queryPrivate(q *Query) ([]*entry, error) {
+	var kinds []nostr.Kind
+	for _, name := range q.Kinds {
+		kinds = append(kinds, nostr.Kind(r.kindOf(name).Kind))
+	}
+	authors, err := r.authors(q)
+	if err != nil {
+		return nil, err
+	}
+	rumors, err := r.env.Private(r.ctx, kinds)
+	if err != nil {
+		return nil, err
+	}
+	tags := map[string]string{}
+	for name, template := range q.Tags {
+		if tags[name], err = r.template(template); err != nil {
+			return nil, err
+		}
+	}
+	out := []*entry{}
+	for _, rumor := range rumors {
+		if authors != nil && !slices.Contains(authors, rumor.PubKey) {
+			continue
+		}
+		match := true
+		for name, value := range tags {
+			if value != "" && !rumor.Tags.ContainsAny(name, []string{value}) {
+				match = false
+			}
+		}
+		if match {
+			out = append(out, plainEntry(rumor, r.kindName(q.Kinds, rumor.Kind)))
+		}
+	}
+	return out, nil
 }

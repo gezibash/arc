@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -21,9 +20,6 @@ import (
 // back after the output.
 func (r *run) pipeline(entries []*entry) ([]*entry, error) {
 	o := r.command.Output
-	if o.Thread != nil {
-		return nil, errors.New("this arc does not run thread yet: it comes in phase C of the interface")
-	}
 
 	if o.Open != nil {
 		for _, e := range entries {
@@ -73,6 +69,9 @@ func (r *run) pipeline(entries []*entry) ([]*entry, error) {
 			return nil, err
 		}
 		entries = rank(entries, query, o.Rank.Fields, o.Rank.Limit)
+	}
+	if o.Thread != nil {
+		entries = thread(entries, o.Thread.Parent)
 	}
 	if o.Sort != nil {
 		sortEntries(entries, o.Sort.Field, o.Sort.Order == "desc")
@@ -239,6 +238,56 @@ func sortEntries(entries []*entry, by string, desc bool) {
 		}
 		return less
 	})
+}
+
+// thread orders records as replies: each record after its parent, the
+// replies to one record oldest first. A record whose parent is not among the
+// records starts a thread. It adds the field depth, from 0.
+func thread(entries []*entry, parent string) []*entry {
+	byID := map[string]*entry{}
+	for _, e := range entries {
+		byID[str(e.rec["id"])] = e
+	}
+	children := map[string][]*entry{}
+	var roots []*entry
+	for _, e := range entries {
+		p := str(field(e.rec, parent))
+		if _, ok := byID[p]; ok && p != str(e.rec["id"]) {
+			children[p] = append(children[p], e)
+		} else {
+			roots = append(roots, e)
+		}
+	}
+	byTime := func(list []*entry) {
+		sort.SliceStable(list, func(i, j int) bool { return number(list[i].rec["created"]) < number(list[j].rec["created"]) })
+	}
+	byTime(roots)
+	out := make([]*entry, 0, len(entries))
+	seen := map[*entry]bool{}
+	var walk func(e *entry, depth int)
+	walk = func(e *entry, depth int) {
+		if seen[e] {
+			return
+		}
+		seen[e] = true
+		e.rec["depth"] = int64(depth)
+		out = append(out, e)
+		kids := children[str(e.rec["id"])]
+		byTime(kids)
+		for _, kid := range kids {
+			walk(kid, depth+1)
+		}
+	}
+	for _, root := range roots {
+		walk(root, 0)
+	}
+	// A cycle leaves records unvisited; they follow, flat.
+	for _, e := range entries {
+		if !seen[e] {
+			walk(e, 0)
+		}
+	}
+	return out
 }
 
 // words are the lower-case runs of letters and digits of a text.

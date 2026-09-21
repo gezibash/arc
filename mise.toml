@@ -36,6 +36,6 @@ run = "bash scripts/test-delivery.sh"
 raw = true
 
 [tasks.interface]
-description = "Prove phases A and B of the capability interface: calls, and sealed data"
+description = "Prove phases A to C of the capability interface: calls, sealed data, messages and groups"
 run = "bash scripts/test-interface.sh"
 raw = true

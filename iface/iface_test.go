@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -88,7 +89,32 @@ func TestParseRefusesWhatVersionOneDoesNotDefine(t *testing.T) {
 }
 
 // fakeEnv answers calls with a fixed reply, and records the request.
+// fakeNet stands in for the relays and the mail between citizens.
+type fakeNet struct {
+	relays map[string]*store.Store
+	inbox  map[nostr.PubKey][]nostr.Event
+}
+
+func newNet() *fakeNet {
+	return &fakeNet{relays: map[string]*store.Store{}, inbox: map[nostr.PubKey][]nostr.Event{}}
+}
+
+func (n *fakeNet) relay(t *testing.T, url string) *store.Store {
+	if s := n.relays[url]; s != nil {
+		return s
+	}
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	n.relays[url] = s
+	return s
+}
+
 type fakeEnv struct {
+	t     *testing.T
+	net   *fakeNet
 	me    nostr.SecretKey
 	store *store.Store
 	live  chan nostr.Event
@@ -111,9 +137,13 @@ func (f *fakeEnv) ResolveKey(_ context.Context, text string) (nostr.PubKey, erro
 }
 func (f *fakeEnv) Me() nostr.PubKey   { return f.me.Public() }
 func (f *fakeEnv) Keyer() nostr.Keyer { return keyer.NewPlainKeySigner(f.me) }
-func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event) error {
+func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []string) error {
 	for _, event := range events {
-		result, err := f.store.Save(event)
+		s := f.store
+		if relays != nil {
+			s = f.net.relay(f.t, relays[0])
+		}
+		result, err := s.Save(event)
 		if err != nil {
 			return err
 		}
@@ -126,21 +156,37 @@ func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event) error {
 	}
 	return nil
 }
-func (f *fakeEnv) Fetch(_ context.Context, filter nostr.Filter) ([]nostr.Event, error) {
+func (f *fakeEnv) Fetch(_ context.Context, filter nostr.Filter, relays []string) ([]nostr.Event, error) {
 	f.fetchedIDs += len(filter.IDs)
+	if relays != nil {
+		return f.net.relay(f.t, relays[0]).Query(filter), nil
+	}
 	return f.store.Query(filter), nil
 }
-func (f *fakeEnv) Watch(context.Context, nostr.Filter) (<-chan nostr.Event, error) {
+func (f *fakeEnv) Watch(context.Context, nostr.Filter, []string) (<-chan nostr.Event, error) {
 	if f.live == nil {
 		return nil, errors.New("no relay to watch")
 	}
 	return f.live, nil
 }
+func (f *fakeEnv) SendPrivate(_ context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+	rumor := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), Content: content, Tags: tags, PubKey: f.me.Public()}
+	rumor.ID = rumor.GetID()
+	f.net.inbox[to] = append(f.net.inbox[to], rumor)
+	f.net.inbox[f.me.Public()] = append(f.net.inbox[f.me.Public()], rumor)
+	return nil
+}
+func (f *fakeEnv) Private(_ context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
+	var out []nostr.Event
+	for _, rumor := range f.net.inbox[f.me.Public()] {
+		if slices.Contains(kinds, rumor.Kind) {
+			out = append(out, rumor)
+		}
+	}
+	return out, nil
+}
 func (f *fakeEnv) Keyed(info []byte, input string) (string, error) {
 	return KeyedValue(f.me, info, input)
-}
-func (f *fakeEnv) EventAuthor(context.Context, string) (nostr.PubKey, error) {
-	return f.me.Public(), nil
 }
 func (f *fakeEnv) Name(pk nostr.PubKey) string { return "petname-" + pk.Hex()[:4] }
 func (f *fakeEnv) Call(_ context.Context, _ nostr.PubKey, r CallRequest, later bool) (CallResult, error) {

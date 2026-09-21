@@ -1,5 +1,5 @@
 #!/bin/bash
-# The proofs of phases A and B of docs/interface/SPEC.md. Two providers announce
+# The proofs of phases A, B and C of docs/interface/SPEC.md. Two providers announce
 # manifests of interface version 1. A caller installs them, and runs their
 # commands as commands of arcn, with no code for them in arcn.
 #
@@ -14,6 +14,7 @@ cleanup() {
   [ -n "${relay_pid:-}" ] && kill "$relay_pid" 2>/dev/null || true
   [ -n "${exec_pid:-}" ] && kill "$exec_pid" 2>/dev/null || true
   [ -n "${sqlite_pid:-}" ] && kill "$sqlite_pid" 2>/dev/null || true
+  [ -n "${board_pid:-}" ] && kill "$board_pid" 2>/dev/null || true
   # A process started from the work directory must not outlive it.
   pkill -f "$work/" 2>/dev/null || true
   sleep 0.2
@@ -182,4 +183,60 @@ desktop sync --dir "$work/stick" > /dev/null
 [ "$(desktop journal read hrs/notes/offline)" = "carried by hand" ] || fail "the stick did not carry the page"
 say "with no relay, a page crosses a USB stick"
 
-printf 'phase B holds: drafts, checkpoints, parts, delete, the journal and the files\n'
+printf 'phase B holds: drafts, checkpoints, parts, delete, the journal and the files\n\n'
+
+# Phase C: private kinds through the mail layer, and a NIP-29 group on a
+# relay that enforces it. Direct messages and Agora are manifests.
+laptop relay add "$url"
+bob() { "$work/arcn" --home "$work/bob" "$@"; }
+moderator() { "$work/arcn" --home "$work/moderator" "$@"; }
+bob key new > /dev/null
+bob relay add "$url"
+bob_key="$(bob key show | tail -1)"
+moderator key new > /dev/null
+moderator relay add "$url"
+moderator_key="$(moderator key show | tail -1)"
+
+"$work/arcn" --home "$work/board" relay serve --listen 127.0.0.1:0 \
+  --group agora --admin "$moderator_key" > "$work/board.log" 2>&1 &
+board_pid=$!
+for _ in $(seq 1 50); do grep "listens on" "$work/board.log" > /dev/null 2>&1 && break; sleep 0.1; done
+board="$(sed -n 's/^relay listens on //p' "$work/board.log")"
+[ -n "$board" ] || fail "the board relay did not start: $(cat "$work/board.log")"
+grep "hosts groups agora" "$work/board.log" > /dev/null || fail "the board hosts no group"
+say "a relay hosts the NIP-29 group agora, with one admin"
+
+# The author of Agora names the board relay in the manifest.
+sed "s#wss://board.example#$board#" "$root/manifests/agora.json" > "$work/agora.json"
+laptop announce "$root/manifests/dm.json" > /dev/null
+laptop announce "$work/agora.json" > /dev/null
+for machine in laptop bob moderator; do
+  $machine install "$caller_key" dm --yes > /dev/null || fail "$machine did not install dm"
+  $machine install "$caller_key" agora --yes > /dev/null || fail "$machine did not install agora"
+done
+say "three citizens install dm and agora"
+
+laptop dm send "$bob_key" meet at noon 2> /dev/null
+bob dm inbox | grep "meet at noon" > /dev/null || fail "bob's inbox: $(bob dm inbox)"
+bob dm send "$caller_key" see you there 2> /dev/null
+laptop dm open "$bob_key" > "$work/conversation.txt"
+grep "meet at noon" "$work/conversation.txt" > /dev/null && grep "see you there" "$work/conversation.txt" > /dev/null ||
+  fail "the conversation is $(cat "$work/conversation.txt")"
+go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
+say "a direct message crosses the relay, both ways, and opens in a NIP-17 client"
+
+post="$(laptop agora post --title Hello first post 2>&1 > /dev/null | tail -1)"
+case "$post" in nevent1*) ;; *) fail "the post printed $post" ;; esac
+bob agora feed | grep "Hello" > /dev/null || fail "bob's feed: $(bob agora feed)"
+bob agora reply "$post" welcome 2> /dev/null
+laptop agora thread "$post" | grep "welcome" > /dev/null || fail "the thread: $(laptop agora thread "$post")"
+say "a post and a reply cross the board relay"
+
+if bob agora remove "$post" > /dev/null 2> "$work/remove.txt"; then fail "a citizen who is not an admin removed the post"; fi
+grep "only an admin" "$work/remove.txt" > /dev/null || fail "the refusal was $(cat "$work/remove.txt")"
+moderator agora remove "$post" 2> "$work/admin.txt" || fail "the admin could not remove the post: $(cat "$work/admin.txt")"
+bob agora feed | grep "no posts" > /dev/null || fail "the removed post still shows: $(bob agora feed)"
+go test -count=1 -run 'NIP29' ./delivery/groups/ > "$work/nip29.txt" 2>&1 || fail "NIP-29: $(cat "$work/nip29.txt")"
+say "only the admin removes the post, and the post opens in a NIP-29 client"
+
+printf 'phase C holds: private kinds, NIP-29 groups, direct messages and Agora\n'

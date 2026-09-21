@@ -7,12 +7,16 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
+	"github.com/gezibash/arc/delivery/groups"
 )
 
 // Start runs a relay that keeps events in memory and supports Negentropy, and
@@ -101,4 +105,31 @@ func start(t *testing.T, negentropy bool) string {
 	server := httptest.NewServer(relay)
 	t.Cleanup(server.Close)
 	return "ws" + strings.TrimPrefix(server.URL, "http")
+}
+
+// StartGroups runs a relay that hosts NIP-29 groups, with one open group and
+// its admins. It returns the URL and the key of the relay.
+func StartGroups(t *testing.T, id string, admins ...nostr.PubKey) (string, nostr.PubKey) {
+	t.Helper()
+	// Bolt, as arcn uses: it cannot delete while a query of it is open.
+	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}
+	if err := db.Init(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	relay := khatru.NewRelay()
+	relay.Log = log.New(io.Discard, "", 0)
+	relay.UseEventstore(db, 500)
+
+	key := nostr.Generate()
+	g, err := groups.Attach(relay, db, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Create(id, id, false, admins); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(relay)
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http"), key.Public()
 }

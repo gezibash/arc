@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip19"
+	"fiatjaf.com/nostr/nip70"
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/store"
 )
@@ -29,7 +31,7 @@ func newCitizen(t *testing.T) *citizen {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	return &citizen{t: t, env: &fakeEnv{me: nostr.Generate(), store: s}, author: nostr.Generate().Public()}
+	return &citizen{t: t, env: &fakeEnv{t: t, net: newNet(), me: nostr.Generate(), store: s}, author: nostr.Generate().Public()}
 }
 
 func (c *citizen) run(id, stdin string, words ...string) (string, error) {
@@ -284,5 +286,102 @@ func TestARangeFetchesOnlyItsParts(t *testing.T) {
 	c.must("journal", "", "append", page, "last", "line")
 	if got := c.must("journal", "", "read", page, "--lines", "3001:"); got != "last line\n" {
 		t.Errorf("after append, line 3001 reads %q", got)
+	}
+}
+
+// pair makes two citizens on one network, with one author for manifests.
+func pair(t *testing.T) (*citizen, *citizen) {
+	a, b := newCitizen(t), newCitizen(t)
+	b.env.net = a.env.net
+	b.author = a.author
+	return a, b
+}
+
+func TestDirectMessages(t *testing.T) {
+	alice, bob := pair(t)
+	bobKey := nip19.EncodeNpub(bob.env.me.Public())
+	alice.must("dm", "", "send", bobKey, "meet", "at", "noon")
+	bob.must("dm", "", "send", alice.env.me.Public().Hex(), "see you there")
+
+	inbox := bob.must("dm", "", "inbox")
+	if !strings.Contains(inbox, "meet at noon") || strings.Contains(inbox, "see you there") {
+		t.Errorf("bob's inbox is %q", inbox)
+	}
+	conversation := alice.must("dm", "", "open", bobKey)
+	first, second := strings.Index(conversation, "meet at noon"), strings.Index(conversation, "see you there")
+	if first < 0 || second < 0 {
+		t.Errorf("the conversation is %q", conversation)
+	}
+	rumors := alice.env.net.inbox[bob.env.me.Public()]
+	if rumors[0].Kind != 14 || rumors[0].Tags.Find("p")[1] != bob.env.me.Public().Hex() {
+		t.Errorf("the message is %+v", rumors[0])
+	}
+}
+
+func TestAgoraPostsRepliesAndThreads(t *testing.T) {
+	alice, bob := pair(t)
+	alice.must("agora", "", "post", "--title", "Hello", "first", "post")
+	board := alice.env.net.relays["wss://board.example"]
+	posts := board.Query(nostr.Filter{Kinds: []nostr.Kind{11}})
+	if len(posts) != 1 {
+		t.Fatalf("the board holds %d posts", len(posts))
+	}
+	post := posts[0]
+	if h := post.Tags.Find("h"); h == nil || h[1] != "agora" || !nip70.IsProtected(post) {
+		t.Errorf("the post lacks its group tags: %v", post.Tags)
+	}
+
+	feed := bob.must("agora", "", "feed")
+	if !strings.Contains(feed, "Hello") || !strings.Contains(feed, "first post") {
+		t.Errorf("the feed is %q", feed)
+	}
+
+	root := nip19.EncodeNevent(post.ID, nil, nostr.ZeroPK)
+	bob.must("agora", "", "reply", root, "welcome")
+	time.Sleep(1100 * time.Millisecond)
+	alice.must("agora", "", "reply", root, "thanks")
+	replies := board.Query(nostr.Filter{Kinds: []nostr.Kind{1111}})
+	if len(replies) != 2 {
+		t.Fatalf("the board holds %d replies", len(replies))
+	}
+	for _, reply := range replies {
+		for _, name := range []string{"E", "e"} {
+			if tag := reply.Tags.Find(name); tag == nil || tag[1] != post.ID.Hex() || tag[3] != alice.env.me.Public().Hex() {
+				t.Errorf("the %s tag is %v", name, tag)
+			}
+		}
+		for _, name := range []string{"P", "p"} {
+			if tag := reply.Tags.Find(name); tag == nil || tag[1] != alice.env.me.Public().Hex() {
+				t.Errorf("the %s tag is %v", name, tag)
+			}
+		}
+		if k := reply.Tags.Find("K"); k == nil || k[1] != "11" {
+			t.Errorf("the K tag is %v", k)
+		}
+	}
+
+	thread := bob.must("agora", "", "thread", root)
+	if w, th := strings.Index(thread, "welcome"), strings.Index(thread, "thanks"); w < 0 || th < w {
+		t.Errorf("the thread is %q", thread)
+	}
+
+	alice.must("agora", "", "remove", root)
+	removals := board.Query(nostr.Filter{Kinds: []nostr.Kind{9005}})
+	if len(removals) != 1 || removals[0].Tags.Find("e")[1] != post.ID.Hex() || removals[0].Tags.Find("h")[1] != "agora" {
+		t.Errorf("the removal is %+v", removals)
+	}
+}
+
+func TestThreadOrdersReplies(t *testing.T) {
+	e := func(id, parent string, at int64) *entry {
+		return &entry{rec: Record{"id": id, "created": at, "tags": map[string]any{"e": parent}}}
+	}
+	got := thread([]*entry{e("c", "a", 3), e("b", "root", 2), e("a", "root", 1), e("d", "b", 4)}, "tags.e")
+	var order []string
+	for _, x := range got {
+		order = append(order, str(x.rec["id"])+str(x.rec["depth"]))
+	}
+	if strings.Join(order, " ") != "a0 c1 b0 d1" {
+		t.Errorf("the thread is %v", order)
 	}
 }

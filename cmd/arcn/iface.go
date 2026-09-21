@@ -16,6 +16,7 @@ import (
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/catalog"
 	"github.com/gezibash/arc/delivery/store"
+	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
@@ -151,62 +152,83 @@ func (e *cliEnv) ResolveKey(ctx context.Context, text string) (nostr.PubKey, err
 	return nostr.PubKey{}, fmt.Errorf("%q is not a key: use hex, an npub, an nprofile, a NIP-05 name, or an installed name", text)
 }
 
-// EventAuthor finds the author of an event in the store, then on the relays.
-// A coordinate names its author itself.
-func (e *cliEnv) EventAuthor(ctx context.Context, ref string) (nostr.PubKey, error) {
-	if parts := strings.SplitN(ref, ":", 3); len(parts) == 3 {
-		return nostr.PubKeyFromHex(parts[1])
-	}
-	id, err := nostr.IDFromHex(ref)
-	if err != nil {
-		return nostr.PubKey{}, err
-	}
-	filter := nostr.Filter{IDs: []nostr.ID{id}}
-	if found := e.sess.node.Store.Query(filter); len(found) > 0 {
-		return found[0].PubKey, nil
-	}
-	e.sess.node.Pull(ctx, filter, e.sess.relays)
-	if found := e.sess.node.Store.Query(filter); len(found) > 0 {
-		return found[0].PubKey, nil
-	}
-	return nostr.PubKey{}, fmt.Errorf("no store and no relay holds the event %s", ref)
-}
-
 func (e *cliEnv) Keyer() nostr.Keyer { return e.sess.keyer }
 
-// Publish keeps each event, then sends it to every relay. An event that a
-// relay did not take stays in the store, and the next sync sends it.
-func (e *cliEnv) Publish(ctx context.Context, events []nostr.Event) error {
+// relaysOf makes transports of relay URLs. No URLs means the citizen's own
+// relays.
+func (e *cliEnv) relaysOf(urls []string) []transport.Transport {
+	if urls == nil {
+		return e.sess.relays
+	}
+	out := make([]transport.Transport, 0, len(urls))
+	for _, url := range urls {
+		out = append(out, relay.Relay{URL: url, Signer: e.sess.keyer})
+	}
+	return out
+}
+
+// Publish keeps each event, then sends it. An event that one of the
+// citizen's relays did not take stays in the store, and the next sync sends
+// it. An event for named relays, such as a group's, fails when none of them
+// takes it: no other path reaches a group.
+func (e *cliEnv) Publish(ctx context.Context, events []nostr.Event, urls []string) error {
+	targets := e.relaysOf(urls)
 	unsent := map[string]error{}
 	for _, event := range events {
-		result, sent, err := e.sess.node.Publish(ctx, event, e.sess.relays)
+		result, sent, err := e.sess.node.Publish(ctx, event, targets)
 		if err != nil {
 			return err
 		}
 		if result.Outcome == store.Refused {
 			return fmt.Errorf("the store refused the event: %s", result.Reason)
 		}
+		taken := false
 		for _, s := range sent {
-			if s.Err != nil && unsent[s.Transport] == nil {
+			if s.Err == nil {
+				taken = true
+			} else if unsent[s.Transport] == nil {
 				unsent[s.Transport] = s.Err
 			}
 		}
+		if urls != nil && !taken {
+			return fmt.Errorf("the relay did not take the event: %v", sent[0].Err)
+		}
 	}
-	for name, err := range unsent {
-		fmt.Fprintf(os.Stderr, "not sent to %s: %v\nit waits in the store; arcn sync sends it\n", name, err)
+	if urls == nil {
+		for name, err := range unsent {
+			fmt.Fprintf(os.Stderr, "not sent to %s: %v\nit waits in the store; arcn sync sends it\n", name, err)
+		}
 	}
 	return nil
 }
 
-// Fetch asks the relays for what matches, keeps it, and reads the store. A
-// filter of IDs asks only for the events that the store lacks.
-func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter) ([]nostr.Event, error) {
-	if filter.IDs != nil {
-		// An empty list of IDs matches nothing. A relay would read it as no
-		// condition, and send everything.
-		if len(filter.IDs) == 0 {
-			return nil, nil
+// Fetch reads events. With no URLs, it asks the citizen's relays, keeps what
+// they send, and reads the store; a filter of IDs asks only for the events
+// that the store lacks. With URLs, it returns what those relays hold now.
+func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter, urls []string) ([]nostr.Event, error) {
+	// An empty list of IDs matches nothing. A relay would read it as no
+	// condition, and send everything.
+	if filter.IDs != nil && len(filter.IDs) == 0 {
+		return nil, nil
+	}
+	if urls != nil {
+		var out []nostr.Event
+		var failures []string
+		for _, t := range e.relaysOf(urls) {
+			batch, err := t.Fetch(ctx, filter)
+			if err != nil {
+				failures = append(failures, err.Error())
+				continue
+			}
+			out = append(out, batch.Events...)
 		}
+		if len(failures) == len(urls) {
+			return nil, fmt.Errorf("no relay answered: %s", strings.Join(failures, "; "))
+		}
+		slices.SortFunc(out, func(a, b nostr.Event) int { return int(b.CreatedAt) - int(a.CreatedAt) })
+		return out, nil
+	}
+	if filter.IDs != nil {
 		found, err := e.sess.node.Obtain(ctx, filter.IDs, e.sess.relays)
 		if err != nil {
 			return nil, err
@@ -224,14 +246,21 @@ func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter) ([]nostr.Event,
 }
 
 // Watch passes on new events from every relay, until all of them end.
-func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error) {
-	if len(e.sess.relays) == 0 {
+func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter, urls []string) (<-chan nostr.Event, error) {
+	targets := e.relaysOf(urls)
+	if len(targets) == 0 {
 		return nil, errors.New("no relay to watch: add one with arcn relay add")
 	}
 	out := make(chan nostr.Event)
 	var wg sync.WaitGroup
-	for _, t := range e.sess.relays {
-		in, err := e.sess.node.Watch(ctx, filter, t.(relay.Relay))
+	for _, t := range targets {
+		var in <-chan nostr.Event
+		var err error
+		if urls == nil {
+			in, err = e.sess.node.Watch(ctx, filter, t.(relay.Relay))
+		} else {
+			in, err = t.(relay.Relay).Watch(ctx, filter)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
 			continue
@@ -250,6 +279,22 @@ func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.E
 	}
 	go func() { wg.Wait(); close(out) }()
 	return out, nil
+}
+
+// SendPrivate seals a private event through the mail layer.
+func (e *cliEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+	_, err := e.sess.mail.SendRumor(ctx, to, kind, content, tags)
+	return err
+}
+
+// Private syncs the mail with every relay, and reads the private events.
+func (e *cliEnv) Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
+	for _, t := range e.sess.relays {
+		if _, err := e.sess.mail.Sync(ctx, t); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
+		}
+	}
+	return e.sess.mail.Rumors(kinds), nil
 }
 
 // Call sends one request: live over a relay, or later through the outbox.

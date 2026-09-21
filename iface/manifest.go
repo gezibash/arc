@@ -434,8 +434,13 @@ func (m *Manifest) checkCommand(c Command) error {
 		if err := m.checkKind(a.Publish.Kind); err != nil {
 			return err
 		}
-		if m.Kinds[a.Publish.Kind].Visibility == "sealed" && a.Publish.D == "" {
+		switch visibility := m.Kinds[a.Publish.Kind].Visibility; {
+		case visibility == "sealed" && a.Publish.D == "":
 			return errors.New("a publish of a sealed kind needs a d tag")
+		case visibility == "private" && len(a.Publish.To) == 0:
+			return errors.New("a publish of a private kind needs recipients in to")
+		case visibility != "private" && len(a.Publish.To) > 0:
+			return errors.New("only a private kind has recipients")
 		}
 		if a.Publish.Revise != "" && a.Publish.Revise != "replace" && a.Publish.Revise != "append" {
 			return fmt.Errorf("revise %q must be replace or append", a.Publish.Revise)
@@ -471,6 +476,9 @@ func (m *Manifest) checkCommand(c Command) error {
 		for _, k := range q.Kinds {
 			if err := m.checkKind(k); err != nil {
 				return err
+			}
+			if m.Kinds[k].Visibility != m.Kinds[q.Kinds[0]].Visibility {
+				return errors.New("a query reads kinds of one visibility")
 			}
 		}
 		templates := []string{q.D, q.IDs, string(q.Since), string(q.Until), string(q.Limit)}
