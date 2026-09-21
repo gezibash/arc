@@ -83,6 +83,10 @@ type link struct {
 	conn     net.Conn
 	outbound bool
 
+	// sending keeps the messages of this link in the order of their
+	// sequence numbers. The partner refuses a message out of order.
+	sending sync.Mutex
+
 	mu          sync.Mutex
 	ready       bool
 	clientNonce []byte
@@ -335,6 +339,18 @@ func (f *federation) inbound(from *conn, payload []byte) {
 		return
 	}
 	if err := f.handleFrame(held, payload); err != nil {
+		f.drop(held)
+	}
+}
+
+// ended drops the link of a partner whose connection to this relay ended.
+// Without it the link stays ready, and the partner cannot open a new one.
+func (f *federation) ended(from *conn) {
+	f.mu.Lock()
+	held := f.links[string(from.publicKey)]
+	f.mu.Unlock()
+
+	if held != nil && held.conn == from.socket {
 		f.drop(held)
 	}
 }
@@ -697,6 +713,9 @@ func (f *federation) write(held *link, kind int, requestID string, body []byte) 
 	if err != nil {
 		return err
 	}
+
+	held.sending.Lock()
+	defer held.sending.Unlock()
 
 	nonce, ciphertext, seq, err := talk.Encrypt(plaintext)
 	if err != nil {

@@ -194,6 +194,7 @@ func (r *Relay) serve(socket net.Conn) {
 	connection := newConn(socket, publicKey, r.log)
 	r.register(connection)
 	defer r.forget(connection)
+	defer r.federation.ended(connection)
 
 	go connection.write()
 	defer connection.close()

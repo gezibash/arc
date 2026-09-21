@@ -482,15 +482,20 @@ func (c *Citizen) fail(peer, requestID []byte, code, message string) {
 }
 
 // sendControl carries one message of a direct route to a peer, over the
-// relay, as an event of its own.
+// relay, as an event of its own. It never takes the carrier: the peer reads
+// the carrier only after the route stands, and the message that says so
+// must reach it first.
 func (c *Citizen) sendControl(peer, body []byte) error {
 	event, err := frame.EncodeEvent(direct.Topic, body, nil)
 	if err != nil {
 		return err
 	}
 
-	c.send(peer, event)
-	return nil
+	raw, err := c.seal(peer, event)
+	if err != nil {
+		return err
+	}
+	return c.relay.SendPacket(raw)
 }
 
 // watchCarrier reads the packets of a carrier once a route stands, and
@@ -539,22 +544,9 @@ func (c *Citizen) watchCarrier(peer []byte) {
 // send encrypts one frame to a peer, and gives the packet to the relay, or
 // to the carrier of that peer when one stands.
 func (c *Citizen) send(peer, body []byte) {
-	talk, err := c.sessionFor(peer)
+	raw, err := c.seal(peer, body)
 	if err != nil {
-		c.log.Warn("no session for a reply", "to", identity.Name(peer), "error", err)
-		return
-	}
-
-	nonce, ciphertext, seq, err := talk.Encrypt(body)
-	if err != nil {
-		c.log.Error("the reply did not encrypt", "error", err)
-		return
-	}
-
-	raw, err := packet.Encode(c.me, peer, talk.ID, seq, nonce, ciphertext,
-		packet.WithEphemeralKey(talk.EphemeralPublic))
-	if err != nil {
-		c.log.Error("the reply did not encode", "error", err)
+		c.log.Warn("the reply did not seal", "to", identity.Name(peer), "error", err)
 		return
 	}
 
@@ -572,6 +564,22 @@ func (c *Citizen) send(peer, body []byte) {
 	if err := c.relay.SendPacket(raw); err != nil {
 		c.log.Warn("the reply did not reach the relay", "error", err)
 	}
+}
+
+// seal encrypts one frame to a peer, and returns the packet.
+func (c *Citizen) seal(peer, body []byte) ([]byte, error) {
+	talk, err := c.sessionFor(peer)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce, ciphertext, seq, err := talk.Encrypt(body)
+	if err != nil {
+		return nil, err
+	}
+
+	return packet.Encode(c.me, peer, talk.ID, seq, nonce, ciphertext,
+		packet.WithEphemeralKey(talk.EphemeralPublic))
 }
 
 // session returns the session of an arriving packet. A packet that names
