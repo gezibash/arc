@@ -258,7 +258,7 @@ func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter, urls []string) 
 		slices.SortFunc(out, func(a, b nostr.Event) int { return int(b.CreatedAt) - int(a.CreatedAt) })
 		return out, nil
 	}
-	if filter.IDs != nil {
+	if filter.IDs != nil && filter.Kinds == nil {
 		found, err := e.sess.node.Obtain(ctx, filter.IDs, e.sess.relays)
 		if err != nil {
 			return nil, err
@@ -268,6 +268,22 @@ func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter, urls []string) 
 			out = append(out, event)
 		}
 		return out, nil
+	}
+	if filter.IDs != nil {
+		// Ask the relays only for what the store lacks.
+		var missing []nostr.ID
+		for _, id := range filter.IDs {
+			if !e.sess.node.Store.Has(id) {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) == 0 {
+			return e.sess.node.Store.Query(filter), nil
+		}
+		ask := filter
+		ask.IDs = missing
+		e.sess.node.Pull(ctx, ask, e.sess.relays)
+		return e.sess.node.Store.Query(filter), nil
 	}
 	if _, errs := e.sess.node.Pull(ctx, filter, e.sess.relays); len(errs) > 0 && len(errs) == len(e.sess.relays) {
 		fmt.Fprintf(os.Stderr, "no relay answered, so this shows what this machine holds: %v\n", errs[0])

@@ -21,6 +21,22 @@ import (
 // Timeout bounds one call to a relay.
 const Timeout = 15 * time.Second
 
+// errAuthRequired says that the relay wants NIP-42 authentication first.
+var errAuthRequired = errors.New("the relay asks for authentication")
+
+// sealedKinds says whether a filter names a kind that a relay may serve only
+// to its author: a NIP-37 draft, a checkpoint, a part, or a private relay
+// list.
+func sealedKinds(filter nostr.Filter) bool {
+	for _, k := range filter.Kinds {
+		switch k {
+		case 31234, 1234, 3275, 10013:
+			return true
+		}
+	}
+	return false
+}
+
 // Relay is one relay, by its WebSocket URL.
 type Relay struct {
 	URL string
@@ -103,6 +119,13 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 	page := filter
 	for {
 		events, err := stored(ctx, conn, page)
+		if errors.Is(err, errAuthRequired) && r.Signer != nil {
+			// The relay serves sealed data only to its author: answer the
+			// challenge, and ask again.
+			if err = r.authenticate(ctx, conn); err == nil {
+				events, err = stored(ctx, conn, page)
+			}
+		}
 		if err != nil {
 			return batch, fmt.Errorf("relay %s: %w", r.URL, err)
 		}
@@ -148,6 +171,9 @@ func stored(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) ([]nost
 		case <-sub.EndOfStoredEvents:
 			return out, nil
 		case reason := <-sub.ClosedReason:
+			if strings.HasPrefix(reason, "auth-required") {
+				return out, errAuthRequired
+			}
 			return out, errors.New("the relay closed the query: " + reason)
 		case <-ctx.Done():
 			return out, ctx.Err()
@@ -209,6 +235,11 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
+	// The Negentropy session opens its own connection, which cannot answer
+	// a challenge. Sealed data therefore syncs by a full fetch.
+	if sealedKinds(filter) {
+		return nil, nil, false, nil
+	}
 	info, err := nip11.Fetch(ctx, r.URL)
 	if err != nil || !supports(info.SupportedNIPs, 77) {
 		return nil, nil, false, nil
@@ -267,6 +298,20 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 	conn, err := r.connect(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// A relay that serves sealed data only to its author asks for
+	// authentication first. A query of stored events finds that out, and
+	// authenticates, before the watch begins.
+	if r.Signer != nil && sealedKinds(filter) {
+		probe := filter
+		probe.Limit = 1
+		if _, err := stored(ctx, conn, probe); errors.Is(err, errAuthRequired) {
+			if err := r.authenticate(ctx, conn); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("relay %s: %w", r.URL, err)
+			}
+		}
 	}
 
 	sub, err := conn.Subscribe(ctx, filter, nostr.SubscriptionOptions{

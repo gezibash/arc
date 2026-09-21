@@ -31,7 +31,7 @@ func newNode(t *testing.T) *node.Node {
 
 func note(t *testing.T, k keys.Key, text string) nostr.Event {
 	t.Helper()
-	event := nostr.Event{Kind: 3275, CreatedAt: nostr.Timestamp(time.Now().Unix()), Content: text}
+	event := nostr.Event{Kind: 1, CreatedAt: nostr.Timestamp(time.Now().Unix()), Content: text}
 	if err := event.Sign(k.Secret); err != nil {
 		t.Fatal(err)
 	}

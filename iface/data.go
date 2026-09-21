@@ -607,7 +607,9 @@ func (r *run) partTexts(ids []string) ([]string, error) {
 		}
 		want = append(want, parsed)
 	}
-	events, err := r.env.Fetch(r.ctx, nostr.Filter{IDs: want}, nil)
+	// Naming the kind and the author lets a relay that serves parts only to
+	// their author ask for authentication, instead of leaving them out.
+	events, err := r.env.Fetch(r.ctx, nostr.Filter{IDs: want, Kinds: []nostr.Kind{draft.PartKind}, Authors: []nostr.PubKey{r.env.Me()}}, nil)
 	if err != nil {
 		return nil, err
 	}

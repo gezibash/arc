@@ -577,8 +577,9 @@ Phase 2 adds `delivery/private` for gift wraps and route tags, and
 sets with Negentropy when a relay lists NIP-77 in its information document,
 and fetches every event otherwise.
 
-`delivery/groups` makes a khatru relay host NIP-29 groups, and `delivery/draft`
-seals data to its author as NIP-37 drafts. The capability interface uses both.
+`delivery/groups` makes a khatru relay host NIP-29 groups, `delivery/draft`
+seals data to its author as NIP-37 drafts, and `delivery/sealed` makes a relay
+serve those drafts only to their author, after NIP-42 authentication. The capability interface uses both.
 
 Phase 3 adds `delivery/catalog` for announcements, discovery and installs,
 and `delivery/call` for both classes of call. A live call subscribes, waits

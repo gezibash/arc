@@ -33,6 +33,7 @@ import (
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
+	"github.com/gezibash/arc/delivery/sealed"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
@@ -227,6 +228,7 @@ func serveCommand() *cobra.Command {
 			rl.UseEventstore(db, 500)
 			rl.Negentropy = true
 			rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
+			sealed.Protect(rl)
 
 			if ids, _ := command.Flags().GetStringArray("group"); len(ids) > 0 {
 				if err := hostGroups(command, rl, db, ids); err != nil {

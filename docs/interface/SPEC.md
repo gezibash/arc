@@ -530,6 +530,13 @@ that does not exist, and never replaces a file.
 carries the NIP-70 tag, so a relay accepts it only from its author after NIP-42
 authentication. Nobody else can publish an old version of it again.
 
+**Sealed data is served only to its author.** A relay that `arcn` runs, and
+`delivery/sealed` protects, answers a query that names a draft, a checkpoint,
+a part or a private relay list only after NIP-42 authentication, and only
+when the query names the authenticated citizen as its only author. Every
+other query leaves out the sealed events of other citizens, so nobody else
+learns how many drafts a citizen has, or when they wrote them.
+
 **Keyed values stay inside a capability.** See 6.1.
 
 **A reply is data.** Core never runs, opens, or follows what a reply or an
@@ -910,6 +917,12 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
   a time. A `tail` holds it, so a second command on the same home waits.
 - **Each read asks the relays.** A query fetches from every relay before it
   reads the store, so a slow relay makes every read slow.
+- **Sealed data syncs by a full fetch.** A Negentropy session opens its own
+  connection, which cannot answer the relay's challenge, so `arcn sync` fetches
+  sealed data whole instead of comparing sets.
+- **Another relay may serve drafts to anyone.** Only a relay that enforces
+  NIP-42 reads, as `arcn relay serve` does, keeps the events themselves from
+  others. The content stays encrypted on every relay.
 - **A remote signer needs the keyed root first.** A machine with the key must
   run once, and reach a relay or a stick that the remote machine reads, before
   the remote machine can use a capability that uses `keyed`.

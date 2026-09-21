@@ -17,6 +17,7 @@ import (
 	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/delivery/groups"
+	"github.com/gezibash/arc/delivery/sealed"
 )
 
 // Start runs a relay that keeps events in memory and supports Negentropy, and
@@ -37,6 +38,7 @@ func StartKillable(t *testing.T) (string, func()) {
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
 
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -97,6 +99,7 @@ func start(t *testing.T, negentropy bool) string {
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
 	if negentropy {
 		relay.Negentropy = true
 		relay.Info.SupportedNIPs = append(relay.Info.SupportedNIPs, 77)
@@ -120,6 +123,7 @@ func StartGroups(t *testing.T, id string, admins ...nostr.PubKey) (string, nostr
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
 
 	key := nostr.Generate()
 	g, err := groups.Attach(relay, db, key)
