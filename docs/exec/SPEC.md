@@ -59,7 +59,7 @@ agent instructions.
 - The relay forwards ciphertext. It cannot read commands or output.
 - The exec runtime supports request/reply, long-lived streams, and events
   that a provider starts. See `provider/command.go`.
-- `arc request` waits up to 120 seconds for one reply.
+- `arc call` waits for one reply for `--timeout` seconds. The default is 30.
 - A DM mailbox stores sealed messages for a key that is offline. See
   [DM](../dm/SPEC.md).
 
@@ -69,10 +69,10 @@ agent instructions.
 - Disconnection and expiry remove a relay announcement. An announcement
   expires at most 180 seconds after issue. See
   [discovery](../discovery/SPEC.md). The relay cannot show a paused citizen.
-- `arc request` does not wake a peer and does not wait for a peer to connect.
+- `arc call` does not wake a peer and does not wait for a peer to connect.
 - `arc serve` does not detect a pause of its machine.
-- `arc serve` connects to the relay one time. After a failed first
-  connection it keeps running, and every announcement fails.
+- `arc serve` connects to the relay one time. If that connection fails or
+  ends, `arc serve` exits with status 1.
 - A request timeout does not prove that the command did not run. The caller
   must not retry an arbitrary command automatically.
 
@@ -161,8 +161,8 @@ The provider bundle is `cmd/exec-provider`. Its scheme is `exec`. Its method is
 `EXEC`.
 
 ```sh
-arc request 'exec+arc://<citizen-public-key>/' \
-  --body '{"script":"cd ~/arc && git status --short"}'
+arc call 'exec+arc://<citizen-public-key>/' \
+  '{"script":"cd ~/arc && git status --short"}'
 ```
 
 The request body is UTF-8 JSON. It contains exactly one of `argv` or `script`.
@@ -193,8 +193,9 @@ Rules:
   `timed_out` to `true`.
 - Standard output and standard error share one output budget. The provider
   cuts the output at the budget and sets `truncated` to `true`.
-- The timeout limit is at most 115 seconds. The command stops before the
-  120-second reply limit of `arc request`.
+- The timeout limit is at most 115 seconds. `arc call` waits 30 seconds by
+  default. For a longer command, the caller passes a larger `--timeout`, for
+  example `--timeout 120`.
 
 The operator writes `EXEC_CONFIG`, an absolute path to a JSON file:
 
@@ -384,10 +385,10 @@ The body field `action` selects the operation. The method stays `EXEC`.
 | `status` | `{"action":"status","job":"<id>"}` | The state and the output of the job |
 
 ```sh
-arc request 'exec+arc://<citizen-public-key>/' \
-  --body '{"action":"start","script":"cd ~/arc && go test ./..."}'
-arc request 'exec+arc://<citizen-public-key>/' \
-  --body '{"action":"status","job":"01a0bb786e86-6325d28e"}'
+arc call 'exec+arc://<citizen-public-key>/' \
+  '{"action":"start","script":"cd ~/arc && go test ./..."}'
+arc call 'exec+arc://<citizen-public-key>/' \
+  '{"action":"status","job":"01a0bb786e86-6325d28e"}'
 ```
 
 The `status` reply is UTF-8 JSON:
@@ -462,7 +463,7 @@ Requirements:
 - The mailbox provider runs on a long-running server. The relay does not
   store the result.
 - The citizen installs the DM tool one time:
-  `arc install <dm-provider-public-key> primary --trust`.
+  `arc install <dm-provider-public-key> primary --yes`.
 - `citizen/init --notify-dm` writes the `notify` object for this script.
 
 The caller reads the mailbox when it is active. The caller does not need to
@@ -581,7 +582,7 @@ token_env = "SPRITES_TOKEN"
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
 | 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `cmd/exec-provider/citizen/`, the `lease` object, and `cmd/exec-provider/arc-exec`. |
-| 2 | Wake hooks and the `asleep` state in `arc request`. |
+| 2 | Wake hooks and the `asleep` state in `arc call`. |
 | 3a | Asynchronous jobs: `start`, `status`, and `arc-exec --start`, `--status`, `--wait`. Done. |
 | 3b | The notify command (section 12.3) and the DM script (section 12.4). |
 | 4 | Wake URL and signed dormant records on the relay. |

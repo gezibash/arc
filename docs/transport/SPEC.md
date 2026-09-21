@@ -4,14 +4,14 @@
 
 ARC carries application bodies between citizen and provider identities. Relay
 operators route the encrypted messages; the provider implements the application
-protocol. The first general-purpose client is `arc request`, using the existing
+protocol. The first general-purpose client is `arc call`, using the existing
 request/reply frame format. SQLite is the first real database provider using it.
 
 Implemented:
 
 - Identity-addressed `<scheme>+arc://<full-provider-public-key>/<resource>` requests.
 - Signed capability lookup and provider-key verification before application calls.
-- Relay delivery, including permitted onward federation, with explicit local mode.
+- Relay delivery, including permitted onward federation.
 - Opaque request/reply bytes, including a binary-safe opt-in for external runtimes.
 - A real SQLite provider with named databases and citizen access grants.
 
@@ -72,22 +72,21 @@ bodies. A protocol provider can use a normal text body or opt into binary bytes:
 From the repository root, with an active citizen key:
 
 ```sh
-arc request 'sqlite+arc://<provider-public-key>/main' \
-  --body '{"sql":"SELECT name FROM sqlite_schema WHERE type = ?","params":["table"]}' \
+arc call 'sqlite+arc://<provider-public-key>/main' \
+  '{"sql":"SELECT name FROM sqlite_schema WHERE type = ?","params":["table"]}' \
   --relay 127.0.0.1:7331 --relay-pubkey '<relay-public-key>'
 ```
 
-`ARC_RELAY` and `ARC_RELAY_PUBKEY` also configure the relay. This new command
-requires a relay and its pinned key unless `--local` is explicitly supplied.
+`ARC_RELAY` and `ARC_RELAY_PUBKEY` also configure the relay, and so does the
+relay that `arc join` saved. The command requires a relay and its pinned key.
 An invalid or unavailable configured relay is an error, with no local fallback.
-`--local` deliberately ignores relay environment variables and cannot be combined
-with relay flags. Local peers use the existing same-host registry/mailbox path.
 
-`--body TEXT` sends UTF-8 text. `--input PATH` reads bytes from a file; `--input -`
-reads bytes from standard input. Exactly one input option is required. The
-default output is the response body on standard output, with no added newline.
-`--output PATH` writes a new file and refuses to overwrite an existing one.
-Output failures after a completed request do not undo provider changes.
+The second argument is the request body. Without it, `arc call` reads the
+body from standard input, for example `arc call ADDRESS < request.json`. If
+standard input is a terminal, the body is empty. The output is the response
+body on standard output. If the body does not end with a newline, `arc call`
+adds one. Output failures after a completed request do not undo provider
+changes.
 
 The Go API is `client.Peers().Request(ctx, peer, meta, body)`. The caller owns
 the connection and its delivery policy. Success returns the reply, which holds
@@ -131,16 +130,16 @@ a text provider is rejected by the URI client before application submission.
   released by replies or process exit, not client timeouts. A stuck runtime can
   require an operator restart; freeing slots while its work remains queued would
   let callers accumulate unbounded work.
-- Reply budget: 10 seconds by default, configurable with `--timeout` from 1 to
-  120000 milliseconds. Discovery and application replies share this budget after
-  peer connection. Existing relay connection/lookup timeouts also apply.
+- Time budget: `--timeout` seconds, 30 by default. The budget covers the relay
+  connection, the capability lookup and the application reply.
 - Smaller relay frame caps can reject messages including their framing overhead.
 - A request is sent once. There is no automatic retry, offline queue, reconnect
   recovery, or exactly-once execution guarantee.
-- A timeout after application submission returns `outcome_unknown`. A provider
-  may have committed a write before its response was lost. Check its state
-  before submitting that operation again. Other connection failures can also
-  leave uncertain effects; an error alone is not proof of rollback.
+- After a timeout, `arc call` reports `client: the peer did not answer`. The
+  outcome is unknown: a provider can have committed a write before its
+  response was lost. Check its state before submitting that operation again.
+  Other connection failures can also leave uncertain effects; an error alone
+  is not proof of rollback.
 - Relays see identities and routing metadata. A normal provider sees the request
   and its data. Transport encryption does not hide data from that provider's host.
 
@@ -163,10 +162,10 @@ Relays should remain unaware of repository and database operations.
 ## Optional direct promotion
 
 [Direct request/reply](DIRECT.md) is an implemented, explicit opt-in profile.
-Both `arc serve` and `arc request` need matching `--direct-policy` files and
-configured pinned relays. Relay delivery remains the default, and `--local` remains a
-separate explicit mode. The identity-addressed URI and signed capability checks
-do not change when a route promotes to direct TLS.
+Both `arc serve` and `arc call` need matching `--direct-policy` files and
+configured pinned relays. Relay delivery remains the default. The
+identity-addressed URI and signed capability checks do not change when a
+route promotes to direct TLS.
 
 The profile has one reachable listener, literal operator-approved addresses,
 finite leases, and relay-negotiated renewal. It has no automatic route ranking,
