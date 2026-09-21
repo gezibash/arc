@@ -48,9 +48,10 @@ does not create, alter, or remove a local `arc.key` file.
 
 ## User interface
 
-`arc keys show` reports the effective active identity and its selection source.
-`arc keys ls` identifies the effective identity and source alongside the stored
-identities. Neither command prints secret material.
+`arc whoami` prints the name and the public key of the effective active
+identity, and then its selection source, for example `chosen by arc.key`.
+`arc keys list` lists the stored identities and marks the global default with
+`*`. Neither command prints secret material.
 
 ## Example
 
@@ -58,11 +59,11 @@ To assign an existing identity to the current project directory:
 
 ```sh
 printf '%s\n' 'EXISTING-KEY-NAME' > arc.key
-arc keys show
+arc whoami
 ```
 
 To override every file selector for one invocation:
 
 ```sh
-ARC_KEY=EXISTING-KEY-NAME arc keys show
+ARC_KEY=EXISTING-KEY-NAME arc whoami
 ```

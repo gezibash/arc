@@ -24,9 +24,9 @@ they are not a complete global registry.
 
 ## Operator setup
 
-Run the updated source or a build containing network federation on participating
-relays and clients. From this checkout, `mise run arc --` runs current source.
-Generate a persistent identity on each relay machine with `keys gen`.
+Run a release on participating relays and clients. To run this checkout
+instead, build it with `mise run build`; the binaries go to `bin/`. Make a
+persistent identity on each relay machine with `arc keys gen`.
 Exchange only public keys and relay addresses through a channel the operators
 trust. Keep secret keys on their original machines.
 
@@ -34,22 +34,24 @@ Example chain A–B–C:
 
 ```bash
 # A approves B.
-arc relay --key <relay-A-key-name> --port 7331 \
+arc-relay --key <relay-A-key-name> --address :7331 \
   --peer <relay-B-public-key-hex>@relay-b.example.com:7331
 
 # B approves A and C, and explicitly allows traffic between partners.
-arc relay --key <relay-B-key-name> --port 7331 --transit \
+arc-relay --key <relay-B-key-name> --address :7331 --transit \
   --peer <relay-A-public-key-hex>@relay-a.example.com:7331 \
   --peer <relay-C-public-key-hex>@relay-c.example.com:7331
 
 # C approves B.
-arc relay --key <relay-C-key-name> --port 7331 \
+arc-relay --key <relay-C-key-name> --address :7331 \
   --peer <relay-B-public-key-hex>@relay-b.example.com:7331
 ```
 
 Replace the placeholders with real values. `--peer` is repeatable, up to
 sixteen distinct peers. Self-peering and duplicate identities are rejected.
-`ARC_RELAY_KEY` can supply the persistent identity instead of `--key`.
+Without `--key`, the relay uses the active identity: `ARC_KEY`, then
+`arc.key`, then `~/.config/arc/default.key`. When a link is ready, each relay
+logs `the peer link is ready` with the petname of the partner.
 
 `--transit` defaults to off. It permits onward discovery and application
 traffic between configured partners for network-shared publishers. It does

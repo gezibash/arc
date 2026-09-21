@@ -12,12 +12,13 @@ default saved by `arc join`. The required public-key pin comes from
 for that address. See [joining a relay](../join/SPEC.md).
 Invalid or missing settings fail without falling back to a local service.
 Identity selection is independent: status does not read or change the selected
-citizen. `arc host status` remains the separate local host query.
+citizen.
 
 The query uses a temporary in-memory identity, sends a `status` directory
 request, and closes its connection. It does not save a key, publish a capability,
 or replace an existing citizen route. Its temporary route exists only for the
-query. The complete query has a three-second deadline.
+query. The relay has five seconds to answer the request. The complete command,
+with the connection, has fifteen seconds.
 
 Status MUST NOT invoke deployment tools, inspect containers, or assume a Compose
 project name. Runtime state comes from ARC-owned interfaces.
@@ -35,8 +36,8 @@ returns `ok: true` and a `status` object containing:
 - `federation_transit`: whether onward federation traffic is enabled.
 
 No citizen identities, peer addresses, or private configuration are returned.
-The CLI adds `address`, the selected target. A running response does not prove
-end-to-end delivery, federation health, or a citizen's persistent connection.
+A running response does not prove end-to-end delivery, federation health, or
+a citizen's persistent connection.
 The existing handshake checks the presented key against the pin; its greeting
 is not cryptographic proof of server ownership.
 
@@ -45,13 +46,14 @@ There is no fallback from an unsupported query to a successful greeting check.
 
 ## Output and exit status
 
-`--format json` and its alias `--json` emit the same public fields as the table.
-Errors produce `state: error` and a safe `message`, with `address` when a valid
-target was queried. Exit status is zero for a successful query and one for a
+The table has five lines: `relay` (the selected address), `state`, `version`,
+`uptime`, and `key` (the public key of the relay). `--json` writes the
+`status` object of the relay as JSON, with all six fields. An error goes to
+standard error. Exit status is zero for a successful query and one for a
 configuration, connection, protocol, or option error. `--help` succeeds without
-contacting a service. `--check` is retained as a compatibility alias: every
-status invocation now queries the relay.
+contacting a service.
 
 This replaces the combined client/host/container snapshot shipped in v0.3.2.
 Its JSON shape changes accordingly. `--socket`, `--docker`, and
-`--docker-project` are no longer accepted by `arc status`.
+`--docker-project` are no longer accepted by `arc status`. v0.7.0 also
+removed `--format` and `--check`.
