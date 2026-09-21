@@ -2,6 +2,7 @@ package citizen
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gezibash/arc/announce"
 	"github.com/gezibash/arc/capability"
@@ -32,8 +34,12 @@ const (
 	AnnounceEvery = 150 * time.Second
 	// MaxSkew is how far the time of a packet may stand from the time here.
 	MaxSkew = 120 * time.Second
-	// MaxBodyBytes caps one request body.
+	// MaxBodyBytes caps one request body, and one reply body that the
+	// provider writes as base64.
 	MaxBodyBytes = 1024 * 1024
+	// MaxPending is how many requests the provider holds at one time. A
+	// request over it fails before it reaches the provider.
+	MaxPending = 256
 )
 
 // Options holds what a serving citizen needs.
@@ -65,6 +71,11 @@ type Citizen struct {
 	capID    string
 	maxBytes int
 
+	// binaryIn and binaryOut say that the capability carries bytes: the
+	// request and the reply cross the runtime connection as base64.
+	binaryIn  bool
+	binaryOut bool
+
 	direct *direct.Manager
 
 	ctx    context.Context
@@ -77,6 +88,9 @@ type Citizen struct {
 	waiting  map[string]*pending
 
 	group sync.WaitGroup
+
+	stopOnce sync.Once
+	stopErr  error
 }
 
 // pending is one request that the provider still holds.
@@ -108,6 +122,14 @@ func Serve(ctx context.Context, opts Options) (*Citizen, error) {
 	fields, _ := pkg["capability"].(map[string]any)
 	capID, _ := fields["id"].(string)
 
+	// A policy that does not hold is an error before the provider starts.
+	var rules []direct.Rule
+	if opts.DirectPolicy != "" {
+		if rules, err = direct.LoadPolicy(opts.DirectPolicy); err != nil {
+			return nil, err
+		}
+	}
+
 	environment := []string{
 		"ARC_IDENTITY=" + opts.Identity.Name(),
 		"ARC_IDENTITY_SHORT=" + opts.Identity.ShortName(),
@@ -131,27 +153,24 @@ func Serve(ctx context.Context, opts Options) (*Citizen, error) {
 	}
 
 	serving := &Citizen{
-		me:       opts.Identity,
-		pkg:      pkg,
-		runtime:  provider,
-		relay:    relay,
-		log:      opts.Log,
-		capID:    capID,
-		maxBytes: requestLimit(pkg),
-		ctx:      ctx,
-		cancel:   cancel,
-		carriers: map[string]*direct.Conn{},
-		sessions: map[string]*session.Session{},
-		guard:    map[string]uint64{},
-		waiting:  map[string]*pending{},
+		me:        opts.Identity,
+		pkg:       pkg,
+		runtime:   provider,
+		relay:     relay,
+		log:       opts.Log,
+		capID:     capID,
+		maxBytes:  requestLimit(pkg),
+		binaryIn:  bodyEncoding(pkg, "request_body") == "base64",
+		binaryOut: bodyEncoding(pkg, "response_body") == "base64",
+		ctx:       ctx,
+		cancel:    cancel,
+		carriers:  map[string]*direct.Conn{},
+		sessions:  map[string]*session.Session{},
+		guard:     map[string]uint64{},
+		waiting:   map[string]*pending{},
 	}
 
 	if opts.DirectPolicy != "" {
-		rules, err := direct.LoadPolicy(opts.DirectPolicy)
-		if err != nil {
-			serving.Close()
-			return nil, err
-		}
 		serving.direct = direct.NewManager(opts.Identity, rules, serving.sendControl, opts.Log)
 	}
 
@@ -173,6 +192,25 @@ func (c *Citizen) PublicKey() []byte { return c.me.PublicKey }
 
 // Done closes when the citizen stops.
 func (c *Citizen) Done() <-chan struct{} { return c.ctx.Done() }
+
+// Err says why the citizen stopped by itself: the relay connection ended,
+// or the provider stopped. It is nil while the citizen serves, and after a
+// stop that its owner asked for.
+func (c *Citizen) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stopErr
+}
+
+// stop ends the citizen, and keeps the first reason.
+func (c *Citizen) stop(cause error) {
+	c.stopOnce.Do(func() {
+		c.mu.Lock()
+		c.stopErr = cause
+		c.mu.Unlock()
+		c.cancel()
+	})
+}
 
 // Close stops the provider and leaves the relay.
 func (c *Citizen) Close() error {
@@ -279,7 +317,7 @@ func (c *Citizen) readPackets() {
 		select {
 		case raw, ok := <-c.relay.Packets():
 			if !ok {
-				c.cancel()
+				c.relayLost()
 				return
 			}
 			c.handlePacket(raw)
@@ -287,6 +325,33 @@ func (c *Citizen) readPackets() {
 			return
 		}
 	}
+}
+
+// relayLost stops the citizen after its relay connection ends. A direct
+// route that stands keeps its conversation until its lease ends. Without the
+// relay it cannot renew, so the citizen stops when the last lease ends.
+func (c *Citizen) relayLost() {
+	cause := errors.New("the relay connection ended")
+	if err := c.relay.Err(); err != nil {
+		cause = fmt.Errorf("the relay connection ended: %w", err)
+	}
+
+	if c.direct != nil {
+		if until := c.direct.ActiveUntil(); !until.IsZero() {
+			c.log.Warn("the relay connection ended, and the direct routes serve until their leases end",
+				"until", until.Format(time.RFC3339))
+
+			timer := time.NewTimer(time.Until(until))
+			defer timer.Stop()
+
+			select {
+			case <-timer.C:
+			case <-c.ctx.Done():
+				return
+			}
+		}
+	}
+	c.stop(cause)
 }
 
 func (c *Citizen) handlePacket(raw []byte) {
@@ -345,11 +410,18 @@ func (c *Citizen) handlePacket(raw []byte) {
 		return
 	}
 
-	key := hex.EncodeToString(message.RequestID)
+	// A text provider reads JSON strings, which hold UTF-8 only. Other bytes
+	// would change on the way, so they fail here.
+	if !c.binaryIn && !utf8.Valid(message.Body) {
+		c.fail(decoded.Src, message.RequestID, "invalid_body", "the body is not UTF-8, and the capability takes text")
+		return
+	}
 
-	c.mu.Lock()
-	c.waiting[key] = &pending{peer: decoded.Src, requestID: message.RequestID}
-	c.mu.Unlock()
+	key := hex.EncodeToString(message.RequestID)
+	if code, reason := c.admit(decoded.Src, message.RequestID); code != "" {
+		c.fail(decoded.Src, message.RequestID, code, reason)
+		return
+	}
 
 	event := map[string]any{
 		"op":             "request",
@@ -361,6 +433,10 @@ func (c *Citizen) handlePacket(raw []byte) {
 		"request_id":     key,
 		"framed":         true,
 	}
+	if c.binaryIn {
+		event["encoding"] = "base64"
+		event["message"] = base64.StdEncoding.EncodeToString(message.Body)
+	}
 
 	if err := c.runtime.Send(event); err != nil {
 		c.mu.Lock()
@@ -368,6 +444,26 @@ func (c *Citizen) handlePacket(raw []byte) {
 		c.mu.Unlock()
 		c.fail(decoded.Src, message.RequestID, "provider_unavailable", err.Error())
 	}
+}
+
+// admit takes one request into the set that waits for the provider, or says
+// why not. A request id that already waits is refused, and so is a request
+// over MaxPending. A slot frees when the provider answers or stops, and
+// never when a caller gives up.
+func (c *Citizen) admit(peer, requestID []byte) (code, reason string) {
+	key := hex.EncodeToString(requestID)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch {
+	case c.waiting[key] != nil:
+		return "duplicate_request", "a request with this id is waiting"
+	case len(c.waiting) >= MaxPending:
+		return "provider_busy", fmt.Sprintf("the provider holds %d requests", MaxPending)
+	}
+	c.waiting[key] = &pending{peer: peer, requestID: requestID}
+	return "", ""
 }
 
 // readProvider carries the answers of the provider back to the callers.
@@ -379,7 +475,7 @@ func (c *Citizen) readProvider() {
 		case answer, ok := <-c.runtime.Lines():
 			if !ok {
 				c.log.Error("the provider stopped")
-				c.cancel()
+				c.stop(errors.New("the provider stopped"))
 				return
 			}
 			c.handleAnswer(answer)
@@ -412,13 +508,48 @@ func (c *Citizen) handleAnswer(answer map[string]any) {
 		return
 	}
 
-	reply, _ := answer["reply"].(string)
-	body, err := frame.Encode(frame.Response, held.requestID, map[string]any{}, []byte(reply))
+	reply, err := c.replyBody(answer)
+	if err != nil {
+		c.log.Warn("the provider wrote a reply that does not hold", "error", err)
+		c.fail(held.peer, held.requestID, "invalid_reply", err.Error())
+		return
+	}
+
+	body, err := frame.Encode(frame.Response, held.requestID, map[string]any{}, reply)
 	if err != nil {
 		c.log.Error("the answer did not encode", "error", err)
 		return
 	}
 	c.send(held.peer, body)
+}
+
+// replyBody reads the reply of the provider. A capability that carries bytes
+// gets them as base64, and a text capability gets them as they are.
+func (c *Citizen) replyBody(answer map[string]any) ([]byte, error) {
+	reply, _ := answer["reply"].(string)
+	encoding, _ := answer["encoding"].(string)
+
+	if !c.binaryOut {
+		if encoding != "" {
+			return nil, fmt.Errorf("the reply names the encoding %q, and the capability replies with text", encoding)
+		}
+		return []byte(reply), nil
+	}
+
+	if encoding != "base64" {
+		return nil, errors.New("the capability replies with bytes, and the reply is not base64")
+	}
+	if base64.StdEncoding.DecodedLen(len(reply)) > MaxBodyBytes+2 {
+		return nil, fmt.Errorf("the reply is over %d bytes", MaxBodyBytes)
+	}
+	body, err := base64.StdEncoding.DecodeString(reply)
+	if err != nil {
+		return nil, errors.New("the reply is not valid base64")
+	}
+	if len(body) > MaxBodyBytes {
+		return nil, fmt.Errorf("the reply is over %d bytes", MaxBodyBytes)
+	}
+	return body, nil
 }
 
 // sendEvent carries an event of the provider to the citizen that it names.
@@ -665,6 +796,15 @@ func requestLimit(pkg map[string]any) int {
 		}
 	}
 	return limit
+}
+
+// bodyEncoding reads the encoding of the request or the reply body that the
+// capability names: "base64" for bytes, and text otherwise.
+func bodyEncoding(pkg map[string]any, which string) string {
+	fields, _ := pkg["capability"].(map[string]any)
+	invocation, _ := fields["invocation"].(map[string]any)
+	body, _ := invocation[which].(map[string]any)
+	return text(body["encoding"])
 }
 
 func text(value any) string {

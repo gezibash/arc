@@ -86,6 +86,29 @@ func TestAnswersStatusAndObserve(t *testing.T) {
 	}
 }
 
+// Close ends every connection, one that joined a moment ago too. A
+// connection that registered after Close looked at the routes kept Close
+// waiting until its client left.
+func TestCloseEndsAConnectionThatJustJoined(t *testing.T) {
+	for range 30 {
+		server := start(t)
+		me, _ := identity.Generate()
+		join(t, server, me)
+
+		closed := make(chan struct{})
+		go func() {
+			server.Close()
+			close(closed)
+		}()
+
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Close waited for a client that had just joined")
+		}
+	}
+}
+
 func TestRefusesAClientThatCannotProveItsKey(t *testing.T) {
 	server := start(t)
 	me, _ := identity.Generate()

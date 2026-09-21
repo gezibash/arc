@@ -17,11 +17,16 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MaxLineBytes caps one line from the provider. A provider that never writes
 // a newline must not fill the memory of the citizen.
 const MaxLineBytes = 64 * 1024 * 1024
+
+// StopGrace is how long a provider has to end by itself after its input
+// closes. A provider that holds files or locks releases them in that time.
+const StopGrace = 5 * time.Second
 
 // Process is one running provider program.
 type Process struct {
@@ -150,7 +155,8 @@ func (r *Process) report(stderr io.Reader) {
 // provider stops.
 func (r *Process) Lines() <-chan map[string]any { return r.lines }
 
-// Stop closes the input of the provider and waits for it to end.
+// Stop closes the input of the provider and waits for it to end. A provider
+// that is still running after StopGrace is killed.
 func (r *Process) Stop() error {
 	r.mu.Lock()
 	if r.closed {
@@ -161,10 +167,20 @@ func (r *Process) Stop() error {
 	r.stdin.Close()
 	r.mu.Unlock()
 
+	ended := make(chan error, 1)
+	go func() { ended <- r.command.Wait() }()
+
+	select {
+	case err := <-ended:
+		return err
+	case <-time.After(StopGrace):
+	}
+
+	r.log.Warn("the provider did not end after its input closed, so it is killed", "grace", StopGrace)
 	if r.command.Process != nil {
 		r.command.Process.Kill()
 	}
-	return r.command.Wait()
+	return <-ended
 }
 
 func drain(reader *bufio.Reader) error {

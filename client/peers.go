@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gezibash/arc/capability"
 	"github.com/gezibash/arc/direct"
@@ -50,6 +51,9 @@ func (e *RemoteError) Error() string {
 
 var addressPattern = regexp.MustCompile(`^([a-z][a-z0-9-]*)\+arc$`)
 
+// pathPattern holds the characters that the path of an address may use.
+var pathPattern = regexp.MustCompile(`^/[A-Za-z0-9/._~-]*$`)
+
 // Address is one capability address:
 //
 //	<scheme>+arc://<64 characters of hex>/<resource>
@@ -85,10 +89,31 @@ func ParseAddress(raw string) (*Address, error) {
 	if path == "" {
 		path = "/"
 	}
-	if !strings.HasPrefix(path, "/") {
-		return nil, invalid
+	if err := checkPath(raw, path); err != nil {
+		return nil, err
 	}
 	return &Address{Scheme: scheme[1], Key: key, Path: path}, nil
+}
+
+// checkPath refuses a path that could name something other than what it
+// shows: a percent escape, a dot segment, or the /info namespace, where the
+// citizen answers with its own manifests.
+func checkPath(raw, path string) error {
+	switch {
+	case strings.Contains(raw, "%"):
+		return errors.New("client: the path of an address holds no percent escapes")
+	case !pathPattern.MatchString(path):
+		return errors.New("client: the path of an address holds only letters, digits, and / . _ ~ -")
+	case path == "/info" || strings.HasPrefix(path, "/info/"):
+		return errors.New("client: the path /info belongs to the citizen, and an address cannot name it")
+	}
+
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "." || segment == ".." {
+			return errors.New("client: the path of an address holds no . or .. segments")
+		}
+	}
+	return nil
 }
 
 // Peers carries requests to other citizens over one relay connection. It
@@ -391,6 +416,19 @@ func (p *Peers) Call(ctx context.Context, address string, body []byte, capabilit
 
 	if scheme != target.Scheme {
 		return nil, fmt.Errorf("client: the capability speaks %s, and the address says %s", scheme, target.Scheme)
+	}
+	if id, _ := fields["id"].(string); id != capabilityID {
+		return nil, fmt.Errorf("client: the citizen answered with the capability %q, not %q", id, capabilityID)
+	}
+	if mode, _ := invocation["mode"].(string); mode != "" && mode != "request_reply" {
+		return nil, fmt.Errorf("client: the capability %s works in %s mode, and a call needs request_reply", capabilityID, mode)
+	}
+
+	// A text capability reads UTF-8 only. Other bytes would change on the way
+	// to the provider, so they stop here.
+	requestBody, _ := invocation["request_body"].(map[string]any)
+	if encoding, _ := requestBody["encoding"].(string); encoding != "base64" && !utf8.Valid(body) {
+		return nil, errors.New("client: the body is not UTF-8, and the capability takes text")
 	}
 
 	return p.Request(ctx, target.Key, map[string]any{

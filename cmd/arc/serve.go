@@ -66,9 +66,21 @@ func serve(command *cobra.Command, args []string) error {
 
 	select {
 	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr, "the citizen is stopping")
+		return serving.Close()
 	case <-serving.Done():
 	}
 
-	fmt.Fprintln(os.Stderr, "the citizen is stopping")
-	return serving.Close()
+	// The citizen stopped by itself. Its reason comes first: the provider's
+	// own exit status only follows from it.
+	stopped := serving.Close()
+	cause := serving.Err()
+	switch {
+	case cause == nil:
+		return stopped
+	case stopped != nil:
+		return fmt.Errorf("%w (%v)", cause, stopped)
+	default:
+		return cause
+	}
 }
