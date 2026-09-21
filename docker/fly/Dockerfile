@@ -1,8 +1,9 @@
 # A relay and the DM provider in one image, for one Fly.io machine.
 #
 # This file builds everything from this checkout, so a remote builder needs no
-# other image:
-#   fly deploy -c docker/fly/fly.toml --dockerfile docker/fly/Dockerfile
+# other image. Give the version of the checkout, so the relay reports it:
+#   fly deploy -c docker/fly/fly.toml --dockerfile docker/fly/Dockerfile \
+#     --build-arg VERSION=X.Y.Z
 FROM golang:1.27-bookworm AS build
 
 WORKDIR /src
@@ -10,7 +11,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/ ./cmd/...
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/...
 
 FROM debian:bookworm-slim
 
