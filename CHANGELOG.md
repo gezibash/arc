@@ -16,11 +16,30 @@ All notable changes to ARC are recorded here. The format follows
   command. Where the command takes a key, the name of a list runs it once for
   each member.
 
+- `arcn update`, `update check` and `update apply` read a signed release
+  channel from a releases provider with live calls, and replace the program.
+- `arcn release sign` checks the archives of a channel, signs it, and writes
+  it for the releases provider.
+
 ### Changed
 
+- **Breaking:** a release channel has schema 3. Its publisher is a Nostr key,
+  and its signature is BIP-340 Schnorr. This build does not read schemas 1
+  and 2, which used Ed25519. A machine on 0.9.0 installs the next release
+  with `install.sh`.
+- `release.ChunkBytes` is 64 KiB, so that one reply fits in an event of
+  256 KiB on a relay.
 - The citizen scripts of the exec provider run `arcn serve`. `citizen/init`
   takes `--relay` as a Nostr relay URL, and no longer takes
   `--relay-pubkey`.
+
+### Fixed
+
+- `arcn --version` prints the version. Before, it failed, and `arcn update`
+  could not check a new program.
+- Two equal live calls in one second are both answered. Each request rumor
+  carries a `nonce` tag. Before, the provider refused the second call as a
+  replay, and the caller waited until its timeout.
 
 ### Removed
 

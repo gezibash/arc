@@ -9,6 +9,7 @@ package call
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -46,11 +47,17 @@ type Request struct {
 
 // RequestRumor makes the rumor of a request.
 func RequestRumor(me keys.Signer, provider nostr.PubKey, r Request, now time.Time) nostr.Event {
+	// The nonce makes each request its own. Without it, two equal requests
+	// in one second have one ID, and the provider refuses the second as a
+	// replay.
+	nonce := make([]byte, 8)
+	rand.Read(nonce)
 	return private.Rumor(me, RequestKind, r.Body, nostr.Tags{
 		{"p", provider.Hex()},
 		{"capability", r.Capability},
 		{"method", r.Method},
 		{"path", r.Path},
+		{"nonce", hex.EncodeToString(nonce)},
 	}, now)
 }
 

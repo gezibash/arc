@@ -15,23 +15,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/frame"
-	"github.com/gezibash/arc/identity"
-	"github.com/gezibash/arc/internal/vectors"
 	"github.com/gezibash/arc/release"
 )
 
 // channelDocument builds one unsigned channel with the releases given.
-func channelDocument(publisher *identity.Identity, releases ...map[string]any) map[string]any {
+func channelDocument(publisher *publisherKey, releases ...map[string]any) map[string]any {
 	list := make([]any, 0, len(releases))
 	for _, held := range releases {
 		list = append(list, held)
 	}
 
 	return map[string]any{
-		"schema_version": 2,
+		"schema_version": release.Schema,
 		"channel":        "stable",
-		"publisher":      publisher.EncodePublicKey(),
+		"publisher":      hex.EncodeToString(publisher.PublicKey),
 		"sequence":       3,
 		"expires_at":     time.Now().Add(24 * time.Hour).Unix(),
 		"releases":       list,
@@ -53,41 +50,10 @@ func releaseEntry(version, os, arch string, changes ...func(map[string]any)) map
 	return held
 }
 
-// The Elixir implementation signed this channel. Go reads it, so both sign
-// the same bytes.
-func TestVerifiesAnElixirChannel(t *testing.T) {
-	want := vectors.Load(t).ReleaseChannel
-
-	publisher, err := identity.FromSeedHex(want.PublisherSeed)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	channel, err := release.Verify(want.Document, release.Expect{
-		Publisher: publisher.PublicKey, Channel: "stable",
-		Now: time.Unix(want.Now, 0),
-	})
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if channel.Sequence != 7 || len(channel.Releases) != 1 {
-		t.Errorf("channel = %+v", channel)
-	}
-	if channel.Releases[0].Version != "0.7.0" {
-		t.Errorf("the release is %+v", channel.Releases[0])
-	}
-
-	// A machine of that platform takes it.
-	newest, err := channel.Select(release.Platform{OS: "darwin", Arch: "arm64"}, "0.6.0")
-	if err != nil || newest.Version != "0.7.0" {
-		t.Errorf("select gave %v, %v", newest, err)
-	}
-}
-
 func TestSignAndVerify(t *testing.T) {
-	publisher, _ := identity.Generate()
+	publisher, _ := newPublisher()
 
-	signed, err := release.Sign(publisher, channelDocument(publisher, releaseEntry("1.2.3", "linux", "amd64")))
+	signed, err := release.Sign(publisher.secret, channelDocument(publisher, releaseEntry("1.2.3", "linux", "amd64")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,16 +62,16 @@ func TestSignAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if channel.Name != "stable" || channel.Schema != 2 {
+	if channel.Name != "stable" || channel.Schema != release.Schema {
 		t.Errorf("channel = %+v", channel)
 	}
 }
 
 func TestVerifyRefusesWhatItMust(t *testing.T) {
-	publisher, _ := identity.Generate()
-	other, _ := identity.Generate()
+	publisher, _ := newPublisher()
+	other, _ := newPublisher()
 
-	signed, err := release.Sign(publisher, channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64")))
+	signed, err := release.Sign(publisher.secret, channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +93,7 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 	// A document that has expired is refused.
 	old := channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64"))
 	old["expires_at"] = time.Now().Add(-time.Hour).Unix()
-	expired, _ := release.Sign(publisher, old)
+	expired, _ := release.Sign(publisher.secret, old)
 
 	if _, err := release.Verify(expired, release.Expect{Publisher: publisher.PublicKey}); err != release.ErrExpired {
 		t.Errorf("an expired document gave %v", err)
@@ -157,16 +123,16 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 		document := channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64"))
 		change(document)
 
-		if _, err := release.Sign(publisher, document); err == nil {
+		if _, err := release.Sign(publisher.secret, document); err == nil {
 			t.Errorf("%s: the document signed", name)
 		}
 	}
 }
 
 func TestSelectsTheNewestReleaseOfThisMachine(t *testing.T) {
-	publisher, _ := identity.Generate()
+	publisher, _ := newPublisher()
 
-	signed, err := release.Sign(publisher, channelDocument(publisher,
+	signed, err := release.Sign(publisher.secret, channelDocument(publisher,
 		releaseEntry("1.0.0", "linux", "amd64"),
 		releaseEntry("1.2.0", "linux", "amd64"),
 		releaseEntry("2.0.0", "darwin", "arm64"),
@@ -209,7 +175,7 @@ type fakeProvider struct {
 	archive  []byte
 }
 
-func (f *fakeProvider) Request(_ context.Context, _ []byte, _ map[string]any, body []byte) (*frame.Frame, error) {
+func (f *fakeProvider) Request(_ context.Context, body []byte) ([]byte, error) {
 	var request struct {
 		Op      string `json:"op"`
 		Channel string `json:"channel"`
@@ -227,7 +193,7 @@ func (f *fakeProvider) Request(_ context.Context, _ []byte, _ map[string]any, bo
 		if err != nil {
 			return nil, err
 		}
-		return &frame.Frame{Type: frame.Response, Body: encoded}, nil
+		return encoded, nil
 
 	default:
 		end := request.Offset + int64(request.Length)
@@ -242,12 +208,12 @@ func (f *fakeProvider) Request(_ context.Context, _ []byte, _ map[string]any, bo
 		if err != nil {
 			return nil, err
 		}
-		return &frame.Frame{Type: frame.Response, Body: encoded}, nil
+		return encoded, nil
 	}
 }
 
 func TestReadsAChannelAndAnArchive(t *testing.T) {
-	publisher, _ := identity.Generate()
+	publisher, _ := newPublisher()
 	archive := tarball(t, "arc", []byte("the new program"))
 
 	digest := sha256.Sum256(archive)
@@ -257,7 +223,7 @@ func TestReadsAChannelAndAnArchive(t *testing.T) {
 		held["install"] = map[string]any{"size": len(archive), "sha256": hex.EncodeToString(digest[:])}
 	})
 
-	signed, err := release.Sign(publisher, channelDocument(publisher, entry))
+	signed, err := release.Sign(publisher.secret, channelDocument(publisher, entry))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +231,7 @@ func TestReadsAChannelAndAnArchive(t *testing.T) {
 	provider := &fakeProvider{document: signed, archive: archive}
 	ctx := context.Background()
 
-	document, err := release.FetchChannel(ctx, provider, publisher.PublicKey, "stable")
+	document, err := release.FetchChannel(ctx, provider, "stable")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +246,7 @@ func TestReadsAChannelAndAnArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := release.Download(ctx, provider, publisher.PublicKey, newest.Archive(), nil)
+	got, err := release.Download(ctx, provider, newest.Archive(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +265,7 @@ func TestReadsAChannelAndAnArchive(t *testing.T) {
 	// An archive whose hash differs is refused.
 	broken := newest.Archive()
 	broken.SHA256 = strings.Repeat("cd", 32)
-	if _, err := release.Download(ctx, provider, publisher.PublicKey, broken, nil); err == nil {
+	if _, err := release.Download(ctx, provider, broken, nil); err == nil {
 		t.Error("an archive that does not match its hash passed")
 	}
 }

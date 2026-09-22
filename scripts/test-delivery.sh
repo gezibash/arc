@@ -37,7 +37,10 @@ say "arcn and the exec provider build"
 a() { "$work/arcn" --home "$work/laptop" "$@"; }
 b() { "$work/arcn" --home "$work/desktop" "$@"; }
 
-"$work/arcn" --home "$work/relay" relay serve --listen 127.0.0.1:0 > "$work/relay.log" 2>&1 &
+# The relay keeps the limits of the public deploy that bear on this proof:
+# the size of an event, and authentication before a gift wrap.
+"$work/arcn" --home "$work/relay" relay serve --listen 127.0.0.1:0 \
+  --max-event-bytes 262144 --wrap-auth > "$work/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 50); do grep -q "listens on" "$work/relay.log" 2>/dev/null && break; sleep 0.1; done
 url="$(sed -n 's/^relay listens on //p' "$work/relay.log")"
@@ -286,5 +289,58 @@ say "arcn skips the hook of a provider that answered a moment ago"
 
 go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
 say "an ARC direct message opens in a NIP-17 client, and a NIP-17 message opens in ARC"
+
+# Updates: a publisher signs a channel with a Nostr key, a releases provider
+# serves it, and an older arcn replaces itself with the newer build.
+publisher() { "$work/arcn" --home "$work/publisher" "$@"; }
+publisher keys gen > /dev/null
+publisher_key="$(publisher whoami | sed -n 2p)"
+releases="$work/releases"
+mkdir -p "$releases/channels" "$releases/blobs" "$work/new/arc/bin" "$work/old"
+go build -ldflags "-X main.version=0.9.0" -o "$work/old/arcn" ./cmd/arcn
+go build -ldflags "-X main.version=9.9.9" -o "$work/new/arc/bin/arcn" ./cmd/arcn
+go build -o "$work/releases-provider" ./cmd/releases-provider
+tar -czf "$work/new.tar.gz" -C "$work/new" arc
+digest="$(shasum -a 256 "$work/new.tar.gz" | cut -d' ' -f1)"
+size="$(wc -c < "$work/new.tar.gz" | tr -d ' ')"
+cp "$work/new.tar.gz" "$releases/blobs/$digest.tar.gz"
+cat > "$work/unsigned.json" <<JSON
+{"schema_version": 3, "channel": "stable", "publisher": "$publisher_key", "sequence": 1,
+ "expires_at": $(( $(date +%s) + 86400 )),
+ "releases": [{"version": "9.9.9", "build": "9.9.9+test", "runtime": "go",
+   "platform": {"os": "$(go env GOOS)", "arch": "$(go env GOARCH)"},
+   "size": $size, "sha256": "$digest", "sources": [], "restart_required": true,
+   "withdrawn": false, "eligible": true, "install": {"size": $size, "sha256": "$digest"}}]}
+JSON
+publisher release sign --root "$releases" "$work/unsigned.json" > /dev/null || fail "the channel was not signed"
+if publisher release sign --root "$releases" "$work/unsigned.json" > /dev/null 2>&1; then
+  fail "the same sequence was signed twice"
+fi
+say "a publisher signs a channel with a Nostr key, and never the same sequence twice"
+
+"$work/arcn" --home "$work/rel" keys gen > /dev/null
+"$work/arcn" --home "$work/rel" relay add "$url"
+rel_key="$("$work/arcn" --home "$work/rel" whoami | sed -n 2p)"
+RELEASES_ROOT="$releases" "$work/arcn" --home "$work/rel" serve \
+  "exec://$work/releases-provider?manifest=$root/cmd/releases-provider/manifest.json" > "$work/rel.log" 2>&1 &
+rel_pid=$!
+for _ in $(seq 1 50); do grep "serves" "$work/rel.log" > /dev/null 2>&1 && break; sleep 0.1; done
+grep "serves" "$work/rel.log" > /dev/null || fail "the releases provider did not serve: $(cat "$work/rel.log")"
+
+old() { "$work/old/arcn" --home "$work/caller" "$@"; }
+old update check --provider "$rel_key" --publisher "$publisher_key" | grep "names arcn 9.9.9" > /dev/null ||
+  fail "update check: $(old update check --provider "$rel_key" --publisher "$publisher_key" 2>&1)"
+old update apply --provider "$rel_key" --publisher "$publisher_key" > "$work/apply.txt" 2>&1 ||
+  fail "update apply: $(cat "$work/apply.txt")"
+"$work/old/arcn" --version | grep "9.9.9" > /dev/null || fail "the program is $("$work/old/arcn" --version)"
+"$work/old/arcn.previous" --version | grep "0.9.0" > /dev/null || fail "the previous program is gone"
+say "an older arcn reads the channel over the relay, and replaces itself"
+
+if old update check --provider "$rel_key" --publisher "$caller_key" > /dev/null 2> "$work/wrongpub.txt"; then
+  fail "a channel of another publisher passed"
+fi
+grep "another publisher" "$work/wrongpub.txt" > /dev/null || fail "the refusal was $(cat "$work/wrongpub.txt")"
+say "a channel that another key signed is refused"
+kill "$rel_pid" 2>/dev/null || true
 
 printf 'phase 3 holds: announcements, install, live and carried calls, and NIP-17\n'

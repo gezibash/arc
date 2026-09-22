@@ -6,6 +6,9 @@
 //
 //	ARC-RELEASE-CHANNEL-V<schema>\0<canonical JSON without the signature>
 //
+// The publisher is a Nostr key. The signature is BIP-340 Schnorr over the
+// SHA-256 of those bytes.
+//
 // Nothing here downloads or installs. It establishes who published a
 // channel, and which release of it fits this machine.
 package release
@@ -20,7 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gezibash/arc/identity"
+	"fiatjaf.com/nostr"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/gezibash/arc/internal/canonical"
 )
 
@@ -30,8 +35,12 @@ const Domain = "ARC-RELEASE-CHANNEL-V"
 // The channels that a publisher may name.
 var Channels = map[string]bool{"stable": true, "beta": true}
 
-// The schema versions that this build reads.
-var schemas = map[int64]bool{1: true, 2: true}
+// Schema is the schema version that this build reads and signs. Schemas 1
+// and 2 were signed with Ed25519 keys of the older stack.
+const Schema = 3
+
+// Algorithm names the signature of Schema.
+const Algorithm = "bip340"
 
 // Errors of this package.
 var (
@@ -101,12 +110,13 @@ type Expect struct {
 
 // Sign signs one channel document. A publisher signs the canonical JSON of
 // the document, under the domain of its schema.
-func Sign(me *identity.Identity, unsigned map[string]any) (map[string]any, error) {
+func Sign(secret nostr.SecretKey, unsigned map[string]any) (map[string]any, error) {
 	channel, err := readChannel(unsigned)
 	if err != nil {
 		return nil, err
 	}
-	if string(channel.Publisher) != string(me.PublicKey) {
+	public := secret.Public()
+	if string(channel.Publisher) != string(public[:]) {
 		return nil, ErrPublisher
 	}
 
@@ -115,23 +125,34 @@ func Sign(me *identity.Identity, unsigned map[string]any) (map[string]any, error
 		return nil, ErrInvalid
 	}
 
-	payload := append([]byte(Domain+strconv.FormatInt(channel.Schema, 10)+"\x00"), encoded...)
+	digest := signedDigest(channel.Schema, encoded)
+	key, _ := btcec.PrivKeyFromBytes(secret[:])
+	signature, err := schnorr.Sign(key, digest[:])
+	if err != nil {
+		return nil, err
+	}
 
 	signed := make(map[string]any, len(unsigned)+1)
 	for key, value := range unsigned {
 		signed[key] = value
 	}
 	signed["signature"] = map[string]any{
-		"algorithm": "ed25519",
-		"value":     hex.EncodeToString(me.Sign(payload)),
+		"algorithm": Algorithm,
+		"value":     hex.EncodeToString(signature.Serialize()),
 	}
 	return signed, nil
+}
+
+// signedDigest is the SHA-256 of the domain of the schema, one zero byte, and
+// the canonical JSON of the unsigned document.
+func signedDigest(schema int64, encoded []byte) [32]byte {
+	return sha256.Sum256(append([]byte(Domain+strconv.FormatInt(schema, 10)+"\x00"), encoded...))
 }
 
 // Verify reads one signed channel document.
 func Verify(document map[string]any, expect Expect) (*Channel, error) {
 	signature, _ := document["signature"].(map[string]any)
-	if signature == nil || signature["algorithm"] != "ed25519" {
+	if signature == nil || signature["algorithm"] != Algorithm {
 		return nil, ErrInvalid
 	}
 
@@ -147,7 +168,7 @@ func Verify(document map[string]any, expect Expect) (*Channel, error) {
 		return nil, err
 	}
 
-	if len(expect.Publisher) != identity.SeedBytes {
+	if len(expect.Publisher) != 32 {
 		return nil, ErrPublisher
 	}
 	if string(channel.Publisher) != string(expect.Publisher) {
@@ -162,13 +183,20 @@ func Verify(document map[string]any, expect Expect) (*Channel, error) {
 		return nil, ErrInvalid
 	}
 
-	payload := append([]byte(Domain+strconv.FormatInt(channel.Schema, 10)+"\x00"), encoded...)
-
 	value, err := hex.DecodeString(text(signature["value"]))
 	if err != nil || len(value) != 64 {
 		return nil, ErrSignature
 	}
-	if !identity.Verify(channel.Publisher, payload, value) {
+	key, err := schnorr.ParsePubKey(channel.Publisher)
+	if err != nil {
+		return nil, ErrPublisher
+	}
+	parsed, err := schnorr.ParseSignature(value)
+	if err != nil {
+		return nil, ErrSignature
+	}
+	signed := signedDigest(channel.Schema, encoded)
+	if !parsed.Verify(signed[:], key) {
 		return nil, ErrSignature
 	}
 
@@ -249,7 +277,7 @@ func readChannel(unsigned map[string]any) (*Channel, error) {
 	}
 
 	schema, ok := wholeNumber(unsigned["schema_version"])
-	if !ok || !schemas[schema] {
+	if !ok || schema != Schema {
 		return nil, ErrInvalid
 	}
 
@@ -259,7 +287,7 @@ func readChannel(unsigned map[string]any) (*Channel, error) {
 	}
 
 	publisher, err := hex.DecodeString(text(unsigned["publisher"]))
-	if err != nil || len(publisher) != identity.SeedBytes {
+	if err != nil || len(publisher) != 32 {
 		return nil, ErrInvalid
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/gezibash/arc/client"
 	"github.com/gezibash/arc/release"
 	"github.com/spf13/cobra"
 )
@@ -59,7 +61,7 @@ func update(command *cobra.Command, apply bool) error {
 		return err
 	}
 
-	provider, publisher, channel, err := updateTarget(command)
+	target, publisher, channel, err := updateTarget(command)
 	if err != nil {
 		return err
 	}
@@ -73,33 +75,10 @@ func update(command *cobra.Command, apply bool) error {
 	}
 	defer connection.Close()
 
-	peers := connection.Peers()
-
-	document, err := release.FetchChannel(ctx, peers, provider, channel)
-	if err != nil {
-		return err
-	}
-
-	// A citizen remembers the newest document that it accepted, so that an
-	// older signed document cannot hold it on an old release.
+	provider := releasePeer{peers: connection.Peers(), key: target}
 	checkpoint := &release.Checkpoint{Dir: held.keys.Dir}
-
-	expect, err := checkpoint.Read(publisher, channel)
-	if err != nil {
-		return err
-	}
-
-	verified, err := release.Verify(document, expect)
-	if err != nil {
-		return err
-	}
-	if err := checkpoint.Write(publisher, verified); err != nil {
-		return err
-	}
-
 	platform := release.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
-	newest, err := verified.Select(platform, version)
-
+	newest, err := release.Newest(ctx, provider, checkpoint, publisher, channel, platform, version)
 	if errors.Is(err, release.ErrNoRelease) {
 		fmt.Printf("arc %s is the newest release of %s for %s/%s\n",
 			version, channel, platform.OS, platform.Arch)
@@ -114,9 +93,6 @@ func update(command *cobra.Command, apply bool) error {
 	fmt.Printf("  hash    %s\n", newest.Archive().SHA256)
 	fmt.Printf("  size    %d bytes\n", newest.Archive().Size)
 
-	if !newest.Eligible {
-		return errors.New("the channel says that this release cannot be installed")
-	}
 	if !apply {
 		fmt.Println("\nrun arc update apply to install it")
 		return nil
@@ -126,20 +102,10 @@ func update(command *cobra.Command, apply bool) error {
 	if err != nil {
 		return err
 	}
-
-	archive, err := release.Download(ctx, peers, provider, newest.Archive(), progress)
-	if err != nil {
+	if err := release.Apply(ctx, provider, newest, program, progress); err != nil {
 		return err
 	}
 	fmt.Println()
-
-	binary, err := release.Unpack(archive, filepath.Base(program))
-	if err != nil {
-		return err
-	}
-	if err := release.Replace(program, binary, newest.Version); err != nil {
-		return err
-	}
 
 	fmt.Printf("arc %s is installed at %s\n", newest.Version, program)
 	fmt.Printf("the release it replaced stands at %s.previous\n", program)
@@ -194,6 +160,20 @@ func programPath(command *cobra.Command) (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(running)
+}
+
+// releasePeer asks one citizen for releases over the relay.
+type releasePeer struct {
+	peers *client.Peers
+	key   []byte
+}
+
+func (p releasePeer) Request(ctx context.Context, body []byte) ([]byte, error) {
+	answer, err := p.peers.Request(ctx, p.key, map[string]any{"method": "RAW", "path": "/releases"}, body)
+	if err != nil {
+		return nil, err
+	}
+	return answer.Body, nil
 }
 
 // progress shows how much of an archive has arrived.
