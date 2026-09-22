@@ -63,8 +63,9 @@ func TestALiveCallOverARelay(t *testing.T) {
 	r := relay.Relay{URL: testrelay.Start(t)}
 	serving := keys.Generate()
 	server := provider(t, serving)
-	go server.ServeLive(ctx, r)
-	time.Sleep(200 * time.Millisecond)
+	ready := make(chan struct{})
+	go server.ServeLive(ctx, r, func() { close(ready) })
+	<-ready
 
 	caller := keys.Generate()
 	reply, rtt, err := call.Live(ctx, caller, serving.Public, call.Request{
@@ -106,8 +107,9 @@ func TestAStaleLiveRequestIsRefused(t *testing.T) {
 
 	r := relay.Relay{URL: testrelay.Start(t)}
 	serving := keys.Generate()
-	go provider(t, serving).ServeLive(ctx, r)
-	time.Sleep(200 * time.Millisecond)
+	ready := make(chan struct{})
+	go provider(t, serving).ServeLive(ctx, r, func() { close(ready) })
+	<-ready
 
 	// A request written ten minutes ago, as a relay replaying it would send.
 	caller := keys.Generate()

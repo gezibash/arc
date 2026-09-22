@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/delivery/keys"
@@ -26,6 +27,19 @@ import (
 
 // Kind is the kind of a capability announcement.
 const Kind nostr.Kind = 30272
+
+// A provider signs its announcement again each Refresh. An announcement is
+// current while it is at most Fresh old. A caller needs a current
+// announcement before a live call to a citizen that it cannot wake.
+const (
+	Refresh = 2 * time.Minute
+	Fresh   = 5 * time.Minute
+)
+
+// Current says whether an announcement is at most Fresh old.
+func Current(announcement nostr.Event, now time.Time) bool {
+	return now.Sub(announcement.CreatedAt.Time()) <= Fresh
+}
 
 // Offer is one announced capability.
 type Offer struct {
