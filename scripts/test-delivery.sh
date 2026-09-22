@@ -26,6 +26,8 @@ trap cleanup EXIT
 
 say() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; exit 1; }
+# keyfile names the key file of the one identity of a home.
+keyfile() { echo "$work/$1"/citizens/*/key; }
 
 cd "$root"
 go build -o "$work/arcn" ./cmd/arcn
@@ -42,10 +44,9 @@ url="$(sed -n 's/^relay listens on //p' "$work/relay.log")"
 [ -n "$url" ] || fail "the relay did not start: $(cat "$work/relay.log")"
 say "a relay listens on $url"
 
-a key new > "$work/key.txt"
-mkdir -p "$work/desktop"
-cp "$work/laptop/key" "$work/desktop/key"
-[ "$(a key show)" = "$(b key show)" ] || fail "the two machines hold different keys"
+a keys gen > "$work/key.txt"
+b keys add < "$(keyfile laptop)" > /dev/null
+[ "$(a whoami | head -2)" = "$(b whoami | head -2)" ] || fail "the two machines hold different keys"
 say "two machines hold one key, and separate stores"
 
 a relay add "$url"
@@ -54,7 +55,7 @@ b relay add "$url"
 # The journal is a manifest of interface version 1. Its author announces it,
 # and each machine installs it by trusting that author.
 a announce "$root/manifests/journal.json" > /dev/null
-author="$(a key show | tail -1)"
+author="$(a whoami | sed -n 2p)"
 a install "$author" journal --yes > /dev/null
 b install "$author" journal --yes > /dev/null
 say "both machines install the journal"
@@ -114,9 +115,7 @@ b journal read hrs/data/big > "$work/big-back.txt"
 cmp -s "$work/big.txt" "$work/big-back.txt" || fail "the large page came back changed"
 say "a large page of $(wc -c < "$work/big.txt" | tr -d ' ') bytes crosses the relay in parts"
 
-"$work/arcn" --home "$work/phone" key new > /dev/null
-rm "$work/phone/key"
-cp "$work/laptop/key" "$work/phone/key"
+"$work/arcn" --home "$work/phone" keys add < "$(keyfile laptop)" > /dev/null
 "$work/arcn" --home "$work/phone" relay add "$url"
 "$work/arcn" --home "$work/phone" install "$author" journal --yes > /dev/null
 got="$("$work/arcn" --home "$work/phone" journal read hrs/data/big --lines 1500:1501)"
@@ -141,11 +140,11 @@ alice() { "$work/arcn" --home "$work/alice" "$@"; }
 carol() { "$work/arcn" --home "$work/carol" "$@"; }
 bob() { "$work/arcn" --home "$work/bob" "$@"; }
 
-alice key new > /dev/null
-carol key new > /dev/null
-bob key new > "$work/bob.txt"
+alice keys gen > /dev/null
+carol keys gen > /dev/null
+bob keys gen > "$work/bob.txt"
 bob_key="$(tail -1 "$work/bob.txt")"
-alice_key="$(alice key show | tail -1)"
+alice_key="$(alice whoami | sed -n 2p)"
 say "three citizens hold three keys"
 
 alice message send "$bob_key" "meet at the river at noon" | grep "queued" > /dev/null || fail "alice could not queue the message"
@@ -161,7 +160,7 @@ say "the sticks name neither citizen and hold no text"
 
 bob sync --dir "$work/stick-b" | grep "mail received 1" > /dev/null || fail "bob did not receive the message"
 bob message inbox | grep "meet at the river at noon" > /dev/null || fail "bob's inbox: $(bob message inbox)"
-bob message inbox | grep "$(alice key show | head -1)" > /dev/null || fail "the message does not name alice"
+bob message inbox | grep "$(alice whoami | head -1)" > /dev/null || fail "the message does not name alice"
 say "bob receives it, and the seal proves that alice wrote it"
 
 bob sync --dir "$work/stick-b" > /dev/null
@@ -186,13 +185,13 @@ printf 'phase 2 holds: couriers, route tags, acknowledgements, and the outbox\n\
 provider() { "$work/arcn" --home "$work/exec" "$@"; }
 caller() { "$work/arcn" --home "$work/caller" "$@"; }
 
-provider key new > /dev/null
+provider keys gen > /dev/null
 provider relay add "$url"
-provider_key="$(provider key show | tail -1)"
-provider_name="$(provider key show | head -1)"
-caller key new > /dev/null
+provider_key="$(provider whoami | sed -n 2p)"
+provider_name="$(provider whoami | head -1)"
+caller keys gen > /dev/null
 caller relay add "$url"
-caller_key="$(caller key show | tail -1)"
+caller_key="$(caller whoami | sed -n 2p)"
 
 mkdir -p "$work/jobs" "$work/stick-p"
 cat > "$work/exec.json" <<JSON
@@ -219,7 +218,7 @@ rtt="$(sed -n 's/^round trip \([^ ]*\) via.*/\1/p' "$work/live.err")"
 [ -n "$rtt" ] || fail "the live call recorded no round trip"
 say "a live call to exec crosses the relay; round trip $rtt"
 
-"$work/arcn" --home "$work/stranger" key new > /dev/null
+"$work/arcn" --home "$work/stranger" keys gen > /dev/null
 "$work/arcn" --home "$work/stranger" relay add "$url"
 "$work/arcn" --home "$work/stranger" install "$provider_key" --yes > /dev/null
 if "$work/arcn" --home "$work/stranger" call "$provider_name" '{"argv":["echo","x"]}' > /dev/null 2> "$work/denied.txt"; then

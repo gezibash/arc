@@ -1,11 +1,14 @@
 // Command arcn runs the new ARC stack beside the old one, until the new stack
 // covers every command. See docs/delivery/SPEC.md.
 //
-//	arcn key new | show
+//	arcn keys gen | add | list | use | remove | encrypt | bunker
+//	arcn whoami
 //	arcn relay add <url> | rm <url> | ls | serve
 //	arcn message send | inbox | outbox
 //	arcn serve | announce | discover | install | call
 //	arcn sync [--dir <path>]
+//	arcn tool list | info | remove
+//	arcn info | resolve | apps init | version
 //	arcn <capability> <command...>
 package main
 
@@ -63,14 +66,18 @@ func root() *cobra.Command {
 		SilenceErrors:      true,
 	}
 	command.PersistentFlags().String("home", "", "the directory of arcn (ARCN_HOME, default ~/.config/arc/next)")
-	command.AddCommand(keyCommand(), relayCommand(), messageCommand(),
-		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand())
+	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARCN_KEY)")
+	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
+		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand(),
+		toolCommand(), infoCommand(), resolveCommand(), appsCommand(), versionCommand())
 	command.SetHelpCommand(helpCommand(command))
+	command.Version = version
 	return command
 }
 
-// home is the directory that holds the key, the relay list and the store.
-func home(command *cobra.Command) (string, error) {
+// rootDir is the directory of arcn. It holds one directory for each identity,
+// and the files of a relay that this machine runs.
+func rootDir(command *cobra.Command) (string, error) {
 	if dir, _ := command.Flags().GetString("home"); dir != "" {
 		return dir, nil
 	}
@@ -82,6 +89,13 @@ func home(command *cobra.Command) (string, error) {
 		return "", err
 	}
 	return filepath.Join(user, ".config", "arc", "next"), nil
+}
+
+// home is the directory of the identity that the command uses. It holds the
+// key, the relay list, the installs and the store.
+func home(command *cobra.Command) (string, error) {
+	dir, _, err := chosen(command)
+	return dir, err
 }
 
 func keyPath(dir string) string    { return filepath.Join(dir, "key") }
@@ -207,7 +221,7 @@ func serveCommand() *cobra.Command {
 			listen, _ := command.Flags().GetString("listen")
 			path, _ := command.Flags().GetString("db")
 			if path == "" {
-				dir, err := home(command)
+				dir, err := rootDir(command)
 				if err != nil {
 					return err
 				}
@@ -263,7 +277,7 @@ func serveCommand() *cobra.Command {
 // hostGroups makes the relay host NIP-29 groups. The relay signs the state
 // of each group with its own key, which it keeps in <home>/relay.key.
 func hostGroups(command *cobra.Command, rl *khatru.Relay, db *boltdb.BoltBackend, ids []string) error {
-	dir, err := home(command)
+	dir, err := rootDir(command)
 	if err != nil {
 		return err
 	}
@@ -376,7 +390,7 @@ func messageCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			to, err := nostr.PubKeyFromHex(args[0])
 			if err != nil {
-				return errors.New("a recipient is 64 characters of hex, as arcn key show prints it")
+				return errors.New("a recipient is 64 characters of hex, as arcn whoami prints it")
 			}
 
 			text := strings.Join(args[1:], " ")

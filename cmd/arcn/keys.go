@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -130,18 +132,133 @@ func askPassphrase(prompt string) (string, error) {
 	return string(value), nil
 }
 
-func keyCommand() *cobra.Command {
-	command := &cobra.Command{Use: "key", Short: "Manage the identity of this citizen"}
+// Each identity of this machine has its own directory, <root>/citizens/<name>,
+// because the store, the relays and the installs belong to one key. The file
+// <root>/default names the identity that commands use when --key does not.
 
-	newCmd := &cobra.Command{
-		Use: "new", Short: "Make a new identity", Args: cobra.NoArgs,
+func citizensDir(root string) string { return filepath.Join(root, "citizens") }
+func defaultPath(root string) string { return filepath.Join(root, "default") }
+func publicPath(dir string) string   { return filepath.Join(dir, "public") }
+
+// chosen returns the directory of the identity that the command uses, and
+// what chose it: --key, ARCN_KEY, or the default.
+func chosen(command *cobra.Command) (string, string, error) {
+	root, err := rootDir(command)
+	if err != nil {
+		return "", "", err
+	}
+	name, source := "", ""
+	if flag, _ := command.Flags().GetString("key"); flag != "" {
+		name, source = flag, "--key"
+	} else if env := os.Getenv("ARCN_KEY"); env != "" {
+		name, source = env, "ARCN_KEY"
+	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
+		name, source = strings.TrimSpace(string(body)), "the default"
+	}
+	if name == "" {
+		return "", "", errors.New("no identity: make one with arcn keys gen, or add one with arcn keys add")
+	}
+	dir := filepath.Join(citizensDir(root), name)
+	if !validName(name) {
+		return "", "", fmt.Errorf("no identity %q on this machine: see arcn keys list", name)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return "", "", fmt.Errorf("no identity %q on this machine: see arcn keys list", name)
+	}
+	return dir, source, nil
+}
+
+// validName refuses a name that would leave the directory of identities.
+func validName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".")
+}
+
+// localID is one identity of this machine.
+type localID struct {
+	name   string
+	public string
+}
+
+// listCitizens reads the identities of this machine, by name.
+func listCitizens(root string) ([]localID, error) {
+	entries, err := os.ReadDir(citizensDir(root))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []localID
+	for _, entry := range entries {
+		if !entry.IsDir() || !validName(entry.Name()) {
+			continue
+		}
+		public, _ := os.ReadFile(publicPath(filepath.Join(citizensDir(root), entry.Name())))
+		out = append(out, localID{name: entry.Name(), public: strings.TrimSpace(string(public))})
+	}
+	return out, nil
+}
+
+func defaultName(root string) string {
+	body, _ := os.ReadFile(defaultPath(root))
+	return strings.TrimSpace(string(body))
+}
+
+// addCitizen keeps a key file as a new identity. It reads the key in a
+// directory of its own first, so that a key that does not open, or a signer
+// that does not answer, leaves nothing behind. The first identity becomes the
+// default. A caller that made the key passes it as known, so a sealed key does
+// not ask for its passphrase again.
+func addCitizen(ctx context.Context, root, text string, known *keys.Key) (keys.Key, error) {
+	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
+		return keys.Key{}, err
+	}
+	staging, err := os.MkdirTemp(citizensDir(root), ".adding-")
+	if err != nil {
+		return keys.Key{}, err
+	}
+	defer os.RemoveAll(staging)
+
+	if err := keys.Write(keyPath(staging), text); err != nil {
+		return keys.Key{}, err
+	}
+	var k keys.Key
+	if known != nil {
+		k = *known
+	} else {
+		id, err := loadIdentity(ctx, staging)
+		if err != nil {
+			return keys.Key{}, err
+		}
+		k = id.key
+	}
+	if err := os.WriteFile(publicPath(staging), []byte(k.Public.Hex()+"\n"), 0o600); err != nil {
+		return keys.Key{}, err
+	}
+	name := k.Name()
+	if err := os.Rename(staging, filepath.Join(citizensDir(root), name)); err != nil {
+		if _, statErr := os.Stat(filepath.Join(citizensDir(root), name)); statErr == nil {
+			return keys.Key{}, fmt.Errorf("%s is already on this machine", name)
+		}
+		return keys.Key{}, err
+	}
+	if defaultName(root) == "" {
+		if err := os.WriteFile(defaultPath(root), []byte(name+"\n"), 0o600); err != nil {
+			return keys.Key{}, err
+		}
+	}
+	return k, nil
+}
+
+func keysCommand() *cobra.Command {
+	command := &cobra.Command{Use: "keys", Short: "Make, add, list and pick identities"}
+
+	gen := &cobra.Command{
+		Use: "gen", Short: "Make an identity, and make it the default when there is none", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			dir, err := home(command)
+			root, err := rootDir(command)
 			if err != nil {
 				return err
-			}
-			if _, err := os.Stat(keyPath(dir)); err == nil {
-				return keys.ErrExists
 			}
 			k := keys.Generate()
 			text := k.Secret.Hex()
@@ -150,86 +267,178 @@ func keyCommand() *cobra.Command {
 					return err
 				}
 			}
-			if err := keys.Write(keyPath(dir), text); err != nil {
+			if _, err := addCitizen(command.Context(), root, text, &k); err != nil {
 				return err
 			}
 			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
 			return nil
 		},
 	}
-	newCmd.Flags().Bool("encrypt", false, "seal the key with a passphrase, as NIP-49 defines")
+	gen.Flags().Bool("encrypt", false, "seal the key with a passphrase, as NIP-49 defines")
 
-	command.AddCommand(
-		newCmd,
-		&cobra.Command{
-			Use: "show", Short: "Show the identity of this citizen", Args: cobra.NoArgs,
-			RunE: func(command *cobra.Command, _ []string) error {
-				dir, err := home(command)
-				if err != nil {
-					return err
-				}
-				id, err := loadIdentity(command.Context(), dir)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("%s\n%s\n", id.key.Name(), id.key.Public.Hex())
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use: "encrypt", Short: "Seal the key with a passphrase, as NIP-49 defines", Args: cobra.NoArgs,
-			RunE: func(command *cobra.Command, _ []string) error {
-				dir, err := home(command)
-				if err != nil {
-					return err
-				}
-				k, err := keys.Load(keyPath(dir))
-				if err != nil {
-					return err
-				}
-				sealed, err := newPassphrase(k)
-				if err != nil {
-					return err
-				}
-				if err := keys.Write(keyPath(dir), sealed); err != nil {
-					return err
-				}
-				fmt.Println("the key is sealed; arcn asks for the passphrase, or reads ARCN_PASSPHRASE")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "use <bunker://...>",
-			Short: "Sign through a remote signer, as NIP-46 defines",
-			Long: "The key file then names the signer, and holds no secret key. An agent\n" +
-				"uses this: its owner runs arcn key bunker, and keeps the key.",
-			Args: cobra.ExactArgs(1),
-			RunE: func(command *cobra.Command, args []string) error {
+	add := &cobra.Command{
+		Use:   "add [bunker://...]",
+		Short: "Add an identity that exists already",
+		Long: "arcn reads the key from standard input: 64 characters of hex, an nsec,\n" +
+			"or an ncryptsec of NIP-49. With a bunker:// URI, the identity signs\n" +
+			"through a remote signer, as NIP-46 defines, and this machine holds no\n" +
+			"secret key. An agent uses this: its owner runs arcn keys bunker.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			root, err := rootDir(command)
+			if err != nil {
+				return err
+			}
+			var text string
+			if len(args) == 1 {
 				if !nip46.IsValidBunkerURL(args[0]) {
-					return errors.New("that is not a bunker:// URI")
+					return errors.New("that is not a bunker:// URI; give a secret key on standard input")
 				}
-				dir, err := home(command)
+				text = args[0]
+			} else {
+				body, err := io.ReadAll(io.LimitReader(command.InOrStdin(), 4096))
 				if err != nil {
 					return err
 				}
-				if _, err := os.Stat(keyPath(dir)); err == nil {
-					return keys.ErrExists
+				text = strings.TrimSpace(string(body))
+				if text == "" {
+					return errors.New("give the key on standard input, or a bunker:// URI")
 				}
-				if err := keys.Write(keyPath(dir), args[0]); err != nil {
-					return err
-				}
-				id, err := loadIdentity(command.Context(), dir)
-				if err != nil {
-					os.Remove(keyPath(dir))
-					return err
-				}
-				fmt.Printf("%s\n%s\n", id.key.Name(), id.key.Public.Hex())
-				return nil
-			},
+			}
+			k, err := addCitizen(command.Context(), root, text, nil)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
+			return nil
 		},
-		bunkerCommand(),
-	)
+	}
+
+	list := &cobra.Command{
+		Use: "list", Short: "List the identities of this machine", Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			root, err := rootDir(command)
+			if err != nil {
+				return err
+			}
+			all, err := listCitizens(root)
+			if err != nil {
+				return err
+			}
+			if len(all) == 0 {
+				fmt.Println("no identities: make one with arcn keys gen")
+				return nil
+			}
+			active := defaultName(root)
+			for _, c := range all {
+				mark := " "
+				if c.name == active {
+					mark = "*"
+				}
+				fmt.Printf("%s %s  %s\n", mark, c.name, c.public)
+			}
+			return nil
+		},
+	}
+
+	use := &cobra.Command{
+		Use: "use <name>", Short: "Make one identity the default", Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			root, err := rootDir(command)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(filepath.Join(citizensDir(root), args[0])); err != nil || !validName(args[0]) {
+				return fmt.Errorf("no identity %q on this machine: see arcn keys list", args[0])
+			}
+			if err := os.WriteFile(defaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
+				return err
+			}
+			fmt.Printf("the default is %s\n", args[0])
+			return nil
+		},
+	}
+
+	remove := &cobra.Command{
+		Use:   "remove <name>",
+		Short: "Remove one identity from this machine",
+		Long: "This removes the key, and the store, the relays and the installs of\n" +
+			"the identity. A key that no other machine holds is lost for good.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			root, err := rootDir(command)
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			dir := filepath.Join(citizensDir(root), name)
+			if _, err := os.Stat(dir); err != nil || !validName(name) {
+				return fmt.Errorf("no identity %q on this machine: see arcn keys list", name)
+			}
+			if yes, _ := command.Flags().GetBool("yes"); !yes {
+				fmt.Printf("Remove %s, its key and its store? [y/N] ", name)
+				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					return errors.New("nothing was removed")
+				}
+			}
+			if err := os.RemoveAll(dir); err != nil {
+				return err
+			}
+			if defaultName(root) == name {
+				if err := os.Remove(defaultPath(root)); err != nil {
+					return err
+				}
+			}
+			fmt.Printf("removed %s\n", name)
+			return nil
+		},
+	}
+	remove.Flags().Bool("yes", false, "remove without asking")
+
+	encrypt := &cobra.Command{
+		Use: "encrypt", Short: "Seal the key with a passphrase, as NIP-49 defines", Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			dir, err := home(command)
+			if err != nil {
+				return err
+			}
+			k, err := keys.Load(keyPath(dir))
+			if err != nil {
+				return err
+			}
+			sealed, err := newPassphrase(k)
+			if err != nil {
+				return err
+			}
+			if err := keys.Write(keyPath(dir), sealed); err != nil {
+				return err
+			}
+			fmt.Println("the key is sealed; arcn asks for the passphrase, or reads ARCN_PASSPHRASE")
+			return nil
+		},
+	}
+
+	command.AddCommand(gen, add, list, use, remove, encrypt, bunkerCommand())
 	return command
+}
+
+func whoamiCommand() *cobra.Command {
+	return &cobra.Command{
+		Use: "whoami", Short: "Show the identity that commands use here", Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			dir, source, err := chosen(command)
+			if err != nil {
+				return err
+			}
+			public, err := os.ReadFile(publicPath(dir))
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n%s\nchosen by %s\n", filepath.Base(dir), strings.TrimSpace(string(public)), source)
+			return nil
+		},
+	}
 }
 
 // newPassphrase asks for a passphrase twice, and seals the key with it.
