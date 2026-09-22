@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -442,5 +443,49 @@ func TestReservedKindsAndConsent(t *testing.T) {
 	}
 	if d := Describe(louder); !strings.Contains(d, "posted in public") || !strings.Contains(d, "post under your name") {
 		t.Errorf("describe: %s", d)
+	}
+}
+
+// listEnv saves one list, and refuses to send to one citizen.
+type listEnv struct {
+	*fakeEnv
+	pals   []nostr.PubKey
+	refuse nostr.PubKey
+}
+
+func (l *listEnv) List(name string) []nostr.PubKey {
+	if name == "pals" {
+		return l.pals
+	}
+	return nil
+}
+
+func (l *listEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+	if to == l.refuse {
+		return errors.New("no inbox relay")
+	}
+	return l.fakeEnv.SendPrivate(ctx, to, kind, content, tags)
+}
+
+// A key argument that names a list runs the command once for each member.
+// A member that fails does not stop the others, and the command says so.
+func TestAListSendsToEachMemberAndReportsTheOnesThatFailed(t *testing.T) {
+	alice := newCitizen(t)
+	gone, bob, carol := nostr.Generate().Public(), nostr.Generate().Public(), nostr.Generate().Public()
+	env := &listEnv{fakeEnv: alice.env, pals: []nostr.PubKey{gone, bob, carol}, refuse: gone}
+
+	var out, errs bytes.Buffer
+	err := Run(context.Background(), env, Installed{Manifest: specManifests(t)["dm"], Author: alice.author, Name: "dm"},
+		[]string{"send", "pals", "hello", "pals"}, Stdio{In: strings.NewReader(""), Out: &out, Err: &errs})
+	if err == nil || !strings.Contains(err.Error(), "1 of 3") {
+		t.Errorf("the send to a list with one bad member returned %v, want 1 of 3 failed", err)
+	}
+	if !strings.Contains(errs.String(), env.Name(gone)) {
+		t.Errorf("the errors do not name the member that failed: %q", errs.String())
+	}
+	for _, pk := range []nostr.PubKey{bob, carol} {
+		if got := alice.env.net.inbox[pk]; len(got) != 1 || got[0].Content != "hello pals" {
+			t.Errorf("%s received %d messages", env.Name(pk), len(got))
+		}
 	}
 }

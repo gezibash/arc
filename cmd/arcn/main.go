@@ -71,7 +71,7 @@ func root() *cobra.Command {
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARCN_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand(),
-		toolCommand(), infoCommand(), resolveCommand(), appsCommand(), versionCommand())
+		toolCommand(), infoCommand(), resolveCommand(), appsCommand(), versionCommand(), listsCommand())
 	command.SetHelpCommand(helpCommand(command))
 	command.Version = version
 	return command
