@@ -3,6 +3,7 @@ package node_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,5 +264,49 @@ func TestAWatchEndsWhenTheRelayDies(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the watch did not end after the relay died")
 		}
+	}
+}
+
+// deadRelay is the URL of a port that nothing listens on.
+func deadRelay(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "ws://" + l.Addr().String()
+	l.Close()
+	return url
+}
+
+func TestObtainSaysWhenNoRelayAnswered(t *testing.T) {
+	ctx := context.Background()
+	k := keys.Generate()
+	live := relay.Relay{URL: testrelay.Start(t)}
+	dead := relay.Relay{URL: deadRelay(t)}
+
+	event := note(t, k, "far away")
+	if _, _, err := newNode(t).Publish(ctx, event, []transport.Transport{live}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		name       string
+		transports []transport.Transport
+		fails      bool
+	}{
+		{"every relay is down", []transport.Transport{dead}, true},
+		{"one relay is down, and another holds the event", []transport.Transport{dead, live}, false},
+		{"there is no relay", nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := newNode(t).Obtain(ctx, []nostr.ID{event.ID}, c.transports)
+			if c.fails && (err == nil || !strings.Contains(err.Error(), dead.URL)) {
+				t.Fatalf("Obtain returned %v, want an error that names %s", err, dead.URL)
+			}
+			if !c.fails && err != nil {
+				t.Fatalf("Obtain returned %v, want no error", err)
+			}
+		})
 	}
 }

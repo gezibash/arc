@@ -22,6 +22,7 @@ import (
 	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/keys"
+	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/iface"
 	"github.com/spf13/cobra"
@@ -520,8 +521,11 @@ func keyedRoot(ctx context.Context, sess *session) ([]byte, error) {
 		return iface.KeyedRoot(sess.key.Secret)
 	}
 	filter := rootFilter(sess.key.Public)
-	sess.node.Pull(ctx, filter, sess.relays)
+	reports, errs := sess.node.Pull(ctx, filter, sess.relays)
 	wraps := sess.node.Store.Query(filter)
+	if unreached := node.Unreached(reports, errs); len(wraps) == 0 && unreached != nil {
+		return nil, fmt.Errorf("this machine holds no keyed root, and %w", unreached)
+	}
 	if len(wraps) == 0 {
 		return nil, errors.New("no keyed root yet: run any arcn command on a machine that holds the key, then sync")
 	}

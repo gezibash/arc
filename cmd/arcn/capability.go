@@ -22,6 +22,7 @@ import (
 	"github.com/gezibash/arc/delivery/catalog"
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/mail"
+	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
@@ -307,8 +308,12 @@ func findOffer(ctx context.Context, sess *session, provider nostr.PubKey, id str
 	if err == nil {
 		return offer, nil
 	}
-	sess.node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}, sess.relays)
-	return catalog.Find(sess.node.Store, provider, id)
+	reports, errs := sess.node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}, sess.relays)
+	offer, err = catalog.Find(sess.node.Store, provider, id)
+	if unreached := node.Unreached(reports, errs); err != nil && unreached != nil {
+		return offer, fmt.Errorf("this machine holds no announcement from that provider, and %w", unreached)
+	}
+	return offer, err
 }
 
 func callCmd() *cobra.Command {

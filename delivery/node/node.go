@@ -6,6 +6,8 @@ package node
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/delivery/store"
@@ -172,15 +174,27 @@ func (n *Node) Pull(ctx context.Context, filter nostr.Filter, transports []trans
 	return reports, errs
 }
 
+// Unreached is the error of a pull that no transport answered, or nil. A
+// pull with no transports asked nothing, and is not an error.
+func Unreached(reports []Report, errs []error) error {
+	if len(reports) > 0 || len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("no relay answered: %w", errors.Join(errs...))
+}
+
 // Obtain returns the events with these IDs. It reads the store first, and
 // asks the transports only for the events that the store lacks. It keeps what
-// the transports return, after verification.
+// the transports return, after verification. When an event is still missing
+// and no transport answered, it returns their errors.
 func (n *Node) Obtain(ctx context.Context, ids []nostr.ID, transports []transport.Transport) (map[nostr.ID]nostr.Event, error) {
 	found := make(map[nostr.ID]nostr.Event, len(ids))
 	for _, event := range n.Store.Query(nostr.Filter{IDs: ids}) {
 		found[event.ID] = event
 	}
 
+	var errs []error
+	answered := false
 	for _, t := range transports {
 		missing := lacking(ids, found)
 		if len(missing) == 0 {
@@ -189,8 +203,10 @@ func (n *Node) Obtain(ctx context.Context, ids []nostr.ID, transports []transpor
 
 		batch, err := t.Fetch(ctx, nostr.Filter{IDs: missing})
 		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
+		answered = true
 		for _, event := range batch.Events {
 			result, err := n.Store.Save(event)
 			if err != nil {
@@ -200,6 +216,9 @@ func (n *Node) Obtain(ctx context.Context, ids []nostr.ID, transports []transpor
 				found[event.ID] = event
 			}
 		}
+	}
+	if !answered && len(errs) > 0 && len(lacking(ids, found)) > 0 {
+		return found, fmt.Errorf("no relay answered: %w", errors.Join(errs...))
 	}
 	return found, nil
 }
