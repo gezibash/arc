@@ -138,6 +138,22 @@ func (m *Manager) CarrierFor(peer []byte) *Conn {
 	return nil
 }
 
+// ActiveUntil returns the latest end of the leases of the routes that carry a
+// conversation now, or the zero time when no route does.
+func (m *Manager) ActiveUntil() time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var until time.Time
+	now := time.Now()
+	for _, route := range m.routes {
+		if route.phase == phaseActive && route.deadline.After(now) && route.deadline.After(until) {
+			until = route.deadline
+		}
+	}
+	return until
+}
+
 // Offer asks a peer to carry one conversation off the relay. It returns when
 // the route stands, or when the attempt runs out.
 //

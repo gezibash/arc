@@ -75,9 +75,11 @@ func call(command *cobra.Command, args []string) error {
 			return err
 		}
 
+		// A rule that does not match, or a peer that does not agree, leaves
+		// the conversation on the relay.
 		peers.Direct(rules, stderrLog())
 		if err := peers.Promote(ctx, args[0], capabilityID); err != nil {
-			return fmt.Errorf("the conversation did not leave the relay: %w", err)
+			fmt.Fprintf(os.Stderr, "the conversation stays on the relay: %v\n", err)
 		}
 	}
 
@@ -90,11 +92,18 @@ func call(command *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The body goes out as it came, so bytes stay bytes. Only a terminal
+	// gets a newline after a body that has none.
 	os.Stdout.Write(answer.Body)
-	if len(answer.Body) > 0 && !strings.HasSuffix(string(answer.Body), "\n") {
+	if len(answer.Body) > 0 && !strings.HasSuffix(string(answer.Body), "\n") && stdoutIsTerminal() {
 		fmt.Println()
 	}
 	return nil
+}
+
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // requestBody takes the body from the command line, or from standard input.

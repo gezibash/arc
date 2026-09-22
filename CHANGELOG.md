@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A capability can carry bytes. With `encoding: base64` in `request_body` or
+  `response_body`, the citizen passes that body to the runtime as base64,
+  and reads it back the same way. No byte changes on the way.
+
 ### Changed
 
 - **Breaking:** `arc join` takes the pin with `--relay-pubkey`, like the
@@ -20,6 +26,12 @@ All notable changes to ARC are recorded here. The format follows
 - `arc-relay --generate` makes a key only when the store holds none, and
   makes it the default, so the next start finds the same key. With
   `--key NAME`, it refuses a name that the store does not hold.
+- `arc call` writes the response body byte for byte. It adds a newline only
+  when standard output is a terminal.
+- A direct policy that does not match leaves `arc call` on the relay, with a
+  note on standard error. Before, the call failed.
+- A provider has 5 seconds to end after its input closes. Only then does the
+  citizen kill it.
 
 ### Fixed
 
@@ -38,6 +50,20 @@ All notable changes to ARC are recorded here. The format follows
 - Each error prints once, after `arc:`.
 - Two joins at the same time keep both relays. A lock on
   `relays.json.lock` covers each read and write of `relays.json`.
+- `arc serve` says why it stopped: `the relay connection ended`, or
+  `the provider stopped`. Before, it said `signal: killed`. A stop with
+  Ctrl-C exits with status 0.
+- When the relay connection of `arc serve` ends, a direct route that stands
+  serves until its lease ends.
+- The citizen refuses a request id that already waits, and a request over
+  256 that wait.
+- `arc call` refuses an address path with a percent escape, a dot segment,
+  or `/info`. It refuses a capability of another id or another mode than
+  `request_reply`, and a body that is not UTF-8 for a text capability. The
+  citizen refuses such a body too.
+- The Agora board holds its directory with `flock`, so it starts again after
+  a restart. Before, a restart could leave it at `storage_locked` for good.
+- `Relay.Close` no longer waits for a client that joined while it closed.
 
 ## [0.8.0] - 2026-09-21
 
