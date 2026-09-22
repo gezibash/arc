@@ -316,12 +316,12 @@ trusted compute broker.
 
 | Existing building block | Reuse and boundary |
 | --- | --- |
-| [Keypair identity](../../identity/identity.go) | Owner signatures and guest identities; key ownership alone says nothing about protected execution |
-| [Capability packages](../../capability/package.go) and [discovery](../../capability/manifest.go) | Signed provider advertisements and existing detail lookup; evidence-profile advertisement needs an explicit schema design |
+| [Keypair identity](https://github.com/gezibash/arc/blob/v0.10.0/identity/identity.go) | Owner signatures and guest identities; key ownership alone says nothing about protected execution |
+| [Capability packages](../../capability/package.go) and [discovery](https://github.com/gezibash/arc/blob/v0.10.0/capability/manifest.go) | Signed provider advertisements and existing detail lookup; evidence-profile advertisement needs an explicit schema design |
 | [Interface manifests](../../capability/interfaces.go) | Existing provider-installed command and stream descriptions; security decisions cannot be delegated to arbitrary provider-authored templates |
 | [Execution adapter](../../cmd/exec-provider/main.go) | Can host public orchestration; its ordinary process and plaintext input/output are not a protected boundary |
-| [ARC sessions](../../session/session.go) | Encrypted transport; no attestation binding today, and the current version documents exposure of past sessions if the responder's long-term key is compromised |
-| [Sealed boxes](../../sealedbox/sealedbox.go) | Existing encryption building block for recipient-held data; not a storage format, sender authorization, freshness proof, or guest verifier |
+| [ARC sessions](https://github.com/gezibash/arc/blob/v0.10.0/session/session.go) | Encrypted transport; no attestation binding today, and the current version documents exposure of past sessions if the responder's long-term key is compromised |
+| [Sealed boxes](https://github.com/gezibash/arc/blob/v0.10.0/sealedbox/sealedbox.go) | Existing encryption building block for recipient-held data; not a storage format, sender authorization, freshness proof, or guest verifier |
 | [Provider grants](../../provider/config.go) | Local authorization by public key; not the signed, portable run grants defined here |
 
 The private-environment implementation MUST supply the missing verifier,

@@ -25,7 +25,6 @@ that user.
 | `citizen/serve` | Runs `arc serve` for this bundle as a plain process. |
 | `citizen/lease` | Holds the machine awake. One case for each platform. |
 | `citizen/notify-dm` | Sends the result of a finished job to its owner as a direct message. |
-| `arc-exec` | The caller wrapper of `arc-legacy`, the older stack. It sends the request with `arc-legacy call`, and exits with the exit code of the command. |
 
 ## Requirements
 
@@ -72,7 +71,7 @@ Do these steps on the citizen machine.
    The script finds `exec-provider` in the directory of `arc`, and writes its
    path to `citizen.env`. To use another binary, set `EXEC_PROVIDER` before
    you run the script. The script also writes the arc home, `ARC_HOME`, or
-   `~/.config/arc/next` when it is not set.
+   `~/.config/arc` when it is not set.
 
    Add `--notify-dm` to send the result of each finished job to its owner as
    a direct message.
@@ -93,7 +92,7 @@ the time.
 ## Set up a caller
 
 1. Add a wake hook for the citizen to `wake.toml` in the arc home, by
-   default `~/.config/arc/next/wake.toml`. The hook runs the start script on
+   default `~/.config/arc/wake.toml`. The hook runs the start script on
    the citizen machine. Before each live call to the citizen, `arc` runs the
    hook: `arc call`, and the commands that `arc install` adds.
 
@@ -135,30 +134,23 @@ the time.
 
 ## Run commands
 
-`arc-exec` uses `arc-legacy`, the older stack, which v0.11.0 removes. It does
-not reach a citizen that runs `arc`, and it needs `arc-legacy` on the PATH:
-`install.sh` links only `arc`. For a citizen that runs `arc`, send the request
-with `arc call`, see "Request protocol".
+After `arc install <citizen-public-key>`, the capability adds three commands:
 
 ```sh
-arc-exec <citizen-public-key> --script 'cd ~/arc && git status --short'
-arc-exec <citizen-public-key> -- uname -a
+arc exec run uname -a
+arc exec run sh -c 'cd ~/arc && git status --short'
+arc exec start 'cd ~/arc && go test ./...'
+arc exec status <job>
 ```
 
-`arc-exec` writes the output of the command and exits with its exit code.
-Add `-v` to log each step with a time.
+`run` is a live call. It writes the output of the command. It exits 0, also
+when the command fails: read the output.
 
 A command that takes longer than 115 seconds must run as a job. A job
-continues after the caller disconnects:
-
-```sh
-arc-exec <citizen-public-key> --start --script 'cd ~/arc && go test ./...'
-arc-exec <citizen-public-key> --status <job>
-arc-exec <citizen-public-key> --wait --script 'cd ~/arc && go test ./...'
-```
-
-`--status` exits with status 75 while the job runs. After the job ends, it
-exits with the exit code of the job.
+continues after the caller disconnects. `start` is a store-and-forward call:
+it waits in the outbox, and the reply names the job. Run `arc sync`, then
+`arc call results` shows the job. `status` shows the state of the job, and
+its output after it ends.
 
 ## Request protocol
 

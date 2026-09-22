@@ -2,7 +2,7 @@
 
 The real provider lives in `cmd/sqlite-provider`. Its [provider contract and operator
 configuration](../../cmd/sqlite-provider/README.md) are the source for supported
-queries and limits. It uses the [shared request transport](../transport/SPEC.md)
+queries and limits. It uses the [shared request transport](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/SPEC.md)
 and advertises the `sqlite` scheme.
 
 The SQLite engine runs on the provider's machine. Citizens send parameterized

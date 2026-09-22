@@ -4,13 +4,11 @@ go 1.27
 
 require (
 	fiatjaf.com/nostr v0.0.0-20260916040958-27e395a0f6e7
-	filippo.io/edwards25519 v1.2.0
+	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.5.0
-	golang.org/x/crypto v0.57.0
 	golang.org/x/term v0.46.0
-	gopkg.in/yaml.v3 v3.0.1
 	lukechampine.com/blake3 v1.4.1
 	zombiezen.com/go/sqlite v1.4.2
 )
@@ -20,7 +18,6 @@ require (
 	github.com/ImVexed/fasturl v0.0.0-20230304231329-4e41488060f3 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
-	github.com/btcsuite/btcd/btcec/v2 v2.3.4 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/coder/websocket v1.8.13 // indirect
@@ -51,6 +48,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.59.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect

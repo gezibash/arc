@@ -69,23 +69,18 @@ The provider root must not be writable by others. A local demonstration
 channel is not a public trust root, and must never quietly become the
 official publisher.
 
-## Run the local provider
+## Run the provider
 
-The standard stack stays as it is. Build the provider image, then start the
-release provider against the existing relay:
+Serve the provider with `arc serve`, with its own identity. The identity
+must have a relay. Never give it the key of the publisher:
 
 ```sh
-export ARC_LOCAL_PORT=17331
-export ARC_RELEASES_ROOT=/absolute/provider-root
-export ARC_LOCAL_IMAGE=arc-local-release-provider:0.7.0
-docker compose build relay
-docker compose -f compose.yaml -f docker/local/compose.releases.yaml \
-  --profile releases up -d --no-deps --wait releases
+RELEASES_ROOT=/absolute/provider-root arc --key <provider-name> serve \
+  "exec://$(command -v releases-provider)?manifest=$PWD/cmd/releases-provider/manifest.json"
 ```
 
-The release directory is mounted read-only. The provider identity lives in
-its own named volume. Find the provider with `arc discover`. It publishes the
-scheme `releases` and the resource `/releases`.
+Find the provider with `arc discover releases`. A citizen reads the channel
+with `arc update check --provider <provider-key> --publisher <publisher-key>`.
 
 ## A public channel needs more
 

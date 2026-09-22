@@ -66,7 +66,7 @@ arc whoami
 identity is the default. `arc keys use <name>` changes the default, and
 `--key <name>` or `ARC_KEY` picks another identity for one command.
 
-Each identity has its own directory, `~/.config/arc/next/citizens/<name>`,
+Each identity has its own directory, `~/.config/arc/citizens/<name>`,
 with its key, store, relays and installs. `--home` or `ARC_HOME` names
 another home. Back up the key files.
 
@@ -108,7 +108,7 @@ live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 
 Before a live call, `arc` runs the wake hook of the provider from
-`~/.config/arc/next/wake.toml`. Without a hook, the provider needs a current
+`~/.config/arc/wake.toml`. Without a hook, the provider needs a current
 announcement. See [the exec provider](cmd/exec-provider/README.md).
 
 `arc lists add <command> <name> <citizen>...` saves a set of citizens. Where
@@ -150,13 +150,20 @@ program stays as `<program>.previous`. `ARC_RELEASES` and
 channel exists yet. See [updating an installation](docs/updates/OPERATIONS.md)
 and [publishing a channel](docs/updates/PUBLISHING.md).
 
-## The older stack
+## Upgrade from v0.10.0
 
-The release also holds `arc-legacy` and `arc-relay`, the older stack. They
-are deprecated, and v0.11.0 removes them. `install.sh` does not link them.
-`arc-legacy` reads its identity from `ARC_LEGACY_KEY`. The
-[local Compose guide](docker/local/README.md) runs the older stack in
-Docker.
+From v0.11.0, the home of `arc` is `~/.config/arc`. v0.10.0 kept it in
+`~/.config/arc/next`, beside the files of the older stack. Stop every `arc`
+command, then move the home one time:
+
+```bash
+mv ~/.config/arc ~/.config/arc-old
+mv ~/.config/arc-old/next ~/.config/arc
+```
+
+`~/.config/arc-old` then holds only the files of the older stack. If a
+`citizen.env` of the exec provider names `ARC_HOME`, change it, or run
+`citizen/init` again.
 
 ## Development
 
@@ -169,7 +176,6 @@ mise run build       # every command into bin/
 mise run check       # lint and test
 mise run delivery    # the delivery layer, end to end
 mise run interface   # the capability interface, end to end
-mise run cli         # the older stack, end to end
 ```
 
 `mise run build` writes `bin/arc` and one binary for each other command.

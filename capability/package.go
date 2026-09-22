@@ -9,7 +9,6 @@
 package capability
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,7 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/internal/canonical"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -149,97 +147,6 @@ func Valid(pkg map[string]any) bool {
 		}
 	}
 	return true
-}
-
-// Provider is the identity shape that a package and a directory share.
-func Provider(me *identity.Identity) map[string]any {
-	return map[string]any{
-		"name":       me.Name(),
-		"short_name": me.ShortName(),
-		"public_key": me.EncodePublicKey(),
-	}
-}
-
-// Sign normalizes a package, signs it, and returns the signed package.
-func Sign(me *identity.Identity, document map[string]any) (map[string]any, error) {
-	pkg := NormalizePackage(document)
-	provider := Provider(me)
-
-	payload, err := CanonicalPayload(pkg, provider)
-	if err != nil {
-		return nil, err
-	}
-
-	sum := sha256.Sum256(payload)
-	signed := make(map[string]any, len(pkg)+3)
-	for key, value := range pkg {
-		signed[key] = value
-	}
-
-	signed["provider"] = provider
-	signed["package_hash"] = hex.EncodeToString(sum[:])
-	signed["signature"] = map[string]any{
-		"algorithm":         "ed25519",
-		"signer_public_key": provider["public_key"],
-		"value":             hex.EncodeToString(me.Sign(payload)),
-	}
-	return signed, nil
-}
-
-// Verify checks a signed package: the provider signed it, the hash covers the
-// same bytes, and the signature holds.
-func Verify(detail map[string]any) (map[string]any, error) {
-	pkg := NormalizePackage(detail)
-	pkg["provider"] = detail["provider"]
-	pkg["package_hash"] = detail["package_hash"]
-	pkg["signature"] = detail["signature"]
-
-	provider, _ := pkg["provider"].(map[string]any)
-	signature, _ := pkg["signature"].(map[string]any)
-	if !Valid(pkg) || provider == nil || signature == nil {
-		return nil, ErrInvalid
-	}
-	if firstString(pkg["package_hash"]) == "" || signature["algorithm"] != "ed25519" {
-		return nil, ErrInvalid
-	}
-
-	providerKey, err := decodeHex(provider["public_key"])
-	if err != nil {
-		return nil, err
-	}
-	signerKey, err := decodeHex(signature["signer_public_key"])
-	if err != nil {
-		return nil, err
-	}
-	if string(providerKey) != string(signerKey) {
-		return nil, ErrSignerMismatch
-	}
-
-	value, err := decodeHex(signature["value"])
-	if err != nil {
-		return nil, err
-	}
-
-	payload, err := CanonicalPayload(pkg, provider)
-	if err != nil {
-		return nil, err
-	}
-
-	sum := sha256.Sum256(payload)
-	if hex.EncodeToString(sum[:]) != pkg["package_hash"] {
-		return nil, ErrHashMismatch
-	}
-	if !identity.Verify(providerKey, payload, value) {
-		return nil, ErrBadSignature
-	}
-	return pkg, nil
-}
-
-// CanonicalPayload returns the bytes that a signature covers.
-func CanonicalPayload(pkg map[string]any, provider any) ([]byte, error) {
-	payload := NormalizePackage(pkg)
-	payload["provider"] = provider
-	return canonical.Encode(payload)
 }
 
 func normalizeDocument(document map[string]any) (map[string]any, error) {

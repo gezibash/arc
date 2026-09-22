@@ -55,7 +55,7 @@ provider=${EXEC_PROVIDER:-$(dirname "$(readlink -f "$(command -v arc)")")/exec-p
 # A wake hook runs with the environment of the caller, so citizen.env names
 # the arc home of the citizen.
 cat > "$here/citizen.env" <<ENV
-ARC_HOME=${ARC_HOME:-$HOME/.config/arc/next}
+ARC_HOME=${ARC_HOME:-$HOME/.config/arc}
 ARC_KEY=$key
 CITIZEN_RELAY=$relay
 EXEC_CONFIG=$here/config.json

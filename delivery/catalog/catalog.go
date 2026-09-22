@@ -21,7 +21,6 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/store"
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
 )
 
@@ -60,7 +59,7 @@ type Offer struct {
 }
 
 // Name is the petname of the provider.
-func (o Offer) Name() string { return identity.Name(o.Provider[:]) }
+func (o Offer) Name() string { return keys.Name(o.Provider[:]) }
 
 // Announce makes the announcement of one capability package. The package is
 // the normalized manifest; its capability id becomes the d tag.

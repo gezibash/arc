@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	echoBinary = filepath.Join(dir, "echo")
-	build := exec.Command("go", "build", "-o", echoBinary, "../../citizen/testdata/echo")
+	build := exec.Command("go", "build", "-o", echoBinary, "../../provider/host/testdata/echo")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		panic(err)

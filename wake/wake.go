@@ -30,7 +30,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gezibash/arc/identity"
+	"github.com/gezibash/arc/delivery/keys"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -143,7 +143,7 @@ func Load(path, stateDir string) *Waker {
 	if err == nil {
 		for key := range held.Wake {
 			citizen, decodeErr := hex.DecodeString(key)
-			if decodeErr != nil || len(citizen) != identity.SeedBytes {
+			if decodeErr != nil || len(citizen) != 32 {
 				err = fmt.Errorf("%q is not a public key of 64 characters of hex", key)
 				break
 			}
@@ -157,7 +157,7 @@ func Load(path, stateDir string) *Waker {
 	home, _ := os.UserHomeDir()
 	for key, hook := range held.Wake {
 		citizen, _ := hex.DecodeString(key)
-		name := identity.Name(citizen)
+		name := keys.Name(citizen)
 
 		switch {
 		case hook.Kind != "command":
@@ -239,7 +239,7 @@ func (w *Waker) Wake(ctx context.Context, citizen []byte, online func(context.Co
 		}
 		announced, err := online(ctx, citizen)
 		if err == nil && !announced {
-			return fmt.Errorf("%w: %s has no current announcement on the relay, and this machine keeps no wake hook for it", ErrPeerOffline, identity.Name(citizen))
+			return fmt.Errorf("%w: %s has no current announcement on the relay, and this machine keeps no wake hook for it", ErrPeerOffline, keys.Name(citizen))
 		}
 		return nil
 	}
@@ -310,7 +310,7 @@ func (w *Waker) run(ctx context.Context, citizen []byte, argv []string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	name := identity.Name(citizen)
+	name := keys.Name(citizen)
 	stderr := &tail{limit: stderrLimit}
 
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)

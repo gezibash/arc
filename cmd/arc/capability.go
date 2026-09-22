@@ -18,16 +18,15 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/bundle"
 	"github.com/gezibash/arc/capability"
-	"github.com/gezibash/arc/citizen"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/catalog"
 	"github.com/gezibash/arc/delivery/draft"
+	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
 	"github.com/gezibash/arc/provider/host"
 	"github.com/spf13/cobra"
@@ -65,7 +64,7 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	path, programArgs, manifest, err := citizen.ParseServeURI(address)
+	path, programArgs, manifest, err := host.ParseServeURI(address)
 	if err != nil {
 		return err
 	}
@@ -372,7 +371,7 @@ func callCmd() *cobra.Command {
 				}
 				found = true
 				to, _ := nostr.PubKeyFromHex(o.To)
-				fmt.Printf("%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), identity.Name(to[:]), o.State(now), o.Text)
+				fmt.Printf("%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Text)
 				switch {
 				case o.Reply.Err != "":
 					fmt.Printf("  error: %s\n", o.Reply.Err)

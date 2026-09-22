@@ -6,6 +6,37 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-23
+
+The older stack is gone, and `arc` is the only program of ARC. This is step 5
+of the switchover in `docs/delivery/SPEC.md`, section 15.1. The home of `arc`
+moves to `~/.config/arc`: see "Upgrade from v0.10.0" in the README.
+
+### Changed
+
+- **Breaking:** the home of `arc` is `~/.config/arc`, where it was
+  `~/.config/arc/next`. Move it one time, as the README says.
+- The image `ghcr.io/gezibash/arc` runs `arc relay serve` on port 7447. It
+  ran `arc-relay` on port 7331.
+- The petnames of keys come from `delivery/keys`. The names stay the same.
+
+### Removed
+
+- **Breaking:** `arc-legacy` and `arc-relay`, and the packages of the older
+  stack: `identity`, `sealedbox`, `session`, `packet`, `frame`,
+  `internal/wire`, `announce`, `relay`, `client`, `direct`, `control`,
+  `citizen`, `toolbox` and `relays`.
+- The DM, journal, Agora and files providers. Their manifests in
+  `manifests/` replace them, with no provider.
+- `arc-exec`, the local Compose stack, `mise run cli`, and the docs of the
+  older stack. Links to those docs point to the tag v0.10.0.
+- A binary, `arcn`, that v0.10.0 committed by mistake.
+
+### Known issues
+
+- `arc exec run` exits 0 when the command fails. `arc-exec` gave the exit
+  code of the command.
+
 ## [0.10.0] - 2026-09-22
 
 `arc` now runs the delivery layer on Nostr events, and the older program is
