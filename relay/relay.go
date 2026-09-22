@@ -73,6 +73,7 @@ type Relay struct {
 	catalog    *catalog
 
 	mu        sync.RWMutex
+	closing   bool
 	routes    map[string]*conn
 	directory map[string]*record
 	paths     map[string]*conversation
@@ -141,7 +142,10 @@ func (r *Relay) Close() error {
 	r.federation.stop()
 	err := r.listener.Close()
 
+	// A connection that finishes its handshake after this point is refused,
+	// so none escapes the close below.
 	r.mu.Lock()
+	r.closing = true
 	connections := make([]*conn, 0, len(r.routes))
 	for _, connection := range r.routes {
 		connections = append(connections, connection)
@@ -194,7 +198,9 @@ func (r *Relay) serve(socket net.Conn) {
 	}
 
 	connection := newConn(socket, publicKey, r.log)
-	r.register(connection)
+	if !r.register(connection) {
+		return
+	}
 	defer r.forget(connection)
 	defer r.federation.ended(connection)
 
@@ -290,13 +296,19 @@ func (r *Relay) route(from *conn, raw []byte) {
 	}
 }
 
-func (r *Relay) register(connection *conn) {
+// register gives a connection its route. A relay that is closing refuses it.
+func (r *Relay) register(connection *conn) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.closing {
+		return false
+	}
 
 	// One citizen holds one route. A new connection takes the route, and the
 	// old connection stops receiving.
 	r.routes[string(connection.publicKey)] = connection
+	return true
 }
 
 func (r *Relay) forget(connection *conn) {

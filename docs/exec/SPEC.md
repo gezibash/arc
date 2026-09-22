@@ -76,8 +76,10 @@ agent instructions.
   connect. It fails at once with `peer_offline` when the relay has no current
   announcement of the peer.
 - `arc serve` does not detect a pause of its machine.
-- `arc serve` connects to the relay one time. If that connection fails or
-  ends, `arc serve` exits with status 1.
+- `arc serve` connects to the relay one time. If that connection fails,
+  `arc serve` exits with status 1. If the connection ends later, the direct
+  routes that stand serve until their leases end. Then `arc serve` exits
+  with status 1, and says that the relay connection ended.
 - A request timeout does not prove that the command did not run. The caller
   must not retry an arbitrary command automatically.
 

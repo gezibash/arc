@@ -84,9 +84,9 @@ An invalid or unavailable configured relay is an error, with no local fallback.
 The second argument is the request body. Without it, `arc call` reads the
 body from standard input, for example `arc call ADDRESS < request.json`. If
 standard input is a terminal, the body is empty. The output is the response
-body on standard output. If the body does not end with a newline, `arc call`
-adds one. Output failures after a completed request do not undo provider
-changes.
+body on standard output, byte for byte. Only when standard output is a
+terminal, and the body does not end with a newline, `arc call` adds one.
+Output failures after a completed request do not undo provider changes.
 
 The Go API is `client.Peers().Request(ctx, peer, meta, body)`. The caller owns
 the connection and its delivery policy. Success returns the reply, which holds

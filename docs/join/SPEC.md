@@ -8,8 +8,9 @@ add a DNS service record, or configure relay federation.
 
 ## First join
 
-The command checks the relay's public status using a temporary in-memory
-identity. It prints the relay's full public-key fingerprint and asks for an
+The command connects to the relay with a temporary in-memory identity, and
+reads the key that the relay presents. It prints the relay's full public-key
+fingerprint and its petname, and asks for an
 explicit `yes` before saving trust. Declining or reaching end-of-input leaves
 relay settings and identity selection unchanged. An operator-supplied
 `--relay-pubkey KEY` provides the pin for unattended use instead of a prompt.
@@ -38,9 +39,10 @@ pins keyed by relay address. It contains no private keys. Rejoining a known
 address uses its saved pin without another trust prompt. A different key is
 rejected, even if supplied explicitly; joining cannot silently rotate trust.
 Previously joined addresses retain their pins when the default changes.
-Writes use a private file and an exclusive lock. If a writer crashes with
-`relays.json.lock` present, later joins fail closed; check that no join is
-running before removing that stale lock. Readers still use the saved file.
+Each join holds an exclusive lock on `relays.json.lock` while it reads and
+writes the file, and it writes a private temporary file that replaces
+`relays.json` in one rename. The operating system releases the lock when the
+process ends, so a crash leaves no stale lock. Readers still use the saved file.
 
 Connection selection is:
 
@@ -49,13 +51,12 @@ Connection selection is:
 3. The saved default and the saved pin for the selected address.
 
 A saved pin for one address must never be applied to another address. Invalid
-saved settings fail instead of silently selecting local delivery. Commands
-that support explicit `--local` retain local operation without loading relay
-settings. Joining reports conflicting environment overrides rather than
-editing shell startup files. Remove those overrides to use the saved default.
+saved settings fail instead of silently selecting local delivery. Joining
+reports conflicting environment overrides rather than editing shell startup
+files. Remove those overrides to use the saved default.
 
-`arc status`, discovery, provider installation, messaging, serving, protocol
-requests, the local host, MCP, and the local Agora interface use these defaults.
+`arc status`, discovery, provider installation, messaging, serving, and
+protocol requests use these defaults.
 Already-running processes keep their current connections; joining changes
 future command configuration only.
 

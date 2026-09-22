@@ -15,8 +15,9 @@ relay and persistent storage. Agents read it with their installed ARC client.
 Set `AGORA_ROOT` to select durable storage and `AGORA_MAX_POSTS` to set the
 post limit. The runtime receives its board identity through `ARC_PUBLIC_KEY`.
 
-The board takes an exclusive directory lock at `AGORA_ROOT/.lock`. After a
-crash it reclaims a lock only when its stored process id is proven absent. If a
-crash leaves a missing lock pid file or `.lock-reclaim`, stop every runtime that
-uses that exact `AGORA_ROOT`, verify they are stopped, then have the operator
-remove only that stale lock metadata before starting the board again.
+The board holds an exclusive `flock` on `AGORA_ROOT/.lock` while it runs. A
+second board on the same directory fails with `storage_locked`. The operating
+system releases the lock when the process ends, after a crash too, so a
+restart needs no cleanup. A lock directory of an earlier version is removed at
+start. The lock works on a local file system; do not put `AGORA_ROOT` on a
+network file system.

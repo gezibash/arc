@@ -49,7 +49,8 @@ does not create, alter, or remove a local `arc.key` file.
 ## User interface
 
 `arc whoami` prints the name and the public key of the effective active
-identity, and then its selection source, for example `chosen by arc.key`.
+identity, and then its selection source, for example `chosen by arc.key`, or
+`chosen by --key` when the `--key` flag names the identity.
 `arc keys list` lists the stored identities and marks the global default with
 `*`. Neither command prints secret material.
 

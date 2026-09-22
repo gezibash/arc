@@ -139,12 +139,7 @@ func whoamiCommand() *cobra.Command {
 				return err
 			}
 
-			source := "the default key"
-			if _, from, err := held.keys.Active(); err == nil {
-				source = string(from)
-			}
-
-			fmt.Printf("%s\n%s\nchosen by %s\n", held.me.Name(), held.me.EncodePublicKey(), source)
+			fmt.Printf("%s\n%s\nchosen by %s\n", held.me.Name(), held.me.EncodePublicKey(), held.source)
 			return nil
 		},
 	}

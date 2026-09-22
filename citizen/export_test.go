@@ -12,3 +12,8 @@ func (c *Citizen) HoldCarrier(peer []byte, carrier *direct.Conn) {
 
 // SendControl sends one control message of a direct route.
 func (c *Citizen) SendControl(peer, body []byte) error { return c.sendControl(peer, body) }
+
+// Admit takes one request into the set that waits for the provider.
+func (c *Citizen) Admit(peer, requestID []byte) (code, reason string) {
+	return c.admit(peer, requestID)
+}

@@ -8,6 +8,9 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Added
 
+- A capability can carry bytes. With `encoding: base64` in `request_body` or
+  `response_body`, the citizen passes that body to the runtime as base64,
+  and reads it back the same way. No byte changes on the way.
 - `arc serve` and `arc listen` take `--federate` or `--federate-network`.
   With `--federate`, the direct partners of the relay find the citizen. With
   `--federate-network`, the wider network finds it where transit allows. The
@@ -21,9 +24,59 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Changed
 
+- **Breaking:** `arc join` takes the pin with `--relay-pubkey`, like the
+  other commands. `--pubkey` is gone.
+- `arc join` shows the key and the petname of a new relay, and pins the key
+  only after you type `yes`. It asks the relay with a temporary identity, so
+  it never replaces the route of a running citizen. With no key and no
+  selector, it makes the first identity of the machine. It warns when
+  `ARC_RELAY` or `ARC_RELAY_PUBKEY` hides the relay that it saved.
+- `arc status` asks the relay with a temporary identity. It needs no key,
+  reads no selector, and never replaces the route of a running citizen.
+- `arc-relay --generate` makes a key only when the store holds none, and
+  makes it the default, so the next start finds the same key. With
+  `--key NAME`, it refuses a name that the store does not hold.
+- `arc call` writes the response body byte for byte. It adds a newline only
+  when standard output is a terminal.
+- A direct policy that does not match leaves `arc call` on the relay, with a
+  note on standard error. Before, the call failed.
+- A provider has 5 seconds to end after its input closes. Only then does the
+  citizen kill it.
 - A lookup by name or prefix that did not reach every partner fails with
   `federation_unavailable`. Before, it returned its entries with
   `partial: true`.
+
+### Fixed
+
+- The status of a relay that runs with `--transit` says
+  `"federation_transit": true`. Before, it always said `false`.
+- An empty `arc.key` or `default.key` fails the command. Before, `arc` went
+  on to the next selector.
+- A selector that names no key fails with the selector and the name, for
+  example `ARC_KEY names "nope"`. Before, the error said `no identity`.
+- `arc` reads the legacy `~/.config/arc/default_key` when `default.key` is
+  absent, as 0.6.0 did. `arc keys use` removes it after it writes
+  `default.key`.
+- `arc whoami --key NAME` says `chosen by --key`.
+- An unknown subcommand, such as `arc keys show`, fails with status 1.
+  Before, `arc` printed the help and exited with status 0.
+- Each error prints once, after `arc:`.
+- Two joins at the same time keep both relays. A lock on
+  `relays.json.lock` covers each read and write of `relays.json`.
+- `arc serve` says why it stopped: `the relay connection ended`, or
+  `the provider stopped`. Before, it said `signal: killed`. A stop with
+  Ctrl-C exits with status 0.
+- When the relay connection of `arc serve` ends, a direct route that stands
+  serves until its lease ends.
+- The citizen refuses a request id that already waits, and a request over
+  256 that wait.
+- `arc call` refuses an address path with a percent escape, a dot segment,
+  or `/info`. It refuses a capability of another id or another mode than
+  `request_reply`, and a body that is not UTF-8 for a text capability. The
+  citizen refuses such a body too.
+- The Agora board holds its directory with `flock`, so it starts again after
+  a restart. Before, a restart could leave it at `storage_locked` for good.
+- `Relay.Close` no longer waits for a client that joined while it closed.
 
 ## [0.8.0] - 2026-09-21
 
@@ -87,7 +140,20 @@ earlier versions. `arcn` runs the delivery layer on Nostr events.
   default. To run another command in the image, name it, for example
   `docker run IMAGE arc keys gen`.
 - **Breaking:** `arc call ADDRESS [BODY]` replaces
-  `arc request ADDRESS --body BODY`. `--timeout` counts seconds.
+  `arc request ADDRESS --body BODY`. `--timeout` counts seconds, and the
+  default is 30. The body comes from the second argument or from standard
+  input. `--input`, `--output` and `--local` are gone.
+- **Breaking:** `arc status` takes `--json` only. `--format` and `--check`
+  are gone. An error goes to standard error, and the JSON has no `address`
+  field.
+- **Breaking:** `arc install` takes `--yes` in place of `--trust`.
+- **Breaking:** `arc update` reads the channel from the provider that
+  `--provider` or `ARC_RELEASES` names. It does not search the relay.
+  `arc update status`, `--source` and `--replace-publisher` are gone.
+- `arc send` returns when the message leaves for the relay. `--wait` waits
+  for an answer.
+- `arc keys list` marks the global default with `*`, not the active
+  identity.
 - **Breaking:** `arc whoami` replaces `arc keys show`. `arc keys gen` prints
   the name and the public key on two lines. `arc keys list` and
   `arc keys remove` replace `arc keys ls` and `arc keys rm`.
@@ -113,6 +179,7 @@ earlier versions. `arcn` runs the delivery layer on Nostr events.
 - **Breaking:** the hot upgrade of a running relay. To update a relay, replace
   the binary and restart the relay.
 - **Breaking:** `arc host`.
+- **Breaking:** `arc tool update` and `arc apps open`.
 - The TCP hole punch of direct connections.
 
 ### Fixed

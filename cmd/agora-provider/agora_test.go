@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -362,10 +363,47 @@ func TestOneServerHoldsTheBoard(t *testing.T) {
 		t.Error("two servers hold one board")
 	}
 
-	// A lock of a process that is gone is taken over.
-	os.WriteFile(filepath.Join(s.store.lockDir(), "pid"), []byte("2147483"), 0o600)
+	// A server that ends lets the next one take the board.
+	s.store.unlock()
 	if err := other.lock(); err != nil {
-		t.Errorf("a lock of a process that is gone was not taken: %v", err)
+		t.Fatalf("the board was not taken after the first server ended: %v", err)
 	}
 	other.unlock()
+}
+
+// A server that crashes holds no lock: the operating system releases it with
+// the process. Closing the file without an unlock stands for that.
+func TestACrashLeavesNoLock(t *testing.T) {
+	s, _ := testBoard(t)
+
+	if err := s.store.lock(); err != nil {
+		t.Fatal(err)
+	}
+	s.store.held.Close()
+	s.store.held = nil
+
+	other := &store{root: s.store.root, board: s.board, maxPosts: DefaultMaxPosts}
+	if err := other.lock(); err != nil {
+		t.Fatalf("the lock of a crashed server was not released: %v", err)
+	}
+	other.unlock()
+}
+
+// Earlier versions held the board with a directory and a process id. The id
+// can name a live process in a new container, so the directory never counts.
+func TestTheLockDirectoryOfAnEarlierVersionIsTakenOver(t *testing.T) {
+	s, _ := testBoard(t)
+
+	if err := os.MkdirAll(s.store.lockPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pid := []byte(strconv.Itoa(os.Getpid()))
+	if err := os.WriteFile(filepath.Join(s.store.lockPath(), "pid"), pid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.store.lock(); err != nil {
+		t.Fatalf("the old lock directory stopped the board: %v", err)
+	}
+	s.store.unlock()
 }

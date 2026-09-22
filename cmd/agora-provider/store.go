@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,12 +42,15 @@ type store struct {
 	root     string
 	board    string
 	maxPosts int
+
+	// held is the lock file, open while this server holds the board.
+	held *os.File
 }
 
 func (s *store) postsDir() string          { return filepath.Join(s.root, "posts") }
 func (s *store) postPath(id string) string { return filepath.Join(s.postsDir(), id+".json") }
 func (s *store) statePath() string         { return filepath.Join(s.root, "state.json") }
-func (s *store) lockDir() string           { return filepath.Join(s.root, ".lock") }
+func (s *store) lockPath() string          { return filepath.Join(s.root, ".lock") }
 
 func (s *store) ensure() error {
 	if err := os.MkdirAll(s.postsDir(), 0o700); err != nil {
@@ -59,65 +61,49 @@ func (s *store) ensure() error {
 
 // -- the lock ---------------------------------------------------------------
 
-// lock holds the board for one server. A lock of a process that is gone is
-// taken over.
+// lock holds the board for one server. The server holds an exclusive flock on
+// AGORA_ROOT/.lock while it runs. The operating system releases the lock when
+// the process ends, after a crash too, so a restart takes the board at once.
+// A process id would not do: a new container starts a new process namespace,
+// and the id of a server that is gone can name a process that runs.
 func (s *store) lock() error {
 	if err := s.ensure(); err != nil {
 		return err
 	}
-	return s.takeLock(false)
-}
 
-func (s *store) takeLock(again bool) error {
-	err := os.Mkdir(s.lockDir(), 0o700)
-
-	switch {
-	case err == nil:
-		pid := strconv.Itoa(os.Getpid())
-		if err := os.WriteFile(filepath.Join(s.lockDir(), "pid"), []byte(pid), 0o600); err != nil {
-			os.Remove(s.lockDir())
-			return errLocked
+	// Earlier versions held the board with a directory and a process id in
+	// it. The flock replaces it.
+	if info, err := os.Stat(s.lockPath()); err == nil && info.IsDir() {
+		if err := os.RemoveAll(s.lockPath()); err != nil {
+			return errStorage
 		}
-		return nil
+	}
 
-	case errors.Is(err, os.ErrExist):
-		if again {
-			return errLocked
-		}
-		return s.reclaimLock()
-
-	default:
+	file, err := os.OpenFile(s.lockPath(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
 		return errStorage
 	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return errLocked
+		}
+		return errStorage
+	}
+
+	s.held = file
+	return nil
 }
 
-// reclaimLock takes a lock whose process is gone.
-func (s *store) reclaimLock() error {
-	data, err := os.ReadFile(filepath.Join(s.lockDir(), "pid"))
-	if err != nil {
-		return errLocked
-	}
-
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || pid <= 0 || alive(pid) {
-		return errLocked
-	}
-
-	os.Remove(filepath.Join(s.lockDir(), "pid"))
-	if err := os.Remove(s.lockDir()); err != nil {
-		return errLocked
-	}
-	return s.takeLock(true)
-}
-
+// unlock releases the board. The lock file stays: a server that opens it
+// next locks the same file.
 func (s *store) unlock() {
-	os.Remove(filepath.Join(s.lockDir(), "pid"))
-	os.Remove(s.lockDir())
-}
-
-func alive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	if s.held == nil {
+		return
+	}
+	syscall.Flock(int(s.held.Fd()), syscall.LOCK_UN)
+	s.held.Close()
+	s.held = nil
 }
 
 // -- reading and writing ----------------------------------------------------
