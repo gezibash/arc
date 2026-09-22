@@ -11,10 +11,10 @@ import (
 )
 
 // testStore returns a store with two keys, and a working directory with no
-// arc.key. ARC_KEY is unset.
+// arc.key. ARC_LEGACY_KEY is unset.
 func testStore(t *testing.T) (*identity.Store, *identity.Identity, *identity.Identity) {
 	t.Helper()
-	t.Setenv("ARC_KEY", "")
+	t.Setenv("ARC_LEGACY_KEY", "")
 	t.Chdir(t.TempDir())
 
 	store := &identity.Store{Dir: t.TempDir()}
@@ -60,9 +60,9 @@ func TestEachSelectorSaysWhereTheKeyCameFrom(t *testing.T) {
 		t.Fatalf("arc.key: %v %q %v", me, source, err)
 	}
 
-	t.Setenv("ARC_KEY", first.Name())
+	t.Setenv("ARC_LEGACY_KEY", first.Name())
 	if me, source, err = store.Active(); err != nil || me.Name() != first.Name() || source != identity.FromEnvironment {
-		t.Fatalf("ARC_KEY: %v %q %v", me, source, err)
+		t.Fatalf("ARC_LEGACY_KEY: %v %q %v", me, source, err)
 	}
 }
 
@@ -91,12 +91,12 @@ func TestAnEmptySelectorFailsAndNeverFallsThrough(t *testing.T) {
 func TestAnUnknownSelectorNamesTheSelectorAndTheName(t *testing.T) {
 	store, _, _ := testStore(t)
 
-	t.Setenv("ARC_KEY", "nobody-here")
+	t.Setenv("ARC_LEGACY_KEY", "nobody-here")
 	_, _, err := store.Active()
 	if !errors.Is(err, identity.ErrNotFound) {
 		t.Fatalf("err %v", err)
 	}
-	for _, want := range []string{"ARC_KEY", "nobody-here"} {
+	for _, want := range []string{"ARC_LEGACY_KEY", "nobody-here"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error does not name %s: %v", want, err)
 		}

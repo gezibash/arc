@@ -48,7 +48,7 @@ func serveCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "serve <exec://...|bundle directory>",
 		Short: "Offer a capability, and answer its calls",
-		Long: "arcn announces the capability, answers live calls that reach it\n" +
+		Long: "arc announces the capability, answers live calls that reach it\n" +
 			"through a relay, and answers store-and-forward calls on each sync.\n" +
 			"With --sync-dir, it also syncs with that directory on each tick, so\n" +
 			"calls that couriers carry reach it.",
@@ -301,7 +301,7 @@ func installCmd() *cobra.Command {
 				if err := installs.Add(offer, ""); err != nil {
 					return err
 				}
-				fmt.Printf("installed %s: call it with arcn call %s\n", offer.ID, offer.Name())
+				fmt.Printf("installed %s: call it with arc call %s\n", offer.ID, offer.Name())
 				return nil
 			}
 			as, _ := command.Flags().GetString("as")
@@ -309,12 +309,12 @@ func installCmd() *cobra.Command {
 				as = offer.ID
 			}
 			if builtinName(command.Root(), as) {
-				return fmt.Errorf("%s is a command of arcn; choose another name with --as", as)
+				return fmt.Errorf("%s is a command of arc; choose another name with --as", as)
 			}
 			if err := installs.Add(offer, as); err != nil {
 				return err
 			}
-			fmt.Printf("installed %s: see arcn help %s\n", as, as)
+			fmt.Printf("installed %s: see arc help %s\n", as, as)
 			return nil
 		},
 	}
@@ -345,7 +345,7 @@ func callCmd() *cobra.Command {
 		Long: "With a relay, the call is live: it needs the provider to be present\n" +
 			"now, and it prints the reply and the round-trip time. With --later, or\n" +
 			"with no relay, the call waits in the outbox and travels like a message;\n" +
-			"arcn call results shows the reply once a sync brings it.",
+			"arc call results shows the reply once a sync brings it.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: callCapability,
 	}
@@ -413,7 +413,7 @@ func callCapability(command *cobra.Command, args []string) error {
 		return err
 	}
 	if !installs.Trusted(provider, offer.ID) {
-		return fmt.Errorf("install it first: arcn install %s %s", provider.Hex(), offer.ID)
+		return fmt.Errorf("install it first: arc install %s %s", provider.Hex(), offer.ID)
 	}
 
 	body := strings.Join(args[1:], " ")
@@ -438,7 +438,7 @@ func callCapability(command *cobra.Command, args []string) error {
 		if _, err := sess.mail.Request(command.Context(), provider, request); err != nil {
 			return err
 		}
-		fmt.Printf("queued for %s: the reply arrives with a sync; see arcn call results\n", offer.Name())
+		fmt.Printf("queued for %s: the reply arrives with a sync; see arc call results\n", offer.Name())
 		return nil
 	}
 

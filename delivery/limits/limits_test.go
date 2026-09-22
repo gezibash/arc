@@ -21,7 +21,7 @@ import (
 
 var ctx = context.Background()
 
-// start runs a relay as arcn relay serve runs it, with the policy.
+// start runs a relay as arc relay serve runs it, with the policy.
 func start(t *testing.T, p limits.Policy) string {
 	t.Helper()
 	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}

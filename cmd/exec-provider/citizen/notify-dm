@@ -11,4 +11,4 @@ set +a
 export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 
 owner=${1:?usage: notify-dm <owner-public-key>}
-exec arcn message send "$owner"
+exec arc message send "$owner"

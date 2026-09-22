@@ -323,7 +323,7 @@ func (r *run) call(c *Call) ([]*entry, error) {
 		return nil, err
 	}
 	if result.Queued {
-		fmt.Fprintf(r.stdio.Err, "queued for %s: the reply arrives with a sync; see arcn call results\n", r.env.Name(r.in.Author))
+		fmt.Fprintf(r.stdio.Err, "queued for %s: the reply arrives with a sync; see arc call results\n", r.env.Name(r.in.Author))
 		return nil, nil
 	}
 	if result.Err != "" {
@@ -540,7 +540,7 @@ func commandHelp(in Installed, c *Command) string {
 }
 
 func usage(in Installed, c *Command) string {
-	words := append([]string{"arcn", in.Name}, c.Path...)
+	words := append([]string{"arc", in.Name}, c.Path...)
 	for _, a := range c.Args {
 		text := usageOf(a)
 		if !a.Required {

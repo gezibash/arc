@@ -45,15 +45,15 @@ export SQLITE_CONFIG=/absolute/path/sqlite.json
 From the repository root, serve the bundle with ARC's normal provider flow:
 
 ```sh
-ARC_KEY=<provider-key> arc serve cmd/sqlite-provider
+ARC_LEGACY_KEY=<provider-key> arc-legacy serve cmd/sqlite-provider
 ```
 
-The provider and the citizen use the same relay. Join it with `arc join`, or
+The provider and the citizen use the same relay. Join it with `arc-legacy join`, or
 set `ARC_RELAY` and `ARC_RELAY_PUBKEY`. Then call the provider as the active
 citizen identity:
 
 ```sh
-arc call 'sqlite+arc://<provider-public-key>/main' \
+arc-legacy call 'sqlite+arc://<provider-public-key>/main' \
   '{"sql":"SELECT 1 AS n"}'
 ```
 

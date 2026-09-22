@@ -223,7 +223,7 @@ func Find(s *store.Store, provider nostr.PubKey, id string) (Offer, error) {
 	}
 	switch {
 	case len(offers) == 0:
-		return Offer{}, errors.New("catalog: no announcement from that provider; run arcn discover")
+		return Offer{}, errors.New("catalog: no announcement from that provider; run arc discover")
 	case len(offers) > 1 && id == "":
 		return Offer{}, errors.New("catalog: that provider offers several capabilities; name one")
 	}
@@ -295,7 +295,7 @@ func (i Installs) Add(offer Offer, as string) error {
 }
 
 // Remove takes one install out, by the name that runs it, or by the petname
-// of its provider for an install that runs through arcn call. It returns the
+// of its provider for an install that runs through arc call. It returns the
 // install that it removed.
 func (i Installs) Remove(name string) (Install, error) {
 	list, err := i.List()

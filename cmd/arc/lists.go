@@ -39,7 +39,7 @@ func listsCommand() *cobra.Command {
 		Short: "Saved sets of citizens, one for each installed command",
 		Long: "A list names a set of citizens for one installed command. Where the\n" +
 			"command takes a key, the name of a list runs it once for each member:\n" +
-			"arcn lists add dm team <key> <key>, then arcn dm send team hello.",
+			"arc lists add dm team <key> <key>, then arc dm send team hello.",
 	}
 	command.AddCommand(
 		&cobra.Command{
@@ -51,7 +51,7 @@ func listsCommand() *cobra.Command {
 					return err
 				}
 				if _, ok := installs.Named(args[0]); !ok {
-					return fmt.Errorf("no installed command %q: see arcn tool list", args[0])
+					return fmt.Errorf("no installed command %q: see arc tool list", args[0])
 				}
 				// A member is a key, in any form that a key argument takes.
 				env := &cliEnv{installs: installs}

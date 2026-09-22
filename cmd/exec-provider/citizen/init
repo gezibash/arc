@@ -5,8 +5,8 @@
 #   citizen/init --key NAME --relay URL --grant HEX [--grant HEX ...]
 #     [--platform sprite|none] [--cwd DIR] [--notify-dm]
 #
-# --key       the arcn identity of the citizen. Make it first with
-#             `arcn keys gen`.
+# --key       the arc identity of the citizen. Make it first with
+#             `arc keys gen`.
 # --relay     the Nostr relay of the citizen, for example
 #             wss://arc-nostr-gezim.fly.dev. init adds it to the identity.
 # --grant     a caller key that can run commands. A grant equals a shell login.
@@ -16,7 +16,7 @@
 # --notify-dm when a job ends, send the result to its owner as a direct
 #             message.
 #
-# The provider is the exec-provider binary next to the arcn binary, where an
+# The provider is the exec-provider binary next to the arc binary, where an
 # ARC release installs it. Set EXEC_PROVIDER to use another binary.
 set -eu
 
@@ -44,19 +44,19 @@ done
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 export PATH="$HOME/.local/bin:$PATH"
-command -v arcn >/dev/null || { echo "init: arcn is not on the PATH" >&2; exit 1; }
-public_key=$(arcn --key "$key" whoami 2>/dev/null | sed -n 2p)
-[[ $public_key =~ ^[0-9a-f]{64}$ ]] || { echo "init: no arcn identity named $key" >&2; exit 1; }
-arcn --key "$key" relay add "$relay"
+command -v arc >/dev/null || { echo "init: arc is not on the PATH" >&2; exit 1; }
+public_key=$(arc --key "$key" whoami 2>/dev/null | sed -n 2p)
+[[ $public_key =~ ^[0-9a-f]{64}$ ]] || { echo "init: no arc identity named $key" >&2; exit 1; }
+arc --key "$key" relay add "$relay"
 
-provider=${EXEC_PROVIDER:-$(dirname "$(readlink -f "$(command -v arcn)")")/exec-provider}
+provider=${EXEC_PROVIDER:-$(dirname "$(readlink -f "$(command -v arc)")")/exec-provider}
 [ -x "$provider" ] || { echo "init: $provider is not a program. Install ARC with install.sh, or set EXEC_PROVIDER." >&2; exit 1; }
 
 # A wake hook runs with the environment of the caller, so citizen.env names
-# the arcn home of the citizen.
+# the arc home of the citizen.
 cat > "$here/citizen.env" <<ENV
-ARCN_HOME=${ARCN_HOME:-$HOME/.config/arc/next}
-ARCN_KEY=$key
+ARC_HOME=${ARC_HOME:-$HOME/.config/arc/next}
+ARC_KEY=$key
 CITIZEN_RELAY=$relay
 EXEC_CONFIG=$here/config.json
 EXEC_PROVIDER=$provider

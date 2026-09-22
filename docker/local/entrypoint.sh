@@ -23,9 +23,9 @@ prepare_identity() {
     for key_file in "$config_dir"/keys/*.toml; do
       [ ! -e "$key_file" ] || fail "Keys exist without a default; restore $config_dir/default.key."
     done
-    arc keys gen >/dev/null
+    arc-legacy keys gen >/dev/null
   fi
-  identity=$(arc whoami)
+  identity=$(arc-legacy whoami)
   identity_name=$(printf '%s\n' "$identity" | sed -n 1p)
   identity_public=$(printf '%s\n' "$identity" | sed -n 2p)
   case "$identity_name" in ''|*[!a-z0-9-]*) fail "Could not read active identity name." ;; esac
@@ -49,12 +49,12 @@ case "${1:-}" in
     provider=$1
     prepare_identity
     configure_relay
-    exec arc serve "/opt/arc-providers/$provider"
+    exec arc-legacy serve "/opt/arc-providers/$provider"
     ;;
   client)
     shift
     configure_relay
-    exec arc "$@"
+    exec arc-legacy "$@"
     ;;
   info)
     port=${ARC_LOCAL_PORT:-7331}

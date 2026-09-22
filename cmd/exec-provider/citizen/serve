@@ -3,7 +3,7 @@
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 . "$here/citizen.env"
-export ARCN_HOME ARCN_KEY EXEC_CONFIG EXEC_PROVIDER
+export ARC_HOME ARC_KEY EXEC_CONFIG EXEC_PROVIDER
 export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
 cd "$here"
 
@@ -28,4 +28,4 @@ while [ "$attempt" -lt 30 ]; do
   sleep 1
 done
 
-exec arcn serve "exec://$EXEC_PROVIDER?manifest=$here/manifest.json"
+exec arc serve "exec://$EXEC_PROVIDER?manifest=$here/manifest.json"

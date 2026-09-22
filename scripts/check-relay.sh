@@ -23,9 +23,9 @@ fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 # keyfile names the key file of the one identity of a home.
 keyfile() { echo "$work/$1"/citizens/*/key; }
 
-(cd "$root" && go build -o "$work/arcn" ./cmd/arcn && go build -o "$work/exec-provider" ./cmd/exec-provider)
-a() { "$work/arcn" --home "$work/laptop" "$@"; }
-b() { "$work/arcn" --home "$work/desktop" "$@"; }
+(cd "$root" && go build -o "$work/arc" ./cmd/arc && go build -o "$work/exec-provider" ./cmd/exec-provider)
+a() { "$work/arc" --home "$work/laptop" "$@"; }
+b() { "$work/arc" --home "$work/desktop" "$@"; }
 
 a keys gen > /dev/null
 b keys add < "$(keyfile laptop)" > /dev/null
@@ -42,8 +42,8 @@ printf 'sealed through %s\n' "$url" | a journal write "$page" > /dev/null || fai
 [ "$(b journal read "$page")" = "sealed through $url" ] || fail "the other machine read $(b journal read "$page" 2>&1)"
 say "a sealed page crosses the relay, after NIP-42 authentication"
 
-provider() { "$work/arcn" --home "$work/exec" "$@"; }
-caller() { "$work/arcn" --home "$work/caller" "$@"; }
+provider() { "$work/arc" --home "$work/exec" "$@"; }
+caller() { "$work/arc" --home "$work/caller" "$@"; }
 provider keys gen > /dev/null
 provider relay add "$url"
 caller keys gen > /dev/null
@@ -53,7 +53,7 @@ caller_key="$(caller whoami | sed -n 2p)"
 
 mkdir -p "$work/jobs"
 printf '{"grants": ["%s"], "cwd": "%s", "jobs_dir": "%s/jobs"}\n' "$caller_key" "$work" "$work" > "$work/exec.json"
-EXEC_CONFIG="$work/exec.json" "$work/arcn" --home "$work/exec" serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" > "$work/serve.log" 2>&1 &
 serve_pid=$!
 for _ in $(seq 1 100); do grep "serves" "$work/serve.log" > /dev/null 2>&1 && break; sleep 0.1; done

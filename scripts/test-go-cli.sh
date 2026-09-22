@@ -7,7 +7,7 @@ set -euo pipefail
 
 # The test stands on its own: the relay of the machine, the key of the shell
 # and the pin of the shell must not reach it.
-unset ARC_RELAY ARC_RELAY_PUBKEY ARC_KEY
+unset ARC_RELAY ARC_RELAY_PUBKEY ARC_LEGACY_KEY
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
@@ -32,14 +32,17 @@ say() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 
 cd "$root"
-go build -o "$work/arc" ./cmd/arc
+go build -o "$work/arc-legacy" ./cmd/arc-legacy
 go build -o "$work/arc-relay" ./cmd/arc-relay
 go build -o "$work/exec-provider" ./cmd/exec-provider
 go build -o "$work/echo-provider" ./citizen/testdata/echo
 go build -o "$work/dm-provider" ./cmd/dm-provider
 say "the binaries build"
+"$work/arc-legacy" version 2>&1 > /dev/null | grep "arc-legacy is deprecated" > /dev/null ||
+  fail "arc-legacy wrote no deprecation notice"
+say "arc-legacy says that it is deprecated"
 
-arc() { "$work/arc" --store "$work" "$@"; }
+arc() { "$work/arc-legacy" --store "$work" "$@"; }
 
 # The relay runs on a free port, and prints its key.
 # --generate makes the first key of the store, and the relay keeps it.
@@ -87,22 +90,22 @@ say "arc status reads the relay"
 
 # Status asks with a temporary identity, so it needs no key of its own.
 mkdir -p "$work/empty"
-"$work/arc" --store "$work/empty" status --relay "$relay_address" --relay-pubkey "$relay_key" |
+"$work/arc-legacy" --store "$work/empty" status --relay "$relay_address" --relay-pubkey "$relay_key" |
   grep "state    running" > /dev/null || fail "arc status needs a key"
 say "arc status needs no key"
 
 # Join shows the key of a new relay, and pins it only after a yes. On a
 # machine with no key, it makes the first one.
 mkdir -p "$work/fresh"
-if printf 'no\n' | "$work/arc" --store "$work/fresh" join "$relay_address" > "$work/join-no.txt" 2>&1; then
+if printf 'no\n' | "$work/arc-legacy" --store "$work/fresh" join "$relay_address" > "$work/join-no.txt" 2>&1; then
   fail "join pinned a relay that was not trusted"
 fi
 [ -e "$work/fresh/relays.json" ] && fail "a refused join saved the relay"
-printf 'yes\n' | "$work/arc" --store "$work/fresh" join "$relay_address" > "$work/join-yes.txt" 2>&1 ||
+printf 'yes\n' | "$work/arc-legacy" --store "$work/fresh" join "$relay_address" > "$work/join-yes.txt" 2>&1 ||
   fail "join failed: $(cat "$work/join-yes.txt")"
 grep -q "$relay_key" "$work/join-yes.txt" || fail "join did not show the key: $(cat "$work/join-yes.txt")"
 grep -q "made the identity" "$work/join-yes.txt" || fail "join made no identity: $(cat "$work/join-yes.txt")"
-"$work/arc" --store "$work/fresh" whoami | grep "chosen by default.key" > /dev/null ||
+"$work/arc-legacy" --store "$work/fresh" whoami | grep "chosen by default.key" > /dev/null ||
   fail "the new identity is not the default"
 say "arc join asks before it pins a relay, and makes the first key"
 
@@ -118,7 +121,7 @@ cat > "$work/exec.json" <<JSON
 JSON
 mkdir -p "$work/jobs"
 
-EXEC_CONFIG="$work/exec.json" "$work/arc" --store "$work" serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc-legacy" --store "$work" serve \
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \
   > "$work/serve.log" 2>"$work/serve.err" &
 serve_pid=$!
@@ -185,7 +188,7 @@ cat > "$work/wake-exec" <<SCRIPT
 #!/bin/sh
 # The start script of the citizen: serve again, and exit 0 when ready.
 echo woke >> "$work/woke"
-EXEC_CONFIG="$work/exec.json" "$work/arc" --store "$work" serve \\
+EXEC_CONFIG="$work/exec.json" "$work/arc-legacy" --store "$work" serve \\
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \\
   > "$work/serve-woken.log" 2>"$work/serve-woken.err" < /dev/null &
 for _ in \$(seq 1 50); do
@@ -244,7 +247,7 @@ say "a call to a citizen that is not there fails at once with peer_offline"
 # A capability with a command line becomes a command of arc.
 caller keys gen > /dev/null 2>&1 || true
 
-EXEC_CONFIG="$work/exec.json" "$work/arc" --store "$work" --key "$echo_name" serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc-legacy" --store "$work" --key "$echo_name" serve \
   "exec://$work/echo-provider?manifest=$root/citizen/testdata/echo/cli-manifest.json" \
   > "$work/echo.log" 2>"$work/echo.err" &
 echo_pid=$!
@@ -285,7 +288,7 @@ kill "$echo_pid" 2>/dev/null || true
 # One citizen listens, and another sends it a message. A third identity
 # takes this, because one identity holds one route at a time.
 stranger_key="$(arc --key "$stranger_name" whoami | sed -n 2p)"
-"$work/arc" --store "$work" --key "$stranger_name" listen > "$work/listen.log" 2>&1 &
+"$work/arc-legacy" --store "$work" --key "$stranger_name" listen > "$work/listen.log" 2>&1 &
 listen_pid=$!
 
 for _ in $(seq 1 50); do
@@ -321,7 +324,7 @@ arc keys gen > "$work/dm.txt"
 dm_name="$(head -1 "$work/dm.txt")"
 dm_key="$(tail -1 "$work/dm.txt")"
 
-DM_ROOT="$work/dm" "$work/arc" --store "$work" --key "$dm_name" serve \
+DM_ROOT="$work/dm" "$work/arc-legacy" --store "$work" --key "$dm_name" serve \
   "exec://$work/dm-provider?manifest=$root/cmd/dm-provider/manifest.json" \
   > "$work/dm.log" 2>"$work/dm.err" &
 dm_pid=$!
@@ -392,7 +395,7 @@ arc keys gen > "$work/app.txt"
 app_name="$(head -1 "$work/app.txt")"
 app_key="$(tail -1 "$work/app.txt")"
 
-"$work/arc" --store "$work" --key "$app_name" serve "$work/hello-app" > "$work/app.log" 2>"$work/app.err" &
+"$work/arc-legacy" --store "$work" --key "$app_name" serve "$work/hello-app" > "$work/app.log" 2>"$work/app.err" &
 app_pid=$!
 
 for _ in $(seq 1 50); do

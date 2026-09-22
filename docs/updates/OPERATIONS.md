@@ -26,32 +26,34 @@ Each command takes:
 | `--channel` | The channel to read. The default is `stable` |
 | `--program` | The program to replace. The default is this one |
 
-The relay comes from `arc join`, from `ARC_RELAY`, or from `--relay`. The
+The relays are the relays of the identity, from `arc relay add`. The
 identity comes from `arc keys use`, from `ARC_KEY`, or from `--key`.
 
 ## What one run does
 
-1. Connects to the relay as the active citizen, the way `arc call` does.
-2. Asks the provider for the channel document.
-3. Verifies the document: the publisher signed it, the signature covers the
+1. Asks the provider for the channel document with a live call, the way
+   `arc call` does. Before the call, `arc` runs the wake hook of the
+   provider, when it has one.
+2. Verifies the document: the publisher signed it, the signature covers the
    canonical bytes under a domain that names the schema, the channel is the
    one that was asked for, the document has not expired, and its sequence
    does not go backwards.
-4. Selects the newest release for this operating system and CPU that carries
+3. Selects the newest release for this operating system and CPU that carries
    an archive and is eligible. A lower version is never installed.
-5. Reports what it found. `apply` continues.
-6. Downloads the archive through the relay in bounded chunks, and checks its
-   length and its SHA-256.
-7. Reads one program out of the archive. A member that is not a regular file,
+4. Reports what it found. `apply` continues.
+5. Downloads the archive through the relay in chunks of 64 KiB, and checks
+   its length and its SHA-256.
+6. Reads one program out of the archive. A member that is not a regular file,
    or whose path escapes its directory, is refused.
-8. Writes the candidate beside the target, runs it once to prove that it
+7. Writes the candidate beside the target, runs it once to prove that it
    starts and reports the expected version, and only then renames it over the
    target. The old program becomes `<name>.previous`.
 
 ## What one machine remembers
 
-`~/.config/arc/update/<publisher>/<channel>.json` holds the highest sequence
-that this machine accepted, and the digest of that document.
+`<identity directory>/update/<publisher>/<channel>.json` holds the highest
+sequence that this identity accepted, and the digest of that document. The
+identity directory is `~/.config/arc/next/citizens/<name>`.
 
 A publisher, a provider, or anyone between them could otherwise serve an
 older document and hold the citizen on an old release. The signature of an
@@ -89,16 +91,14 @@ document:
 A release without `install` is reported as the latest of the channel, and
 cannot be installed.
 
-Signing needs the publisher key. `release.Sign` in the `release` package
-signs a document. **There is no command that publishes a channel.** The
-Elixir tool that did this went with the Elixir tree. Write a Go one before
-you publish.
+Signing needs the publisher key, a Nostr key. `arc release sign` checks the
+archives, signs the document, and writes it for the provider. See
+[publishing signed channels](PUBLISHING.md).
 
 ## After an update
 
-Restart each service that runs the old program. `arc status` reports the
-relay that answers now, not the program on disk. To see the program, run
-`arc version`.
+Restart each service that runs the old program. To see the program on disk,
+run `arc version`.
 
 If the new program does not start, the old one is still there as
 `<name>.previous`. Move it back.

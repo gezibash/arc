@@ -8,7 +8,7 @@ import (
 	"github.com/gezibash/arc/delivery/keys"
 )
 
-func arcn(t *testing.T, home string, args ...string) error {
+func arc(t *testing.T, home string, args ...string) error {
 	t.Helper()
 	command := root()
 	command.SetArgs(append([]string{"--home", home}, args...))
@@ -26,14 +26,14 @@ func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
 	l.Close()
 
 	home := t.TempDir()
-	if err := arcn(t, home, "keys", "gen"); err != nil {
+	if err := arc(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)
 	}
-	if err := arcn(t, home, "relay", "add", dead); err != nil {
+	if err := arc(t, home, "relay", "add", dead); err != nil {
 		t.Fatal(err)
 	}
 	provider := keys.Generate().Public.Hex()
-	err = arcn(t, home, "install", provider, "journal", "--yes")
+	err = arc(t, home, "install", provider, "journal", "--yes")
 	if err == nil || !strings.Contains(err.Error(), "no relay answered") || !strings.Contains(err.Error(), dead) {
 		t.Fatalf("install returned %v, want an error that names the relay %s", err, dead)
 	}

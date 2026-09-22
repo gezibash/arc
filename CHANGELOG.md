@@ -6,22 +6,40 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-22
+
+`arc` now runs the delivery layer on Nostr events, and the older program is
+`arc-legacy`. This is step 4 of the switchover in `docs/delivery/SPEC.md`,
+section 15.1. `arc` of 0.9.0 cannot update to this release: install it with
+`install.sh`. Move each identity by hand: `arc keys gen` makes a new one, and
+the older keys stay with `arc-legacy`.
+
 ### Added
 
-- Before a live call, `arcn` runs the wake hook of the provider from
+- Before a live call, `arc` runs the wake hook of the provider from
   `<home>/wake.toml`. Without a hook, the provider needs an announcement
   that is at most 5 minutes old, or the call stops with `peer_offline`.
-  `arcn serve` signs its announcement again every 2 minutes.
-- `arcn lists add`, `rm` and `ls` save sets of citizens for one installed
+  `arc serve` signs its announcement again every 2 minutes.
+- `arc lists add`, `rm` and `ls` save sets of citizens for one installed
   command. Where the command takes a key, the name of a list runs it once for
   each member.
-
-- `arcn update`, `update check` and `update apply` read a signed release
+- `arc update`, `update check` and `update apply` read a signed release
   channel from a releases provider with live calls, and replace the program.
-- `arcn release sign` checks the archives of a channel, signs it, and writes
+- `arc release sign` checks the archives of a channel, signs it, and writes
   it for the releases provider.
 
 ### Changed
+
+- **Breaking:** `arc` is the program of the delivery layer, built from
+  `cmd/arc`. Up to 0.9.0 it was `arcn`. It reads `ARC_HOME`, `ARC_KEY` and
+  `ARC_PASSPHRASE`, where `arcn` read `ARCN_HOME`, `ARCN_KEY` and
+  `ARCN_PASSPHRASE`. Its home stays `~/.config/arc/next` until 0.11.0.
+- **Breaking:** the older program is `arc-legacy`, built from
+  `cmd/arc-legacy`. It writes a deprecation notice to standard error on each
+  run, and 0.11.0 removes it. `arc-legacy` and `arc-relay` read the identity
+  from `ARC_LEGACY_KEY`, where they read `ARC_KEY`. `install.sh` links only
+  `arc`.
+- The local Compose stack runs `arc-legacy`.
 
 - **Breaking:** a release channel has schema 3. Its publisher is a Nostr key,
   and its signature is BIP-340 Schnorr. This build does not read schemas 1
@@ -29,13 +47,15 @@ All notable changes to ARC are recorded here. The format follows
   with `install.sh`.
 - `release.ChunkBytes` is 64 KiB, so that one reply fits in an event of
   256 KiB on a relay.
-- The citizen scripts of the exec provider run `arcn serve`. `citizen/init`
+- The citizen scripts of the exec provider run `arc serve`. `citizen/init`
   takes `--relay` as a Nostr relay URL, and no longer takes
   `--relay-pubkey`.
 
 ### Fixed
 
-- `arcn --version` prints the version. Before, it failed, and `arcn update`
+- `arc -v` prints the version, as `arc --version` does.
+
+- `arc --version` prints the version. Before, it failed, and `arc update`
   could not check a new program.
 - Two equal live calls in one second are both answered. Each request rumor
   carries a `nonce` tag. Before, the provider refused the second call as a

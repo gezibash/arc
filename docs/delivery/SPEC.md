@@ -511,7 +511,7 @@ cannot bring a deleted event back.
   author. An ARC relay therefore asks for NIP-42 authentication, or for
   NIP-13 proof of work, before it accepts a gift wrap.
 
-`arcn relay serve` applies these limits when its flags turn them on, see
+`arc relay serve` applies these limits when its flags turn them on, see
 docs/DEPLOY.md. A relay also caps the size of one event and the rate of
 events from one IP address.
 
@@ -553,7 +553,7 @@ recipient does not learn who wrote to them.
 | `wake` | kept; the hook runs before a call on the node, see 15.1 |
 | `control` | removed; the node store answers who this citizen is |
 | `cmd/arc-relay` | `arc relay serve`, a khatru relay |
-| `cmd/arc` and `cmd/arcn` | one program, `arc`, built from `cmd/arcn`, see 15.1 |
+| `cmd/arc` and `cmd/arcn` | one program, `arc`, built from the former `cmd/arcn`, see 15.1 |
 
 ## 15. Phases
 
@@ -561,7 +561,7 @@ Each phase ends with its proof. A phase that does not pass its proof does not
 merge.
 
 Phases 1 and 2 are built: the packages under `delivery/` and the command
-`arcn`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
+`arc`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
 journal manifest of the capability interface.
 Phase 2 adds `delivery/private` for gift wraps and route tags, and
 `delivery/mail` for the outbox, acknowledgements and couriers. Sync compares
@@ -576,11 +576,11 @@ Phase 3 adds `delivery/catalog` for announcements, discovery and installs,
 and `delivery/call` for both classes of call. A live call subscribes, waits
 until the relay has taken the subscription, and only then sends, all on one
 connection, because a relay never stores the ephemeral reply. On a local relay,
-a live call to `exec` takes about 10 ms for the round trip. `arcn call` calls
+a live call to `exec` takes about 10 ms for the round trip. `arc call` calls
 a capability with a raw body. The capability interface, docs/interface/SPEC.md,
 now declares the commands of a capability. The journal adds one thing that
 the phase names: a page travels as parts of at most 32 KiB, so it fits the
-event limit of common relays, and `arcn journal tail` streams text as it is
+event limit of common relays, and `arc journal tail` streams text as it is
 appended.
 
 | Phase | Scope | Proof |
@@ -594,17 +594,18 @@ appended.
 
 ### 15.1 The switchover
 
-Phase 4 makes the delivery layer the only ARC stack. The program `arc` is
-built from `cmd/arcn`. The older program stays for one release as
-`arc-legacy`, and is then removed. Each step below is one pull request.
+Phase 4 makes the delivery layer the only ARC stack. Until step 4, the
+program of this layer was `arcn`, built from `cmd/arcn`. Step 4 moves it to
+`cmd/arc`, as the program `arc`. The older program stays for one release as
+`arc-legacy`, built from `cmd/arc-legacy`, and is then removed. Each step below is one pull request.
 
 | Step | Work | Proof |
 | --- | --- | --- |
 | 1 | Port the commands of the older `arc` that the table below marks "port". | Each ported command has a test at the command line. `mise run delivery` and `mise run interface` pass. |
 | 2 | Deploy a khatru relay on Fly. The operator runs the deploy. The older relay on Fly is stopped. | `arc relay add` takes the new relay, and a live call to `exec` crosses it. |
 | 3 | Port `update` and `lists`, see the table below. Port the wake flow to the node. Before a call to a citizen with a wake hook, the node runs the hook, as `wake` does today. A citizen without a hook must have a current announcement of kind 30272. The Sprite serves `exec` on this layer through the relay of step 2. | A call to `exec` on a paused Sprite wakes it, and the reply arrives. |
-| 4 | Build `cmd/arcn` as `arc`, and the older `cmd/arc` as `arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. Release v0.10.0. | `arc update apply` from v0.9.0 installs the new `arc`. |
-| 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Release v0.11.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
+| 4 | Move `cmd/arcn` to `cmd/arc`, and the older `cmd/arc` to `cmd/arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. `arc` reads `ARC_HOME`, `ARC_KEY` and `ARC_PASSPHRASE`, and its home stays `~/.config/arc/next` until step 5. `arc-legacy` and `arc-relay` read `ARC_LEGACY_KEY`. Release v0.10.0. A machine of v0.9.0 installs v0.10.0 with `install.sh`, because `arc update` of v0.9.0 reads only the older stack. | `arc update apply` of v0.10.0 installs a later signed build. `mise run delivery` proves it, from a build that reports 0.9.0 to 9.9.9. |
+| 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Move the home of `arc` from `~/.config/arc/next` to `~/.config/arc`. Release v0.11.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
 
 The commands of `arc` after step 4:
 
