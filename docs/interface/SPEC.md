@@ -510,7 +510,7 @@ the citizen's identity, or core makes them itself:
 | 3272, 3273, 3274 | Calls and acknowledgements. Core makes them. |
 | 9734, 9735 | Zaps. |
 | 10002, 10013, 10050 | Relay lists. |
-| 10272, 30272 | Migration records and announcements. |
+| 10272, 30272 | A kind that ARC keeps unused, and announcements. |
 | 39000 to 39009 | The state of a NIP-29 group, which only its relay signs. |
 | 13194, 23194, 23195 | Wallet connect. |
 | 22242, 24133, 27235 | Authentication and remote signing. |

@@ -2,7 +2,8 @@
 
 Status: phases 1 to 3 are built, see section 15. The rest is proposed. The older ARC
 code uses its own protocol: Ed25519 keys, live sessions, and routed relays.
-Section 14 lists what changes.
+Section 14 lists what changes. Phase 4, section 15.1, makes this layer the
+only ARC stack and removes the older code.
 
 ## 1. Purpose
 
@@ -82,38 +83,12 @@ transport. The delivery layer never reads a private payload.
 - A citizen uses one key on every transport. ARC does not keep a second key
   for the mesh.
 
-### 5.1 Migration from an Ed25519 key
+### 5.1 Ed25519 keys
 
-A citizen with an ARC Ed25519 key moves to a new secp256k1 key once. The new
-key publishes a migration record: an event of kind 10272, which is
-replaceable.
-
-```json
-{
-  "kind": 10272,
-  "pubkey": "<new secp256k1 public key>",
-  "content": "",
-  "tags": [
-    ["ed25519", "<old Ed25519 public key, 64 hex>"],
-    ["proof", "<Ed25519 signature, 128 hex>"]
-  ]
-}
-```
-
-The Ed25519 signature covers these bytes:
-
-```text
-"ARC-MIGRATE-V1" || 0x00 || new public key (32 bytes) || old public key (32 bytes)
-```
-
-- The new key signs the event, so the record proves that the citizen holds the
-  new key.
-- The old key signs the proof, so the record proves that the old key agreed.
-- A node that trusted the old key trusts the new key the same way: its
-  petname, its signer trust, and its installed capabilities.
-- If two records name different new keys for one old key, the node trusts
-  neither. It reports both to the citizen, because this means that someone
-  else holds the old key.
+ARC does not move an Ed25519 key to a secp256k1 key. A citizen of the older
+stack makes a new key, installs its capabilities again, and trusts their
+signers again. One operator runs all the Ed25519 citizens, so a migration
+record costs more than it saves.
 
 ## 6. The unit
 
@@ -562,7 +537,12 @@ cannot bring a deleted event back.
 | `cmd/dm-provider` | NIP-17 direct messages; no provider needed |
 | `cmd/journal-provider` | data that the citizen keeps for itself; no provider needed |
 | `cmd/agora-provider` | public events on a relay; no provider needed |
+| `cmd/files-provider` | the files manifest of docs/interface/SPEC.md; no provider needed |
 | `cmd/exec-provider`, `cmd/sqlite-provider`, `cmd/releases-provider` | kept, answering calls |
+| `wake` | kept; the hook runs before a call on the node, see 15.1 |
+| `control` | removed; the node store answers who this citizen is |
+| `cmd/arc-relay` | `arc relay serve`, a khatru relay |
+| `cmd/arc` and `cmd/arcn` | one program, `arc`, built from `cmd/arcn`, see 15.1 |
 
 ## 15. Phases
 
@@ -597,8 +577,42 @@ appended.
 | 1 | Identity, events, the store, the router, and the relay and file transports | Two machines sync a journal through a relay, then through a USB stick. A changed event is refused. |
 | 2 | The outbox, acknowledgements, route tags, couriers, and sync | A message reaches an offline recipient through a third machine that carries a USB stick. |
 | 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay, and the round-trip time is recorded. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. |
-| 4 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. |
-| 5 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. |
+| 4 | The switchover: `arc` runs on this layer only, and the older stack is removed, see 15.1 | See 15.1. |
+| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. |
+| 6 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. |
+
+### 15.1 The switchover
+
+Phase 4 makes the delivery layer the only ARC stack. The program `arc` is
+built from `cmd/arcn`. The older program stays for one release as
+`arc-legacy`, and is then removed. Each step below is one pull request.
+
+| Step | Work | Proof |
+| --- | --- | --- |
+| 1 | Port the commands of the older `arc` that the table below marks "port". | Each ported command has a test at the command line. `mise run delivery` passes. |
+| 2 | Deploy a khatru relay beside the older relay on Fly. The operator runs the deploy. | `arc relay add` takes the new relay, and a live call to `exec` crosses it. |
+| 3 | Port the wake flow to the node. Before a call to a citizen with a wake hook, the node runs the hook, as `wake` does today. A citizen without a hook must have a current announcement of kind 30272. The Sprite serves `exec` on this layer through the relay of step 2. | A call to `exec` on a paused Sprite wakes it, and the reply arrives. |
+| 4 | Build `cmd/arcn` as `arc`, and the older `cmd/arc` as `arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. Release v0.9.0. | `arc update apply` from v0.8.0 installs the new `arc`. |
+| 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Stop the older relay. Release v0.10.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
+
+The commands of `arc` after step 4:
+
+| Command | Source | Note |
+| --- | --- | --- |
+| `keys gen`, `list`, `use`, `remove`, `whoami` | port | Named secp256k1 keys. A key can be a NIP-49 sealed key or a NIP-46 bunker, as `arcn key` allows today. |
+| `trust list`, `allow`, `deny` | port | Signers are secp256k1 public keys. |
+| `tool list`, `remove`, `pin`, `unpin`, `info` | port | `toolbox` is kept. |
+| `lists add`, `rm`, `ls` | port | Members are secp256k1 public keys. |
+| `apps init` | port | Bundles are kept. |
+| `cache` | port | The cache is local. |
+| `resolve` | port | Petnames derive from the secp256k1 key. |
+| `info <public key> [capability]` | port | It reads the announcement of kind 30272. |
+| `version`, `update check`, `update apply` | port | The release channel is kept. |
+| `discover`, `install`, `call`, `results`, `serve`, `announce` | `arcn` | — |
+| `relay add`, `rm`, `ls`, `serve` | `arcn` | They replace `join` and `relay status`. `relay ls` shows the NIP-11 document of each relay. |
+| `message send`, `inbox`, `outbox` | `arcn` | They replace `send` and `listen`. |
+| `sync` | `arcn` | — |
+| `publish` | removed | The node store replaces the control plane. |
 
 ## 16. Decisions
 
@@ -613,14 +627,14 @@ registry uses these numbers:
 | 3273 | regular | a call reply, inside a gift wrap |
 | 3274 | regular | an acknowledgement, inside a gift wrap |
 | 3275 | regular | one continuation part of sealed content longer than 32 KiB |
-| 10272 | replaceable | a migration record, see 5.1 |
+| 10272 | replaceable | reserved, and not used, see 5.1 |
 | 30272 | addressable | a capability announcement |
 
 Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
 data, such as a journal page, a KPI series or a file, is a NIP-37 draft of
 kind 31234, with checkpoints of kind 1234 and a relay list of kind 10013. A
 part of kind 3275 carries only content past the first 32 KiB of a draft. See
-docs/interface/SPEC.md, section 7.2. ARC registers its six kinds in the
+docs/interface/SPEC.md, section 7.2. ARC registers its five kinds in the
 registry.
 
 ### 16.2 The route tag
@@ -639,7 +653,7 @@ D-Bus. If the change does not fit that library, ARC calls BlueZ through
 
 A macOS node is a Bluetooth central only in the first version. The
 CoreBluetooth bindings under the Go library aim to cover all of CoreBluetooth,
-which includes the peripheral manager. A spike after phase 4 decides whether a
+which includes the peripheral manager. A spike after phase 5 decides whether a
 macOS node can become a full mesh node.
 
 ### 16.5 LoRa
@@ -671,5 +685,5 @@ A capability announcement is public, so it moves by sync, not by couriers.
 | Item | Why it waits | When to decide |
 | --- | --- | --- |
 | The TLS direct carrier as a live transport | Relays can carry live calls: about 10 ms for a round trip on a local relay. | After a round trip is measured through a public relay. |
-| A full macOS mesh node | It needs a peripheral backend in Go. | After phase 4, see 16.4. |
+| A full macOS mesh node | It needs a peripheral backend in Go. | After phase 5, see 16.4. |
 | A bridge to bitchat direct messages | bitchat's Nostr envelopes are not NIP-17. Only the citizen's own node can translate them, because translation needs the private key. | When ARC direct messages must reach bitchat users. |
