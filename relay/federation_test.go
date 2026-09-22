@@ -38,7 +38,8 @@ func listen(t *testing.T, me *identity.Identity, transit bool, peers ...relay.Pe
 
 // chain starts relays that each approve the one before and the one after,
 // and returns them in order. Only the relays in the middle pass traffic on.
-func chain(t *testing.T, count int) []*relay.Relay {
+// extra adds partners to the first relay of the chain.
+func chain(t *testing.T, count int, extra ...relay.Peer) []*relay.Relay {
 	t.Helper()
 
 	// The relay with the lower key dials, so the keys rise along the chain
@@ -74,6 +75,9 @@ func chain(t *testing.T, count int) []*relay.Relay {
 			peers = append(peers, peer)
 		}
 
+		if index == 0 {
+			peers = append(peers, extra...)
+		}
 		servers[index] = listen(t, identities[index], index > 0 && index < count-1, peers...)
 	}
 	return servers

@@ -31,6 +31,19 @@ func lookupRequest(kind, query, id string, budget int, path ...[]byte) map[strin
 
 func lookupID(n byte) string { return strings.Repeat(hex.EncodeToString([]byte{n}), 16) }
 
+// linked waits until each relay of the chain has a ready link to the next.
+func linked(t *testing.T, relays []*relay.Relay) {
+	t.Helper()
+	waitFor(t, "the links of the chain are ready", func() bool {
+		for index := 1; index < len(relays); index++ {
+			if relays[index-1].LinkTo(relays[index].PublicKey()) == nil || relays[index].LinkTo(relays[index-1].PublicKey()) == nil {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func keyOf(t *testing.T) []byte {
 	t.Helper()
 	me, err := identity.Generate()
@@ -44,12 +57,13 @@ func keyOf(t *testing.T) []byte {
 // carries a packet at once.
 func TestALiveLookupFindsANameAcrossTheChain(t *testing.T) {
 	relays := chain(t, 3)
+	linked(t, relays)
 	provider, waiting := serving(t, relays[2], announce.Network)
 	caller, from := citizen(t, relays[0])
 	ctx := context.Background()
 
-	// One try: the catalog syncs every two seconds, so a retry could find
-	// the name without a live lookup.
+	// One try, at once: the catalog syncs every two seconds, so a retry
+	// could find the name without a live lookup.
 	entries, err := from.Resolve(ctx, provider.Name())
 	if err != nil || len(entries) != 1 || entries[0]["public_key"] != provider.EncodePublicKey() {
 		t.Fatalf("the name gave %v, %v", entries, err)
@@ -81,14 +95,18 @@ func TestALiveLookupFindsANameAcrossTheChain(t *testing.T) {
 }
 
 // A search of a cold catalog asks the partners, and finds a publisher that
-// is two relays away.
+// is two relays away. A partner that never links keeps the catalog of the
+// first relay cold.
 func TestASearchAsksThePartnersOfAColdCatalog(t *testing.T) {
-	relays := chain(t, 3)
+	ghost, _ := identity.Generate()
+	relays := chain(t, 3, relay.Peer{PublicKey: ghost.PublicKey, Address: "127.0.0.1:1"})
+	linked(t, relays)
 	provider, _ := serving(t, relays[2], announce.Network)
 	_, from := citizen(t, relays[0])
 	ctx := context.Background()
 
-	// One try, before the catalog of the first relay syncs.
+	// One try, at once, before the catalog of the first relay holds the
+	// publisher.
 	page, err := from.Search(ctx, "exec", 10, "")
 	if err != nil {
 		t.Fatal(err)
@@ -164,10 +182,7 @@ func TestALookupIDThatComesBackIsPartial(t *testing.T) {
 func TestABudgetThatRunsOutIsPartial(t *testing.T) {
 	relays := chain(t, 3)
 	origin := relays[0].PublicKey()
-
-	waitFor(t, "the middle relay links both ends", func() bool {
-		return relays[1].LinkTo(relays[0].PublicKey()) != nil && relays[1].LinkTo(relays[2].PublicKey()) != nil
-	})
+	linked(t, relays)
 
 	spent := relays[1].AnswerLookup(origin, lookupRequest("search", "", lookupID(20), 1, origin))
 	if spent["partial"] != true {
