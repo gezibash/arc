@@ -16,7 +16,7 @@ import (
 //	[identity]
 //	seed = "<64 characters of hex>"
 //
-// The active identity comes from ARC_KEY, then arc.key in the current
+// The active identity comes from ARC_LEGACY_KEY, then arc.key in the current
 // directory, then ~/.config/arc/default.key. Each of these holds a petname or
 // a prefix of one, and never a secret. Older installations wrote
 // ~/.config/arc/default_key; the store reads it only when default.key is
@@ -228,18 +228,18 @@ type Source string
 
 // The selectors, in the order that the store reads them.
 const (
-	FromEnvironment   Source = "ARC_KEY"
+	FromEnvironment   Source = "ARC_LEGACY_KEY"
 	FromDirectory     Source = "arc.key"
 	FromDefault       Source = "default.key"
 	FromLegacyDefault Source = "default_key"
 )
 
-// Active resolves the identity of this shell: ARC_KEY, then arc.key in the
+// Active resolves the identity of this shell: ARC_LEGACY_KEY, then arc.key in the
 // current directory, then the default key. A selector that is there but does
 // not fit a key is an error, and never falls through. Only a selector that
 // is absent lets the next one answer.
 func (s *Store) Active() (*Identity, Source, error) {
-	if name := os.Getenv("ARC_KEY"); name != "" {
+	if name := os.Getenv("ARC_LEGACY_KEY"); name != "" {
 		me, err := s.Select(FromEnvironment, name)
 		return me, FromEnvironment, err
 	}

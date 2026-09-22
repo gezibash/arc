@@ -1,7 +1,7 @@
 #!/bin/bash
 # The proofs of phases A to D of docs/interface/SPEC.md. Two providers announce
 # manifests of interface version 1. A caller installs them, and runs their
-# commands as commands of arcn, with no code for them in arcn.
+# commands as commands of arc, with no code for them in arc.
 #
 #     mise run interface
 set -euo pipefail
@@ -30,29 +30,29 @@ fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 keyfile() { echo "$work/$1"/citizens/*/key; }
 
 cd "$root"
-go build -o "$work/arcn" ./cmd/arcn
+go build -o "$work/arc" ./cmd/arc
 go build -o "$work/exec-provider" ./cmd/exec-provider
 go build -o "$work/sqlite-provider" ./cmd/sqlite-provider
-say "arcn and two providers build"
+say "arc and two providers build"
 
-"$work/arcn" --home "$work/relay" relay serve --listen 127.0.0.1:0 > "$work/relay.log" 2>&1 &
+"$work/arc" --home "$work/relay" relay serve --listen 127.0.0.1:0 > "$work/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 50); do grep "listens on" "$work/relay.log" > /dev/null 2>&1 && break; sleep 0.1; done
 url="$(sed -n 's/^relay listens on //p' "$work/relay.log")"
 [ -n "$url" ] || fail "the relay did not start: $(cat "$work/relay.log")"
 say "a relay listens on $url"
 
-caller() { "$work/arcn" --home "$work/caller" "$@"; }
+caller() { "$work/arc" --home "$work/caller" "$@"; }
 caller keys gen > /dev/null
 caller relay add "$url"
 caller_key="$(caller whoami | sed -n 2p)"
 
 for name in exec sqlite; do
-  "$work/arcn" --home "$work/$name" keys gen > /dev/null
-  "$work/arcn" --home "$work/$name" relay add "$url"
+  "$work/arc" --home "$work/$name" keys gen > /dev/null
+  "$work/arc" --home "$work/$name" relay add "$url"
 done
-exec_key="$("$work/arcn" --home "$work/exec" whoami | sed -n 2p)"
-sqlite_key="$("$work/arcn" --home "$work/sqlite" whoami | sed -n 2p)"
+exec_key="$("$work/arc" --home "$work/exec" whoami | sed -n 2p)"
+sqlite_key="$("$work/arc" --home "$work/sqlite" whoami | sed -n 2p)"
 
 mkdir -p "$work/jobs"
 cat > "$work/exec.json" <<JSON
@@ -62,12 +62,12 @@ cat > "$work/sqlite.json" <<JSON
 {"databases": {"main": {"path": "$work/main.db", "grants": {"$caller_key": "write"}}}}
 JSON
 
-# The manifest= of the URI names the older manifest; arcn announces the
+# The manifest= of the URI names the older manifest; arc announces the
 # interface.json beside it.
-EXEC_CONFIG="$work/exec.json" "$work/arcn" --home "$work/exec" serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" > "$work/exec.log" 2>&1 &
 exec_pid=$!
-SQLITE_CONFIG="$work/sqlite.json" "$work/arcn" --home "$work/sqlite" serve \
+SQLITE_CONFIG="$work/sqlite.json" "$work/arc" --home "$work/sqlite" serve \
   "exec://$work/sqlite-provider?manifest=$root/cmd/sqlite-provider/manifest.json" > "$work/sqlite.log" 2>&1 &
 sqlite_pid=$!
 for log in exec sqlite; do
@@ -84,11 +84,11 @@ caller install "$sqlite_key" --as db --yes | grep "installed db" > /dev/null || 
 say "the caller installs exec as exec, and sqlite as db"
 
 # The proof of phase A.
-[ "$(caller exec run echo hello)" = "hello" ] || fail "arcn exec run echo hello answered $(caller exec run echo hello 2>&1)"
-say "arcn exec run echo hello answers through the installed manifest"
+[ "$(caller exec run echo hello)" = "hello" ] || fail "arc exec run echo hello answered $(caller exec run echo hello 2>&1)"
+say "arc exec run echo hello answers through the installed manifest"
 
-caller help exec | grep "arcn exec start <script...>" > /dev/null || fail "help does not list the commands"
-caller exec run --help | grep "usage: arcn exec run <argv...>" > /dev/null || fail "a command has no help"
+caller help exec | grep "arc exec start <script...>" > /dev/null || fail "help does not list the commands"
+caller exec run --help | grep "usage: arc exec run <argv...>" > /dev/null || fail "a command has no help"
 say "help comes from the manifest"
 
 caller exec run --json sh -c 'echo out; exit 3' > "$work/json.txt"
@@ -100,22 +100,22 @@ caller db "insert into people values (1, 'ada'), (22, 'grace hopper')" > /dev/nu
 caller db select id, name from people order by id > "$work/table.txt"
 [ "$(cat "$work/table.txt")" = "$(printf 'id  name\n1   ada\n22  grace hopper')" ] ||
   fail "the table is $(cat "$work/table.txt")"
-say "arcn db shows rows as a table"
+say "arc db shows rows as a table"
 
 if caller exec run > /dev/null 2> "$work/missing.txt"; then fail "a missing argument ran"; fi
 grep "missing <argv...>" "$work/missing.txt" > /dev/null || fail "the error was $(cat "$work/missing.txt")"
 if caller exec fly > /dev/null 2> "$work/nope.txt"; then fail "an unknown command ran"; fi
 grep 'no command "fly"' "$work/nope.txt" > /dev/null || fail "the error was $(cat "$work/nope.txt")"
-say "arcn checks the arguments before it calls"
+say "arc checks the arguments before it calls"
 
 if caller install "$exec_key" --as relay --yes > /dev/null 2> "$work/as.txt"; then fail "a capability took the name of a command"; fi
-grep "is a command of arcn" "$work/as.txt" > /dev/null || fail "the error was $(cat "$work/as.txt")"
-say "a capability cannot take the name of a command of arcn"
+grep "is a command of arc" "$work/as.txt" > /dev/null || fail "the error was $(cat "$work/as.txt")"
+say "a capability cannot take the name of a command of arc"
 
-"$work/arcn" --home "$work/stranger" keys gen > /dev/null
-"$work/arcn" --home "$work/stranger" relay add "$url"
-"$work/arcn" --home "$work/stranger" install "$exec_key" --yes > /dev/null
-if "$work/arcn" --home "$work/stranger" exec run id > /dev/null 2> "$work/denied.txt"; then
+"$work/arc" --home "$work/stranger" keys gen > /dev/null
+"$work/arc" --home "$work/stranger" relay add "$url"
+"$work/arc" --home "$work/stranger" install "$exec_key" --yes > /dev/null
+if "$work/arc" --home "$work/stranger" exec run id > /dev/null 2> "$work/denied.txt"; then
   fail "a caller without a grant ran a command"
 fi
 grep "access_denied" "$work/denied.txt" > /dev/null || fail "the refusal was $(cat "$work/denied.txt")"
@@ -128,9 +128,9 @@ say "--later queues a live call in the outbox"
 printf 'phase A holds: manifests, arguments, templates, call, format\n\n'
 
 # Phase B: sealed data. The journal and the files are manifests, with no
-# code for them in arcn. Two machines hold one key.
+# code for them in arc. Two machines hold one key.
 laptop() { caller "$@"; }
-desktop() { "$work/arcn" --home "$work/desktop" "$@"; }
+desktop() { "$work/arc" --home "$work/desktop" "$@"; }
 desktop keys add < "$(keyfile caller)" > /dev/null
 desktop relay add "$url"
 
@@ -190,8 +190,8 @@ printf 'phase B holds: drafts, checkpoints, parts, delete, the journal and the f
 # Phase C: private kinds through the mail layer, and a NIP-29 group on a
 # relay that enforces it. Direct messages and Agora are manifests.
 laptop relay add "$url"
-bob() { "$work/arcn" --home "$work/bob" "$@"; }
-moderator() { "$work/arcn" --home "$work/moderator" "$@"; }
+bob() { "$work/arc" --home "$work/bob" "$@"; }
+moderator() { "$work/arc" --home "$work/moderator" "$@"; }
 bob keys gen > /dev/null
 bob relay add "$url"
 bob_key="$(bob whoami | sed -n 2p)"
@@ -199,7 +199,7 @@ moderator keys gen > /dev/null
 moderator relay add "$url"
 moderator_key="$(moderator whoami | sed -n 2p)"
 
-"$work/arcn" --home "$work/board" relay serve --listen 127.0.0.1:0 \
+"$work/arc" --home "$work/board" relay serve --listen 127.0.0.1:0 \
   --group agora --admin "$moderator_key" > "$work/board.log" 2>&1 &
 board_pid=$!
 for _ in $(seq 1 50); do grep "listens on" "$work/board.log" > /dev/null 2>&1 && break; sleep 0.1; done
@@ -280,22 +280,22 @@ grep '"kind": 30023' "$work/dry.txt" > /dev/null || fail "the dry run showed $(c
 [ -z "$(laptop journal read hrs/notes/draft)" ] || fail "a dry run wrote the page"
 say "--dry-run shows the event, and signs nothing"
 
-ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" keys gen --encrypt > "$work/sealed.txt"
+ARC_PASSPHRASE="correct horse" "$work/arc" --home "$work/sealed" keys gen --encrypt > "$work/sealed.txt"
 head -c 10 "$(keyfile sealed)" | grep "ncryptsec1" > /dev/null || fail "the key file is not an ncryptsec"
-[ "$("$work/arcn" --home "$work/sealed" whoami | head -2)" = "$(cat "$work/sealed.txt")" ] || fail "the sealed key is another identity"
-ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" message outbox > /dev/null || fail "the passphrase did not open the key"
-if ARCN_PASSPHRASE=wrong "$work/arcn" --home "$work/sealed" message outbox > /dev/null 2>&1; then fail "a wrong passphrase opened the key"; fi
+[ "$("$work/arc" --home "$work/sealed" whoami | head -2)" = "$(cat "$work/sealed.txt")" ] || fail "the sealed key is another identity"
+ARC_PASSPHRASE="correct horse" "$work/arc" --home "$work/sealed" message outbox > /dev/null || fail "the passphrase did not open the key"
+if ARC_PASSPHRASE=wrong "$work/arc" --home "$work/sealed" message outbox > /dev/null 2>&1; then fail "a wrong passphrase opened the key"; fi
 say "a key sealed with a passphrase opens with it, and not without it"
 
 # An agent signs through its owner's bunker, and holds no secret key.
-owner() { "$work/arcn" --home "$work/owner" "$@"; }
-agent() { "$work/arcn" --home "$work/agent" "$@"; }
+owner() { "$work/arc" --home "$work/owner" "$@"; }
+agent() { "$work/arc" --home "$work/agent" "$@"; }
 owner keys gen > /dev/null
 owner_key="$(owner whoami | sed -n 2p)"
 # A background process starts directly, not through a shell function, so $!
 # names it and kill reaches it. The owner allows posts, drafts and their parts, seals, and relay lists;
 # not replies.
-"$work/arcn" --home "$work/owner" keys bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
+"$work/arc" --home "$work/owner" keys bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
   --allow-kind 13 --allow-kind 10050 --allow-kind 10013 > "$work/bunker.log" 2>&1 &
 bunker_pid=$!
 for _ in $(seq 1 50); do grep "bunker://" "$work/bunker.log" > /dev/null 2>&1 && break; sleep 0.1; done
@@ -340,7 +340,7 @@ say "by default the bunker opens the owner's own drafts, and not their mail"
 
 kill "$bunker_pid"
 wait "$bunker_pid" 2> /dev/null || true
-"$work/arcn" --home "$work/owner" keys bunker --relay "$url" --decrypt all --allow-kind 13 > "$work/bunker2.log" 2>&1 &
+"$work/arc" --home "$work/owner" keys bunker --relay "$url" --decrypt all --allow-kind 13 > "$work/bunker2.log" 2>&1 &
 bunker_pid=$!
 for _ in $(seq 1 50); do grep "bunker://" "$work/bunker2.log" > /dev/null 2>&1 && break; sleep 0.1; done
 [ "$(grep "^bunker://" "$work/bunker2.log")" = "$uri" ] || fail "the bunker URI changed on restart"

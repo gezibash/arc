@@ -8,7 +8,7 @@ import (
 
 func emptyStore(t *testing.T) *identity.Store {
 	t.Helper()
-	t.Setenv("ARC_KEY", "")
+	t.Setenv("ARC_LEGACY_KEY", "")
 	t.Chdir(t.TempDir())
 	return &identity.Store{Dir: t.TempDir()}
 }

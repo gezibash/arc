@@ -1,651 +1,323 @@
 package main
 
 import (
-	"bufio"
-	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"os"
+	"runtime"
+	"runtime/debug"
 	"strings"
 
-	"github.com/gezibash/arc/client"
-	"github.com/gezibash/arc/control"
+	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/bundle"
+	"github.com/gezibash/arc/delivery/catalog"
+	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/identity"
-	"github.com/gezibash/arc/toolbox"
+	"github.com/gezibash/arc/iface"
 	"github.com/spf13/cobra"
 )
 
-// An installed capability becomes a command of arc. The install holds the
-// signed package that the owner accepted, so a later call checks that the
-// citizen still serves the same thing.
-
-func installCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "install <public key> [capability]",
-		Short: "Install a capability of another citizen as a command",
-		Long: "The citizen serves a signed package. arc checks the signature,\n" +
-			"asks you about the signer once, and saves the package as a\n" +
-			"command that you can run.",
-		Args: cobra.RangeArgs(1, 2),
-		RunE: install,
-	}
-
-	command.Flags().String("as", "", "the name of the command, when the capability suggests another")
-	command.Flags().Bool("yes", false, "trust the signer without asking")
-	return command
-}
-
-func install(command *cobra.Command, args []string) error {
-	held, err := open(command, true)
-	if err != nil {
-		return err
-	}
-
-	capabilityID := "primary"
-	if len(args) == 2 {
-		capabilityID = args[1]
-	}
-
-	peer, err := hex.DecodeString(strings.ToLower(args[0]))
-	if err != nil || len(peer) != identity.SeedBytes {
-		return errors.New("the citizen is named by 64 characters of hex")
-	}
-
-	ctx, cancel := deadline(30)
-	defer cancel()
-
-	connection, err := held.dial(ctx)
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
-
-	signed, err := connection.Peers().Detail(ctx, peer, capabilityID)
-	if err != nil {
-		return err
-	}
-
-	tools, err := toolStore(command)
-	if err != nil {
-		return err
-	}
-
-	signature, _ := signed["signature"].(map[string]any)
-	signer, _ := signature["signer_public_key"].(string)
-
-	state, err := tools.TrustState(held.me.PublicKey, signer)
-	if err != nil {
-		return err
-	}
-
-	switch state {
-	case toolbox.Denied:
-		return fmt.Errorf("you denied the signer %s: allow it with arc trust allow %s", short(signer), short(signer))
-	case toolbox.Allowed:
-	default:
-		yes, _ := command.Flags().GetBool("yes")
-		if !yes {
-			if err := askAboutSigner(tools, held.me.PublicKey, signed, signer); err != nil {
-				return err
-			}
-		} else if _, err := tools.Trust(held.me.PublicKey, signer, toolbox.Allowed, ""); err != nil {
-			return err
-		}
-	}
-
-	name, _ := command.Flags().GetString("as")
-	record, err := tools.Install(held.me.PublicKey, signed, toolbox.Options{
-		Command: name, TrustState: toolbox.Allowed,
-	})
-	if err != nil {
-		return err
-	}
-
-	showInstall(record)
-	return nil
-}
-
-// askAboutSigner asks the owner once about a signer it has not seen.
-func askAboutSigner(tools *toolbox.Store, owner []byte, signed map[string]any, signer string) error {
-	provider, _ := signed["provider"].(map[string]any)
-	fields, _ := signed["capability"].(map[string]any)
-
-	fmt.Printf("%s offers %s (%s)\n", text(provider["name"]), text(fields["title"]), text(fields["id"]))
-	fmt.Printf("signer %s\n", signer)
-	fmt.Printf("hash   %s\n", text(signed["package_hash"]))
-	fmt.Print("Trust this signer? [y/N] ")
-
-	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-
-	switch strings.ToLower(strings.TrimSpace(answer)) {
-	case "y", "yes":
-		_, err := tools.Trust(owner, signer, toolbox.Allowed, "")
-		return err
-	case "n", "no":
-		if _, err := tools.Trust(owner, signer, toolbox.Denied, ""); err != nil {
-			return err
-		}
-		return errors.New("the signer is denied, and nothing was installed")
-	default:
-		return errors.New("nothing was installed")
-	}
-}
+// version is the release of this build. A build sets it with
+// -ldflags "-X main.version=0.9.0".
+var version = "dev"
 
 func toolCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "tool",
-		Short: "List, show and remove the capabilities that you installed",
-	}
+	command := &cobra.Command{Use: "tool", Short: "List, show and remove the capabilities that you installed"}
 
 	command.AddCommand(
 		&cobra.Command{
-			Use: "list", Short: "List the commands that you installed",
-			Args: cobra.NoArgs, RunE: listTools,
+			Use: "list", Short: "List the capabilities that you installed", Args: cobra.NoArgs,
+			RunE: func(command *cobra.Command, _ []string) error {
+				installs, err := installsOf(command)
+				if err != nil {
+					return err
+				}
+				list, err := installs.List()
+				if err != nil {
+					return err
+				}
+				if len(list) == 0 {
+					fmt.Println("no capabilities: install one with arc install <provider>")
+					return nil
+				}
+				for _, e := range list {
+					fmt.Printf("%s -> %s/%s\n  %s\n", runName(e), e.Name, e.ID, e.Provider)
+				}
+				return nil
+			},
 		},
-		infoCommand(),
 		&cobra.Command{
-			Use: "remove <command>", Short: "Remove one installed command",
-			Args: cobra.ExactArgs(1), RunE: removeTool,
+			Use: "info <name>", Short: "Show one installed capability", Args: cobra.ExactArgs(1),
+			RunE: func(command *cobra.Command, args []string) error {
+				installs, err := installsOf(command)
+				if err != nil {
+					return err
+				}
+				install, err := installed(installs, args[0])
+				if err != nil {
+					return err
+				}
+				provider, err := nostr.PubKeyFromHex(install.Provider)
+				if err != nil {
+					return err
+				}
+				sess, err := open(command)
+				if err != nil {
+					return err
+				}
+				defer sess.close()
+
+				offer, err := findOffer(command.Context(), sess, provider, install.ID)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%s -> %s/%s\n", runName(install), install.Name, install.ID)
+				showOffer(offer)
+				if install.Consent != nil && offer.Manifest != nil {
+					if changes := install.Consent.Changes(offer.Manifest); len(changes) > 0 {
+						fmt.Printf("the author changed what it can do; install it again to agree:\n  %s\n", strings.Join(changes, "\n  "))
+					}
+				}
+				return nil
+			},
 		},
 		&cobra.Command{
-			Use: "pin <command>", Short: "Hold one command at the version you installed",
-			Args: cobra.ExactArgs(1), RunE: pinTool(true),
-		},
-		&cobra.Command{
-			Use: "unpin <command>", Short: "Let one command move to a new version",
-			Args: cobra.ExactArgs(1), RunE: pinTool(false),
+			Use: "remove <name>", Short: "Remove one installed capability", Args: cobra.ExactArgs(1),
+			RunE: func(command *cobra.Command, args []string) error {
+				installs, err := installsOf(command)
+				if err != nil {
+					return err
+				}
+				gone, err := installs.Remove(args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Printf("removed %s/%s\n", gone.Name, gone.ID)
+				return nil
+			},
 		},
 	)
 	return command
+}
+
+// runName is how the citizen runs an install.
+func runName(e catalog.Install) string {
+	if e.As != "" {
+		return "arc " + e.As
+	}
+	return "arc call " + e.Name
+}
+
+// installed finds one install by the name that runs it, or by the petname of
+// its provider.
+func installed(installs catalog.Installs, name string) (catalog.Install, error) {
+	list, err := installs.List()
+	if err != nil {
+		return catalog.Install{}, err
+	}
+	for _, e := range list {
+		if e.As == name || (e.As == "" && e.Name == name) {
+			return e, nil
+		}
+	}
+	return catalog.Install{}, fmt.Errorf("nothing installed as %q: see arc tool list", name)
+}
+
+func showOffer(o catalog.Offer) {
+	fmt.Printf("%s offers %s (%s)\n  %s\n  %s\n", o.Name(), o.Title, o.ID, o.Summary, o.Provider.Hex())
+	if o.Manifest != nil {
+		fmt.Print(iface.Describe(o.Manifest))
+	}
 }
 
 func infoCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use: "info <command>", Short: "Show one installed command",
-		Args: cobra.ExactArgs(1), RunE: toolInfo,
-	}
-
-	command.Flags().Bool("json", false, "write the install as JSON")
-	return command
-}
-
-func listTools(command *cobra.Command, _ []string) error {
-	held, tools, err := ownerTools(command)
-	if err != nil {
-		return err
-	}
-
-	installs, err := tools.List(held.me.PublicKey)
-	if err != nil {
-		return err
-	}
-	if len(installs) == 0 {
-		fmt.Println("no commands: install one with arc install <public key>")
-		return nil
-	}
-
-	fmt.Printf("%s holds %d commands\n", held.me.Name(), len(installs))
-	for _, record := range installs {
-		fields, _ := record["capability"].(map[string]any)
-		provider, _ := record["provider"].(map[string]any)
-
-		fmt.Printf("\n%s -> %s/%s\n", text(record["command"]), text(provider["name"]), text(record["capability_id"]))
-		fmt.Printf("  usage   %s\n", text(record["usage"]))
-
-		if subcommands := toolbox.Subcommands(fields); len(subcommands) > 0 {
-			var labels []string
-			for _, one := range subcommands {
-				labels = append(labels, toolbox.Label(one))
-			}
-			fmt.Printf("  commands %s\n", strings.Join(labels, ", "))
-		}
-		fmt.Printf("  version %s (%s)\n", text(record["release_version"]), text(record["channel"]))
-	}
-	return nil
-}
-
-func toolInfo(command *cobra.Command, args []string) error {
-	held, tools, err := ownerTools(command)
-	if err != nil {
-		return err
-	}
-
-	record, err := tools.Get(held.me.PublicKey, args[0])
-	if err != nil {
-		return err
-	}
-
-	if asJSON, _ := command.Flags().GetBool("json"); asJSON {
-		return write(record)
-	}
-
-	showInstall(record)
-
-	fields, _ := record["capability"].(map[string]any)
-	for _, one := range toolbox.Commands(fields) {
-		fmt.Printf("  %s\n", toolbox.CommandUsage(text(record["command"]), one))
-		if summary := text(one["summary"]); summary != "" {
-			fmt.Printf("      %s\n", summary)
-		}
-	}
-	return nil
-}
-
-func removeTool(command *cobra.Command, args []string) error {
-	held, tools, err := ownerTools(command)
-	if err != nil {
-		return err
-	}
-
-	if _, err := tools.Get(held.me.PublicKey, args[0]); err != nil {
-		return err
-	}
-	if err := tools.Uninstall(held.me.PublicKey, args[0]); err != nil {
-		return err
-	}
-
-	fmt.Printf("removed %s\n", toolbox.NormalizeCommand(args[0]))
-	return nil
-}
-
-func pinTool(pinned bool) func(*cobra.Command, []string) error {
-	return func(command *cobra.Command, args []string) error {
-		held, tools, err := ownerTools(command)
-		if err != nil {
-			return err
-		}
-
-		record, err := tools.SetPinned(held.me.PublicKey, args[0], pinned)
-		if err != nil {
-			return err
-		}
-
-		state := "unpinned"
-		if pinned {
-			state = "pinned"
-		}
-		fmt.Printf("%s is %s at %s\n", text(record["command"]), state, text(record["release_version"]))
-		return nil
-	}
-}
-
-func trustCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "trust",
-		Short: "Show and change what you decided about the signers of capabilities",
-	}
-
-	command.AddCommand(
-		&cobra.Command{
-			Use: "list", Short: "List your decisions",
-			Args: cobra.NoArgs, RunE: listTrust,
-		},
-		&cobra.Command{
-			Use: "allow <signer>", Short: "Trust one signer",
-			Args: cobra.ExactArgs(1), RunE: setTrust(toolbox.Allowed),
-		},
-		&cobra.Command{
-			Use: "deny <signer>", Short: "Refuse one signer",
-			Args: cobra.ExactArgs(1), RunE: setTrust(toolbox.Denied),
-		},
-	)
-	return command
-}
-
-func listTrust(command *cobra.Command, _ []string) error {
-	held, tools, err := ownerTools(command)
-	if err != nil {
-		return err
-	}
-
-	signers, err := tools.Signers(held.me.PublicKey)
-	if err != nil {
-		return err
-	}
-	if len(signers) == 0 {
-		fmt.Println("no decisions yet")
-		return nil
-	}
-
-	for _, signer := range signers {
-		fmt.Printf("%-8s %s\n", signer.State, signer.PublicKey)
-	}
-	return nil
-}
-
-func setTrust(state string) func(*cobra.Command, []string) error {
-	return func(command *cobra.Command, args []string) error {
-		held, tools, err := ownerTools(command)
-		if err != nil {
-			return err
-		}
-
-		record, err := tools.Trust(held.me.PublicKey, args[0], state, "")
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("%s is %s\n", short(record.PublicKey), record.State)
-		return nil
-	}
-}
-
-// runInstalled runs one installed command. It answers false when no install
-// holds that name, so arc can report an unknown command instead.
-func runInstalled(name string, argv []string) (bool, error) {
-	// The flags of arc itself come out of the line. Everything else belongs
-	// to the capability, which names its own flags.
-	command := installedCommand(name)
-	rest, err := readArcFlags(command, name, argv)
-	if err != nil {
-		return true, err
-	}
-
-	held, err := open(command, true)
-	if err != nil {
-		return false, nil
-	}
-
-	tools, err := toolStore(command)
-	if err != nil {
-		return false, nil
-	}
-
-	record, err := tools.Get(held.me.PublicKey, name)
-	if err != nil {
-		return false, nil
-	}
-
-	seconds, _ := command.Flags().GetInt("timeout")
-	ctx, cancel := deadline(seconds)
-	defer cancel()
-
-	connection, err := held.dial(ctx)
-	if err != nil {
-		return true, err
-	}
-	defer connection.Close()
-
-	peers := connection.Peers()
-
-	saved, err := listStore(command)
-	if err != nil {
-		return true, err
-	}
-
-	context := toolbox.Context{
-		Identity: held.me,
-		Resolve: func(query string) ([][]byte, error) {
-			// A name may stand for a list of this command.
-			if members := saved.Members(name, query); len(members) > 0 {
-				var keys [][]byte
-				for _, member := range members {
-					found, err := lookUp(ctx, held, connection, member)
-					if err != nil {
-						return nil, err
-					}
-					keys = append(keys, found...)
-				}
-				return keys, nil
-			}
-			return lookUp(ctx, held, connection, query)
-		},
-	}
-
-	invocation, err := toolbox.Build(record, rest, context)
-	if err != nil {
-		return true, err
-	}
-
-	// A command may take its body from the standard input, from one of its
-	// arguments, or from a file.
-	if invocation.Command != nil {
-		if input, ok := invocation.Command["input"].(map[string]any); ok && input["source"] == "stdin" {
-			var body []byte
-
-			if readsStdin(input, invocation.Values) {
-				body, err = io.ReadAll(io.LimitReader(os.Stdin, client.MaxBodyBytes+1))
-				if err != nil {
-					return true, err
-				}
-			}
-
-			invocation.Body, err = toolbox.RenderStdin(invocation.Command, invocation.Values, body, context)
+	return &cobra.Command{
+		Use:   "info <provider> [capability]",
+		Short: "Show the capabilities that a provider announces",
+		Long:  "The provider is 64 characters of hex, or the name of an install.",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(command *cobra.Command, args []string) error {
+			installs, err := installsOf(command)
 			if err != nil {
-				return true, err
+				return err
 			}
-		}
-	}
-
-	provider, _ := record["provider"].(map[string]any)
-	peer, err := hex.DecodeString(text(provider["public_key"]))
-	if err != nil {
-		return true, errors.New("the install names no citizen")
-	}
-
-	// The citizen must still serve the package that the owner accepted.
-	signed, err := peers.Detail(ctx, peer, text(record["capability_id"]))
-	if err != nil {
-		return true, err
-	}
-	if signed["package_hash"] != record["package_hash"] {
-		return true, fmt.Errorf(
-			"%s serves another version now: install it again with arc install %s",
-			text(provider["name"]), text(provider["public_key"]))
-	}
-
-	answer, err := peers.Request(ctx, peer, invocation.Meta, []byte(invocation.Body))
-	if err != nil {
-		return true, err
-	}
-
-	body := string(answer.Body)
-	if raw, _ := command.Flags().GetBool("raw"); !raw {
-		body = renderAnswer(command, held, name, invocation.Command, body)
-	}
-
-	os.Stdout.WriteString(body)
-	if len(body) > 0 && !strings.HasSuffix(body, "\n") {
-		fmt.Println()
-	}
-	return true, nil
-}
-
-// renderAnswer runs the filters that the capability names. The cache is a
-// filter of this machine, and keeps a copy of each record.
-func renderAnswer(command *cobra.Command, held *settings, name string, spec map[string]any, body string) string {
-	filters := toolbox.OutputFilters(spec)
-	if len(filters) == 0 {
-		return body
-	}
-
-	if hex, _ := command.Flags().GetBool("hex"); hex {
-		filters = without(filters, "petnames")
-	}
-
-	// A format of the caller stands in for the one that the capability names.
-	if format, _ := command.Flags().GetString("format"); format != "" {
-		filters = append(without(without(filters, "conversation"), "markdown"), format)
-	}
-
-	cache := &toolbox.Cache{Dir: held.keys.Dir}
-	extra := map[string]func(string) string{
-		"cache": func(text string) string {
-			if _, err := cache.Keep(name, held.me, text); err != nil {
-				fmt.Fprintf(os.Stderr, "the cache did not keep this answer: %v\n", err)
+			provider, _, err := installs.Resolve(args[0])
+			if err != nil {
+				return err
 			}
-			return text
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.close()
+
+			if len(args) == 2 {
+				offer, err := findOffer(command.Context(), sess, provider, args[1])
+				if err != nil {
+					return err
+				}
+				showOffer(offer)
+				return nil
+			}
+
+			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
+			reports, errs := sess.node.Pull(command.Context(), mine, sess.relays)
+			var offers []catalog.Offer
+			for _, event := range sess.node.Store.Query(mine) {
+				if offer, err := catalog.Read(event); err == nil {
+					offers = append(offers, offer)
+				}
+			}
+			if len(offers) == 0 {
+				if unreached := node.Unreached(reports, errs); unreached != nil {
+					return fmt.Errorf("this machine holds no announcement from that provider, and %w", unreached)
+				}
+				return errors.New("that provider announces nothing")
+			}
+			for i, offer := range offers {
+				if i > 0 {
+					fmt.Println()
+				}
+				showOffer(offer)
+			}
+			return nil
 		},
 	}
-	return toolbox.ApplyOutput(body, filters, held.me, extra)
 }
 
-// without returns the filters, less the one of that name.
-func without(filters []string, name string) []string {
-	out := filters[:0:0]
-	for _, filter := range filters {
-		if filter != name {
-			out = append(out, filter)
-		}
+func resolveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resolve <name or key>",
+		Short: "Find citizens by petname, or by the start of their key",
+		Long: "arc looks in the identities of this machine, in its installs, and in\n" +
+			"the announcements that its relays hold.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			query := strings.ToLower(strings.TrimSpace(args[0]))
+			if len(query) < 4 {
+				return errors.New("give at least 4 characters of a petname or a key")
+			}
+
+			type found struct{ key, name, where string }
+			var hits []found
+			seen := map[string]bool{}
+			consider := func(key, where string) {
+				pk, err := nostr.PubKeyFromHex(key)
+				if err != nil || seen[key] {
+					return
+				}
+				name := identity.Name(pk[:])
+				if name == query || strings.HasPrefix(key, query) {
+					seen[key] = true
+					hits = append(hits, found{key, name, where})
+				}
+			}
+
+			root, err := rootDir(command)
+			if err != nil {
+				return err
+			}
+			mine, err := listCitizens(root)
+			if err != nil {
+				return err
+			}
+			for _, c := range mine {
+				consider(c.public, "an identity of this machine")
+			}
+
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.close()
+
+			installs, err := installsOf(command)
+			if err != nil {
+				return err
+			}
+			list, err := installs.List()
+			if err != nil {
+				return err
+			}
+			for _, e := range list {
+				consider(e.Provider, "installed as "+runName(e))
+			}
+
+			reports, errs := sess.node.Pull(command.Context(), announcements, sess.relays)
+			for _, offer := range catalog.Search(sess.node.Store, "") {
+				consider(offer.Provider.Hex(), "announces "+offer.ID)
+			}
+
+			if len(hits) == 0 {
+				if unreached := node.Unreached(reports, errs); unreached != nil {
+					return fmt.Errorf("no citizen answers to %s on this machine, and %w", args[0], unreached)
+				}
+				return fmt.Errorf("no citizen answers to %s", args[0])
+			}
+			for _, h := range hits {
+				fmt.Printf("%s\n  %s\n  %s\n", h.name, h.key, h.where)
+			}
+			return nil
+		},
 	}
-	return out
 }
 
-// readsStdin says whether a command still needs the standard input. An
-// argument or a file that carries the body stands in for it, and a terminal
-// never does.
-func readsStdin(input map[string]any, values map[string]any) bool {
-	for _, field := range []string{"body", "file"} {
-		if name := text(input[field]); name != "" {
-			if value, held := values[name]; held && value != nil && value != "" {
-				return false
+func appsCommand() *cobra.Command {
+	command := &cobra.Command{Use: "apps", Short: "Work with provider bundles"}
+	command.AddCommand(&cobra.Command{
+		Use:   "init [directory]",
+		Short: "Write a new provider bundle",
+		Long: "The bundle holds an Arcfile, a manifest, and a runtime that\n" +
+			"answers one message. Serve it with arc serve <directory>.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			path := "."
+			if len(args) == 1 {
+				path = args[0]
 			}
-		}
-	}
-
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice == 0
-}
-
-// readArcFlags takes the flags of arc out of the line, and returns what the
-// capability reads. The name of the command goes as well.
-func readArcFlags(command *cobra.Command, name string, argv []string) ([]string, error) {
-	takesValue := map[string]bool{
-		"--relay": true, "--relay-pubkey": true, "--key": true, "--store": true,
-		"--timeout": true,
-	}
-	takesValue["--format"] = true
-	noValue := map[string]bool{"--raw": true, "--hex": true}
-
-	var rest []string
-	seenName := false
-
-	for index := 0; index < len(argv); index++ {
-		argument := argv[index]
-
-		if takesValue[argument] {
-			if index+1 >= len(argv) {
-				return nil, fmt.Errorf("the flag %s needs a value", argument)
+			files, err := bundle.Init(path)
+			if err != nil {
+				return err
 			}
-
-			index++
-			if err := command.Flags().Set(strings.TrimPrefix(argument, "--"), argv[index]); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		if noValue[argument] {
-			if err := command.Flags().Set(strings.TrimPrefix(argument, "--"), "true"); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		if !seenName && argument == name {
-			seenName = true
-			continue
-		}
-		rest = append(rest, argument)
-	}
-	return rest, nil
-}
-
-// lookUp reads one citizen: a key, a name of this machine, or a name that
-// the relay answers.
-func lookUp(ctx context.Context, held *settings, connection *client.Client, query string) ([][]byte, error) {
-	if key, err := peerKey(query); err == nil {
-		return [][]byte{key}, nil
-	}
-
-	plane := &control.Store{Dir: held.keys.Dir}
-	if entries, err := plane.Resolve(query); err == nil {
-		var keys [][]byte
-		for _, entry := range entries {
-			if key, err := entry.Key(); err == nil {
-				keys = append(keys, key)
-			}
-		}
-		if len(keys) > 0 {
-			return keys, nil
-		}
-	}
-
-	entries, err := connection.Resolve(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-
-	var keys [][]byte
-	for _, entry := range entries {
-		if key, err := hex.DecodeString(text(entry["public_key"])); err == nil {
-			keys = append(keys, key)
-		}
-	}
-	return keys, nil
-}
-
-// installedCommand holds the flags that every installed command takes.
-func installedCommand(name string) *cobra.Command {
-	command := &cobra.Command{Use: name}
-
-	command.Flags().String("relay", "", "the relay to use, as host:port")
-	command.Flags().String("relay-pubkey", "", "the public key to pin for the relay")
-	command.Flags().String("key", "", "the identity to use, by petname")
-	command.Flags().String("store", "", "the directory of ARC")
-	command.Flags().Int("timeout", 30, "how many seconds to wait for the answer")
-	command.Flags().Bool("raw", false, "print the answer as the provider wrote it")
-	command.Flags().Bool("hex", false, "keep the public keys, instead of writing petnames")
-	command.Flags().String("format", "", "show the answer as conversation or as markdown")
+			fmt.Printf("wrote a bundle in %s\n", files.Root)
+			fmt.Printf("  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Runtime)
+			fmt.Printf("\nserve it with: arc serve %s\n", path)
+			return nil
+		},
+	})
 	return command
 }
 
-func ownerTools(command *cobra.Command) (*settings, *toolbox.Store, error) {
-	held, err := open(command, false)
-	if err != nil {
-		return nil, nil, err
+func versionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version and the build commit",
+		Args:  cobra.NoArgs,
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Printf("arc %s\n", version)
+			fmt.Printf("commit %s\n", commit())
+			fmt.Printf("built with %s for %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		},
 	}
-
-	tools, err := toolStore(command)
-	if err != nil {
-		return nil, nil, err
-	}
-	return held, tools, nil
 }
 
-func toolStore(command *cobra.Command) (*toolbox.Store, error) {
-	if dir, _ := command.Flags().GetString("store"); dir != "" {
-		return &toolbox.Store{Dir: dir}, nil
+// commit reads the revision that the Go build wrote into the binary. A build
+// outside a checkout writes none.
+func commit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
 	}
-	return toolbox.DefaultStore()
-}
-
-func showInstall(record map[string]any) {
-	provider, _ := record["provider"].(map[string]any)
-	fields, _ := record["capability"].(map[string]any)
-
-	fmt.Printf("%s runs %s/%s [%s/%s]\n",
-		text(record["command"]), text(provider["name"]), text(record["capability_id"]),
-		text(fields["kind"]), text(fields["scheme"]))
-	fmt.Printf("version %s (%s)\n", text(record["release_version"]), text(record["channel"]))
-	fmt.Printf("signer  %s\n", short(text(record["signer_public_key"])))
-	fmt.Printf("hash    %s\n", short(text(record["package_hash"])))
-	fmt.Printf("run     %s\n", text(record["usage"]))
-}
-
-func text(value any) string {
-	out, _ := value.(string)
-	return out
-}
-
-func short(value string) string {
-	if len(value) <= 16 {
-		return value
+	revision, dirty := "unknown", false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			dirty = setting.Value == "true"
+		}
 	}
-	return value[:16]
+	if dirty && revision != "unknown" {
+		return revision + " (modified)"
+	}
+	return revision
 }

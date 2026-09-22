@@ -1,6 +1,6 @@
 # Capability interface, version 1
 
-Status: phases A to D are built, see section 18. `arcn` runs them, and
+Status: phases A to D are built, see section 18. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
@@ -112,7 +112,7 @@ moderation of the group's admins. The citizen who runs that relay can
 announce a different relay or id in a new version of the manifest.
 
 The operator of the relay makes the group and names its admins:
-`arcn relay serve --group agora --admin <key>`. The relay signs the state of
+`arc relay serve --group agora --admin <key>`. The relay signs the state of
 the group with its own key, and names that key in its NIP-11 document as
 `self`. It refuses an event for a group that does not exist, a post to a
 restricted group from a citizen who is not a member, and a moderation event
@@ -530,7 +530,7 @@ that does not exist, and never replaces a file.
 carries the NIP-70 tag, so a relay accepts it only from its author after NIP-42
 authentication. Nobody else can publish an old version of it again.
 
-**Sealed data is served only to its author.** A relay that `arcn` runs, and
+**Sealed data is served only to its author.** A relay that `arc` runs, and
 `delivery/sealed` protects, answers a query that names a draft, a checkpoint,
 a part or a private relay list only after NIP-42 authentication, and only
 when the query names the authenticated citizen as its only author. Every
@@ -553,21 +553,21 @@ A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
 | `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
 
 Each identity of a machine has its own directory, `<home>/citizens/<name>`,
-with its key, store, relays and installs. `arcn keys gen` makes an identity,
-and `arcn keys add` adds one that exists already. The first identity is the
-default. `arcn keys use <name>` changes the default, and `--key <name>` or
-`ARCN_KEY` picks another identity for one command.
+with its key, store, relays and installs. `arc keys gen` makes an identity,
+and `arc keys add` adds one that exists already. The first identity is the
+default. `arc keys use <name>` changes the default, and `--key <name>` or
+`ARC_KEY` picks another identity for one command.
 
-`arcn keys gen --encrypt` and `arcn keys encrypt` seal a key with a passphrase.
-Core reads the passphrase from `ARCN_PASSPHRASE`, or asks on the terminal.
+`arc keys gen --encrypt` and `arc keys encrypt` seal a key with a passphrase.
+Core reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
 
-`arcn keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
+`arc keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
 and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
 and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
 `self`, the default, which opens only what the owner sealed to their own key,
 such as drafts and the keyed root; or `all`, which mail needs, because a gift
 wrap comes from a one-time key that no list can name. The bunker keeps its URI
-when it restarts. `arcn keys add <uri>` makes an identity that
+when it restarts. `arc keys add <uri>` makes an identity that
 signs through it. That identity seals and opens mail, makes calls, and reads the
 keyed root, all through the signer. The bunker publishes the keyed root to its
 relay when it starts.
@@ -924,10 +924,10 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 - **Each read asks the relays.** A query fetches from every relay before it
   reads the store, so a slow relay makes every read slow.
 - **Sealed data syncs by a full fetch.** A Negentropy session opens its own
-  connection, which cannot answer the relay's challenge, so `arcn sync` fetches
+  connection, which cannot answer the relay's challenge, so `arc sync` fetches
   sealed data whole instead of comparing sets.
 - **Another relay may serve drafts to anyone.** Only a relay that enforces
-  NIP-42 reads, as `arcn relay serve` does, keeps the events themselves from
+  NIP-42 reads, as `arc relay serve` does, keeps the events themselves from
   others. The content stays encrypted on every relay.
 - **A remote signer needs the keyed root first.** A machine with the key must
   run once, and reach a relay or a stick that the remote machine reads, before

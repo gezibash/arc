@@ -33,6 +33,7 @@ WORKDIR /home/arc
 VOLUME ["/home/arc/.config/arc"]
 
 # The image runs a relay with the default identity of the volume. To run
-# another command, name it: docker run IMAGE arc keys gen
+# another command, name it: docker run IMAGE arc-legacy keys gen. The relay
+# of the older stack reads the key store of arc-legacy.
 EXPOSE 7331
 CMD ["arc-relay"]

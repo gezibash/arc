@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run one command on an exec citizen, and exit with its exit code.
 
-This is a wrapper around `arc call` for docs/exec/SPEC.md. It needs Python
+This is a wrapper around `arc-legacy call` for docs/exec/SPEC.md. It needs Python
 3.9 or newer.
 
   arc-exec <citizen-public-key> --script 'git status'
@@ -27,7 +27,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-# The wake counts toward the timeout of `arc call`. A wake takes at most
+# The wake counts toward the timeout of `arc-legacy call`. A wake takes at most
 # 30 seconds.
 WAKE_S = 30
 POLL_S = 5
@@ -82,7 +82,7 @@ def main() -> int:
 def request(args: argparse.Namespace, body: dict, timeout_s: int) -> dict:
     log(args.verbose, f"sending {body.get('action', 'run')} request")
     reply = subprocess.run(
-        ["arc", "call", "--timeout", str(timeout_s + WAKE_S), f"exec+arc://{args.citizen}/", json.dumps(body)],
+        ["arc-legacy", "call", "--timeout", str(timeout_s + WAKE_S), f"exec+arc://{args.citizen}/", json.dumps(body)],
         capture_output=True,
         text=True,
     )
@@ -90,7 +90,7 @@ def request(args: argparse.Namespace, body: dict, timeout_s: int) -> dict:
         sys.stderr.write(reply.stdout + reply.stderr)
         sys.exit(reply.returncode)
     log(args.verbose, "reply received")
-    # `arc call` prints the reply body as the last line.
+    # `arc-legacy call` prints the reply body as the last line.
     return json.loads(reply.stdout.strip().splitlines()[-1])
 
 

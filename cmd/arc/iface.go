@@ -25,7 +25,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// dispatch runs a command of an installed capability: arcn <name> <path...>.
+// dispatch runs a command of an installed capability: arc <name> <path...>.
 // The root command does not parse flags, so the capability reads its own;
 // dispatch reads only a leading --home and --key.
 func dispatch(command *cobra.Command, args []string) error {
@@ -54,9 +54,9 @@ func dispatch(command *cobra.Command, args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		return command.Help()
 	}
-	// arcn update runs a new program with --version before it swaps it in.
-	if args[0] == "--version" {
-		fmt.Printf("arcn %s\n", version)
+	// arc update runs a new program with --version before it swaps it in.
+	if args[0] == "--version" || args[0] == "-v" {
+		fmt.Printf("arc %s\n", version)
 		return nil
 	}
 	return runCapability(command, args[0], args[1:])
@@ -69,7 +69,7 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 	}
 	install, ok := installs.Named(name)
 	if !ok {
-		return fmt.Errorf("unknown command %q: see arcn --help, or install a capability with arcn install", name)
+		return fmt.Errorf("unknown command %q: see arc --help, or install a capability with arc install", name)
 	}
 	provider, err := nostr.PubKeyFromHex(install.Provider)
 	if err != nil {
@@ -94,7 +94,7 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 		return err
 	}
 	if offer.Manifest == nil {
-		return fmt.Errorf("%s predates interface version 1: call it with arcn call %s", name, offer.Name())
+		return fmt.Errorf("%s predates interface version 1: call it with arc call %s", name, offer.Name())
 	}
 	// A new version of the manifest can do no more than the citizen agreed
 	// to, until they agree again.
@@ -105,7 +105,7 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 		changes = install.Consent.Changes(offer.Manifest)
 	}
 	if len(changes) > 0 {
-		return fmt.Errorf("the author changed what %s can do:\n  %s\nto agree, install it again: arcn install %s %s --as %s",
+		return fmt.Errorf("the author changed what %s can do:\n  %s\nto agree, install it again: arc install %s %s --as %s",
 			name, strings.Join(changes, "\n  "), install.Provider, install.ID, name)
 	}
 
@@ -118,7 +118,7 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 }
 
-// helpCommand shows the help of a command of arcn, or of a capability.
+// helpCommand shows the help of a command of arc, or of a capability.
 func helpCommand(root *cobra.Command) *cobra.Command {
 	return &cobra.Command{
 		Use:   "help [command]",
@@ -135,7 +135,7 @@ func helpCommand(root *cobra.Command) *cobra.Command {
 	}
 }
 
-// builtinName says whether a name is a command of arcn itself.
+// builtinName says whether a name is a command of arc itself.
 func builtinName(root *cobra.Command, name string) bool {
 	for _, c := range root.Commands() {
 		if c.Name() == name || slices.Contains(c.Aliases, name) {
@@ -252,7 +252,7 @@ func (e *cliEnv) Publish(ctx context.Context, events []nostr.Event, urls []strin
 	}
 	if urls == nil {
 		for name, err := range unsent {
-			fmt.Fprintf(os.Stderr, "not sent to %s: %v\nit waits in the store; arcn sync sends it\n", name, err)
+			fmt.Fprintf(os.Stderr, "not sent to %s: %v\nit waits in the store; arc sync sends it\n", name, err)
 		}
 	}
 	return nil
@@ -327,7 +327,7 @@ func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter, urls []string) 
 func (e *cliEnv) Watch(ctx context.Context, filter nostr.Filter, urls []string) (<-chan nostr.Event, error) {
 	targets := e.relaysOf(urls)
 	if len(targets) == 0 {
-		return nil, errors.New("no relay to watch: add one with arcn relay add")
+		return nil, errors.New("no relay to watch: add one with arc relay add")
 	}
 	out := make(chan nostr.Event)
 	var wg sync.WaitGroup

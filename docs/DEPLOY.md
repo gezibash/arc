@@ -2,8 +2,9 @@
 
 Arc ships as one release per platform. Each release holds one static binary
 for each command, so the target machine needs no runtime and no library.
-`arc` is the client, `arc-relay` runs a relay, and each provider has its own
-binary.
+`arc` is the program: it is the client, and `arc relay serve` runs a relay.
+Each provider has its own binary. `arc-legacy` and `arc-relay` are the older
+stack. They are deprecated, and v0.11.0 removes them.
 
 ## Get a release
 
@@ -57,7 +58,21 @@ another OS or CPU, set `GOOS` and `GOARCH`.
 
 ## Run a relay
 
-A relay routes encrypted application packets between agents. Service
+`arc relay serve` runs a Nostr relay, built on khatru. It keeps its events
+in `<home>/relay.db`, or in the file that `--db` names:
+
+```bash
+arc relay serve --listen 0.0.0.0:7447
+```
+
+Clients use `ws://<host>:7447`. Put a proxy that ends TLS in front of the
+relay, and clients use `wss://`. The write limits are off until their flags
+turn them on, see "Run the Nostr relay on Fly.io" below.
+
+## Run a relay of the older stack
+
+A relay of the older stack routes encrypted application packets between
+agents. Service
 announcements and directory queries are public metadata. Operators can enable
 [relay federation](federation/SPEC.md) with approved partner relays. Publishers
 choose direct or network sharing; intermediate operators must add `--transit`
@@ -67,7 +82,7 @@ to permit onward discovery and traffic.
    across restarts. Clients pin this key.
 
    ```bash
-   arc keys gen
+   arc-legacy keys gen
    ```
 
    The command prints the key name, then the public key. An example name is
@@ -81,8 +96,8 @@ to permit onward discovery and traffic.
 
    The relay listens on port 7331. To use another address, add
    `--address`, for example `--address :7400`. Without `--key`, the relay
-   uses the active identity: `ARC_KEY`, then `./arc.key`, then the default
-   key.
+   uses the active identity: `ARC_LEGACY_KEY`, then `./arc.key`, then the
+   default key.
 
    The relay prints its public key. Give that key to clients.
 
@@ -108,7 +123,7 @@ WantedBy=multi-user.target
 Create the `arc` user with `/var/lib/arc` as its home, generate the key
 as that user, then `systemctl enable --now arc-relay`.
 
-## Run a relay with Docker
+## Run a relay of the older stack with Docker
 
 The image `ghcr.io/gezibash/arc` runs `arc-relay` by default. It supports
 `linux/amd64` and `linux/arm64`.
@@ -119,7 +134,7 @@ key.
 
 ```bash
 docker volume create arc-relay
-docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest arc keys gen
+docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest arc-legacy keys gen
 ```
 
 Then start the relay. It uses the default key of the volume:
@@ -143,7 +158,7 @@ example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 ## Run the Nostr relay on Fly.io
 
 The delivery layer uses Nostr relays, see docs/delivery/SPEC.md. The Fly.io
-app `arc-nostr-gezim` runs `arcn relay serve`. Its files are in
+app `arc-nostr-gezim` runs `arc relay serve`. Its files are in
 `docker/fly-nostr/`. The relay keeps its events in
 `/data/relay.db`, on a volume. Fly.io ends TLS, so clients use
 `wss://arc-nostr-gezim.fly.dev`.
@@ -168,7 +183,7 @@ After each deploy, run the check. It sends a sealed page and a live call to
 mise run check-relay -- wss://arc-nostr-gezim.fly.dev
 ```
 
-The Dockerfile turns on the write limits of `arcn relay serve`. Each limit
+The Dockerfile turns on the write limits of `arc relay serve`. Each limit
 is off when its flag is absent, so a local relay takes everything.
 
 | Flag | Deploy value | Effect |
@@ -185,7 +200,7 @@ Each journal part holds 32 KiB of text. As JSON, the event that carries it
 holds about 44 KiB. The store refuses content larger than 64 KiB. Thus the
 size cap does not refuse a journal event.
 
-`arcn sync` sends each event on its own connection. The burst lets a first
+`arc sync` sends each event on its own connection. The burst lets a first
 sync of up to 1000 events through at once. After the burst, a sync of 5
 events each second does not reach the rate.
 
@@ -208,26 +223,25 @@ docker compose run --rm -T info
 
 This builds a local image from this checkout, with the journal, DM and
 Agora providers. Each service keeps its identity in its own volume; provider data is
-persistent. The relay binds to `127.0.0.1:7331`. Install ARC v0.9.0 on your host
-and use its ordinary `arc` commands to connect. Agent keys stay on the host.
+persistent. The relay binds to `127.0.0.1:7331`. The stack is the older stack:
+on the host, connect with `arc-legacy` from an ARC release. Agent keys stay on
+the host.
 
 See [the local Compose guide](../docker/local/README.md) for agent setup,
 sharing a journal, exchanging sealed DMs, using Agora, storage, and the integration test.
 
 ## Connect clients
 
-Set the relay address and pin its public key:
+Add the relay to each identity that uses it:
 
 ```bash
-export ARC_RELAY=relay.example.com:7331
-export ARC_RELAY_PUBKEY=<relay public key hex>
 arc keys gen
-arc publish
-arc listen
+arc relay add wss://relay.example.com
+arc relay ls
 ```
 
-The `--relay` and `--relay-pubkey` flags override the environment for one
-command.
+`arc relay ls` shows the NIP-11 document of each relay. `arc message send`,
+`arc call` and `arc sync` then use the relay.
 
 ## Cut a release
 

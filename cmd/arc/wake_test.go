@@ -40,13 +40,13 @@ func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}, {"install", provider.Public.Hex(), "--yes"}} {
-		if err := arcn(t, home, args...); err != nil {
+		if err := arc(t, home, args...); err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
 	call := func() (error, time.Duration) {
 		start := time.Now()
-		err := arcn(t, home, "call", provider.Public.Hex(), `{"argv":["true"]}`, "--timeout", "3s")
+		err := arc(t, home, "call", provider.Public.Hex(), `{"argv":["true"]}`, "--timeout", "3s")
 		return err, time.Since(start)
 	}
 

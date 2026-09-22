@@ -21,7 +21,7 @@ import (
 // Errors of a key file.
 var (
 	ErrExists   = errors.New("keys: a key file is already there")
-	ErrNotFound = errors.New("keys: no key file; make one with arcn keys gen")
+	ErrNotFound = errors.New("keys: no key file; make one with arc keys gen")
 	ErrOpenMode = errors.New("keys: the key file can be read by other users")
 )
 

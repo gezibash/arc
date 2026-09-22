@@ -312,17 +312,17 @@ func TestHelpListsTheCommands(t *testing.T) {
 	env := &fakeEnv{me: nostr.Generate()}
 	for _, words := range [][]string{nil, {"help"}, {"--help"}} {
 		out, _, err := runSpec(t, "exec", env, words...)
-		if err != nil || !strings.Contains(out, "arcn exec run <argv...>") || !strings.Contains(out, "Start a script as a job") {
+		if err != nil || !strings.Contains(out, "arc exec run <argv...>") || !strings.Contains(out, "Start a script as a job") {
 			t.Errorf("%v: %v\n%s", words, err, out)
 		}
 	}
 	out, _, err := runSpec(t, "releases", env, "channel", "--help")
-	if err != nil || !strings.Contains(out, "usage: arcn releases channel [<channel>]") || !strings.Contains(out, "default stable") {
+	if err != nil || !strings.Contains(out, "usage: arc releases channel [<channel>]") || !strings.Contains(out, "default stable") {
 		t.Errorf("command help: %v\n%s", err, out)
 	}
 	// sqlite has a root command with a positional, so no words show help.
 	out, _, err = runSpec(t, "sqlite", env)
-	if err != nil || !strings.Contains(out, "arcn sqlite <sql...>") || env.calls != 0 {
+	if err != nil || !strings.Contains(out, "arc sqlite <sql...>") || env.calls != 0 {
 		t.Errorf("sqlite help: %v\n%s", err, out)
 	}
 }

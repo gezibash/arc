@@ -134,7 +134,7 @@ func start(t *testing.T, negentropy bool) string {
 // its admins. It returns the URL and the key of the relay.
 func StartGroups(t *testing.T, id string, admins ...nostr.PubKey) (string, nostr.PubKey) {
 	t.Helper()
-	// Bolt, as arcn uses: it cannot delete while a query of it is open.
+	// Bolt, as arc uses: it cannot delete while a query of it is open.
 	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}
 	if err := db.Init(); err != nil {
 		t.Fatal(err)

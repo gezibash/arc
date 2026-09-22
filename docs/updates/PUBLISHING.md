@@ -10,7 +10,7 @@ This is an operator-driven path, not an official public channel.
 
 ## The tools
 
-- **The publisher** is `arcn release sign`. It reads an unsigned channel,
+- **The publisher** is `arc release sign`. It reads an unsigned channel,
   checks the size and hash of each archive in `<root>/blobs`, and signs the
   channel with the chosen identity. It refuses a channel whose publisher
   differs from the served channel, or whose sequence does not increase. It
@@ -19,17 +19,17 @@ This is an operator-driven path, not an official public channel.
 - **The verifier does not exist yet.** It must read the channel through a
   relay as a throwaway citizen, verify publisher authority, download each
   archive, and check its signed size and digest without installing
-  anything. `arcn update check` does the first part.
+  anything. `arc update check` does the first part.
 
 ## Prepare a publication
 
-Generate a dedicated identity with `arcn keys gen`. Keep its printed name
+Generate a dedicated identity with `arc keys gen`. Keep its printed name
 and public key. Do not change the active citizen identity. Keep the secret
 key on this machine: a remote signer cannot sign a release yet. Name the
 identity with `--key` when you sign:
 
 ```sh
-arcn --key <publisher-name> release sign --root /absolute/provider-root unsigned.json
+arc --key <publisher-name> release sign --root /absolute/provider-root unsigned.json
 ```
 
 Create `channels/` and `blobs/` under a provider root that the operator owns.

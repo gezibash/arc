@@ -50,7 +50,7 @@ func TestTheBunkerPolicy(t *testing.T) {
 	}
 }
 
-// run runs arcn in a home, with its standard output captured.
+// run runs arc in a home, with its standard output captured.
 func run(t *testing.T, home string, stdin string, args ...string) (string, error) {
 	t.Helper()
 	read, write, err := os.Pipe()
@@ -69,12 +69,12 @@ func run(t *testing.T, home string, stdin string, args ...string) (string, error
 	return string(out), runErr
 }
 
-// ok runs arcn, and fails the test when the command fails.
+// ok runs arc, and fails the test when the command fails.
 func ok(t *testing.T, home string, stdin string, args ...string) string {
 	t.Helper()
 	out, err := run(t, home, stdin, args...)
 	if err != nil {
-		t.Fatalf("arcn %s: %v\n%s", strings.Join(args, " "), err, out)
+		t.Fatalf("arc %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return out
 }
@@ -171,7 +171,7 @@ func TestToolRemoveTakesOutOneInstall(t *testing.T) {
 
 	ok(t, home, "", "tool", "remove", "journal")
 	out := ok(t, home, "", "tool", "list")
-	if strings.Contains(out, "journal") || !strings.Contains(out, "arcn call y") {
+	if strings.Contains(out, "journal") || !strings.Contains(out, "arc call y") {
 		t.Fatalf("tool list after removing journal gave %q", out)
 	}
 	if _, err := run(t, home, "", "tool", "remove", "journal"); err == nil {

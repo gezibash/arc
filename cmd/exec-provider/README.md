@@ -22,16 +22,16 @@ that user.
 | `run.sh` | Runs the binary that `EXEC_PROVIDER` names. Without it, builds the provider from this checkout. |
 | `citizen/init` | Writes `citizen.env` and `config.json` for one machine. |
 | `citizen/citizen-up` | The start script. The caller runs it to wake the citizen. |
-| `citizen/serve` | Runs `arcn serve` for this bundle as a plain process. |
+| `citizen/serve` | Runs `arc serve` for this bundle as a plain process. |
 | `citizen/lease` | Holds the machine awake. One case for each platform. |
 | `citizen/notify-dm` | Sends the result of a finished job to its owner as a direct message. |
-| `arc-exec` | The caller wrapper of the older `arc`. It sends the request with `arc call`, and exits with the exit code of the command. |
+| `arc-exec` | The caller wrapper of `arc-legacy`, the older stack. It sends the request with `arc-legacy call`, and exits with the exit code of the command. |
 
 ## Requirements
 
-- On the citizen machine: `arcn` and `exec-provider` from an ARC release,
+- On the citizen machine: `arc` and `exec-provider` from an ARC release,
   `bash`, and a copy of this directory. The machine needs no Go toolchain.
-- On the caller: `arcn`.
+- On the caller: `arc`.
 - A Nostr relay on a machine that does not pause, for example
   `wss://arc-nostr-gezim.fly.dev`. The citizen and the caller use the same
   relay.
@@ -41,7 +41,7 @@ that user.
 Do these steps on the citizen machine.
 
 1. Install ARC. The release puts `exec-provider` in the same directory as
-   `arcn`:
+   `arc`:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/gezibash/arc/main/install.sh | sh
@@ -52,7 +52,7 @@ Do these steps on the citizen machine.
    public key. Record the name:
 
    ```sh
-   arcn keys gen
+   arc keys gen
    ```
 
 4. Write the configuration. Give one `--grant` for each caller key:
@@ -69,9 +69,9 @@ Do these steps on the citizen machine.
    machine that never pauses. The script adds the relay to the identity, and
    prints the public key of the citizen.
 
-   The script finds `exec-provider` in the directory of `arcn`, and writes its
+   The script finds `exec-provider` in the directory of `arc`, and writes its
    path to `citizen.env`. To use another binary, set `EXEC_PROVIDER` before
-   you run the script. The script also writes the arcn home, `ARCN_HOME`, or
+   you run the script. The script also writes the arc home, `ARC_HOME`, or
    `~/.config/arc/next` when it is not set.
 
    Add `--notify-dm` to send the result of each finished job to its owner as
@@ -83,7 +83,7 @@ Do these steps on the citizen machine.
    ~/exec-provider/citizen/citizen-up && echo ready
    ```
 
-   `citizen-up` exits 0 when `arcn serve` writes `serves`. At that time, each
+   `citizen-up` exits 0 when `arc serve` writes `serves`. At that time, each
    relay holds the announcement and listens for calls.
 
 CAUTION: On a Sprite, do not run `citizen/serve` or `sshd` as a Sprite
@@ -92,10 +92,10 @@ the time.
 
 ## Set up a caller
 
-1. Add a wake hook for the citizen to `wake.toml` in the arcn home, by
+1. Add a wake hook for the citizen to `wake.toml` in the arc home, by
    default `~/.config/arc/next/wake.toml`. The hook runs the start script on
-   the citizen machine. Before each live call to the citizen, `arcn` runs the
-   hook: `arcn call`, and the commands that `arcn install` adds.
+   the citizen machine. Before each live call to the citizen, `arc` runs the
+   hook: `arc call`, and the commands that `arc install` adds.
 
    For a Sprite:
 
@@ -115,12 +115,12 @@ the time.
 
    The wake follows these rules:
 
-   - `arcn serve` signs its announcement again every 2 minutes. An
+   - `arc serve` signs its announcement again every 2 minutes. An
      announcement is current while it is at most 5 minutes old.
    - If there is no wake hook, the citizen must have a current announcement
      on the relay. If it has none, the call stops at once with
      `peer_offline`.
-   - After an answer from the citizen, `arcn` skips the hook for 30 seconds.
+   - After an answer from the citizen, `arc` skips the hook for 30 seconds.
      A citizen that answered did not pause.
    - If the hook exits with a status other than 0, the call stops with
      `wake_failed`. If the hook runs longer than 30 seconds, the call stops
@@ -129,15 +129,16 @@ the time.
 2. Add the relay of the citizen, and install the capability:
 
    ```sh
-   arcn relay add wss://<relay-host>
-   arcn install <citizen-public-key> --yes
+   arc relay add wss://<relay-host>
+   arc install <citizen-public-key> --yes
    ```
 
 ## Run commands
 
-`arc-exec` uses the older `arc`. It does not reach a citizen that runs
-`arcn`. For such a citizen, send the request with `arcn call`, see "Request
-protocol".
+`arc-exec` uses `arc-legacy`, the older stack, which v0.11.0 removes. It does
+not reach a citizen that runs `arc`, and it needs `arc-legacy` on the PATH:
+`install.sh` links only `arc`. For a citizen that runs `arc`, send the request
+with `arc call`, see "Request protocol".
 
 ```sh
 arc-exec <citizen-public-key> --script 'cd ~/arc && git status --short'
@@ -170,10 +171,10 @@ body is UTF-8 JSON. The body field `action` selects the operation:
 | `start` | The same fields as `run` | `job` and `state` |
 | `status` | `job` | `state`, the output, and the result after the job ends |
 
-With `arcn`, send a request with `arcn call`:
+With `arc`, send a request with `arc call`:
 
 ```sh
-arcn call <citizen-public-key> '{"argv":["uname","-a"]}'
+arc call <citizen-public-key> '{"argv":["uname","-a"]}'
 ```
 
 ## Configuration

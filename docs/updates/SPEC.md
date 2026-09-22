@@ -28,8 +28,8 @@ download, an archive that escapes its directory, and a program that does not
 start after the swap.
 
 `mise run delivery` proves the whole path. A publisher signs a channel with
-`arcn release sign`, a releases provider serves it through a relay, and an
-older `arcn` replaces itself with `arcn update apply`.
+`arc release sign`, a releases provider serves it through a relay, and an
+older `arc` replaces itself with `arc update apply`.
 
 ## User contract
 

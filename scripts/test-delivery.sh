@@ -30,16 +30,16 @@ fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 keyfile() { echo "$work/$1"/citizens/*/key; }
 
 cd "$root"
-go build -o "$work/arcn" ./cmd/arcn
+go build -o "$work/arc" ./cmd/arc
 go build -o "$work/exec-provider" ./cmd/exec-provider
-say "arcn and the exec provider build"
+say "arc and the exec provider build"
 
-a() { "$work/arcn" --home "$work/laptop" "$@"; }
-b() { "$work/arcn" --home "$work/desktop" "$@"; }
+a() { "$work/arc" --home "$work/laptop" "$@"; }
+b() { "$work/arc" --home "$work/desktop" "$@"; }
 
 # The relay keeps the limits of the public deploy that bear on this proof:
 # the size of an event, and authentication before a gift wrap.
-"$work/arcn" --home "$work/relay" relay serve --listen 127.0.0.1:0 \
+"$work/arc" --home "$work/relay" relay serve --listen 127.0.0.1:0 \
   --max-event-bytes 262144 --wrap-auth > "$work/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 50); do grep -q "listens on" "$work/relay.log" 2>/dev/null && break; sleep 0.1; done
@@ -118,15 +118,15 @@ b journal read hrs/data/big > "$work/big-back.txt"
 cmp -s "$work/big.txt" "$work/big-back.txt" || fail "the large page came back changed"
 say "a large page of $(wc -c < "$work/big.txt" | tr -d ' ') bytes crosses the relay in parts"
 
-"$work/arcn" --home "$work/phone" keys add < "$(keyfile laptop)" > /dev/null
-"$work/arcn" --home "$work/phone" relay add "$url"
-"$work/arcn" --home "$work/phone" install "$author" journal --yes > /dev/null
-got="$("$work/arcn" --home "$work/phone" journal read hrs/data/big --lines 1500:1501)"
+"$work/arc" --home "$work/phone" keys add < "$(keyfile laptop)" > /dev/null
+"$work/arc" --home "$work/phone" relay add "$url"
+"$work/arc" --home "$work/phone" install "$author" journal --yes > /dev/null
+got="$("$work/arc" --home "$work/phone" journal read hrs/data/big --lines 1500:1501)"
 [ "$got" = "$(sed -n '1500,1501p' "$work/big.txt")" ] || fail "the range read gave $got"
 say "a range of two lines reads on a machine that held nothing"
 
 # Tail streams what is appended.
-"$work/arcn" --home "$work/desktop" journal tail hrs/log/live > "$work/tail.txt" 2>&1 &
+"$work/arc" --home "$work/desktop" journal tail hrs/log/live > "$work/tail.txt" 2>&1 &
 tail_pid=$!
 sleep 0.5
 a journal append hrs/log/live first note > /dev/null
@@ -139,9 +139,9 @@ printf 'phase 1 holds: relay, USB stick, refusal, parts, and tail\n\n'
 
 # Phase 2: a message reaches an offline recipient through a third machine
 # that carries a USB stick. Nobody has a relay.
-alice() { "$work/arcn" --home "$work/alice" "$@"; }
-carol() { "$work/arcn" --home "$work/carol" "$@"; }
-bob() { "$work/arcn" --home "$work/bob" "$@"; }
+alice() { "$work/arc" --home "$work/alice" "$@"; }
+carol() { "$work/arc" --home "$work/carol" "$@"; }
+bob() { "$work/arc" --home "$work/bob" "$@"; }
 
 alice keys gen > /dev/null
 carol keys gen > /dev/null
@@ -185,8 +185,8 @@ printf 'phase 2 holds: couriers, route tags, acknowledgements, and the outbox\n\
 
 # Phase 3: capabilities. A provider serves exec; a caller finds it, installs
 # it, and calls it live over the relay and by hand through a courier.
-provider() { "$work/arcn" --home "$work/exec" "$@"; }
-caller() { "$work/arcn" --home "$work/caller" "$@"; }
+provider() { "$work/arc" --home "$work/exec" "$@"; }
+caller() { "$work/arc" --home "$work/caller" "$@"; }
 
 provider keys gen > /dev/null
 provider relay add "$url"
@@ -201,13 +201,13 @@ cat > "$work/exec.json" <<JSON
 {"grants": ["$caller_key"], "cwd": "$work", "jobs_dir": "$work/jobs"}
 JSON
 
-EXEC_CONFIG="$work/exec.json" "$work/arcn" --home "$work/exec" serve \
+EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \
   --sync-dir "$work/stick-p" --interval 1s > "$work/serve.log" 2>&1 &
 serve_pid=$!
 for _ in $(seq 1 50); do grep "serves" "$work/serve.log" > /dev/null 2>&1 && break; sleep 0.1; done
 grep "serves" "$work/serve.log" > /dev/null || fail "the provider did not serve: $(cat "$work/serve.log")"
-say "a provider serves exec through arcn"
+say "a provider serves exec through arc"
 
 caller discover exec | grep "$provider_key" > /dev/null || fail "discover did not find the provider"
 caller install "$provider_key" --yes | grep "installed" > /dev/null || fail "the install failed"
@@ -221,10 +221,10 @@ rtt="$(sed -n 's/^round trip \([^ ]*\) via.*/\1/p' "$work/live.err")"
 [ -n "$rtt" ] || fail "the live call recorded no round trip"
 say "a live call to exec crosses the relay; round trip $rtt"
 
-"$work/arcn" --home "$work/stranger" keys gen > /dev/null
-"$work/arcn" --home "$work/stranger" relay add "$url"
-"$work/arcn" --home "$work/stranger" install "$provider_key" --yes > /dev/null
-if "$work/arcn" --home "$work/stranger" call "$provider_name" '{"argv":["echo","x"]}' > /dev/null 2> "$work/denied.txt"; then
+"$work/arc" --home "$work/stranger" keys gen > /dev/null
+"$work/arc" --home "$work/stranger" relay add "$url"
+"$work/arc" --home "$work/stranger" install "$provider_key" --yes > /dev/null
+if "$work/arc" --home "$work/stranger" call "$provider_name" '{"argv":["echo","x"]}' > /dev/null 2> "$work/denied.txt"; then
   fail "a caller without a grant ran a command"
 fi
 grep "access_denied" "$work/denied.txt" > /dev/null || fail "the refusal is not access_denied: $(cat "$work/denied.txt")"
@@ -250,7 +250,7 @@ caller call results | grep "reply:.*carried by hand" > /dev/null || fail "the re
 say "a store-and-forward call crosses the courier path, and its reply comes back"
 
 # A provider whose machine paused. The caller keeps a wake hook for it, and
-# arcn runs the hook before the live call, the way ssh runs a ProxyCommand.
+# arc runs the hook before the live call, the way ssh runs a ProxyCommand.
 kill "$serve_pid"
 wait "$serve_pid" 2>/dev/null || true
 caller relay add "$url"
@@ -259,7 +259,7 @@ cat > "$work/wake-exec" <<SCRIPT
 #!/bin/sh
 # The start script of the provider: serve again, and exit 0 when it listens.
 echo woke >> "$work/woke"
-EXEC_CONFIG="$work/exec.json" "$work/arcn" --home "$work/exec" serve \\
+EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \\
   "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \\
   > "$work/serve-woken.log" 2>&1 < /dev/null &
 echo \$! > "$work/serve-woken.pid"
@@ -281,24 +281,24 @@ caller call "$provider_name" '{"argv":["echo","woken"]}' > "$work/woken.txt" 2> 
 serve_pid="$(cat "$work/serve-woken.pid")"
 grep "woken" "$work/woken.txt" > /dev/null || fail "the woken provider answered $(cat "$work/woken.txt")"
 [ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran $(wc -l < "$work/woke") times"
-say "arcn runs the wake hook, and the woken provider answers"
+say "arc runs the wake hook, and the woken provider answers"
 
 caller call "$provider_name" '{"argv":["echo","again"]}' > /dev/null 2>&1 || fail "the second call failed"
 [ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran again for a provider that answered a moment ago"
-say "arcn skips the hook of a provider that answered a moment ago"
+say "arc skips the hook of a provider that answered a moment ago"
 
 go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
 say "an ARC direct message opens in a NIP-17 client, and a NIP-17 message opens in ARC"
 
 # Updates: a publisher signs a channel with a Nostr key, a releases provider
-# serves it, and an older arcn replaces itself with the newer build.
-publisher() { "$work/arcn" --home "$work/publisher" "$@"; }
+# serves it, and an older arc replaces itself with the newer build.
+publisher() { "$work/arc" --home "$work/publisher" "$@"; }
 publisher keys gen > /dev/null
 publisher_key="$(publisher whoami | sed -n 2p)"
 releases="$work/releases"
 mkdir -p "$releases/channels" "$releases/blobs" "$work/new/arc/bin" "$work/old"
-go build -ldflags "-X main.version=0.9.0" -o "$work/old/arcn" ./cmd/arcn
-go build -ldflags "-X main.version=9.9.9" -o "$work/new/arc/bin/arcn" ./cmd/arcn
+go build -ldflags "-X main.version=0.9.0" -o "$work/old/arc" ./cmd/arc
+go build -ldflags "-X main.version=9.9.9" -o "$work/new/arc/bin/arc" ./cmd/arc
 go build -o "$work/releases-provider" ./cmd/releases-provider
 tar -czf "$work/new.tar.gz" -C "$work/new" arc
 digest="$(shasum -a 256 "$work/new.tar.gz" | cut -d' ' -f1)"
@@ -318,23 +318,23 @@ if publisher release sign --root "$releases" "$work/unsigned.json" > /dev/null 2
 fi
 say "a publisher signs a channel with a Nostr key, and never the same sequence twice"
 
-"$work/arcn" --home "$work/rel" keys gen > /dev/null
-"$work/arcn" --home "$work/rel" relay add "$url"
-rel_key="$("$work/arcn" --home "$work/rel" whoami | sed -n 2p)"
-RELEASES_ROOT="$releases" "$work/arcn" --home "$work/rel" serve \
+"$work/arc" --home "$work/rel" keys gen > /dev/null
+"$work/arc" --home "$work/rel" relay add "$url"
+rel_key="$("$work/arc" --home "$work/rel" whoami | sed -n 2p)"
+RELEASES_ROOT="$releases" "$work/arc" --home "$work/rel" serve \
   "exec://$work/releases-provider?manifest=$root/cmd/releases-provider/manifest.json" > "$work/rel.log" 2>&1 &
 rel_pid=$!
 for _ in $(seq 1 50); do grep "serves" "$work/rel.log" > /dev/null 2>&1 && break; sleep 0.1; done
 grep "serves" "$work/rel.log" > /dev/null || fail "the releases provider did not serve: $(cat "$work/rel.log")"
 
-old() { "$work/old/arcn" --home "$work/caller" "$@"; }
-old update check --provider "$rel_key" --publisher "$publisher_key" | grep "names arcn 9.9.9" > /dev/null ||
+old() { "$work/old/arc" --home "$work/caller" "$@"; }
+old update check --provider "$rel_key" --publisher "$publisher_key" | grep "names arc 9.9.9" > /dev/null ||
   fail "update check: $(old update check --provider "$rel_key" --publisher "$publisher_key" 2>&1)"
 old update apply --provider "$rel_key" --publisher "$publisher_key" > "$work/apply.txt" 2>&1 ||
   fail "update apply: $(cat "$work/apply.txt")"
-"$work/old/arcn" --version | grep "9.9.9" > /dev/null || fail "the program is $("$work/old/arcn" --version)"
-"$work/old/arcn.previous" --version | grep "0.9.0" > /dev/null || fail "the previous program is gone"
-say "an older arcn reads the channel over the relay, and replaces itself"
+"$work/old/arc" --version | grep "9.9.9" > /dev/null || fail "the program is $("$work/old/arc" --version)"
+"$work/old/arc.previous" --version | grep "0.9.0" > /dev/null || fail "the previous program is gone"
+say "an older arc reads the channel over the relay, and replaces itself"
 
 if old update check --provider "$rel_key" --publisher "$caller_key" > /dev/null 2> "$work/wrongpub.txt"; then
   fail "a channel of another publisher passed"
