@@ -15,6 +15,7 @@ import (
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/catalog"
+	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/relay"
@@ -68,9 +69,11 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 
 	// Ask for the newest announcement first, so a new version meets the
 	// consent check at once.
-	sess.node.Pull(command.Context(), nostr.Filter{
+	if err := node.Unreached(sess.node.Pull(command.Context(), nostr.Filter{
 		Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}, Tags: nostr.TagMap{"d": {install.ID}},
-	}, sess.relays)
+	}, sess.relays)); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\nthis uses the announcement that this machine holds\n", err)
+	}
 	offer, err := findOffer(command.Context(), sess, provider, install.ID)
 	if err != nil {
 		return err
@@ -282,17 +285,17 @@ func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter, urls []string) 
 		}
 		ask := filter
 		ask.IDs = missing
-		_, errs := e.sess.node.Pull(ctx, ask, e.sess.relays)
+		reports, errs := e.sess.node.Pull(ctx, ask, e.sess.relays)
 		found := e.sess.node.Store.Query(filter)
 		// An event that is still missing because no relay answered is an
 		// error of the relays, not of the event.
-		if len(errs) > 0 && len(errs) == len(e.sess.relays) && len(found) < len(filter.IDs) {
-			return found, fmt.Errorf("no relay answered: %w", errors.Join(errs...))
+		if err := node.Unreached(reports, errs); err != nil && len(found) < len(filter.IDs) {
+			return found, err
 		}
 		return found, nil
 	}
-	if _, errs := e.sess.node.Pull(ctx, filter, e.sess.relays); len(errs) > 0 && len(errs) == len(e.sess.relays) {
-		fmt.Fprintf(os.Stderr, "no relay answered, so this shows what this machine holds: %v\n", errs[0])
+	if err := node.Unreached(e.sess.node.Pull(ctx, filter, e.sess.relays)); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\nthis shows what this machine holds\n", err)
 	}
 	return e.sess.node.Store.Query(filter), nil
 }
