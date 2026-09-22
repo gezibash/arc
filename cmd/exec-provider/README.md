@@ -130,7 +130,7 @@ the time.
 2. Join the relay of the citizen:
 
    ```sh
-   arc join <relay-host>:7331 --pubkey <relay-public-key>
+   arc join <relay-host>:7331 --relay-pubkey <relay-public-key>
    ```
 
 ## Run commands
