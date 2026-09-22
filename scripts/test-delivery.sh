@@ -208,6 +208,9 @@ serve_pid=$!
 for _ in $(seq 1 50); do grep "serves" "$work/serve.log" > /dev/null 2>&1 && break; sleep 0.1; done
 grep "serves" "$work/serve.log" > /dev/null || fail "the provider did not serve: $(cat "$work/serve.log")"
 say "a provider serves exec through arc"
+provider message outbox > /dev/null 2> "$work/beside-serve.txt" ||
+  fail "a second command of the serving identity failed: $(cat "$work/beside-serve.txt")"
+say "another command of the serving identity runs while it serves"
 
 caller discover exec | grep "$provider_key" > /dev/null || fail "discover did not find the provider"
 caller install "$provider_key" --yes | grep "installed" > /dev/null || fail "the install failed"

@@ -149,7 +149,19 @@ laptop journal append hrs/ablations/lr-sweep next: try warmup
 desktop journal ls | grep "hrs/ablations/lr-sweep	LR sweep" > /dev/null || fail "ls shows $(desktop journal ls)"
 say "a page that is written and appended on one machine reads on the other"
 
-[ "$(desktop journal history hrs/ablations/lr-sweep | grep -c '^20')" = 2 ] ||
+# Two commands of one identity run at once: tail holds a watch, and append
+# writes on the same machine.
+laptop journal tail hrs/ablations/lr-sweep > "$work/tail-same.txt" 2>&1 &
+tail_pid=$!
+for _ in $(seq 1 50); do grep "next: try warmup" "$work/tail-same.txt" > /dev/null 2>&1 && break; sleep 0.1; done
+laptop journal append hrs/ablations/lr-sweep beside the tail 2> "$work/beside.txt" ||
+  { kill "$tail_pid"; fail "a second command of one identity failed: $(cat "$work/beside.txt")"; }
+for _ in $(seq 1 50); do grep "beside the tail" "$work/tail-same.txt" > /dev/null 2>&1 && break; sleep 0.1; done
+kill "$tail_pid" 2>/dev/null || true
+grep "beside the tail" "$work/tail-same.txt" > /dev/null || fail "the tail did not show the append: $(cat "$work/tail-same.txt")"
+say "two commands of one identity run at once"
+
+[ "$(desktop journal history hrs/ablations/lr-sweep | grep -c '^20')" = 3 ] ||
   fail "the history is $(desktop journal history hrs/ablations/lr-sweep)"
 desktop journal search warmup | grep "^hrs/ablations/lr-sweep" > /dev/null || fail "search found nothing"
 say "the page has two revisions, and search finds it"
