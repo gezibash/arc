@@ -1,6 +1,5 @@
 // Command arc is the command line tool of ARC, on Nostr events. See
-// docs/delivery/SPEC.md. The older stack stays for one release as
-// arc-legacy.
+// docs/delivery/SPEC.md.
 //
 //	arc keys gen | add | list | use | remove | encrypt | bunker
 //	arc whoami
@@ -46,7 +45,6 @@ import (
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/wake"
 	"github.com/spf13/cobra"
 )
@@ -71,7 +69,7 @@ func root() *cobra.Command {
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 	}
-	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc/next)")
+	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc)")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand(),
@@ -94,7 +92,7 @@ func rootDir(command *cobra.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(user, ".config", "arc", "next"), nil
+	return filepath.Join(user, ".config", "arc"), nil
 }
 
 // home is the directory of the identity that the command uses. It holds the
@@ -454,7 +452,7 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("queued for %s until %s\n", identity.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
+			fmt.Printf("queued for %s until %s\n", keys.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
 			if len(sess.relays) == 0 {
 				fmt.Println("no relays: run arc sync --dir <path> to hand it to a courier")
 			}
@@ -476,7 +474,7 @@ func messageCommand() *cobra.Command {
 				fmt.Println("no messages: run arc sync")
 			}
 			for _, m := range msgs {
-				fmt.Printf("%s  %s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), identity.Name(m.From[:]), m.Text)
+				fmt.Printf("%s  %s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), m.Text)
 			}
 			if n := sess.mail.Carrying(); n > 0 {
 				fmt.Printf("\ncarrying %d sealed messages for other citizens\n", n)
@@ -502,7 +500,7 @@ func messageCommand() *cobra.Command {
 			for _, o := range out {
 				to, _ := nostr.PubKeyFromHex(o.To)
 				fmt.Printf("%s  to %s  %s, sent %d times\n  %s\n",
-					o.Created.Local().Format("2006-01-02 15:04"), identity.Name(to[:]), o.State(now), o.Attempts, o.Text)
+					o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Attempts, o.Text)
 			}
 			return nil
 		},

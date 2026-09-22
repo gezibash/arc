@@ -1,7 +1,8 @@
 # What the Go build writes. `go build ./cmd/<name>` at the root writes /<name>.
 /bin/
-/arc-legacy
 /arc
+/arc-*
+/*-provider
 
 # Temporary files, for example, from tests.
 /tmp/

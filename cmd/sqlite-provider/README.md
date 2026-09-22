@@ -42,19 +42,18 @@ access to one shared database by changing this mapping.
 export SQLITE_CONFIG=/absolute/path/sqlite.json
 ```
 
-From the repository root, serve the bundle with ARC's normal provider flow:
+Serve the provider with `arc serve`. The identity of the provider must have
+a relay:
 
 ```sh
-ARC_LEGACY_KEY=<provider-key> arc-legacy serve cmd/sqlite-provider
+arc serve "exec://$(command -v sqlite-provider)?manifest=$PWD/cmd/sqlite-provider/manifest.json"
 ```
 
-The provider and the citizen use the same relay. Join it with `arc-legacy join`, or
-set `ARC_RELAY` and `ARC_RELAY_PUBKEY`. Then call the provider as the active
-citizen identity:
+A citizen adds the same relay, installs the capability, and queries it:
 
 ```sh
-arc-legacy call 'sqlite+arc://<provider-public-key>/main' \
-  '{"sql":"SELECT 1 AS n"}'
+arc install <provider-public-key> --yes
+arc sqlite select 1 as n
 ```
 
 ## Tests

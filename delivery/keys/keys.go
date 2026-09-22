@@ -15,7 +15,6 @@ import (
 	"fiatjaf.com/nostr/nip19"
 	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip49"
-	"github.com/gezibash/arc/identity"
 )
 
 // Errors of a key file.
@@ -44,7 +43,7 @@ func FromSecret(secret nostr.SecretKey) Key {
 
 // Name is the petname of the citizen. It follows from the public key, as it
 // does for every ARC identity.
-func (k Key) Name() string { return identity.Name(k.Public[:]) }
+func (k Key) Name() string { return Name(k.Public[:]) }
 
 // Save writes the secret key to a new file that only its owner can read. It
 // refuses to write over a key that is already there, because that would lose

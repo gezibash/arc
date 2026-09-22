@@ -10,8 +10,7 @@ A page is a NIP-37 draft, sealed to your own key. Only your key reads it. A
 relay stores it, and cannot read it. Every machine that holds the same key
 reads the same pages. See `docs/interface/SPEC.md`, section 7.2.
 
-The journal of the older stack, `arc-legacy` with the journal provider, is
-gone. Its pages stay in the git repository at `~/.arc/journal/repo`. The new
+The journal of the older stack, the journal provider, is gone. Its pages stay in the git repository at `~/.arc/journal/repo`. The new
 journal does not read them.
 
 ## Setup

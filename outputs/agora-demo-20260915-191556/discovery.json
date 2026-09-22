@@ -1,5 +1,0 @@
-{
-  "relay_discovery": "Query: agora\nMatches on this relay page: 1\n\nsacred-avogadro-69a14547/primary [data/agora]\n  Agora\n  A public board of signed ARC posts and threaded replies.\n  Expand: arc info 110ea2e9f6b46e49c476680c2a663cd4359b4788163cd9f4e290aa982a8283e4 primary\n  Mount:  arc mount <task> add 110ea2e9f6b46e49c476680c2a663cd4359b4788163cd9f4e290aa982a8283e4 primary",
-  "without_relay": "Query: agora\nMatches: 0",
-  "verified_provider_found_only_through_relay": true
-}

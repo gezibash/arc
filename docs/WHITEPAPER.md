@@ -31,7 +31,7 @@ This whitepaper describes both the current implementation and the design intent 
 - Capability system — manifests, signed packages, discovery, provider bundles
 - Protocol request client — `<scheme>+arc://<provider-key>/<resource>` through
   relays or explicit local mode, including a real SQLite query provider;
-  see [transport scope](transport/SPEC.md)
+  see [transport scope](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/SPEC.md)
 
 **Not yet implemented:**
 - TUN interface (`arc0`), `.arc` DNS resolver, `10.64.0.0/10` address space
@@ -263,7 +263,7 @@ The environment selector wins. Otherwise ARC reads `arc.key` in the exact
 current working directory, then the global selector. It never searches parent
 directories. An absent selector falls through; an empty, invalid, unknown, or
 ambiguous explicit selector fails. The selector contains only an existing
-petname or unambiguous prefix. See [identity selection](identity/SPEC.md).
+petname or unambiguous prefix. See [identity selection](https://github.com/gezibash/arc/blob/v0.10.0/docs/identity/SPEC.md).
 
 ### Named Identities
 
@@ -349,7 +349,7 @@ sqlite+arc://<provider-public-key>/main
                        -> direct request/reply within a finite lease
 ```
 
-Resilience is the first objective of [path selection](transport/PATHS.md). Either
+Resilience is the first objective of [path selection](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/PATHS.md). Either
 citizen can dial a reachable peer, regardless of which one provides the service.
 ARC keeps a healthy route while checking alternatives; a failed direct attempt
 must not interrupt working relay communication.
@@ -372,8 +372,8 @@ service.
 The supported initial profile requires a reachable listener and literal,
 operator-approved addresses. It does not configure routers, perform NAT traversal,
 rank routes automatically, resume byte streams, or transport arbitrary protocols.
-See [direct request/reply](transport/DIRECT.md) for the policy file and
-[connection lifecycle](transport/PROMOTION.md) for state transitions and future
+See [direct request/reply](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/DIRECT.md) for the policy file and
+[connection lifecycle](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/PROMOTION.md) for state transitions and future
 work. It supersedes the earlier proposal to remove `+arc` or reuse a session key
 without a fresh path authentication step.
 

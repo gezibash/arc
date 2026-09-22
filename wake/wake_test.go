@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/identity"
+	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/wake"
 )
 
@@ -22,11 +22,8 @@ import (
 func citizen(t *testing.T) []byte {
 	t.Helper()
 
-	me, err := identity.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return me.PublicKey
+	me := keys.Generate()
+	return me.Public[:]
 }
 
 // configure writes a wake configuration, and loads it.
@@ -140,7 +137,7 @@ func TestAHookThatCannotRunFailsOnlyItsCitizen(t *testing.T) {
 			waker, _ := configure(t, fmt.Sprintf("[wake.%q]\n%s", hex.EncodeToString(sleeper), entry))
 
 			err := waker.Wake(context.Background(), sleeper, nil)
-			if !errors.Is(err, wake.ErrFailed) || !strings.Contains(err.Error(), identity.Name(sleeper)) {
+			if !errors.Is(err, wake.ErrFailed) || !strings.Contains(err.Error(), keys.Name(sleeper)) {
 				t.Errorf("the citizen of the hook: %v", err)
 			}
 			if waker.State(sleeper, false) != wake.Asleep {
@@ -159,7 +156,7 @@ func TestACitizenWithoutAHookMustBeOnline(t *testing.T) {
 	key := citizen(t)
 
 	err := waker.Wake(context.Background(), key, (&asked{answer: false}).online)
-	if !errors.Is(err, wake.ErrPeerOffline) || !strings.Contains(err.Error(), identity.Name(key)) {
+	if !errors.Is(err, wake.ErrPeerOffline) || !strings.Contains(err.Error(), keys.Name(key)) {
 		t.Errorf("an absent citizen: %v, and it must be peer_offline", err)
 	}
 
@@ -211,7 +208,7 @@ func TestStateNamesThePresence(t *testing.T) {
 		{other, false, wake.Offline},
 	} {
 		if got := waker.State(check.key, check.announced); got != check.want {
-			t.Errorf("State(%s, %v) = %s, want %s", identity.Name(check.key), check.announced, got, check.want)
+			t.Errorf("State(%s, %v) = %s, want %s", keys.Name(check.key), check.announced, got, check.want)
 		}
 	}
 
@@ -304,7 +301,7 @@ func TestAHookThatFailsGivesWakeFailed(t *testing.T) {
 	if !errors.Is(err, wake.ErrFailed) {
 		t.Fatalf("err = %v, and it must be wake_failed", err)
 	}
-	for _, want := range []string{"wake_failed", identity.Name(key), "status 3", "the sprite is gone"} {
+	for _, want := range []string{"wake_failed", keys.Name(key), "status 3", "the sprite is gone"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error %q does not say %q", err, want)
 		}

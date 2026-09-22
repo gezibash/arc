@@ -53,7 +53,7 @@ identity comes from `arc keys use`, from `ARC_KEY`, or from `--key`.
 
 `<identity directory>/update/<publisher>/<channel>.json` holds the highest
 sequence that this identity accepted, and the digest of that document. The
-identity directory is `~/.config/arc/next/citizens/<name>`.
+identity directory is `~/.config/arc/citizens/<name>`.
 
 A publisher, a provider, or anyone between them could otherwise serve an
 older document and hold the citizen on an old release. The signature of an

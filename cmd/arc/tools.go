@@ -10,8 +10,8 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/bundle"
 	"github.com/gezibash/arc/delivery/catalog"
+	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/node"
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
 	"github.com/spf13/cobra"
 )
@@ -205,7 +205,7 @@ func resolveCommand() *cobra.Command {
 				if err != nil || seen[key] {
 					return
 				}
-				name := identity.Name(pk[:])
+				name := keys.Name(pk[:])
 				if name == query || strings.HasPrefix(key, query) {
 					seen[key] = true
 					hits = append(hits, found{key, name, where})

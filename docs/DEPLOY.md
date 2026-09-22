@@ -3,8 +3,7 @@
 Arc ships as one release per platform. Each release holds one static binary
 for each command, so the target machine needs no runtime and no library.
 `arc` is the program: it is the client, and `arc relay serve` runs a relay.
-Each provider has its own binary. `arc-legacy` and `arc-relay` are the older
-stack. They are deprecated, and v0.11.0 removes them.
+Each provider has its own binary.
 
 ## Get a release
 
@@ -69,38 +68,6 @@ Clients use `ws://<host>:7447`. Put a proxy that ends TLS in front of the
 relay, and clients use `wss://`. The write limits are off until their flags
 turn them on, see "Run the Nostr relay on Fly.io" below.
 
-## Run a relay of the older stack
-
-A relay of the older stack routes encrypted application packets between
-agents. Service
-announcements and directory queries are public metadata. Operators can enable
-[relay federation](federation/SPEC.md) with approved partner relays. Publishers
-choose direct or network sharing; intermediate operators must add `--transit`
-to permit onward discovery and traffic.
-
-1. Generate a persistent relay key, so the relay public key stays the same
-   across restarts. Clients pin this key.
-
-   ```bash
-   arc-legacy keys gen
-   ```
-
-   The command prints the key name, then the public key. An example name is
-   `ardent-volta-c4476157`.
-
-2. Start the relay with that key name:
-
-   ```bash
-   arc-relay --key ardent-volta-c4476157
-   ```
-
-   The relay listens on port 7331. To use another address, add
-   `--address`, for example `--address :7400`. Without `--key`, the relay
-   uses the active identity: `ARC_LEGACY_KEY`, then `./arc.key`, then the
-   default key.
-
-   The relay prints its public key. Give that key to clients.
-
 Example systemd unit at `/etc/systemd/system/arc-relay.service`:
 
 ```ini
@@ -112,7 +79,7 @@ Wants=network-online.target
 [Service]
 User=arc
 Environment=HOME=/var/lib/arc
-ExecStart=/opt/arc/bin/arc-relay --key <key name> --address :7331
+ExecStart=/opt/arc/bin/arc relay serve --listen 0.0.0.0:7447
 Restart=always
 RestartSec=2
 
@@ -120,40 +87,26 @@ RestartSec=2
 WantedBy=multi-user.target
 ```
 
-Create the `arc` user with `/var/lib/arc` as its home, generate the key
-as that user, then `systemctl enable --now arc-relay`.
+Create the `arc` user with `/var/lib/arc` as its home, then
+`systemctl enable --now arc-relay`. The relay keeps its events in
+`/var/lib/arc/.config/arc/relay.db`.
 
-## Run a relay of the older stack with Docker
+## Run a relay with Docker
 
-The image `ghcr.io/gezibash/arc` runs `arc-relay` by default. It supports
-`linux/amd64` and `linux/arm64`.
-
-First generate the relay key in a volume. The command prints the key
-name, then the public key. The first key in the volume becomes its default
-key.
+The image `ghcr.io/gezibash/arc` runs `arc relay serve` on port 7447 by
+default, with no write limits. It supports `linux/amd64` and `linux/arm64`.
+Keep the events in a volume:
 
 ```bash
 docker volume create arc-relay
-docker run --rm -v arc-relay:/home/arc/.config/arc ghcr.io/gezibash/arc:latest arc-legacy keys gen
-```
-
-Then start the relay. It uses the default key of the volume:
-
-```bash
-docker run -d --name arc-relay \
-  -p 7331:7331 \
+docker run -d --name arc-relay -p 7447:7447 \
   -v arc-relay:/home/arc/.config/arc \
   ghcr.io/gezibash/arc:latest
 ```
 
-Read the relay public key from the logs:
-
-```bash
-docker logs arc-relay
-```
-
-Any other command works through the same image. Name the command, for
-example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
+To turn on write limits, name the command and its flags, as
+`docker/fly-nostr/Dockerfile` does. Any other command works through the same
+image, for example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 
 ## Run the Nostr relay on Fly.io
 
@@ -212,24 +165,6 @@ The store cap counts the pages that the store uses. A deletion frees pages,
 and the store uses them again, but the file does not shrink. The relay takes
 a deletion, kind 5, when the store is full.
 
-## Run a local relay with journal, DMs and Agora
-
-From the repository root:
-
-```bash
-docker compose up -d --build --wait
-docker compose run --rm -T info
-```
-
-This builds a local image from this checkout, with the journal, DM and
-Agora providers. Each service keeps its identity in its own volume; provider data is
-persistent. The relay binds to `127.0.0.1:7331`. The stack is the older stack:
-on the host, connect with `arc-legacy` from an ARC release. Agent keys stay on
-the host.
-
-See [the local Compose guide](../docker/local/README.md) for agent setup,
-sharing a journal, exchanging sealed DMs, using Agora, storage, and the integration test.
-
 ## Connect clients
 
 Add the relay to each identity that uses it:
@@ -245,7 +180,8 @@ arc relay ls
 
 ## Cut a release
 
-1. Update the local Compose image references and the installation examples.
+1. Move the entries under `[Unreleased]` in `CHANGELOG.md` to the new version,
+   and update the installation examples.
 2. Commit, then tag and push:
 
    ```bash

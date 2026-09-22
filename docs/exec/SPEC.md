@@ -63,14 +63,14 @@ agent instructions.
   that a provider starts. See `provider/command.go`.
 - `arc call` waits for one reply for `--timeout` seconds. The default is 30.
 - A DM mailbox stores sealed messages for a key that is offline. See
-  [DM](../dm/SPEC.md).
+  [DM](https://github.com/gezibash/arc/blob/v0.10.0/docs/dm/SPEC.md).
 
 ## 5. What ARC does not give exec
 
 - The relay drops a packet when the recipient is offline. There is no queue.
 - Disconnection and expiry remove a relay announcement. An announcement
   expires at most 180 seconds after issue. See
-  [discovery](../discovery/SPEC.md). The relay cannot show a paused citizen.
+  [discovery](https://github.com/gezibash/arc/blob/v0.10.0/docs/discovery/SPEC.md). The relay cannot show a paused citizen.
 - `arc call` wakes a peer only through a wake hook of the caller (section 10).
   Without a hook, it does not wake the peer and does not wait for the peer to
   connect. It fails at once with `peer_offline` when the relay has no current

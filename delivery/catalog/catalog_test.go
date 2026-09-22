@@ -14,7 +14,7 @@ import (
 
 func echoPackage(t *testing.T) map[string]any {
 	t.Helper()
-	pkg, err := capability.LoadFile(filepath.Join("..", "..", "citizen", "testdata", "echo", "manifest.json"))
+	pkg, err := capability.LoadFile(filepath.Join("..", "..", "provider", "host", "testdata", "echo", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

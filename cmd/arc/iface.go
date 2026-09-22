@@ -15,11 +15,11 @@ import (
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/catalog"
+	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/relay"
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
 	"github.com/gezibash/arc/lists"
 	"github.com/spf13/cobra"
@@ -158,7 +158,7 @@ type cliEnv struct {
 
 func (e *cliEnv) Me() nostr.PubKey { return e.sess.key.Public }
 
-func (e *cliEnv) Name(pk nostr.PubKey) string { return identity.Name(pk[:]) }
+func (e *cliEnv) Name(pk nostr.PubKey) string { return keys.Name(pk[:]) }
 
 func (e *cliEnv) Keyed(info []byte, input string) (string, error) {
 	if e.root == nil {
@@ -434,5 +434,5 @@ func liveCall(ctx context.Context, sess *session, provider nostr.PubKey, request
 		failures = append(failures, fmt.Sprintf("%s: %v", t.Name(), err))
 	}
 	return call.Reply{}, 0, "", fmt.Errorf("no live path to %s:\n  %s\nuse --later to store and forward the call",
-		identity.Name(provider[:]), strings.Join(failures, "\n  "))
+		keys.Name(provider[:]), strings.Join(failures, "\n  "))
 }

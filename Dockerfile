@@ -28,12 +28,11 @@ COPY --from=build --chown=arc:arc /out /app
 USER arc
 WORKDIR /home/arc
 
-# Keys, control state, and caches live under $HOME/.config/arc and
-# $HOME/.arc. Mount a volume there to keep the relay identity across runs.
+# The home of arc is $HOME/.config/arc: identities, stores, and the events
+# of the relay in relay.db. Mount a volume there to keep them across runs.
 VOLUME ["/home/arc/.config/arc"]
 
-# The image runs a relay with the default identity of the volume. To run
-# another command, name it: docker run IMAGE arc-legacy keys gen. The relay
-# of the older stack reads the key store of arc-legacy.
-EXPOSE 7331
-CMD ["arc-relay"]
+# The image runs a Nostr relay, with no write limits. To run another
+# command, name it: docker run IMAGE arc keys gen
+EXPOSE 7447
+CMD ["arc", "relay", "serve", "--listen", "0.0.0.0:7447"]

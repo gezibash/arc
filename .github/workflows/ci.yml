@@ -28,17 +28,6 @@ jobs:
       - run: go build ./...
       - run: go test ./...
 
-  cli:
-    name: ARC end to end in Go
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.27.1"
-          cache: true
-      - run: bash scripts/test-go-cli.sh
-
   delivery:
     name: Delivery proofs
     runs-on: ubuntu-24.04
