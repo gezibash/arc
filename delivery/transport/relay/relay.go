@@ -70,17 +70,23 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	}
 	defer conn.Close()
 
-	err = conn.Publish(ctx, event)
+	if err := r.publish(ctx, conn, event); err != nil {
+		return fmt.Errorf("relay %s: %w", r.URL, err)
+	}
+	return nil
+}
+
+// publish sends one event on a connection. If the relay asks for
+// authentication first, publish answers the challenge and sends again.
+func (r Relay) publish(ctx context.Context, conn *nostr.Relay, event nostr.Event) error {
+	err := conn.Publish(ctx, event)
 	if err != nil && strings.Contains(err.Error(), "auth-required") && r.Signer != nil {
 		err = r.authenticate(ctx, conn)
 		if err == nil {
 			err = conn.Publish(ctx, event)
 		}
 	}
-	if err != nil {
-		return fmt.Errorf("relay %s: %w", r.URL, err)
-	}
-	return nil
+	return err
 }
 
 // authenticate answers the relay's challenge. The challenge can arrive just
@@ -226,7 +232,7 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 		return nostr.Event{}, ctx.Err()
 	}
 
-	if err := conn.Publish(ctx, event); err != nil {
+	if err := r.publish(ctx, conn, event); err != nil {
 		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 

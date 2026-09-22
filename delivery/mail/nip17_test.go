@@ -93,6 +93,29 @@ func TestAMessageFollowsTheRecipientsRelayList(t *testing.T) {
 	}
 }
 
+// The inbox relay of the recipient asks for authentication before it takes a
+// gift wrap. The sender answers with a one-time key.
+func TestAMessageReachesAnInboxRelayThatAsksForAuthentication(t *testing.T) {
+	ctx := context.Background()
+	shared := relay.Relay{URL: testrelay.Start(t)}
+	bobs := relay.Relay{URL: testrelay.StartGuarded(t)}
+
+	alice, bob := newCitizen(t, shared), newCitizen(t, bobs)
+
+	list, err := mail.RelayList(bob.key, []string{bobs.URL}, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := shared.Send(ctx, list); err != nil {
+		t.Fatal(err)
+	}
+
+	alice.send(t, bob, "past the guard")
+	if got := bob.sync(t, bobs); got.Received != 1 {
+		t.Errorf("bob received %d messages on his own relay", got.Received)
+	}
+}
+
 // The dm manifest sends a rumor of kind 14 with a p tag through SendRumor. A
 // NIP-17 client opens it.
 func TestARumorOfTheDMManifestOpensInANIP17Client(t *testing.T) {

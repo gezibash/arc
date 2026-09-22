@@ -34,6 +34,7 @@ import (
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/groups"
 	"github.com/gezibash/arc/delivery/keys"
+	"github.com/gezibash/arc/delivery/limits"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/sealed"
@@ -243,6 +244,7 @@ func serveCommand() *cobra.Command {
 			rl.Negentropy = true
 			rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
 			sealed.Protect(rl)
+			limits.Apply(rl, db.DB, writePolicy(command))
 
 			if ids, _ := command.Flags().GetStringArray("group"); len(ids) > 0 {
 				if err := hostGroups(command, rl, db, ids); err != nil {
@@ -271,7 +273,29 @@ func serveCommand() *cobra.Command {
 	command.Flags().String("db", "", "the file that holds the events (default <home>/relay.db)")
 	command.Flags().StringArray("group", nil, "host an open NIP-29 group with this id")
 	command.Flags().StringArray("admin", nil, "a public key that administers the groups")
+	command.Flags().Int("max-event-bytes", 0, "refuse an event larger than this, as JSON (0: no cap)")
+	command.Flags().Bool("wrap-auth", false, "take a gift wrap only after NIP-42 authentication, or with proof of work")
+	command.Flags().Int("wrap-pow", 0, "the NIP-13 difficulty that lets a gift wrap in without authentication (0: none)")
+	command.Flags().Int("rate", 0, "the events that one IP address can write each minute (0: no limit)")
+	command.Flags().Int("burst", 0, "the events that one IP address can write at once (default the rate)")
+	command.Flags().String("ip-header", "", "the HTTP header that holds the client IP address, when a proxy sets it")
+	command.Flags().Int64("max-store-mb", 0, "refuse new stored events when the store uses this many MiB (0: no cap)")
 	return command
+}
+
+// writePolicy reads the write limits of a relay from its flags.
+func writePolicy(command *cobra.Command) limits.Policy {
+	flags := command.Flags()
+	var p limits.Policy
+	p.MaxEventBytes, _ = flags.GetInt("max-event-bytes")
+	p.WrapAuth, _ = flags.GetBool("wrap-auth")
+	p.WrapPoW, _ = flags.GetInt("wrap-pow")
+	p.Rate, _ = flags.GetInt("rate")
+	p.Burst, _ = flags.GetInt("burst")
+	p.IPHeader, _ = flags.GetString("ip-header")
+	mb, _ := flags.GetInt64("max-store-mb")
+	p.MaxStoreBytes = mb << 20
+	return p
 }
 
 // hostGroups makes the relay host NIP-29 groups. The relay signs the state

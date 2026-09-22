@@ -17,6 +17,7 @@ import (
 	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/delivery/groups"
+	"github.com/gezibash/arc/delivery/limits"
 	"github.com/gezibash/arc/delivery/sealed"
 )
 
@@ -81,6 +82,25 @@ func (l *tracking) closeAll() {
 		conn.Close()
 	}
 	l.conns = nil
+}
+
+// StartGuarded runs a relay that takes a gift wrap only after NIP-42
+// authentication, as the public deploy does.
+func StartGuarded(t *testing.T) string {
+	t.Helper()
+	db := &slicestore.SliceStore{}
+	if err := db.Init(); err != nil {
+		t.Fatal(err)
+	}
+	relay := khatru.NewRelay()
+	relay.Log = log.New(io.Discard, "", 0)
+	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
+	limits.Apply(relay, nil, limits.Policy{WrapAuth: true})
+
+	server := httptest.NewServer(relay)
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http")
 }
 
 // StartPlain runs a relay that does not support Negentropy.
