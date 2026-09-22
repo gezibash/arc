@@ -26,7 +26,7 @@ func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
 	l.Close()
 
 	home := t.TempDir()
-	if err := arcn(t, home, "key", "new"); err != nil {
+	if err := arcn(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)
 	}
 	if err := arcn(t, home, "relay", "add", dead); err != nil {

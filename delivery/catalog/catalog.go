@@ -280,6 +280,37 @@ func (i Installs) Add(offer Offer, as string) error {
 	return os.WriteFile(i.Path, body, 0o600)
 }
 
+// Remove takes one install out, by the name that runs it, or by the petname
+// of its provider for an install that runs through arcn call. It returns the
+// install that it removed.
+func (i Installs) Remove(name string) (Install, error) {
+	list, err := i.List()
+	if err != nil {
+		return Install{}, err
+	}
+	var matches []Install
+	for _, e := range list {
+		if e.As == name || (e.As == "" && e.Name == name) {
+			matches = append(matches, e)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return Install{}, fmt.Errorf("catalog: nothing installed as %q", name)
+	case 1:
+	default:
+		return Install{}, fmt.Errorf("catalog: %q names %d installs; remove the others by their names first", name, len(matches))
+	}
+	gone := matches[0]
+	list = slices.DeleteFunc(list, func(e Install) bool { return e.Provider == gone.Provider && e.ID == gone.ID })
+
+	body, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return Install{}, err
+	}
+	return gone, os.WriteFile(i.Path, body, 0o600)
+}
+
 // Trusted says whether the citizen installed a capability of a provider.
 func (i Installs) Trusted(provider nostr.PubKey, id string) bool {
 	list, _ := i.List()

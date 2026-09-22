@@ -589,9 +589,9 @@ built from `cmd/arcn`. The older program stays for one release as
 
 | Step | Work | Proof |
 | --- | --- | --- |
-| 1 | Port the commands of the older `arc` that the table below marks "port". | Each ported command has a test at the command line. `mise run delivery` passes. |
+| 1 | Port the commands of the older `arc` that the table below marks "port". | Each ported command has a test at the command line. `mise run delivery` and `mise run interface` pass. |
 | 2 | Deploy a khatru relay beside the older relay on Fly. The operator runs the deploy. | `arc relay add` takes the new relay, and a live call to `exec` crosses it. |
-| 3 | Port the wake flow to the node. Before a call to a citizen with a wake hook, the node runs the hook, as `wake` does today. A citizen without a hook must have a current announcement of kind 30272. The Sprite serves `exec` on this layer through the relay of step 2. | A call to `exec` on a paused Sprite wakes it, and the reply arrives. |
+| 3 | Port `update` and `lists`, see the table below. Port the wake flow to the node. Before a call to a citizen with a wake hook, the node runs the hook, as `wake` does today. A citizen without a hook must have a current announcement of kind 30272. The Sprite serves `exec` on this layer through the relay of step 2. | A call to `exec` on a paused Sprite wakes it, and the reply arrives. |
 | 4 | Build `cmd/arcn` as `arc`, and the older `cmd/arc` as `arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. Release v0.9.0. | `arc update apply` from v0.8.0 installs the new `arc`. |
 | 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Stop the older relay. Release v0.10.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
 
@@ -599,19 +599,21 @@ The commands of `arc` after step 4:
 
 | Command | Source | Note |
 | --- | --- | --- |
-| `keys gen`, `list`, `use`, `remove`, `whoami` | port | Named secp256k1 keys. A key can be a NIP-49 sealed key or a NIP-46 bunker, as `arcn key` allows today. |
-| `trust list`, `allow`, `deny` | port | Signers are secp256k1 public keys. |
-| `tool list`, `remove`, `pin`, `unpin`, `info` | port | `toolbox` is kept. |
-| `lists add`, `rm`, `ls` | port | Members are secp256k1 public keys. |
+| `keys gen`, `add`, `list`, `use`, `remove`, `encrypt`, `bunker`, and `whoami` | port | Each identity has its own directory, `<home>/citizens/<name>`, because its store, relays and installs belong to its key. A key can be a NIP-49 sealed key or a NIP-46 bunker. |
+| `tool list`, `info`, `remove` | port | They read the installs of the node, not the toolbox. |
 | `apps init` | port | Bundles are kept. |
-| `cache` | port | The cache is local. |
-| `resolve` | port | Petnames derive from the secp256k1 key. |
-| `info <public key> [capability]` | port | It reads the announcement of kind 30272. |
-| `version`, `update check`, `update apply` | port | The release channel is kept. |
+| `resolve` | port | It searches the identities of the machine, the installs, and the announcements. |
+| `info <provider> [capability]` | port | It reads the announcements of kind 30272. |
+| `version` | port | — |
+| `lists add`, `rm`, `ls` | port in step 3 | Members are secp256k1 public keys. The capability interface resolves a list name to its members. |
+| `update check`, `update apply` | port in step 3 | The release provider must answer calls on this layer first. |
 | `discover`, `install`, `call`, `results`, `serve`, `announce` | `arcn` | — |
 | `relay add`, `rm`, `ls`, `serve` | `arcn` | They replace `join` and `relay status`. `relay ls` shows the NIP-11 document of each relay. |
 | `message send`, `inbox`, `outbox` | `arcn` | They replace `send` and `listen`. |
 | `sync` | `arcn` | — |
+| `tool pin`, `unpin` | removed | An announcement keeps only its newest version. Consent stops a version that asks for more, see docs/interface/SPEC.md. |
+| `trust list`, `allow`, `deny` | removed | An install trusts the author of the capability. |
+| `cache` | removed | It needs an output filter that manifests of interface version 1 do not have. |
 | `publish` | removed | The node store replaces the control plane. |
 
 ## 16. Decisions

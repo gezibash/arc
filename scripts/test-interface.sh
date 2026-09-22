@@ -26,6 +26,8 @@ trap cleanup EXIT
 
 say() { printf 'ok   %s\n' "$1"; }
 fail() { printf 'FAIL %s\n' "$1"; exit 1; }
+# keyfile names the key file of the one identity of a home.
+keyfile() { echo "$work/$1"/citizens/*/key; }
 
 cd "$root"
 go build -o "$work/arcn" ./cmd/arcn
@@ -41,16 +43,16 @@ url="$(sed -n 's/^relay listens on //p' "$work/relay.log")"
 say "a relay listens on $url"
 
 caller() { "$work/arcn" --home "$work/caller" "$@"; }
-caller key new > /dev/null
+caller keys gen > /dev/null
 caller relay add "$url"
-caller_key="$(caller key show | tail -1)"
+caller_key="$(caller whoami | sed -n 2p)"
 
 for name in exec sqlite; do
-  "$work/arcn" --home "$work/$name" key new > /dev/null
+  "$work/arcn" --home "$work/$name" keys gen > /dev/null
   "$work/arcn" --home "$work/$name" relay add "$url"
 done
-exec_key="$("$work/arcn" --home "$work/exec" key show | tail -1)"
-sqlite_key="$("$work/arcn" --home "$work/sqlite" key show | tail -1)"
+exec_key="$("$work/arcn" --home "$work/exec" whoami | sed -n 2p)"
+sqlite_key="$("$work/arcn" --home "$work/sqlite" whoami | sed -n 2p)"
 
 mkdir -p "$work/jobs"
 cat > "$work/exec.json" <<JSON
@@ -110,7 +112,7 @@ if caller install "$exec_key" --as relay --yes > /dev/null 2> "$work/as.txt"; th
 grep "is a command of arcn" "$work/as.txt" > /dev/null || fail "the error was $(cat "$work/as.txt")"
 say "a capability cannot take the name of a command of arcn"
 
-"$work/arcn" --home "$work/stranger" key new > /dev/null
+"$work/arcn" --home "$work/stranger" keys gen > /dev/null
 "$work/arcn" --home "$work/stranger" relay add "$url"
 "$work/arcn" --home "$work/stranger" install "$exec_key" --yes > /dev/null
 if "$work/arcn" --home "$work/stranger" exec run id > /dev/null 2> "$work/denied.txt"; then
@@ -129,8 +131,7 @@ printf 'phase A holds: manifests, arguments, templates, call, format\n\n'
 # code for them in arcn. Two machines hold one key.
 laptop() { caller "$@"; }
 desktop() { "$work/arcn" --home "$work/desktop" "$@"; }
-mkdir -p "$work/desktop"
-cp "$work/caller/key" "$work/desktop/key"
+desktop keys add < "$(keyfile caller)" > /dev/null
 desktop relay add "$url"
 
 laptop announce "$root/manifests/journal.json" > /dev/null
@@ -191,12 +192,12 @@ printf 'phase B holds: drafts, checkpoints, parts, delete, the journal and the f
 laptop relay add "$url"
 bob() { "$work/arcn" --home "$work/bob" "$@"; }
 moderator() { "$work/arcn" --home "$work/moderator" "$@"; }
-bob key new > /dev/null
+bob keys gen > /dev/null
 bob relay add "$url"
-bob_key="$(bob key show | tail -1)"
-moderator key new > /dev/null
+bob_key="$(bob whoami | sed -n 2p)"
+moderator keys gen > /dev/null
 moderator relay add "$url"
-moderator_key="$(moderator key show | tail -1)"
+moderator_key="$(moderator whoami | sed -n 2p)"
 
 "$work/arcn" --home "$work/board" relay serve --listen 127.0.0.1:0 \
   --group agora --admin "$moderator_key" > "$work/board.log" 2>&1 &
@@ -267,30 +268,30 @@ grep '"kind": 30023' "$work/dry.txt" > /dev/null || fail "the dry run showed $(c
 [ -z "$(laptop journal read hrs/notes/draft)" ] || fail "a dry run wrote the page"
 say "--dry-run shows the event, and signs nothing"
 
-ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" key new --encrypt > "$work/sealed.txt"
-head -c 10 "$work/sealed/key" | grep "ncryptsec1" > /dev/null || fail "the key file is not an ncryptsec"
-[ "$(ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" key show)" = "$(cat "$work/sealed.txt")" ] ||
-  fail "the passphrase did not open the key"
-if ARCN_PASSPHRASE=wrong "$work/arcn" --home "$work/sealed" key show > /dev/null 2>&1; then fail "a wrong passphrase opened the key"; fi
+ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" keys gen --encrypt > "$work/sealed.txt"
+head -c 10 "$(keyfile sealed)" | grep "ncryptsec1" > /dev/null || fail "the key file is not an ncryptsec"
+[ "$("$work/arcn" --home "$work/sealed" whoami | head -2)" = "$(cat "$work/sealed.txt")" ] || fail "the sealed key is another identity"
+ARCN_PASSPHRASE="correct horse" "$work/arcn" --home "$work/sealed" message outbox > /dev/null || fail "the passphrase did not open the key"
+if ARCN_PASSPHRASE=wrong "$work/arcn" --home "$work/sealed" message outbox > /dev/null 2>&1; then fail "a wrong passphrase opened the key"; fi
 say "a key sealed with a passphrase opens with it, and not without it"
 
 # An agent signs through its owner's bunker, and holds no secret key.
 owner() { "$work/arcn" --home "$work/owner" "$@"; }
 agent() { "$work/arcn" --home "$work/agent" "$@"; }
-owner key new > /dev/null
-owner_key="$(owner key show | tail -1)"
+owner keys gen > /dev/null
+owner_key="$(owner whoami | sed -n 2p)"
 # A background process starts directly, not through a shell function, so $!
 # names it and kill reaches it. The owner allows posts, drafts and their parts, seals, and relay lists;
 # not replies.
-"$work/arcn" --home "$work/owner" key bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
+"$work/arcn" --home "$work/owner" keys bunker --relay "$url" --allow-kind 11 --allow-kind 31234 --allow-kind 1234 --allow-kind 3275 \
   --allow-kind 13 --allow-kind 10050 --allow-kind 10013 > "$work/bunker.log" 2>&1 &
 bunker_pid=$!
 for _ in $(seq 1 50); do grep "bunker://" "$work/bunker.log" > /dev/null 2>&1 && break; sleep 0.1; done
 uri="$(grep "^bunker://" "$work/bunker.log")"
 [ -n "$uri" ] || fail "the bunker did not start: $(cat "$work/bunker.log")"
-agent key use "$uri" > "$work/agent.txt" || fail "the agent could not use the bunker: $(cat "$work/agent.txt")"
+agent keys add "$uri" > "$work/agent.txt" || fail "the agent could not use the bunker: $(cat "$work/agent.txt")"
 [ "$(tail -1 "$work/agent.txt")" = "$owner_key" ] || fail "the agent is $(cat "$work/agent.txt"), not the owner"
-grep -r "$(cat "$work/owner/key")" "$work/agent" > /dev/null 2>&1 && fail "the agent holds the owner's secret key"
+grep -r "$(cat "$(keyfile owner)")" "$work/agent" > /dev/null 2>&1 && fail "the agent holds the owner's secret key"
 agent relay add "$url" 2> /dev/null
 for capability in agora journal dm; do
   agent install "$caller_key" $capability --yes > /dev/null || fail "the agent did not install $capability"
@@ -299,7 +300,7 @@ say "an agent signs as its owner through a bunker, and holds no secret key"
 
 agent agora post --title "From the agent" signed remotely 2> /dev/null || fail "the agent could not post"
 bob agora feed | grep "From the agent" > /dev/null || fail "the agent's post is not on the board: $(bob agora feed)"
-bob agora feed | grep "$(owner key show | head -1)" > /dev/null || fail "the post does not name the owner"
+bob agora feed | grep "$(owner whoami | head -1)" > /dev/null || fail "the post does not name the owner"
 agent_post="$(bob agora feed | grep -o 'nevent1[a-z0-9]*' | head -1)"
 if agent agora reply "$agent_post" not allowed > /dev/null 2> "$work/refused-kind.txt"; then fail "the bunker signed a kind it does not allow"; fi
 grep "does not sign kind 1111" "$work/refused-kind.txt" > /dev/null || fail "the refusal was $(cat "$work/refused-kind.txt")"
@@ -318,7 +319,7 @@ say "an agent keeps a journal through the bunker, and its owner reads the same p
 # the journal works, and incoming mail stays shut.
 agent dm send "$bob_key" hello from the agent 2> /dev/null || fail "the agent could not send a message"
 bob dm inbox | grep "hello from the agent" > /dev/null || fail "bob's inbox: $(bob dm inbox)"
-bob dm inbox | grep "$(owner key show | head -1)" > /dev/null || fail "the message does not come from the owner"
+bob dm inbox | grep "$(owner whoami | head -1)" > /dev/null || fail "the message does not come from the owner"
 bob dm send "$owner_key" hello agent 2> /dev/null
 agent dm inbox > "$work/shut.txt" 2> "$work/shut.err"
 grep "hello agent" "$work/shut.txt" > /dev/null && fail "the bunker opened mail by default"
@@ -327,7 +328,7 @@ say "by default the bunker opens the owner's own drafts, and not their mail"
 
 kill "$bunker_pid"
 wait "$bunker_pid" 2> /dev/null || true
-"$work/arcn" --home "$work/owner" key bunker --relay "$url" --decrypt all --allow-kind 13 > "$work/bunker2.log" 2>&1 &
+"$work/arcn" --home "$work/owner" keys bunker --relay "$url" --decrypt all --allow-kind 13 > "$work/bunker2.log" 2>&1 &
 bunker_pid=$!
 for _ in $(seq 1 50); do grep "bunker://" "$work/bunker2.log" > /dev/null 2>&1 && break; sleep 0.1; done
 [ "$(grep "^bunker://" "$work/bunker2.log")" = "$uri" ] || fail "the bunker URI changed on restart"

@@ -552,17 +552,23 @@ A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
 | `ncryptsec` | The secret key, encrypted with a passphrase. Core asks for the passphrase. |
 | `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
 
-`arcn key new --encrypt` and `arcn key encrypt` seal a key with a passphrase.
+Each identity of a machine has its own directory, `<home>/citizens/<name>`,
+with its key, store, relays and installs. `arcn keys gen` makes an identity,
+and `arcn keys add` adds one that exists already. The first identity is the
+default. `arcn keys use <name>` changes the default, and `--key <name>` or
+`ARCN_KEY` picks another identity for one command.
+
+`arcn keys gen --encrypt` and `arcn keys encrypt` seal a key with a passphrase.
 Core reads the passphrase from `ARCN_PASSPHRASE`, or asks on the terminal.
 
-`arcn key bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
+`arcn keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
 and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
 and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
 `self`, the default, which opens only what the owner sealed to their own key,
 such as drafts and the keyed root; or `all`, which mail needs, because a gift
 wrap comes from a one-time key that no list can name. The bunker keeps its URI
-when it restarts. `arcn key use <uri>` makes a home that
-signs through it. That home seals and opens mail, makes calls, and reads the
+when it restarts. `arcn keys add <uri>` makes an identity that
+signs through it. That identity seals and opens mail, makes calls, and reads the
 keyed root, all through the signer. The bunker publishes the keyed root to its
 relay when it starts.
 

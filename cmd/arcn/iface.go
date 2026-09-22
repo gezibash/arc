@@ -26,18 +26,27 @@ import (
 
 // dispatch runs a command of an installed capability: arcn <name> <path...>.
 // The root command does not parse flags, so the capability reads its own;
-// dispatch reads only a leading --home.
+// dispatch reads only a leading --home and --key.
 func dispatch(command *cobra.Command, args []string) error {
-	for len(args) > 0 && strings.HasPrefix(args[0], "--home") {
-		value, ok := strings.CutPrefix(args[0], "--home=")
+	for len(args) > 0 {
+		flag := ""
+		for _, name := range []string{"home", "key"} {
+			if args[0] == "--"+name || strings.HasPrefix(args[0], "--"+name+"=") {
+				flag = name
+			}
+		}
+		if flag == "" {
+			break
+		}
+		value, ok := strings.CutPrefix(args[0], "--"+flag+"=")
 		args = args[1:]
 		if !ok {
 			if len(args) == 0 {
-				return errors.New("--home needs a value")
+				return fmt.Errorf("--%s needs a value", flag)
 			}
 			value, args = args[0], args[1:]
 		}
-		if err := command.Flags().Set("home", value); err != nil {
+		if err := command.Flags().Set(flag, value); err != nil {
 			return err
 		}
 	}
