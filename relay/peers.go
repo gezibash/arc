@@ -28,35 +28,6 @@ func (r *Relay) answerPeer(peer []byte, request map[string]any) map[string]any {
 	case "catalog":
 		return r.catalog.answer(peer, request)
 
-	case "resolve":
-		query, ok := request["query"].(string)
-		if !ok || len(query) > MaxQueryBytes {
-			return map[string]any{"ok": false, "error": "invalid_query"}
-		}
-
-		matching := r.match(func(held *record) bool {
-			return held.entry.Federatable(r.identity.PublicKey) && held.entry.Matches(query)
-		})
-		if len(matching) > 2 {
-			matching = matching[:2]
-		}
-		return map[string]any{"ok": true, "entries": recordsOf(matching)}
-
-	case "search":
-		query, ok := request["query"].(string)
-		if !ok || len(query) > MaxQueryBytes {
-			return map[string]any{"ok": false, "error": "invalid_query"}
-		}
-
-		matching := r.match(func(held *record) bool {
-			return held.entry.Federatable(r.identity.PublicKey) &&
-				len(held.entry.Capabilities) > 0 && held.entry.SearchMatch(query)
-		})
-		if len(matching) > MaxDirectoryLimit {
-			matching = matching[:MaxDirectoryLimit]
-		}
-		return map[string]any{"ok": true, "entries": recordsOf(matching)}
-
 	default:
 		return map[string]any{"ok": false, "error": "invalid_request"}
 	}

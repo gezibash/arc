@@ -13,3 +13,8 @@ func (r *Relay) LinkTo(peer []byte) net.Conn {
 	}
 	return held.conn
 }
+
+// AnswerLookup answers one lookup as if a partner sent it.
+func (r *Relay) AnswerLookup(peer []byte, request map[string]any) map[string]any {
+	return r.answerLookup(peer, request)
+}

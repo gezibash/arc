@@ -11,6 +11,16 @@ All notable changes to ARC are recorded here. The format follows
 - A capability can carry bytes. With `encoding: base64` in `request_body` or
   `response_body`, the citizen passes that body to the runtime as base64,
   and reads it back the same way. No byte changes on the way.
+- `arc serve` and `arc listen` take `--federate` or `--federate-network`.
+  With `--federate`, the direct partners of the relay find the citizen. With
+  `--federate-network`, the wider network finds it where transit allows. The
+  two flags are mutually exclusive.
+- `arc listen` announces the citizen when it connects, and again every 150
+  seconds. `arc resolve` and `arc send` find a listener by name.
+- A relay with partners asks them live when its catalog is cold, or when it
+  does not hold a name or a public key. The lookup carries an id, a path and a
+  budget of 64. Each relay runs at most 32 lookups and asks at most 16
+  partners for each.
 
 ### Changed
 
@@ -32,6 +42,9 @@ All notable changes to ARC are recorded here. The format follows
   note on standard error. Before, the call failed.
 - A provider has 5 seconds to end after its input closes. Only then does the
   citizen kill it.
+- A lookup by name or prefix that did not reach every partner fails with
+  `federation_unavailable`. Before, it returned its entries with
+  `partial: true`.
 
 ### Fixed
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -161,6 +162,16 @@ func (f *federation) stop() {
 	for _, held := range links {
 		held.conn.Close()
 	}
+}
+
+// approved names every partner that the operator approved, in key order.
+func (f *federation) approved() [][]byte {
+	out := make([][]byte, 0, len(f.peers))
+	for key := range f.peers {
+		out = append(out, []byte(key))
+	}
+	sort.Slice(out, func(left, right int) bool { return string(out[left]) < string(out[right]) })
+	return out
 }
 
 // Connected names the partners that hold a ready link.
@@ -566,6 +577,18 @@ func (f *federation) dispatch(held *link, kind int, requestID string, body []byt
 	case kindRequest:
 		request, ok := decodeFields(body)
 		if !ok {
+			return
+		}
+
+		// A lookup asks further partners and takes seconds, so it runs apart
+		// from the link, which keeps reading.
+		if kind, _ := request["type"].(string); kind == "search" || kind == "resolve" {
+			go func() {
+				answer := f.relay.answerLookup(held.peer, request)
+				if err := f.send(held, kindResponse, requestID, answer); err != nil {
+					f.relay.log.Debug("the answer did not reach the peer", "error", err)
+				}
+			}()
 			return
 		}
 

@@ -69,6 +69,7 @@ type Relay struct {
 	cancel context.CancelFunc
 
 	federation *federation
+	lookups    *lookups
 	catalog    *catalog
 
 	mu        sync.RWMutex
@@ -120,6 +121,7 @@ func Listen(ctx context.Context, opts Options) (*Relay, error) {
 	}
 	relay.federation = held
 	relay.catalog = newCatalog(relay)
+	relay.lookups = newLookups()
 
 	relay.group.Add(1)
 	go relay.accept()
