@@ -157,28 +157,48 @@ func stored(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) ([]nost
 		return nil, err
 	}
 	defer sub.Unsub()
+	return drain(ctx, sub)
+}
 
+// drain reads the events of a subscription until its end of stored events.
+func drain(ctx context.Context, sub *nostr.Subscription) ([]nostr.Event, error) {
 	var out []nostr.Event
 	for {
 		select {
 		case event, ok := <-sub.Events:
-			// The library closes Events when the subscription ends, for
-			// example when the relay goes away.
-			if !ok {
+			if ok {
+				out = append(out, event)
+				continue
+			}
+			// The library closes Events when the subscription ends. On a
+			// CLOSED message, it first puts the reason on ClosedReason, and
+			// then closes Events. Both channels can be ready at once, and
+			// select then picks one at random. Look for the reason first, so
+			// that a request for authentication is not lost.
+			select {
+			case <-sub.EndOfStoredEvents:
+				return out, nil
+			case reason := <-sub.ClosedReason:
+				return out, closed(reason)
+			default:
 				return out, errors.New("the relay ended the query before its stored events")
 			}
-			out = append(out, event)
 		case <-sub.EndOfStoredEvents:
 			return out, nil
 		case reason := <-sub.ClosedReason:
-			if strings.HasPrefix(reason, "auth-required") {
-				return out, errAuthRequired
-			}
-			return out, errors.New("the relay closed the query: " + reason)
+			return out, closed(reason)
 		case <-ctx.Done():
 			return out, ctx.Err()
 		}
 	}
+}
+
+// closed is the error for the reason of a CLOSED message.
+func closed(reason string) error {
+	if strings.HasPrefix(reason, "auth-required") {
+		return errAuthRequired
+	}
+	return errors.New("the relay closed the query: " + reason)
 }
 
 // Exchange sends one event and waits for the first answer that matches. It
