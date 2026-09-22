@@ -22,8 +22,12 @@ type settings struct {
 	keys   *identity.Store
 	relays *relays.Store
 	me     *identity.Identity
+	source identity.Source
 	relay  *relays.Selection
 }
+
+// fromFlag is the source of an identity that --key names.
+const fromFlag identity.Source = "--key"
 
 // open reads the flags of a command, and finds the identity and the relay.
 func open(command *cobra.Command, needRelay bool) (*settings, error) {
@@ -35,26 +39,57 @@ func open(command *cobra.Command, needRelay bool) (*settings, error) {
 		return nil, err
 	}
 
-	me, err := activeIdentity(keys, name)
+	me, source, err := activeIdentity(keys, name)
+	if err != nil {
+		return nil, err
+	}
+
+	held := &settings{keys: keys, relays: &relays.Store{Dir: keys.Dir}, me: me, source: source}
+	if !needRelay {
+		return held, nil
+	}
+	if held.relay, err = selectRelay(command, held.relays); err != nil {
+		return nil, err
+	}
+	return held, nil
+}
+
+// openAnonymous finds the relay, and holds a temporary identity that exists
+// only in memory. The relay keeps one route for each identity, so a command
+// that uses this identity never replaces the route of a running citizen.
+func openAnonymous(command *cobra.Command) (*settings, error) {
+	dir, _ := command.Flags().GetString("store")
+	keys, err := keyStore(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	me, err := identity.Generate()
 	if err != nil {
 		return nil, err
 	}
 
 	held := &settings{keys: keys, relays: &relays.Store{Dir: keys.Dir}, me: me}
-	if !needRelay {
-		return held, nil
+	if held.relay, err = selectRelay(command, held.relays); err != nil {
+		return nil, err
 	}
+	return held, nil
+}
 
+// selectRelay reads the relay: the flags, then the environment, then the
+// relay that arc join saved. A relay needs a pinned key.
+func selectRelay(command *cobra.Command, store *relays.Store) (*relays.Selection, error) {
 	address, _ := command.Flags().GetString("relay")
 	pin, _ := command.Flags().GetString("relay-pubkey")
 
-	if held.relay, err = held.relays.Resolve(address, pin); err != nil {
+	selected, err := store.Resolve(address, pin)
+	if err != nil {
 		return nil, err
 	}
-	if len(held.relay.Pin) == 0 {
-		return nil, fmt.Errorf("no public key is pinned for %s: join it again with arc join", held.relay.Address)
+	if len(selected.Pin) == 0 {
+		return nil, fmt.Errorf("no public key is pinned for %s: join it again with arc join", selected.Address)
 	}
-	return held, nil
+	return selected, nil
 }
 
 // dial joins the relay as the active identity. Before each request, the
@@ -81,17 +116,18 @@ func keyStore(dir string) (*identity.Store, error) {
 }
 
 // activeIdentity picks the identity: the --key flag, then the rules of the
-// key store.
-func activeIdentity(keys *identity.Store, name string) (*identity.Identity, error) {
+// key store. It says which of them chose it.
+func activeIdentity(keys *identity.Store, name string) (*identity.Identity, identity.Source, error) {
 	if name != "" {
-		return keys.Get(name)
+		me, err := keys.Select(fromFlag, name)
+		return me, fromFlag, err
 	}
 
-	me, _, err := keys.Active()
-	if errors.Is(err, identity.ErrNoDefault) || errors.Is(err, identity.ErrNotFound) {
-		return nil, errors.New("no identity: make one with arc keys gen")
+	me, source, err := keys.Active()
+	if errors.Is(err, identity.ErrNoDefault) {
+		return nil, source, errors.New("no identity: make one with arc keys gen")
 	}
-	return me, err
+	return me, source, err
 }
 
 // deadline gives a command a bounded run.

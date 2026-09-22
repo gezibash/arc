@@ -76,6 +76,9 @@ func TestAnswersStatusAndObserve(t *testing.T) {
 	if status["role"] != "relay" || status["state"] != "running" || status["version"] != "test" {
 		t.Errorf("status = %v", status)
 	}
+	if status["federation_transit"] != false {
+		t.Errorf("a relay without transit says federation_transit = %v", status["federation_transit"])
+	}
 
 	observed, err := connection.Observe(ctx)
 	if err != nil {
@@ -106,6 +109,35 @@ func TestCloseEndsAConnectionThatJustJoined(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("Close waited for a client that had just joined")
 		}
+	}
+}
+
+// The status of a relay tells whether traffic of partners passes through it.
+func TestStatusSaysWhetherTheRelayCarriesTransit(t *testing.T) {
+	me, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := relay.Listen(context.Background(), relay.Options{
+		Identity: me,
+		Address:  "127.0.0.1:0",
+		Version:  "test",
+		Transit:  true,
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Close() })
+
+	_, connection := citizen(t, server)
+	status, err := connection.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status["federation_transit"] != true {
+		t.Errorf("a relay with transit says federation_transit = %v", status["federation_transit"])
 	}
 }
 

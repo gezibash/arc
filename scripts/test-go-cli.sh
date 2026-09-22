@@ -42,7 +42,8 @@ say "the binaries build"
 arc() { "$work/arc" --store "$work" "$@"; }
 
 # The relay runs on a free port, and prints its key.
-"$work/arc-relay" --address 127.0.0.1:0 --store "$work" --key relay --generate > "$work/relay.log" 2>"$work/relay.err" &
+# --generate makes the first key of the store, and the relay keeps it.
+"$work/arc-relay" --address 127.0.0.1:0 --store "$work" --generate > "$work/relay.log" 2>"$work/relay.err" &
 relay_pid=$!
 
 for _ in $(seq 1 50); do
@@ -73,7 +74,7 @@ echo_key="$(tail -1 "$work/echo.txt")"
 arc keys use "$provider_name" > /dev/null
 say "the machine holds four identities"
 
-arc join "$relay_address" --pubkey "$relay_key" > /dev/null
+arc join "$relay_address" --relay-pubkey "$relay_key" > /dev/null
 say "the citizen joined the relay and pinned its key"
 
 # The relay may still be registering the join.
@@ -83,6 +84,33 @@ for _ in $(seq 1 25); do
 done
 arc status | grep "state    running" > /dev/null || fail "the relay does not report that it runs: $(arc status)"
 say "arc status reads the relay"
+
+# Status asks with a temporary identity, so it needs no key of its own.
+mkdir -p "$work/empty"
+"$work/arc" --store "$work/empty" status --relay "$relay_address" --relay-pubkey "$relay_key" |
+  grep "state    running" > /dev/null || fail "arc status needs a key"
+say "arc status needs no key"
+
+# Join shows the key of a new relay, and pins it only after a yes. On a
+# machine with no key, it makes the first one.
+mkdir -p "$work/fresh"
+if printf 'no\n' | "$work/arc" --store "$work/fresh" join "$relay_address" > "$work/join-no.txt" 2>&1; then
+  fail "join pinned a relay that was not trusted"
+fi
+[ -e "$work/fresh/relays.json" ] && fail "a refused join saved the relay"
+printf 'yes\n' | "$work/arc" --store "$work/fresh" join "$relay_address" > "$work/join-yes.txt" 2>&1 ||
+  fail "join failed: $(cat "$work/join-yes.txt")"
+grep -q "$relay_key" "$work/join-yes.txt" || fail "join did not show the key: $(cat "$work/join-yes.txt")"
+grep -q "made the identity" "$work/join-yes.txt" || fail "join made no identity: $(cat "$work/join-yes.txt")"
+"$work/arc" --store "$work/fresh" whoami | grep "chosen by default.key" > /dev/null ||
+  fail "the new identity is not the default"
+say "arc join asks before it pins a relay, and makes the first key"
+
+if arc keys show > /dev/null 2>&1; then
+  fail "arc keys show succeeded, and that command does not exist"
+fi
+arc --key "$caller_name" whoami | grep "chosen by --key" > /dev/null || fail "whoami does not name --key"
+say "an unknown subcommand fails, and whoami names --key"
 
 # The provider grants the caller, and nobody else.
 cat > "$work/exec.json" <<JSON
@@ -101,6 +129,13 @@ for _ in $(seq 1 50); do
 done
 grep -q "serves on" "$work/serve.log" || fail "the citizen did not serve: $(cat "$work/serve.err")"
 say "the citizen serves the exec provider"
+
+# The citizen serves as the default key. Status asks with a temporary
+# identity, so the relay keeps the route of the citizen.
+arc status > /dev/null || fail "arc status failed"
+sleep 0.5
+kill -0 "$serve_pid" 2>/dev/null || fail "arc status stopped the citizen: $(cat "$work/serve.err")"
+say "arc status leaves the route of a running citizen alone"
 
 # Every command below runs as another citizen on the same relay.
 caller() { arc --key "$caller_name" "$@"; }

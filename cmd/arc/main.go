@@ -79,6 +79,8 @@ func root() *cobra.Command {
 		Short:        "ARC: capabilities between citizens, addressed by public key",
 		Version:      version,
 		SilenceUsage: true,
+		// main prints each error once, after "arc:".
+		SilenceErrors: true,
 	}
 
 	command.PersistentFlags().String("relay", "", "the relay to use, as host:port (ARC_RELAY)")
@@ -88,9 +90,9 @@ func root() *cobra.Command {
 
 	command.AddCommand(
 		installCommand(),
-		toolCommand(),
-		trustCommand(),
-		keysCommand(),
+		group(toolCommand()),
+		group(trustCommand()),
+		group(keysCommand()),
 		whoamiCommand(),
 		joinCommand(),
 		statusCommand(),
@@ -102,11 +104,22 @@ func root() *cobra.Command {
 		sendCommand(),
 		listenCommand(),
 		publishCommand(),
-		listsCommand(),
+		group(listsCommand()),
 		updateCommand(),
-		appsCommand(),
-		cacheCommand(),
+		group(appsCommand()),
+		group(cacheCommand()),
 		versionCommand(),
 	)
+	return command
+}
+
+// group makes a command that only holds subcommands. Without a subcommand it
+// shows its help. An unknown subcommand is an error, so that a script that
+// calls a command that does not exist fails.
+func group(command *cobra.Command) *cobra.Command {
+	command.Args = cobra.NoArgs
+	command.RunE = func(command *cobra.Command, _ []string) error {
+		return command.Help()
+	}
 	return command
 }

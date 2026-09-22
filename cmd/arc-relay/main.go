@@ -31,7 +31,7 @@ func main() {
 	key := flag.String("key", "", "the petname of the relay identity, or a prefix of it")
 	store := flag.String("store", "", "the directory of ARC (default ~/.config/arc)")
 	maxFrame := flag.Uint("max-frame-bytes", 0, "the largest frame that the relay accepts, or 0 for any size")
-	generate := flag.Bool("generate", false, "make the identity when the store does not hold it")
+	generate := flag.Bool("generate", false, "make the identity when the store holds no key, and make it the default")
 	transit := flag.Bool("transit", false, "let the traffic of partner relays pass through this one")
 
 	var peers peerList
@@ -108,22 +108,43 @@ func openStore(dir string) (*identity.Store, error) {
 }
 
 // relayIdentity picks the key of the relay: the one that --key names, or the
-// active identity of this shell.
+// active identity of this shell. The store names each key by its petname, so
+// --generate cannot give a new key the name that --key asks for. It makes the
+// first key of an empty store, and makes it the default, so the next start
+// finds the same key.
 func relayIdentity(keys *identity.Store, name string, generate bool) (*identity.Identity, error) {
-	if name == "" {
-		me, _, err := keys.Active()
-		if err != nil {
-			return nil, fmt.Errorf("no identity: name one with --key, or make one with arc keys gen: %w", err)
+	if name != "" {
+		me, err := keys.Select("--key", name)
+		if err == nil {
+			return me, nil
 		}
-		return me, nil
+		if generate {
+			return nil, fmt.Errorf("%w: --generate cannot name a new key, because a key takes its name from its public key. Start without --key, or make the key with arc keys gen", err)
+		}
+		return nil, err
 	}
 
-	me, err := keys.Get(name)
+	me, _, err := keys.Active()
 	if err == nil {
 		return me, nil
 	}
-	if !generate {
-		return nil, fmt.Errorf("the store holds no key for %q: %w", name, err)
+	if !generate || !errors.Is(err, identity.ErrNoDefault) {
+		return nil, fmt.Errorf("no identity: name one with --key, or make one with arc keys gen: %w", err)
 	}
-	return keys.Generate()
+
+	held, err := keys.List()
+	if err != nil {
+		return nil, err
+	}
+	if len(held) > 0 {
+		return nil, errors.New("the store holds keys, and none is selected: name one with --key, or pick one with arc keys use NAME")
+	}
+
+	if me, err = keys.Generate(); err != nil {
+		return nil, err
+	}
+	if err := keys.SetDefault(me.Name()); err != nil {
+		return nil, err
+	}
+	return me, nil
 }
