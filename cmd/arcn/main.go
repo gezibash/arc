@@ -43,6 +43,7 @@ import (
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/identity"
+	"github.com/gezibash/arc/wake"
 	"github.com/spf13/cobra"
 )
 
@@ -355,6 +356,8 @@ type session struct {
 	remote bool
 	// signer signs and seals for the mail layer and for calls.
 	signer keys.Signer
+	// waker runs the wake hook of a citizen before a live call to it.
+	waker *wake.Waker
 }
 
 func open(command *cobra.Command) (*session, error) {
@@ -387,6 +390,14 @@ func open(command *cobra.Command) (*session, error) {
 		s.Close()
 		return nil, err
 	}
+
+	// The wake hooks belong to the machine, not to one identity.
+	root, err := rootDir(command)
+	if err != nil {
+		sess.close()
+		return nil, err
+	}
+	sess.waker = wake.Load(filepath.Join(root, wake.FileName), filepath.Join(root, wake.StateDirName))
 	return sess, nil
 }
 

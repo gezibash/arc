@@ -269,14 +269,18 @@ func (s *Server) forget(id string) {
 
 // ServeLive answers live calls that reach this provider through a relay. It
 // refuses a request older than LiveWindow, so a relay cannot replay one later.
+// It calls ready, when ready is not nil, once the relay has taken the watch.
 // It returns when the relay ends the watch or the context ends.
-func (s *Server) ServeLive(ctx context.Context, relay transport.Live) error {
+func (s *Server) ServeLive(ctx context.Context, relay transport.Live, ready func()) error {
 	requests, err := relay.Watch(ctx, nostr.Filter{
 		Kinds: []nostr.Kind{private.LiveWrapKind},
 		Tags:  nostr.TagMap{"p": {s.key.PublicKey().Hex()}},
 	})
 	if err != nil {
 		return err
+	}
+	if ready != nil {
+		ready()
 	}
 
 	for wrap := range requests {

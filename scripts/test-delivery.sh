@@ -246,6 +246,44 @@ caller sync --dir "$work/stick-c" > /dev/null
 caller call results | grep "reply:.*carried by hand" > /dev/null || fail "the reply did not come back: $(caller call results)"
 say "a store-and-forward call crosses the courier path, and its reply comes back"
 
+# A provider whose machine paused. The caller keeps a wake hook for it, and
+# arcn runs the hook before the live call, the way ssh runs a ProxyCommand.
+kill "$serve_pid"
+wait "$serve_pid" 2>/dev/null || true
+caller relay add "$url"
+
+cat > "$work/wake-exec" <<SCRIPT
+#!/bin/sh
+# The start script of the provider: serve again, and exit 0 when it listens.
+echo woke >> "$work/woke"
+EXEC_CONFIG="$work/exec.json" "$work/arcn" --home "$work/exec" serve \\
+  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \\
+  > "$work/serve-woken.log" 2>&1 < /dev/null &
+echo \$! > "$work/serve-woken.pid"
+for _ in \$(seq 1 50); do
+  grep -q "serves" "$work/serve-woken.log" 2>/dev/null && exit 0
+  sleep 0.1
+done
+exit 1
+SCRIPT
+chmod +x "$work/wake-exec"
+cat > "$work/caller/wake.toml" <<TOML
+[wake."$provider_key"]
+kind = "command"
+argv = ["$work/wake-exec"]
+TOML
+
+caller call "$provider_name" '{"argv":["echo","woken"]}' > "$work/woken.txt" 2> "$work/woken.err" ||
+  fail "the call did not wake the provider: $(cat "$work/woken.err")"
+serve_pid="$(cat "$work/serve-woken.pid")"
+grep "woken" "$work/woken.txt" > /dev/null || fail "the woken provider answered $(cat "$work/woken.txt")"
+[ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran $(wc -l < "$work/woke") times"
+say "arcn runs the wake hook, and the woken provider answers"
+
+caller call "$provider_name" '{"argv":["echo","again"]}' > /dev/null 2>&1 || fail "the second call failed"
+[ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran again for a provider that answered a moment ago"
+say "arcn skips the hook of a provider that answered a moment ago"
+
 go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
 say "an ARC direct message opens in a NIP-17 client, and a NIP-17 message opens in ARC"
 

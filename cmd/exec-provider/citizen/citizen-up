@@ -3,10 +3,10 @@
 # See docs/exec/SPEC.md, section 10.3.
 #
 # On a platform that pauses, a live lease proves that the machine did not
-# pause since the last run, so the running `arc serve` still has its relay
+# pause since the last run, so the running `arcn serve` still has its relay
 # connection. Without the lease, the old relay connection is gone.
 #
-# Exit 0: the citizen is ready. Exit 1: the relay has no announcement.
+# Exit 0: the citizen is ready. Exit 1: `arcn serve` did not listen in time.
 # Stdout stays empty. Callers can use this script in an SSH ProxyCommand.
 set -u
 
@@ -32,28 +32,29 @@ if "$lease" pauses; then
 fi
 
 if [ $fresh = 0 ] && serving; then
-  log "kept arc serve pid $(cat "$pidfile")"
+  log "kept arcn serve pid $(cat "$pidfile")"
   exit 0
 fi
 
 if [ -f "$pidfile" ]; then
   kill -TERM -- "-$(cat "$pidfile")" 2>/dev/null
 fi
+# `arcn serve` writes "serves" when each relay has its announcement and its
+# watch. Count the lines before the start, and wait for one more.
+served=$(grep -c "serves" "$here/serve.log" 2>/dev/null || true)
 # A new session makes the process group ID equal to the PID, so the kill above
-# stops arc serve and its provider together. macOS has no setsid command.
+# stops arcn serve and its provider together. macOS has no setsid command.
 if command -v setsid >/dev/null; then
   setsid "$here/citizen/serve" >> "$here/serve.log" 2>&1 < /dev/null &
 else
   perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$here/citizen/serve" >> "$here/serve.log" 2>&1 < /dev/null &
 fi
 echo $! > "$pidfile"
-log "started arc serve pid $!"
+log "started arcn serve pid $!"
 
-deadline=$((SECONDS + 20))
+deadline=$((SECONDS + 25))
 while [ $SECONDS -lt $deadline ]; do
-  # The probe identity queries the relay directory. A query with the citizen
-  # key would replace the relay connection of `arc serve`.
-  if ARC_KEY="$CITIZEN_PROBE_KEY" arc discover exec --limit 50 2>/dev/null | grep -q "$CITIZEN_PUBLIC_KEY"; then
+  if [ "$(grep -c "serves" "$here/serve.log" 2>/dev/null || true)" -gt "${served:-0}" ]; then
     log "ready"
     exit 0
   fi
@@ -61,5 +62,5 @@ while [ $SECONDS -lt $deadline ]; do
 done
 
 "$lease" delete
-log "no announcement after 20 seconds"
+log "arcn serve did not listen after 25 seconds"
 exit 1

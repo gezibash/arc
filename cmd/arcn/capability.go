@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -115,20 +116,31 @@ func serve(command *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	announcement, err := catalog.Announce(sess.signer, pkg, nostr.Now())
-	if versionOne != nil {
-		announcement, err = catalog.AnnounceManifest(sess.signer, versionOne, nostr.Now())
-	}
-	if err != nil {
+	// A caller needs a current announcement before a live call, so the
+	// provider signs it again each catalog.Refresh.
+	announce := func() error {
+		announcement, err := catalog.Announce(sess.signer, pkg, nostr.Now())
+		if versionOne != nil {
+			announcement, err = catalog.AnnounceManifest(sess.signer, versionOne, nostr.Now())
+		}
+		if err != nil {
+			return err
+		}
+		_, _, err = sess.node.Publish(ctx, announcement, sess.relays)
 		return err
 	}
-	if _, _, err := sess.node.Publish(ctx, announcement, sess.relays); err != nil {
+	if err := announce(); err != nil {
 		return err
 	}
 
+	// Say "serves" only when each relay has the watch, so that a caller
+	// that waits for the line can call at once.
+	var watching sync.WaitGroup
 	for _, r := range sess.relays {
-		go keepServing(ctx, server, r.(relay.Relay), log)
+		watching.Add(1)
+		go keepServing(ctx, server, r.(relay.Relay), watching.Done, log)
 	}
+	watching.Wait()
 
 	dirs, _ := command.Flags().GetStringArray("sync-dir")
 	interval, _ := command.Flags().GetDuration("interval")
@@ -141,6 +153,8 @@ func serve(command *cobra.Command, args []string) error {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	refresh := time.NewTicker(catalog.Refresh)
+	defer refresh.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -148,6 +162,10 @@ func serve(command *cobra.Command, args []string) error {
 			return nil
 		case <-server.Done():
 			return errors.New("the provider program stopped")
+		case <-refresh.C:
+			if err := announce(); err != nil {
+				log.Warn("the announcement was not signed again", "error", err)
+			}
 		case <-ticker.C:
 			for _, t := range targets {
 				mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.key.Public}}
@@ -168,10 +186,14 @@ func serve(command *cobra.Command, args []string) error {
 }
 
 // keepServing answers live calls through one relay, and watches again when
-// the relay drops the connection.
-func keepServing(ctx context.Context, server *call.Server, r relay.Relay, log *slog.Logger) {
+// the relay drops the connection. It calls ready once, when the first watch
+// begins or fails.
+func keepServing(ctx context.Context, server *call.Server, r relay.Relay, ready func(), log *slog.Logger) {
+	var once sync.Once
+	defer once.Do(ready)
 	for {
-		err := server.ServeLive(ctx, r)
+		err := server.ServeLive(ctx, r, func() { once.Do(ready) })
+		once.Do(ready)
 		if ctx.Err() != nil {
 			return
 		}

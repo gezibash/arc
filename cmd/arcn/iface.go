@@ -382,11 +382,31 @@ func (e *cliEnv) Call(ctx context.Context, provider nostr.PubKey, request iface.
 	return iface.CallResult{Body: reply.Body, Err: reply.Err}, nil
 }
 
+// online says whether a citizen has a current announcement on the relays.
+// If no relay answers, it returns the error, and the call goes ahead.
+func (s *session) online(ctx context.Context, citizen []byte) (bool, error) {
+	provider := nostr.PubKey(citizen)
+	filter := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
+	if err := node.Unreached(s.node.Pull(ctx, filter, s.relays)); err != nil {
+		return false, err
+	}
+	now := time.Now()
+	for _, announcement := range s.node.Store.Query(filter) {
+		if catalog.Current(announcement, now) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // liveCall tries each relay in turn, and returns the first reply, the round
 // trip, and the relay that carried it.
 func liveCall(ctx context.Context, sess *session, provider nostr.PubKey, request call.Request, timeout time.Duration) (call.Reply, time.Duration, string, error) {
 	if len(sess.relays) == 0 {
 		return call.Reply{}, 0, "", errors.New("no relay, so no live path: add a relay, or use --later to store and forward the call")
+	}
+	if err := sess.waker.Wake(ctx, provider[:], sess.online); err != nil {
+		return call.Reply{}, 0, "", err
 	}
 	var failures []string
 	for _, t := range sess.relays {
@@ -394,6 +414,7 @@ func liveCall(ctx context.Context, sess *session, provider nostr.PubKey, request
 		reply, rtt, err := call.Live(ctx, sess.signer, provider, request, t.(relay.Relay))
 		cancel()
 		if err == nil {
+			sess.waker.Answered(provider[:])
 			return reply, rtt, t.Name(), nil
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", t.Name(), err))
