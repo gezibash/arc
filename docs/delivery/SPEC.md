@@ -472,7 +472,9 @@ The manifest declares the class of each command:
 | live | 21059 | The router needs a live path now. If none exists, the call fails at once. |
 
 A provider keeps the IDs of the requests that it answered, and answers each
-request once.
+request once. Each request rumor carries a `nonce` tag with 8 random bytes as
+hex. Thus two equal requests in one second have two IDs, and the provider
+answers both.
 
 A call has no acknowledgement. The reply clears the caller's outbox. The
 provider sends its reply again on each sync until the reply expires, so a

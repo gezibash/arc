@@ -25,8 +25,11 @@ go test ./release/...
 The tests cover the signature domain, a changed document, an expired
 document, a replayed sequence, platform selection, a wrong hash, a short
 download, an archive that escapes its directory, and a program that does not
-start after the swap. One test verifies a channel document that the Elixir
-implementation signed, which pins the canonical encoding.
+start after the swap.
+
+`mise run delivery` proves the whole path. A publisher signs a channel with
+`arcn release sign`, a releases provider serves it through a relay, and an
+older `arcn` replaces itself with `arcn update apply`.
 
 ## User contract
 
@@ -93,6 +96,15 @@ provider. To host or forward an artifact grants no publishing authority. The
 publisher signs the channel document with a domain-separated signature over
 a canonical encoding: the domain is `ARC-RELEASE-CHANNEL-V<schema>` followed
 by one zero byte, and then the canonical JSON of the unsigned document.
+
+The schema is 3. The publisher is a Nostr key, 32 bytes as hex. The
+signature has the algorithm `bip340`: a BIP-340 Schnorr signature over the
+SHA-256 of the signed bytes. Schemas 1 and 2 used Ed25519 keys of the older
+stack, and this build does not read them.
+
+A citizen reads the channel and the archive with live calls to the releases
+provider. One reply carries at most 64 KiB of an archive. A gift wrap grows
+a reply about 2.4 times, and a relay takes an event of at most 256 KiB.
 
 The document binds:
 

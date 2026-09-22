@@ -8,28 +8,29 @@ store into the provider.
 
 This is an operator-driven path, not an official public channel.
 
-## The tools do not exist yet
+## The tools
 
-Two Go commands are missing. The Elixir tools that did this work went with
-the Elixir tree, and nothing replaced them:
-
-- **A publisher.** It must take an unsigned manifest and a key, verify the
-  size and hash of every archive, sign the document with `release.Sign`, and
-  replace the channel file under a lock. `release.Sign` exists. The command
-  does not.
-- **A verifier.** It must read the channel through a relay as a throwaway
-  citizen, verify publisher authority, download each archive, and check its
-  signed size and digest without installing anything. `release.Verify`,
-  `release.FetchChannel` and `release.Download` exist. The command does not.
-
-The rest of this document is the policy that those commands must follow, and
-the shape of the document they must produce.
+- **The publisher** is `arcn release sign`. It reads an unsigned channel,
+  checks the size and hash of each archive in `<root>/blobs`, and signs the
+  channel with the chosen identity. It refuses a channel whose publisher
+  differs from the served channel, or whose sequence does not increase. It
+  also refuses a channel file that is a link. It then replaces
+  `<root>/channels/<channel>.json` whole.
+- **The verifier does not exist yet.** It must read the channel through a
+  relay as a throwaway citizen, verify publisher authority, download each
+  archive, and check its signed size and digest without installing
+  anything. `arcn update check` does the first part.
 
 ## Prepare a publication
 
-Generate a dedicated identity with `arc keys gen`. Keep its printed name and
-public key. Do not change the active citizen identity. Keep the private key
-in the host key store, and name it explicitly when signing.
+Generate a dedicated identity with `arcn keys gen`. Keep its printed name
+and public key. Do not change the active citizen identity. Keep the secret
+key on this machine: a remote signer cannot sign a release yet. Name the
+identity with `--key` when you sign:
+
+```sh
+arcn --key <publisher-name> release sign --root /absolute/provider-root unsigned.json
+```
 
 Create `channels/` and `blobs/` under a provider root that the operator owns.
 Download the release archives and check their published checksums. Place each
@@ -46,9 +47,11 @@ size and SHA-256 of its archive, and its `install` object:
   `sha256` and `size` of the release.
 - A release with no `install` object must set `eligible: false`. `arc update`
   reports such a release, and cannot install it.
-- Schema `2` signs under the domain `ARC-RELEASE-CHANNEL-V2` followed by one
-  zero byte. Schema `1` keeps its own bytes. Clients through v0.4.1 refuse
-  schema `2`, so those need one bootstrap update first.
+- Set `schema_version` to `3`, and `publisher` to the Nostr public key of the
+  publisher, as hex. Schema `3` signs under the domain
+  `ARC-RELEASE-CHANNEL-V3` followed by one zero byte, with BIP-340 Schnorr.
+  A client of v0.9.0 or older reads only schemas `1` and `2`, so it must
+  install a newer release with `install.sh` first.
 
 ## Rules that publication must keep
 

@@ -83,6 +83,31 @@ func TestALiveCallOverARelay(t *testing.T) {
 	t.Logf("live round trip over a local relay: %v", rtt)
 }
 
+// The same request twice in one second is two calls. The provider refuses a
+// replay of one request, not a second request with the same body.
+func TestTwoEqualCallsAreBothAnswered(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := relay.Relay{URL: testrelay.Start(t)}
+	serving := keys.Generate()
+	ready := make(chan struct{})
+	go provider(t, serving).ServeLive(ctx, r, func() { close(ready) })
+	<-ready
+
+	caller := keys.Generate()
+	for i := range 2 {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		reply, _, err := call.Live(ctx, caller, serving.Public, call.Request{
+			Capability: "primary", Method: "ECHO", Path: "/", Body: "same",
+		}, r)
+		cancel()
+		if err != nil || reply.Body != "ECHO / same" {
+			t.Fatalf("call %d: %+v, %v", i+1, reply, err)
+		}
+	}
+}
+
 func TestTheProviderSeesTheCallerAsFrom(t *testing.T) {
 	ctx := context.Background()
 	serving := keys.Generate()

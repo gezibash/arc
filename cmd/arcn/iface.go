@@ -54,6 +54,11 @@ func dispatch(command *cobra.Command, args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		return command.Help()
 	}
+	// arcn update runs a new program with --version before it swaps it in.
+	if args[0] == "--version" {
+		fmt.Printf("arcn %s\n", version)
+		return nil
+	}
 	return runCapability(command, args[0], args[1:])
 }
 

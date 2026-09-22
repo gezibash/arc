@@ -5,18 +5,17 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/release"
 )
 
 // channelOf signs one channel document at a sequence.
-func channelOf(t *testing.T, publisher *identity.Identity, sequence int) map[string]any {
+func channelOf(t *testing.T, publisher *publisherKey, sequence int) map[string]any {
 	t.Helper()
 
 	unsigned := channelDocument(publisher, releaseEntry("9.9.9", "linux", "amd64"))
 	unsigned["sequence"] = sequence
 
-	signed, err := release.Sign(publisher, unsigned)
+	signed, err := release.Sign(publisher.secret, unsigned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +23,7 @@ func channelOf(t *testing.T, publisher *identity.Identity, sequence int) map[str
 }
 
 func TestTheCheckpointRefusesAnOlderDocument(t *testing.T) {
-	publisher, err := identity.Generate()
+	publisher, err := newPublisher()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +64,7 @@ func TestTheCheckpointRefusesAnOlderDocument(t *testing.T) {
 	unsigned := channelDocument(publisher, releaseEntry("9.9.8", "linux", "amd64"))
 	unsigned["sequence"] = 7
 
-	again, err := release.Sign(publisher, unsigned)
+	again, err := release.Sign(publisher.secret, unsigned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +79,8 @@ func TestTheCheckpointRefusesAnOlderDocument(t *testing.T) {
 }
 
 func TestEachPublisherAndChannelHoldsItsOwnRecord(t *testing.T) {
-	first, _ := identity.Generate()
-	second, _ := identity.Generate()
+	first, _ := newPublisher()
+	second, _ := newPublisher()
 	checkpoint := &release.Checkpoint{Dir: t.TempDir()}
 
 	verified, err := release.Verify(channelOf(t, first, 9), release.Expect{
@@ -113,7 +112,7 @@ func TestEachPublisherAndChannelHoldsItsOwnRecord(t *testing.T) {
 }
 
 func TestTheCheckpointRefusesADamagedRecord(t *testing.T) {
-	publisher, _ := identity.Generate()
+	publisher, _ := newPublisher()
 	dir := t.TempDir()
 	checkpoint := &release.Checkpoint{Dir: dir}
 
@@ -148,7 +147,7 @@ func TestTheCheckpointRefusesADamagedRecord(t *testing.T) {
 }
 
 func TestTheCheckpointRefusesAChannelNameThatIsAPath(t *testing.T) {
-	publisher, _ := identity.Generate()
+	publisher, _ := newPublisher()
 	checkpoint := &release.Checkpoint{Dir: t.TempDir()}
 
 	for _, name := range []string{"../escape", "a/b", "", "Stable"} {
