@@ -54,6 +54,10 @@ the older keys stay with `arc-legacy`.
 ### Fixed
 
 - `arc -v` prints the version, as `arc --version` does.
+- Two commands of one identity run at once. A command holds the files of
+  the identity only while it uses them, and lets them go 200 ms later.
+  Before, a second command failed with `store: timeout` while `tail` or
+  `serve` ran.
 
 - `arc --version` prints the version. Before, it failed, and `arc update`
   could not check a new program.
