@@ -6,6 +6,22 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Before a live call, `arcn` runs the wake hook of the provider from
+  `<home>/wake.toml`. Without a hook, the provider needs an announcement
+  that is at most 5 minutes old, or the call stops with `peer_offline`.
+  `arcn serve` signs its announcement again every 2 minutes.
+- `arcn lists add`, `rm` and `ls` save sets of citizens for one installed
+  command. Where the command takes a key, the name of a list runs it once for
+  each member.
+
+### Changed
+
+- The citizen scripts of the exec provider run `arcn serve`. `citizen/init`
+  takes `--relay` as a Nostr relay URL, and no longer takes
+  `--relay-pubkey`.
+
 ### Removed
 
 - `docker/fly/`, the image of the older relay and the DM provider on Fly.io.

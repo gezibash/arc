@@ -227,6 +227,18 @@ grep "meet at noon" "$work/conversation.txt" > /dev/null && grep "see you there"
 go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
 say "a direct message crosses the relay, both ways, and opens in a NIP-17 client"
 
+# A list stands for its members where a command takes a key.
+if laptop lists add dm pals not-a-key > /dev/null 2>&1; then fail "a list took a member that is not a key"; fi
+if laptop lists add nothing pals "$bob_key" > /dev/null 2>&1; then fail "a list took a command that is not installed"; fi
+laptop lists add dm pals "$bob_key" "$(moderator whoami | sed -n 2p)" > /dev/null || fail "the list was not saved"
+[ "$(laptop lists ls dm pals | wc -l | tr -d ' ')" = 2 ] || fail "the list holds $(laptop lists ls dm pals)"
+laptop dm send pals hello to the list 2> /dev/null || fail "the message to the list failed"
+bob dm inbox | grep "hello to the list" > /dev/null || fail "bob did not receive the message to the list"
+moderator dm inbox | grep "hello to the list" > /dev/null || fail "the moderator did not receive the message to the list"
+laptop lists rm dm pals > /dev/null
+laptop lists ls dm | grep "no lists" > /dev/null || fail "the removed list still shows: $(laptop lists ls dm)"
+say "a list of two citizens sends one message to each"
+
 post="$(laptop agora post --title Hello first post 2>&1 > /dev/null | tail -1)"
 case "$post" in nevent1*) ;; *) fail "the post printed $post" ;; esac
 bob agora feed | grep "Hello" > /dev/null || fail "bob's feed: $(bob agora feed)"

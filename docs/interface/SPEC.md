@@ -156,7 +156,7 @@ is the capability's name alone. Every command has exactly one action.
 | --- | --- |
 | `text` | Any text. A variadic text is a list of words. A template shows the list as its words, joined by one space. |
 | `integer` | A whole number. |
-| `key` | A citizen. Core resolves 64 hex characters, an `npub` or `nprofile` of NIP-19, a NIP-05 name, a petname of this machine, or an installed name, to a public key. |
+| `key` | A citizen. Core resolves 64 hex characters, an `npub` or `nprofile` of NIP-19, a NIP-05 name, a petname of this machine, or an installed name, to a public key. If the text names a list of this command, `arc lists`, core runs the command once for each member. One command takes one list. If a member fails, core runs the other members, and then reports the failures. |
 | `event` | An event. Core resolves 64 hex characters, or a `note`, `nevent` or `naddr` of NIP-19. |
 | `file` | A local path that core reads. |
 | `path` | A local path that core writes to. It must not exist. |

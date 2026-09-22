@@ -43,6 +43,15 @@ type Resolver interface {
 	ResolveKey(ctx context.Context, text string) (nostr.PubKey, error)
 }
 
+// Lister finds a list of keys that the citizen saved for the running
+// command. A key argument that names a list stands for each of its members.
+type Lister interface {
+	List(name string) []nostr.PubKey
+}
+
+// members is the value of a key argument that named a list, as hex keys.
+type members []string
+
 // bind reads the words that follow a command's path.
 func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
 	var flags Flags
@@ -190,6 +199,15 @@ func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
 		}
 		return n, nil
 	case "key":
+		if l, ok := r.(Lister); ok {
+			if list := l.List(text); len(list) > 0 {
+				out := make(members, len(list))
+				for i, pk := range list {
+					out[i] = pk.Hex()
+				}
+				return out, nil
+			}
+		}
 		pk, err := r.ResolveKey(ctx, text)
 		if err != nil {
 			return nil, err

@@ -204,6 +204,45 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 		return nil
 	}
 
+	// A key argument that named a list runs the command once for each
+	// member.
+	var listed string
+	for name, value := range values {
+		if _, ok := value.(members); ok {
+			if listed != "" {
+				return fmt.Errorf("%s and %s both name a list: one command takes one list", listed, name)
+			}
+			listed = name
+		}
+	}
+	if listed == "" {
+		return runOnce(ctx, env, in, command, values, flags, stdio)
+	}
+	if command.Action.Watch != nil {
+		return fmt.Errorf("%s names a list, and a watch takes one key", listed)
+	}
+	list := values[listed].(members)
+	failed := 0
+	for _, member := range list {
+		one := Values{}
+		for name, value := range values {
+			one[name] = value
+		}
+		one[listed] = member
+		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
+			pk, _ := nostr.PubKeyFromHex(member)
+			fmt.Fprintf(stdio.Err, "%s: %v\n", env.Name(pk), err)
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d members of the list failed", failed, len(list))
+	}
+	return nil
+}
+
+// runOnce runs a command with its values.
+func runOnce(ctx context.Context, env Env, in Installed, command *Command, values Values, flags Flags, stdio Stdio) error {
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio}
 	if command.Action.Watch != nil {
 		return r.watch(command.Action.Watch)

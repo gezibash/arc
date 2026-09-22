@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/identity"
 	"github.com/gezibash/arc/iface"
+	"github.com/gezibash/arc/lists"
 	"github.com/spf13/cobra"
 )
 
@@ -103,7 +104,11 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 			name, strings.Join(changes, "\n  "), install.Provider, install.ID, name)
 	}
 
-	env := &cliEnv{sess: sess, installs: installs}
+	store, err := listsOf(command)
+	if err != nil {
+		return err
+	}
+	env := &cliEnv{sess: sess, installs: installs, tool: name, lists: store}
 	in := iface.Installed{Manifest: offer.Manifest, Author: provider, Name: name}
 	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 }
@@ -140,6 +145,10 @@ type cliEnv struct {
 	sess     *session
 	installs catalog.Installs
 	root     []byte
+	// tool is the installed name of the running command, and lists holds
+	// its lists.
+	tool  string
+	lists *lists.Store
 }
 
 func (e *cliEnv) Me() nostr.PubKey { return e.sess.key.Public }
