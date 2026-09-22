@@ -1,5 +1,4 @@
-# The Nostr relay of ARC, at wss://arc-nostr-gezim.fly.dev. It runs beside the
-# older relay, arc-relay-gezim, until the switchover removes that one.
+# The Nostr relay of ARC, at wss://arc-nostr-gezim.fly.dev.
 app = "arc-nostr-gezim"
 primary_region = "ams"
 

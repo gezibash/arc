@@ -143,8 +143,8 @@ example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 ## Run the Nostr relay on Fly.io
 
 The delivery layer uses Nostr relays, see docs/delivery/SPEC.md. The Fly.io
-app `arc-nostr-gezim` runs `arcn relay serve`, beside the older relay. Its
-files are in `docker/fly-nostr/`. The relay keeps its events in
+app `arc-nostr-gezim` runs `arcn relay serve`. Its files are in
+`docker/fly-nostr/`. The relay keeps its events in
 `/data/relay.db`, on a volume. Fly.io ends TLS, so clients use
 `wss://arc-nostr-gezim.fly.dev`.
 
