@@ -140,6 +140,36 @@ docker logs arc-relay
 Any other command works through the same image. Name the command, for
 example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 
+## Run the Nostr relay on Fly.io
+
+The delivery layer uses Nostr relays, see docs/delivery/SPEC.md. The Fly.io
+app `arc-nostr-gezim` runs `arcn relay serve`, beside the older relay. Its
+files are in `docker/fly-nostr/`. The relay keeps its events in
+`/data/relay.db`, on a volume. Fly.io ends TLS, so clients use
+`wss://arc-nostr-gezim.fly.dev`.
+
+Before the first deploy, make the app and its volume:
+
+```bash
+fly apps create arc-nostr-gezim
+fly volumes create arc_nostr_data --app arc-nostr-gezim --region ams --size 1
+```
+
+Deploy from the root of the checkout:
+
+```bash
+fly deploy -c docker/fly-nostr/fly.toml --dockerfile docker/fly-nostr/Dockerfile --build-arg VERSION=X.Y.Z
+```
+
+After each deploy, run the check. It sends a sealed page and a live call to
+`exec` through the relay:
+
+```bash
+mise run check-relay -- wss://arc-nostr-gezim.fly.dev
+```
+
+The relay has no write limits yet. Any client can write events to it.
+
 ## Run a local relay with journal, DMs and Agora
 
 From the repository root:
