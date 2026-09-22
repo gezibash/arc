@@ -82,8 +82,8 @@ arc call 'sqlite+arc://<provider-public-key>/main' \
 
 The one-shot `arc call` process exits after its reply, so it cannot retain a
 direct route for later commands. A long-running client that makes repeated
-`Peers().Request` calls can retain an admitted route until
-its lease ends.
+`Peers().Request` calls keeps an admitted route while the relay carries its
+renewals.
 
 ## What the connection proves
 
@@ -102,12 +102,30 @@ selection request.
 
 ## Lease, relay loss, and outcomes
 
-The caller starts renewal through a fresh relay session. While renewal succeeds,
-both endpoints renew their finite local lease. If relay access fails, the current
-deadline remains unchanged: an already healthy direct route can still carry
-in-scope request/reply traffic until that deadline, but it cannot renew itself,
-change addresses, or create a replacement route. Restoring the same pinned relay
-and reannouncing the agent permits a fresh-session renewal before expiry.
+The caller renews the lease over the relay, never over the carrier:
+
+1. When half of the lease remains, the caller sends a `renew` control message
+   with a sequence number that increases.
+2. If the route is active and its lease has not ended, the provider extends
+   its deadline by one lease from the time the message arrives. It answers
+   with `renewed` and the same sequence number.
+3. The caller takes only the answer to its last `renew`. It extends its
+   deadline by one lease from the time that `renew` left. Thus the caller
+   never holds the route longer than the provider.
+4. If no answer arrives, the caller sends `renew` again after one eighth of
+   the lease, until the deadline.
+
+The provider takes a `renew` from any relay session of the same peer. Thus a
+client that connects to the relay again renews the route before its deadline.
+
+If relay access fails, the current deadline remains unchanged. An already
+healthy direct route can still carry in-scope request/reply traffic until that
+deadline. It cannot renew itself, change addresses, or create a replacement
+route.
+
+When the deadline arrives, each endpoint retires the route and closes the
+carrier. The conversation then returns to the relay. A `renew` that arrives
+after the deadline does not revive the route.
 
 Withdrawal, expiry, direct failure, an identity or address change, and process
 restart retire the generation. It cannot be revived by a late relay message or
