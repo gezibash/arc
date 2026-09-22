@@ -282,8 +282,14 @@ func (e *cliEnv) Fetch(ctx context.Context, filter nostr.Filter, urls []string) 
 		}
 		ask := filter
 		ask.IDs = missing
-		e.sess.node.Pull(ctx, ask, e.sess.relays)
-		return e.sess.node.Store.Query(filter), nil
+		_, errs := e.sess.node.Pull(ctx, ask, e.sess.relays)
+		found := e.sess.node.Store.Query(filter)
+		// An event that is still missing because no relay answered is an
+		// error of the relays, not of the event.
+		if len(errs) > 0 && len(errs) == len(e.sess.relays) && len(found) < len(filter.IDs) {
+			return found, fmt.Errorf("no relay answered: %w", errors.Join(errs...))
+		}
+		return found, nil
 	}
 	if _, errs := e.sess.node.Pull(ctx, filter, e.sess.relays); len(errs) > 0 && len(errs) == len(e.sess.relays) {
 		fmt.Fprintf(os.Stderr, "no relay answered, so this shows what this machine holds: %v\n", errs[0])
