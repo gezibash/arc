@@ -253,8 +253,9 @@ func TestSqliteShowsATable(t *testing.T) {
 func TestJSONWritesTheRecord(t *testing.T) {
 	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":3,"stdout":"","stderr":"no\n"}`}}
 	out, _, err := runSpec(t, "exec", env, "run", "--json", "false")
-	if err != nil {
-		t.Fatal(err)
+	// With --json, the command still exits with the code of the command.
+	if exitCode(err) != 3 {
+		t.Errorf("the exit status is %d (%v), want 3", exitCode(err), err)
 	}
 	if !strings.Contains(out, `"exit":3`) || strings.Count(out, "\n") != 1 {
 		t.Errorf("the JSON output is %q", out)
@@ -338,7 +339,7 @@ func TestADefaultFillsAnAbsentArgument(t *testing.T) {
 }
 
 func TestAValueCannotReachTheTerminal(t *testing.T) {
-	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: "{\"stdout\":\"a\\u001b[2Jb\\u0007c\\n\",\"stderr\":\"\"}"}}
+	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: "{\"exit\":0,\"stdout\":\"a\\u001b[2Jb\\u0007c\\n\",\"stderr\":\"\"}"}}
 	out, _, err := runSpec(t, "exec", env, "run", "x")
 	if err != nil {
 		t.Fatal(err)
@@ -417,7 +418,7 @@ func TestFileArgumentsOfferTheirFields(t *testing.T) {
 }
 
 func TestAVariadicKeepsItsFlags(t *testing.T) {
-	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"stdout":""}`}}
+	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":""}`}}
 	if _, _, err := runSpec(t, "exec", env, "run", "--json", "sh", "-c", "echo --x"); err != nil {
 		t.Fatal(err)
 	}
@@ -459,5 +460,73 @@ func TestKeyedListsKeepTheirWordsApart(t *testing.T) {
 	y, _ := two.render(r.scope, r, false)
 	if x == y || len(x) != 22 {
 		t.Errorf("ab+c and a+bc key to %s and %s", x, y)
+	}
+}
+
+// exitCode is the exit status that an error of Run asks for, and 0 for nil.
+// An error without a code stands for the status 1 of arc.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+	return -1
+}
+
+// The wrapper arc-exec of v0.10.0 exited with the exit code of the command,
+// and with 1 when the code was not a whole number of 0 or more. It wrote
+// the output first.
+func TestExecRunExitsWithTheCodeOfTheCommand(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		reply string
+		want  int
+	}{
+		{"a success", `{"exit":0,"stdout":"ok\n","stderr":""}`, 0},
+		{"a failure", `{"exit":3,"stdout":"out\n","stderr":"no\n"}`, 3},
+		{"no code", `{"stdout":"out\n","stderr":""}`, 1},
+		{"a code that is not a number", `{"exit":"three","stdout":"out\n","stderr":""}`, 1},
+		{"a negative code", `{"exit":-1,"stdout":"out\n","stderr":""}`, 1},
+		{"a code above 255", `{"exit":256,"stdout":"out\n","stderr":""}`, 1},
+	} {
+		env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: c.reply}}
+		out, _, err := runSpec(t, "exec", env, "run", "sh", "-c", "x")
+		if got := exitCode(err); got != c.want {
+			t.Errorf("%s: the exit status is %d (%v), want %d", c.name, got, err, c.want)
+		}
+		if !strings.HasPrefix(out, map[bool]string{true: "ok\n", false: "out\n"}[c.want == 0]) {
+			t.Errorf("%s: the output is %q", c.name, out)
+		}
+	}
+}
+
+// arc-exec --status exited 75 while the job ran, 1 when the job was lost,
+// and with the code of the job after it ended.
+func TestExecStatusExitsAsArcExecDid(t *testing.T) {
+	for _, c := range []struct {
+		reply string
+		want  int
+	}{
+		{`{"job":"j","state":"running","stdout":"","stderr":""}`, 75},
+		{`{"job":"j","state":"lost","stdout":"","stderr":""}`, 1},
+		{`{"job":"j","state":"done","exit":2,"stdout":"","stderr":""}`, 2},
+		{`{"job":"j","state":"done","exit":0,"stdout":"","stderr":""}`, 0},
+	} {
+		env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: c.reply}}
+		_, _, err := runSpec(t, "exec", env, "status", "j")
+		if got := exitCode(err); got != c.want {
+			t.Errorf("%s: the exit status is %d (%v), want %d", c.reply, got, err, c.want)
+		}
+	}
+}
+
+// A call that waits in the outbox has no reply, so it has no code.
+func TestALaterCallHasNoExitCode(t *testing.T) {
+	env := &fakeEnv{me: nostr.Generate()}
+	if _, _, err := runSpec(t, "exec", env, "run", "--later", "false"); err != nil {
+		t.Errorf("a queued call returned %v", err)
 	}
 }

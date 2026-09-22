@@ -143,14 +143,17 @@ arc exec start 'cd ~/arc && go test ./...'
 arc exec status <job>
 ```
 
-`run` is a live call. It writes the output of the command. It exits 0, also
-when the command fails: read the output.
+`run` is a live call. It writes the output of the command, and exits with the
+exit code of the command. A code that is missing, below 0 or above 255 gives
+the status 1. An error of `arc`, for example no relay, also exits 1, and
+writes a message that starts with `arc:`.
 
 A command that takes longer than 115 seconds must run as a job. A job
 continues after the caller disconnects. `start` is a store-and-forward call:
 it waits in the outbox, and the reply names the job. Run `arc sync`, then
 `arc call results` shows the job. `status` shows the state of the job, and
-its output after it ends.
+its output after it ends. It exits 75 while the job runs, 1 when the job is
+lost, and with the exit code of the job after it ends.
 
 ## Request protocol
 

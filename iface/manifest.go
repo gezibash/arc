@@ -194,6 +194,16 @@ type Output struct {
 	Tail   *struct{} `json:"tail,omitempty"`
 	Save   *Save     `json:"save,omitempty"`
 	Format string    `json:"format,omitempty"`
+	Exit   []Exit    `json:"exit,omitempty"`
+}
+
+// Exit sets the exit status of the command from its first record. Core
+// takes the first rule whose conditions the record meets.
+type Exit struct {
+	Where []Cond `json:"where,omitempty"`
+	// Code is a template over the record. A whole number from 0 to 255 is
+	// the exit status. Any other value gives the status 1.
+	Code string `json:"code"`
 }
 
 // Open parses the content of each record.
@@ -544,6 +554,20 @@ func (m *Manifest) checkCommand(c Command) error {
 	}
 	if err := conds(o.Where); err != nil {
 		return err
+	}
+	if len(o.Exit) > 0 && a.Watch != nil {
+		return errors.New("exit works only for a command that ends")
+	}
+	for _, rule := range o.Exit {
+		if rule.Code == "" {
+			return errors.New("an exit rule needs a code")
+		}
+		if _, err := compile(rule.Code, nil); err != nil {
+			return err
+		}
+		if err := conds(rule.Where); err != nil {
+			return err
+		}
 	}
 	for _, t := range []string{joinLines(o.Join), rankQuery(o.Rank)} {
 		if err := check(t); err != nil {

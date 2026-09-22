@@ -584,13 +584,58 @@ func (r *run) watch(q *Query) error {
 	return errors.New("every relay ended the watch")
 }
 
-// show runs the pipeline on entries and writes them.
+// show runs the pipeline on entries and writes them. Then the exit rules of
+// the output read the first entry.
 func (r *run) show(entries []*entry) error {
 	entries, err := r.pipeline(entries)
 	if err != nil {
 		return err
 	}
-	return r.write(entries, r.stdio.Out)
+	if err := r.write(entries, r.stdio.Out); err != nil {
+		return err
+	}
+	return r.exit(entries)
+}
+
+// ExitError asks for an exit status. The command wrote its output already,
+// so the caller exits with Code, and writes no message.
+type ExitError struct{ Code int }
+
+func (e ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code) }
+
+// ExitCode is the exit status.
+func (e ExitError) ExitCode() int { return e.Code }
+
+// exit applies the first exit rule whose conditions the first entry meets.
+// With no entry, or no rule that fits, the command has no exit status.
+func (r *run) exit(entries []*entry) error {
+	rules := r.command.Output.Exit
+	if len(rules) == 0 || len(entries) == 0 {
+		return nil
+	}
+	rec := entries[0].rec
+	for _, rule := range rules {
+		ok, err := r.matchAll(rec, rule.Where)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		text, err := r.renderIn(rule.Code, r.recordScope(rec))
+		if err != nil {
+			return err
+		}
+		code, err := strconv.Atoi(strings.TrimSpace(text))
+		if err != nil || code < 0 || code > 255 {
+			code = 1
+		}
+		if code == 0 {
+			return nil
+		}
+		return ExitError{Code: code}
+	}
+	return nil
 }
 
 // partTexts opens parts by their IDs, in order. It stops at the first part

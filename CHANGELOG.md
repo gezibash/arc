@@ -6,6 +6,24 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The output of a manifest command can have `exit`: rules that set the exit
+  status of the command from its first record. See `docs/interface/SPEC.md`,
+  section 9.4.
+
+### Changed
+
+- **Breaking:** the manifest of `exec` uses `exit`. A caller of 0.11.0
+  refuses a manifest with a field that it does not know. Update each caller
+  before a provider serves the new manifest.
+
+### Fixed
+
+- `arc exec run` exits with the exit code of the command, as `arc-exec`
+  did. `arc exec status` exits 75 while the job runs, and 1 when the job is
+  lost. Before, both exited 0.
+
 ## [0.11.0] - 2026-09-23
 
 The older stack is gone, and `arc` is the only program of ARC. This is step 5
@@ -31,11 +49,6 @@ moves to `~/.config/arc`: see "Upgrade from v0.10.0" in the README.
 - `arc-exec`, the local Compose stack, `mise run cli`, and the docs of the
   older stack. Links to those docs point to the tag v0.10.0.
 - A binary, `arcn`, that v0.10.0 committed by mistake.
-
-### Known issues
-
-- `arc exec run` exits 0 when the command fails. `arc-exec` gave the exit
-  code of the command.
 
 ## [0.10.0] - 2026-09-22
 
