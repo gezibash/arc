@@ -6,8 +6,30 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-22
+
+`arcn` gets the identity, tool and info commands of `arc`, and a relay that
+limits writes. The Fly.io app `arc-nostr-gezim` runs that relay. Update
+`arcn` before you use that relay: an `arcn` of 0.8.0 cannot make a live call
+through it, or send mail to an inbox on it.
+
 ### Added
 
+- `arcn keys gen`, `add`, `list`, `use`, `remove`, `encrypt` and `bunker`
+  manage identities. Each identity has its own directory,
+  `<home>/citizens/<name>`. `--key <name>` and `ARCN_KEY` pick an identity
+  for one command. `arcn whoami` shows the identity.
+- `arcn tool list`, `info`, `remove`, `resolve`, `apps init` and `version`
+  come from `arc`.
+- `arcn relay serve` takes write limits. Each limit is off when its flag is
+  absent. `--max-event-bytes` caps the size of one event. `--wrap-auth` takes
+  a gift wrap only after NIP-42 authentication, and `--wrap-pow` lets a gift
+  wrap with NIP-13 work in without it. `--rate` and `--burst` cap the events
+  of one IP address, and `--ip-header` names the header that holds that
+  address. `--max-store-mb` caps the store.
+- `docker/fly-nostr/` runs `arcn relay serve` as the Fly.io app
+  `arc-nostr-gezim`, with the write limits on. `mise run check-relay -- <url>`
+  checks one running relay.
 - A capability can carry bytes. With `encoding: base64` in `request_body` or
   `response_body`, the citizen passes that body to the runtime as base64,
   and reads it back the same way. No byte changes on the way.
@@ -24,6 +46,9 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Changed
 
+- **Breaking:** `arcn key` is gone. `arcn keys add` replaces `arcn key use`,
+  and `arcn whoami` replaces `arcn key show`. An `arcn` home keeps each
+  identity in `<home>/citizens/<name>`.
 - **Breaking:** `arc join` takes the pin with `--relay-pubkey`, like the
   other commands. `--pubkey` is gone.
 - `arc join` shows the key and the petname of a new relay, and pins the key
@@ -82,6 +107,18 @@ All notable changes to ARC are recorded here. The format follows
 - When the lease of a direct route ends, both sides close the carrier, and the
   conversation returns to the relay. Before, both sides kept the carrier open
   after the lease ended.
+- A live call of `arcn` answers the NIP-42 challenge of a relay, and sends
+  again. Mail of `arcn` answers the challenge of the inbox relay of a
+  recipient with a one-time key.
+- `arcn` keeps the request of a relay for authentication when a query
+  closes. Before, a read of a sealed part could fail at random.
+- When no relay answers, `arcn` says so. Before, it said that an event was
+  missing, and gave the wrong advice.
+
+### Known issues
+
+- `arc` refuses the `private_file`, `sealed_file` and `agora` inputs, so
+  `arc files` and `arc agora` fail.
 
 ## [0.8.0] - 2026-09-21
 
