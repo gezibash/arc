@@ -599,10 +599,10 @@ built from `cmd/arcn`. The older program stays for one release as
 | Step | Work | Proof |
 | --- | --- | --- |
 | 1 | Port the commands of the older `arc` that the table below marks "port". | Each ported command has a test at the command line. `mise run delivery` and `mise run interface` pass. |
-| 2 | Deploy a khatru relay beside the older relay on Fly. The operator runs the deploy. | `arc relay add` takes the new relay, and a live call to `exec` crosses it. |
+| 2 | Deploy a khatru relay on Fly. The operator runs the deploy. The older relay on Fly is stopped. | `arc relay add` takes the new relay, and a live call to `exec` crosses it. |
 | 3 | Port `update` and `lists`, see the table below. Port the wake flow to the node. Before a call to a citizen with a wake hook, the node runs the hook, as `wake` does today. A citizen without a hook must have a current announcement of kind 30272. The Sprite serves `exec` on this layer through the relay of step 2. | A call to `exec` on a paused Sprite wakes it, and the reply arrives. |
-| 4 | Build `cmd/arcn` as `arc`, and the older `cmd/arc` as `arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. Release v0.9.0. | `arc update apply` from v0.8.0 installs the new `arc`. |
-| 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Stop the older relay. Release v0.10.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
+| 4 | Build `cmd/arcn` as `arc`, and the older `cmd/arc` as `arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. Release v0.10.0. | `arc update apply` from v0.9.0 installs the new `arc`. |
+| 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Release v0.11.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
 
 The commands of `arc` after step 4:
 

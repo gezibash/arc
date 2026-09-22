@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- `docker/fly/`, the image of the older relay and the DM provider on Fly.io.
+  The Fly.io app `arc-relay-gezim` is stopped. The Nostr relay,
+  `docker/fly-nostr/`, replaces it.
+
 ## [0.9.0] - 2026-09-22
 
 `arcn` gets the identity, tool and info commands of `arc`, and a relay that
