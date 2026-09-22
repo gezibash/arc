@@ -48,10 +48,12 @@ func TestALiveLookupFindsANameAcrossTheChain(t *testing.T) {
 	caller, from := citizen(t, relays[0])
 	ctx := context.Background()
 
-	waitFor(t, "the name resolves across the chain", func() bool {
-		entries, err := from.Resolve(ctx, provider.Name())
-		return err == nil && len(entries) == 1 && entries[0]["public_key"] == provider.EncodePublicKey()
-	})
+	// One try: the catalog syncs every two seconds, so a retry could find
+	// the name without a live lookup.
+	entries, err := from.Resolve(ctx, provider.Name())
+	if err != nil || len(entries) != 1 || entries[0]["public_key"] != provider.EncodePublicKey() {
+		t.Fatalf("the name gave %v, %v", entries, err)
+	}
 
 	talk, err := session.Establish(caller, provider.PublicKey)
 	if err != nil {
@@ -86,18 +88,17 @@ func TestASearchAsksThePartnersOfAColdCatalog(t *testing.T) {
 	_, from := citizen(t, relays[0])
 	ctx := context.Background()
 
-	waitFor(t, "the search finds the publisher", func() bool {
-		page, err := from.Search(ctx, "exec", 10, "")
-		if err != nil {
-			return false
+	// One try, before the catalog of the first relay syncs.
+	page, err := from.Search(ctx, "exec", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range page.Entries {
+		if entry["public_key"] == provider.EncodePublicKey() {
+			return
 		}
-		for _, entry := range page.Entries {
-			if entry["public_key"] == provider.EncodePublicKey() {
-				return true
-			}
-		}
-		return false
-	})
+	}
+	t.Fatalf("the search gave %v", page.Entries)
 }
 
 // A partner that does not answer could hold a citizen of the same name, so
@@ -130,7 +131,7 @@ func TestALookupRefusesAPathThatIsNotOne(t *testing.T) {
 	peer, other := keyOf(t), keyOf(t)
 
 	for name, request := range map[string]map[string]any{
-		"the relay itself":  lookupRequest("resolve", "x", lookupID(1), 4, peer, server.PublicKey(), peer),
+		"the relay itself":  lookupRequest("resolve", "x", lookupID(1), 4, server.PublicKey(), peer),
 		"another sender":    lookupRequest("resolve", "x", lookupID(2), 4, other),
 		"no path":           lookupRequest("resolve", "x", lookupID(3), 4),
 		"a budget of none":  lookupRequest("resolve", "x", lookupID(4), 0, peer),
