@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-23
+
+`arc exec run` exits with the exit code of the command again. Update each
+caller to 0.12.0 before a provider of `exec` serves the new manifest: a
+caller of 0.11.0 refuses it.
+
 ### Added
 
 - The output of a manifest command can have `exit`: rules that set the exit
