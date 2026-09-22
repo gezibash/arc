@@ -530,3 +530,18 @@ func TestALaterCallHasNoExitCode(t *testing.T) {
 		t.Errorf("a queued call returned %v", err)
 	}
 }
+
+// A command with no output shows nothing: `true` on a terminal prints no
+// line.
+func TestACommandWithNoOutputShowsNothing(t *testing.T) {
+	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":"","stderr":""}`}}
+	out, _, err := runSpec(t, "exec", env, "run", "true")
+	if err != nil || out != "" {
+		t.Errorf("the output is %q (%v), want nothing", out, err)
+	}
+	// A line that is only a line end stays.
+	env = &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":"\n","stderr":""}`}}
+	if out, _, _ := runSpec(t, "exec", env, "run", "echo"); out != "\n" {
+		t.Errorf("echo shows %q, want one line end", out)
+	}
+}

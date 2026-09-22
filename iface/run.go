@@ -494,6 +494,10 @@ func table(w io.Writer, columns, rows any) {
 
 // line writes text and ends it with a newline, when it has none.
 func line(w io.Writer, text string) {
+	// Text that renders to nothing shows nothing, not an empty line.
+	if text == "" {
+		return
+	}
 	io.WriteString(w, text)
 	if !strings.HasSuffix(text, "\n") {
 		io.WriteString(w, "\n")
