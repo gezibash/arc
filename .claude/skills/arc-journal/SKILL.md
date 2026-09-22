@@ -1,42 +1,57 @@
 ---
 name: arc-journal
-description: Write research notes, KPIs, attachments, and links to the ARC scientific journal with `arc journal`. Use when the user asks to journal, log, record, or note something for a project, when an experiment or measurement finishes, when a decision or dead end is worth keeping, or when the user asks what the journal says about a topic.
+description: Write research notes and KPIs to the ARC journal with `arc journal`. Use when the user asks to journal, log, record, or note something for a project, when an experiment or measurement finishes, when a decision or dead end is worth keeping, or when the user asks what the journal says about a topic.
 ---
 
 # ARC journal
 
-The journal is an ARC provider. It stores markdown pages in a git repository.
-Every write carries the caller's ARC key as author.
+The journal is a capability of `arc`, described by `manifests/journal.json`.
+A page is a NIP-37 draft, sealed to your own key. Only your key reads it. A
+relay stores it, and cannot read it. Every machine that holds the same key
+reads the same pages. See `docs/interface/SPEC.md`, section 7.2.
+
+The journal of the older stack, `arc-legacy` with the journal provider, is
+gone. Its pages stay in the git repository at `~/.arc/journal/repo`. The new
+journal does not read them.
 
 ## Setup
 
-Set two environment variables before every call:
+Do these steps one time for each machine. Check each step before the next.
 
-```bash
-export ARC_KEY=<writer key name>
-export ARC_RELAY=127.0.0.1:7411
-```
+1. Make or add the identity. The first identity is the default.
 
-`ARC_KEY` is the name of a local key that writes. `arc keys list` lists the
-names. Set it to the key that the project ACL allows. `ARC_RELAY` is the relay
-that the journal provider listens on. If `ARC_RELAY` is not set, add
-`--relay 127.0.0.1:7411` to the command line.
+   ```bash
+   arc keys list
+   arc keys gen                  # a new identity
+   arc keys add < <key file>     # the key of another machine of this citizen
+   ```
 
-Test the connection:
+   `--key <name>` or `ARC_KEY` picks another identity for one command.
 
-```bash
-arc journal ls
-```
+2. Add a relay:
 
-- If the call fails with `client: the peer did not answer` after 30 seconds,
-  the provider is not running. See "Start the provider" below.
-- If `arc` reports `no public key is pinned for 127.0.0.1:7411`, pin the key
-  that the relay printed when it started:
-  `arc join 127.0.0.1:7411 --relay-pubkey "$(awk '{print $3; exit}' ~/.arc/journal/relay.log)"`.
-- If `arc` reports `unknown command "journal"`, install the tool:
-  `arc install <journal provider public key> --yes`.
-- If `arc` reports that the provider `serves another version now`, install
-  the tool again with the same command.
+   ```bash
+   arc relay add wss://arc-nostr-gezim.fly.dev
+   ```
+
+3. Install the journal from its author. If no author announced it, announce
+   it yourself from the root of the ARC repository, and install it from your
+   own key:
+
+   ```bash
+   arc announce manifests/journal.json
+   arc install "$(arc whoami | sed -n 2p)" journal --yes
+   ```
+
+4. Test it:
+
+   ```bash
+   arc journal ls
+   ```
+
+If `arc` reports `unknown command "journal"`, do step 3. If `arc` reports that
+the author changed what the journal can do, install it again with the same
+command.
 
 ## Address model
 
@@ -45,11 +60,11 @@ Every page has the address `<project>/<notebook>/<page>`.
 - `project`: one research effort or codebase. Example: `arc`.
 - `notebook`: one topic inside the project. Example: `journal`, `relay`.
 - `page`: one document. Start the name with the date. Example:
-  `2026-09-11-v1-status`.
+  `2026-09-22-v1-status`.
 
-Each segment must match `[a-z0-9][a-z0-9-_.]*`.
+Each segment must match `[a-z0-9][a-z0-9_.-]*`. Lower case only.
 
-Run `arc journal ls` before you create a notebook. Reuse an existing
+Run `arc journal ls <project>` before you create a notebook. Use an existing
 notebook when the topic fits.
 
 ## Commands
@@ -57,118 +72,107 @@ notebook when the topic fits.
 Read first:
 
 ```bash
-arc journal ls                          # projects
-arc journal ls arc                      # notebooks in a project
-arc journal ls arc/journal              # pages in a notebook
-arc journal read arc/journal/2026-09-11-v1-status
-arc journal read arc/journal/2026-09-11-v1-status --lines 1:40
-arc journal search "tool update" --project arc
-arc journal history arc/journal/2026-09-11-v1-status
+arc journal ls                          # every page: address, title, date
+arc journal ls arc                      # the pages whose address starts with arc
+arc journal ls arc/journal              # the pages of one notebook
+arc journal read arc/journal/2026-09-22-v1-status
+arc journal read arc/journal/2026-09-22-v1-status --lines 1:40
+arc journal search tool update          # address, score, title
+arc journal history arc/journal/2026-09-22-v1-status
 ```
 
-`read` returns `rev: <sha>` on the first line. Keep the rev if you plan to
-edit the page.
+`read` of a page that does not exist prints nothing, and exits 0.
 
-Create or replace a page. The body comes from stdin:
+Make or replace a page. The body comes from standard input:
 
 ```bash
-arc journal write arc/journal/2026-09-11-v1-status --title "Journal provider v1 status" --tags "journal,status" <<'MD'
-# Journal provider v1 status
+arc journal write arc/journal/2026-09-22-v1-status --title "Journal v1 status" <<'MD'
+# Journal v1 status
 
 Body in markdown.
 MD
 ```
 
-Add a note to the end of a page. This never conflicts:
+Add text to the end of a page. Each word after the address is part of the
+text:
 
 ```bash
-arc journal append arc/journal/2026-09-11-v1-status "Tried lr=3e-4. Worse."
+arc journal append arc/journal/2026-09-22-v1-status "Tried lr=3e-4. Worse."
 ```
 
-Change one string in a page. `--if-rev` is required:
+Show each text as another machine appends it. Stop it with Ctrl-C:
 
 ```bash
-arc journal edit <project>/<notebook>/<page> --if-rev <rev from read> --find "old text" --replace "new text"
+arc journal tail arc/journal/2026-09-22-v1-status
 ```
 
-Record a KPI. KPIs live outside the page and never rewrite history:
+Record a KPI. A KPI lives outside the pages. The notebook argument is any
+text. Use the address of the notebook:
 
 ```bash
-arc journal kpi set arc/journal tests_passing 23 --ref 80b5777 --note "go test"
-arc journal kpi log arc/journal tests_passing
-arc journal kpi latest arc/journal
+arc journal kpi set arc/journal tests_passing 23 --note "go test at 80b5777"
+arc journal kpi log arc/journal tests_passing     # every value
+arc journal kpi latest arc/journal                # the last value of each key
 ```
 
-If a page contains the line `<!-- kpi: tests_passing -->`, `read` shows the
-latest value there.
-
-Attach a file, or link to one that stays where it is:
+Delete a page and its history. Do this only when the user asks:
 
 ```bash
-arc journal attach arc/journal/2026-09-11-v1-status --name plot.png --base64 "$(base64 < plot.png)"
-arc journal fetch <sha256>
-arc journal link arc/journal/2026-09-11-v1-status file:///Users/zim/runs/lr-sweep --name run-dir
+arc journal delete arc/journal/2026-09-22-v1-status
 ```
 
-Attachments are capped at 16 MiB and are not backed up. Prefer `link` for
-large or local files.
+`arc help journal` lists the commands.
+
+## What the new journal does not have
+
+The older journal had these features. The new journal does not have them. Do
+not use them, and do not invent a replacement.
+
+- `edit` with `--find`, `--replace` and `--if-rev`. Use `read`, then `write`
+  the whole page.
+- `--tags` on `write`.
+- A `rev` line in `read`, and `conflict` errors.
+- Project ACLs and `acl add`. A page is private to your key.
+- `search --project`. Search takes words only, and searches every page.
+- `kpi set --ref`. Put the commit in `--note`.
+- A KPI line in a page, `<!-- kpi: ... -->`.
+- `attach`, `fetch` and `link`. Write the path or the URL in the page text.
 
 ## Rules for agents
 
-- Before you write, `ls` and `search` the project. Do not create a duplicate
-  page for a topic that has one.
-- Use `write` for a new page or a full rewrite. Use `append` for a note on an
-  existing page. Use `edit` with `--if-rev` for a small correction.
-- If `write` or `edit` fails with `conflict`, `read` the page again, then
-  retry with the new rev.
-- Write dense notes: what was tried, what was measured, what it means, and
-  what is next. Name commits, files, and symbols.
-- Record every measurement as a KPI. Put the commit SHA in `--ref`.
-- Do not journal raw diffs or formatting-only edits.
-- Never delete a page. If a page is obsolete, `write` an empty body with
-  `--tags deleted`.
+- Run one `arc` command at a time for one machine. Each command holds the
+  store of the identity. While another command runs, including `tail`, a
+  command fails with `store: timeout`.
+- Before you write, `ls` and `search`. Do not make a second page for a topic
+  that has one.
+- Use `write` for a new page or a full rewrite. Use `append` for a note on a
+  page that exists.
+- Write dense notes: what you tried, what you measured, what it means, and
+  what is next. Name commits, files and symbols.
+- Record each measurement as a KPI. Put the commit SHA in `--note`.
+- Do not journal raw diffs or edits that change only the format.
+- Do not delete a page unless the user asks. For an obsolete page, `append`
+  a line that says so.
+
+## Without a relay
+
+If no relay answers, `write` and `append` keep the page in the store of this
+machine, and say `it waits in the store; arc sync sends it`. `read` then
+shows what this machine holds. When a relay answers again, run:
+
+```bash
+arc sync
+```
+
+`arc sync --dir <path>` carries the pages on a USB stick or a shared folder
+instead. Run it on each machine.
 
 ## Errors
 
-Errors are one word, then optional detail: `forbidden`, `conflict`,
-`not_found`, `too_large`, `invalid_address`, `invalid_number`,
-`unknown_command`, `search_unavailable`. `arc` prints them after
-`client: the peer answered provider_error:`.
-
-- `forbidden`: the key is not on the project ACL. The project owner adds it
-  with `arc journal acl <project> add <hex pubkey>`.
-- `search_unavailable`: `qmd` is not on `PATH` on the provider host.
-
-## Start the provider
-
-Run these from the ARC repo root when `arc journal ls` fails with
-`client: the peer did not answer`. If `bin/` is empty, run `mise run build`
-first. The provider key is the key that owns the journal projects. The line
-`<key name> serves on 127.0.0.1:7411` in `~/.arc/journal/serve.log` names the
-key from the last run.
-
-Start the relay:
-
-```bash
-nohup env ARC_KEY=<provider key name> bin/arc-relay --address 127.0.0.1:7411 > ~/.arc/journal/relay.log 2>&1 &
-```
-
-Pin the key that the relay printed when it started. If the pin is already
-there, this changes nothing:
-
-```bash
-ARC_KEY=<provider key name> bin/arc join 127.0.0.1:7411 --relay-pubkey "$(awk '{print $3; exit}' ~/.arc/journal/relay.log)"
-```
-
-Start the provider:
-
-```bash
-nohup env ARC_KEY=<provider key name> JOURNAL_ROOT=$HOME/.arc/journal bin/arc serve cmd/journal-provider --relay 127.0.0.1:7411 > ~/.arc/journal/serve.log 2>&1 &
-```
-
-Do not run other `arc` commands as the provider key while the provider
-runs. The relay keeps one connection for each key, so it drops the provider.
-
-The first `serve` builds the binary. Wait for `arc journal ls` to answer.
-The data lives in `~/.arc/journal/repo`. The spec is in
-`docs/journal/SPEC.md` in the ARC repo.
+- `unknown command "journal"`: install the journal, see "Setup".
+- `address: "..." does not match ...`: an address segment has upper case or
+  another character that is not allowed.
+- `no relay answered`: the relay is down or the URL is wrong. See "Without a
+  relay".
+- `store: timeout`: another `arc` command holds the store. Wait, then try
+  again.
