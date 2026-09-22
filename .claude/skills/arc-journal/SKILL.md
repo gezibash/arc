@@ -100,7 +100,8 @@ text:
 arc journal append arc/journal/2026-09-22-v1-status "Tried lr=3e-4. Worse."
 ```
 
-Show each text as another machine appends it. Stop it with Ctrl-C:
+Show each text as it is appended, on this machine or another. Stop it with
+Ctrl-C:
 
 ```bash
 arc journal tail arc/journal/2026-09-22-v1-status
@@ -140,9 +141,6 @@ not use them, and do not invent a replacement.
 
 ## Rules for agents
 
-- Run one `arc` command at a time for one machine. Each command holds the
-  store of the identity. While another command runs, including `tail`, a
-  command fails with `store: timeout`.
 - Before you write, `ls` and `search`. Do not make a second page for a topic
   that has one.
 - Use `write` for a new page or a full rewrite. Use `append` for a note on a
@@ -174,5 +172,3 @@ instead. Run it on each machine.
   another character that is not allowed.
 - `no relay answered`: the relay is down or the URL is wrong. See "Without a
   relay".
-- `store: timeout`: another `arc` command holds the store. Wait, then try
-  again.

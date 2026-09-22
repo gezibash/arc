@@ -102,7 +102,7 @@ type carried struct {
 type Mail struct {
 	key    keys.Signer
 	node   *node.Node
-	db     *bbolt.DB
+	db     *store.Lease[*bbolt.DB]
 	relays []transport.Transport
 	now    func() time.Time
 
@@ -114,27 +114,50 @@ type Mail struct {
 // Open opens the mail state in a directory. The relays are where new mail is
 // sent at once.
 func Open(dir string, k keys.Signer, n *node.Node, relays []transport.Transport) (*Mail, error) {
-	db, err := bbolt.Open(filepath.Join(dir, "mail.db"), 0o600, &bbolt.Options{Timeout: 2 * time.Second})
-	if err != nil {
-		return nil, fmt.Errorf("mail: %w", err)
-	}
-	err = db.Update(func(tx *bbolt.Tx) error {
-		for _, name := range [][]byte{outboxBucket, carryBucket} {
-			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
-				return err
-			}
+	// The file is open only while a call uses it, so that other commands of
+	// this citizen can use it too. See store.Lease.
+	path := filepath.Join(dir, "mail.db")
+	db := store.NewLease(path, func() (*bbolt.DB, error) {
+		db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		db.Close()
+		err = db.Update(func(tx *bbolt.Tx) error {
+			for _, name := range [][]byte{outboxBucket, carryBucket} {
+				if _, err := tx.CreateBucketIfNotExists(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		return db, nil
+	}, func(db *bbolt.DB) { db.Close() })
+	m := &Mail{key: k, node: n, db: db, relays: relays, now: time.Now}
+	if err := m.view(func(*bbolt.Tx) error { return nil }); err != nil {
 		return nil, fmt.Errorf("mail: %w", err)
 	}
-	return &Mail{key: k, node: n, db: db, relays: relays, now: time.Now}, nil
+	return m, nil
 }
 
 // Close releases the mail state.
-func (m *Mail) Close() error { return m.db.Close() }
+func (m *Mail) Close() error {
+	m.db.Close()
+	return nil
+}
+
+// update runs fn in a transaction that writes.
+func (m *Mail) update(fn func(*bbolt.Tx) error) error {
+	return m.db.Do(func(db *bbolt.DB) error { return db.Update(fn) })
+}
+
+// view runs fn in a transaction that reads.
+func (m *Mail) view(fn func(*bbolt.Tx) error) error {
+	return m.db.Do(func(db *bbolt.DB) error { return db.View(fn) })
+}
 
 // Send seals a message to a citizen, puts it in the outbox, and sends it to
 // the relays at once. A relay that fails does not fail the send: the outbox
@@ -485,7 +508,7 @@ func (m *Mail) evict() error {
 	}
 
 	sort.Slice(others, func(a, b int) bool { return others[a].Received.Before(others[b].Received) })
-	return m.db.Update(func(tx *bbolt.Tx) error {
+	return m.update(func(tx *bbolt.Tx) error {
 		for _, c := range others[:len(others)-MaxCarried] {
 			if err := tx.Bucket(carryBucket).Delete([]byte(c.Wrap)); err != nil {
 				return err
@@ -555,7 +578,7 @@ func (m *Mail) attempted(rumor string) {
 // expired messages, so the citizen can see that they were not delivered.
 func (m *Mail) expire() {
 	now := m.now()
-	_ = m.db.Update(func(tx *bbolt.Tx) error {
+	_ = m.update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(carryBucket)
 		var gone [][]byte
 		_ = bucket.ForEach(func(k, v []byte) error {
@@ -626,7 +649,7 @@ func (m *Mail) Rumors(kinds []nostr.Kind) []nostr.Event {
 			keep(rumor)
 		}
 	}
-	_ = m.db.View(func(tx *bbolt.Tx) error {
+	_ = m.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(outboxBucket).ForEach(func(_, v []byte) error {
 			var o Outgoing
 			if json.Unmarshal(v, &o) == nil {
@@ -644,7 +667,7 @@ func (m *Mail) Rumors(kinds []nostr.Kind) []nostr.Event {
 // Outbox returns the messages that this citizen sent, oldest first.
 func (m *Mail) Outbox() []Outgoing {
 	var out []Outgoing
-	_ = m.db.View(func(tx *bbolt.Tx) error {
+	_ = m.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(outboxBucket).ForEach(func(_, v []byte) error {
 			var o Outgoing
 			if json.Unmarshal(v, &o) == nil {
@@ -754,7 +777,7 @@ func (m *Mail) Carrying() int {
 }
 
 func (m *Mail) each(fn func(carried)) {
-	_ = m.db.View(func(tx *bbolt.Tx) error {
+	_ = m.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(carryBucket).ForEach(func(_, v []byte) error {
 			var c carried
 			if json.Unmarshal(v, &c) == nil {
@@ -770,14 +793,14 @@ func (m *Mail) put(bucket []byte, key string, value any) error {
 	if err != nil {
 		return err
 	}
-	return m.db.Update(func(tx *bbolt.Tx) error {
+	return m.update(func(tx *bbolt.Tx) error {
 		return tx.Bucket(bucket).Put([]byte(key), body)
 	})
 }
 
 func (m *Mail) get(bucket []byte, key string, into any) (bool, error) {
 	var body []byte
-	err := m.db.View(func(tx *bbolt.Tx) error {
+	err := m.view(func(tx *bbolt.Tx) error {
 		if v := tx.Bucket(bucket).Get([]byte(key)); v != nil {
 			body = append([]byte(nil), v...)
 		}
