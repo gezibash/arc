@@ -168,7 +168,34 @@ After each deploy, run the check. It sends a sealed page and a live call to
 mise run check-relay -- wss://arc-nostr-gezim.fly.dev
 ```
 
-The relay has no write limits yet. Any client can write events to it.
+The Dockerfile turns on the write limits of `arcn relay serve`. Each limit
+is off when its flag is absent, so a local relay takes everything.
+
+| Flag | Deploy value | Effect |
+| --- | --- | --- |
+| `--max-event-bytes` | `262144` | The relay refuses an event larger than 256 KiB, as JSON. |
+| `--wrap-auth` | on | The relay takes a gift wrap, kind 1059 or 21059, only after NIP-42 authentication. |
+| `--wrap-pow` | `20` | A gift wrap with NIP-13 work of 20 bits needs no authentication. |
+| `--rate` | `300` | One IP address writes at most 300 events each minute. |
+| `--burst` | `1000` | One IP address writes at most 1000 events at once. |
+| `--ip-header` | `Fly-Client-IP` | The relay reads the client address from this header. |
+| `--max-store-mb` | `800` | The relay refuses new stored events when the store uses 800 MiB. |
+
+Each journal part holds 32 KiB of text. As JSON, the event that carries it
+holds about 44 KiB. The store refuses content larger than 64 KiB. Thus the
+size cap does not refuse a journal event.
+
+`arcn sync` sends each event on its own connection. The burst lets a first
+sync of up to 1000 events through at once. After the burst, a sync of 5
+events each second does not reach the rate.
+
+A client can write any `X-Forwarded-For` header. The relay therefore reads
+only the header that `--ip-header` names. The Fly proxy sets `Fly-Client-IP`.
+If the header is absent, the relay uses the address of the connection.
+
+The store cap counts the pages that the store uses. A deletion frees pages,
+and the store uses them again, but the file does not shrink. The relay takes
+a deletion, kind 5, when the store is full.
 
 ## Run a local relay with journal, DMs and Agora
 

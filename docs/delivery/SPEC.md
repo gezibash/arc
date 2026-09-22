@@ -509,6 +509,15 @@ cannot bring a deleted event back.
   author. An ARC relay therefore asks for NIP-42 authentication, or for
   NIP-13 proof of work, before it accepts a gift wrap.
 
+`arcn relay serve` applies these limits when its flags turn them on, see
+docs/DEPLOY.md. A relay also caps the size of one event and the rate of
+events from one IP address.
+
+The relay transport answers the NIP-42 challenge of a relay and sends the
+gift wrap again. On the relays of the citizen, the citizen's key answers. On
+the inbox relay of a recipient, a one-time key answers. Thus the relay of the
+recipient does not learn who wrote to them.
+
 ## 13. Security properties
 
 | Property | Holds | Why |

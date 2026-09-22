@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/keyer"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/node"
@@ -728,10 +729,14 @@ func (m *Mail) inboxRelays(ctx context.Context, to nostr.PubKey) []transport.Tra
 		return nil
 	}
 
+	// An inbox relay can ask for authentication before it takes a gift
+	// wrap. A one-time key answers it, so the relay of the recipient does
+	// not learn who wrote to them.
+	once := keyer.NewPlainKeySigner(nostr.Generate())
 	var out []transport.Transport
 	for _, t := range lists[0].Tags {
 		if len(t) > 1 && t[0] == "relay" {
-			out = append(out, relay.Relay{URL: t[1]})
+			out = append(out, relay.Relay{URL: t[1], Signer: once})
 		}
 	}
 	return out
