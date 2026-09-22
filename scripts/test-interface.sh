@@ -91,9 +91,13 @@ caller help exec | grep "arc exec start <script...>" > /dev/null || fail "help d
 caller exec run --help | grep "usage: arc exec run <argv...>" > /dev/null || fail "a command has no help"
 say "help comes from the manifest"
 
+set +e
 caller exec run --json sh -c 'echo out; exit 3' > "$work/json.txt"
+code=$?
+set -e
 grep '"exit":3' "$work/json.txt" > /dev/null || fail "--json wrote $(cat "$work/json.txt")"
-say "--json writes the record"
+[ "$code" = 3 ] || fail "--json exited $code, want the code of the command, 3"
+say "--json writes the record, and exits with the code of the command"
 
 caller db "create table people (id integer, name text)" > /dev/null
 caller db "insert into people values (1, 'ada'), (22, 'grace hopper')" > /dev/null
@@ -120,6 +124,15 @@ if "$work/arc" --home "$work/stranger" exec run id > /dev/null 2> "$work/denied.
 fi
 grep "access_denied" "$work/denied.txt" > /dev/null || fail "the refusal was $(cat "$work/denied.txt")"
 say "a caller without a grant is refused"
+
+set +e
+caller exec run sh -c 'echo out; exit 3' > "$work/exit.txt" 2> "$work/exit.err"
+code=$?
+set -e
+[ "$code" = 3 ] || fail "exec run of a command that exits 3 exited $code: $(cat "$work/exit.err")"
+[ "$(cat "$work/exit.txt")" = "out" ] || fail "exec run lost the output: $(cat "$work/exit.txt")"
+[ ! -s "$work/exit.err" ] || fail "exec run wrote an error for a code: $(cat "$work/exit.err")"
+say "exec run exits with the code of the command, after its output"
 
 caller exec run --later echo later 2> "$work/later.txt"
 grep "queued" "$work/later.txt" > /dev/null || fail "--later did not queue: $(cat "$work/later.txt")"

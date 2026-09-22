@@ -407,6 +407,7 @@ the order in the manifest:
 | 8 | `tail` | In a watch: shows only what each new version adds. See 9.3. |
 | 9 | `save` | Writes a field to a `path` argument, instead of showing it. |
 | 10 | `format` | Shows each record with a named format, see section 10. |
+| 11 | `exit` | Sets the exit status of the command from its first record. See 9.4. |
 
 ```json
 "output": {
@@ -450,6 +451,31 @@ In a watch, `tail` compares each new version of a record with the version
 that it showed before. When the new text starts with the old text, `tail`
 shows only what follows it. Otherwise it shows a line that says the record was
 rewritten, and then the whole new text.
+
+### 9.4 exit
+
+`exit` sets the exit status of the command, after the output is shown. It is
+a list of rules. Core reads the first record that the pipeline keeps, and
+takes the first rule whose `where` conditions that record meets. A rule with
+no `where` meets every record.
+
+```json
+"exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
+         {"code": "{{exit}}"}]
+```
+
+- `code` is a template over the record. A whole number from 0 to 255 is the
+  exit status. Any other value, and a missing field, gives the status 1.
+- With no record, or with no rule that fits, the status is 0.
+- A call that waits in the outbox has no reply, so it has no exit status.
+- `--json` writes the record, and the command still exits with the status.
+- A command that names a list runs once for each member. A member whose
+  status is not 0 counts as failed, and the command then exits 1.
+- A watch cannot have `exit`.
+- An error of `arc`, for example no relay, exits 1 and writes a message.
+
+A manifest with `exit` needs a caller of v0.12.0 or later. An older caller
+refuses the manifest, because it does not know the field.
 
 ## 10. Formats
 
@@ -624,7 +650,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
     {"path": ["run"], "summary": "Run one command",
      "args": [{"name": "argv", "kind": "positional", "type": "text", "variadic": true, "required": true}],
      "action": {"call": {"class": "live", "body": "{\"argv\": {{argv|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "run"}},
+     "output": {"open": {"parse": "json"}, "format": "run", "exit": [{"code": "{{exit}}"}]}},
     {"path": ["start"], "summary": "Start a script as a job",
      "args": [{"name": "script", "kind": "positional", "type": "text", "variadic": true, "required": true}],
      "action": {"call": {"class": "later", "body": "{\"action\": \"start\", \"script\": {{script|join|json}}}"}},
@@ -632,7 +658,10 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
     {"path": ["status"], "summary": "Show a job",
      "args": [{"name": "job", "kind": "positional", "type": "text", "required": true}],
      "action": {"call": {"class": "live", "body": "{\"action\": \"status\", \"job\": {{job|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "run"}}
+     "output": {"open": {"parse": "json"}, "format": "run",
+                "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
+                         {"where": [{"field": "state", "is": "lost"}], "code": "1"},
+                         {"code": "{{exit}}"}]}}
   ]
 }
 ```

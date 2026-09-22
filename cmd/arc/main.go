@@ -45,12 +45,19 @@ import (
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/iface"
 	"github.com/gezibash/arc/wake"
 	"github.com/spf13/cobra"
 )
 
 func main() {
 	if err := root().Execute(); err != nil {
+		// A capability set the exit status from its reply, and wrote its
+		// output already.
+		var status iface.ExitError
+		if errors.As(err, &status) {
+			os.Exit(status.Code)
+		}
 		fmt.Fprintln(os.Stderr, "arc:", err)
 		os.Exit(1)
 	}

@@ -11,7 +11,7 @@
     {"path": ["run"], "summary": "Run one command",
      "args": [{"name": "argv", "kind": "positional", "type": "text", "variadic": true, "required": true}],
      "action": {"call": {"class": "live", "body": "{\"argv\": {{argv|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "run"}},
+     "output": {"open": {"parse": "json"}, "format": "run", "exit": [{"code": "{{exit}}"}]}},
     {"path": ["start"], "summary": "Start a script as a job",
      "args": [{"name": "script", "kind": "positional", "type": "text", "variadic": true, "required": true}],
      "action": {"call": {"class": "later", "body": "{\"action\": \"start\", \"script\": {{script|join|json}}}"}},
@@ -19,6 +19,9 @@
     {"path": ["status"], "summary": "Show a job",
      "args": [{"name": "job", "kind": "positional", "type": "text", "required": true}],
      "action": {"call": {"class": "live", "body": "{\"action\": \"status\", \"job\": {{job|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "run"}}
+     "output": {"open": {"parse": "json"}, "format": "run",
+                "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
+                         {"where": [{"field": "state", "is": "lost"}], "code": "1"},
+                         {"code": "{{exit}}"}]}}
   ]
 }
