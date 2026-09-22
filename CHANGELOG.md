@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-23
+
+### Fixed
+
+- A command whose output renders to nothing shows nothing. Before, it showed
+  an empty line, for example `arc exec run true`.
+
 ## [0.12.0] - 2026-09-23
 
 `arc exec run` exits with the exit code of the command again. Update each
