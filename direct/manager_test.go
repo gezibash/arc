@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,12 +22,23 @@ type citizens struct {
 	alice, bob    *identity.Identity
 	first, second *direct.Manager
 	sessionID     []byte
+
+	// down stops the relay: no control message passes.
+	down atomic.Bool
 }
+
+var errRelayDown = errors.New("the relay is down")
 
 // meet builds two citizens whose owners allow one conversation to leave the
 // relay. The control messages pass straight between them, as the relay
 // carries them.
 func meet(t *testing.T, callerListens, providerListens bool) *citizens {
+	t.Helper()
+	return meetWithLease(t, callerListens, providerListens, 30000)
+}
+
+// meetWithLease builds the two citizens with a lease of their choice.
+func meetWithLease(t *testing.T, callerListens, providerListens bool, lease int) *citizens {
 	t.Helper()
 
 	alice, err := identity.Generate()
@@ -49,14 +62,20 @@ func meet(t *testing.T, callerListens, providerListens bool) *citizens {
 		quiet = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
-	held.first = direct.NewManager(alice, rules(t, bob.PublicKey, callerListens),
+	held.first = direct.NewManager(alice, rules(t, bob.PublicKey, callerListens, lease),
 		func(peer, body []byte) error {
+			if held.down.Load() {
+				return errRelayDown
+			}
 			go held.second.Control(alice.PublicKey, sessionID, body)
 			return nil
 		}, quiet)
 
-	held.second = direct.NewManager(bob, rules(t, alice.PublicKey, providerListens),
+	held.second = direct.NewManager(bob, rules(t, alice.PublicKey, providerListens, lease),
 		func(peer, body []byte) error {
+			if held.down.Load() {
+				return errRelayDown
+			}
 			go held.first.Control(bob.PublicKey, sessionID, body)
 			return nil
 		}, quiet)
@@ -67,7 +86,7 @@ func meet(t *testing.T, callerListens, providerListens bool) *citizens {
 
 // rules writes the policy of one owner: it dials the other machine, and
 // listens when it is asked to.
-func rules(t *testing.T, peer []byte, listens bool) []direct.Rule {
+func rules(t *testing.T, peer []byte, listens bool, lease int) []direct.Rule {
 	t.Helper()
 
 	document := map[string]any{
@@ -77,7 +96,7 @@ func rules(t *testing.T, peer []byte, listens bool) []direct.Rule {
 			"capability": "primary",
 			"scheme":     "exec",
 			"path":       "/",
-			"lease_ms":   30000,
+			"lease_ms":   lease,
 			"dial":       []any{"127.0.0.1"},
 		}},
 	}
@@ -239,5 +258,106 @@ func TestAllowed(t *testing.T) {
 	}
 	if held.first.Allowed(held.alice.PublicKey, "primary", "exec", "/") {
 		t.Error("a peer without a rule answers")
+	}
+}
+
+// both returns the carriers of the two sides, once both stand.
+func (held *citizens) both(t *testing.T) (*direct.Conn, *direct.Conn) {
+	t.Helper()
+
+	from := held.first.Carrier(held.bob.PublicKey, "primary", "exec", "/")
+	var to *direct.Conn
+	for attempt := 0; attempt < 50 && to == nil; attempt++ {
+		to = held.second.CarrierFor(held.alice.PublicKey)
+		if to == nil {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if from == nil || to == nil {
+		t.Fatalf("the carriers do not stand: %v, %v", from, to)
+	}
+	return from, to
+}
+
+// stands says whether both sides still carry the conversation.
+func (held *citizens) stands() bool {
+	return held.first.Carrier(held.bob.PublicKey, "primary", "exec", "/") != nil &&
+		held.second.CarrierFor(held.alice.PublicKey) != nil
+}
+
+func offer(t *testing.T, held *citizens) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := held.first.Offer(ctx, held.bob.PublicKey, scope(), held.sessionID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// While the relay carries the renewals, a route outlives its lease many times.
+func TestARouteRenewsItsLease(t *testing.T) {
+	held := meetWithLease(t, true, true, direct.MinLeaseMS)
+	offer(t, held)
+	from, to := held.both(t)
+
+	time.Sleep(3 * time.Second)
+
+	if !held.stands() {
+		t.Fatal("the route ended after three leases, with the relay up")
+	}
+	if err := from.Send([]byte("still direct")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case arrived := <-to.Packets():
+		if string(arrived) != "still direct" {
+			t.Errorf("packet = %q", arrived)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the packet did not travel the carrier")
+	}
+}
+
+// Without the relay no renewal passes. The route serves until its lease ends,
+// and then both sides close the carrier, so the conversation goes back to
+// the relay.
+func TestARouteEndsWithItsLeaseWithoutTheRelay(t *testing.T) {
+	held := meetWithLease(t, true, true, direct.MinLeaseMS)
+	offer(t, held)
+	from, to := held.both(t)
+
+	held.down.Store(true)
+
+	time.Sleep(300 * time.Millisecond)
+	if !held.stands() {
+		t.Fatal("the route ended before its lease")
+	}
+
+	for name, carrier := range map[string]*direct.Conn{"the side that offered": from, "the side that answered": to} {
+		select {
+		case <-carrier.Done():
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s still holds the carrier after the lease", name)
+		}
+	}
+	if held.stands() {
+		t.Error("a side still names the route after the lease")
+	}
+}
+
+// When the relay comes back before the lease ends, the renewals pass again.
+func TestARouteRenewsWhenTheRelayComesBack(t *testing.T) {
+	held := meetWithLease(t, true, true, direct.MinLeaseMS)
+	offer(t, held)
+	held.both(t)
+
+	held.down.Store(true)
+	time.Sleep(600 * time.Millisecond)
+	held.down.Store(false)
+
+	time.Sleep(2 * time.Second)
+	if !held.stands() {
+		t.Fatal("the route ended, although the relay came back before its lease ended")
 	}
 }

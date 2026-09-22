@@ -27,8 +27,10 @@ import (
 // stood up first, and the other side agrees. From then on the packets of
 // that conversation travel the carrier, and the relay sees none of them.
 //
-// A route lives for its lease and no longer. Either side withdraws at any
-// time, and the conversation returns to the relay.
+// A route lives for its lease. The side that offered renews the lease over
+// the relay while half of it remains, and the other side agrees. Without the
+// relay no renewal passes, and the route ends when its lease ends. Either
+// side withdraws at any time, and the conversation returns to the relay.
 const (
 	// Topic names the control messages of a direct route inside an event
 	// frame.
@@ -77,6 +79,12 @@ type Route struct {
 	binding         []byte
 	leaseMS         int
 	deadline        time.Time
+
+	// renewals counts the renewals that the side that offered sent. An
+	// answer counts only for the last one.
+	renewals  int
+	renewSent time.Time
+	ended     chan struct{}
 
 	phase    string
 	listener *Listener
@@ -192,6 +200,7 @@ func (m *Manager) Offer(ctx context.Context, peer []byte, scope map[string]any, 
 		rule: rule, credentials: credentials, relaySID: relaySID,
 		leaseMS: rule.LeaseMS, deadline: time.Now().Add(AttemptLimit),
 		phase: phaseOffered, standing: map[string]*Conn{}, ready: make(chan error, 1),
+		ended: make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -259,6 +268,10 @@ func (m *Manager) Control(peer, relaySID, body []byte) {
 		m.receiveNominate(route, message)
 	case "ready":
 		m.receiveReady(route, message)
+	case "renew":
+		m.receiveRenew(route, message)
+	case "renewed":
+		m.receiveRenewed(route, message)
 	case "withdraw":
 		m.retire(route.ID, "the peer withdrew")
 	}
@@ -334,6 +347,7 @@ func (m *Manager) receiveOffer(peer, relaySID []byte, id string, message map[str
 		rule: rule, credentials: credentials, peerFingerprint: fingerprint,
 		relaySID: relaySID, leaseMS: lease, deadline: time.Now().Add(AttemptLimit),
 		phase: phaseProbing, standing: map[string]*Conn{}, ready: make(chan error, 1),
+		ended: make(chan struct{}),
 	}
 	route.binding = route.bindingValue(m.me)
 	m.routes[id] = route
@@ -419,7 +433,9 @@ func (m *Manager) finish(route *Route, direction string) {
 	m.closeListener(route)
 	if err := m.send(route, map[string]any{"type": "ready", "direction": direction}); err != nil {
 		m.retire(route.ID, "the answer did not reach the peer")
+		return
 	}
+	go m.keep(route)
 }
 
 // -- the side that offered ---------------------------------------------------
@@ -484,10 +500,92 @@ func (m *Manager) receiveReady(route *Route, message map[string]any) {
 	route.deadline = time.Now().Add(time.Duration(route.leaseMS) * time.Millisecond)
 	m.mu.Unlock()
 
+	go m.keep(route)
+
 	select {
 	case route.ready <- nil:
 	default:
 	}
+}
+
+// -- the lease ---------------------------------------------------------------
+
+// keep ends a route when its lease ends. On the side that offered, it also
+// asks the peer to renew the lease while half of it remains, and asks again
+// until an answer comes or the lease ends.
+func (m *Manager) keep(route *Route) {
+	lease := time.Duration(route.leaseMS) * time.Millisecond
+	step := lease / 8
+
+	for {
+		m.mu.Lock()
+		now := time.Now()
+		if !now.Before(route.deadline) {
+			m.mu.Unlock()
+			m.retire(route.ID, "the lease ended")
+			return
+		}
+
+		var renewal map[string]any
+		if route.Role == "caller" && route.deadline.Sub(now) <= lease/2 && now.Sub(route.renewSent) >= step {
+			route.renewals++
+			route.renewSent = now
+			renewal = map[string]any{"type": "renew", "sequence": route.renewals}
+		}
+		wait := min(route.deadline.Sub(now), step)
+		m.mu.Unlock()
+
+		// Without the relay the renewal does not pass, and the deadline
+		// stays where it is.
+		if renewal != nil {
+			if err := m.send(route, renewal); err != nil {
+				m.log.Debug("the renewal did not reach the peer", "route", route.ID, "error", err)
+			}
+		}
+
+		select {
+		case <-time.After(wait):
+		case <-route.ended:
+			return
+		}
+	}
+}
+
+// receiveRenew extends the lease on the side that answered, and says so. A
+// lease that ended stays ended.
+func (m *Manager) receiveRenew(route *Route, message map[string]any) {
+	sequence, ok := wholeNumber(message["sequence"])
+
+	m.mu.Lock()
+	now := time.Now()
+	if !ok || route.Role != "provider" || route.phase != phaseActive ||
+		!now.Before(route.deadline) || sequence <= route.renewals {
+		m.mu.Unlock()
+		return
+	}
+	route.renewals = sequence
+	route.deadline = now.Add(time.Duration(route.leaseMS) * time.Millisecond)
+	m.mu.Unlock()
+
+	if err := m.send(route, map[string]any{"type": "renewed", "sequence": sequence}); err != nil {
+		m.log.Debug("the renewal answer did not reach the peer", "route", route.ID, "error", err)
+	}
+}
+
+// receiveRenewed extends the lease on the side that offered. The lease counts
+// from when the renewal left, so this side never holds the route longer than
+// the other side does.
+func (m *Manager) receiveRenewed(route *Route, message map[string]any) {
+	sequence, ok := wholeNumber(message["sequence"])
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !ok || route.Role != "caller" || route.phase != phaseActive ||
+		sequence != route.renewals || !time.Now().Before(route.deadline) {
+		return
+	}
+	route.deadline = route.renewSent.Add(time.Duration(route.leaseMS) * time.Millisecond)
 }
 
 // -- reaching the other side -------------------------------------------------
@@ -696,6 +794,7 @@ func (m *Manager) retire(id, reason string) {
 	if route == nil {
 		return
 	}
+	close(route.ended)
 
 	m.log.Debug("the direct route ended", "route", id, "reason", reason)
 

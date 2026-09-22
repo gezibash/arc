@@ -77,6 +77,11 @@ All notable changes to ARC are recorded here. The format follows
 - The Agora board holds its directory with `flock`, so it starts again after
   a restart. Before, a restart could leave it at `storage_locked` for good.
 - `Relay.Close` no longer waits for a client that joined while it closed.
+- A direct route renews its lease over the relay while half of the lease
+  remains. Before, a route never renewed its lease.
+- When the lease of a direct route ends, both sides close the carrier, and the
+  conversation returns to the relay. Before, both sides kept the carrier open
+  after the lease ended.
 
 ## [0.8.0] - 2026-09-21
 
