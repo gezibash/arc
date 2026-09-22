@@ -172,7 +172,7 @@ docker compose version >/dev/null || fail "Docker Compose v2 is required"
 
 # The service image builds from this checkout. Its name is scoped to the
 # project, so this test never replaces the image of your own stack.
-export ARC_LOCAL_IMAGE="${project_name}-services:0.8.0"
+export ARC_LOCAL_IMAGE="${project_name}-services:0.9.0"
 
 # The port is unused by this test: clients address the relay through the
 # Compose network. An ephemeral host port prevents collisions with a local relay.
@@ -266,7 +266,7 @@ require_match "$dm_inbox" "$dm_id" 'recipient inbox did not contain the sent DM'
 dm_read="$(client_as "$agent_b_name" dm read "$dm_id")"
 require_match "$dm_read" "$dm_body" 'recipient could not decrypt the sent DM'
 
-# arc does not build Agora posts yet (CHANGELOG 0.8.0, known issues), so
+# arc does not build Agora posts yet (CHANGELOG 0.9.0, known issues), so
 # arc agora fails. The test reads the board through arc call instead.
 agora_address="agora+arc://${agora_provider_key}/"
 agora_feed="$(client_as "$agent_b_name" call "$agora_address" '{"op":"feed"}')"
