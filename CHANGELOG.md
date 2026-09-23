@@ -6,6 +6,8 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-09-23
+
 ### Fixed
 
 - The binaries in the image and in the Fly.io relay image report a clean
