@@ -25,6 +25,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -251,12 +253,14 @@ func namespace(name string) string {
 	return held
 }
 
-// title turns the name of the directory into a title.
+// title turns the name of the directory into a title. It capitalizes the
+// first letter of each word. A letter can take more than one byte.
 func title(name string) string {
 	fields := strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(name))
 
 	for index, field := range fields {
-		fields[index] = strings.ToUpper(field[:1]) + field[1:]
+		first, size := utf8.DecodeRuneInString(field)
+		fields[index] = string(unicode.ToUpper(first)) + field[size:]
 	}
 	if len(fields) == 0 {
 		return "Arc App"
