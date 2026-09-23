@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-23
+
+A live call finds the relays of the provider through its NIP-65 relay list,
+and an indexer relay can hold those lists. `arc call` uses the newest
+announcement of the provider. No manifest changes, so machines can update in
+any order.
+
 ### Added
 
 - A citizen publishes its NIP-65 relay list, kind 10002, beside its other
@@ -13,6 +20,17 @@ All notable changes to ARC are recorded here. The format follows
 - A live call also goes to the read relays of the provider's NIP-65 list, so
   a caller and a provider that share no relay can call. See
   `docs/delivery/SPEC.md`, section 11.4.
+- `arc relay add <url> --index` names an indexer relay. `arc` publishes its
+  NIP-65 and NIP-17 relay lists there, and looks up the lists of others
+  there, for live calls and for direct messages. `arc` names no indexer by
+  default. See `docs/delivery/SPEC.md`, section 7.2.
+
+### Fixed
+
+- `arc call` asks the relays for the newest announcement of the provider
+  before each call, as an installed command does. Before, it used the
+  announcement that this machine held, so a new manifest, for example the
+  `service.output` of 0.14.0, took effect only after `arc sync`.
 
 ### Fixed
 
