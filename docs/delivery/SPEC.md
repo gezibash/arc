@@ -202,7 +202,13 @@ reports which nodes it can reach now.
 
 **Relay.** A node connects to relays over WebSocket, as NIP-01 defines. It
 authenticates with NIP-42 where a relay asks. It finds where to send with
-NIP-65 relay lists. It syncs with NIP-77 where a relay supports it.
+NIP-65 relay lists, see 11.4, and sends a direct message to the NIP-17 relay
+list of its recipient. It syncs with NIP-77 where a relay supports it.
+
+A citizen publishes three relay lists to its relays: NIP-65, kind 10002; the
+NIP-17 list, kind 10050; and the private NIP-37 list, kind 10013. Each list
+names every relay of the citizen. `arc relay add`, `arc relay rm`, and
+`arc serve` publish them. `delivery/relaylist` holds the NIP-65 list.
 
 **File.** A node writes events to a directory as JSON lines, one event on
 each line. Another node reads the directory, imports each event that it does
@@ -484,8 +490,12 @@ A provider refuses a live request whose rumor is more than 5 minutes old.
 This window applies to live calls only. A store-and-forward call has no
 window, because it can travel for days.
 
-A provider publishes its relay list with NIP-65. A caller sends each request
-to the provider's read relays.
+A provider publishes its relay list with NIP-65. A caller sends a live
+request to its own relays, then to each read relay of the provider that it
+does not use. The caller also looks for the provider's announcement on those
+relays before the call. The caller finds the provider's list in its store, or
+on its own relays. A store-and-forward request goes to the caller's relays and
+to the provider's NIP-17 relay list, as mail does.
 
 ### 11.5 Data that a citizen keeps for itself
 
