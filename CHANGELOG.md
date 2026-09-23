@@ -35,6 +35,13 @@ All notable changes to ARC are recorded here. The format follows
   `exec://` address can now be a JSON list, and an argument in the list can
   contain a space. An address that gives the arguments with spaces between
   them, for example `args=-v+--x`, still works.
+- `arc serve <bundle directory>` works when the path of the directory has a
+  `#`, a `%`, or a `?` in it. Before, `arc serve` put the path of the program
+  into the `exec://` address without escaping it. When `arc serve` read the
+  address back, it cut the path at `#` or `?`, changed `%20` into a space, or
+  refused the address. For example, `arc serve bot#1` failed with "serve:
+  .../bot is not a program". An `exec://` address that you write yourself
+  works as before.
 - `arc apps init <directory>` writes a valid manifest.json when the name of
   the directory starts with a letter that is not ASCII. Before, it cut that
   letter in half, so the file was not valid JSON, and `arc serve` refused

@@ -149,15 +149,17 @@ func Load(path string) (*Bundle, error) {
 	}, nil
 }
 
-// ServeURI writes the address that the runtime reads. The args parameter is
-// a JSON list, so an argument can contain a space.
+// ServeURI writes the address that the runtime reads. It escapes the path of
+// the command, so a #, a % or a ? in a directory name stays in the path. The
+// args parameter is a JSON list, so an argument can contain a space.
 func (b *Bundle) ServeURI() string {
 	query := url.Values{"manifest": {b.Manifest}}
 	if len(b.Args) > 0 {
 		encoded, _ := json.Marshal(b.Args)
 		query.Set("args", string(encoded))
 	}
-	return "exec://" + b.Command + "?" + query.Encode()
+	address := url.URL{Scheme: "exec", Path: b.Command, RawQuery: query.Encode()}
+	return address.String()
 }
 
 // Files are the paths that Init writes.
