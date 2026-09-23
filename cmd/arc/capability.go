@@ -337,11 +337,60 @@ func findOffer(ctx context.Context, sess *session, provider nostr.PubKey, id str
 	return offer, err
 }
 
+// callTarget finds the capability that a call names: by an address,
+// <scheme>+arc://<provider>/<path>, or by a provider and --capability. It
+// returns the path of the address, or "" for a provider.
+func callTarget(command *cobra.Command, sess *session, installs catalog.Installs, target string) (nostr.PubKey, catalog.Offer, string, error) {
+	ctx := command.Context()
+	flag, _ := command.Flags().GetString("capability")
+	if !catalog.IsAddress(target) {
+		provider, id, err := installs.Resolve(target)
+		if err != nil {
+			return provider, catalog.Offer{}, "", err
+		}
+		if flag != "" {
+			id = flag
+		}
+		offer, err := findOffer(ctx, sess, provider, id)
+		return provider, offer, "", err
+	}
+
+	address, err := catalog.ParseAddress(target)
+	if err != nil {
+		return nostr.PubKey{}, catalog.Offer{}, "", err
+	}
+	provider, err := (&cliEnv{installs: installs}).ResolveKey(ctx, address.Provider)
+	if err != nil {
+		return provider, catalog.Offer{}, "", err
+	}
+	if flag != "" {
+		offer, err := findOffer(ctx, sess, provider, flag)
+		if err == nil && offer.Scheme != address.Scheme {
+			err = fmt.Errorf("the capability %s has the scheme %s, and the address names %s", offer.ID, offer.Scheme, address.Scheme)
+		}
+		return provider, offer, address.Path, err
+	}
+	offer, err := catalog.FindScheme(sess.node.Store, provider, address.Scheme)
+	if err != nil {
+		// Ask the relays for the announcements of the provider, then look
+		// again.
+		reports, errs := sess.node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}, sess.relays)
+		offer, err = catalog.FindScheme(sess.node.Store, provider, address.Scheme)
+		if unreached := node.Unreached(reports, errs); err != nil && unreached != nil {
+			err = fmt.Errorf("this machine holds no announcement from that provider, and %w", unreached)
+		}
+	}
+	return provider, offer, address.Path, err
+}
+
 func callCmd() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "call <provider> [body...]",
+		Use:   "call <provider|address> [body...]",
 		Short: "Call an installed capability",
-		Long: "With a relay, the call is live: it needs the provider to be present\n" +
+		Long: "Name the capability by an address, <scheme>+arc://<provider>/<path>, or\n" +
+			"by its provider and --capability. The provider is a key, an npub, or an\n" +
+			"installed name.\n\n" +
+			"With a relay, the call is live: it needs the provider to be present\n" +
 			"now, and it prints the reply and the round-trip time. With --later, or\n" +
 			"with no relay, the call waits in the outbox and travels like a message;\n" +
 			"arc call results shows the reply once a sync brings it.",
@@ -399,15 +448,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	provider, id, err := installs.Resolve(args[0])
-	if err != nil {
-		return err
-	}
-	if flag, _ := command.Flags().GetString("capability"); flag != "" {
-		id = flag
-	}
-
-	offer, err := findOffer(command.Context(), sess, provider, id)
+	provider, offer, addressPath, err := callTarget(command, sess, installs, args[0])
 	if err != nil {
 		return err
 	}
@@ -428,7 +469,13 @@ func callCapability(command *cobra.Command, args []string) error {
 	if method, _ := command.Flags().GetString("method"); method != "" {
 		request.Method = strings.ToUpper(method)
 	}
+	if addressPath != "" {
+		request.Path = addressPath
+	}
 	if path, _ := command.Flags().GetString("path"); path != "" {
+		if addressPath != "" && path != addressPath {
+			return fmt.Errorf("the address names the path %s, and --path names %s", addressPath, path)
+		}
 		request.Path = path
 	}
 

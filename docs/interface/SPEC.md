@@ -615,6 +615,35 @@ and says what changed, until the citizen installs it again. Core fetches the
 author's newest announcement before each command, so it sees a new version at
 once. Visibility grows in this order: sealed, private, group, public.
 
+### 14.1 Addresses
+
+An address names a capability, its provider, and one resource of it:
+
+```text
+<scheme>+arc://<provider>/<path>
+exec+arc://npub1.../
+sqlite+arc://<64-hex-key>/main
+```
+
+- The scheme names the capability: the capability whose id, the `d` tag of
+  its announcement, is the scheme. Else, the only capability whose manifest
+  has that scheme. The scheme holds lower-case letters, digits and hyphens.
+- The provider is a public key: 64 hex characters, an `npub`, the petname
+  of an installed provider, or an installed name. A domain stands for the
+  NIP-05 name `_@<domain>`. A NIP-05 name with a local part cannot stand in
+  an address, because its `@` is user information.
+- The path is the path of the request. It replaces the path of the manifest.
+  Without a path, the path is `/`. It holds ASCII letters, digits, and
+  `/ . _ ~ -`.
+- An address has no user information, port, query, fragment, percent
+  escape, or dot segment. Core refuses such an address before any call.
+
+`arc call <address> [body]` sends the body to the capability that the
+address names. The capability must be installed, as for every call. The
+address carries no trust: the key of the provider and the install do.
+`--capability <id>` names the capability when two have one scheme, and its
+scheme must then match the address.
+
 ## 15. Versions
 
 This interface is version 1. Core refuses a manifest of a later version, and

@@ -103,8 +103,17 @@ installed capability adds its own commands, `arc <name> <command>`. `arc help
 <name>` lists them. If a new version of a capability asks for more, `arc`
 stops until you install it again.
 
-`arc call <provider> <body>` sends one request. With a relay, the call is
-live. With `--later`, or with no relay, it travels like a message, and
+`arc call` sends one request. An address names the capability, the provider
+and the resource:
+
+```bash
+arc call 'sqlite+arc://<provider>/main' '{"sql":"select 1 as n"}'
+arc call 'exec+arc://npub1.../' '{"argv":["uname","-a"]}'
+```
+
+The provider is a key, an npub, an installed name, or a domain for NIP-05.
+See [addresses](docs/interface/SPEC.md#141-addresses). With a relay, the call
+is live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 
 Before a live call, `arc` runs the wake hook of the provider from

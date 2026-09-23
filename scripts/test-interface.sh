@@ -106,6 +106,28 @@ caller db select id, name from people order by id > "$work/table.txt"
   fail "the table is $(cat "$work/table.txt")"
 say "arc db shows rows as a table"
 
+# An address names the capability, the provider and the resource.
+caller call "exec+arc://$exec_key/" '{"argv":["echo","by address"]}' 2> /dev/null | grep "by address" > /dev/null ||
+  fail "the call by address failed: $(caller call "exec+arc://$exec_key/" '{"argv":["echo","x"]}' 2>&1)"
+caller call "exec+arc://exec/" '{"argv":["echo","by name"]}' 2> /dev/null | grep "by name" > /dev/null ||
+  fail "the call by an installed name failed"
+caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2> /dev/null | grep '\[22\]' > /dev/null ||
+  fail "the path of the address did not reach the provider: $(caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2>&1)"
+if caller call "sqlite+arc://$sqlite_key/other" '{"sql":"select 1"}' > /dev/null 2>&1; then
+  fail "a path that names no database answered"
+fi
+if caller call "exec+arc://$exec_key/../x" '{"argv":["true"]}' > /dev/null 2> "$work/dots.txt"; then
+  fail "an address with a dot segment was called"
+fi
+grep "dot segment" "$work/dots.txt" > /dev/null || fail "the refusal was $(cat "$work/dots.txt")"
+"$work/arc" --home "$work/nobody" keys gen > /dev/null
+"$work/arc" --home "$work/nobody" relay add "$url"
+if "$work/arc" --home "$work/nobody" call "exec+arc://$exec_key/" '{"argv":["true"]}' > /dev/null 2> "$work/untrusted.txt"; then
+  fail "an address called a capability that was not installed"
+fi
+grep "install it first" "$work/untrusted.txt" > /dev/null || fail "the refusal was $(cat "$work/untrusted.txt")"
+say "arc call takes an address: <scheme>+arc://<provider>/<path>"
+
 if caller exec run > /dev/null 2> "$work/missing.txt"; then fail "a missing argument ran"; fi
 grep "missing <argv...>" "$work/missing.txt" > /dev/null || fail "the error was $(cat "$work/missing.txt")"
 if caller exec fly > /dev/null 2> "$work/nope.txt"; then fail "an unknown command ran"; fi
