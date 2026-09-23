@@ -1,6 +1,7 @@
 package host
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +11,13 @@ import (
 
 // ParseServeURI reads exec:///path/to/runtime?manifest=/path/to/file.json,
 // with an optional args parameter. No other form exists.
+//
+// The args parameter is a JSON list of strings, for example
+// args=["-u","server.py"]. An argument in the list can contain a space.
+// `arc serve` writes this form for a bundle. If the value does not start
+// with "[", ParseServeURI splits it at each space, so a hand-written address
+// can say args=-v+--x. If the value starts with "[" and is not a JSON list
+// of strings, ParseServeURI returns an error.
 func ParseServeURI(raw string) (path string, args []string, manifest string, err error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "exec" {
@@ -36,7 +44,13 @@ func ParseServeURI(raw string) (path string, args []string, manifest string, err
 		return "", nil, "", err
 	}
 
-	if given := query.Get("args"); given != "" {
+	given := strings.TrimSpace(query.Get("args"))
+	switch {
+	case strings.HasPrefix(given, "["):
+		if err := json.Unmarshal([]byte(given), &args); err != nil {
+			return "", nil, "", fmt.Errorf("serve: the args of the address are not a JSON list of strings: %w", err)
+		}
+	case given != "":
 		args = strings.Fields(given)
 	}
 	return path, args, manifest, nil
