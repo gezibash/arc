@@ -43,6 +43,27 @@ func manifestTemplate(space, name string) string {
 `, time.Now().UTC().Format(time.RFC3339), space, name)
 }
 
+// interfaceTemplate writes the commands of the capability, as interface
+// version 1 defines them. Its one command sends the text of the caller to the
+// runtime as the body, and shows the reply.
+func interfaceTemplate(space, name string) string {
+	return fmt.Sprintf(`{
+  "interface": 1, "id": %q, "shape": "service",
+  "title": %q,
+  "summary": "A starter ARC app. Edit this manifest and the runtime to say what your capability does.",
+  "service": {"method": "RAW", "path": "/", "max_bytes": 1048576},
+  "kinds": {},
+  "formats": {"reply": {"record": "{{content}}"}},
+  "commands": [
+    {"path": ["say"], "summary": "Send a message, and show the reply",
+     "args": [{"name": "message", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"call": {"class": "live", "body": "{{message}}"}},
+     "output": {"format": "reply"}}
+  ]
+}
+`, space, name)
+}
+
 // runtimeTemplate writes a program that reads one request for each line and
 // answers it. It is a shell starter. Write a real runtime for real work.
 func runtimeTemplate(space string) string {

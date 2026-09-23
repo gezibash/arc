@@ -10,6 +10,7 @@ import (
 
 	"github.com/gezibash/arc/bundle"
 	"github.com/gezibash/arc/capability"
+	"github.com/gezibash/arc/iface"
 	"github.com/gezibash/arc/provider/host"
 )
 
@@ -21,7 +22,7 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{files.Arcfile, files.Manifest, files.Runtime} {
+	for _, path := range []string{files.Arcfile, files.Manifest, files.Interface, files.Runtime} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("%s is missing: %v", path, err)
 		}
@@ -49,6 +50,13 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 		t.Errorf("title = %v", fields["title"])
 	}
 
+	// arc serve announces the interface in place of the manifest, and
+	// refuses an interface that iface.Parse refuses.
+	m := parseInterface(t, files.Interface)
+	if m.ID != "weather-bot" {
+		t.Errorf("id = %s, want the name of the directory", m.ID)
+	}
+
 	// The bundle resolves into an address that the runtime reads.
 	address, held, err := bundle.Resolve(root)
 	if err != nil {
@@ -71,15 +79,47 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 	}
 }
 
-func TestInitRefusesToWriteOverAFile(t *testing.T) {
-	root := t.TempDir()
+// An interface id starts with a letter and has at most 64 characters. A
+// directory name need not.
+func TestInitWritesAnInterfaceForAnyDirectoryName(t *testing.T) {
+	for _, name := range []string{"2048", "My App!", strings.Repeat("long-name-", 10)} {
+		files, err := bundle.Init(filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		parseInterface(t, files.Interface)
+	}
+}
 
-	if err := os.WriteFile(filepath.Join(root, bundle.ArcfileName), []byte("version = 1\n"), 0o644); err != nil {
+func TestInitRefusesToWriteOverAFile(t *testing.T) {
+	for _, name := range []string{bundle.ArcfileName, bundle.ManifestName, bundle.InterfaceName, bundle.RuntimeName} {
+		root := t.TempDir()
+		path := filepath.Join(root, name)
+
+		if err := os.WriteFile(path, []byte("mine\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := bundle.Init(root); err == nil {
+			t.Errorf("Init wrote over the %s that was already there", name)
+		}
+		if body, _ := os.ReadFile(path); string(body) != "mine\n" {
+			t.Errorf("Init changed the %s that was already there", name)
+		}
+	}
+}
+
+// parseInterface reads an interface.json as arc serve reads it.
+func parseInterface(t *testing.T, path string) *iface.Manifest {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bundle.Init(root); err == nil {
-		t.Error("Init wrote over an Arcfile that was already there")
+	m, err := iface.Parse(body)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
 	}
+	return m
 }
 
 // write puts an Arcfile and a manifest in a new directory.
