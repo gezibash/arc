@@ -143,6 +143,48 @@ caller call "exec+arc://$exec_key/" '{"argv":["echo","raw"]}' --raw 2> /dev/null
   fail "the sqlite reply is not a table: $(caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2>&1)"
 say "a call by address shows the reply as the service says, and --raw as it came"
 
+# A provider announces a new manifest. The next call uses it, although this
+# machine holds the older announcement.
+for version in old new; do
+  mkdir -p "$work/exec2-$version"
+  cp "$root/cmd/exec-provider/manifest.json" "$work/exec2-$version/"
+done
+jq 'del(.service.output)' "$root/cmd/exec-provider/interface.json" > "$work/exec2-old/interface.json"
+cp "$root/cmd/exec-provider/interface.json" "$work/exec2-new/"
+"$work/arc" --home "$work/exec2" keys gen > /dev/null
+"$work/arc" --home "$work/exec2" relay add "$url"
+exec2_key="$("$work/arc" --home "$work/exec2" whoami | sed -n 2p)"
+serve_exec2() {
+  # An announcement carries its time in seconds. Of two in one second,
+  # NIP-01 keeps the lower ID, so each announcement comes a second later.
+  sleep 1
+  EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec2" serve \
+    "exec://$work/exec-provider?manifest=$work/exec2-$1/manifest.json" > "$work/exec2-$1.log" 2>&1 &
+  exec2_pid=$!
+  for _ in $(seq 1 50); do grep "serves" "$work/exec2-$1.log" > /dev/null 2>&1 && break; sleep 0.1; done
+  grep "serves" "$work/exec2-$1.log" > /dev/null || fail "exec2 did not serve: $(cat "$work/exec2-$1.log")"
+}
+caller_install_done=
+# Each form of call meets the new manifest: first by provider, then by
+# address. Each round starts from the old manifest.
+for target in "$exec2_key" "exec+arc://$exec2_key/"; do
+  serve_exec2 old
+  if [ -z "$caller_install_done" ]; then
+    caller install "$exec2_key" --as exec2 --yes > /dev/null || fail "the caller did not install exec2"
+    caller_install_done=1
+  fi
+  caller call "$target" '{"argv":["echo","old"]}' 2> /dev/null | grep '"stdout"' > /dev/null ||
+    fail "$target: the old manifest has no output, so the reply must come as it came"
+  kill "$exec2_pid"
+  wait "$exec2_pid" 2>/dev/null || true
+  serve_exec2 new
+  [ "$(caller call "$target" '{"argv":["echo","new"]}' 2> /dev/null)" = "new" ] ||
+    fail "$target: the call used the older announcement: $(caller call "$target" '{"argv":["echo","new"]}' 2>&1)"
+  kill "$exec2_pid"
+  wait "$exec2_pid" 2>/dev/null || true
+done
+say "a call uses the newest announcement of the provider"
+
 if caller exec run > /dev/null 2> "$work/missing.txt"; then fail "a missing argument ran"; fi
 grep "missing <argv...>" "$work/missing.txt" > /dev/null || fail "the error was $(cat "$work/missing.txt")"
 if caller exec fly > /dev/null 2> "$work/nope.txt"; then fail "an unknown command ran"; fi
