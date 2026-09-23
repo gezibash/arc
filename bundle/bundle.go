@@ -13,7 +13,7 @@
 // The command `arc serve <directory>` reads the Arcfile and turns it into
 // the address that the runtime already understands:
 //
-//	exec://<command>?manifest=<path>
+//	exec://<command>?manifest=<path>&args=<JSON list>&cwd=<directory>
 package bundle
 
 import (
@@ -153,15 +153,18 @@ func Load(path string) (*Bundle, error) {
 	}, nil
 }
 
-// ServeURI writes the address that the runtime reads. The args parameter is
-// a JSON list, so an argument can contain a space.
+// ServeURI writes the address that the runtime reads. It escapes the path of
+// the command, so a #, a % or a ? in a directory name stays in the path. The
+// args parameter is a JSON list, so an argument can contain a space. The cwd
+// parameter names the directory that the program runs in.
 func (b *Bundle) ServeURI() string {
-	query := url.Values{"manifest": {b.Manifest}}
+	query := url.Values{"manifest": {b.Manifest}, "cwd": {b.Cwd}}
 	if len(b.Args) > 0 {
 		encoded, _ := json.Marshal(b.Args)
 		query.Set("args", string(encoded))
 	}
-	return "exec://" + b.Command + "?" + query.Encode()
+	address := url.URL{Scheme: "exec", Path: b.Command, RawQuery: query.Encode()}
+	return address.String()
 }
 
 // Files are the paths that Init writes.

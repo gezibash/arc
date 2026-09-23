@@ -50,6 +50,22 @@ All notable changes to ARC are recorded here. The format follows
   `exec://` address can now be a JSON list, and an argument in the list can
   contain a space. An address that gives the arguments with spaces between
   them, for example `args=-v+--x`, still works.
+- `arc serve <bundle directory>` works when the path of the directory has a
+  `#`, a `%`, or a `?` in it. Before, `arc serve` put the path of the program
+  into the `exec://` address without escaping it. When `arc serve` read the
+  address back, it cut the path at `#` or `?`, changed `%20` into a space, or
+  refused the address. For example, `arc serve bot#1` failed with "serve:
+  .../bot is not a program". An `exec://` address that you write yourself
+  works as before.
+- `arc serve <bundle directory>` runs the program in the directory that
+  `runtime.cwd` in the Arcfile names. Before, the program ran in the
+  directory of the shell. For example, with `args = ["-u", "server.py"]`,
+  the program found `server.py` only if the owner started `arc serve` in the
+  bundle directory. If the Arcfile has no `cwd`, the program runs in the
+  bundle directory. `PWD` in the environment of the program names the same
+  directory. The `exec://` address carries the directory in a new `cwd`
+  parameter. The directory must exist. If it does not, `arc serve` stops
+  with an error. A hand-written address without `cwd` works as before.
 
 ## [0.15.4] - 2026-09-23
 

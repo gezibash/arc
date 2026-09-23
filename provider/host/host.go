@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -40,10 +39,13 @@ type Process struct {
 }
 
 // Start starts a provider program, with the environment that a provider
-// expects added to this process's own.
-func Start(path string, args []string, environment []string, log *slog.Logger) (*Process, error) {
+// expects added to this process's own. The program runs in the directory
+// cwd. If cwd is empty, it runs in the directory of this process.
+func Start(path string, args []string, cwd string, environment []string, log *slog.Logger) (*Process, error) {
 	command := exec.Command(path, args...)
-	command.Env = append(os.Environ(), environment...)
+	command.Dir = cwd
+	// Environ sets PWD to cwd, so PWD names the directory of the program.
+	command.Env = append(command.Environ(), environment...)
 
 	stdin, err := command.StdinPipe()
 	if err != nil {

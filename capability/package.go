@@ -1,15 +1,11 @@
-// Package capability holds the capability package: the document that a
-// provider writes, and the signed contract that a caller installs.
+// Package capability loads the manifest of a provider, and normalizes it
+// into the package that `arc serve` announces.
 //
-// A provider writes the document in JSON or TOML. ARC normalizes it, signs it
-// with the identity of the serving citizen, and serves the signed result.
-//
-// The signature covers the canonical JSON of the package and its provider.
-// The hash is SHA-256 of the same bytes.
+// The manifest is a JSON file, such as manifest.json, or a TOML file. The
+// file extension selects the format.
 package capability
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,10 +30,6 @@ const (
 var (
 	ErrInvalid         = errors.New("capability: the package is not valid")
 	ErrUnsupportedFile = errors.New("capability: the file is not JSON or TOML")
-	ErrSignerMismatch  = errors.New("capability: the signer is not the provider")
-	ErrHashMismatch    = errors.New("capability: the hash does not match")
-	ErrBadSignature    = errors.New("capability: the signature does not verify")
-	ErrNotFound        = errors.New("capability: no capability of that name")
 )
 
 // LoadFile reads a capability document from a JSON or a TOML file, and
@@ -66,25 +58,6 @@ func LoadFile(path string) (map[string]any, error) {
 	}
 
 	return normalizeDocument(document)
-}
-
-// NormalizePackage returns the package in its one shape. Two documents that
-// say the same thing normalize to the same bytes, and therefore to the same
-// hash.
-func NormalizePackage(document map[string]any) map[string]any {
-	if document == nil {
-		return map[string]any{}
-	}
-
-	fields, _ := document["capability"].(map[string]any)
-
-	out := map[string]any{
-		"package_version": PackageVersion,
-		"capability":      NormalizeCapability(fields),
-		"release":         normalizeRelease(document["release"]),
-	}
-	putPresent(out, "published_at", firstString(document["published_at"]))
-	return out
 }
 
 // NormalizeCapability returns one capability in its one shape.
@@ -235,18 +208,6 @@ func normalizeConfig(value any) map[string]any {
 		return nil
 	}
 	return fields
-}
-
-func decodeHex(value any) ([]byte, error) {
-	text, ok := value.(string)
-	if !ok {
-		return nil, ErrInvalid
-	}
-	out, err := hex.DecodeString(strings.ToLower(text))
-	if err != nil {
-		return nil, ErrInvalid
-	}
-	return out, nil
 }
 
 // wholeNumber reads a number that came from JSON, from TOML, or from Go.

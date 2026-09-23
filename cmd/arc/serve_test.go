@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -224,6 +225,52 @@ func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
 		if !found {
 			t.Errorf("%s came back, but it did not get the relay list of the provider", url)
 		}
+	}
+
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The Arcfile of a bundle names the directory of its program: cwd = "." is
+// the bundle directory. `arc serve` runs the program there, wherever the owner
+// runs `arc serve`.
+func TestServeRunsTheProgramOfABundleInItsCwd(t *testing.T) {
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	ok(t, home, "", "relay", "add", testrelay.Start(t))
+
+	app := filepath.Join(t.TempDir(), "app")
+	ok(t, home, "", "apps", "init", app)
+	// The program writes the directory that it runs in, then waits for its
+	// input to close.
+	where := filepath.Join(t.TempDir(), "where")
+	program := fmt.Sprintf("#!/bin/sh\npwd > %q\nexec cat\n", where)
+	if err := os.WriteFile(filepath.Join(app, "run.sh"), []byte(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := &output{}
+	command := root()
+	command.SetOut(out)
+	command.SetArgs([]string{"--home", home, "serve", app})
+	result := make(chan error, 1)
+	go func() { result <- command.ExecuteContext(ctx) }()
+
+	if !waitFor(out, "serves", 10*time.Second) {
+		t.Fatalf("arc serve did not say serves: %q", out.String())
+	}
+	var ran []byte
+	for deadline := time.Now().Add(5 * time.Second); len(ran) == 0 && time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		ran, _ = os.ReadFile(where)
+	}
+	got, _ := filepath.EvalSymlinks(strings.TrimSpace(string(ran)))
+	want, _ := filepath.EvalSymlinks(app)
+	if got != want {
+		t.Errorf("the program ran in %q, want the bundle directory %q", strings.TrimSpace(string(ran)), app)
 	}
 
 	cancel()

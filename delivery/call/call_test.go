@@ -55,7 +55,7 @@ func provider(t *testing.T, k keys.Key) *call.Server {
 // providerWith starts the echo provider with a caller for its calls.
 func providerWith(t *testing.T, k keys.Key, caller call.Caller) *call.Server {
 	t.Helper()
-	process, err := host.Start(echoBinary, nil, []string{"ARC_PUBLIC_KEY=" + k.Public.Hex()}, quiet)
+	process, err := host.Start(echoBinary, nil, "", []string{"ARC_PUBLIC_KEY=" + k.Public.Hex()}, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
