@@ -44,3 +44,8 @@ raw = true
 description = "Prove phases A to D of the capability interface"
 run = "bash scripts/test-interface.sh"
 raw = true
+
+[tasks.compose]
+description = "Prove HTTP over ARC, and a provider that keeps its state in SQLite over ARC"
+run = "bash scripts/check-compose.sh"
+raw = true

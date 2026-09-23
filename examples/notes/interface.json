@@ -1,0 +1,24 @@
+{
+  "interface": 1, "id": "http", "shape": "service",
+  "title": "Notes", "summary": "Keeps notes for each caller, over HTTP, in SQLite over ARC.",
+  "service": {"method": "GET", "path": "/", "max_bytes": 262144,
+              "output": {"open": {"parse": "json"}, "format": "response",
+                         "exit": [{"where": [{"field": "status", "prefix": "4"}], "code": "22"},
+                                  {"where": [{"field": "status", "prefix": "5"}], "code": "22"}]}},
+  "kinds": {},
+  "formats": {"response": {"record": "{{status}} {{body}}"}},
+  "commands": [
+    {"path": ["add"], "summary": "Keep a note",
+     "args": [{"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"call": {"class": "live", "method": "POST", "path": "/notes", "body": "{\"body\": {{text|join|json}}}"}},
+     "output": {"open": {"parse": "json"}, "format": "response",
+                "exit": [{"where": [{"field": "status", "prefix": "4"}], "code": "22"},
+                         {"where": [{"field": "status", "prefix": "5"}], "code": "22"}]}},
+    {"path": ["list"], "summary": "Show your notes",
+     "args": [],
+     "action": {"call": {"class": "live", "method": "GET", "path": "/notes", "body": ""}},
+     "output": {"open": {"parse": "json"}, "format": "response",
+                "exit": [{"where": [{"field": "status", "prefix": "4"}], "code": "22"},
+                         {"where": [{"field": "status", "prefix": "5"}], "code": "22"}]}}
+  ]
+}

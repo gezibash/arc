@@ -36,6 +36,8 @@ This whitepaper describes the current implementation of ARC and marks each part 
 - Capabilities — announcements of kind 30272, discovery, install with consent, installed commands, and calls of kinds 3272 and 3273, live or store-and-forward. See delivery section 11 and interface sections 4 to 14.
 - Data capabilities — direct messages (NIP-17), a journal and files sealed to their author (NIP-37), and a board on a NIP-29 group. See interface section 17.
 - Service providers — `exec`, `sqlite`, and `releases`, each one a separate program that `arc serve` runs. See interface section 17.
+- Providers that call — a provider program calls a capability that its citizen installed, as that citizen, and never holds the key. See interface section 14.2.
+- HTTP over ARC — `provider.HTTP` serves a Go HTTP handler, and `http-provider` serves an HTTP server of any language. See [HTTP over ARC](http/SPEC.md).
 - Addresses — `<scheme>+arc://<provider>/<path>` names a capability and its provider, and `arc call` takes one. See section 8 and interface section 14.1.
 - Wake — a hook on the caller wakes a machine that pauses before a live call. See [exec section 10](exec/SPEC.md).
 - A relay — `arc relay serve`, built on khatru, with NIP-42 authentication, NIP-77 sync, sealed data served only to its author, and write limits. See delivery section 12 and [Deploy](DEPLOY.md).
@@ -365,12 +367,13 @@ The address carries no trust. The capability must be installed, as for every cal
 
 ### Schemes
 
-A scheme works when a provider serves it. Three providers exist:
+A scheme works when a provider serves it. Four providers exist:
 
 ```text
 exec+arc://<provider>/          run commands              built
 sqlite+arc://<provider>/main    answer SQL                built
 releases+arc://<provider>/...   serve release channels    built
+http+arc://<provider>/<path>    serve an HTTP server      built: http-provider, and provider.HTTP in Go
 ```
 
 The schemes below are ideas. No provider serves them, and no specification defines them:
@@ -380,7 +383,6 @@ pg+arc://zim/db            Postgres
 kv+arc://zim               key-value store
 fs+arc://zim/path          filesystem
 s3+arc://zim/bucket        object store
-http+arc://zim             HTTP
 ws+arc://zim/stream        WebSocket
 grpc+arc://zim/Svc/Method  gRPC
 tcp+arc://zim:port         raw TCP
@@ -416,17 +418,18 @@ In the address form of section 8:
 ```text
 exec+arc://9f8e7d6c.../       a shell command runner with a keypair     built
 sqlite+arc://9f8e7d6c.../main a SQLite database with a keypair          built
-http+arc://zim                a REST API with a keypair                 idea
+http+arc://9f8e7d6c.../notes  a REST API with a keypair                 built
 llm+arc://model-agent         an LLM with a keypair                     idea
 ```
 
-Three providers exist today. See [interface section 17](interface/SPEC.md).
+Four providers exist today. See [interface section 17](interface/SPEC.md) and [HTTP over ARC](http/SPEC.md).
 
 | Capability | What it serves |
 |---|---|
 | `exec` | Runs commands for the citizens that it grants. The caller's public key is the login. |
 | `sqlite` | Answers SQL for the citizens that it grants, against databases that its operator names. |
 | `releases` | Serves signed release channels and their archives to `arc update`. |
+| `http` | Forwards each call to an HTTP server of any language. The caller's public key reaches the server as `Arc-Caller`. |
 
 A provider knows exactly who called it, because the seal of each request is signed by the caller. It checks the caller's key against its own grants. No password, no API key, and no open port take part. The relay carries ciphertext only.
 
