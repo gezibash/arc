@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -20,7 +21,7 @@ path = "./manifest.json"
 // edits it to say what the provider really does.
 func manifestTemplate(space, name string) string {
 	return fmt.Sprintf(`{
-  "published_at": %q,
+  "published_at": %s,
   "release": {
     "version": "0.1.0",
     "channel": "stable"
@@ -28,8 +29,8 @@ func manifestTemplate(space, name string) string {
   "capability": {
     "id": "primary",
     "kind": "service",
-    "scheme": %q,
-    "title": %q,
+    "scheme": %s,
+    "title": %s,
     "summary": "A starter ARC app. Edit this manifest and the runtime to say what your capability does.",
     "invocation": {
       "method": "RAW",
@@ -38,38 +39,16 @@ func manifestTemplate(space, name string) string {
     "examples": [
       "hello from arc"
     ]
-  },
-  "interfaces": {
-    "cli": {
-      "version": 1,
-      "namespace": %q,
-      "summary": "The commands of the starter ARC app",
-      "commands": [
-        {
-          "path": [],
-          "summary": "Send a message to the starter ARC app",
-          "args": [
-            {
-              "name": "message",
-              "kind": "positional",
-              "required": false,
-              "variadic": true,
-              "description": "The text to send"
-            }
-          ],
-          "input": {
-            "source": "template",
-            "template": "{{message}}"
-          },
-          "examples": [
-            "hello from arc"
-          ]
-        }
-      ]
-    }
   }
 }
-`, time.Now().UTC().Format(time.RFC3339), space, name, space)
+`, jsonString(time.Now().UTC().Format(time.RFC3339)), jsonString(space), jsonString(name))
+}
+
+// jsonString writes a string as a JSON string. Go quoting (%q) is not JSON:
+// it writes a byte that is not UTF-8 as \xa9, and JSON has no such escape.
+func jsonString(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
 
 // runtimeTemplate writes a program that reads one request for each line and

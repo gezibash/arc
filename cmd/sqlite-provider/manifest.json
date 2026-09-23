@@ -7,7 +7,7 @@
     "scheme": "sqlite",
     "title": "SQLite over ARC",
     "summary": "Runs authorized SQLite queries through ARC request/reply transport.",
-    "invocation": {"mode": "request_reply", "method": "QUERY", "path": "/main", "request_body": {"max_bytes": 1048576}},
+    "invocation": {"method": "QUERY", "path": "/main", "request_body": {"max_bytes": 1048576}},
     "examples": ["sqlite+arc://provider/main"]
   }
 }

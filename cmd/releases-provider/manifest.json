@@ -8,7 +8,6 @@
     "title": "ARC Releases",
     "summary": "Read-only channel documents and immutable ARC release archives.",
     "invocation": {
-      "mode": "request_reply",
       "method": "RAW",
       "path": "/releases",
       "request_body": {"encoding": "utf-8", "max_bytes": 4096},

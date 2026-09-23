@@ -7,7 +7,7 @@
     "scheme": "http",
     "title": "Notes",
     "summary": "Keeps notes for each caller, over HTTP, in SQLite over ARC.",
-    "invocation": {"mode": "request_reply", "method": "GET", "path": "/", "request_body": {"max_bytes": 262144}},
+    "invocation": {"method": "GET", "path": "/", "request_body": {"max_bytes": 262144}},
     "examples": ["http+arc://provider/notes"]
   }
 }
