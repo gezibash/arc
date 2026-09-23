@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,9 +112,12 @@ func StartPlain(t *testing.T) string {
 	return start(t, false)
 }
 
-// StartAt runs a relay on an address, for example the address of a relay
-// that was down, and returns its URL. The relay stops when the test ends.
-func StartAt(t *testing.T, address string) string {
+// StartDown runs a relay that is down, and returns its URL and a function
+// that brings it up. Until then, the relay closes each connection when it
+// accepts it, so a dial to it fails at once. The relay keeps its port while it
+// is down, so no other process can take the port. The relay stops when the
+// test ends.
+func StartDown(t *testing.T) (string, func()) {
 	t.Helper()
 
 	db := &slicestore.SliceStore{}
@@ -125,14 +129,32 @@ func StartAt(t *testing.T, address string) string {
 	relay.UseEventstore(db, 500)
 	sealed.Protect(relay)
 
-	listener, err := net.Listen("tcp", address)
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	listener := &gated{Listener: inner}
 	server := &http.Server{Handler: relay}
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
-	return "ws://" + listener.Addr().String()
+	return "ws://" + inner.Addr().String(), func() { listener.up.Store(true) }
+}
+
+// gated is a listener that closes each connection at once until the relay is
+// up.
+type gated struct {
+	net.Listener
+	up atomic.Bool
+}
+
+func (l *gated) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil || l.up.Load() {
+			return conn, err
+		}
+		conn.Close()
+	}
 }
 
 func start(t *testing.T, negentropy bool) string {
