@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-23
+
+A live call finds the relays of the provider through its NIP-65 relay list,
+and an indexer relay can hold those lists. `arc call` uses the newest
+announcement of the provider. No manifest changes, so machines can update in
+any order.
+
 ### Added
 
 - A citizen publishes its NIP-65 relay list, kind 10002, beside its other
