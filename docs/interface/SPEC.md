@@ -659,6 +659,41 @@ address carries no trust: the key of the provider and the install do.
 `--capability <id>` names the capability when two have one scheme, and its
 scheme must then match the address.
 
+### 14.2 Calls of a provider
+
+A provider program can call a capability, as the citizen that serves it.
+`arc serve` makes the call. The provider program never holds the key of the
+citizen. A web service keeps its data in `sqlite` this way, for example.
+
+The rules are the rules of `arc call`:
+
+- The citizen must have installed the capability. If not, the call fails
+  with `not_installed`. An install is the consent to call.
+- The call names the capability by an address, see 14.1. The method is the
+  method of the manifest.
+- The call is live. It needs a relay, and it waits at most 30 seconds.
+
+`arc serve` and the provider program speak newline delimited JSON on the
+standard input and the standard output of the program. The program writes
+one line for each call:
+
+```json
+{"op": "call", "call_id": "7", "address": "sqlite+arc://<key>/main", "body": "{\"sql\": \"select 1\"}"}
+```
+
+`arc serve` writes one result with the same `call_id`:
+
+| Result | Meaning |
+| --- | --- |
+| `{"op": "result", "call_id": "7", "reply": "..."}` | The reply of the provider that got the call. |
+| `{"op": "result", "call_id": "7", "refused": "unauthorized"}` | That provider answered with an error. |
+| `{"op": "result", "call_id": "7", "error": "not_installed: ..."}` | `arc serve` could not make the call. |
+
+In Go, a handler that has the method `SetCaller(provider.Caller)` gets a
+caller before its first request. `Caller.Call` returns the reply, or a
+`*provider.CallError`. Its field `Refused` separates a refusal from a
+failure.
+
 ## 15. Versions
 
 This interface is version 1. Core refuses a manifest of a later version, and

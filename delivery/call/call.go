@@ -35,6 +35,9 @@ const (
 	LiveWindow = 5 * time.Minute
 	// Timeout bounds how long a provider takes to answer one request.
 	Timeout = 60 * time.Second
+	// CallTimeout bounds one call that a provider program makes. It is less
+	// than Timeout, so a request that makes one call still gets its answer.
+	CallTimeout = 30 * time.Second
 )
 
 // Request is one call.
@@ -159,14 +162,29 @@ type Server struct {
 	waiting map[string]chan map[string]any
 	seen    map[string]time.Time
 	done    chan struct{}
+	caller  Caller
 }
 
-// NewServer serves one capability with a running provider program.
-func NewServer(k keys.Signer, capability string, process *host.Process, maxBytes int, log *slog.Logger) *Server {
+// Outbound is a call that the provider program makes.
+type Outbound struct {
+	// Address names the capability: <scheme>+arc://<provider>/<path>.
+	Address string
+	Body    string
+}
+
+// Caller makes the calls of a provider program. It returns the reply of the
+// provider that got the call. It returns an error when it could not make the
+// call.
+type Caller func(ctx context.Context, out Outbound) (Reply, error)
+
+// NewServer serves one capability with a running provider program. The
+// caller makes the calls of the program. With a nil caller, each call of the
+// program fails.
+func NewServer(k keys.Signer, capability string, process *host.Process, maxBytes int, caller Caller, log *slog.Logger) *Server {
 	s := &Server{
 		key: k, capability: capability, process: process, maxBytes: maxBytes, log: log,
 		waiting: map[string]chan map[string]any{}, seen: map[string]time.Time{},
-		done: make(chan struct{}),
+		done: make(chan struct{}), caller: caller,
 	}
 	go s.read()
 	return s
@@ -175,9 +193,14 @@ func NewServer(k keys.Signer, capability string, process *host.Process, maxBytes
 // Done closes when the provider program stops.
 func (s *Server) Done() <-chan struct{} { return s.done }
 
-// read passes each answer of the provider to the request that waits for it.
+// read passes each answer of the provider to the request that waits for it,
+// and makes each call of the provider.
 func (s *Server) read() {
 	for answer := range s.process.Lines() {
+		if op, _ := answer["op"].(string); op == "call" {
+			go s.call(answer)
+			continue
+		}
 		id, _ := answer["request_id"].(string)
 		s.mu.Lock()
 		wait := s.waiting[id]
@@ -265,6 +288,41 @@ func (s *Server) Handle(ctx context.Context, rumor nostr.Event) (Reply, error) {
 	case <-ctx.Done():
 		s.forget(id)
 		return Reply{Err: "provider_timeout the provider did not answer"}, nil
+	}
+}
+
+// call makes one call of the provider program, and writes its result to the
+// program. See the package provider for the lines.
+func (s *Server) call(line map[string]any) {
+	id, _ := line["call_id"].(string)
+	if id == "" {
+		s.log.Warn("the provider wrote a call with no call_id")
+		return
+	}
+	address, _ := line["address"].(string)
+	body, hasBody := line["body"].(string)
+
+	result := map[string]any{"op": "result", "call_id": id}
+	switch {
+	case address == "" || !hasBody:
+		result["error"] = "invalid_call: a call needs an address and a body"
+	case s.caller == nil:
+		result["error"] = "calls_off: this host makes no calls"
+	default:
+		ctx, cancel := context.WithTimeout(context.Background(), CallTimeout)
+		reply, err := s.caller(ctx, Outbound{Address: address, Body: body})
+		cancel()
+		switch {
+		case err != nil:
+			result["error"] = err.Error()
+		case reply.Err != "":
+			result["refused"] = reply.Err
+		default:
+			result["reply"] = reply.Body
+		}
+	}
+	if err := s.process.Send(result); err != nil {
+		s.log.Warn("the result of a call did not reach the provider", "error", err)
 	}
 }
 
