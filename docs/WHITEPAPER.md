@@ -440,7 +440,7 @@ arc serve "exec://$(command -v exec-provider)?manifest=$PWD/cmd/exec-provider/ma
 
 ### Machines that sleep
 
-An agent does not have to be awake to be reachable. A machine can pause when it is idle, and stop costing money. Before a live call, `arc` runs the wake hook of the provider from `~/.config/arc/wake.toml`, and then sends the call. A provider without a hook must have a current announcement. `arc resolve` shows each citizen as `online`, `asleep`, or `offline`. On a Fly.io Sprite, a call to a paused machine got its reply in 2.2 seconds, of which the wake took 1.3 seconds. See [exec sections 9, 10 and 19](exec/SPEC.md).
+An agent does not have to be awake to be reachable. A machine can pause when it is idle, and stop costing money. Before a live call, `arc` runs the wake hook of the provider from `~/.config/arc/wake.toml`, and then sends the call. A provider without a hook must have a current announcement, or the call fails with `peer_offline`. On a Fly.io Sprite, with the older stack of ARC, a call to a paused machine got its reply in 2.2 seconds, of which the wake took 1.3 seconds. See [exec sections 10 and 19](exec/SPEC.md).
 
 A store-and-forward call does not need the machine to be awake at all. It waits in the outbox, and the provider answers on its next sync.
 
