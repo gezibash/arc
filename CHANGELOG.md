@@ -26,6 +26,16 @@ All notable changes to ARC are recorded here. The format follows
   provider program. The second is a plain HTTP server with no ARC library,
   behind `http-provider`. `mise run compose` proves both end to end.
 
+### Fixed
+
+- `arc serve <directory>` works when the path of the directory has a `#`, a
+  `%`, or a `?` in it. Before, `arc serve` put the path of the program into
+  the `exec://` address without escaping it. When `arc serve` read the
+  address back, it cut the path at `#` or `?`, changed `%20` into a space, or
+  refused the address. For example, `arc serve bot#1` failed with "serve:
+  .../bot is not a program". An `exec://` address that you write yourself
+  works as before.
+
 ## [0.15.4] - 2026-09-23
 
 ### Fixed
