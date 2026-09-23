@@ -4,11 +4,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gezibash/arc/bundle"
 	"github.com/gezibash/arc/capability"
+	"github.com/gezibash/arc/provider/host"
 )
 
 func TestInitWritesABundleThatServes(t *testing.T) {
@@ -115,6 +117,34 @@ path = "./manifest.json"
 	query, _ := url.Parse(address)
 	if got := query.Query().Get("args"); got != `["-u","server.py"]` {
 		t.Errorf("args = %s", got)
+	}
+}
+
+func TestTheRuntimeGetsEachArgumentOfTheArcfile(t *testing.T) {
+	root := write(t, `version = 1
+[runtime]
+type = "exec"
+command = "./run.sh"
+args = ["-u", "server.py", "--greeting", "hello world", "a+b&c=%41"]
+[manifest]
+path = "./manifest.json"
+`)
+	if err := os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, args, _, err := host.ParseServeURI(held.ServeURI())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"-u", "server.py", "--greeting", "hello world", "a+b&c=%41"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q", args, want)
 	}
 }
 
