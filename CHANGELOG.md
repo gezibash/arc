@@ -6,6 +6,8 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-09-23
+
 ### Fixed
 
 - The linux-aarch64 and darwin-aarch64 binaries of a release report a clean
