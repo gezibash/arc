@@ -48,6 +48,7 @@ This whitepaper describes the current implementation of ARC and marks each part 
 - Asynchronous job results in the mailbox, a wake URL, and signed dormant records. These are phases 3b and 4 of [exec section 18](exec/SPEC.md).
 - Private environments: compute whose operator cannot read the work. The [private environment contract](private-environment/SPEC.md) is a proposal only.
 - An official release channel. `arc update` works, but no publisher runs a channel yet.
+- The `+arc://` address form of section 8. Not in arc v0.12.1: the address form is being restored.
 
 **Out of scope:**
 
@@ -336,7 +337,79 @@ No manifest can name a kind that speaks for the citizen's identity, or that `arc
 
 ---
 
-## 8. Programs Are Agents
+## 8. The URI Scheme
+
+**Not in arc v0.12.1: the address form is being restored.** No command of `arc` reads these URIs today. A citizen calls a capability with `arc <name> <command>` or `arc call`, see section 7.
+
+ARC introduces a canonical URI taxonomy where the identity is the address and the scheme is the capability:
+
+```
+<protocol>+arc://<identity>[/<path>][?<opts>]
+```
+
+The identity can be a pubkey (hex), a name, or a `.arc` domain:
+
+```
+sql+arc://zim/main
+http+arc://9f8e7d6c.../api/users
+dm+arc://zim
+group+arc://devs.arc
+shell+arc://zim/python3
+llm+arc://zim/claude-3
+```
+
+### Canonical Schemes
+
+**Identity**
+```
+arc://zim                  raw connection
+arc://zim/info             capabilities manifest
+arc://zim/ping             liveness
+```
+
+**Data**
+```
+sql+arc://zim/db           SQLite
+pg+arc://zim/db            Postgres
+kv+arc://zim               key-value store
+fs+arc://zim/path          filesystem
+s3+arc://zim/bucket        object store
+```
+
+**Services**
+```
+http+arc://zim             HTTP
+ws+arc://zim/stream        WebSocket
+grpc+arc://zim/Svc/Method  gRPC
+tcp+arc://zim:port         raw TCP
+```
+
+**Compute**
+```
+shell+arc://zim            interactive shell
+shell+arc://zim/python3    named environment
+exec+arc://zim/cmd         single command
+container+arc://zim/image  container session
+wasm+arc://zim/module      WASM execution
+llm+arc://zim              LLM inference
+fn+arc://zim/handler       function invocation
+```
+
+**Messaging**
+```
+dm+arc://zim               direct message
+group+arc://devs.arc       group
+stream+arc://zim/events    event stream
+pub+arc://zim/topic        publish
+sub+arc://zim/topic        subscribe
+queue+arc://zim/jobs       message queue
+```
+
+Every scheme is an application running on the same network primitive. The network does not distinguish a database from a chat session from a sandboxed compute environment. They are all identities serving capabilities.
+
+---
+
+## 9. Programs Are Agents
 
 This is the shift that changes everything.
 
@@ -347,6 +420,15 @@ In ARC, a program is an agent. It has a keypair. It has an address. It can be fo
 Identity is what persists through change. A person remains themselves across decades of replaced cells; a program on ARC remains itself across replaced hardware, rewritten code, and migrated hosts — because the keypair persists. The agent that signs a message today is verifiably the same agent that signed one last year, on different silicon, in a different country, under a different operator. For the first time, software has continuity of self that does not depend on where it runs or who runs it.
 
 Continuity is the precondition of accountability. Debates about who is responsible when an agent transacts, errs, or causes harm all founder on the same missing fact: you cannot hold accountable what you cannot identify. Logs can be edited, IP addresses are recycled, API keys are passed around like office stationery. A signature is unforgeable testimony. ARC does not decide who *should* be responsible — that remains a human matter — but it makes the question answerable. Any future governance of autonomous systems needs attribution underneath it, and ARC supplies that.
+
+The same idea, in the address form of section 8. **Not in arc v0.12.1: the address form is being restored.**
+
+```
+sql+arc://9f8e7d6c...    a SQLite database with a keypair
+http+arc://zim           a REST API with a keypair
+llm+arc://model-agent    an LLM with a keypair
+shell+arc://sandbox-1    a sandboxed shell with a keypair
+```
 
 Three providers exist today. See [interface section 17](interface/SPEC.md).
 
@@ -374,7 +456,7 @@ A store-and-forward call does not need the machine to be awake at all. It waits 
 
 ---
 
-## 9. What Falls Out
+## 10. What Falls Out
 
 Because every participant is a keypair and every private datum is sealed, some things that traditionally need their own servers become manifests over the same primitives. Each one below is a manifest in [interface section 17](interface/SPEC.md). None needs a provider.
 
@@ -388,6 +470,8 @@ arc sync
 arc message inbox
 ```
 
+In the address form of section 8, `dm+arc://zim` names a direct message channel. **Not in arc v0.12.1: the address form is being restored.**
+
 A message goes to one recipient. NIP-17 allows several, and ARC refuses that today (interface section 19).
 
 ### A private journal, and private files
@@ -398,9 +482,21 @@ A journal page is a NIP-23 article inside a NIP-37 draft, sealed to its author's
 
 A board is a NIP-29 group. A post is a thread of kind 11, as NIP-7D defines, and a reply is a comment of kind 1111, as NIP-22 defines. The group's relay decides who may post, and its admins moderate. The posts of a board are public: the relay does not hide them from readers. See interface section 17.6.
 
+In the address form of section 8, `group+arc://devs.arc` names a group. **Not in arc v0.12.1: the address form is being restored.**
+
 ### Remote commands
 
 `exec` replaces the SSH workflow for many tasks: the caller's key is the login, the provider's grants are the list of who may run commands, and the machine needs no open port. `arc exec start` runs a script as a job, and `arc exec status` reads it later. See [exec](exec/SPEC.md).
+
+### Sandboxed compute (future work)
+
+In the address form of section 8, a compute provider serves `shell+arc://` or `container+arc://`. **Not in arc v0.12.1: the address form is being restored.** No such provider exists.
+
+```
+shell+arc://provider/python3    → isolated Python environment
+container+arc://provider/ubuntu → ephemeral container
+wasm+arc://provider/module      → WASM sandbox
+```
 
 ### Private compute (future work)
 
@@ -408,7 +504,7 @@ Compute whose operator cannot read the work, the data, or the results, needs har
 
 ---
 
-## 10. Relays
+## 11. Relays
 
 A relay stores and forwards events. ARC uses standard Nostr relays, so any relay that speaks NIP-01 can carry ARC events. A relay sees the one-time key of a gift wrap, the routing tag, the size, and the time of arrival. It does not see the author, the content, or the real time. See [delivery section 9](delivery/SPEC.md).
 
@@ -425,7 +521,7 @@ One public relay runs on Fly.io. [Deploy](DEPLOY.md) describes how to run anothe
 
 ---
 
-## 11. Security Model
+## 12. Security Model
 
 ### Threat model
 
@@ -478,7 +574,7 @@ The capability layer adds its own rules. See [interface section 12](interface/SP
 
 ---
 
-## 12. The Binary
+## 13. The Binary
 
 ARC ships as one static binary for each command — no runtime, no Docker, no library. `arc` is the one program. Each provider has its own binary. Each release carries one tarball for each platform. See [Deploy](DEPLOY.md).
 
@@ -515,7 +611,7 @@ There is no second server to run, and no tool registry to keep. The manifest say
 
 ---
 
-## 13. What This Is Not
+## 14. What This Is Not
 
 **ARC is not a blockchain.** It has no token, no consensus, and no chain. Running ARC does not require holding any cryptocurrency.
 
@@ -523,13 +619,13 @@ There is no second server to run, and no tool registry to keep. The manifest say
 
 **ARC is not an AI framework.** It does not define how agents think, decide, or act. It defines how they communicate, find each other, and prove who they are. The agent logic is yours.
 
-**ARC is not a messaging app.** Direct messages, the journal, and the board are manifests over the same primitives. They are consequences of the design, not its purpose.
+**ARC is not a messaging app.** Direct messages, the journal, and the board are manifests over the same primitives. `dm+arc://` and `group+arc://` name them as addresses, see section 8. Not in arc v0.12.1: the address form is being restored. They are consequences of the design, not its purpose.
 
 **ARC is not owned by anyone.** The specifications are open. The binary is open source. No company controls the relays, the names, or the identity layer.
 
 ---
 
-## 14. What This Is
+## 15. What This Is
 
 The internet has three foundational primitives: packets (IP), names (DNS), and transport security (TLS). All three were designed before the web existed. All three show their age. None of them have a coherent answer for identity, and all of them assume a live path.
 
@@ -577,6 +673,7 @@ ARC is a place for agents to live.
 | Courier | A node that carries a private event for another citizen, without knowing who it is. |
 | Route tag | A short tag that names the recipient of a private event for one day. |
 | Relay | A server that stores and forwards Nostr events. |
+| Arc scheme | A URI of the form `<proto>+arc://<identity>` that names a capability. Not in arc v0.12.1: the address form is being restored. |
 | Capability | A set of commands that a manifest declares, announced by its author. |
 | Manifest | The JSON document that defines a capability. |
 | Provider | A citizen that answers calls to a capability. |
