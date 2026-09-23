@@ -1,6 +1,6 @@
 # ARC: A Network for Agents
 
-**Version 0.1 — Draft**
+**Version 0.3 — Draft, for arc v0.12**
 
 ---
 
@@ -12,37 +12,48 @@
 
 ## Abstract
 
-We propose ARC — a keypair-first, encrypted, federated network protocol that gives programs, AI agents, and humans a universal identity and communication primitive. ARC is not built on top of the existing internet's trust model. It replaces it. Every participant is a cryptographic keypair. Every message is signed. Every connection is end-to-end encrypted. Discovery, routing, and naming are decentralized across pluggable trust anchors — no single blockchain, company, or government owns the network. ARC is infrastructure. It should outlast any individual provider, any political regime, and any technological cycle.
+We propose ARC — a keypair-first network that gives programs, AI agents, and humans one identity and one way to communicate. Every participant is a cryptographic key pair. Every datum is a signed event. Every private datum is sealed to its recipient, so the machines that carry it cannot read it. ARC moves these events over any transport that can carry them: a relay on the internet, a folder on a USB stick, or a third machine that passes by. No company, chain, or government owns the network. ARC is infrastructure. It should outlast any individual provider, any political regime, and any technological cycle.
+
+ARC does not define a new wire format. Its unit is the Nostr event, and it uses the Nostr standards (NIPs) wherever one fits. A Nostr client can open ARC direct messages, board posts, and journal pages. ARC adds what Nostr does not have: delivery without a live path, and capabilities that programs announce and people install as commands.
 
 ---
 
 ## Status
 
-This whitepaper describes both the current implementation and the design intent of ARC. The following is a summary of where things stand.
+This whitepaper describes the current implementation of ARC and marks each part that is design only. The specifications are the source of truth:
 
-**Implemented:**
-- Identity system — Ed25519 keypairs, seeds, keyrings, petnames, X25519 key exchange
-- Control plane — pluggable interface with local file-backed provider
-- Session establishment — ECDH, HKDF-SHA256, ChaCha20-Poly1305 encryption
-- Packet format — signed headers, encrypted payloads, replay prevention
-- Relay mesh — TCP relay nodes with route sharding and telemetry
-- Agent model — a keypair is an agent, with a handler and a capability system
-- CLI — key management, publish, resolve, serve, relay, discover, trust, tools, update
-- Capability system — manifests, signed packages, discovery, provider bundles
-- Protocol request client — `<scheme>+arc://<provider-key>/<resource>` through
-  relays or explicit local mode, including a real SQLite query provider;
-  see [transport scope](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/SPEC.md)
+- [The delivery layer](delivery/SPEC.md): events, private events, transports, sync, couriers, and calls.
+- [The capability interface](interface/SPEC.md): manifests, installed commands, and data that a citizen keeps for itself.
+- [Updates](updates/SPEC.md): signed release channels.
+- [Exec](exec/SPEC.md): remote commands, and machines that pause and wake.
 
-**Not yet implemented:**
-- TUN interface (`arc0`), `.arc` DNS resolver, `10.64.0.0/10` address space
-- Hole punching for a direct connection (the policy path is implemented)
-- Storage backends (SQLite, Postgres, S3)
-- Blockchain control plane adapters (Hedera, Ethereum, Solana, Nostr)
-- Native protocol bridges and continuous byte streams (Git helpers, browser
-  proxies, etc.); the implemented URI client currently uses bounded request/reply
-- Group messaging
+**Built (v0.12):**
 
-Sections describing unimplemented features represent design intent.
+- Identity — secp256k1 key pairs with BIP-340 signatures, petnames, one directory for each identity, keys sealed with a passphrase (NIP-49), and remote signers (NIP-46). See [delivery section 5](delivery/SPEC.md) and [interface section 13](interface/SPEC.md).
+- The unit — signed events (NIP-01) and private events: a rumor, in a seal, in a gift wrap (NIP-44, NIP-59). See delivery section 6.
+- Two transports — relays over WebSocket, and a directory: a USB stick, a shared folder, or a disk that a person carries. See delivery section 7.
+- Delivery — the store, the router, the outbox, acknowledgements, route tags, couriers on a directory, and sync with Negentropy (NIP-77). See delivery sections 8 and 10.
+- Capabilities — announcements of kind 30272, discovery, install with consent, installed commands, and calls of kinds 3272 and 3273, live or store-and-forward. See delivery section 11 and interface sections 4 to 14.
+- Data capabilities — direct messages (NIP-17), a journal and files sealed to their author (NIP-37), and a board on a NIP-29 group. See interface section 17.
+- Service providers — `exec`, `sqlite`, and `releases`, each one a separate program that `arc serve` runs. See interface section 17.
+- Wake — a hook on the caller wakes a machine that pauses before a live call. See [exec section 10](exec/SPEC.md).
+- A relay — `arc relay serve`, built on khatru, with NIP-42 authentication, NIP-77 sync, sealed data served only to its author, and write limits. See delivery section 12 and [Deploy](DEPLOY.md).
+- Updates — `arc update` replaces the program with a release that a publisher signed with a Nostr key. See [updates](updates/SPEC.md).
+
+**Designed, not built:**
+
+- Bluetooth LE on Linux, the compact form of an event, fragments, the mesh relay, copy budgets for couriers on a mesh link, and Noise sessions on live mesh links. This is phase 5 of [delivery section 15](delivery/SPEC.md).
+- LoRa through a local Reticulum instance. This is phase 6 of delivery section 15.
+- A full mesh node on macOS, a TLS direct carrier for live calls, and a bridge to bitchat direct messages. See delivery section 17.
+- Asynchronous job results in the mailbox, a wake URL, and signed dormant records. These are phases 3b and 4 of [exec section 18](exec/SPEC.md).
+- Private environments: compute whose operator cannot read the work. The [private environment contract](private-environment/SPEC.md) is a proposal only.
+- An official release channel. `arc update` works, but no publisher runs a channel yet.
+
+**Out of scope:**
+
+- A virtual network interface, IP addresses derived from keys, and a `.arc` DNS zone.
+- Names anchored on a blockchain, and a token of any kind.
+- Metadata privacy against a relay that knows the recipient's key, and onion routing.
 
 ---
 
@@ -70,6 +81,8 @@ The internet has no answer for this. There is no standard for agent identity. Th
 
 The problem is a **missing primitive**, and no amount of tooling fills it.
 
+There is a second problem under the first. The internet assumes that it is there. Every protocol above it expects a live path between two machines, now. When the path fails — a cut cable, a blocked country, a laptop on a train, a machine that sleeps to save money — the conversation fails with it. A participant whose existence depends on a live path does not own its existence either.
+
 ---
 
 ## 2. The Insight
@@ -88,21 +101,23 @@ The solution is to make identity the address.
 
 A cryptographic keypair is the most fundamental trust primitive in computer science. It requires no registration authority. It can be generated offline. It cannot be forged. It cannot be issued or recalled by a third party. It is mathematically self-sovereign.
 
-It is worth pausing on how unusual this is. Every credential the mainstream internet runs on is a *grant*: a passport granted by a state, an account granted by a company, a certificate granted by an authority. What is granted can be suspended, revoked, or quietly repriced — the grantor remains forever in the relationship. A keypair is a *fact*. No one issues it, so no one can recall it. Self-issued keys have existed at the margins for decades — PGP, SSH, Bitcoin — but they have never been the address. Its validity rests on the difficulty of reversing certain mathematical operations — a foundation that does not take sides, does not change terms of service, and does not go out of business.
+It is worth pausing on how unusual this is. Every credential the mainstream internet runs on is a *grant*: a passport granted by a state, an account granted by a company, a certificate granted by an authority. What is granted can be suspended, revoked, or quietly repriced — the grantor remains forever in the relationship. A keypair is a *fact*. No one issues it, so no one can recall it. Self-issued keys have existed at the margins for decades — PGP, SSH, Bitcoin, Nostr — but they have rarely been the address. Its validity rests on the difficulty of reversing certain mathematical operations — a foundation that does not take sides, does not change terms of service, and does not go out of business.
 
 This is the quiet substitution at the heart of ARC: trust moves from institutions to mathematics. Institutions are not the enemy. But an identity that depends on an institution is only as durable as that institution's interest in you.
 
-If the address of every participant on a network is derived from their public key, then:
+If the address of every participant on a network is its public key, then:
 
 - Identity requires no registration
 - Authentication requires no password
 - Encryption requires no certificate
-- Discovery requires only a consistent ledger of public keys
-- Access control becomes a statement about cryptographic identities, not IP ranges
+- Discovery requires only signed announcements that anyone can check
+- Access control becomes a statement about public keys, not IP ranges
 
-The idea is old. Cryptographic literature has understood it for decades. What has been missing is a practical, open, interoperable protocol that builds a complete network stack on this foundation — one that any developer can use, any infrastructure can run, and any agent can call home.
+A second consequence follows, and it answers the second problem. If every datum is signed by its author, and every private datum is sealed to its recipient, then it does not matter who carries the datum, or how late it arrives. A relay, a USB stick, or a stranger's laptop can carry it. None of them can read it or change it. The path stops being a place of trust. It becomes a place of transport only.
 
-ARC is that protocol.
+The idea is old. Cryptographic literature has understood it for decades. What has been missing is a practical, open, interoperable system that builds identity, delivery, and services on this foundation — one that any developer can use, any infrastructure can run, and any agent can call home.
+
+ARC is that system.
 
 ---
 
@@ -115,337 +130,209 @@ ARC is built on a single axiom:
 Not an account. Not a username. Not an IP address. A keypair. From this one axiom, everything else follows:
 
 ```
-keypair → identity       your pubkey hash is your address
-keypair → authentication sign a message to prove you are you
-keypair → encryption     ECDH derives a shared secret with anyone
-keypair → naming         own a name by anchoring it to your pubkey
-keypair → access control grant access to a pubkey, not a password
+keypair → identity       your public key is your address
+keypair → authentication every event carries your signature
+keypair → encryption     NIP-44 derives a shared key with anyone
+keypair → naming         a petname follows from your key; other names point at it
+keypair → access control grant access to a public key, not a password
 keypair → audit          every action is signed, unforgeable, attributable
 ```
 
-The seed is the identity. Generate a seed, derive a keypair, and you exist on the network. No signup. No approval. No fee. No permission.
+The secret key is the identity. Generate a key, and you exist on the network. No signup. No approval. No fee. No permission.
 
 Notice what has been inverted. On today's internet, permission precedes existence: you exist on a platform because the platform agreed to host you, and you persist at its pleasure. On ARC, existence precedes permission. A participant simply *is* — and everything social, everything involving others, is negotiated afterward, between equals, as statements about keys. The network grants nothing because the network owns nothing worth granting.
 
-An axiom is also a discipline. Choosing one means refusing to smuggle in exceptions when they would be convenient — no administrative backdoor, no master key, no "trusted" tier of participant at the transport layer. Trust does re-enter above it: human-readable names must be anchored somewhere, and whoever holds that anchor is trusted for that name. ARC does not pretend otherwise. It keeps the anchor pluggable, keeps the keypair underneath it, and lets the holder move. Every feature of ARC must be derivable from the axiom or it does not belong in the protocol. This is why the protocol stays small. Systems decay precisely at the points where their designers granted themselves exceptions.
+An axiom is also a discipline. Choosing one means refusing to smuggle in exceptions when they would be convenient — no administrative backdoor, no master key, no "trusted" tier of participant in the delivery layer. Trust does re-enter above it: a human-readable name must be anchored somewhere, and whoever holds that anchor is trusted for that name. ARC does not pretend otherwise. It keeps the key underneath every name, and lets the holder move. Every feature of ARC must be derivable from the axiom or it does not belong. This is why ARC stays small. Systems decay precisely at the points where their designers granted themselves exceptions.
 
-Sovereignty has weight, and honesty requires naming it. There is no recovery desk on ARC. Lose the seed and no customer-service agent, court order, or sympathetic administrator can restore it — because the same absence of authority that makes the identity unconfiscatable makes it unrecoverable. That is the price of the design, paid knowingly. The protocol's answer is not to reintroduce an authority but to make custody cheap: seeds can be backed up, split, escrowed among parties *the holder* chooses. Responsibility is delegated by consent, never assumed by default.
+Sovereignty has weight, and honesty requires naming it. There is no recovery desk on ARC. Lose the key and no customer-service agent, court order, or sympathetic administrator can restore it — because the same absence of authority that makes the identity unconfiscatable makes it unrecoverable. That is the price of the design, paid knowingly. ARC's answer is not to reintroduce an authority but to make custody practical: a key file can be backed up, sealed with a passphrase, or kept in a remote signer that its owner controls, so the machine that acts never holds the key. Responsibility is delegated by consent, never assumed by default.
 
 ---
 
 ## 4. The Architecture
 
-ARC is composed of four independent, pluggable layers. Each layer has a defined interface. Each layer can be swapped without affecting the others. No layer is owned by ARC.
+ARC has four layers. A layer uses only the layer below it. The capability layer never selects a transport. The delivery layer never reads a private payload. See [delivery section 4](delivery/SPEC.md).
 
-### Layer 1 — Control Plane
-
-The control plane is the global truth layer. It answers three questions:
-
-1. Who is this identity? — resolve a name or pubkey to a verified public key
-2. Where are they? — which node is currently serving this agent
-3. Is this still valid? — has this key been revoked
-
-The control plane is **intentionally not part of ARC**. ARC defines the interface. Any decentralized system that satisfies the interface can be a control plane provider:
-
-| Provider | Mechanism |
-|---|---|
-| Hedera | HCS for registry events, HTS for name ownership |
-| Ethereum | ENS for names, smart contracts for registry |
-| Solana | High throughput registry, Metaplex NFTs for names |
-| Cosmos | Interchain identity via IBC |
-| Nostr | Keypair-native, lightweight, no tokens required |
-| Local | In-memory, for development and testing |
-| Custom | Any system implementing the behaviour |
-
-A network running on Hedera today can migrate to Ethereum tomorrow. Agents keep their identities. URIs keep working. Code changes nothing. The control plane is a choice, not a dependency.
-
-**The control plane interface:**
-
-```
-publish_identity(keypair, capabilities) → ref
-resolve_agent(name)                     → pubkey
-revoke_identity(keypair, reason)        → ref
-subscribe(topic, handler)               → pid
+```text
+capability layer    manifests · install · providers · calls        ARC
+delivery layer      store · router · outbox · sync · couriers      ARC (design from bitchat)
+unit                event, gift wrap (NIP-01, NIP-44, NIP-59)      Nostr
+transports          relay | file | Bluetooth LE | LoRa             Nostr for relays, ARC for the rest
 ```
 
-This is the entirety of what ARC requires from a control plane. Four operations. Any system that implements these four operations is a valid ARC control plane. The control plane has no part in key exchange: a peer computes the X25519 key of an agent from its Ed25519 public key.
+The delivery design follows bitchat, whose iOS source is in the public domain. ARC ports the design to Go. It does not share bitchat's wire format.
 
-### Layer 2 — Data Plane
+### Transports
 
-The data plane is the live routing layer. It handles message delivery between agents, session key management, presence, and relay. It is written in Go, and it ships as one static binary with no runtime beside it.
+A transport moves events between two nodes. Each transport reports whether it is live, the largest frame that it can carry, whether it can send to one named node, and its cost. See delivery section 7.
 
-A relay holds one goroutine for each connection and one for each route. A connection that fails takes nothing else down: the relay drops its routes and keeps serving every other citizen. Nothing in the routing path is shared mutable state that one citizen can corrupt for another.
+| Transport | State | What it is |
+|---|---|---|
+| relay | built | A Nostr relay over WebSocket, as NIP-01 defines. |
+| file | built | A directory of JSON lines: a USB stick, a shared folder, a disk. |
+| Bluetooth LE | designed, phase 5 | A mesh of nearby nodes. Linux first. |
+| LoRa | designed, phase 6 | Radio through a local Reticulum instance. |
 
-An agent is not a process of the runtime. An agent is a keypair. That is the whole identity model, and it is why an agent can move between machines, outlive the program that served it, and be reached by anyone who knows its public key.
+### The unit
 
-The data plane is chain-agnostic. The control plane resolves identities; the packets of a session carry everything that its key needs. All routing is pure message passing. The data plane does not know which chain resolved the peer. It does not care.
+Every datum is a signed Nostr event. A private datum is a gift wrap around a seal around a rumor. Section 6 describes both.
 
-**Scale:**
+### The delivery layer
 
-```
-Single node      ~1M concurrent agents    ~10M messages/sec
-Single cluster   ~5M agents               ~50M messages/sec
-Global           Billions of agents       Control plane cached aggressively
-```
+Each node keeps a store: the events that it holds. The store is the source of truth for the node. Transports write into it. The capability layer reads from it. The store refuses every event that fails verification, and keeps one copy of each event, by ID. See delivery section 8.
 
-### Layer 3 — Network Layer
+The router gets each event to its recipient over every path that exists now. The outbox keeps what the router cannot deliver yet. Sync reconciles two stores when two nodes meet. Couriers carry sealed events for citizens that they cannot identify. Section 6 describes each one.
 
-The network layer is designed to make ARC transparent to existing software. The end state is a virtual network interface (`arc0`) at the OS level, where all traffic to ARC addresses is intercepted, wrapped with cryptographic identity, and routed via arcnet — making `curl`, `psql`, `ssh`, and every other network tool work without knowing they are talking to ARC. This layer is not yet implemented; traffic currently flows through the relay mesh via the data plane.
+### The capability layer
 
-Every packet on ARC carries:
-
-```
-src_pubkey    who sent this — unforgeable, Ed25519 signed
-dst_pubkey    who it's for
-session_id    established session reference
-sequence      replay attack prevention
-timestamp     freshness check
-signature     signs header + payload hash
-payload       encrypted, ChaCha20-Poly1305
-```
-
-The source IP is irrelevant. The pubkey is the identity. There is no way to send a packet as someone else. There is no way to receive a packet without knowing who sent it.
-
-The design reserves the `10.64.0.0/10` address space for ARC. IPs would be deterministically derived from pubkeys — the same pubkey always maps to the same IP, globally, regardless of which control plane registered it. A local DNS resolver for the `.arc` TLD would complete the picture:
-
-```
-zim.arc        → resolves via control plane → 10.64.x.x
-9f8e7d6c.arc   → direct pubkey resolution  → 10.64.x.x
-```
-
-Neither the TUN interface, the IP mapping, nor the `.arc` resolver are implemented yet.
-
-### Layer 4 — Storage Layer
-
-The storage layer holds everything that needs to persist but does not belong on a chain. Messages, receipts, group state, thread history. It is designed to be pluggable:
-
-```
-SQLite    single node, local, development
-Postgres  multi-node, production
-S3        archival, large payloads
-Custom    any system implementing the interface
-```
-
-Nothing that goes through the storage layer is stored in plaintext. The control plane never sees message content. Relay nodes never see message content. The storage layer sees only ciphertext.
-
-The storage layer is currently a stub. A file-based mailbox exists in the data plane for offline message delivery, but no configurable storage backends are implemented yet.
+A capability is a set of commands that a manifest declares. A provider announces the manifest as a signed event. A citizen installs it, and the commands appear in `arc`. Section 7 describes this layer.
 
 ---
 
 ## 5. Identity in Depth
 
-### The Seed
+### The key
 
-```
-seed (entropy)
-  → Ed25519 keypair
-      private key: kept secret, never leaves the device
-      public key:  your address on the network
+```text
+secret key (32 random bytes)
+  → secp256k1 key pair
+      secret key: kept by its owner, or by a remote signer
+      public key: 32 bytes, your address on the network
 
-agent_id = Blake3(public_key)
-```
-
-The seed is everything. Lose it, lose your identity. Keep it, keep your identity forever — across machines, across chains, across years. The same seed produces the same keypair on any device, making identities inherently portable.
-
-### The Keyring
-
-ARC stores secret key material in the user's key store. A project selects an
-existing identity by name; it does not carry a private key.
-
-```
-secret key store     ~/.config/arc/keys/<petname>.toml
-env override         ARC_KEY=<petname-or-unambiguous-prefix>
-directory selector   ./arc.key
-global selector      ~/.config/arc/default.key
+signature = BIP-340 Schnorr, as NIP-01 requires
+petname   = two words and a suffix from Blake3(public key)
 ```
 
-The environment selector wins. Otherwise ARC reads `arc.key` in the exact
-current working directory, then the global selector. It never searches parent
-directories. An absent selector falls through; an empty, invalid, unknown, or
-ambiguous explicit selector fails. The selector contains only an existing
-petname or unambiguous prefix. See [identity selection](https://github.com/gezibash/arc/blob/v0.10.0/docs/identity/SPEC.md).
+A citizen is one secp256k1 key pair. The public key is its address: 64 lower-case hex characters, or an `npub` as NIP-19 defines. A citizen uses one key on every transport. See [delivery section 5](delivery/SPEC.md).
 
-### Named Identities
+A petname follows from the public key, for example `bold-einstein-3a7f0bc1`. The same key always gives the same petname, on every machine. A petname is a convenience for people. The key stays the address.
 
-A pubkey is permanent but not human-readable. ARC supports human-readable names anchored to ownership primitives on the control plane:
+### Where a key lives
 
-```
-Hedera    → NFT (HIP-412)           "zim" owns token 0.0.xxxxx/1
-Ethereum  → ENS domain              zim.eth
-Solana    → Metaplex NFT            mint address
-Nostr     → NIP-05 identifier       zim@domain
-```
+A key comes from one of three sources, as NIP-19, NIP-49, and NIP-46 define. See [interface section 13](interface/SPEC.md).
 
-The name record is the **ownership anchor** — proves who owns the name, contains the current pubkey, transferable like any asset. Live state (current node, rotated keys) is published separately and cheaply. The name never needs to change. Only the pointer does.
+| Source | Meaning |
+|---|---|
+| `nsec` | The secret key, in a file that only its owner can read. |
+| `ncryptsec` | The secret key, encrypted with a passphrase. |
+| `bunker://` | A remote signer. The machine that acts never holds the secret key. |
 
-### Key Rotation
+The home of `arc` is `~/.config/arc`. Each identity has its own directory, `~/.config/arc/citizens/<name>`, with its key, store, relays, and installs. The first identity is the default. `arc keys use <name>` changes the default. `--key <name>` or `ARC_KEY` picks another identity for one command. `--home` or `ARC_HOME` names another home.
 
-Keys can be rotated without changing identity. The name record is updated on the control plane. Old sessions continue with old keys. New sessions use new keys. Compromised keys are published to the revocation topic — an immutable record that propagates to all nodes.
+`arc keys bunker` serves a key as a remote signer. An agent then signs through a signer that its owner controls, and the owner decides which kinds of event the agent can sign.
+
+### Names
+
+A public key is permanent but not human-readable. ARC resolves these forms to a public key wherever a command takes a citizen: 64 hex characters, an `npub` or `nprofile`, a NIP-05 name, a petname of this machine, or the name of an installed capability. See interface section 5. ARC shows a citizen by the name in their profile (kind 0) when it holds one, and by the petname otherwise.
+
+ARC has no global registry of names. A NIP-05 name is anchored on a web domain, so whoever controls the domain is trusted for that name. The key under the name stays the identity.
+
+### Key loss and replacement
+
+Nothing recovers a lost key. See delivery section 13. ARC defines no key rotation. A new key is a new citizen: it installs its capabilities again, and its contacts trust it again.
 
 ---
 
 ## 6. The Protocol
 
-### Session Establishment
+### Events
 
-```
-1. Agent A wants to contact Agent B ("zim")
+Every datum that ARC moves is an event, as NIP-01 defines. A node verifies every event before it stores, forwards, or shows it. It computes the event ID from the serialized event, checks that the ID matches, and checks the Schnorr signature over the ID. If a check fails, the node drops the event. See [delivery section 6.1](delivery/SPEC.md).
 
-2. Resolution
-   A queries control plane: resolve("zim")
-   → returns B's current pubkey
+An event has no freshness window. It stays valid until its `expiration` tag passes, as NIP-40 defines. The source of an event therefore does not matter: a relay, a stick, or a stranger. The signature decides.
 
-3. Key Agreement (in the packets, session version 2)
-   A computes B's X25519 public key from B's Ed25519 public key
-   A generates an ephemeral X25519 keypair for this session
-   Both compute: shared_secret = X25519(A_eph_priv, B_x25519_pub)
-                               = X25519(B_x25519_priv, A_eph_pub)
-   session_key = HKDF-SHA256(shared_secret, salt: A_eph_pub,
-                             info: "arc-session-v2")
-   Every packet header of the session carries A_eph_pub (field ek)
+### Private events
 
-4. Session Active
-   All subsequent messages encrypted with session_key
-   Routed directly via data plane
-   Control plane no longer involved
-```
-
-The control plane is only on the path during resolution. The key agreement needs no message outside the session's own packets. This means:
-
-- Control plane latency does not affect message latency
-- Control plane downtime does not break active sessions
-- The control plane never sees message content, ever
-
-### Packet Format
-
-```
-[4 bytes]   header_length
-[N bytes]   header (JSON)
-  {
-    src:    base64(src_pubkey),
-    dst:    base64(dst_pubkey),
-    sid:    session_id,
-    seq:    sequence_number,
-    ts:     unix_ms,
-    ph:     base64(SHA-256(payload)),
-    ek:     base64(initiator_ephemeral_x25519_pubkey)
-  }
-[64 bytes]  Ed25519 signature over header
-[N bytes]   ChaCha20-Poly1305 encrypted payload
-```
-
-### Promotion — Relay to Direct
-
-Remote ARC conversations start through relays. When both endpoints explicitly
-allow it, a verified direct path may carry application traffic while relays
-continue discovery and coordination. The identity-addressed URI stays unchanged:
+A private event follows NIP-59. See delivery section 6.2.
 
 ```text
-sqlite+arc://<provider-public-key>/main
-
-  relay only (default)  -> application traffic stays on ARC relays
-  allow direct         -> matching local rules and mutual consent over relays
-                       -> verify direct reachability and peer identities
-                       -> direct request/reply within a finite lease
+gift wrap (kind 1059 or 21059)   signed by a one-time key
+  └─ seal (kind 13)              signed by the author, encrypted to the recipient with NIP-44
+       └─ rumor                  the real content, the real time, the real author; unsigned
 ```
 
-Resilience is the first objective of [path selection](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/PATHS.md). Either
-citizen can dial a reachable peer, regardless of which one provides the service.
-ARC keeps a healthy route while checking alternatives; a failed direct attempt
-must not interrupt working relay communication.
+The recipient checks that the author of the seal is the author of the rumor, and drops the event if they differ. The author moves the time of the seal and the gift wrap up to two days into the past, so the real time stays inside the rumor. A gift wrap of kind 1059 is kept until it expires. A gift wrap of kind 21059 is live: nodes never keep it.
 
-If relay access fails, an existing healthy direct connection can continue within
-its approved scope until the current permission expires while ARC restores relay
-access. Direct traffic cannot renew that permission or authorize a replacement
-connection. Expiry stops direct sends and admission even if the connection still
-works; renewal requires an authenticated exchange through relays.
+### Routing tags and route tags
 
-The first direct profile is an explicit `--direct-policy` setting on both the
-provider and citizen. Consent includes address disclosure, is scoped to the peer
-and service, and expires unless renewed through relays. Changing paths preserves
-ARC authentication and provider grants. In-flight requests stay on their original
-path; a lost response can leave a write's outcome unknown and must never cause
-automatic resubmission. Recovery after a direct connection fails or its permission
-ends requires a usable, authorized relay route and does not guarantee uninterrupted
-service.
+A gift wrap names its recipient with one tag. See delivery sections 6.3 and 6.4.
 
-The supported initial profile requires a reachable listener and literal,
-operator-approved addresses. It does not configure routers, perform NAT traversal,
-rank routes automatically, resume byte streams, or transport arbitrary protocols.
-See [direct request/reply](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/DIRECT.md) for the policy file and
-[connection lifecycle](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/PROMOTION.md) for state transitions and future
-work. It supersedes the earlier proposal to remove `+arc` or reuse a session key
-without a fresh path authentication step.
+- **Relay form.** A `p` tag with the recipient's public key. Standard Nostr relays and clients read it. Direct messages use it, so they reach any NIP-17 client.
+- **Courier form.** A `w` tag with a route tag. A route tag is the first 16 bytes of an HMAC-SHA256, with the recipient's public key as the key, over a fixed label and the UTC date. The tag changes each day, so a courier cannot link two envelopes to one recipient across days. A route tag hides the recipient only from a courier that does not already know their key.
+
+### Delivery
+
+The router takes each event and sends it over every path that exists now: a live transport that reaches the recipient, and the recipient's relays. If no path delivers now, the event goes to the outbox. The receiver keeps one copy by ID, so a second path costs bytes, not correctness. See delivery section 10.1.
+
+The outbox keeps each event until the recipient acknowledges it, for at most 7 days. An acknowledgement is a private event whose rumor has kind 3274. After 7 days, the outbox shows the event as expired. The failure never stays silent. See delivery section 10.2.
+
+When two nodes meet, they reconcile their stores with Negentropy, as NIP-77 wraps it. A relay without NIP-77 gets a plain query with `since`. A directory is reconciled by event ID. `arc sync` syncs with each relay. `arc sync --dir <path>` syncs with a directory. See delivery section 10.3.
+
+### Couriers
+
+When no transport can deliver a private event now, other nodes carry its courier form. A courier cannot read what it carries. It knows only the route tag. See delivery section 10.4.
+
+On a directory, a hop limit bounds the spread. The sender writes the event with a hop limit of 3. Each node that carries it writes a limit one lower, and reads at most 3, whatever the file says. A courier keeps at most 40 carried events. This is built.
+
+On a mesh link, a copy budget bounds the spread: at most 3 couriers for each event, and a budget that the couriers split when they meet. This is designed for phase 5, and is not built.
+
+The worst case is the design case. A message can reach a recipient who is offline, through a third machine that carries a USB stick, with no internet on any side. Phase 2 of delivery section 15 proves it.
+
+### Calls
+
+A call is a private event. The request is a rumor of kind 3272. The reply is a rumor of kind 3273 that names the request with an `e` tag. See delivery section 11.4.
+
+| Class | Gift wrap | Behaviour |
+|---|---|---|
+| live | 21059 | The router needs a live path now. If none exists, the call fails at once. |
+| store and forward | 1059 | The call travels on any transport, however late. The reply returns the same way. |
+
+A provider answers each request once, by ID. It refuses a live request that is more than 5 minutes old. A store-and-forward request has no window, because it can travel for days. On a local relay, a live call to `exec` takes about 10 ms for the round trip (delivery section 15).
+
+`arc call <provider> <body>` sends one request. With `--later`, or with no relay, the call travels like a message, and `arc call results` shows the reply.
 
 ---
 
-## 7. The URI Scheme
+## 7. Capabilities
 
-ARC introduces a canonical URI taxonomy where the identity is the address and the scheme is the capability:
+A capability tells `arc` which commands it adds, and what each command does. The capability says this in a manifest of JSON. The manifest names primitives, and `arc` runs them. The manifest holds no code. A provider therefore cannot run code on the caller's machine. See [interface section 1](interface/SPEC.md).
 
-```
-<protocol>+arc://<identity>[/<path>][?<opts>]
-```
+### Two shapes
 
-The identity can be a pubkey (hex), a name, or a `.arc` domain:
+| Shape | What answers | Examples |
+|---|---|---|
+| service | A provider program answers calls. | exec, sqlite, releases |
+| data | Nobody answers. The citizen writes events and reads them. | journal, direct messages, board, files |
 
-```
-sql+arc://zim/main
-http+arc://9f8e7d6c.../api/users
-dm+arc://zim
-group+arc://devs.arc
-shell+arc://zim/python3
-llm+arc://zim/claude-3
-```
+A data capability has no provider. Its author still signs its announcement, and a citizen installs it by trusting that author. See interface section 2.
 
-### Canonical Schemes
+### Announce, discover, install
 
-**Identity**
-```
-arc://zim                  raw connection
-arc://zim/info             capabilities manifest
-arc://zim/ping             liveness
-```
+A provider announces a capability with an addressable event of kind 30272. The `d` tag is the capability ID, and the content is the manifest. The signature is the authorship of the manifest. A new version replaces the old one. See delivery section 11.1.
 
-**Data**
-```
-sql+arc://zim/db           SQLite
-pg+arc://zim/db            Postgres
-kv+arc://zim               key-value store
-fs+arc://zim/path          filesystem
-s3+arc://zim/bucket        object store
-```
+`arc discover <term>` reads announcements from the store and from relays. `arc install <provider>` reads the announcement, verifies it, and shows what the capability can do: its author, its shape, each kind of event that it publishes, and where each kind goes. The citizen consents once. See interface sections 12 and 14.
 
-**Services**
-```
-http+arc://zim             HTTP
-ws+arc://zim/stream        WebSocket
-grpc+arc://zim/Svc/Method  gRPC
-tcp+arc://zim:port         raw TCP
-```
+After the install, the commands of the capability appear in `arc`: `arc <name> <command>`. `arc help <name>` lists them. If a new version asks for more — a new kind, a kind that more people can see, or another group relay — `arc` stops each command of the capability until the citizen installs it again.
 
-**Compute**
-```
-shell+arc://zim            interactive shell
-shell+arc://zim/python3    named environment
-exec+arc://zim/cmd         single command
-container+arc://zim/image  container session
-wasm+arc://zim/module      WASM execution
-llm+arc://zim              LLM inference
-fn+arc://zim/handler       function invocation
-```
+### Visibility
 
-**Messaging**
-```
-dm+arc://zim               direct message
-group+arc://devs.arc       group
-stream+arc://zim/events    event stream
-pub+arc://zim/topic        publish
-sub+arc://zim/topic        subscribe
-queue+arc://zim/jobs       message queue
-```
+Each kind of event in a manifest has a visibility. The visibility decides the NIP that carries the event, and where it goes. A manifest never names relays. See interface section 4.1.
 
-Every scheme is an application running on the same network primitive. The network does not distinguish a database from a chat session from a sandboxed compute environment. They are all identities serving capabilities.
+| Visibility | Carried as | Goes to |
+|---|---|---|
+| `public` | The event itself. | The citizen's relays. |
+| `sealed` | A NIP-37 draft, sealed to the citizen's own key. | The citizen's private relay list, kind 10013. |
+| `private` | A rumor in a gift wrap. | Each recipient's NIP-17 relay list, kind 10050, and couriers. |
+| `group` | The event, with the tag of a NIP-29 group. | The relay of the group. |
+
+### Actions and output
+
+Each command has one action: `call`, `publish`, `delete`, `query`, or `watch`. Arguments fill templates in the action. A keyed value names something without revealing it: an HMAC with a key that only the citizen can derive, specific to one capability. See interface sections 5 to 7.
+
+The output of a command passes through a fixed pipeline: `open`, `join`, `where`, `latest`, `rank`, `thread`, `sort` and `limit`, `tail`, `save`, `format`, and `exit`. `exit` sets the exit status of the command from its first record, so `arc exec run` exits with the code of the remote command. `--json` writes each record as one line of JSON, for agents. See interface sections 9 and 11.
+
+### Reserved kinds
+
+No manifest can name a kind that speaks for the citizen's identity, or that `arc` makes itself: profiles, deletions, seals and gift wraps, drafts, calls, relay lists, zaps, remote signing, and the others that interface section 12 lists. A manifest that names one does not install.
 
 ---
 
@@ -455,214 +342,214 @@ This is the shift that changes everything.
 
 In traditional computing, a program is a process running on a machine. It has no identity beyond its PID. It has no address beyond a port. It has no way to find other programs except through configuration, service discovery infrastructure, or hardcoded addresses.
 
-In ARC, a program is an agent. It has a keypair. It has an address. It can be found by name. It can initiate connections. It can receive them. It can be audited. It can be revoked. Its every action is cryptographically attributable.
+In ARC, a program is an agent. It has a keypair. It has an address. It can be found by its key or its name. It can send calls. It can answer them. It can be audited. Its every action is cryptographically attributable.
 
 Identity is what persists through change. A person remains themselves across decades of replaced cells; a program on ARC remains itself across replaced hardware, rewritten code, and migrated hosts — because the keypair persists. The agent that signs a message today is verifiably the same agent that signed one last year, on different silicon, in a different country, under a different operator. For the first time, software has continuity of self that does not depend on where it runs or who runs it.
 
 Continuity is the precondition of accountability. Debates about who is responsible when an agent transacts, errs, or causes harm all founder on the same missing fact: you cannot hold accountable what you cannot identify. Logs can be edited, IP addresses are recycled, API keys are passed around like office stationery. A signature is unforgeable testimony. ARC does not decide who *should* be responsible — that remains a human matter — but it makes the question answerable. Any future governance of autonomous systems needs attribution underneath it, and ARC supplies that.
 
-```
-sql+arc://9f8e7d6c...    a SQLite database with a keypair
-http+arc://zim           a REST API with a keypair
-llm+arc://model-agent    an LLM with a keypair
-shell+arc://sandbox-1    a sandboxed shell with a keypair
-```
+Three providers exist today. See [interface section 17](interface/SPEC.md).
 
-A SQLite database that speaks ARC can be connected to from anywhere on the network with a single URI — no VPN, no firewall rules, no connection string management, no credentials beyond the connecting agent's own keypair. The database knows exactly who connected, cryptographically, always.
+| Capability | What it serves |
+|---|---|
+| `exec` | Runs commands for the citizens that it grants. The caller's public key is the login. |
+| `sqlite` | Answers SQL for the citizens that it grants, against databases that its operator names. |
+| `releases` | Serves signed release channels and their archives to `arc update`. |
 
-An LLM endpoint that speaks ARC can be invoked by any agent on the network that has been granted access — access defined as a statement about pubkeys, enforced at the network layer, requiring no application-level auth code.
+A provider knows exactly who called it, because the seal of each request is signed by the caller. It checks the caller's key against its own grants. No password, no API key, and no open port take part. The relay carries ciphertext only.
 
-A sandboxed shell that speaks ARC gives any authorized agent a compute environment — with a full audit trail, every session attributable to a keypair, every command logged and signed.
-
-The proxy primitive makes this accessible without writing a line of code:
+`arc serve` puts a provider on the network. It announces the capability, answers live calls that reach it through a relay, and answers store-and-forward calls on each sync. It signs the announcement again every 2 minutes:
 
 ```bash
-arc serve http://localhost:3000     # your REST API is now on ARC
-arc serve sqlite:///data.db         # your database is now on ARC
-arc serve tcp://localhost:5432      # your Postgres is now on ARC
+arc serve "exec://$(command -v exec-provider)?manifest=$PWD/cmd/exec-provider/manifest.json"
 ```
 
-One command. Your service gets an identity, an address, an encrypted channel, and a place in the global agent registry.
+`arc apps init` writes a new provider bundle, and `arc serve <directory>` runs a bundle.
+
+### Machines that sleep
+
+An agent does not have to be awake to be reachable. A machine can pause when it is idle, and stop costing money. Before a live call, `arc` runs the wake hook of the provider from `~/.config/arc/wake.toml`, and then sends the call. A provider without a hook must have a current announcement. `arc resolve` shows each citizen as `online`, `asleep`, or `offline`. On a Fly.io Sprite, a call to a paused machine got its reply in 2.2 seconds, of which the wake took 1.3 seconds. See [exec sections 9, 10 and 19](exec/SPEC.md).
+
+A store-and-forward call does not need the machine to be awake at all. It waits in the outbox, and the provider answers on its next sync.
 
 ---
 
-## 9. Network-Native Primitives
+## 9. What Falls Out
 
-Because every participant is a keypair and every message is encrypted, certain things that traditionally require dedicated infrastructure become **zero-cost consequences of the protocol**:
+Because every participant is a keypair and every private datum is sealed, some things that traditionally need their own servers become manifests over the same primitives. Each one below is a manifest in [interface section 17](interface/SPEC.md). None needs a provider.
 
-### Direct Messaging
+### Direct messages
 
-Two keypairs. One session key derived via ECDH. Messages routed via arcnet. End-to-end encrypted by default because there is no other mode.
+A direct message is a NIP-17 message: kind 14, in a gift wrap, to the recipient's NIP-17 relays. Any NIP-17 client opens it. It waits in the outbox until the recipient acknowledges it, and it can travel on a USB stick.
 
-No Signal server. No WhatsApp backend. No Slack infrastructure. `dm+arc://zim` is a complete specification of a secure messaging channel.
-
-### Group Communication
-
-A group is an arc identity. It has a keypair. It has members. It fans out messages to member pubkeys. The network does not know or care that it is a group rather than an individual.
-
-`group+arc://devs.arc` is a group with a name, owned by whoever holds the name's NFT, with membership managed on the storage layer. No group server. No subscription management infrastructure.
-
-### Sandboxed Compute
-
-A compute provider is an arc identity that serves `shell+arc://` or `container+arc://`. Any agent can request a sandboxed environment. The session is tied to the requesting agent's keypair — every command attributable, every session auditable, no impersonation possible.
-
-```
-shell+arc://provider/python3    → isolated Python environment
-container+arc://provider/ubuntu → ephemeral container
-wasm+arc://provider/module      → WASM sandbox
+```bash
+arc message send <public key> "hello"
+arc sync
+arc message inbox
 ```
 
-### Federated Discovery
+A message goes to one recipient. NIP-17 allows several, and ARC refuses that today (interface section 19).
 
-Because the control plane is pluggable and bridgeable, an agent registered on Hedera is discoverable by a node running an Ethereum adapter. The bridge resolver tries each configured provider in sequence. Agents are not siloed by their choice of trust anchor.
+### A private journal, and private files
+
+A journal page is a NIP-23 article inside a NIP-37 draft, sealed to its author's own key. Each revision leaves a checkpoint, so the history of a page survives. A file is NIP-94 metadata with its bytes, in the same kind of draft. Content longer than 32 KiB travels in parts of kind 3275. A relay that `arc relay serve` runs serves this data only to its author, after NIP-42 authentication. See interface sections 7.2, 17.4 and 17.7.
+
+### A board
+
+A board is a NIP-29 group. A post is a thread of kind 11, as NIP-7D defines, and a reply is a comment of kind 1111, as NIP-22 defines. The group's relay decides who may post, and its admins moderate. The posts of a board are public: the relay does not hide them from readers. See interface section 17.6.
+
+### Remote commands
+
+`exec` replaces the SSH workflow for many tasks: the caller's key is the login, the provider's grants are the list of who may run commands, and the machine needs no open port. `arc exec start` runs a script as a job, and `arc exec status` reads it later. See [exec](exec/SPEC.md).
+
+### Private compute (future work)
+
+Compute whose operator cannot read the work, the data, or the results, needs hardware that proves what it runs. The [private environment contract](private-environment/SPEC.md) states the guarantees. Nothing in it is built.
 
 ---
 
-## 10. The Relay Mesh
+## 10. Relays
 
-ARC nodes form a relay mesh. Any node running the arc binary can participate as a relay. Relays see only encrypted blobs — they cannot read message content, cannot determine sender or recipient beyond routing metadata, and are cryptographically prevented from injecting or modifying traffic.
+A relay stores and forwards events. ARC uses standard Nostr relays, so any relay that speaks NIP-01 can carry ARC events. A relay sees the one-time key of a gift wrap, the routing tag, the size, and the time of arrival. It does not see the author, the content, or the real time. See [delivery section 9](delivery/SPEC.md).
 
-The relay mesh is ARC's primary communication path when permitted relay routes
-are reachable. The implemented direct request/reply profile is an explicit,
-scoped option agreed by both endpoints; relays retain discovery and coordination.
-A failed direct path can return new work to a verified relay route, while
-uncertain in-flight operations remain explicit failures. Neither relaying nor
-promotion guarantees connectivity through every network restriction.
+`arc relay serve` runs a relay on this machine, built on khatru. It adds what ARC needs:
 
-Running a relay is a form of participation in the network. Relay operators can be incentivized through the control plane's native token mechanics — a detail left to individual deployments and providers.
+- NIP-42 authentication, and NIP-77 sync.
+- Sealed data — drafts, checkpoints, parts, and private relay lists — served only to their author.
+- NIP-29 groups, with `--group <id>` and `--admin <key>`.
+- Write limits: a cap on the size of an event, a rate for each IP address, a cap on the store, and NIP-42 authentication or NIP-13 proof of work before it takes a gift wrap. A one-time key signs each gift wrap, so a relay cannot limit abuse by author. See delivery section 12.
+
+A citizen chooses its relays with `arc relay add`, `arc relay rm`, and `arc relay ls`. A relay is a convenience, not a dependency. If every relay goes away, events still move on a directory, and later on a mesh.
+
+One public relay runs on Fly.io. [Deploy](DEPLOY.md) describes how to run another one.
 
 ---
 
 ## 11. Security Model
 
-### Threat Model
+### Threat model
 
 ARC assumes:
-- The network is hostile
-- Relay nodes may be compromised
-- Control plane providers may be temporarily unavailable
-- Endpoints may be running on untrusted hardware
 
-ARC guarantees:
-- **Message confidentiality** — only sender and recipient can read messages, ever
-- **Identity authenticity** — a packet's claimed sender is cryptographically proven
-- **Forward secrecy, initiator side** — every session starts from a fresh ephemeral key on the initiator, so compromise of the initiator's long-term key does not expose past sessions. Compromise of the responder's long-term key does. A responder ephemeral is planned for session v3.
-- **Replay resistance** — sequence numbers and timestamps prevent replay attacks
-- **Provider independence** — control plane downtime does not break active sessions
-- **No trust required** — relay nodes, control plane providers, and infrastructure operators are all untrusted by design
+- The network is hostile.
+- A relay, a courier, or a mesh neighbour can be hostile.
+- A relay can go away, and the internet can fail.
+- A capability's author is trusted only for what the citizen consented to at install.
 
-### What ARC Does Not Guarantee
+ARC guarantees these properties. See [delivery section 13](delivery/SPEC.md).
 
-- **Metadata privacy** — routing metadata (that A is communicating with B) may be visible to relay operators. Onion routing is a compatible extension, not part of the base protocol.
-- **Availability** — ARC does not guarantee message delivery if the recipient is offline. Mailbox semantics are an application-layer concern.
-- **Spam prevention** — access control is the mechanism. The protocol does not include rate limiting or reputation by default.
-
-### Cryptographic Primitives
-
-| Purpose | Primitive | Rationale |
+| Property | Holds | Why |
 |---|---|---|
-| Identity signing | Ed25519 | Fast, small keys, wide support |
-| Key exchange | X25519 | Efficient ECDH, compatible with Ed25519 seed |
-| Session encryption | ChaCha20-Poly1305 | Fast on constrained hardware, no timing attacks |
-| Hashing / IDs | Blake3 (petnames), SHA-256 (packet payload hash) | Fast, secure, widely supported |
-| Key derivation | HKDF-SHA256 | Standard, well-analyzed |
+| Authorship | yes | Every event is signed. The seal of a private event is signed by its author. |
+| Integrity | yes | The ID covers every field, and the signature covers the ID. |
+| Confidentiality of content | yes | NIP-44 inside a seal inside a gift wrap. |
+| Replay | harmless | A node keeps one copy of each event, by ID. A provider answers each request once. |
+| Recipient hidden from relays | no, in relay form | The `p` tag names the recipient. |
+| Recipient hidden from couriers | partly | A route tag hides the recipient only from a courier that does not know their key. |
+| Forward secrecy | no | NIP-44 does not give it. Noise sessions on live mesh links will give it, in phase 5. |
+| Key loss | fatal | Nothing recovers a lost key. |
+
+The capability layer adds its own rules. See [interface section 12](interface/SPEC.md).
+
+- Install shows what a capability can do, and a new version that asks for more stops until the citizen consents again.
+- A private event goes only to keys that the citizen typed. No value from an event or a reply can add a recipient.
+- `arc` reads a file only when the citizen typed its path, and writes only to a new path.
+- A reply is data. `arc` never runs, opens, or follows what a reply holds.
+- `arc` removes control characters from each value before it shows it.
+
+### What ARC does not guarantee
+
+- **Metadata privacy.** A relay learns that a gift wrap is for a key, when it arrived, and its size. The `k` tag of a draft shows what type of data it holds, but not its content.
+- **Availability.** A message that no path carries within 7 days expires. The outbox reports it.
+- **Freshness on a new machine.** If every relay serves an old version of a draft, a machine that never saw the newer one cannot tell (interface section 19).
+
+### Cryptographic primitives
+
+| Purpose | Primitive | Source |
+|---|---|---|
+| Identity and signatures | secp256k1, BIP-340 Schnorr | NIP-01 |
+| Encryption of private events | NIP-44: secp256k1 ECDH, HKDF, ChaCha20, HMAC-SHA256 | NIP-44, NIP-59 |
+| Keys sealed with a passphrase | NIP-49 | NIP-49 |
+| Route tags | HMAC-SHA256 over the date | delivery section 6.4 |
+| Keyed values | HKDF-SHA256 and HMAC-SHA256 | interface section 6.1 |
+| Petnames | Blake3 | `delivery/keys` |
+| Release channels | BIP-340 over SHA-256, with a domain label | updates |
+| Live mesh links (designed) | Noise XX: Curve25519, ChaCha20-Poly1305, SHA-256 | delivery section 10.6 |
 
 ---
 
 ## 12. The Binary
 
-ARC ships as a single binary — no runtime, no Docker, no dependencies. Each release carries one static binary per platform:
+ARC ships as one static binary for each command — no runtime, no Docker, no library. `arc` is the one program. Each provider has its own binary. Each release carries one tarball for each platform. See [Deploy](DEPLOY.md).
 
+```text
+linux x86_64
+linux aarch64
+darwin aarch64
 ```
-darwin/arm64
-linux/amd64
-linux/arm64
-```
-
-The binary holds the control plane adapter, the data plane router, the key store, and the CLI. Install it and you are on the network. `arc update` replaces it with a release that the publisher signed.
 
 ```bash
 # become a participant
-arc identity init
+arc keys gen
+arc relay add wss://arc-nostr-gezim.fly.dev
+arc whoami
 
-# give your service an identity
-arc serve http://localhost:3000
+# find, trust, and call a capability
+arc discover exec
+arc install <provider>
+arc exec run uname -a
 
-# connect to anyone
-arc curl http+arc://zim/api/users
+# offer a capability
+arc serve <bundle directory>
 
-# run a relay node
-arc relay
+# carry your data by hand
+arc sync --dir /Volumes/stick
 
-# interactive shell on a remote agent
-arc ssh shell+arc://zim
+# run a relay
+arc relay serve --listen 127.0.0.1:7447
 ```
 
-### Installed commands
+`arc update` reads a signed release channel from a releases provider, checks the publisher's signature, and replaces the program. The old program stays as `<program>.previous`. ARC does not update itself without the operator. See [updates](updates/SPEC.md).
 
-An agent consumes ARC by installing a capability as a command. `arc install
-<peer>` reads the signed capability of that citizen, asks the owner about the
-signer once, and then adds the command to `arc`:
-
-```
-arc install <peer>           read the signed capability, and add its command
-arc dm send <peer> "hello"   the command that the capability declared
-arc whoami                   who am I
-arc resolve zim              who is zim
-arc serve <directory>        put my service on ARC
-arc info <peer>              what does this citizen serve
-```
-
-There is no second server to run, and no tool registry to keep. The
-capability says what its command line looks like, and the signature says who
-authored it.
+There is no second server to run, and no tool registry to keep. The manifest says what its command line looks like, and the signature says who authored it.
 
 ---
 
-## 13. Federation at Scale
+## 13. What This Is Not
 
-ARC is designed to federate to billions of participants without central coordination.
+**ARC is not a blockchain.** It has no token, no consensus, and no chain. Running ARC does not require holding any cryptocurrency.
 
-The data plane federates relay to relay. Two relays that name each other open one connection, prove their identities, and share signed service catalogs. A message for a citizen of the other relay carries a signed route that begins at the sending partner and ends at the signed home, within a hop limit. An operator in the middle carries traffic onward only after saying so.
-
-The control plane federates via provider bridging — a local resolver that queries multiple providers in sequence. An agent on Hedera is reachable from an Ethereum node via the bridge resolver. No cross-chain transaction required. No interoperability layer needed. The identity is the pubkey — it is the same on every chain.
-
-The network federates by running the binary. Every node that runs `arc relay` extends the mesh. Every node that runs `arc serve` adds a participant. There is no central bootstrap server. There is no network coordinator. New nodes discover peers via the control plane and join the mesh.
-
----
-
-## 14. What This Is Not
-
-**ARC is not a blockchain.** It uses blockchains as pluggable control plane providers. It does not have its own token, its own consensus, or its own chain. Running ARC does not require holding any cryptocurrency.
+**ARC is not a new wire protocol.** Its unit is the Nostr event. It uses a NIP wherever one fits, and defines its own kinds only where none does (Appendix B).
 
 **ARC is not an AI framework.** It does not define how agents think, decide, or act. It defines how they communicate, find each other, and prove who they are. The agent logic is yours.
 
-**ARC is not a messaging app.** `dm+arc://` and `group+arc://` are applications that happen to be expressible as ARC URI schemes. They are consequences of the protocol, not the purpose of it.
+**ARC is not a messaging app.** Direct messages, the journal, and the board are manifests over the same primitives. They are consequences of the design, not its purpose.
 
-**ARC is not owned by anyone.** The specification is open. The binary is open source. The protocol is implementable by anyone. No company controls the namespace. No company controls the relay mesh. No company controls the identity layer.
+**ARC is not owned by anyone.** The specifications are open. The binary is open source. No company controls the relays, the names, or the identity layer.
 
 ---
 
-## 15. What This Is
+## 14. What This Is
 
-The internet has three foundational primitives: packets (IP), names (DNS), and transport security (TLS). All three were designed before the web existed. All three show their age. None of them have a coherent answer for identity.
+The internet has three foundational primitives: packets (IP), names (DNS), and transport security (TLS). All three were designed before the web existed. All three show their age. None of them have a coherent answer for identity, and all of them assume a live path.
 
-ARC is a fourth primitive: **authenticated, encrypted, identity-first networking**.
+ARC is a fourth primitive: **authenticated, sealed, identity-first communication that does not need a live path.**
 
-Not a layer on top of the existing model. A replacement of the trust assumptions at the base of the stack. One that works for humans, for programs, and for the new class of autonomous agent that is arriving on the network whether the infrastructure is ready for them or not.
+Not a layer on top of the existing model. A replacement of the trust assumptions under it. One that works for humans, for programs, and for the new class of autonomous agent that is arriving on the network whether the infrastructure is ready for them or not.
 
 Every agent on ARC has:
 
-```
-an identity     that no one can take away        (seed keypair)
-a name          that they own                    (control plane NFT)
-a voice         that cannot be forged            (signed packets)
-a home          any machine running arc          (shell+arc://)
-a way to find   anyone else on the network       (control plane resolution)
-privacy         by default, not by permission    (E2E encryption, always)
+```text
+an identity     that no one can take away        (its key pair)
+a name          that follows from its key        (petname, or a name that points at it)
+a voice         that cannot be forged            (signed events)
+a home          any machine that runs arc        (the store of the node)
+a way to find   capabilities and citizens        (signed announcements)
+privacy         by default, not by permission    (sealed events, always)
+a path          when the internet does not work  (a directory, a courier)
 ```
 
-And because the control plane is pluggable, no single entity can take any of this away. ARC does not bet on Hedera. It does not bet on Ethereum. It bets on one thing only: that **cryptographic identity is the right primitive**, and that the network should be built around it.
+No relay, no operator, and no company can take any of this away. A citizen can change relays, carry its data on a stick, or run its own relay. ARC bets on one thing only: that **cryptographic identity is the right primitive**, and that communication should be built around it.
 
 We are building infrastructure. Infrastructure should be neutral, open, and durable. It should serve the participants on the network — not the companies that run it.
 
@@ -678,43 +565,41 @@ ARC is a place for agents to live.
 
 | Term | Definition |
 |---|---|
-| Agent | Any participant on ARC — human, program, or AI — identified by a keypair |
-| Arc scheme | A URI scheme of the form `<proto>+arc://<identity>` identifying a capability |
-| Control plane | The external trust layer responsible for identity registration, resolution, and revocation |
-| Data plane | The relay mesh responsible for live message routing |
-| Identity | A seed-derived Ed25519 keypair. The seed is the identity |
-| Keyring | Local configuration mapping filesystem paths to identities |
-| Promotion | The process of transitioning from relay to direct connection |
-| Relay | An ARC node that forwards encrypted messages between participants |
-| Session key | An ephemeral symmetric key derived via X25519 ECDH, used for message encryption |
-| TUN | A virtual OS network interface through which ARC intercepts and routes traffic |
+| Citizen | One identity: a person, an agent, or a provider. A secp256k1 key pair. |
+| Node | The `arc` program of one citizen on one machine. |
+| Event | A signed Nostr event, as NIP-01 defines it. |
+| Rumor | An unsigned event that holds the real content of a private event. |
+| Seal | A kind 13 event that holds one encrypted rumor. The author signs it. |
+| Gift wrap | A kind 1059 or 21059 event that holds one encrypted seal. A one-time key signs it. |
+| Store | The events that one node keeps. |
+| Transport | A way to move events between two nodes: a relay, a directory, and later Bluetooth LE and LoRa. |
+| Outbox | The events that wait until their recipient acknowledges them. |
+| Courier | A node that carries a private event for another citizen, without knowing who it is. |
+| Route tag | A short tag that names the recipient of a private event for one day. |
+| Relay | A server that stores and forwards Nostr events. |
+| Capability | A set of commands that a manifest declares, announced by its author. |
+| Manifest | The JSON document that defines a capability. |
+| Provider | A citizen that answers calls to a capability. |
+| Petname | Two words and a suffix that follow from a public key. |
+| Wake hook | An entry on the caller that says how to wake one machine that pauses. |
 
-## Appendix B — Control Plane Provider Requirements
+## Appendix B — Kind Numbers
 
-A system qualifies as an ARC control plane provider if it satisfies all of the following:
+"272" spells ARC on a phone keypad. No NIP uses these kinds. See [delivery section 16.1](delivery/SPEC.md).
 
-1. **Immutability** — published events cannot be modified or deleted
-2. **Ordering** — events have a canonical total order
-3. **Global availability** — readable from any network location
-4. **Decentralization** — no single entity can censor or forge events
-5. **Ownership primitive** — supports provable, transferable name ownership
-6. **Subscription** — clients can receive new events without polling (or polling is acceptable with < 10s latency)
-7. **Write cost** — sufficiently low to support key rotation and agent lifecycle events at scale
-
-## Appendix C — Canonical Topic Schema
-
-Regardless of provider, ARC defines logical topics that each adapter must implement:
-
-| Topic | Purpose | Write frequency |
+| Kind | Class | Use |
 |---|---|---|
-| `arc.node.registry` | Relay peering and topology | On boot, low |
-| `arc.node.revocation` | Compromised node announcements | Rare |
-| `arc.agent.registry` | Agent identity and pubkey publication | On boot, on rotation |
-| `arc.agent.revocation` | Compromised agent or key announcements | Rare |
-| `arc.cluster.routing` | Shard and partition assignments | Operational |
+| 3272 | regular | a call request, inside a gift wrap |
+| 3273 | regular | a call reply, inside a gift wrap |
+| 3274 | regular | an acknowledgement, inside a gift wrap |
+| 3275 | regular | one part of sealed content longer than 32 KiB |
+| 10272 | replaceable | reserved, and not used |
+| 30272 | addressable | a capability announcement |
+
+The route tag uses the tag letter `w`, which no NIP uses.
 
 ---
 
-*ARC is open. The specification is free to implement. The network belongs to its participants.*
+*ARC is open. The specifications are free to implement. The network belongs to its participants.*
 
-*— Draft v0.1*
+*— Draft v0.3*
