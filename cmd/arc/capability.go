@@ -99,6 +99,10 @@ func serve(command *cobra.Command, args []string) error {
 		return err
 	}
 	defer sess.close()
+	installs, err := installsOf(command)
+	if err != nil {
+		return err
+	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	process, err := host.Start(path, programArgs, []string{
@@ -110,7 +114,11 @@ func serve(command *cobra.Command, args []string) error {
 	}
 	defer process.Stop()
 
-	server := call.NewServer(sess.signer, id, process, limit, log)
+	// The program can call what this citizen installed, as this citizen.
+	calls := func(ctx context.Context, out call.Outbound) (call.Reply, error) {
+		return callAddress(ctx, sess, installs, out.Address, out.Body)
+	}
+	server := call.NewServer(sess.signer, id, process, limit, calls, log)
 	sess.mail.OnRequest = server.Handle
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
@@ -424,11 +432,9 @@ func newestAnnouncements(ctx context.Context, sess *session, provider nostr.PubK
 }
 
 // callTarget finds the capability that a call names: by an address,
-// <scheme>+arc://<provider>/<path>, or by a provider and --capability. It
-// returns the path of the address, or "" for a provider.
-func callTarget(command *cobra.Command, sess *session, installs catalog.Installs, target string) (nostr.PubKey, catalog.Offer, string, error) {
-	ctx := command.Context()
-	flag, _ := command.Flags().GetString("capability")
+// <scheme>+arc://<provider>/<path>, or by a provider and a capability id in
+// flag. It returns the path of the address, or "" for a provider.
+func callTarget(ctx context.Context, sess *session, installs catalog.Installs, target, flag string) (nostr.PubKey, catalog.Offer, string, error) {
 	if !catalog.IsAddress(target) {
 		provider, id, err := installs.Resolve(target)
 		if err != nil {
@@ -537,7 +543,8 @@ func callCapability(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	provider, offer, addressPath, err := callTarget(command, sess, installs, args[0])
+	flag, _ := command.Flags().GetString("capability")
+	provider, offer, addressPath, err := callTarget(command.Context(), sess, installs, args[0], flag)
 	if err != nil {
 		return err
 	}
@@ -598,6 +605,25 @@ func callCapability(command *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+// callAddress makes one live call, as this citizen, to an installed capability
+// that an address names. A provider program that this citizen serves calls
+// this way, so it can do only what `arc call` can do for this citizen.
+func callAddress(ctx context.Context, sess *session, installs catalog.Installs, address, body string) (call.Reply, error) {
+	if !catalog.IsAddress(address) {
+		return call.Reply{}, fmt.Errorf("%q is not an address: <scheme>+arc://<provider>/<path>", address)
+	}
+	provider, offer, path, err := callTarget(ctx, sess, installs, address, "")
+	if err != nil {
+		return call.Reply{}, err
+	}
+	if !installs.Trusted(provider, offer.ID) {
+		return call.Reply{}, fmt.Errorf("not_installed: the citizen that serves this provider must install it: arc install %s %s", provider.Hex(), offer.ID)
+	}
+	request := call.Request{Capability: offer.ID, Method: offer.Method, Path: path, Body: body}
+	reply, _, _, err := liveCall(ctx, sess, provider, request, call.CallTimeout)
+	return reply, err
 }
 
 // publishRelayList tells other citizens which relays this citizen reads and

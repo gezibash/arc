@@ -231,3 +231,68 @@ func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// servedKey waits until `arc serve` says "serves", and returns the id of the
+// capability and the public key of the provider.
+func servedKey(t *testing.T, out *output) (string, nostr.PubKey) {
+	t.Helper()
+	if !waitFor(out, "serves", 10*time.Second) {
+		t.Fatalf("arc serve did not say serves: %q", out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	public, err := hex.DecodeString(lines[len(lines)-1])
+	if err != nil || len(public) != 32 {
+		t.Fatalf("arc serve gave no public key: %q", out.String())
+	}
+	return strings.Fields(lines[0])[2], nostr.PubKey(public)
+}
+
+// A provider program calls another provider through `arc serve`, as the
+// citizen that serves it. The call is refused until that citizen installs
+// the other provider, because an install is the consent to call it.
+func TestAProviderCallsOnlyWhatItsCitizenInstalled(t *testing.T) {
+	url := testrelay.Start(t)
+	front, back := t.TempDir(), t.TempDir()
+	for _, home := range []string{front, back} {
+		ok(t, home, "", "keys", "gen")
+		ok(t, home, "", "relay", "add", url)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	backOut, backResult := serving(t, ctx, back)
+	frontOut, frontResult := serving(t, ctx, front)
+	_, backKey := servedKey(t, backOut)
+	frontID, frontKey := servedKey(t, frontOut)
+
+	ask := func() string {
+		t.Helper()
+		callCtx, cancelCall := context.WithTimeout(ctx, 20*time.Second)
+		defer cancelCall()
+		reply, _, err := call.Live(callCtx, keys.Generate(), frontKey, call.Request{
+			Capability: frontID, Method: "ECHO", Path: "/", Body: "call exec+arc://" + backKey.Hex() + "/jobs ping",
+		}, relay.Relay{URL: url})
+		if err != nil {
+			t.Fatalf("the live call to the front provider: %v", err)
+		}
+		return reply.Body
+	}
+
+	if got := ask(); !strings.HasPrefix(got, "failed: ") || !strings.Contains(got, "not_installed") {
+		t.Fatalf("before the install, the front provider got %q", got)
+	}
+
+	ok(t, front, "", "install", backKey.Hex(), "--yes")
+	// The back provider answers with the method of its manifest, the path of
+	// the address, and the body.
+	if got := ask(); got != "reply: EXEC /jobs ping" {
+		t.Fatalf("after the install, the front provider got %q", got)
+	}
+
+	cancel()
+	for _, result := range []<-chan error{backResult, frontResult} {
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+	}
+}

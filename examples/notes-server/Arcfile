@@ -1,0 +1,11 @@
+version = 1
+
+[runtime]
+type = "exec"
+command = "./run.sh"
+cwd = "."
+
+# The two notes examples serve one capability, so they share its manifest.
+# arc serve reads interface.json beside it.
+[manifest]
+path = "../notes/manifest.json"

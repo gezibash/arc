@@ -2,6 +2,7 @@ package call_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -48,12 +49,79 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 // provider starts the echo provider, and returns its server.
 func provider(t *testing.T, k keys.Key) *call.Server {
 	t.Helper()
+	return providerWith(t, k, nil)
+}
+
+// providerWith starts the echo provider with a caller for its calls.
+func providerWith(t *testing.T, k keys.Key, caller call.Caller) *call.Server {
+	t.Helper()
 	process, err := host.Start(echoBinary, nil, []string{"ARC_PUBLIC_KEY=" + k.Public.Hex()}, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { process.Stop() })
-	return call.NewServer(k, "primary", process, 64*1024, quiet)
+	return call.NewServer(k, "primary", process, 64*1024, caller, quiet)
+}
+
+// handle sends one request with a body to a server, and returns the reply.
+// A provider that does not answer in 10 seconds gives a provider_timeout.
+func handle(t *testing.T, server *call.Server, k keys.Key, body string) call.Reply {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rumor := call.RequestRumor(keys.Generate(), k.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/", Body: body}, time.Now())
+	reply, err := server.Handle(ctx, rumor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reply
+}
+
+// The echo provider calls a capability through its host. The caller gets the
+// address and the body that the program wrote, and the reply goes back to
+// the program.
+func TestAProviderCallsThroughItsHost(t *testing.T) {
+	serving := keys.Generate()
+	seen := make(chan call.Outbound, 1)
+	server := providerWith(t, serving, func(_ context.Context, out call.Outbound) (call.Reply, error) {
+		seen <- out
+		return call.Reply{Body: "pong"}, nil
+	})
+
+	if reply := handle(t, server, serving, "call sqlite+arc://k/main select 1"); reply.Body != "reply: pong" {
+		t.Fatalf("reply = %+v", reply)
+	}
+	if out := <-seen; out.Address != "sqlite+arc://k/main" || out.Body != "select 1" {
+		t.Errorf("the caller got %+v", out)
+	}
+}
+
+// A refusal of the provider that got the call, and a call that the host
+// could not make, reach the program apart.
+func TestARefusalAndAFailureReachTheProgramApart(t *testing.T) {
+	serving := keys.Generate()
+	server := providerWith(t, serving, func(_ context.Context, out call.Outbound) (call.Reply, error) {
+		if out.Address == "x+arc://k/refuse" {
+			return call.Reply{Err: "invalid_request"}, nil
+		}
+		return call.Reply{}, errors.New("not_installed: install it first")
+	})
+
+	if reply := handle(t, server, serving, "call x+arc://k/refuse q"); reply.Body != "refused: invalid_request" {
+		t.Errorf("a refusal gave %+v", reply)
+	}
+	if reply := handle(t, server, serving, "call x+arc://k/fail q"); !strings.HasPrefix(reply.Body, "failed: ") || !strings.Contains(reply.Body, "not_installed") {
+		t.Errorf("a failure gave %+v", reply)
+	}
+}
+
+// A server with no caller makes no call for its program.
+func TestAProgramWithNoCallerCannotCall(t *testing.T) {
+	serving := keys.Generate()
+	reply := handle(t, provider(t, serving), serving, "call x+arc://k/ q")
+	if !strings.HasPrefix(reply.Body, "failed: ") || !strings.Contains(reply.Body, "calls_off") {
+		t.Errorf("reply = %+v", reply)
+	}
 }
 
 func TestALiveCallOverARelay(t *testing.T) {
