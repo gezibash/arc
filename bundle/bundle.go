@@ -147,7 +147,8 @@ func Load(path string) (*Bundle, error) {
 	}, nil
 }
 
-// ServeURI writes the address that the runtime reads.
+// ServeURI writes the address that the runtime reads. It writes the
+// arguments as a JSON array, so that each argument keeps its spaces.
 func (b *Bundle) ServeURI() string {
 	query := url.Values{"manifest": {b.Manifest}}
 	if len(b.Args) > 0 {

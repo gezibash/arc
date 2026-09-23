@@ -1,14 +1,17 @@
 package bundle_test
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gezibash/arc/bundle"
 	"github.com/gezibash/arc/capability"
+	"github.com/gezibash/arc/provider/host"
 )
 
 func TestInitWritesABundleThatServes(t *testing.T) {
@@ -118,6 +121,35 @@ path = "./manifest.json"
 	query, _ := url.Parse(address)
 	if got := query.Query().Get("args"); got != `["-u","server.py"]` {
 		t.Errorf("args = %s", got)
+	}
+}
+
+func TestTheArgumentsOfTheRuntimeSurviveTheAddress(t *testing.T) {
+	// The test binary stands for the runtime: it is a program that exists.
+	binary, _ := filepath.Abs(os.Args[0])
+	root := write(t, fmt.Sprintf(`version = 1
+[runtime]
+type = "exec"
+command = %q
+args = ["-u", "server.py", "hello world"]
+[manifest]
+path = "./manifest.json"
+`, binary))
+
+	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path, args, manifest, err := host.ParseServeURI(held.ServeURI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"-u", "server.py", "hello world"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q", args, want)
+	}
+	if path != binary || manifest != held.Manifest {
+		t.Errorf("path = %s, manifest = %s", path, manifest)
 	}
 }
 

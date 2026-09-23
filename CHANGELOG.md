@@ -6,6 +6,15 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `arc serve <directory>` gives the program each argument from the `args`
+  list of the Arcfile. Before, the program got the list as JSON text, for
+  example as the one argument `["-u","server.py"]`. In an `exec://`
+  address, an `args` value that starts with `[` must be a JSON array of
+  strings. If it is not, `arc serve` refuses the address. `arc serve` splits
+  an `args` value that does not start with `[` at its spaces, as before.
+
 ## [0.15.4] - 2026-09-23
 
 ### Fixed

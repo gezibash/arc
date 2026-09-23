@@ -23,6 +23,7 @@ func TestParseServeURI(t *testing.T) {
 		"exec://" + binary,
 		"exec:///does/not/exist?manifest=" + manifest,
 		"exec://" + filepath.Dir(binary) + "?manifest=" + manifest,
+		"exec://" + binary + "?manifest=" + manifest + "&args=[\"-v\",",
 	} {
 		if _, _, _, err := host.ParseServeURI(uri); err == nil {
 			t.Errorf("%s passed", uri)
