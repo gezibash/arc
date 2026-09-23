@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The binaries in the image and in the Fly.io relay image report a clean
+  build. Before, `arc version` printed "commit <sha> (modified)" for them,
+  because the build left out tracked files and git saw them as deleted.
+
 ## [0.15.3] - 2026-09-23
 
 ### Fixed
