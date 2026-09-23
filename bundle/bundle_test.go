@@ -74,20 +74,30 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 	}
 }
 
-func TestInitWritesAManifestForANameThatIsNotASCII(t *testing.T) {
-	files, err := bundle.Init(filepath.Join(t.TempDir(), "émile-bot"))
-	if err != nil {
-		t.Fatal(err)
+func TestInitWritesAManifestForAnUnusualName(t *testing.T) {
+	titles := map[string]string{
+		// The letter é takes two bytes. The title must keep both.
+		"émile-bot": "Émile Bot",
+		// Go quoting writes DEL as \x7f, and JSON has no such escape.
+		"del\x7f-bot": "Del\x7f Bot",
 	}
 
-	pkg, err := capability.LoadFile(files.Manifest)
-	if err != nil {
-		t.Fatalf("the manifest is not a capability: %v", err)
-	}
+	for name, want := range titles {
+		files, err := bundle.Init(filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	fields, _ := pkg["capability"].(map[string]any)
-	if fields["title"] != "Émile Bot" {
-		t.Errorf("title = %q, want %q", fields["title"], "Émile Bot")
+		pkg, err := capability.LoadFile(files.Manifest)
+		if err != nil {
+			t.Errorf("%q: the manifest is not a capability: %v", name, err)
+			continue
+		}
+
+		fields, _ := pkg["capability"].(map[string]any)
+		if fields["title"] != want {
+			t.Errorf("%q: title = %q, want %q", name, fields["title"], want)
+		}
 	}
 }
 
