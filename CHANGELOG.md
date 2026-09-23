@@ -6,6 +6,26 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A provider program can call a capability that its citizen installed. The
+  program writes a `call` line. `arc serve` makes the call as the citizen,
+  and writes a `result` line. The program never holds the key. A call to a
+  capability that the citizen did not install fails with `not_installed`.
+  In Go, a handler gets a `provider.Caller`. See docs/interface/SPEC.md,
+  section 14.2.
+- HTTP over ARC. `provider.HTTP` serves a Go `http.Handler` as a provider,
+  and opens no port. The handler reads the key of the caller from the header
+  field `Arc-Caller`. See docs/http/SPEC.md.
+- `http-provider` serves an HTTP server of any language over ARC. It starts
+  the server, and forwards each call to it. The server calls other
+  capabilities through a local endpoint that takes only its token. See
+  docs/http/SPEC.md, section 10.
+- The examples `examples/notes` and `examples/notes-server`: one HTTP
+  service that keeps its notes in SQLite over ARC. The first runs in the
+  provider program. The second is a plain HTTP server with no ARC library,
+  behind `http-provider`. `mise run compose` proves both end to end.
+
 ## [0.15.4] - 2026-09-23
 
 ### Fixed

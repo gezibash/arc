@@ -1,0 +1,13 @@
+{
+  "published_at": "2026-09-23T00:00:00Z",
+  "release": {"version": "0.1.0", "channel": "stable"},
+  "capability": {
+    "id": "http",
+    "kind": "service",
+    "scheme": "http",
+    "title": "Notes",
+    "summary": "Keeps notes for each caller, over HTTP, in SQLite over ARC.",
+    "invocation": {"mode": "request_reply", "method": "GET", "path": "/", "request_body": {"max_bytes": 262144}},
+    "examples": ["http+arc://provider/notes"]
+  }
+}

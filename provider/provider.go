@@ -13,6 +13,20 @@
 //	{"op":"reply","request_id":"...","reply":"..."}
 //	{"op":"error","request_id":"...","error":"invalid_request"}
 //
+// A provider can call a capability that the citizen who serves it installed.
+// The call goes out as that citizen. The provider writes:
+//
+//	{"op":"call","call_id":"...","address":"sqlite+arc://<key>/main","body":"..."}
+//
+// ARC makes the call, and writes one result with the same call_id:
+//
+//	{"op":"result","call_id":"...","reply":"..."}
+//	{"op":"result","call_id":"...","refused":"invalid_request"}
+//	{"op":"result","call_id":"...","error":"..."}
+//
+// refused is the error of the provider that got the call. error says why ARC
+// could not make the call.
+//
 // Standard output carries the protocol, so a provider writes its logs to
 // standard error and never to standard output.
 //
@@ -37,6 +51,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"sync"
 )
 
@@ -88,6 +103,36 @@ type Events interface {
 // it serves the first request.
 type WantsEvents interface {
 	SetEvents(events Events)
+}
+
+// Caller calls other capabilities, as the citizen that serves this provider.
+type Caller interface {
+	// Call sends one live call to the capability that an address names,
+	// <scheme>+arc://<provider>/<path>, and returns the reply. The method is
+	// the one that the manifest of the capability names.
+	Call(ctx context.Context, address, body string) (string, error)
+}
+
+// WantsCaller is a handler that calls other capabilities. Run gives it the
+// caller before it serves the first request.
+type WantsCaller interface {
+	SetCaller(caller Caller)
+}
+
+// CallError is a call that got no reply.
+type CallError struct {
+	// Refused says that the provider that got the call answered with an
+	// error. Otherwise ARC could not make the call.
+	Refused bool
+	// Reason is the error of that provider, or the reason of ARC.
+	Reason string
+}
+
+func (e *CallError) Error() string {
+	if e.Refused {
+		return "provider: the call was refused: " + e.Reason
+	}
+	return "provider: the call failed: " + e.Reason
 }
 
 // Handler answers one request. Several requests run at one time, so a handler
@@ -148,9 +193,15 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 		opts.MaxLineBytes = DefaultMaxLineBytes
 	}
 
-	runtime := &runtime{handler: handler, options: opts, out: bufio.NewWriter(opts.Out)}
+	runtime := &runtime{
+		handler: handler, options: opts, out: bufio.NewWriter(opts.Out),
+		calls: map[string]chan result{}, stopped: make(chan struct{}),
+	}
 	if wants, ok := handler.(WantsEvents); ok {
 		wants.SetEvents(runtime)
+	}
+	if wants, ok := handler.(WantsCaller); ok {
+		wants.SetCaller(runtime)
 	}
 	return runtime.run(ctx)
 }
@@ -163,6 +214,20 @@ type runtime struct {
 	out *bufio.Writer
 
 	group sync.WaitGroup
+
+	// calls holds each call that waits for its result, by call_id.
+	callsMu sync.Mutex
+	calls   map[string]chan result
+	next    uint64
+	// stopped closes when the input ends. No result can come after it.
+	stopped chan struct{}
+}
+
+// result is the answer of ARC to one call.
+type result struct {
+	reply   *string
+	refused string
+	err     string
 }
 
 func (r *runtime) run(ctx context.Context) error {
@@ -171,6 +236,8 @@ func (r *runtime) run(ctx context.Context) error {
 
 	reader := bufio.NewReaderSize(r.options.In, 64*1024)
 	defer r.group.Wait()
+	// A call that waits when the input ends fails, so its request ends too.
+	defer close(r.stopped)
 
 	for {
 		line, err := readLine(reader, r.options.MaxLineBytes)
@@ -214,10 +281,19 @@ func (r *runtime) serve(ctx context.Context, line []byte) {
 		ArcSessionID string         `json:"arc_session_id"`
 		AppSessionID string         `json:"app_session_id"`
 		Framed       bool           `json:"framed"`
+
+		CallID  string  `json:"call_id"`
+		Reply   *string `json:"reply"`
+		Refused string  `json:"refused"`
+		Error   string  `json:"error"`
 	}
 
 	if err := json.Unmarshal(line, &event); err != nil {
 		r.answer(nil, "", ErrInvalidRequest)
+		return
+	}
+	if event.Op == "result" {
+		r.settle(event.CallID, result{reply: event.Reply, refused: event.Refused, err: event.Error})
 		return
 	}
 	if event.Op != "request" || event.Message == nil || event.Meta == nil || !validRequestID(event.RequestID) {
@@ -264,6 +340,71 @@ func (r *runtime) Emit(to, topic, body string, meta map[string]any) error {
 		return err
 	}
 	return r.writeLine(line)
+}
+
+// Call writes one call line, and waits for its result.
+func (r *runtime) Call(ctx context.Context, address, body string) (string, error) {
+	answer := make(chan result, 1)
+	r.callsMu.Lock()
+	r.next++
+	id := strconv.FormatUint(r.next, 10)
+	r.calls[id] = answer
+	r.callsMu.Unlock()
+	defer func() {
+		r.callsMu.Lock()
+		delete(r.calls, id)
+		r.callsMu.Unlock()
+	}()
+
+	line, err := json.Marshal(map[string]any{"op": "call", "call_id": id, "address": address, "body": body})
+	if err != nil {
+		return "", err
+	}
+	if err := r.writeLine(line); err != nil {
+		return "", err
+	}
+
+	select {
+	case got := <-answer:
+		return got.outcome()
+	case <-r.stopped:
+		// A result that came just before the end still counts.
+		select {
+		case got := <-answer:
+			return got.outcome()
+		default:
+		}
+		return "", &CallError{Reason: "the input ended before the result came"}
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (got result) outcome() (string, error) {
+	switch {
+	case got.refused != "":
+		return "", &CallError{Refused: true, Reason: got.refused}
+	case got.reply != nil:
+		return *got.reply, nil
+	case got.err != "":
+		return "", &CallError{Reason: got.err}
+	}
+	return "", &CallError{Reason: "the result holds no reply"}
+}
+
+// settle passes a result to the call that waits for it. A result for a call
+// that stopped waiting goes.
+func (r *runtime) settle(id string, got result) {
+	r.callsMu.Lock()
+	answer := r.calls[id]
+	delete(r.calls, id)
+	r.callsMu.Unlock()
+
+	if answer == nil {
+		fmt.Fprintf(r.options.Log, "provider: a result came for call %q, which does not wait\n", id)
+		return
+	}
+	answer <- got
 }
 
 // answer writes one line. One writer holds the lock, so two answers never
