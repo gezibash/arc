@@ -39,38 +39,9 @@ func manifestTemplate(space, name string) string {
     "examples": [
       "hello from arc"
     ]
-  },
-  "interfaces": {
-    "cli": {
-      "version": 1,
-      "namespace": %s,
-      "summary": "The commands of the starter ARC app",
-      "commands": [
-        {
-          "path": [],
-          "summary": "Send a message to the starter ARC app",
-          "args": [
-            {
-              "name": "message",
-              "kind": "positional",
-              "required": false,
-              "variadic": true,
-              "description": "The text to send"
-            }
-          ],
-          "input": {
-            "source": "template",
-            "template": "{{message}}"
-          },
-          "examples": [
-            "hello from arc"
-          ]
-        }
-      ]
-    }
   }
 }
-`, jsonString(time.Now().UTC().Format(time.RFC3339)), jsonString(space), jsonString(name), jsonString(space))
+`, jsonString(time.Now().UTC().Format(time.RFC3339)), jsonString(space), jsonString(name))
 }
 
 // jsonString writes a string as a JSON string. Go quoting (%q) is not JSON:

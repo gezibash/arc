@@ -26,6 +26,14 @@ All notable changes to ARC are recorded here. The format follows
   provider program. The second is a plain HTTP server with no ARC library,
   behind `http-provider`. `mise run compose` proves both end to end.
 
+### Removed
+
+- The command line interfaces of the older stack, versions 1 to 4, in
+  `manifest.json`. They do not run on the delivery layer. `arc serve` still
+  loads a manifest that holds one, but the announcement leaves out
+  `interfaces`, `cli`, `invocation.mode` and `invocation.stream`.
+  `arc apps init` writes a manifest without a command line.
+
 ### Fixed
 
 - `arc serve <bundle directory>` gives the program each argument of

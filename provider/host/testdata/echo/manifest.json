@@ -7,7 +7,7 @@
     "scheme": "echo",
     "title": "Echo over ARC",
     "summary": "Answers with the body that it receives.",
-    "invocation": {"mode": "request_reply", "method": "ECHO", "path": "/", "request_body": {"max_bytes": 65536}},
+    "invocation": {"method": "ECHO", "path": "/", "request_body": {"max_bytes": 65536}},
     "examples": ["echo+arc://provider/"]
   }
 }

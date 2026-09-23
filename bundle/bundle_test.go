@@ -48,9 +48,6 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 	if fields["title"] != "Weather Bot" {
 		t.Errorf("title = %v", fields["title"])
 	}
-	if _, held := fields["interfaces"]; !held {
-		t.Error("the manifest offers no command line")
-	}
 
 	// The bundle resolves into an address that the runtime reads.
 	address, held, err := bundle.Resolve(root)
