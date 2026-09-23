@@ -420,7 +420,7 @@ func (s *session) online(ctx context.Context, citizen []byte) (bool, error) {
 // that this citizen does not use. See docs/delivery/SPEC.md, section 11.4.
 func (s *session) liveRelays(ctx context.Context, provider nostr.PubKey) []transport.Transport {
 	out := append([]transport.Transport(nil), s.relays...)
-	for _, url := range relaylist.ReadRelays(ctx, s.node, provider, s.relays) {
+	for _, url := range relaylist.ReadRelays(ctx, s.node, provider, slices.Concat(s.relays, s.indexers)) {
 		known := slices.ContainsFunc(out, func(t transport.Transport) bool {
 			return relaylist.Same(t.(relay.Relay).URL, url)
 		})

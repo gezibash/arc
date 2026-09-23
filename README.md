@@ -62,6 +62,14 @@ arc relay add wss://arc-nostr-gezim.fly.dev
 arc whoami
 ```
 
+To reach citizens that share no relay with you, name an indexer relay. `arc`
+publishes its relay lists there, and looks up the relay lists of others
+there. For example:
+
+```bash
+arc relay add wss://purplepag.es --index
+```
+
 `keys gen` prints the name of the identity, then its public key. The first
 identity is the default. `arc keys use <name>` changes the default, and
 `--key <name>` or `ARC_KEY` picks another identity for one command.

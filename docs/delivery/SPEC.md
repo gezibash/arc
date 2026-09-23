@@ -210,6 +210,13 @@ NIP-17 list, kind 10050; and the private NIP-37 list, kind 10013. Each list
 names every relay of the citizen. `arc relay add`, `arc relay rm`, and
 `arc serve` publish them. `delivery/relaylist` holds the NIP-65 list.
 
+A citizen can also name indexer relays with `arc relay add <url> --index`.
+An indexer holds only relay lists. The citizen publishes its NIP-65 and NIP-17
+lists there, but not its private list. The citizen looks up the lists of
+others in its store, then on its relays and its indexers. A one-time key
+answers the NIP-42 challenge of an indexer, so the indexer does not learn who
+looks up a list. `arc` names no indexer by default.
+
 **File.** A node writes events to a directory as JSON lines, one event on
 each line. Another node reads the directory, imports each event that it does
 not hold, and writes each event that the directory lacks. A person carries

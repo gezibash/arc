@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -521,27 +522,33 @@ func callCapability(command *cobra.Command, args []string) error {
 // NIP-17 defines. It also publishes the private relay list of NIP-37, which
 // names the relays that hold the citizen's drafts.
 func publishRelayList(ctx context.Context, sess *session) {
-	var lists []nostr.Event
+	// The public lists go to the indexers too. The private list does not.
+	type list struct {
+		event nostr.Event
+		to    []transport.Transport
+	}
+	public := slices.Concat(sess.relays, sess.indexers)
+	var lists []list
 	outbox, err := relaylist.Make(sess.signer, sess.urls, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the NIP-65 relay list was not signed: %v\n", err)
 	} else {
-		lists = append(lists, outbox)
+		lists = append(lists, list{outbox, public})
 	}
-	list, err := mail.RelayList(sess.signer, sess.urls, nostr.Now())
+	inbox, err := mail.RelayList(sess.signer, sess.urls, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the relay list was not signed: %v\n", err)
 	} else {
-		lists = append(lists, list)
+		lists = append(lists, list{inbox, public})
 	}
 	private, err := draft.RelayList(ctx, sess.keyer, sess.urls, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the private relay list was not signed: %v\n", err)
 	} else {
-		lists = append(lists, private)
+		lists = append(lists, list{private, sess.relays})
 	}
-	for _, event := range lists {
-		_, sent, _ := sess.node.Publish(ctx, event, sess.relays)
+	for _, l := range lists {
+		_, sent, _ := sess.node.Publish(ctx, l.event, l.to)
 		for _, s := range sent {
 			if s.Err != nil {
 				fmt.Fprintf(os.Stderr, "the relay list did not reach %s: %v\n", s.Transport, s.Err)
