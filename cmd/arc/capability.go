@@ -65,7 +65,7 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	path, programArgs, manifest, err := host.ParseServeURI(address)
+	path, programArgs, manifest, cwd, err := host.ParseServeURI(address)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func serve(command *cobra.Command, args []string) error {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	process, err := host.Start(path, programArgs, []string{
+	process, err := host.Start(path, programArgs, cwd, []string{
 		"ARC_IDENTITY=" + sess.key.Name(),
 		"ARC_PUBLIC_KEY=" + sess.key.Public.Hex(),
 	}, log)

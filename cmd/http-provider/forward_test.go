@@ -49,7 +49,7 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 func serve(t *testing.T, caller call.Caller, program ...string) (*call.Server, *host.Process, keys.Key) {
 	t.Helper()
 	k := keys.Generate()
-	process, err := host.Start(adapterBinary, program, nil, quiet)
+	process, err := host.Start(adapterBinary, program, "", nil, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,6 +42,15 @@ All notable changes to ARC are recorded here. The format follows
   refused the address. For example, `arc serve bot#1` failed with "serve:
   .../bot is not a program". An `exec://` address that you write yourself
   works as before.
+- `arc serve <bundle directory>` runs the program in the directory that
+  `runtime.cwd` in the Arcfile names. Before, the program ran in the
+  directory of the shell. For example, with `args = ["-u", "server.py"]`,
+  the program found `server.py` only if the owner started `arc serve` in the
+  bundle directory. If the Arcfile has no `cwd`, the program runs in the
+  bundle directory. `PWD` in the environment of the program names the same
+  directory. The `exec://` address carries the directory in a new `cwd`
+  parameter. The directory must exist. If it does not, `arc serve` stops
+  with an error. A hand-written address without `cwd` works as before.
 
 ## [0.15.4] - 2026-09-23
 

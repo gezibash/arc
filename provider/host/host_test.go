@@ -14,7 +14,7 @@ func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)
 // A provider that ends when its input closes ends cleanly: it has time to
 // release what it holds, and Stop reports no error.
 func TestStopLetsTheProviderEnd(t *testing.T) {
-	provider, err := host.Start("/bin/cat", nil, nil, quiet())
+	provider, err := host.Start("/bin/cat", nil, "", nil, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestStopLetsTheProviderEnd(t *testing.T) {
 // A provider that keeps running after its input closes is killed after the
 // grace period.
 func TestStopKillsAProviderThatDoesNotEnd(t *testing.T) {
-	provider, err := host.Start("/bin/sh", []string{"-c", "exec sleep 60"}, nil, quiet())
+	provider, err := host.Start("/bin/sh", []string{"-c", "exec sleep 60"}, "", nil, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
