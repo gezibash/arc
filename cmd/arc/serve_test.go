@@ -97,10 +97,10 @@ func deadAddress(t *testing.T) string {
 // reads the line calls at once. When the relay comes up, `arc serve` says
 // "serves", and a live call through the relay gets an answer.
 func TestServeSaysServesOnlyWhenARelayHasTheWatch(t *testing.T) {
-	address := deadAddress(t)
+	url, up := testrelay.StartDown(t)
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
-	ok(t, home, "", "relay", "add", "ws://"+address)
+	ok(t, home, "", "relay", "add", url)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -110,7 +110,7 @@ func TestServeSaysServesOnlyWhenARelayHasTheWatch(t *testing.T) {
 		t.Fatalf("arc serve said %q, but no relay has the watch", out.String())
 	}
 
-	url := testrelay.StartAt(t, address)
+	up()
 	if !waitFor(out, "serves", 15*time.Second) {
 		t.Fatalf("arc serve did not say serves after the relay came up: %q", out.String())
 	}
@@ -195,12 +195,13 @@ func callEcho(ctx context.Context, provider nostr.PubKey, id string, r relay.Rel
 // a caller that shares no relay with the provider finds its read relays
 // there.
 func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
-	down, indexer := deadAddress(t), deadAddress(t)
+	down, upDown := testrelay.StartDown(t)
+	indexer, upIndexer := testrelay.StartDown(t)
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", testrelay.Start(t))
-	ok(t, home, "", "relay", "add", "ws://"+down)
-	ok(t, home, "", "relay", "add", "--index", "ws://"+indexer)
+	ok(t, home, "", "relay", "add", down)
+	ok(t, home, "", "relay", "add", "--index", indexer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -214,16 +215,19 @@ func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
 		t.Fatalf("arc serve gave no public key: %q", out.String())
 	}
 
-	for _, address := range []string{down, indexer} {
-		url := testrelay.StartAt(t, address)
+	for _, r := range []struct {
+		url string
+		up  func()
+	}{{down, upDown}, {indexer, upIndexer}} {
+		r.up()
 		filter := nostr.Filter{Kinds: []nostr.Kind{relaylist.Kind}, Authors: []nostr.PubKey{nostr.PubKey(public)}}
 		found := false
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && !found; time.Sleep(200 * time.Millisecond) {
-			batch, err := relay.Relay{URL: url}.Fetch(ctx, filter)
+			batch, err := relay.Relay{URL: r.url}.Fetch(ctx, filter)
 			found = err == nil && len(batch.Events) > 0
 		}
 		if !found {
-			t.Errorf("%s came back, but it did not get the relay list of the provider", url)
+			t.Errorf("%s came back, but it did not get the relay list of the provider", r.url)
 		}
 	}
 
