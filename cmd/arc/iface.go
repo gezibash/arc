@@ -17,6 +17,7 @@ import (
 	"github.com/gezibash/arc/delivery/catalog"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/node"
+	"github.com/gezibash/arc/delivery/relaylist"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/relay"
@@ -396,12 +397,13 @@ func (e *cliEnv) Call(ctx context.Context, provider nostr.PubKey, request iface.
 	return iface.CallResult{Body: reply.Body, Err: reply.Err}, nil
 }
 
-// online says whether a citizen has a current announcement on the relays.
-// If no relay answers, it returns the error, and the call goes ahead.
+// online says whether a citizen has a current announcement on the relays of
+// this citizen, or on the read relays of the provider. If no relay answers,
+// it returns the error, and the call goes ahead.
 func (s *session) online(ctx context.Context, citizen []byte) (bool, error) {
 	provider := nostr.PubKey(citizen)
 	filter := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
-	if err := node.Unreached(s.node.Pull(ctx, filter, s.relays)); err != nil {
+	if err := node.Unreached(s.node.Pull(ctx, filter, s.liveRelays(ctx, provider))); err != nil {
 		return false, err
 	}
 	now := time.Now()
@@ -411,6 +413,22 @@ func (s *session) online(ctx context.Context, citizen []byte) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// liveRelays returns the relays that a live call to a provider tries: the
+// relays of this citizen, then each read relay of the provider's NIP-65 list
+// that this citizen does not use. See docs/delivery/SPEC.md, section 11.4.
+func (s *session) liveRelays(ctx context.Context, provider nostr.PubKey) []transport.Transport {
+	out := append([]transport.Transport(nil), s.relays...)
+	for _, url := range relaylist.ReadRelays(ctx, s.node, provider, s.relays) {
+		known := slices.ContainsFunc(out, func(t transport.Transport) bool {
+			return relaylist.Same(t.(relay.Relay).URL, url)
+		})
+		if !known {
+			out = append(out, relay.Relay{URL: url, Signer: s.keyer})
+		}
+	}
+	return out
 }
 
 // liveCall tries each relay in turn, and returns the first reply, the round
@@ -423,7 +441,7 @@ func liveCall(ctx context.Context, sess *session, provider nostr.PubKey, request
 		return call.Reply{}, 0, "", err
 	}
 	var failures []string
-	for _, t := range sess.relays {
+	for _, t := range sess.liveRelays(ctx, provider) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		reply, rtt, err := call.Live(ctx, sess.signer, provider, request, t.(relay.Relay))
 		cancel()

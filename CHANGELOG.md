@@ -6,6 +6,14 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A citizen publishes its NIP-65 relay list, kind 10002, beside its other
+  relay lists. `arc relay add`, `arc relay rm` and `arc serve` publish it.
+- A live call also goes to the read relays of the provider's NIP-65 list, so
+  a caller and a provider that share no relay can call. See
+  `docs/delivery/SPEC.md`, section 11.4.
+
 ## [0.14.0] - 2026-09-23
 
 `arc call` shows a reply as the manifest of the service says. Update each

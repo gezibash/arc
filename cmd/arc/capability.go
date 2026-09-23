@@ -24,6 +24,7 @@ import (
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
+	"github.com/gezibash/arc/delivery/relaylist"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
@@ -131,6 +132,9 @@ func serve(command *cobra.Command, args []string) error {
 	if err := announce(); err != nil {
 		return err
 	}
+	// A caller that shares no relay with this provider finds its read
+	// relays in this list.
+	publishRelayList(ctx, sess)
 
 	// Say "serves" only when each relay has the watch, so that a caller
 	// that waits for the line can call at once.
@@ -512,11 +516,18 @@ func callCapability(command *cobra.Command, args []string) error {
 	return nil
 }
 
-// publishRelayList tells other citizens which relays this citizen reads its
-// mail on, as NIP-17 defines. It also publishes the private relay list of
-// NIP-37, which names the relays that hold the citizen's drafts.
+// publishRelayList tells other citizens which relays this citizen reads and
+// writes on, as NIP-65 defines, and which relays it reads its mail on, as
+// NIP-17 defines. It also publishes the private relay list of NIP-37, which
+// names the relays that hold the citizen's drafts.
 func publishRelayList(ctx context.Context, sess *session) {
 	var lists []nostr.Event
+	outbox, err := relaylist.Make(sess.signer, sess.urls, nostr.Now())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "the NIP-65 relay list was not signed: %v\n", err)
+	} else {
+		lists = append(lists, outbox)
+	}
 	list, err := mail.RelayList(sess.signer, sess.urls, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the relay list was not signed: %v\n", err)
