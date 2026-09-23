@@ -6,6 +6,15 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `arc serve` prints "serves" only when at least one relay has the watch for
+  live calls. Before, a relay that refused its first watch also counted, so
+  with no relay up, "serves" came and every live call failed with "mute: no
+  one was listening for this". `arc serve` logs each relay that refused its
+  first watch, tries it again every 3 seconds, and sends the announcement
+  again. With no relay up, `arc serve` waits for one.
+
 ## [0.15.1] - 2026-09-23
 
 ### Fixed

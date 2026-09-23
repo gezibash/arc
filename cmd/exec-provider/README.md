@@ -82,8 +82,9 @@ Do these steps on the citizen machine.
    ~/exec-provider/citizen/citizen-up && echo ready
    ```
 
-   `citizen-up` exits 0 when `arc serve` writes `serves`. At that time, each
-   relay holds the announcement and listens for calls.
+   `citizen-up` exits 0 when `arc serve` writes `serves`. At that time, at
+   least one relay holds the announcement and listens for calls. If a relay
+   does not take the watch, `arc serve` logs it and tries again.
 
 CAUTION: On a Sprite, do not run `citizen/serve` or `sshd` as a Sprite
 service. A running service stops the pause, and the Sprite costs compute all

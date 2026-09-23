@@ -111,6 +111,30 @@ func StartPlain(t *testing.T) string {
 	return start(t, false)
 }
 
+// StartAt runs a relay on an address, for example the address of a relay
+// that was down, and returns its URL. The relay stops when the test ends.
+func StartAt(t *testing.T, address string) string {
+	t.Helper()
+
+	db := &slicestore.SliceStore{}
+	if err := db.Init(); err != nil {
+		t.Fatal(err)
+	}
+	relay := khatru.NewRelay()
+	relay.Log = log.New(io.Discard, "", 0)
+	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
+
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: relay}
+	go server.Serve(listener)
+	t.Cleanup(func() { server.Close() })
+	return "ws://" + listener.Addr().String()
+}
+
 func start(t *testing.T, negentropy bool) string {
 	t.Helper()
 

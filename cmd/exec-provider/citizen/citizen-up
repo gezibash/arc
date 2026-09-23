@@ -39,8 +39,9 @@ fi
 if [ -f "$pidfile" ]; then
   kill -TERM -- "-$(cat "$pidfile")" 2>/dev/null
 fi
-# `arc serve` writes "serves" when each relay has its announcement and its
-# watch. Count the lines before the start, and wait for one more.
+# `arc serve` writes "serves" when each relay has taken or refused its first
+# watch, and at least one relay has the watch. Count the lines before the
+# start, and wait for one more.
 served=$(grep -c "serves" "$here/serve.log" 2>/dev/null || true)
 # A new session makes the process group ID equal to the PID, so the kill above
 # stops arc serve and its provider together. macOS has no setsid command.

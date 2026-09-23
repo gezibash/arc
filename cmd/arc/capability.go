@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -137,14 +136,23 @@ func serve(command *cobra.Command, args []string) error {
 	// relays in this list.
 	publishRelayList(ctx, sess)
 
-	// Say "serves" only when each relay has the watch, so that a caller
-	// that waits for the line can call at once.
-	var watching sync.WaitGroup
-	for _, r := range sess.relays {
-		watching.Add(1)
-		go keepServing(ctx, server, r.(relay.Relay), watching.Done, log)
+	// Say "serves" only when a relay has the watch, so that a caller that
+	// waits for the line can call at once.
+	missing, err := watchAll(ctx, server, sess.relays, log)
+	if ctx.Err() != nil {
+		fmt.Fprintln(os.Stderr, "the provider is stopping")
+		return nil
 	}
-	watching.Wait()
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		log.Warn("serves without these relays until they take the watch", "relays", missing)
+		// A relay that took the watch late did not get the announcement.
+		if err := announce(); err != nil {
+			log.Warn("the announcement was not signed again", "error", err)
+		}
+	}
 
 	dirs, _ := command.Flags().GetStringArray("sync-dir")
 	interval, _ := command.Flags().GetDuration("interval")
@@ -153,7 +161,7 @@ func serve(command *cobra.Command, args []string) error {
 		targets = append(targets, file.Dir{Path: dir})
 	}
 
-	fmt.Printf("%s serves %s\n%s\n", sess.key.Name(), id, sess.key.Public.Hex())
+	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.key.Name(), id, sess.key.Public.Hex())
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -189,19 +197,70 @@ func serve(command *cobra.Command, args []string) error {
 	}
 }
 
+// watchAll starts a live watch on each relay. It returns when each relay
+// has begun or failed its first watch, and at least one relay has the watch.
+// If no relay has the watch, watchAll waits until one relay takes it. It
+// returns the relays whose first watch failed. Those relays get the watch
+// when they come back.
+func watchAll(ctx context.Context, server *call.Server, relays []transport.Transport, log *slog.Logger) ([]string, error) {
+	type result struct {
+		index int
+		err   error
+	}
+	results := make(chan result)
+	started := make(chan struct{})
+	defer close(started)
+	for i, t := range relays {
+		go keepServing(ctx, server, t.(relay.Relay), func(err error) {
+			select {
+			case results <- result{i, err}:
+			case <-started:
+			case <-ctx.Done():
+			}
+		}, log)
+	}
+
+	answered := map[int]bool{}
+	watches := 0
+	var missing []string
+	for len(answered) < len(relays) || (watches == 0 && len(relays) > 0) {
+		select {
+		case r := <-results:
+			if r.err == nil {
+				watches++
+			} else if !answered[r.index] {
+				missing = append(missing, relays[r.index].Name())
+			}
+			answered[r.index] = true
+		case <-server.Done():
+			return nil, errors.New("the provider program stopped")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return missing, nil
+}
+
 // keepServing answers live calls through one relay, and watches again when
-// the relay drops the connection. It calls ready once, when the first watch
-// begins or fails.
-func keepServing(ctx context.Context, server *call.Server, r relay.Relay, ready func(), log *slog.Logger) {
-	var once sync.Once
-	defer once.Do(ready)
+// the relay drops the connection. After each attempt to watch, it calls
+// report: with nil when the watch begins, and with the error when the watch
+// does not begin.
+func keepServing(ctx context.Context, server *call.Server, r relay.Relay, report func(error), log *slog.Logger) {
 	for {
-		err := server.ServeLive(ctx, r, func() { once.Do(ready) })
-		once.Do(ready)
+		began := false
+		err := server.ServeLive(ctx, r, func() {
+			began = true
+			report(nil)
+		})
 		if ctx.Err() != nil {
 			return
 		}
-		log.Warn("the relay ended the watch; watching again", "relay", r.URL, "error", err)
+		if began {
+			log.Warn("the relay ended the watch; watching again", "relay", r.URL, "error", err)
+		} else {
+			report(err)
+			log.Warn("the relay did not take the watch; trying again", "relay", r.URL, "error", err)
+		}
 		select {
 		case <-time.After(3 * time.Second):
 		case <-ctx.Done():
