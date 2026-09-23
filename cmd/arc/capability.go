@@ -402,6 +402,7 @@ func callCmd() *cobra.Command {
 	command.Flags().String("method", "", "the method of the call (default: the manifest's)")
 	command.Flags().String("path", "", "the path of the call (default: the manifest's)")
 	command.Flags().Duration("timeout", 30*time.Second, "how long a live call waits")
+	command.Flags().Bool("raw", false, "write the reply as it came, not as the manifest shows it")
 
 	command.AddCommand(&cobra.Command{
 		Use: "results", Short: "Show your store-and-forward calls, and their replies", Args: cobra.NoArgs,
@@ -496,6 +497,13 @@ func callCapability(command *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "round trip %s via %s\n", rtt.Round(100*time.Microsecond), via)
 	if reply.Err != "" {
 		return fmt.Errorf("the provider refused: %s", reply.Err)
+	}
+	// The manifest can say how to show a reply. --raw writes it as it came.
+	raw, _ := command.Flags().GetBool("raw")
+	if m := offer.Manifest; !raw && m != nil && m.Service != nil && m.Service.Output != nil {
+		env := &cliEnv{sess: sess, installs: installs}
+		in := iface.Installed{Manifest: m, Author: provider, Name: offer.ID}
+		return iface.ShowReply(command.Context(), env, in, reply.Body, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 	}
 	fmt.Print(reply.Body)
 	if !strings.HasSuffix(reply.Body, "\n") {

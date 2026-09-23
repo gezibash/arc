@@ -50,6 +50,9 @@ type Service struct {
 	Method   string `json:"method"`
 	Path     string `json:"path"`
 	MaxBytes int    `json:"max_bytes"`
+	// Output shows the reply of a call by address, arc call. Without it,
+	// arc call writes the reply as it came.
+	Output *Output `json:"output,omitempty"`
 }
 
 // Format renders records as text.
@@ -319,6 +322,19 @@ func (m *Manifest) check() error {
 	if m.Shape == "data" && m.Service != nil {
 		return errors.New("a data capability has no service section")
 	}
+	if m.Service != nil && m.Service.Output != nil {
+		o := *m.Service.Output
+		if o.Save != nil || o.Tail != nil {
+			return errors.New("the output of the service cannot save or tail")
+		}
+		noNames := func(t string) error {
+			_, err := compile(t, func(string) bool { return false })
+			return err
+		}
+		if err := m.checkOutput(o, false, noNames); err != nil {
+			return fmt.Errorf("the output of the service: %w", err)
+		}
+	}
 
 	grouped := false
 	for name, kind := range m.Kinds {
@@ -513,7 +529,12 @@ func (m *Manifest) checkCommand(c Command) error {
 		return fmt.Errorf("a command has exactly one action, not %d", actions)
 	}
 
-	o := c.Output
+	return m.checkOutput(c.Output, a.Watch != nil, check)
+}
+
+// checkOutput checks an output pipeline. A watch may tail, and may not
+// exit. check checks a template against the names that it may use.
+func (m *Manifest) checkOutput(o Output, watch bool, check func(string) error) error {
 	if o.Open != nil && !slices.Contains(parses, o.Open.Parse) {
 		return fmt.Errorf("open parses text, json or frontmatter, not %q", o.Open.Parse)
 	}
@@ -535,7 +556,7 @@ func (m *Manifest) checkCommand(c Command) error {
 			}
 		}
 	}
-	if o.Tail != nil && a.Watch == nil {
+	if o.Tail != nil && !watch {
 		return errors.New("tail works only in a watch")
 	}
 	var conds func([]Cond) error
@@ -555,7 +576,7 @@ func (m *Manifest) checkCommand(c Command) error {
 	if err := conds(o.Where); err != nil {
 		return err
 	}
-	if len(o.Exit) > 0 && a.Watch != nil {
+	if len(o.Exit) > 0 && watch {
 		return errors.New("exit works only for a command that ends")
 	}
 	for _, rule := range o.Exit {

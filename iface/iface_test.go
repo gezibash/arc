@@ -545,3 +545,52 @@ func TestACommandWithNoOutputShowsNothing(t *testing.T) {
 		t.Errorf("echo shows %q, want one line end", out)
 	}
 }
+
+// showReply shows a reply of the service of a manifest of the spec, as arc
+// call does.
+func showReply(t *testing.T, id, body string) (string, error) {
+	t.Helper()
+	var out, errs bytes.Buffer
+	err := ShowReply(context.Background(), &fakeEnv{me: nostr.Generate()},
+		Installed{Manifest: specManifests(t)[id], Author: nostr.Generate().Public(), Name: id}, body,
+		Stdio{In: strings.NewReader(""), Out: &out, Err: &errs})
+	return out.String(), err
+}
+
+// A call by address shows the reply as the service says, and exits as
+// arc-exec did: with the code of the command, and 75 while a job runs.
+func TestACallByAddressShowsTheReplyAsTheServiceSays(t *testing.T) {
+	for _, c := range []struct {
+		name, id, body, out string
+		code                int
+	}{
+		{"run", "exec", `{"exit":3,"stdout":"out\n","stderr":"err\n"}`, "out\nerr\n", 3},
+		{"start", "exec", `{"job":"j1","state":"running"}`, "j1\n", 75},
+		{"status done", "exec", `{"job":"j1","state":"done","exit":0,"stdout":"done\n","stderr":""}`, "done\nj1\n", 0},
+		{"sqlite", "sqlite", `{"results":[{"columns":["n"],"rows":[[22]]}]}`, "n\n22\n", 0},
+	} {
+		out, err := showReply(t, c.id, c.body)
+		if out != c.out || exitCode(err) != c.code {
+			t.Errorf("%s: %q, status %d (%v); want %q, status %d", c.name, out, exitCode(err), err, c.out, c.code)
+		}
+	}
+}
+
+// A reply that does not fit the output of the service still reaches the
+// citizen, as it came.
+func TestAReplyThatDoesNotFitIsShownAsItCame(t *testing.T) {
+	out, err := showReply(t, "exec", "not json")
+	if out != "not json\n" || err == nil {
+		t.Errorf("the reply shows %q, %v", out, err)
+	}
+}
+
+func TestTheOutputOfAServiceCannotSave(t *testing.T) {
+	m := `{"interface": 1, "id": "x", "shape": "service", "title": "X", "summary": "X",
+	  "service": {"method": "GET", "path": "/", "max_bytes": 10,
+	              "output": {"save": {"to": "/tmp/x", "field": "content"}}},
+	  "kinds": {}, "commands": [{"path": ["x"], "summary": "X", "action": {"call": {"class": "live", "body": "{}"}}}]}`
+	if _, err := Parse([]byte(m)); err == nil || !strings.Contains(err.Error(), "cannot save") {
+		t.Errorf("the output of a service saved to a file: %v", err)
+	}
+}

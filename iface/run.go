@@ -554,3 +554,24 @@ func usage(in Installed, c *Command) string {
 	}
 	return strings.Join(words, " ")
 }
+
+// ShowReply shows the reply of a call by address, with the output of the
+// service of the manifest. A reply that does not fit that output is written
+// as it came, and the error says why.
+func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio Stdio) error {
+	service := in.Manifest.Service
+	if service == nil || service.Output == nil {
+		return errors.New("the service has no output")
+	}
+	command := &Command{Output: *service.Output}
+	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio}
+	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
+	if err != nil {
+		line(stdio.Out, body)
+		return fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err)
+	}
+	if err := r.write(entries, stdio.Out); err != nil {
+		return err
+	}
+	return r.exit(entries)
+}

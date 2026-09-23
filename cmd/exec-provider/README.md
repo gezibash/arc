@@ -169,8 +169,12 @@ body is UTF-8 JSON. The body field `action` selects the operation:
 With `arc`, send a request with `arc call`:
 
 ```sh
-arc call <citizen-public-key> '{"argv":["uname","-a"]}'
+arc call 'exec+arc://<citizen-public-key>/' '{"argv":["uname","-a"]}'
 ```
+
+`arc call` shows the reply as `arc exec` does: the output of the command, the
+job of `start`, and the exit status of the command, or 75 while a job runs.
+`--raw` writes the reply JSON as it came.
 
 ## Configuration
 
