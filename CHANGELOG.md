@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-23
+
+A provider can call the capabilities of its citizen, and can serve HTTP over
+ARC. A Go provider with a `SetEvents` method does not compile. Remove the
+method.
+
 ### Added
 
 - A provider program can call a capability that its citizen installed. The
