@@ -71,6 +71,62 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 	}
 }
 
+// The runtime must read back the exact path of the program, whatever the
+// name of the directory.
+func TestTheAddressKeepsThePathOfTheProgram(t *testing.T) {
+	base := t.TempDir()
+
+	for _, name := range []string{"my bots", "bot#1", "100%", "a%20b", "what?"} {
+		root := filepath.Join(base, name)
+		if _, err := bundle.Init(root); err != nil {
+			t.Fatal(err)
+		}
+		held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		path, _, manifest, _, err := host.ParseServeURI(held.ServeURI())
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if want := filepath.Join(root, "run.sh"); path != want {
+			t.Errorf("%s: program = %s, want %s", name, path, want)
+		}
+		if want := filepath.Join(root, "manifest.json"); manifest != want {
+			t.Errorf("%s: manifest = %s, want %s", name, manifest, want)
+		}
+	}
+}
+
+func TestInitWritesAManifestForAnUnusualName(t *testing.T) {
+	titles := map[string]string{
+		// The letter é takes two bytes. The title must keep both.
+		"émile-bot": "Émile Bot",
+		// Go quoting writes DEL as \x7f, and JSON has no such escape.
+		"del\x7f-bot": "Del\x7f Bot",
+	}
+
+	for name, want := range titles {
+		files, err := bundle.Init(filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pkg, err := capability.LoadFile(files.Manifest)
+		if err != nil {
+			t.Errorf("%q: the manifest is not a capability: %v", name, err)
+			continue
+		}
+
+		fields, _ := pkg["capability"].(map[string]any)
+		if fields["title"] != want {
+			t.Errorf("%q: title = %q, want %q", name, fields["title"], want)
+		}
+	}
+}
+
 func TestInitRefusesToWriteOverAFile(t *testing.T) {
 	root := t.TempDir()
 
@@ -137,7 +193,7 @@ path = "./manifest.json"
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, args, _, err := host.ParseServeURI(held.ServeURI())
+	_, args, _, _, err := host.ParseServeURI(held.ServeURI())
 	if err != nil {
 		t.Fatal(err)
 	}
