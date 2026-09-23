@@ -1,10 +1,15 @@
 {
   "interface": 1, "id": "exec", "shape": "service",
   "title": "Exec", "summary": "Runs commands for the citizens that it grants.",
-  "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576},
+  "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576,
+              "output": {"open": {"parse": "json"}, "format": "reply",
+                         "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
+                                  {"where": [{"field": "state", "is": "lost"}], "code": "1"},
+                                  {"code": "{{exit}}"}]}},
   "kinds": {},
   "formats": {
     "run": {"record": "{{stdout}}{{stderr}}"},
+    "reply": {"record": "{{stdout}}{{stderr}}{{job}}"},
     "job": {"record": "{{job}}\t{{state}}"}
   },
   "commands": [

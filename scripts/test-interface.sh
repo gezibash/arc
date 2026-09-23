@@ -111,7 +111,7 @@ caller call "exec+arc://$exec_key/" '{"argv":["echo","by address"]}' 2> /dev/nul
   fail "the call by address failed: $(caller call "exec+arc://$exec_key/" '{"argv":["echo","x"]}' 2>&1)"
 caller call "exec+arc://exec/" '{"argv":["echo","by name"]}' 2> /dev/null | grep "by name" > /dev/null ||
   fail "the call by an installed name failed"
-caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2> /dev/null | grep '\[22\]' > /dev/null ||
+caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' --raw 2> /dev/null | grep '\[22\]' > /dev/null ||
   fail "the path of the address did not reach the provider: $(caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2>&1)"
 if caller call "sqlite+arc://$sqlite_key/other" '{"sql":"select 1"}' > /dev/null 2>&1; then
   fail "a path that names no database answered"
@@ -127,6 +127,21 @@ if "$work/arc" --home "$work/nobody" call "exec+arc://$exec_key/" '{"argv":["tru
 fi
 grep "install it first" "$work/untrusted.txt" > /dev/null || fail "the refusal was $(cat "$work/untrusted.txt")"
 say "arc call takes an address: <scheme>+arc://<provider>/<path>"
+
+# The manifest says how to show the reply of a call by address.
+[ "$(caller call "exec+arc://$exec_key/" '{"argv":["echo","shown"]}' 2> /dev/null)" = "shown" ] ||
+  fail "the reply was not shown as the service says: $(caller call "exec+arc://$exec_key/" '{"argv":["echo","shown"]}' 2>&1)"
+set +e
+caller call "exec+arc://$exec_key/" '{"argv":["sh","-c","echo out; exit 3"]}' > "$work/call-exit.txt" 2> /dev/null
+code=$?
+set -e
+[ "$code" = 3 ] && [ "$(cat "$work/call-exit.txt")" = "out" ] ||
+  fail "a call by address exited $code, and showed $(cat "$work/call-exit.txt")"
+caller call "exec+arc://$exec_key/" '{"argv":["echo","raw"]}' --raw 2> /dev/null | grep '"stdout":"raw\\n"' > /dev/null ||
+  fail "--raw did not write the reply as it came: $(caller call "exec+arc://$exec_key/" '{"argv":["echo","raw"]}' --raw 2>&1)"
+[ "$(caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2> /dev/null)" = "$(printf 'n\n22')" ] ||
+  fail "the sqlite reply is not a table: $(caller call "sqlite+arc://$sqlite_key/main" '{"sql":"select 22 as n"}' 2>&1)"
+say "a call by address shows the reply as the service says, and --raw as it came"
 
 if caller exec run > /dev/null 2> "$work/missing.txt"; then fail "a missing argument ran"; fi
 grep "missing <argv...>" "$work/missing.txt" > /dev/null || fail "the error was $(cat "$work/missing.txt")"

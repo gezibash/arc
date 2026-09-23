@@ -6,6 +6,20 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The service of a manifest can have `output`: the pipeline that shows the
+  reply of `arc call`. `arc call` then shows the reply as the service says,
+  and `--raw` writes it as it came. See `docs/interface/SPEC.md`, section 4.3.
+- `arc call` of exec shows the output of the command, and exits with its
+  code, or 75 while a job runs. `arc call` of sqlite shows a table.
+
+### Changed
+
+- **Breaking:** the manifests of exec and sqlite use `service.output`. A
+  caller of 0.13.0 refuses a manifest with a field that it does not know.
+  Update each caller before a provider serves the new manifest.
+
 ## [0.13.0] - 2026-09-23
 
 ### Added

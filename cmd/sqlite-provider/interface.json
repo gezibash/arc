@@ -1,7 +1,8 @@
 {
   "interface": 1, "id": "sqlite", "shape": "service",
   "title": "SQLite", "summary": "Answers SQL for the citizens that it grants.",
-  "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576},
+  "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576,
+              "output": {"open": {"parse": "json"}, "format": "rows"}},
   "kinds": {},
   "formats": {"rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}},
   "commands": [

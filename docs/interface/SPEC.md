@@ -126,6 +126,20 @@ from a citizen who is not an admin. `delivery/groups` holds these rules.
 
 A command of a service can override the method and the path.
 
+`output` is optional. It is an output pipeline, as section 9 defines, for the
+reply of a call by address, `arc call`, see 14.1. It starts from one record
+whose `content` is the reply. It can open, filter, format, and set the exit
+status. It cannot `save` or `tail`, and its templates name no arguments.
+Without `output`, `arc call` writes the reply as it came.
+
+```json
+"service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576,
+            "output": {"open": {"parse": "json"}, "format": "rows"}}
+```
+
+A manifest with `output` in its service needs a caller of v0.14.0 or later.
+An older caller refuses the manifest, because it does not know the field.
+
 ### 4.4 Commands
 
 ```json
@@ -639,7 +653,8 @@ sqlite+arc://<64-hex-key>/main
   escape, or dot segment. Core refuses such an address before any call.
 
 `arc call <address> [body]` sends the body to the capability that the
-address names. The capability must be installed, as for every call. The
+address names, and shows the reply with the `output` of the service, see 4.3.
+`--raw` writes the reply as it came. The capability must be installed, as for every call. The
 address carries no trust: the key of the provider and the install do.
 `--capability <id>` names the capability when two have one scheme, and its
 scheme must then match the address.
@@ -669,10 +684,15 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 {
   "interface": 1, "id": "exec", "shape": "service",
   "title": "Exec", "summary": "Runs commands for the citizens that it grants.",
-  "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576},
+  "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576,
+              "output": {"open": {"parse": "json"}, "format": "reply",
+                         "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
+                                  {"where": [{"field": "state", "is": "lost"}], "code": "1"},
+                                  {"code": "{{exit}}"}]}},
   "kinds": {},
   "formats": {
     "run": {"record": "{{stdout}}{{stderr}}"},
+    "reply": {"record": "{{stdout}}{{stderr}}{{job}}"},
     "job": {"record": "{{job}}\t{{state}}"}
   },
   "commands": [
@@ -701,7 +721,8 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 {
   "interface": 1, "id": "sqlite", "shape": "service",
   "title": "SQLite", "summary": "Answers SQL for the citizens that it grants.",
-  "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576},
+  "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576,
+              "output": {"open": {"parse": "json"}, "format": "rows"}},
   "kinds": {},
   "formats": {"rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}},
   "commands": [
