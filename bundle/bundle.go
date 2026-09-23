@@ -148,7 +148,8 @@ func Load(path string) (*Bundle, error) {
 }
 
 // ServeURI writes the address that the runtime reads. It escapes the path of
-// the command, so a #, a % or a ? in a directory name stays in the path.
+// the command, so a #, a % or a ? in a directory name stays in the path. The
+// args parameter is a JSON list, so an argument can contain a space.
 func (b *Bundle) ServeURI() string {
 	query := url.Values{"manifest": {b.Manifest}}
 	if len(b.Args) > 0 {

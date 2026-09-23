@@ -28,9 +28,16 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Fixed
 
-- `arc serve <directory>` works when the path of the directory has a `#`, a
-  `%`, or a `?` in it. Before, `arc serve` put the path of the program into
-  the `exec://` address without escaping it. When `arc serve` read the
+- `arc serve <bundle directory>` gives the program each argument of
+  `runtime.args` in the Arcfile. Before, the program got the JSON text of
+  the list, split at each space. For example, `args = ["-u", "server.py"]`
+  gave one argument: `["-u","server.py"]`. The `args` parameter of an
+  `exec://` address can now be a JSON list, and an argument in the list can
+  contain a space. An address that gives the arguments with spaces between
+  them, for example `args=-v+--x`, still works.
+- `arc serve <bundle directory>` works when the path of the directory has a
+  `#`, a `%`, or a `?` in it. Before, `arc serve` put the path of the program
+  into the `exec://` address without escaping it. When `arc serve` read the
   address back, it cut the path at `#` or `?`, changed `%20` into a space, or
   refused the address. For example, `arc serve bot#1` failed with "serve:
   .../bot is not a program". An `exec://` address that you write yourself
