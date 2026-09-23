@@ -33,6 +33,16 @@ All notable changes to ARC are recorded here. The format follows
   an event never reached its citizen. If a provider has a `SetEvents` method,
   remove it.
 
+### Fixed
+
+- `arc serve <bundle directory>` gives the program each argument of
+  `runtime.args` in the Arcfile. Before, the program got the JSON text of
+  the list, split at each space. For example, `args = ["-u", "server.py"]`
+  gave one argument: `["-u","server.py"]`. The `args` parameter of an
+  `exec://` address can now be a JSON list, and an argument in the list can
+  contain a space. An address that gives the arguments with spaces between
+  them, for example `args=-v+--x`, still works.
+
 ## [0.15.4] - 2026-09-23
 
 ### Fixed
