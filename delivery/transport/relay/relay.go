@@ -320,6 +320,11 @@ func (discard) Publish(context.Context, nostr.Event) error { return nil }
 // Watch sends the stored events that match the filter, then each new one as
 // it arrives. It closes the channel when the context ends, or when the relay
 // ends the subscription.
+//
+// Watch returns only after the relay sent its end of stored events. From then
+// on, the relay delivers each new matching event, also an ephemeral one that
+// it does not keep. If no end of stored events comes within Timeout, Watch
+// returns an error.
 func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error) {
 	conn, err := r.connect(ctx)
 	if err != nil {
@@ -349,12 +354,31 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 
+	// A relay sends the end of stored events after it takes the
+	// subscription. The library gives it only after the stored events are
+	// read, so drain keeps them until then.
+	wait, cancel := context.WithTimeout(ctx, Timeout)
+	pending, err := drain(wait, sub)
+	cancel()
+	if err != nil {
+		sub.Unsub()
+		conn.Close()
+		return nil, fmt.Errorf("relay %s: the relay did not take the subscription: %w", r.URL, err)
+	}
+
 	out := make(chan nostr.Event)
 	go func() {
 		defer close(out)
 		defer conn.Close()
 		defer sub.Unsub()
 
+		for _, event := range pending {
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
 		for {
 			select {
 			case event, ok := <-sub.Events:

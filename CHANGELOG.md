@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `arc serve` prints "serves" only after each relay has taken the watch for
+  live calls. Before, a first call just after that line could fail with
+  "mute: no one was listening for this". A watch of a relay now waits for the
+  end of stored events, for up to 15 seconds.
+
 ## [0.15.0] - 2026-09-23
 
 A live call finds the relays of the provider through its NIP-65 relay list,

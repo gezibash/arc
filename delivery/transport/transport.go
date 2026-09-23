@@ -55,6 +55,7 @@ type Reconciler interface {
 type Live interface {
 	Transport
 	// Watch sends each event that matches the filter, stored or new, until
-	// the context ends.
+	// the context ends. When Watch returns, the transport delivers each new
+	// matching event.
 	Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error)
 }
