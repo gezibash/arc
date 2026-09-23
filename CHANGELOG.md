@@ -13,6 +13,10 @@ All notable changes to ARC are recorded here. The format follows
 - A live call also goes to the read relays of the provider's NIP-65 list, so
   a caller and a provider that share no relay can call. See
   `docs/delivery/SPEC.md`, section 11.4.
+- `arc relay add <url> --index` names an indexer relay. `arc` publishes its
+  NIP-65 and NIP-17 relay lists there, and looks up the lists of others
+  there, for live calls and for direct messages. `arc` names no indexer by
+  default. See `docs/delivery/SPEC.md`, section 7.2.
 
 ## [0.14.0] - 2026-09-23
 

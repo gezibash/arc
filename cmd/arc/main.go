@@ -33,6 +33,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
+	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/groups"
@@ -109,11 +110,24 @@ func home(command *cobra.Command) (string, error) {
 	return dir, err
 }
 
-func keyPath(dir string) string    { return filepath.Join(dir, "key") }
-func relaysPath(dir string) string { return filepath.Join(dir, "relays") }
+func keyPath(dir string) string      { return filepath.Join(dir, "key") }
+func relaysPath(dir string) string   { return filepath.Join(dir, "relays") }
+func indexersPath(dir string) string { return filepath.Join(dir, "indexers") }
 
-func readRelays(dir string) ([]string, error) {
-	body, err := os.ReadFile(relaysPath(dir))
+func readRelays(dir string) ([]string, error) { return readURLs(relaysPath(dir)) }
+
+func writeRelays(dir string, urls []string) error { return writeURLs(dir, relaysPath(dir), urls) }
+
+// An indexer relay holds only relay lists. A citizen publishes its NIP-65
+// and NIP-17 lists there, and looks up the lists of others there.
+func readIndexers(dir string) ([]string, error) { return readURLs(indexersPath(dir)) }
+
+func writeIndexers(dir string, urls []string) error {
+	return writeURLs(dir, indexersPath(dir), urls)
+}
+
+func readURLs(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -129,7 +143,7 @@ func readRelays(dir string) ([]string, error) {
 	return out, nil
 }
 
-func writeRelays(dir string, urls []string) error {
+func writeURLs(dir, path string, urls []string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -137,38 +151,63 @@ func writeRelays(dir string, urls []string) error {
 	if body != "" {
 		body += "\n"
 	}
-	return os.WriteFile(relaysPath(dir), []byte(body), 0o600)
+	return os.WriteFile(path, []byte(body), 0o600)
 }
 
 func relayCommand() *cobra.Command {
 	command := &cobra.Command{Use: "relay", Short: "Manage the relays of this citizen, or run one"}
 
-	command.AddCommand(
-		&cobra.Command{
-			Use: "add <url>", Short: "Send to and sync with a relay", Args: cobra.ExactArgs(1),
-			RunE: func(command *cobra.Command, args []string) error {
-				url := args[0]
-				if !strings.HasPrefix(url, "ws://") && !strings.HasPrefix(url, "wss://") {
-					return errors.New("a relay is a ws:// or wss:// URL")
+	add := &cobra.Command{
+		Use: "add <url>", Short: "Send to and sync with a relay", Args: cobra.ExactArgs(1),
+		Long: "With --index, the relay is an indexer: arc publishes only its relay\n" +
+			"lists there, and looks up the relay lists of other citizens there.",
+		RunE: func(command *cobra.Command, args []string) error {
+			url := args[0]
+			if !strings.HasPrefix(url, "ws://") && !strings.HasPrefix(url, "wss://") {
+				return errors.New("a relay is a ws:// or wss:// URL")
+			}
+			dir, err := home(command)
+			if err != nil {
+				return err
+			}
+			relays, err := readRelays(dir)
+			if err != nil {
+				return err
+			}
+			indexers, err := readIndexers(dir)
+			if err != nil {
+				return err
+			}
+			index, _ := command.Flags().GetBool("index")
+			if index {
+				if slices.Contains(relays, url) {
+					return fmt.Errorf("%s is a relay of this citizen; remove it with arc relay rm first", url)
 				}
-				dir, err := home(command)
-				if err != nil {
+				if !slices.Contains(indexers, url) {
+					indexers = append(indexers, url)
+				}
+				if err := writeIndexers(dir, indexers); err != nil {
 					return err
 				}
-				urls, err := readRelays(dir)
-				if err != nil {
+			} else {
+				if slices.Contains(indexers, url) {
+					return fmt.Errorf("%s is an indexer of this citizen; remove it with arc relay rm first", url)
+				}
+				if !slices.Contains(relays, url) {
+					relays = append(relays, url)
+				}
+				if err := writeRelays(dir, relays); err != nil {
 					return err
 				}
-				if !slices.Contains(urls, url) {
-					urls = append(urls, url)
-				}
-				if err := writeRelays(dir, urls); err != nil {
-					return err
-				}
-				announceRelays(command)
-				return nil
-			},
+			}
+			announceRelays(command)
+			return nil
 		},
+	}
+	add.Flags().Bool("index", false, "use the relay only to publish and look up relay lists")
+
+	command.AddCommand(
+		add,
 		&cobra.Command{
 			Use: "rm <url>", Short: "Stop using a relay", Args: cobra.ExactArgs(1),
 			RunE: func(command *cobra.Command, args []string) error {
@@ -176,11 +215,19 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				urls, err := readRelays(dir)
+				relays, err := readRelays(dir)
 				if err != nil {
 					return err
 				}
-				if err := writeRelays(dir, slices.DeleteFunc(urls, func(u string) bool { return u == args[0] })); err != nil {
+				indexers, err := readIndexers(dir)
+				if err != nil {
+					return err
+				}
+				other := func(u string) bool { return u == args[0] }
+				if err := writeRelays(dir, slices.DeleteFunc(relays, other)); err != nil {
+					return err
+				}
+				if err := writeIndexers(dir, slices.DeleteFunc(indexers, other)); err != nil {
 					return err
 				}
 				announceRelays(command)
@@ -198,11 +245,18 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				indexers, err := readIndexers(dir)
+				if err != nil {
+					return err
+				}
 				if len(urls) == 0 {
 					fmt.Println("no relays: add one with arc relay add <url>")
 				}
 				for _, url := range urls {
 					fmt.Println(url)
+				}
+				for _, url := range indexers {
+					fmt.Println(url + "  (index)")
 				}
 				return nil
 			},
@@ -359,7 +413,10 @@ type session struct {
 	mail   *mail.Mail
 	relays []transport.Transport
 	urls   []string
-	keyer  nostr.Keyer
+	// indexers hold only relay lists. A one-time key answers their NIP-42
+	// challenge, so an indexer does not learn who looks up a list.
+	indexers []transport.Transport
+	keyer    nostr.Keyer
 	// remote says that a NIP-46 signer holds the secret key. The key then
 	// holds the public key alone.
 	remote bool
@@ -389,9 +446,19 @@ func open(command *cobra.Command) (*session, error) {
 		return nil, err
 	}
 
+	indexers, err := readIndexers(dir)
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+
 	sess := &session{key: k, node: &node.Node{Store: s}, urls: urls, keyer: id.keyer, remote: id.remote, signer: id.signer}
 	for _, url := range urls {
 		sess.relays = append(sess.relays, relay.Relay{URL: url, Signer: sess.keyer})
+	}
+	once := keyer.NewPlainKeySigner(nostr.Generate())
+	for _, url := range indexers {
+		sess.indexers = append(sess.indexers, relay.Relay{URL: url, Signer: once})
 	}
 
 	sess.mail, err = mail.Open(filepath.Join(dir, "store"), sess.signer, sess.node, sess.relays)
@@ -399,6 +466,7 @@ func open(command *cobra.Command) (*session, error) {
 		s.Close()
 		return nil, err
 	}
+	sess.mail.Indexers = sess.indexers
 
 	// The wake hooks belong to the machine, not to one identity.
 	root, err := rootDir(command)

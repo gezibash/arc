@@ -106,6 +106,10 @@ type Mail struct {
 	relays []transport.Transport
 	now    func() time.Time
 
+	// Indexers are relays that hold relay lists. Mail looks up the NIP-17
+	// list of a recipient there when its own relays do not hold it.
+	Indexers []transport.Transport
+
 	// OnRequest answers a store-and-forward call to this citizen. A citizen
 	// that serves no capability leaves it nil, and ignores requests.
 	OnRequest func(ctx context.Context, rumor nostr.Event) (call.Reply, error)
@@ -744,8 +748,8 @@ func RelayList(k keys.Signer, urls []string, at nostr.Timestamp) (nostr.Event, e
 func (m *Mail) inboxRelays(ctx context.Context, to nostr.PubKey) []transport.Transport {
 	filter := nostr.Filter{Kinds: []nostr.Kind{RelayListKind}, Authors: []nostr.PubKey{to}}
 	lists := m.node.Store.Query(filter)
-	if len(lists) == 0 && len(m.relays) > 0 {
-		m.node.Pull(ctx, filter, m.relays)
+	if via := slices.Concat(m.relays, m.Indexers); len(lists) == 0 && len(via) > 0 {
+		m.node.Pull(ctx, filter, via)
 		lists = m.node.Store.Query(filter)
 	}
 	if len(lists) == 0 {
