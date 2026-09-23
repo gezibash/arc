@@ -6,6 +6,8 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-09-23
+
 ### Fixed
 
 - `arc serve` prints "serves" only when at least one relay has the watch for
