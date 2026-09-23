@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc call` takes an address again: `<scheme>+arc://<provider>/<path>`, as
+  the older stack did. The scheme names the capability, the path is the path
+  of the request, and the provider can now be a key, an npub, an installed
+  name, or a domain for NIP-05. See `docs/interface/SPEC.md`, section 14.1.
+
 ## [0.12.1] - 2026-09-23
 
 ### Fixed
