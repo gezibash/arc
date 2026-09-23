@@ -335,8 +335,11 @@ machine. It does these steps:
 3. If not, the script stops the old `arc serve` process group. Then it starts
    a new `arc serve` as a plain process.
 4. The start script waits until `arc serve` writes the line `serves` to its
-   log. `arc serve` writes it when each relay has its announcement and its
-   watch. Then the script exits with status 0.
+   log. `arc serve` writes it when two conditions are true: each relay has
+   taken or refused its first watch, and at least one relay has the watch.
+   If a relay refuses the watch, `arc serve` logs the relay and tries again
+   every 3 seconds. A caller tries its relays in turn, so a live call goes
+   through a relay that has the watch. Then the script exits with status 0.
 5. If `arc serve` does not write that line within 25 seconds, the start
    script deletes the lease. Then it exits with status 1.
 
