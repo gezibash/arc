@@ -266,8 +266,10 @@ func appsCommand() *cobra.Command {
 	command.AddCommand(&cobra.Command{
 		Use:   "init [directory]",
 		Short: "Write a new provider bundle",
-		Long: "The bundle holds an Arcfile, a manifest, and a runtime that\n" +
-			"answers one message. Serve it with arc serve <directory>.",
+		Long: "The bundle holds an Arcfile, a manifest, an interface of version 1,\n" +
+			"and a runtime that answers one message. Serve it with\n" +
+			"arc serve <directory>. A caller who installs it sends a message\n" +
+			"with arc <name> say <message>.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			path := "."
@@ -279,7 +281,7 @@ func appsCommand() *cobra.Command {
 				return err
 			}
 			fmt.Printf("wrote a bundle in %s\n", files.Root)
-			fmt.Printf("  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Runtime)
+			fmt.Printf("  %s\n  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Interface, files.Runtime)
 			fmt.Printf("\nserve it with: arc serve %s\n", path)
 			return nil
 		},
