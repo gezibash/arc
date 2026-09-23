@@ -35,6 +35,11 @@ description = "Prove that one running relay carries sealed data and live calls"
 run = "bash scripts/check-relay.sh"
 raw = true
 
+[tasks.check-clean-build]
+description = "Prove that each release build of a commit stamps vcs.modified=false"
+run = "bash scripts/check-clean-build.sh"
+raw = true
+
 [tasks.interface]
 description = "Prove phases A to D of the capability interface"
 run = "bash scripts/test-interface.sh"
