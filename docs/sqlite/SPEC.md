@@ -2,8 +2,8 @@
 
 The real provider lives in `cmd/sqlite-provider`. Its [provider contract and operator
 configuration](../../cmd/sqlite-provider/README.md) are the source for supported
-queries and limits. It uses the [shared request transport](https://github.com/gezibash/arc/blob/v0.10.0/docs/transport/SPEC.md)
-and advertises the `sqlite` scheme.
+queries and limits. It answers calls of the [delivery layer](../delivery/SPEC.md), section 11.4,
+and announces the `sqlite` scheme.
 
 The SQLite engine runs on the provider's machine. Citizens send parameterized
 query requests through ARC; the provider checks their authenticated public keys

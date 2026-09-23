@@ -316,12 +316,12 @@ trusted compute broker.
 
 | Existing building block | Reuse and boundary |
 | --- | --- |
-| [Keypair identity](https://github.com/gezibash/arc/blob/v0.10.0/identity/identity.go) | Owner signatures and guest identities; key ownership alone says nothing about protected execution |
-| [Capability packages](../../capability/package.go) and [discovery](https://github.com/gezibash/arc/blob/v0.10.0/capability/manifest.go) | Signed provider advertisements and existing detail lookup; evidence-profile advertisement needs an explicit schema design |
-| [Interface manifests](../../capability/interfaces.go) | Existing provider-installed command and stream descriptions; security decisions cannot be delegated to arbitrary provider-authored templates |
+| [Keypair identity](../../delivery/keys/keys.go) | Owner signatures and guest identities: secp256k1 keys with BIP-340 signatures; key ownership alone says nothing about protected execution |
+| [Capability announcements](../../delivery/catalog/catalog.go) | Signed provider advertisements, kind 30272, and discovery; evidence-profile advertisement needs an explicit schema design |
+| [Interface manifests](../../iface/manifest.go) | Existing provider-installed command descriptions of interface version 1; security decisions cannot be delegated to arbitrary provider-authored templates |
 | [Execution adapter](../../cmd/exec-provider/main.go) | Can host public orchestration; its ordinary process and plaintext input/output are not a protected boundary |
-| [ARC sessions](https://github.com/gezibash/arc/blob/v0.10.0/session/session.go) | Encrypted transport; no attestation binding today, and the current version documents exposure of past sessions if the responder's long-term key is compromised |
-| [Sealed boxes](https://github.com/gezibash/arc/blob/v0.10.0/sealedbox/sealedbox.go) | Existing encryption building block for recipient-held data; not a storage format, sender authorization, freshness proof, or guest verifier |
+| [Private events](../../delivery/private/private.go) | NIP-44 encryption in NIP-59 gift wraps, to one recipient; no attestation binding today, and no forward secrecy (docs/delivery/SPEC.md, section 13) |
+| [Sealed drafts](../../delivery/draft/draft.go) | NIP-37 drafts, sealed to their author; data that an owner keeps for itself, not a storage format for a guest, sender authorization, freshness proof, or guest verifier |
 | [Provider grants](../../provider/config.go) | Local authorization by public key; not the signed, portable run grants defined here |
 
 The private-environment implementation MUST supply the missing verifier,

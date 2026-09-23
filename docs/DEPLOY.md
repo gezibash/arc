@@ -42,8 +42,11 @@ as quarantined and refuses to run them. Remove the mark before use:
 xattr -dr com.apple.quarantine /opt/arc
 ```
 
-State lives in `~/.config/arc` (keys, control plane, tools) and
-`~/.arc` (cache). Back up `~/.config/arc/keys`.
+State lives in `~/.config/arc`, or in the directory that `--home` or
+`ARC_HOME` names. Each identity has its own directory,
+`~/.config/arc/citizens/<name>`, with its key, store, relays, and installs.
+The file `default` names the default identity, and `wake.toml` holds the wake
+hooks. Back up the `key` file of each identity.
 
 ## Build a release locally
 

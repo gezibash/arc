@@ -1,9 +1,9 @@
 # Delivery: ARC over Nostr events, on any transport
 
-Status: phases 1 to 3 are built, see section 15. The rest is proposed. The older ARC
-code uses its own protocol: Ed25519 keys, live sessions, and routed relays.
-Section 14 lists what changes. Phase 4, section 15.1, makes this layer the
-only ARC stack and removes the older code.
+Status: phases 1 to 4 are built, see section 15. Phases 5 and 6 are
+proposed. Phase 4, section 15.1, made this layer the only ARC stack in
+v0.11.0. The older stack used its own protocol: Ed25519 keys, live sessions,
+and routed relays. Section 14 lists what replaced each part of it.
 
 ## 1. Purpose
 
@@ -533,9 +533,9 @@ recipient does not learn who wrote to them.
 | Replay | harmless | A node keeps one copy of each event, by ID. A provider answers each request once. |
 | Key loss | fatal | Nothing recovers a lost key. |
 
-## 14. What changes in ARC
+## 14. What replaced the older stack
 
-| Today | After |
+| Before v0.11.0 | From v0.11.0 |
 | --- | --- |
 | `identity` (Ed25519) | secp256k1 keys from `fiatjaf.com/nostr` |
 | `sealedbox`, `session`, `packet`, `frame`, `internal/wire` | NIP-44 and NIP-59 |
@@ -543,7 +543,7 @@ recipient does not learn who wrote to them.
 | `relay` with routes and federation | relays built on khatru, and the NIP-65 outbox model |
 | `client` | the node: store, router, and transports |
 | `direct` | left out of the first version, see section 16 |
-| `citizen` provider runtime | moved to `provider/host`, which both stacks use: a provider still runs as a process over standard input and output |
+| `citizen` provider runtime | moved to `provider/host`, which `arc serve` uses: a provider still runs as a process over standard input and output |
 | `capability`, `toolbox`, installed commands | kept; the manifest travels in an announcement |
 | `cmd/dm-provider` | NIP-17 direct messages; no provider needed |
 | `cmd/journal-provider` | data that the citizen keeps for itself; no provider needed |
