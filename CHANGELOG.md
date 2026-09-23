@@ -14,6 +14,13 @@ All notable changes to ARC are recorded here. The format follows
   a caller and a provider that share no relay can call. See
   `docs/delivery/SPEC.md`, section 11.4.
 
+### Fixed
+
+- `arc serve` prints "serves" only after each relay has taken the watch for
+  live calls. Before, a first call just after that line could fail with
+  "mute: no one was listening for this". A watch of a relay now waits for the
+  end of stored events, for up to 15 seconds.
+
 ## [0.14.0] - 2026-09-23
 
 `arc call` shows a reply as the manifest of the service says. Update each

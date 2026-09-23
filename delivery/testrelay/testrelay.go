@@ -2,15 +2,18 @@
 package testrelay
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
@@ -156,4 +159,36 @@ func StartGroups(t *testing.T, id string, admins ...nostr.PubKey) (string, nostr
 	server := httptest.NewServer(relay)
 	t.Cleanup(server.Close)
 	return "ws" + strings.TrimPrefix(server.URL, "http"), key.Public()
+}
+
+// StartSlow runs a relay that waits for delay before it takes a subscription
+// for events tagged to one key. Until then, the relay does not deliver an
+// ephemeral event to that key. Subscriptions for other keys are not slow.
+func StartSlow(t *testing.T, delay time.Duration, to nostr.PubKey) string {
+	t.Helper()
+	db := &slicestore.SliceStore{}
+	if err := db.Init(); err != nil {
+		t.Fatal(err)
+	}
+	relay := khatru.NewRelay()
+	relay.Log = log.New(io.Discard, "", 0)
+	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
+
+	// Khatru handles each message in its own goroutine, and adds the
+	// listener only after OnRequest returns.
+	onRequest := relay.OnRequest
+	relay.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
+		if slices.Contains(filter.Tags["p"], to.Hex()) {
+			time.Sleep(delay)
+		}
+		if onRequest != nil {
+			return onRequest(ctx, filter)
+		}
+		return false, ""
+	}
+
+	server := httptest.NewServer(relay)
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http")
 }

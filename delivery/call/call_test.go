@@ -83,6 +83,32 @@ func TestALiveCallOverARelay(t *testing.T) {
 	t.Logf("live round trip over a local relay: %v", rtt)
 }
 
+// A relay can take a subscription some time after the request for it. The
+// provider is ready only when the relay delivers a call to it. The relay here
+// takes the provider's subscription late, and the caller's at once.
+func TestALiveCallThroughARelayThatSubscribesLate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serving := keys.Generate()
+	r := relay.Relay{URL: testrelay.StartSlow(t, 300*time.Millisecond, serving.Public)}
+	ready := make(chan struct{})
+	go provider(t, serving).ServeLive(ctx, r, func() { close(ready) })
+	<-ready
+
+	ctx, stop := context.WithTimeout(ctx, 5*time.Second)
+	defer stop()
+	reply, _, err := call.Live(ctx, keys.Generate(), serving.Public, call.Request{
+		Capability: "primary", Method: "ECHO", Path: "/", Body: "late",
+	}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Body != "ECHO / late" {
+		t.Errorf("reply = %+v", reply)
+	}
+}
+
 // The same request twice in one second is two calls. The provider refuses a
 // replay of one request, not a second request with the same body.
 func TestTwoEqualCallsAreBothAnswered(t *testing.T) {
