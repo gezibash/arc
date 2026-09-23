@@ -1,8 +1,9 @@
+# The build copies .git, so Go stamps the commit. Do not leave out a tracked
+# file here: git then sees it as deleted, and Go stamps vcs.modified=true.
 bin
 .arc
-.claude
-.github
-docs
+.claude/*
+!.claude/skills/
 outputs
 tmp
 *.tar.gz
