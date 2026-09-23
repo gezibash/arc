@@ -6,6 +6,8 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-23
+
 ### Added
 
 - `arc call` takes an address again: `<scheme>+arc://<provider>/<path>`, as
