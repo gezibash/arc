@@ -93,11 +93,6 @@ func NormalizeCapability(fields map[string]any) map[string]any {
 		fields = map[string]any{}
 	}
 
-	interfaces := normalizeInterfaces(fields["interfaces"])
-	if interfaces == nil {
-		interfaces = interfacesFromLegacyCLI(fields["cli"])
-	}
-
 	id := "primary"
 	if given, ok := fields["id"].(string); ok && given != "" {
 		id = given
@@ -113,7 +108,6 @@ func NormalizeCapability(fields map[string]any) map[string]any {
 		"examples":   anyList(stringList(fields["examples"])),
 	}
 	putMap(out, "config", normalizeConfig(fields["config"]))
-	putMap(out, "interfaces", interfaces)
 	return out
 }
 
@@ -155,16 +149,11 @@ func normalizeDocument(document map[string]any) (map[string]any, error) {
 		return nil, ErrInvalid
 	}
 
-	// A document may hold the interfaces and the examples beside the
-	// capability. They belong to the capability.
-	capability := make(map[string]any, len(fields)+2)
+	// A document may hold the examples beside the capability. They belong to
+	// the capability.
+	capability := make(map[string]any, len(fields)+1)
 	for key, value := range fields {
 		capability[key] = value
-	}
-	if _, held := capability["interfaces"]; !held {
-		if interfaces := normalizeInterfaces(document["interfaces"]); interfaces != nil {
-			capability["interfaces"] = interfaces
-		}
 	}
 	if _, held := capability["examples"]; !held && document["examples"] != nil {
 		capability["examples"] = document["examples"]
@@ -213,12 +202,6 @@ func normalizeInvocation(value any) map[string]any {
 		fields = map[string]any{}
 	}
 
-	mode := "request_reply"
-	switch fields["mode"] {
-	case "stream", "events", "request_reply":
-		mode, _ = fields["mode"].(string)
-	}
-
 	method := "RAW"
 	if given, ok := fields["method"].(string); ok {
 		method = given
@@ -228,15 +211,12 @@ func normalizeInvocation(value any) map[string]any {
 		path = given
 	}
 
-	invocation := map[string]any{
-		"mode":          mode,
+	return map[string]any{
 		"method":        method,
 		"path":          path,
 		"request_body":  bodyShape(fields["request_body"], "Plain text request body"),
 		"response_body": bodyShape(fields["response_body"], "Plain text response body"),
 	}
-	putMap(invocation, "stream", normalizeStreamInvocation(fields["stream"]))
-	return invocation
 }
 
 func bodyShape(value any, description string) any {
@@ -244,54 +224,6 @@ func bodyShape(value any, description string) any {
 		return fields
 	}
 	return map[string]any{"type": "text", "description": description}
-}
-
-func normalizeStreamInvocation(value any) map[string]any {
-	fields, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	operations := []any{"open", "data", "resize", "close", "exit", "error"}
-	if list, ok := fields["operations"].([]any); ok {
-		seen := map[string]bool{}
-		operations = []any{}
-		for _, item := range list {
-			text, ok := item.(string)
-			if !ok {
-				continue
-			}
-			text = strings.ToLower(text)
-			if !seen[text] {
-				seen[text] = true
-				operations = append(operations, text)
-			}
-		}
-	}
-
-	stream := map[string]any{"operations": operations}
-	if tty, ok := fields["tty"].(bool); ok {
-		stream["tty"] = tty
-	}
-	putPresent(stream, "encoding", firstString(fields["encoding"]))
-	putMap(stream, "input", streamIO(fields["input"]))
-	putMap(stream, "output", streamIO(fields["output"]))
-	return stream
-}
-
-func streamIO(value any) map[string]any {
-	fields, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-
-	io := map[string]any{}
-	putPresent(io, "type", firstString(fields["type"]))
-	putPresent(io, "description", firstString(fields["description"]))
-	if len(io) == 0 {
-		return nil
-	}
-	return io
 }
 
 func normalizeConfig(value any) map[string]any {
@@ -343,13 +275,6 @@ func firstString(values ...any) string {
 	return ""
 }
 
-func stringOrNil(value any) any {
-	if text := firstString(value); text != "" {
-		return text
-	}
-	return nil
-}
-
 func orNil(value any) any {
 	if text, ok := value.(string); ok && text != "" {
 		return text
@@ -388,12 +313,6 @@ func putPresent(fields map[string]any, key string, value string) {
 
 func putMap(fields map[string]any, key string, value map[string]any) {
 	if value != nil {
-		fields[key] = value
-	}
-}
-
-func putList(fields map[string]any, key string, value []any) {
-	if len(value) > 0 {
 		fields[key] = value
 	}
 }

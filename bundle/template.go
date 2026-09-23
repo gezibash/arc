@@ -38,38 +38,9 @@ func manifestTemplate(space, name string) string {
     "examples": [
       "hello from arc"
     ]
-  },
-  "interfaces": {
-    "cli": {
-      "version": 1,
-      "namespace": %q,
-      "summary": "The commands of the starter ARC app",
-      "commands": [
-        {
-          "path": [],
-          "summary": "Send a message to the starter ARC app",
-          "args": [
-            {
-              "name": "message",
-              "kind": "positional",
-              "required": false,
-              "variadic": true,
-              "description": "The text to send"
-            }
-          ],
-          "input": {
-            "source": "template",
-            "template": "{{message}}"
-          },
-          "examples": [
-            "hello from arc"
-          ]
-        }
-      ]
-    }
   }
 }
-`, time.Now().UTC().Format(time.RFC3339), space, name, space)
+`, time.Now().UTC().Format(time.RFC3339), space, name)
 }
 
 // runtimeTemplate writes a program that reads one request for each line and
