@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-23
+
+`arc call` shows a reply as the manifest of the service says. Update each
+caller to 0.14.0 before a provider of exec or sqlite serves the new manifest:
+a caller of 0.13.0 refuses it.
+
 ### Added
 
 - The service of a manifest can have `output`: the pipeline that shows the
