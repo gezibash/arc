@@ -103,6 +103,33 @@ func TestTheAddressKeepsThePathOfTheProgram(t *testing.T) {
 	}
 }
 
+func TestInitWritesAManifestForAnUnusualName(t *testing.T) {
+	titles := map[string]string{
+		// The letter é takes two bytes. The title must keep both.
+		"émile-bot": "Émile Bot",
+		// Go quoting writes DEL as \x7f, and JSON has no such escape.
+		"del\x7f-bot": "Del\x7f Bot",
+	}
+
+	for name, want := range titles {
+		files, err := bundle.Init(filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pkg, err := capability.LoadFile(files.Manifest)
+		if err != nil {
+			t.Errorf("%q: the manifest is not a capability: %v", name, err)
+			continue
+		}
+
+		fields, _ := pkg["capability"].(map[string]any)
+		if fields["title"] != want {
+			t.Errorf("%q: title = %q, want %q", name, fields["title"], want)
+		}
+	}
+}
+
 func TestInitRefusesToWriteOverAFile(t *testing.T) {
 	root := t.TempDir()
 

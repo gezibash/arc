@@ -51,6 +51,13 @@ All notable changes to ARC are recorded here. The format follows
   directory. The `exec://` address carries the directory in a new `cwd`
   parameter. The directory must exist. If it does not, `arc serve` stops
   with an error. A hand-written address without `cwd` works as before.
+- `arc apps init <directory>` writes a valid manifest.json when the name of
+  the directory starts with a letter that is not ASCII. Before, it cut that
+  letter in half, so the file was not valid JSON, and `arc serve` refused
+  it. For example, `émile-bot` gave `"title": "�\xa9mile Bot"`. Now the
+  title is "Émile Bot". `arc apps init` also writes each string of
+  manifest.json with a JSON encoder, so no directory name can make the file
+  invalid JSON.
 
 ## [0.15.4] - 2026-09-23
 
