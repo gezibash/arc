@@ -140,7 +140,7 @@ path = "./manifest.json"
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, args, _, err := host.ParseServeURI(held.ServeURI())
+	_, args, _, _, err := host.ParseServeURI(held.ServeURI())
 	if err != nil {
 		t.Fatal(err)
 	}

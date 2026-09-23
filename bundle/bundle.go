@@ -8,7 +8,7 @@
 // The command `arc serve <directory>` reads the Arcfile and turns it into
 // the address that the runtime already understands:
 //
-//	exec://<command>?manifest=<path>
+//	exec://<command>?manifest=<path>&args=<JSON list>&cwd=<directory>
 package bundle
 
 import (
@@ -150,7 +150,7 @@ func Load(path string) (*Bundle, error) {
 // ServeURI writes the address that the runtime reads. The args parameter is
 // a JSON list, so an argument can contain a space.
 func (b *Bundle) ServeURI() string {
-	query := url.Values{"manifest": {b.Manifest}}
+	query := url.Values{"manifest": {b.Manifest}, "cwd": {b.Cwd}}
 	if len(b.Args) > 0 {
 		encoded, _ := json.Marshal(b.Args)
 		query.Set("args", string(encoded))
