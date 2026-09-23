@@ -74,6 +74,23 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 	}
 }
 
+func TestInitWritesAManifestForANameThatIsNotASCII(t *testing.T) {
+	files, err := bundle.Init(filepath.Join(t.TempDir(), "émile-bot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkg, err := capability.LoadFile(files.Manifest)
+	if err != nil {
+		t.Fatalf("the manifest is not a capability: %v", err)
+	}
+
+	fields, _ := pkg["capability"].(map[string]any)
+	if fields["title"] != "Émile Bot" {
+		t.Errorf("title = %q, want %q", fields["title"], "Émile Bot")
+	}
+}
+
 func TestInitRefusesToWriteOverAFile(t *testing.T) {
 	root := t.TempDir()
 
