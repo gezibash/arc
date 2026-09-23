@@ -35,6 +35,10 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Removed
 
+- **Breaking:** the `Events` and `WantsEvents` interfaces of the `provider`
+  package, and `Emit`. `arc serve` dropped each event line of a provider, so
+  an event never reached its citizen. If a provider has a `SetEvents` method,
+  remove it.
 - The command line interfaces of the older stack, versions 1 to 4, in
   `manifest.json`. They do not run on the delivery layer. `arc serve` still
   loads a manifest that holds one, but the announcement leaves out
