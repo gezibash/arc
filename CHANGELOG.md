@@ -18,6 +18,13 @@ All notable changes to ARC are recorded here. The format follows
   there, for live calls and for direct messages. `arc` names no indexer by
   default. See `docs/delivery/SPEC.md`, section 7.2.
 
+### Fixed
+
+- `arc call` asks the relays for the newest announcement of the provider
+  before each call, as an installed command does. Before, it used the
+  announcement that this machine held, so a new manifest, for example the
+  `service.output` of 0.14.0, took effect only after `arc sync`.
+
 ## [0.14.0] - 2026-09-23
 
 `arc call` shows a reply as the manifest of the service says. Update each

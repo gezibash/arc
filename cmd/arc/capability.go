@@ -342,6 +342,19 @@ func findOffer(ctx context.Context, sess *session, provider nostr.PubKey, id str
 	return offer, err
 }
 
+// newestAnnouncements asks the relays for the announcements of a provider,
+// so that a call meets a new manifest at once. If no relay answers, the call
+// uses the announcements that this machine holds.
+func newestAnnouncements(ctx context.Context, sess *session, provider nostr.PubKey) {
+	if len(sess.relays) == 0 {
+		return
+	}
+	filter := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
+	if err := node.Unreached(sess.node.Pull(ctx, filter, sess.relays)); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\nthis uses the announcement that this machine holds\n", err)
+	}
+}
+
 // callTarget finds the capability that a call names: by an address,
 // <scheme>+arc://<provider>/<path>, or by a provider and --capability. It
 // returns the path of the address, or "" for a provider.
@@ -356,6 +369,7 @@ func callTarget(command *cobra.Command, sess *session, installs catalog.Installs
 		if flag != "" {
 			id = flag
 		}
+		newestAnnouncements(ctx, sess, provider)
 		offer, err := findOffer(ctx, sess, provider, id)
 		return provider, offer, "", err
 	}
@@ -368,6 +382,7 @@ func callTarget(command *cobra.Command, sess *session, installs catalog.Installs
 	if err != nil {
 		return provider, catalog.Offer{}, "", err
 	}
+	newestAnnouncements(ctx, sess, provider)
 	if flag != "" {
 		offer, err := findOffer(ctx, sess, provider, flag)
 		if err == nil && offer.Scheme != address.Scheme {
