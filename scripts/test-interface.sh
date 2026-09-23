@@ -217,6 +217,24 @@ caller exec run --later echo later 2> "$work/later.txt"
 grep "queued" "$work/later.txt" > /dev/null || fail "--later did not queue: $(cat "$work/later.txt")"
 say "--later queues a live call in the outbox"
 
+# The starter bundle of arc apps init announces its interface.json, and a
+# caller runs its command.
+"$work/arc" apps init "$work/weather-bot" > /dev/null
+starter() { "$work/arc" --home "$work/starter" "$@"; }
+starter keys gen > /dev/null
+starter relay add "$url"
+starter_key="$(starter whoami | sed -n 2p)"
+starter serve "$work/weather-bot" > "$work/starter.log" 2>&1 &
+starter_pid=$!
+for _ in $(seq 1 50); do grep "serves" "$work/starter.log" > /dev/null 2>&1 && break; sleep 0.1; done
+grep "serves weather-bot" "$work/starter.log" > /dev/null || fail "the starter did not serve: $(cat "$work/starter.log")"
+caller install "$starter_key" --yes | grep "installed weather-bot" > /dev/null || fail "the starter did not install"
+[ "$(caller weather-bot say hello from arc)" = "hello from weather-bot: hello from arc" ] ||
+  fail "the starter answered $(caller weather-bot say hello from arc 2>&1)"
+kill "$starter_pid"
+wait "$starter_pid" 2>/dev/null || true
+say "arc weather-bot say hello answers through the starter of arc apps init"
+
 printf 'phase A holds: manifests, arguments, templates, call, format\n\n'
 
 # Phase B: sealed data. The journal and the files are manifests, with no

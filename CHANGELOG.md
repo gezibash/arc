@@ -25,6 +25,13 @@ All notable changes to ARC are recorded here. The format follows
   service that keeps its notes in SQLite over ARC. The first runs in the
   provider program. The second is a plain HTTP server with no ARC library,
   behind `http-provider`. `mise run compose` proves both end to end.
+- `arc apps init` writes `interface.json` beside `manifest.json`. It is a
+  manifest of interface version 1 with one command. After a caller installs
+  the bundle, `arc <name> say <message>` sends the message to the runtime and
+  shows the reply. Before, a caller could reach a starter bundle only with
+  `arc call`. The id of the interface comes from the name of the directory,
+  as the scheme does. If that name starts with a digit, the id and the
+  scheme start with `app-`. They have at most 64 characters.
 
 ### Removed
 

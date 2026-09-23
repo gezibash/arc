@@ -44,6 +44,27 @@ func manifestTemplate(space, name string) string {
 `, jsonString(time.Now().UTC().Format(time.RFC3339)), jsonString(space), jsonString(name))
 }
 
+// interfaceTemplate writes the commands of the capability, as interface
+// version 1 defines them. Its one command sends the text of the caller to the
+// runtime as the body, and shows the reply.
+func interfaceTemplate(space, name string) string {
+	return fmt.Sprintf(`{
+  "interface": 1, "id": %s, "shape": "service",
+  "title": %s,
+  "summary": "A starter ARC app. Edit this manifest and the runtime to say what your capability does.",
+  "service": {"method": "RAW", "path": "/", "max_bytes": 1048576},
+  "kinds": {},
+  "formats": {"reply": {"record": "{{content}}"}},
+  "commands": [
+    {"path": ["say"], "summary": "Send a message, and show the reply",
+     "args": [{"name": "message", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+     "action": {"call": {"class": "live", "body": "{{message}}"}},
+     "output": {"format": "reply"}}
+  ]
+}
+`, jsonString(space), jsonString(name))
+}
+
 // jsonString writes a string as a JSON string. Go quoting (%q) is not JSON:
 // it writes a byte that is not UTF-8 as \xa9, and JSON has no such escape.
 func jsonString(value string) string {
