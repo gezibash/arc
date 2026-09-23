@@ -26,6 +26,13 @@ All notable changes to ARC are recorded here. The format follows
   provider program. The second is a plain HTTP server with no ARC library,
   behind `http-provider`. `mise run compose` proves both end to end.
 
+### Removed
+
+- **Breaking:** the `Events` and `WantsEvents` interfaces of the `provider`
+  package, and `Emit`. `arc serve` dropped each event line of a provider, so
+  an event never reached its citizen. If a provider has a `SetEvents` method,
+  remove it.
+
 ## [0.15.4] - 2026-09-23
 
 ### Fixed

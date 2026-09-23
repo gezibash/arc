@@ -92,19 +92,6 @@ func (r Request) Path() string {
 	return path
 }
 
-// Events writes a message that no request asked for. ARC sends it to the
-// citizen that the event names.
-type Events interface {
-	// Emit sends one event to a citizen, named by its public key in hex.
-	Emit(to, topic, body string, meta map[string]any) error
-}
-
-// WantsEvents is a handler that sends events. Run gives it the writer before
-// it serves the first request.
-type WantsEvents interface {
-	SetEvents(events Events)
-}
-
 // Caller calls other capabilities, as the citizen that serves this provider.
 type Caller interface {
 	// Call sends one live call to the capability that an address names,
@@ -196,9 +183,6 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 	runtime := &runtime{
 		handler: handler, options: opts, out: bufio.NewWriter(opts.Out),
 		calls: map[string]chan result{}, stopped: make(chan struct{}),
-	}
-	if wants, ok := handler.(WantsEvents); ok {
-		wants.SetEvents(runtime)
 	}
 	if wants, ok := handler.(WantsCaller); ok {
 		wants.SetCaller(runtime)
@@ -325,21 +309,6 @@ func (r *runtime) call(ctx context.Context, request Request) (reply string, err 
 	}()
 
 	return r.handler.HandleRequest(ctx, request)
-}
-
-// Emit writes one event line. ARC reads the citizen out of "to".
-func (r *runtime) Emit(to, topic, body string, meta map[string]any) error {
-	if meta == nil {
-		meta = map[string]any{}
-	}
-
-	line, err := json.Marshal(map[string]any{
-		"op": "event", "to": to, "topic": topic, "meta": meta, "body": body,
-	})
-	if err != nil {
-		return err
-	}
-	return r.writeLine(line)
 }
 
 // Call writes one call line, and waits for its result.
