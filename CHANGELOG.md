@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The linux-aarch64 and darwin-aarch64 binaries of a release report a clean
+  build. Before, `arc version` printed "commit <sha> (modified)" for them,
+  because the release build saw its own tarballs in `dist/` as changes.
+
 ## [0.15.2] - 2026-09-23
 
 ### Fixed

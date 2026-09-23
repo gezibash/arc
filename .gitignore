@@ -4,6 +4,10 @@
 /arc-*
 /*-provider
 
+# The release workflow writes its tarballs here. Git must not see them, or each
+# later build of the loop stamps vcs.modified=true.
+/dist/
+
 # Temporary files, for example, from tests.
 /tmp/
 
