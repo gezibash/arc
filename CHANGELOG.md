@@ -14,6 +14,12 @@ All notable changes to ARC are recorded here. The format follows
   one was listening for this". `arc serve` logs each relay that refused its
   first watch, tries it again every 3 seconds, and sends the announcement
   again. With no relay up, `arc serve` waits for one.
+- `arc serve` sends the relay lists of NIP-65 and NIP-17 to a relay or an
+  indexer that comes back after start-up. Before, a relay or an indexer that
+  was down at start-up never got them. Then a caller that shares no relay
+  with the provider could not find the provider. Each sync now sends the
+  lists to the relays. Each sync also sends them to an indexer that did not
+  get them at start-up, until that indexer has them.
 
 ## [0.15.1] - 2026-09-23
 

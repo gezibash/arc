@@ -16,6 +16,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/keys"
+	"github.com/gezibash/arc/delivery/relaylist"
 	"github.com/gezibash/arc/delivery/testrelay"
 	"github.com/gezibash/arc/delivery/transport/relay"
 )
@@ -186,4 +187,47 @@ func callEcho(ctx context.Context, provider nostr.PubKey, id string, r relay.Rel
 	return call.Live(ctx, keys.Generate(), provider, call.Request{
 		Capability: id, Method: "ECHO", Path: "/", Body: "hello",
 	}, r)
+}
+
+// A relay and an indexer of a provider are down when `arc serve` starts, and
+// come back after it says "serves". Each gets the NIP-65 relay list, because
+// a caller that shares no relay with the provider finds its read relays
+// there.
+func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
+	down, indexer := deadAddress(t), deadAddress(t)
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	ok(t, home, "", "relay", "add", testrelay.Start(t))
+	ok(t, home, "", "relay", "add", "ws://"+down)
+	ok(t, home, "", "relay", "add", "--index", "ws://"+indexer)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out, result := serving(t, ctx, home)
+	if !waitFor(out, "serves", 10*time.Second) {
+		t.Fatalf("arc serve did not say serves through the relay that is up: %q", out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	public, err := hex.DecodeString(lines[len(lines)-1])
+	if err != nil || len(public) != 32 {
+		t.Fatalf("arc serve gave no public key: %q", out.String())
+	}
+
+	for _, address := range []string{down, indexer} {
+		url := testrelay.StartAt(t, address)
+		filter := nostr.Filter{Kinds: []nostr.Kind{relaylist.Kind}, Authors: []nostr.PubKey{nostr.PubKey(public)}}
+		found := false
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && !found; time.Sleep(200 * time.Millisecond) {
+			batch, err := relay.Relay{URL: url}.Fetch(ctx, filter)
+			found = err == nil && len(batch.Events) > 0
+		}
+		if !found {
+			t.Errorf("%s came back, but it did not get the relay list of the provider", url)
+		}
+	}
+
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
 }

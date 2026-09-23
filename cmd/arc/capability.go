@@ -133,8 +133,8 @@ func serve(command *cobra.Command, args []string) error {
 		return err
 	}
 	// A caller that shares no relay with this provider finds its read
-	// relays in this list.
-	publishRelayList(ctx, sess)
+	// relays in this list. An indexer that was down gets it on a later tick.
+	owed := publishRelayList(ctx, sess)
 
 	// Say "serves" only when a relay has the watch, so that a caller that
 	// waits for the line can call at once.
@@ -179,8 +179,10 @@ func serve(command *cobra.Command, args []string) error {
 				log.Warn("the announcement was not signed again", "error", err)
 			}
 		case <-ticker.C:
+			// The sync sends the relay lists too, so a relay that was down
+			// gets them when it comes back.
+			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind, relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.key.Public}}
 			for _, t := range targets {
-				mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.key.Public}}
 				if _, err := sess.node.Sync(ctx, mine, t); err != nil {
 					log.Debug("the announcement did not sync", "transport", t.Name(), "error", err)
 				}
@@ -193,6 +195,13 @@ func serve(command *cobra.Command, args []string) error {
 					log.Info("answered store-and-forward calls", "transport", t.Name(), "calls", report.Answered)
 				}
 			}
+			// An indexer holds only relay lists, so it gets a sync only
+			// until it has them.
+			lists := nostr.Filter{Kinds: []nostr.Kind{relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.key.Public}}
+			owed = slices.DeleteFunc(owed, func(t transport.Transport) bool {
+				report, err := sess.node.Sync(ctx, lists, t)
+				return err == nil && len(report.SendFailed) == 0
+			})
 		}
 	}
 }
@@ -594,8 +603,9 @@ func callCapability(command *cobra.Command, args []string) error {
 // publishRelayList tells other citizens which relays this citizen reads and
 // writes on, as NIP-65 defines, and which relays it reads its mail on, as
 // NIP-17 defines. It also publishes the private relay list of NIP-37, which
-// names the relays that hold the citizen's drafts.
-func publishRelayList(ctx context.Context, sess *session) {
+// names the relays that hold the citizen's drafts. It returns the indexers
+// that did not get each public list.
+func publishRelayList(ctx context.Context, sess *session) []transport.Transport {
 	// The public lists go to the indexers too. The private list does not.
 	type list struct {
 		event nostr.Event
@@ -621,14 +631,20 @@ func publishRelayList(ctx context.Context, sess *session) {
 	} else {
 		lists = append(lists, list{private, sess.relays})
 	}
+	var owed []transport.Transport
 	for _, l := range lists {
 		_, sent, _ := sess.node.Publish(ctx, l.event, l.to)
-		for _, s := range sent {
+		for i, s := range sent {
 			if s.Err != nil {
 				fmt.Fprintf(os.Stderr, "the relay list did not reach %s: %v\n", s.Transport, s.Err)
+				// The relays come first in l.to, and the indexers after them.
+				if i >= len(sess.relays) && !slices.Contains(owed, l.to[i]) {
+					owed = append(owed, l.to[i])
+				}
 			}
 		}
 	}
+	return owed
 }
 
 func announceCmd() *cobra.Command {
