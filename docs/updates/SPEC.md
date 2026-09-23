@@ -36,7 +36,7 @@ older `arc` replaces itself with `arc update apply`.
 A service follows a channel selected by its operator. A channel says which
 releases the publisher recommends. It does not grant permission to run them.
 Each running service has its own policy. Updating a local CLI installation
-must not update a configured remote relay, or any federated partner.
+must not update a configured remote relay, or any other machine.
 
 The outcomes are:
 
@@ -47,7 +47,7 @@ The outcomes are:
   old one.
 - `blocked`: metadata, platform, storage, or a failed check prevents updating.
 
-Report every failure explicitly. Deliberately closing a citizen socket,
+Report every failure explicitly. Deliberately closing the connection of a citizen,
 reconnecting on their behalf, or replaying an application request is not a
 successful update.
 
@@ -84,8 +84,8 @@ reconciled. Never loop through failures to advance.
 
 ## Distribution and trust
 
-Discovery, channel metadata and package transfer go through ARC providers
-over the configured relay, and follow the federation sharing rules. A local
+Discovery, channel metadata and package transfer go through a releases
+provider, as live calls over the configured relays. A local
 package may be supplied for offline operation. A first installation is a
 bootstrap operation. GitHub may build or store artifacts, but the updater
 must not bypass the selected relay to fetch them. A large artifact moves in
@@ -149,11 +149,11 @@ reload an external program that a provider runs.
 
 The local `arc update` interface is described in
 [OPERATIONS.md](OPERATIONS.md). It must show the program being replaced, the
-running version, the selected channel, any pin, and the last outcome. Public
-`arc status` stays read-only. To know a relay address, or to connect as a
-citizen, grants no update authority.
+running version, the selected channel, any pin, and the last outcome. To
+know a relay address, or to connect as a citizen, grants no update
+authority.
 
 Any later remote control must use explicit operator authorization over ARC,
-with its own scope for update operations. Federation partners never inherit
-that authority. A background check must not turn a public status call into
+with its own scope for update operations. A relay or a provider never
+inherits that authority. A background check must not turn a status call into
 an update.

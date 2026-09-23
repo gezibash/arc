@@ -1,11 +1,10 @@
 # Exec: remote commands and wakeable citizens on ARC
 
-Status: proposed. Phases 1, 2 and 3a of section 18 exist. `cmd/exec-provider`
-holds the provider (section 8), the start script (section 10.4), the lease
-(section 11), jobs (sections 12.1 to 12.3), and the wrapper `arc-exec`. `arc`
-and the `wake` package run the wake flow (section 10), and `arc resolve`
-shows the presence states (section 9). The other sections describe work that
-does not exist yet.
+Status: proposed. Phases 1, 2, 3a and 3b of section 18 exist.
+`cmd/exec-provider` holds the provider (section 8), the start script
+(section 10.4), the lease (section 11), and jobs with their result to the
+caller (section 12). `arc` and the `wake` package run the wake flow
+(section 10). The other sections describe work that does not exist yet.
 
 ## 1. Purpose
 
@@ -23,7 +22,7 @@ before it sends the command. This copies how SSH reaches a machine that pauses:
 | `~/.ssh/config` on the client holds the wake method. | The caller's wake configuration holds the wake method. |
 | `authorized_keys` lists who can log in. | The provider's grants list who can run commands. |
 
-The relay stays a router. It holds no cloud credentials and no queue.
+The relay only carries events. It holds no cloud credentials.
 
 ## 2. Terms
 
@@ -46,8 +45,7 @@ The relay stays a router. It holds no cloud credentials and no queue.
 | Role | Where it runs | Presence |
 | --- | --- | --- |
 | Relay | A long-running server | Always online |
-| Mailbox provider | A long-running server | Always online |
-| Manager | A long-running identity. Agent sessions start and stop. | Online. It reads its mailbox. |
+| Manager | A long-running identity. Agent sessions start and stop. | Online. It syncs its messages. |
 | Citizen | A machine that pauses, for example a Sprite | Online only while awake |
 
 A manager sends work to citizens. A citizen runs the work and returns the
@@ -56,30 +54,31 @@ agent instructions.
 
 ## 4. What ARC already gives exec
 
-- Every request reaches the provider with the caller's public key in `from`.
-  The exec runtime verifies the signature first.
-- The relay forwards ciphertext. It cannot read commands or output.
-- The exec runtime supports request/reply, long-lived streams, and events
-  that a provider starts. See `provider/command.go`.
-- `arc call` waits for one reply for `--timeout` seconds. The default is 30.
-- A DM mailbox stores sealed messages for a key that is offline. See
-  [DM](https://github.com/gezibash/arc/blob/v0.10.0/docs/dm/SPEC.md).
+- A call is a private event. Its seal is signed by the caller, so the
+  provider knows the caller's public key. See docs/delivery/SPEC.md,
+  section 11.4.
+- The relay carries gift wraps. It cannot read commands or output.
+- A live call needs a live path now. A store-and-forward call waits in the
+  outbox of the caller, and the provider answers it on its next sync.
+- `arc call` waits for one reply of a live call for `--timeout`. The
+  default is 30 seconds.
+- A direct message waits in the outbox until the recipient acknowledges it,
+  for at most 7 days. See docs/delivery/SPEC.md, section 10.2.
 
 ## 5. What ARC does not give exec
 
-- The relay drops a packet when the recipient is offline. There is no queue.
-- Disconnection and expiry remove a relay announcement. An announcement
-  expires at most 180 seconds after issue. See
-  [discovery](https://github.com/gezibash/arc/blob/v0.10.0/docs/discovery/SPEC.md). The relay cannot show a paused citizen.
+- A relay does not keep a live gift wrap, kind 21059. If the provider is not
+  present, a live call fails.
+- `arc serve` signs its announcement again every 2 minutes. An announcement
+  is current for 5 minutes after it is signed. A relay can therefore show a
+  paused citizen as present for up to 5 minutes.
 - `arc call` wakes a peer only through a wake hook of the caller (section 10).
   Without a hook, it does not wake the peer and does not wait for the peer to
-  connect. It fails at once with `peer_offline` when the relay has no current
-  announcement of the peer.
+  connect. It fails at once with `peer_offline` when the relays have no
+  current announcement of the peer.
 - `arc serve` does not detect a pause of its machine.
-- `arc serve` connects to the relay one time. If that connection fails,
-  `arc serve` exits with status 1. If the connection ends later, the direct
-  routes that stand serve until their leases end. Then `arc serve` exits
-  with status 1, and says that the relay connection ended.
+- If a relay ends the watch of `arc serve`, `arc serve` watches again after
+  3 seconds. It does not exit.
 - A request timeout does not prove that the command did not run. The caller
   must not retry an arbitrary command automatically.
 
@@ -147,7 +146,7 @@ the design. There are three sources:
 
 ## 7. Design rules
 
-1. The relay routes packets. It holds no cloud credentials and no queue.
+1. The relay carries events. It holds no cloud credentials.
 2. The caller wakes the machine. The wake hook uses the caller's own cloud
    credentials.
 3. The citizen keeps its machine awake while a command runs. It uses a lease.
@@ -222,22 +221,17 @@ A caller sees a citizen in one of three states:
 
 | State | Condition |
 | --- | --- |
-| `online` | The relay has a current announcement for the key. |
+| `online` | A relay has a current announcement for the key. |
 | `asleep` | No current announcement. The caller has a wake hook for the key. |
 | `offline` | No current announcement. The caller has no wake hook. |
 
 The caller calculates `asleep` from its own wake configuration. The relay does
-not change.
+not change. The `wake` package calculates the state. `arc resolve` does not
+show it.
 
-`arc resolve` prints the state of each citizen on its own line: `online`,
-`asleep: arc wakes it with its wake hook`, or `offline`. `--json` adds the
-field `state`. `arc resolve` finds a citizen that sleeps by the name or the
-key of its wake hook. A full key with no announcement and no hook gives
-`offline`. A program asks the relay about one citizen with
-`client.Peers.Online`.
-
-Note: After a pause, the relay can hold the last announcement until it
-expires. Thus `online` does not prove that the machine is awake.
+Note: After a pause, a relay holds the last announcement, and it stays
+current for up to 5 minutes. Thus `online` does not prove that the machine is
+awake.
 
 ## 10. Wake
 
@@ -263,13 +257,13 @@ argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/exec-provid
 - `arc` runs only the `command` kind. A hook of another kind, or a hook with
   an empty `argv`, fails each request to its citizen with `wake_failed`.
 - A file that is not valid TOML, or that has a bad key, fails every request
-  to a citizen. Commands that send no such request, for example `arc status`
-  and `arc discover`, do not read the hooks.
+  to a citizen. Commands that send no live call, for example
+  `arc discover`, do not read the hooks.
 
 ### 10.2 Wake flow
 
 1. If the caller has no wake hook for the citizen, the caller uses the
-   presence state from the relay.
+   presence state from its relays.
    - If the state is `online`, the caller sends the request.
    - If the state is not `online`, the caller fails with `peer_offline`.
 2. If the last reply from the citizen arrived less than 30 seconds ago, the
@@ -279,24 +273,21 @@ argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/exec-provid
 4. If the wake hook exits with a status that is not 0, the caller fails with
    `wake_failed`.
 5. If the hook kind is `command`, exit status 0 means that the citizen is
-   ready. For another kind, the caller polls the relay until a current
-   announcement exists.
+   ready. `arc` runs no other kind, see 10.1.
 6. If the wake timeout ends, the caller fails with `wake_timeout`.
 7. The caller sends the request one time. The caller does not retry the
    command.
 
 The default wake timeout is 30 seconds. It includes the time of the wake hook.
 
-`arc` runs this flow before each request to a citizen: `arc call`, `arc info`,
-`arc install`, and the installed commands. A program that uses the `client`
-package gets the flow through `client.Options.Waker`. The wake counts toward
-the `--timeout` of `arc call`. If that deadline ends the hook first, the
-`wake_timeout` error names the time that the hook had.
+`arc` runs this flow before each live call: `arc call`, the installed
+commands whose call is live, and `arc update`. A store-and-forward call does
+not wake the citizen. The wake counts toward the `--timeout` of `arc call`.
+If that deadline ends the hook first, the `wake_timeout` error names the time
+that the hook had.
 
-For step 1, `arc` asks the relay for the announcement of the full key. It
-skips the question when the citizen answered less than 30 seconds ago in the
-same process, or when a direct carrier to the citizen exists. If the relay
-cannot answer, `arc` sends the request.
+For step 1, `arc` asks its relays for the announcement of the full key. If no
+relay answers, `arc` sends the request.
 
 `arc` keeps the time of the last answer of each citizen with a hook in the
 directory `wake/` beside `wake.toml`. Thus the next `arc` process skips that
@@ -343,11 +334,11 @@ machine. It does these steps:
    runs, the script exits with status 0.
 3. If not, the script stops the old `arc serve` process group. Then it starts
    a new `arc serve` as a plain process.
-4. The start script waits until the relay has the announcement of the
-   citizen. It reads the relay directory with the probe identity. Then it
-   exits with status 0.
-5. If the relay has no announcement after 20 seconds, the start script
-   deletes the lease. Then it exits with status 1.
+4. The start script waits until `arc serve` writes the line `serves` to its
+   log. `arc serve` writes it when each relay has its announcement and its
+   watch. Then the script exits with status 0.
+5. If `arc serve` does not write that line within 25 seconds, the start
+   script deletes the lease. Then it exits with status 1.
 
 A refresh to 120 seconds can shorten the lease of a running command. This is
 safe. The provider refreshes the lease again in 60 seconds or less
@@ -356,17 +347,8 @@ safe. The provider refreshes the lease again in 60 seconds or less
 If no request arrives, the lease expires after 120 seconds. Then the machine
 pauses.
 
-The citizen machine holds two identities:
-
-- The citizen identity serves the capability.
-- The probe identity reads the relay directory for the readiness check.
-
-A relay keeps one connection for each identity. A query with the citizen key
-replaces the relay connection of `arc serve`, and the announcement of the
-citizen goes away. `citizen/init` creates the probe identity.
-
-`arc serve` connects to the relay one time, at startup. After a wake the
-network needs a moment, so `citizen/serve` waits for the relay first.
+After a wake the network needs a moment, so `citizen/serve` waits until it
+can reach the relay before it starts `arc serve`.
 
 ## 11. Lease in the provider
 
@@ -419,6 +401,9 @@ The body field `action` selects the operation. The method stays `EXEC`.
 | `start` | The fields of section 8 | `{"job":"<id>","state":"running"}`, at once |
 | `status` | `{"action":"status","job":"<id>"}` | The state and the output of the job |
 
+The installed commands `arc exec start` and `arc exec status` send these
+bodies. With `arc call`:
+
 ```sh
 arc call 'exec+arc://<citizen-public-key>/' \
   '{"action":"start","script":"cd ~/arc && go test ./..."}'
@@ -453,7 +438,9 @@ The `status` reply is UTF-8 JSON:
   holds the result of most jobs.
 - The provider keeps each job in its own directory below `jobs_dir`. The
   default is `~/.arc/exec/jobs`. The provider does not delete old jobs.
-- The wake flow of section 10.2 applies to `start` and to `status`.
+- The wake flow of section 10.2 applies to each live call. `arc exec start`
+  is a store-and-forward call, so it does not wake the machine. The provider
+  answers it when `arc serve` next syncs.
 
 ### 12.3 Result to the caller
 
@@ -482,27 +469,24 @@ Rules:
   of the job does not change.
 - The default timeout is 30 seconds. The maximum is 300 seconds.
 
-### 12.4 Result in the mailbox
+### 12.4 Result as a direct message
 
-The script `citizen/notify-dm` sends the result to the mailbox of the caller:
+The script `citizen/notify-dm` sends the result to the caller as a direct
+message:
 
 ```sh
-arc dm send <owner-public-key>
+arc message send <owner-public-key>
 ```
 
-The DM body is the `status` reply of the job. The DM is sealed to the key of
-the caller before it leaves the machine.
+The message body is the `status` reply of the job, from the standard input.
+The message is a NIP-17 direct message, sealed to the key of the caller
+before it leaves the machine. It waits in the outbox of the citizen until the
+caller acknowledges it.
 
-Requirements:
-
-- The mailbox provider runs on a long-running server. The relay does not
-  store the result.
-- The citizen installs the DM tool one time:
-  `arc install <dm-provider-public-key> primary --yes`.
 - `citizen/init --notify-dm` writes the `notify` object for this script.
-
-The caller reads the mailbox when it is active. The caller does not need to
-be online when the job ends.
+- The caller reads the result with `arc sync` and `arc message inbox` when it
+  is active. The caller does not need to be online when the job ends.
+- A message holds at most 32 KiB.
 
 ## 13. SSH access to a machine that pauses
 
@@ -615,17 +599,21 @@ token_env = "SPRITES_TOKEN"
 | Phase | Scope |
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
-| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. No change to ARC core. Done: `cmd/exec-provider/citizen/`, the `lease` object, and `cmd/exec-provider/arc-exec`. |
-| 2 | Wake hooks and presence states in `arc` and in the `client` package. Done: the `wake` package, `wake.toml`, `client.Options.Waker`, `client.Peers.Online`, `peer_offline` (step 1 of section 10.2), and the states of `arc resolve` (section 9). |
-| 3a | Asynchronous jobs: `start`, `status`, and `arc-exec --start`, `--status`, `--wait`. Done. |
-| 3b | The notify command (section 12.3) and the DM script (section 12.4). |
-| 4 | Wake URL and signed dormant records on the relay. |
+| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. Done: `cmd/exec-provider/citizen/` and the `lease` object. v0.11.0 removed the wrapper `arc-exec`, because `arc` runs the wake flow. |
+| 2 | Wake hooks and presence states. Done: the `wake` package, `wake.toml`, `peer_offline` (step 1 of section 10.2), and the wake flow before each live call of `arc`. |
+| 3a | Asynchronous jobs: `start` and `status`, and the installed commands `arc exec start` and `arc exec status`. Done. |
+| 3b | The notify command (section 12.3) and the direct-message script (section 12.4). Done. |
+| 4 | Wake URL and signed dormant records. |
 
 ## 19. Verified
 
 Measured on 2026-09-19 with one Fly.io Sprite (8 CPUs, 8 GB, runtime
 `0.0.1-rc48`) and the prototype provider. The relay ran on a Fly.io Machine
 (`shared-cpu-1x`, 512 MB, region `ams`), unless the row says differently.
+
+These measurements used the older stack of ARC, before v0.11.0: its relay,
+its sessions, and the wrapper `arc-exec`. Nobody has measured them again on
+the delivery layer.
 
 To detect a pause, a loop on the Sprite wrote the time each second. A gap
 between two times shows a pause.
