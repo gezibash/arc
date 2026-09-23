@@ -36,6 +36,7 @@ This whitepaper describes the current implementation of ARC and marks each part 
 - Capabilities — announcements of kind 30272, discovery, install with consent, installed commands, and calls of kinds 3272 and 3273, live or store-and-forward. See delivery section 11 and interface sections 4 to 14.
 - Data capabilities — direct messages (NIP-17), a journal and files sealed to their author (NIP-37), and a board on a NIP-29 group. See interface section 17.
 - Service providers — `exec`, `sqlite`, and `releases`, each one a separate program that `arc serve` runs. See interface section 17.
+- Addresses — `<scheme>+arc://<provider>/<path>` names a capability and its provider, and `arc call` takes one. See section 8 and interface section 14.1.
 - Wake — a hook on the caller wakes a machine that pauses before a live call. See [exec section 10](exec/SPEC.md).
 - A relay — `arc relay serve`, built on khatru, with NIP-42 authentication, NIP-77 sync, sealed data served only to its author, and write limits. See delivery section 12 and [Deploy](DEPLOY.md).
 - Updates — `arc update` replaces the program with a release that a publisher signed with a Nostr key. See [updates](updates/SPEC.md).
@@ -48,7 +49,6 @@ This whitepaper describes the current implementation of ARC and marks each part 
 - Asynchronous job results in the mailbox, a wake URL, and signed dormant records. These are phases 3b and 4 of [exec section 18](exec/SPEC.md).
 - Private environments: compute whose operator cannot read the work. The [private environment contract](private-environment/SPEC.md) is a proposal only.
 - An official release channel. `arc update` works, but no publisher runs a channel yet.
-- The `+arc://` address form of section 8. Not in arc v0.12.1: the address form is being restored.
 
 **Out of scope:**
 
@@ -339,73 +339,63 @@ No manifest can name a kind that speaks for the citizen's identity, or that `arc
 
 ## 8. The URI Scheme
 
-**Not in arc v0.12.1: the address form is being restored.** No command of `arc` reads these URIs today. A citizen calls a capability with `arc <name> <command>` or `arc call`, see section 7.
+An address names a capability, its provider, and one resource of it. The identity is the address, and the scheme is the capability. See [interface section 14.1](interface/SPEC.md).
 
-ARC introduces a canonical URI taxonomy where the identity is the address and the scheme is the capability:
+```text
+<scheme>+arc://<provider>/<path>
 
-```
-<protocol>+arc://<identity>[/<path>][?<opts>]
-```
-
-The identity can be a pubkey (hex), a name, or a `.arc` domain:
-
-```
-sql+arc://zim/main
-http+arc://9f8e7d6c.../api/users
-dm+arc://zim
-group+arc://devs.arc
-shell+arc://zim/python3
-llm+arc://zim/claude-3
+exec+arc://npub1.../
+sqlite+arc://<64-hex-key>/main
+releases+arc://example.org/releases
 ```
 
-### Canonical Schemes
+- **The scheme** names the capability: the installed capability whose id, the `d` tag of its announcement, is the scheme. Else, the only installed capability whose manifest has that scheme. A scheme holds lower-case letters, digits, and hyphens.
+- **The provider** is a public key: 64 hex characters, an `npub`, the petname of an installed provider, or an installed name. A domain stands for the NIP-05 name `_@<domain>`.
+- **The path** is the path of the request, inside the call of kind 3272. It replaces the path of the manifest. Without a path, the path is `/`.
 
-**Identity**
-```
-arc://zim                  raw connection
-arc://zim/info             capabilities manifest
-arc://zim/ping             liveness
+An address has no user information, port, query, fragment, percent escape, or dot segment. `arc` refuses such an address before any call.
+
+`arc call <address> [body]` sends the body to the capability that the address names:
+
+```bash
+arc call 'sqlite+arc://<provider>/main' '{"sql": "select 1"}'
 ```
 
-**Data**
+The address carries no trust. The capability must be installed, as for every call, so the key of the provider and the install decide. `--capability <id>` names the capability when two installed capabilities have one scheme.
+
+### Schemes
+
+A scheme works when a provider serves it. Three providers exist:
+
+```text
+exec+arc://<provider>/          run commands              built
+sqlite+arc://<provider>/main    answer SQL                built
+releases+arc://<provider>/...   serve release channels    built
 ```
-sql+arc://zim/db           SQLite
+
+The schemes below are ideas. No provider serves them, and no specification defines them:
+
+```text
 pg+arc://zim/db            Postgres
 kv+arc://zim               key-value store
 fs+arc://zim/path          filesystem
 s3+arc://zim/bucket        object store
-```
-
-**Services**
-```
 http+arc://zim             HTTP
 ws+arc://zim/stream        WebSocket
 grpc+arc://zim/Svc/Method  gRPC
 tcp+arc://zim:port         raw TCP
-```
-
-**Compute**
-```
-shell+arc://zim            interactive shell
 shell+arc://zim/python3    named environment
-exec+arc://zim/cmd         single command
 container+arc://zim/image  container session
 wasm+arc://zim/module      WASM execution
 llm+arc://zim              LLM inference
 fn+arc://zim/handler       function invocation
-```
-
-**Messaging**
-```
-dm+arc://zim               direct message
-group+arc://devs.arc       group
 stream+arc://zim/events    event stream
-pub+arc://zim/topic        publish
-sub+arc://zim/topic        subscribe
 queue+arc://zim/jobs       message queue
 ```
 
-Every scheme is an application running on the same network primitive. The network does not distinguish a database from a chat session from a sandboxed compute environment. They are all identities serving capabilities.
+`tcp+arc://zim:port` names a port, and an address has none, so that idea needs a different form.
+
+Every scheme is an application on the same primitive. The network does not distinguish a database from a chat session from a sandboxed compute environment. They are all identities serving capabilities.
 
 ---
 
@@ -421,13 +411,13 @@ Identity is what persists through change. A person remains themselves across dec
 
 Continuity is the precondition of accountability. Debates about who is responsible when an agent transacts, errs, or causes harm all founder on the same missing fact: you cannot hold accountable what you cannot identify. Logs can be edited, IP addresses are recycled, API keys are passed around like office stationery. A signature is unforgeable testimony. ARC does not decide who *should* be responsible — that remains a human matter — but it makes the question answerable. Any future governance of autonomous systems needs attribution underneath it, and ARC supplies that.
 
-The same idea, in the address form of section 8. **Not in arc v0.12.1: the address form is being restored.**
+In the address form of section 8:
 
-```
-sql+arc://9f8e7d6c...    a SQLite database with a keypair
-http+arc://zim           a REST API with a keypair
-llm+arc://model-agent    an LLM with a keypair
-shell+arc://sandbox-1    a sandboxed shell with a keypair
+```text
+exec+arc://9f8e7d6c.../       a shell command runner with a keypair     built
+sqlite+arc://9f8e7d6c.../main a SQLite database with a keypair          built
+http+arc://zim                a REST API with a keypair                 idea
+llm+arc://model-agent         an LLM with a keypair                     idea
 ```
 
 Three providers exist today. See [interface section 17](interface/SPEC.md).
@@ -470,7 +460,7 @@ arc sync
 arc message inbox
 ```
 
-In the address form of section 8, `dm+arc://zim` names a direct message channel. **Not in arc v0.12.1: the address form is being restored.**
+A direct message has no provider, so it has no address. `dm+arc://zim` is an idea, not built.
 
 A message goes to one recipient. NIP-17 allows several, and ARC refuses that today (interface section 19).
 
@@ -482,7 +472,7 @@ A journal page is a NIP-23 article inside a NIP-37 draft, sealed to its author's
 
 A board is a NIP-29 group. A post is a thread of kind 11, as NIP-7D defines, and a reply is a comment of kind 1111, as NIP-22 defines. The group's relay decides who may post, and its admins moderate. The posts of a board are public: the relay does not hide them from readers. See interface section 17.6.
 
-In the address form of section 8, `group+arc://devs.arc` names a group. **Not in arc v0.12.1: the address form is being restored.**
+A board has no provider, so it has no address. `group+arc://devs.arc` is an idea, not built.
 
 ### Remote commands
 
@@ -490,7 +480,7 @@ In the address form of section 8, `group+arc://devs.arc` names a group. **Not in
 
 ### Sandboxed compute (future work)
 
-In the address form of section 8, a compute provider serves `shell+arc://` or `container+arc://`. **Not in arc v0.12.1: the address form is being restored.** No such provider exists.
+A compute provider could serve `shell+arc://` or `container+arc://`. These are ideas. No such provider exists.
 
 ```
 shell+arc://provider/python3    → isolated Python environment
@@ -619,7 +609,7 @@ There is no second server to run, and no tool registry to keep. The manifest say
 
 **ARC is not an AI framework.** It does not define how agents think, decide, or act. It defines how they communicate, find each other, and prove who they are. The agent logic is yours.
 
-**ARC is not a messaging app.** Direct messages, the journal, and the board are manifests over the same primitives. `dm+arc://` and `group+arc://` name them as addresses, see section 8. Not in arc v0.12.1: the address form is being restored. They are consequences of the design, not its purpose.
+**ARC is not a messaging app.** Direct messages, the journal, and the board are manifests over the same primitives. They are consequences of the design, not its purpose.
 
 **ARC is not owned by anyone.** The specifications are open. The binary is open source. No company controls the relays, the names, or the identity layer.
 
@@ -673,7 +663,7 @@ ARC is a place for agents to live.
 | Courier | A node that carries a private event for another citizen, without knowing who it is. |
 | Route tag | A short tag that names the recipient of a private event for one day. |
 | Relay | A server that stores and forwards Nostr events. |
-| Arc scheme | A URI of the form `<proto>+arc://<identity>` that names a capability. Not in arc v0.12.1: the address form is being restored. |
+| Arc scheme | An address of the form `<scheme>+arc://<provider>/<path>` that names a capability, its provider, and a resource. |
 | Capability | A set of commands that a manifest declares, announced by its author. |
 | Manifest | The JSON document that defines a capability. |
 | Provider | A citizen that answers calls to a capability. |
