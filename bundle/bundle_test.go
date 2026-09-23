@@ -89,7 +89,7 @@ func TestTheAddressKeepsThePathOfTheProgram(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		path, _, manifest, err := host.ParseServeURI(held.ServeURI())
+		path, _, manifest, _, err := host.ParseServeURI(held.ServeURI())
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
@@ -196,7 +196,7 @@ path = "./manifest.json"
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, args, _, err := host.ParseServeURI(held.ServeURI())
+	_, args, _, _, err := host.ParseServeURI(held.ServeURI())
 	if err != nil {
 		t.Fatal(err)
 	}
