@@ -269,7 +269,7 @@ On a mesh transport, a frame carries one event, or one fragment of an event:
 ```text
 frame type       1 byte: event, fragment, sync, announce, handshake, session
 hop limit        1 byte
-fragment header  8-byte fragment ID, index, total, when the type is fragment
+fragment header  8-byte fragment ID, uint16 index, uint16 total (big-endian)
 body             the compact event, a fragment of it, or a sync message
 ```
 
@@ -279,6 +279,42 @@ without changing the signed event.
 A receiver joins fragments by fragment ID. It keeps at most 128 incomplete
 events, and drops an incomplete event after 30 seconds. It refuses an event
 larger than 1 MiB.
+
+`delivery/frame` implements event (type 1) and fragment (type 2) frames.
+Types 3–6 are reserved for sync, announce, handshake and session, respectively;
+this implementation rejects them until their protocols are implemented. There
+is no frame version byte: a future link handshake must negotiate the framing
+profile before exchanging frames. A transport supplies exactly one complete
+frame per decode; the body occupies all remaining bytes.
+
+An event frame has a 2-byte header. A fragment frame has a 14-byte header;
+indices start at zero and totals range from 2 to 4096. Bodies must be nonempty.
+The fragment ID is the first 8 bytes of SHA-256 of the complete compact event,
+including its signature. Reassembly checks that ID before compact decoding.
+This short digest detects inconsistent assembly; it is not authentication.
+Every completed event still needs store verification. Frame headers, including
+hop limits, are not signed by the event.
+
+The splitter takes the usable application frame size, including these headers,
+from the link adapter. This is not the raw BLE ATT MTU. Events that fit use one
+event frame. Others use fragment frames; a size requiring more than 4096 pieces
+is refused. Different fragment sizes for the same event should not be mixed in
+one assembly; a link must finish, expire or reset that transfer before reframing.
+
+The assembler accepts pieces out of order and ignores identical duplicates.
+Conflicting totals or different bodies for one index discard that assembly.
+The completed hop limit is the minimum seen, including duplicate pieces; zero
+allows local receipt but grants no forwarding permission. Forwarding is future
+work. Completing an event removes its assembly, so replay suppression remains
+with the store and future mesh layer.
+
+The 30-second deadline starts at the first piece and is never extended. `Add`
+expires stale assemblies; the adapter must also call `Expire` on a timer while
+idle. Use a monotonic clock and serialize calls to an assembler. Buffered bodies
+across all incomplete events are capped at 8 MiB; count and byte capacity
+failures reject the incoming piece without evicting unrelated events. The 4096
+piece limit also bounds per-assembly bookkeeping. Exceeding the 1 MiB limit for
+one event discards that assembly. The limits are local receiver policy.
 
 ## 8. The node and its store
 

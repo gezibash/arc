@@ -8,15 +8,27 @@ This plan follows the current Go delivery design in [SPEC.md](SPEC.md). The
 shared transport interface already exists, so extracting another transport
 interface is not the first step.
 
-## Current status: PR 1
+## Current status: PRs 1 and 2
 
 `delivery/compact` implements the compact event format from section 7.3 of the
 specification. Think of it as packing the same signed message into a smaller
 envelope. It preserves the public key, signature, timestamp, kind, tags and
 content. The receiver rebuilds the event ID from those fields.
 
-This package does not turn on Bluetooth, find devices, connect to a relay or
-send messages. Existing transports behave as before. Bluetooth is not yet a
+`delivery/frame` now wraps those compact bytes for a small link. It splits
+large events into numbered pieces and rebuilds them when they arrive, including
+out-of-order arrivals. It bounds unfinished work, expires missing pieces after
+30 seconds, and passes completed bytes back to the compact decoder. See
+[section 7.4](SPEC.md#74-the-frame) for the exact byte format and limits.
+
+Run `mise exec -- go test ./delivery/compact ./delivery/frame -v` to check both
+layers without Bluetooth hardware. Tests cover frame sizes, reordered and
+duplicate pieces, conflicting data, expired assemblies, memory limits and
+signed-event round trips. A fuzz check is available with
+`mise exec -- go test ./delivery/frame -fuzz=FuzzDecode -fuzztime=30s`.
+
+Neither package turns on Bluetooth, finds devices, connects to a relay or
+sends messages. Existing transports behave as before. Bluetooth is not yet a
 usable ARC transport.
 
 The encoder accepts an event whose ID matches its fields. The decoder checks
