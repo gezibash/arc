@@ -8,7 +8,7 @@ This plan follows the current Go delivery design in [SPEC.md](SPEC.md). The
 shared transport interface already exists, so extracting another transport
 interface is not the first step.
 
-## Current status: PRs 1 and 2
+## Current status: PRs 1–3 (radio hardware validation pending)
 
 `delivery/compact` implements the compact event format from section 7.3 of the
 specification. Think of it as packing the same signed message into a smaller
@@ -27,8 +27,14 @@ duplicate pieces, conflicting data, expired assemblies, memory limits and
 signed-event round trips. A fuzz check is available with
 `mise exec -- go test ./delivery/frame -fuzz=FuzzDecode -fuzztime=30s`.
 
-Neither package turns on Bluetooth, finds devices, connects to a relay or
-sends messages. Existing transports behave as before. Bluetooth is not yet a
+`delivery/transport/ble` and the separate `arc-ble-probe` command now provide
+an experimental Linux BlueZ discovery and byte-round-trip test. See the
+[Linux hardware guide](BLUETOOTH-LINUX.md). Automated checks and cross-builds
+are not a substitute for the pending two-device radio test. ARC messages and
+capability calls are not connected to Bluetooth yet.
+
+The compact and frame packages do not turn on Bluetooth, find devices, connect to a relay or
+send messages. Existing transports behave as before. Bluetooth is not yet a
 usable ARC transport.
 
 The encoder accepts an event whose ID matches its fields. The decoder checks

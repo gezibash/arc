@@ -223,11 +223,13 @@ not hold, and writes each event that the directory lacks. A person carries
 the directory between the two nodes.
 
 **Bluetooth LE.** Every node takes both roles at once: central and
-peripheral. BlueZ supports both roles at once on Linux. ARC builds on the
-Linux backend of `tinygo.org/x/bluetooth`, which reaches BlueZ over D-Bus, and
-extends it to hold a GATT server and a GATT client together. ARC offers the
-change upstream. On macOS, a node is a central only, so it reaches one hop.
-See section 16.
+peripheral. BlueZ supports both roles at once on Linux, subject to controller
+support. The initial Linux radio probe uses `godbus/dbus` directly, the fallback
+allowed in section 16, because its server needs BlueZ's per-device write context.
+It keeps advertising active while scanning and testing an outbound connection.
+The [Linux probe guide](BLUETOOTH-LINUX.md) describes the experimental test
+profile and pending hardware validation. It is not yet an event transport.
+On macOS, the planned first implementation is central only. See section 16.
 
 **LoRa.** A node reaches LoRa through Reticulum. The node connects to a local
 Reticulum instance over TCP, and that instance drives the radio. Reticulum
