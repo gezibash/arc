@@ -5,6 +5,7 @@ go 1.27
 require (
 	fiatjaf.com/nostr v0.0.0-20260916040958-27e395a0f6e7
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.5.0

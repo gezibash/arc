@@ -303,7 +303,10 @@ func TestTheNotifyCommandCarriesTheResult(t *testing.T) {
 	s := testServer(t)
 	written := filepath.Join(t.TempDir(), "notified")
 	s.config.Notify = &notifyConfig{
-		Argv:      []string{"sh", "-c", "cat > " + written + ".{owner}"},
+		// Redirection creates an empty file before cat writes the JSON. Publish
+		// the final path only after cat finishes, so existence means ready.
+		Argv: []string{"sh", "-c", `cat > "$1.tmp" && mv "$1.tmp" "$1"`,
+			"notify-test", written + ".{owner}"},
 		TimeoutMS: 30_000,
 	}
 
