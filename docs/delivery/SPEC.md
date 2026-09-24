@@ -254,6 +254,14 @@ The compact form leaves out `id`. The receiver computes the ID from the
 NIP-01 serialization of the other fields, then checks the signature. The form
 therefore loses nothing that the signature covers.
 
+Version 1 uses shortest-form unsigned base-128 varints and UTF-8 byte lengths.
+Timestamps must fit a nonnegative signed 64-bit integer, and kinds must fit an
+unsigned 16-bit integer. An encoded event is limited to 1 MiB. Decoders reject
+trailing bytes and malformed fields. Decoding reconstructs the ID; the store
+still verifies the signature before accepting the event. See the
+[Bluetooth implementation plan](BLUETOOTH-PLAN.md) for implementation status
+and the sequence of small PRs.
+
 ### 7.4 The frame
 
 On a mesh transport, a frame carries one event, or one fragment of an event:
