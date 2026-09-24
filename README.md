@@ -54,6 +54,9 @@ A machine on v0.9.0 or older must install v0.10.0 with the script. The
 
 ## Quick start
 
+New to ARC? Follow the [step-by-step getting-started guide](docs/GETTING-STARTED.md).
+For assistant-guided setup, use the [arc-onboarding skill](.claude/skills/arc-onboarding/SKILL.md).
+
 Make an identity, and add a relay:
 
 ```bash
