@@ -1,0 +1,31 @@
+name: PR policy
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: Conventional PR title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      # Read only the event metadata. Never check out or execute PR code here.
+      - name: Check Conventional Commit title
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          with open(os.environ['GITHUB_EVENT_PATH']) as source:
+              title = json.load(source)['pull_request']['title']
+          pattern = r'(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-zA-Z0-9_./-]+\))?!?: \S[^\r\n]*'
+          if not re.fullmatch(pattern, title):
+              raise SystemExit('PR title must use Conventional Commits, e.g. fix(delivery): handle expired fragments')
+          print('Conventional PR title: passed')
+          PY
