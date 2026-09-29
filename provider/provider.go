@@ -138,8 +138,9 @@ func (f HandlerFunc) HandleRequest(ctx context.Context, request Request) (string
 	return f(ctx, request)
 }
 
-// Error is an error whose text is safe to send to the caller. Every other
-// error answers "internal_error", and the detail goes to standard error.
+// Error is an error whose text is safe to send to the caller. Context errors
+// answer provider_timeout or provider_canceled. Other errors answer
+// internal_error, and the detail goes to standard error.
 type Error string
 
 // Error returns the code that the caller sees.
@@ -309,6 +310,12 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 		return
 	}
 	ctx, cancel := wire.Budget(ctx, event.DeadlineMS)
+	if err := ctx.Err(); err != nil {
+		cancel()
+		<-r.slots
+		r.answer(event.RequestID, "", err)
+		return
+	}
 	r.requestsMu.Lock()
 	if _, exists := r.requests[event.RequestID]; exists {
 		r.requestsMu.Unlock()
@@ -323,14 +330,14 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 	r.group.Add(1)
 	go func() {
 		defer r.group.Done()
-		defer func() {
-			cancel()
-			r.requestsMu.Lock()
-			delete(r.requests, event.RequestID)
-			r.requestsMu.Unlock()
-			<-r.slots
-		}()
+		defer func() { <-r.slots }()
 		reply, err := r.call(ctx, request)
+		cancel()
+		r.requestsMu.Lock()
+		delete(r.requests, event.RequestID)
+		r.requestsMu.Unlock()
+		// The host can reuse this ID as soon as it reads the reply.
+		// Finish admission bookkeeping before publishing that reply.
 		r.answer(event.RequestID, reply, err)
 	}()
 }
@@ -348,6 +355,9 @@ func (r *runtime) call(ctx context.Context, request Request) (reply string, err 
 
 // Call writes one call line, and waits for its result.
 func (r *runtime) Call(ctx context.Context, address, body string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	answer := make(chan result, 1)
 	r.callsMu.Lock()
 	r.next++
@@ -453,6 +463,12 @@ func (r *runtime) writeLine(line []byte) error {
 // safeError keeps the detail of an unexpected error out of the answer. The
 // caller gets a code, and the operator gets the detail on standard error.
 func safeError(log io.Writer, err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "provider_timeout"
+	case errors.Is(err, context.Canceled):
+		return "provider_canceled"
+	}
 	var safe Error
 	if errors.As(err, &safe) {
 		return string(safe)

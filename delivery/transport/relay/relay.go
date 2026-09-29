@@ -263,6 +263,9 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 // information document that it supports NIP-77. A relay that does not know
 // the protocol can stay silent, and a sync would then wait until its timeout.
 func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Querier) ([]nostr.ID, []nostr.ID, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, false, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
@@ -272,6 +275,9 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 		return nil, nil, false, nil
 	}
 	info, err := nip11.Fetch(ctx, r.URL)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, false, err
+	}
 	if err != nil || !supports(info.SupportedNIPs, 77) {
 		return nil, nil, false, nil
 	}
