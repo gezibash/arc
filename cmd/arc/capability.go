@@ -23,12 +23,11 @@ import (
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
-	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/relaylist"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
-	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/iface"
+	"github.com/gezibash/arc/internal/citizen"
 	"github.com/gezibash/arc/provider/host"
 	"github.com/spf13/cobra"
 )
@@ -69,36 +68,17 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	pkg, err := capability.LoadFile(manifest)
+	definition, err := capability.LoadProvider(manifest)
 	if err != nil {
 		return err
 	}
-	fields, _ := pkg["capability"].(map[string]any)
-	id, _ := fields["id"].(string)
-	limit := maxBody(fields)
-
-	// A manifest of interface version 1 beside the older one replaces it in
-	// the announcement.
-	versionOne, err := os.ReadFile(filepath.Join(filepath.Dir(manifest), "interface.json"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if versionOne != nil {
-		m, err := iface.Parse(versionOne)
-		if err != nil {
-			return err
-		}
-		id = m.ID
-		if m.Service != nil && m.Service.MaxBytes > 0 {
-			limit = m.Service.MaxBytes
-		}
-	}
+	id, limit := definition.ID, definition.MaxBytes
 
 	sess, err := open(command)
 	if err != nil {
 		return err
 	}
-	defer sess.close()
+	defer sess.Close()
 	installs, err := installsOf(command)
 	if err != nil {
 		return err
@@ -106,8 +86,8 @@ func serve(command *cobra.Command, args []string) error {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	process, err := host.Start(path, programArgs, cwd, []string{
-		"ARC_IDENTITY=" + sess.key.Name(),
-		"ARC_PUBLIC_KEY=" + sess.key.Public.Hex(),
+		"ARC_IDENTITY=" + sess.Key.Name(),
+		"ARC_PUBLIC_KEY=" + sess.Key.Public.Hex(),
 	}, log)
 	if err != nil {
 		return err
@@ -116,10 +96,10 @@ func serve(command *cobra.Command, args []string) error {
 
 	// The program can call what this citizen installed, as this citizen.
 	calls := func(ctx context.Context, out call.Outbound) (call.Reply, error) {
-		return callAddress(ctx, sess, installs, out.Address, out.Body)
+		return sess.CallAddress(ctx, installs, out.Address, out.Body)
 	}
-	server := call.NewServer(sess.signer, id, process, limit, calls, log)
-	sess.mail.OnRequest = server.Handle
+	server := call.NewServer(sess.Signer, id, process, limit, calls, log)
+	sess.Mail.OnRequest = server.Handle
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -127,14 +107,11 @@ func serve(command *cobra.Command, args []string) error {
 	// A caller needs a current announcement before a live call, so the
 	// provider signs it again each catalog.Refresh.
 	announce := func() error {
-		announcement, err := catalog.Announce(sess.signer, pkg, nostr.Now())
-		if versionOne != nil {
-			announcement, err = catalog.AnnounceManifest(sess.signer, versionOne, nostr.Now())
-		}
+		announcement, err := catalog.AnnounceProvider(ctx, sess.Signer, definition, nostr.Now())
 		if err != nil {
 			return err
 		}
-		_, _, err = sess.node.Publish(ctx, announcement, sess.relays)
+		_, _, err = sess.Node.Publish(ctx, announcement, sess.Relays)
 		return err
 	}
 	if err := announce(); err != nil {
@@ -146,7 +123,7 @@ func serve(command *cobra.Command, args []string) error {
 
 	// Say "serves" only when a relay has the watch, so that a caller that
 	// waits for the line can call at once.
-	missing, err := watchAll(ctx, server, sess.relays, log)
+	missing, err := watchAll(ctx, server, sess.Relays, log)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "the provider is stopping")
 		return nil
@@ -164,12 +141,12 @@ func serve(command *cobra.Command, args []string) error {
 
 	dirs, _ := command.Flags().GetStringArray("sync-dir")
 	interval, _ := command.Flags().GetDuration("interval")
-	targets := append([]transport.Transport(nil), sess.relays...)
+	targets := append([]transport.Transport(nil), sess.Relays...)
 	for _, dir := range dirs {
 		targets = append(targets, file.Dir{Path: dir})
 	}
 
-	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.key.Name(), id, sess.key.Public.Hex())
+	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.Key.Name(), id, sess.Key.Public.Hex())
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -189,12 +166,12 @@ func serve(command *cobra.Command, args []string) error {
 		case <-ticker.C:
 			// The sync sends the relay lists too, so a relay that was down
 			// gets them when it comes back.
-			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind, relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.key.Public}}
+			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind, relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.Key.Public}}
 			for _, t := range targets {
-				if _, err := sess.node.Sync(ctx, mine, t); err != nil {
+				if _, err := sess.Node.Sync(ctx, mine, t); err != nil {
 					log.Debug("the announcement did not sync", "transport", t.Name(), "error", err)
 				}
-				report, err := sess.mail.Sync(ctx, t)
+				report, err := sess.Mail.Sync(ctx, t)
 				if err != nil {
 					log.Debug("mail did not sync", "transport", t.Name(), "error", err)
 					continue
@@ -205,9 +182,9 @@ func serve(command *cobra.Command, args []string) error {
 			}
 			// An indexer holds only relay lists, so it gets a sync only
 			// until it has them.
-			lists := nostr.Filter{Kinds: []nostr.Kind{relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.key.Public}}
+			lists := nostr.Filter{Kinds: []nostr.Kind{relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.Key.Public}}
 			owed = slices.DeleteFunc(owed, func(t transport.Transport) bool {
-				report, err := sess.node.Sync(ctx, lists, t)
+				report, err := sess.Node.Sync(ctx, lists, t)
 				return err == nil && len(report.SendFailed) == 0
 			})
 		}
@@ -227,8 +204,16 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 	results := make(chan result)
 	started := make(chan struct{})
 	defer close(started)
+	count := 0
+	var missing []string
 	for i, t := range relays {
-		go keepServing(ctx, server, t.(relay.Relay), func(err error) {
+		live, ok := t.(transport.Live)
+		if !ok {
+			missing = append(missing, t.Name())
+			continue
+		}
+		count++
+		go keepServing(ctx, server, live, func(err error) {
 			select {
 			case results <- result{i, err}:
 			case <-started:
@@ -239,8 +224,7 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 
 	answered := map[int]bool{}
 	watches := 0
-	var missing []string
-	for len(answered) < len(relays) || (watches == 0 && len(relays) > 0) {
+	for len(answered) < count || (watches == 0 && count > 0) {
 		select {
 		case r := <-results:
 			if r.err == nil {
@@ -262,7 +246,7 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 // the relay drops the connection. After each attempt to watch, it calls
 // report: with nil when the watch begins, and with the error when the watch
 // does not begin.
-func keepServing(ctx context.Context, server *call.Server, r relay.Relay, report func(error), log *slog.Logger) {
+func keepServing(ctx context.Context, server *call.Server, r transport.Live, report func(error), log *slog.Logger) {
 	for {
 		began := false
 		err := server.ServeLive(ctx, r, func() {
@@ -273,10 +257,10 @@ func keepServing(ctx context.Context, server *call.Server, r relay.Relay, report
 			return
 		}
 		if began {
-			log.Warn("the relay ended the watch; watching again", "relay", r.URL, "error", err)
+			log.Warn("the relay ended the watch; watching again", "relay", r.Name(), "error", err)
 		} else {
 			report(err)
-			log.Warn("the relay did not take the watch; trying again", "relay", r.URL, "error", err)
+			log.Warn("the relay did not take the watch; trying again", "relay", r.Name(), "error", err)
 		}
 		select {
 		case <-time.After(3 * time.Second):
@@ -284,24 +268,6 @@ func keepServing(ctx context.Context, server *call.Server, r relay.Relay, report
 			return
 		}
 	}
-}
-
-// maxBody is the largest request body that the manifest allows.
-func maxBody(fields map[string]any) int {
-	invocation, _ := fields["invocation"].(map[string]any)
-	body, _ := invocation["request_body"].(map[string]any)
-	switch v := body["max_bytes"].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	if n, ok := body["max_bytes"].(interface{ Int64() (int64, error) }); ok {
-		if value, err := n.Int64(); err == nil {
-			return int(value)
-		}
-	}
-	return 1024 * 1024
 }
 
 func discoverCmd() *cobra.Command {
@@ -314,9 +280,9 @@ func discoverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
-			_, errs := sess.node.Pull(command.Context(), announcements, sess.relays)
+			_, errs := sess.Node.Pull(command.Context(), announcements, sess.Relays)
 			for _, err := range errs {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
 			}
@@ -325,7 +291,10 @@ func discoverCmd() *cobra.Command {
 			if len(args) == 1 {
 				query = args[0]
 			}
-			offers := catalog.Search(sess.node.Store, query)
+			offers, err := catalog.Search(sess.Node.Store, query)
+			if err != nil {
+				return err
+			}
 			if len(offers) == 0 {
 				fmt.Println("no capabilities found: add a relay, or sync with a directory")
 			}
@@ -347,13 +316,13 @@ func installCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
 			installs, err := installsOf(command)
 			if err != nil {
 				return err
 			}
-			provider, id, err := installs.Resolve(args[0])
+			provider, id, err := installs.Resolve(command.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -361,7 +330,7 @@ func installCmd() *cobra.Command {
 				id = args[1]
 			}
 
-			offer, err := findOffer(command.Context(), sess, provider, id)
+			offer, err := sess.FindOffer(command.Context(), provider, id)
 			if err != nil {
 				return err
 			}
@@ -405,78 +374,6 @@ func installCmd() *cobra.Command {
 
 // findOffer reads an offer from the store, and asks the relays when the store
 // has none.
-func findOffer(ctx context.Context, sess *session, provider nostr.PubKey, id string) (catalog.Offer, error) {
-	offer, err := catalog.Find(sess.node.Store, provider, id)
-	if err == nil {
-		return offer, nil
-	}
-	reports, errs := sess.node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}, sess.relays)
-	offer, err = catalog.Find(sess.node.Store, provider, id)
-	if unreached := node.Unreached(reports, errs); err != nil && unreached != nil {
-		return offer, fmt.Errorf("this machine holds no announcement from that provider, and %w", unreached)
-	}
-	return offer, err
-}
-
-// newestAnnouncements asks the relays for the announcements of a provider,
-// so that a call meets a new manifest at once. If no relay answers, the call
-// uses the announcements that this machine holds.
-func newestAnnouncements(ctx context.Context, sess *session, provider nostr.PubKey) {
-	if len(sess.relays) == 0 {
-		return
-	}
-	filter := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
-	if err := node.Unreached(sess.node.Pull(ctx, filter, sess.relays)); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\nthis uses the announcement that this machine holds\n", err)
-	}
-}
-
-// callTarget finds the capability that a call names: by an address,
-// <scheme>+arc://<provider>/<path>, or by a provider and a capability id in
-// flag. It returns the path of the address, or "" for a provider.
-func callTarget(ctx context.Context, sess *session, installs catalog.Installs, target, flag string) (nostr.PubKey, catalog.Offer, string, error) {
-	if !catalog.IsAddress(target) {
-		provider, id, err := installs.Resolve(target)
-		if err != nil {
-			return provider, catalog.Offer{}, "", err
-		}
-		if flag != "" {
-			id = flag
-		}
-		newestAnnouncements(ctx, sess, provider)
-		offer, err := findOffer(ctx, sess, provider, id)
-		return provider, offer, "", err
-	}
-
-	address, err := catalog.ParseAddress(target)
-	if err != nil {
-		return nostr.PubKey{}, catalog.Offer{}, "", err
-	}
-	provider, err := (&cliEnv{installs: installs}).ResolveKey(ctx, address.Provider)
-	if err != nil {
-		return provider, catalog.Offer{}, "", err
-	}
-	newestAnnouncements(ctx, sess, provider)
-	if flag != "" {
-		offer, err := findOffer(ctx, sess, provider, flag)
-		if err == nil && offer.Scheme != address.Scheme {
-			err = fmt.Errorf("the capability %s has the scheme %s, and the address names %s", offer.ID, offer.Scheme, address.Scheme)
-		}
-		return provider, offer, address.Path, err
-	}
-	offer, err := catalog.FindScheme(sess.node.Store, provider, address.Scheme)
-	if err != nil {
-		// Ask the relays for the announcements of the provider, then look
-		// again.
-		reports, errs := sess.node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}, sess.relays)
-		offer, err = catalog.FindScheme(sess.node.Store, provider, address.Scheme)
-		if unreached := node.Unreached(reports, errs); err != nil && unreached != nil {
-			err = fmt.Errorf("this machine holds no announcement from that provider, and %w", unreached)
-		}
-	}
-	return provider, offer, address.Path, err
-}
-
 func callCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "call <provider|address> [body...]",
@@ -495,7 +392,7 @@ func callCmd() *cobra.Command {
 	command.Flags().String("capability", "", "the capability of the provider to call")
 	command.Flags().String("method", "", "the method of the call (default: the manifest's)")
 	command.Flags().String("path", "", "the path of the call (default: the manifest's)")
-	command.Flags().Duration("timeout", 30*time.Second, "how long a live call waits")
+	command.Flags().Duration("timeout", call.Timeout, "how long a live call waits")
 	command.Flags().Bool("raw", false, "write the reply as it came, not as the manifest shows it")
 
 	command.AddCommand(&cobra.Command{
@@ -505,11 +402,15 @@ func callCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
 			found := false
 			now := time.Now()
-			for _, o := range sess.mail.Outbox() {
+			out, err := sess.Mail.Outbox(command.Context())
+			if err != nil {
+				return err
+			}
+			for _, o := range out {
 				if o.Kind != "request" {
 					continue
 				}
@@ -537,18 +438,22 @@ func callCapability(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer sess.close()
+	defer sess.Close()
 
 	installs, err := installsOf(command)
 	if err != nil {
 		return err
 	}
 	flag, _ := command.Flags().GetString("capability")
-	provider, offer, addressPath, err := callTarget(command.Context(), sess, installs, args[0], flag)
+	provider, offer, addressPath, err := sess.Target(command.Context(), installs, args[0], flag)
 	if err != nil {
 		return err
 	}
-	if !installs.Trusted(provider, offer.ID) {
+	trusted, err := installs.Trusted(provider, offer.ID)
+	if err != nil {
+		return err
+	}
+	if !trusted {
 		return fmt.Errorf("install it first: arc install %s %s", provider.Hex(), offer.ID)
 	}
 
@@ -576,8 +481,8 @@ func callCapability(command *cobra.Command, args []string) error {
 	}
 
 	later, _ := command.Flags().GetBool("later")
-	if later || len(sess.relays) == 0 {
-		if _, err := sess.mail.Request(command.Context(), provider, request); err != nil {
+	if later || len(sess.Relays) == 0 {
+		if _, err := sess.Mail.Request(command.Context(), provider, request); err != nil {
 			return err
 		}
 		fmt.Printf("queued for %s: the reply arrives with a sync; see arc call results\n", offer.Name())
@@ -585,7 +490,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	}
 
 	timeout, _ := command.Flags().GetDuration("timeout")
-	reply, rtt, via, err := liveCall(command.Context(), sess, provider, request, timeout)
+	reply, rtt, via, err := sess.LiveCall(command.Context(), provider, request, timeout)
 	if err != nil {
 		return err
 	}
@@ -596,7 +501,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	// The manifest can say how to show a reply. --raw writes it as it came.
 	raw, _ := command.Flags().GetBool("raw")
 	if m := offer.Manifest; !raw && m != nil && m.Service != nil && m.Service.Output != nil {
-		env := &cliEnv{sess: sess, installs: installs}
+		env := &citizen.Environment{Session: sess, Installs: installs}
 		in := iface.Installed{Manifest: m, Author: provider, Name: offer.ID}
 		return iface.ShowReply(command.Context(), env, in, reply.Body, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 	}
@@ -607,64 +512,45 @@ func callCapability(command *cobra.Command, args []string) error {
 	return nil
 }
 
-// callAddress makes one live call, as this citizen, to an installed capability
-// that an address names. A provider program that this citizen serves calls
-// this way, so it can do only what `arc call` can do for this citizen.
-func callAddress(ctx context.Context, sess *session, installs catalog.Installs, address, body string) (call.Reply, error) {
-	if !catalog.IsAddress(address) {
-		return call.Reply{}, fmt.Errorf("%q is not an address: <scheme>+arc://<provider>/<path>", address)
-	}
-	provider, offer, path, err := callTarget(ctx, sess, installs, address, "")
-	if err != nil {
-		return call.Reply{}, err
-	}
-	if !installs.Trusted(provider, offer.ID) {
-		return call.Reply{}, fmt.Errorf("not_installed: the citizen that serves this provider must install it: arc install %s %s", provider.Hex(), offer.ID)
-	}
-	request := call.Request{Capability: offer.ID, Method: offer.Method, Path: path, Body: body}
-	reply, _, _, err := liveCall(ctx, sess, provider, request, call.CallTimeout)
-	return reply, err
-}
-
 // publishRelayList tells other citizens which relays this citizen reads and
 // writes on, as NIP-65 defines, and which relays it reads its mail on, as
 // NIP-17 defines. It also publishes the private relay list of NIP-37, which
 // names the relays that hold the citizen's drafts. It returns the indexers
 // that did not get each public list.
-func publishRelayList(ctx context.Context, sess *session) []transport.Transport {
+func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Transport {
 	// The public lists go to the indexers too. The private list does not.
 	type list struct {
 		event nostr.Event
 		to    []transport.Transport
 	}
-	public := slices.Concat(sess.relays, sess.indexers)
+	public := slices.Concat(sess.Relays, sess.Indexers)
 	var lists []list
-	outbox, err := relaylist.Make(sess.signer, sess.urls, nostr.Now())
+	outbox, err := relaylist.Make(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the NIP-65 relay list was not signed: %v\n", err)
 	} else {
 		lists = append(lists, list{outbox, public})
 	}
-	inbox, err := mail.RelayList(sess.signer, sess.urls, nostr.Now())
+	inbox, err := mail.RelayList(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the relay list was not signed: %v\n", err)
 	} else {
 		lists = append(lists, list{inbox, public})
 	}
-	private, err := draft.RelayList(ctx, sess.keyer, sess.urls, nostr.Now())
+	private, err := draft.RelayList(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "the private relay list was not signed: %v\n", err)
 	} else {
-		lists = append(lists, list{private, sess.relays})
+		lists = append(lists, list{private, sess.Relays})
 	}
 	var owed []transport.Transport
 	for _, l := range lists {
-		_, sent, _ := sess.node.Publish(ctx, l.event, l.to)
+		_, sent, _ := sess.Node.Publish(ctx, l.event, l.to)
 		for i, s := range sent {
 			if s.Err != nil {
 				fmt.Fprintf(os.Stderr, "the relay list did not reach %s: %v\n", s.Transport, s.Err)
 				// The relays come first in l.to, and the indexers after them.
-				if i >= len(sess.relays) && !slices.Contains(owed, l.to[i]) {
+				if i >= len(sess.Relays) && !slices.Contains(owed, l.to[i]) {
 					owed = append(owed, l.to[i])
 				}
 			}
@@ -689,13 +575,13 @@ func announceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
-			announcement, err := catalog.AnnounceManifest(sess.signer, data, nostr.Now())
+			announcement, err := catalog.AnnounceManifest(command.Context(), sess.Signer, data, nostr.Now())
 			if err != nil {
 				return err
 			}
-			if _, sent, err := sess.node.Publish(command.Context(), announcement, sess.relays); err != nil {
+			if _, sent, err := sess.Node.Publish(command.Context(), announcement, sess.Relays); err != nil {
 				return err
 			} else {
 				for _, s := range sent {
@@ -704,7 +590,7 @@ func announceCmd() *cobra.Command {
 					}
 				}
 			}
-			fmt.Printf("announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.key.Name(), sess.key.Public.Hex())
+			fmt.Printf("announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.Key.Name(), sess.Key.Public.Hex())
 			return nil
 		},
 	}

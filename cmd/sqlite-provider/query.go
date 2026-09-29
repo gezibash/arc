@@ -43,7 +43,7 @@ type result struct {
 }
 
 // query runs the statements of one request against one database.
-func (s *server) query(caller, path, message string) (map[string]any, error) {
+func (s *server) query(ctx context.Context, caller, path, message string) (map[string]any, error) {
 	if !publicKeyPattern.MatchString(caller) {
 		return nil, errUnauthorized
 	}
@@ -66,7 +66,7 @@ func (s *server) query(caller, path, message string) (map[string]any, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.config.Limits.QueryMS)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(s.config.Limits.QueryMS)*time.Millisecond)
 	defer cancel()
 
 	conn, guard, err := s.connect(ctx, held, role)

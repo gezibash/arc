@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/gezibash/arc/internal/atomicfile"
 )
 
 // ErrInvalidName reports a name that a list may not take.
@@ -39,14 +41,17 @@ func (s *Store) path(tool, name string) string {
 
 // Members returns the peers of one list, and nothing when there is no such
 // list.
-func (s *Store) Members(tool, name string) []string {
+func (s *Store) Members(tool, name string) ([]string, error) {
 	if !namePattern.MatchString(tool) || !namePattern.MatchString(name) {
-		return nil
+		return nil, nil
 	}
 
 	data, err := os.ReadFile(s.path(tool, name))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var members []string
@@ -55,7 +60,7 @@ func (s *Store) Members(tool, name string) []string {
 			members = append(members, line)
 		}
 	}
-	return members
+	return members, nil
 }
 
 // Add puts peers in a list, and returns what the list holds now.
@@ -64,7 +69,15 @@ func (s *Store) Add(tool, name string, peers []string) ([]string, error) {
 		return nil, ErrInvalidName
 	}
 
-	held := s.Members(tool, name)
+	unlock, err := atomicfile.Lock(s.path(tool, name))
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	held, err := s.Members(tool, name)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	for _, peer := range held {
 		seen[peer] = true
@@ -85,6 +98,11 @@ func (s *Store) Remove(tool, name string, peers []string) ([]string, error) {
 		return nil, ErrInvalidName
 	}
 
+	unlock, err := atomicfile.Lock(s.path(tool, name))
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if len(peers) == 0 {
 		return nil, os.Remove(s.path(tool, name))
 	}
@@ -95,7 +113,11 @@ func (s *Store) Remove(tool, name string, peers []string) ([]string, error) {
 	}
 
 	var held []string
-	for _, peer := range s.Members(tool, name) {
+	members, err := s.Members(tool, name)
+	if err != nil {
+		return nil, err
+	}
+	for _, peer := range members {
 		if !drop[peer] {
 			held = append(held, peer)
 		}
@@ -104,14 +126,17 @@ func (s *Store) Remove(tool, name string, peers []string) ([]string, error) {
 }
 
 // Names returns the lists of one tool, in name order.
-func (s *Store) Names(tool string) []string {
+func (s *Store) Names(tool string) ([]string, error) {
 	if !namePattern.MatchString(tool) {
-		return nil
+		return nil, nil
 	}
 
 	files, err := os.ReadDir(filepath.Join(s.Dir, "lists", tool))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var names []string
@@ -121,7 +146,7 @@ func (s *Store) Names(tool string) []string {
 		}
 	}
 	sort.Strings(names)
-	return names
+	return names, nil
 }
 
 func (s *Store) write(tool, name string, members []string) error {
@@ -135,5 +160,5 @@ func (s *Store) write(tool, name string, members []string) error {
 		body.WriteString(member)
 		body.WriteByte('\n')
 	}
-	return os.WriteFile(path, []byte(body.String()), 0o600)
+	return atomicfile.Write(path, []byte(body.String()), 0600)
 }

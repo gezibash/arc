@@ -5,10 +5,8 @@
 //	Arcfile        how to run the program on this machine
 //	manifest.json  the capability that the citizen announces
 //
-// A bundle can also hold interface.json beside manifest.json: the commands
-// of the capability, as interface version 1 defines them. arc serve then
-// announces interface.json in place of manifest.json, and a caller who
-// installs the capability runs its commands.
+// New bundles author one interface manifest in manifest.json. Historical
+// bundles may point to interface.json, or hold it beside a legacy manifest.
 //
 // The command `arc serve <directory>` reads the Arcfile and turns it into
 // the address that the runtime already understands:
@@ -138,7 +136,14 @@ func Load(path string) (*Bundle, error) {
 
 	manifest := resolve(root, held.Manifest.Path)
 	if info, err := os.Stat(manifest); err != nil || info.IsDir() {
-		return nil, ErrManifestAbsent
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		modern := filepath.Join(root, InterfaceName)
+		if info, err := os.Stat(modern); err != nil || info.IsDir() {
+			return nil, ErrManifestAbsent
+		}
+		manifest = modern
 	}
 
 	var args []string
@@ -171,11 +176,10 @@ func (b *Bundle) ServeURI() string {
 
 // Files are the paths that Init writes.
 type Files struct {
-	Root      string
-	Arcfile   string
-	Manifest  string
-	Interface string
-	Runtime   string
+	Root     string
+	Arcfile  string
+	Manifest string
+	Runtime  string
 }
 
 // Init writes a new bundle in a directory. It refuses to write over a file
@@ -193,18 +197,17 @@ func Init(path string) (*Files, error) {
 	space := namespace(name)
 
 	files := &Files{
-		Root:      root,
-		Arcfile:   filepath.Join(root, ArcfileName),
-		Manifest:  filepath.Join(root, ManifestName),
-		Interface: filepath.Join(root, InterfaceName),
-		Runtime:   filepath.Join(root, RuntimeName),
+		Root:     root,
+		Arcfile:  filepath.Join(root, ArcfileName),
+		Manifest: filepath.Join(root, ManifestName),
+		Runtime:  filepath.Join(root, RuntimeName),
 	}
 
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
 
-	for _, one := range []string{files.Arcfile, files.Manifest, files.Interface, files.Runtime} {
+	for _, one := range []string{files.Arcfile, files.Manifest, filepath.Join(root, InterfaceName), files.Runtime} {
 		if _, err := os.Stat(one); err == nil {
 			return nil, fmt.Errorf("bundle: %s is already there", one)
 		}
@@ -214,9 +217,6 @@ func Init(path string) (*Files, error) {
 		return nil, err
 	}
 	if err := os.WriteFile(files.Manifest, []byte(manifestTemplate(space, title(name))), 0o644); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(files.Interface, []byte(interfaceTemplate(space, title(name))), 0o644); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(files.Runtime, []byte(runtimeTemplate(space)), 0o755); err != nil {

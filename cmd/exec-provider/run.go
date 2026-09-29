@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/gezibash/arc/internal/limitio"
 )
 
 // result is what one command left behind.
@@ -27,10 +30,14 @@ func start(cmd *command) *exec.Cmd {
 }
 
 // runCommand runs one command and waits for it.
-func runCommand(cfg *config, cmd *command) (*result, error) {
+func runCommand(ctx context.Context, cfg *config, cmd *command) (*result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	process := start(cmd)
 
-	var stdout, stderr bytes.Buffer
+	stdout := limitio.Buffer{Max: cfg.Limits.OutputBytes}
+	stderr := limitio.Buffer{Max: cfg.Limits.OutputBytes}
 	process.Stdin = bytes.NewReader(cmd.Stdin)
 	process.Stdout = &stdout
 	process.Stderr = &stderr
@@ -39,7 +46,7 @@ func runCommand(cfg *config, cmd *command) (*result, error) {
 		return nil, err
 	}
 
-	timedOut := wait(process, time.Duration(cmd.TimeoutMS)*time.Millisecond)
+	timedOut := wait(ctx, process, time.Duration(cmd.TimeoutMS)*time.Millisecond)
 
 	// Standard output and standard error share one budget.
 	limit := cfg.Limits.OutputBytes
@@ -51,25 +58,25 @@ func runCommand(cfg *config, cmd *command) (*result, error) {
 		Stdout:    out,
 		Stderr:    err,
 		TimedOut:  timedOut,
-		Truncated: outClipped || errClipped,
+		Truncated: outClipped || errClipped || stdout.Truncated || stderr.Truncated,
 	}, nil
 }
 
 // wait waits for the process, and stops its whole group at the timeout.
-func wait(process *exec.Cmd, timeout time.Duration) bool {
+func wait(ctx context.Context, process *exec.Cmd, timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {
 		process.Wait()
 		close(done)
 	}()
 
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	select {
 	case <-done:
 		return false
-	case <-timer.C:
+	case <-ctx.Done():
 		killGroup(process)
 		<-done
 		return true

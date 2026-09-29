@@ -3,7 +3,6 @@ package bundle
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 )
 
 const arcfileTemplate = `version = 1
@@ -17,37 +16,10 @@ cwd = "."
 path = "./manifest.json"
 `
 
-// manifestTemplate writes a capability that answers one message. The owner
-// edits it to say what the provider really does.
-func manifestTemplate(space, name string) string {
-	return fmt.Sprintf(`{
-  "published_at": %s,
-  "release": {
-    "version": "0.1.0",
-    "channel": "stable"
-  },
-  "capability": {
-    "id": "primary",
-    "kind": "service",
-    "scheme": %s,
-    "title": %s,
-    "summary": "A starter ARC app. Edit this manifest and the runtime to say what your capability does.",
-    "invocation": {
-      "method": "RAW",
-      "path": "/"
-    },
-    "examples": [
-      "hello from arc"
-    ]
-  }
-}
-`, jsonString(time.Now().UTC().Format(time.RFC3339)), jsonString(space), jsonString(name))
-}
-
-// interfaceTemplate writes the commands of the capability, as interface
+// manifestTemplate writes the commands of the capability, as interface
 // version 1 defines them. Its one command sends the text of the caller to the
 // runtime as the body, and shows the reply.
-func interfaceTemplate(space, name string) string {
+func manifestTemplate(space, name string) string {
 	return fmt.Sprintf(`{
   "interface": 1, "id": %s, "shape": "service",
   "title": %s,

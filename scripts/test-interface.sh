@@ -455,7 +455,9 @@ agent dm send "$bob_key" hello from the agent 2> /dev/null || fail "the agent co
 bob dm inbox | grep "hello from the agent" > /dev/null || fail "bob's inbox: $(bob dm inbox)"
 bob dm inbox | grep "$(owner whoami | head -1)" > /dev/null || fail "the message does not come from the owner"
 bob dm send "$owner_key" hello agent 2> /dev/null
-agent dm inbox > "$work/shut.txt" 2> "$work/shut.err"
+if agent dm inbox > "$work/shut.txt" 2> "$work/shut.err"; then
+  fail "the inbox succeeded although the bunker refused to open its recorded mail"
+fi
 grep "hello agent" "$work/shut.txt" > /dev/null && fail "the bunker opened mail by default"
 grep "decrypts only what its owner sealed" "$work/shut.err" > /dev/null || fail "the agent was not told why: $(cat "$work/shut.err")"
 say "by default the bunker opens the owner's own drafts, and not their mail"

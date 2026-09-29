@@ -8,10 +8,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gezibash/arc/provider"
 	"zombiezen.com/go/sqlite"
 )
+
+func TestCallerCancellationInterruptsAQuery(t *testing.T) {
+	s := testServer(t)
+	s.config.Limits.QueryMS = 30000
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := s.HandleRequest(ctx, provider.Request{From: aliceKey, Meta: map[string]any{"method": "QUERY", "path": "/main"}, Message: `{"sql":"WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n"}`})
+	if err == nil || time.Since(started) > time.Second {
+		t.Fatalf("query=%v elapsed=%s", err, time.Since(started))
+	}
+}
 
 const (
 	aliceKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

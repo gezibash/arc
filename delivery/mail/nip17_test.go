@@ -12,6 +12,7 @@ import (
 	"github.com/gezibash/arc/delivery/private"
 	"github.com/gezibash/arc/delivery/testrelay"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/internal/testutil"
 )
 
 // The proof of phase 3, part three: an ARC direct message opens in a NIP-17
@@ -64,7 +65,7 @@ func TestANIP17MessageOpensInARC(t *testing.T) {
 	if got := bob.sync(t, r); got.Received != 1 {
 		t.Fatalf("bob received %d messages, refused %v", got.Received, got.Refused)
 	}
-	msgs := bob.mail.Inbox()
+	msgs := testutil.Must(bob.mail.Inbox(context.Background()))
 	if len(msgs) != 1 || msgs[0].Text != "hello from a nip-17 client" || msgs[0].From != alice.key.Public {
 		t.Errorf("bob's inbox: %+v", msgs)
 	}
@@ -79,7 +80,7 @@ func TestAMessageFollowsTheRecipientsRelayList(t *testing.T) {
 
 	alice, bob := newCitizen(t, shared), newCitizen(t, bobs)
 
-	list, err := mail.RelayList(bob.key, []string{bobs.URL}, nostr.Now())
+	list, err := mail.RelayList(context.Background(), bob.key, []string{bobs.URL}, nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestAMessageReachesAnInboxRelayThatAsksForAuthentication(t *testing.T) {
 
 	alice, bob := newCitizen(t, shared), newCitizen(t, bobs)
 
-	list, err := mail.RelayList(bob.key, []string{bobs.URL}, nostr.Now())
+	list, err := mail.RelayList(context.Background(), bob.key, []string{bobs.URL}, nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +141,10 @@ func TestARumorOfTheDMManifestOpensInANIP17Client(t *testing.T) {
 
 	// Bob's machine reads it back as a rumor, and so does Alice's.
 	bob.sync(t, r)
-	if got := bob.mail.Rumors([]nostr.Kind{14}); len(got) != 1 || got[0].Content != "from the manifest" {
+	if got := testutil.Must(bob.mail.Rumors(context.Background(), []nostr.Kind{14})); len(got) != 1 || got[0].Content != "from the manifest" {
 		t.Errorf("bob's rumors: %+v", got)
 	}
-	if got := alice.mail.Rumors([]nostr.Kind{14}); len(got) != 1 || got[0].PubKey != alice.key.Public {
+	if got := testutil.Must(alice.mail.Rumors(context.Background(), []nostr.Kind{14})); len(got) != 1 || got[0].PubKey != alice.key.Public {
 		t.Errorf("alice's rumors: %+v", got)
 	}
 }

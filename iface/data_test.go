@@ -17,6 +17,7 @@ import (
 	"fiatjaf.com/nostr/nip70"
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/store"
+	"github.com/gezibash/arc/internal/testutil"
 )
 
 // citizen is one machine with a store, and the journal and files installed.
@@ -76,7 +77,7 @@ func TestAJournalPageIsWrittenReadAndAppended(t *testing.T) {
 func TestThePageIsANIP37DraftOfAnArticle(t *testing.T) {
 	c := newCitizen(t)
 	c.must("journal", "short page\n", "write", page, "--title", "T")
-	wraps := c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}})
+	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
 	if len(wraps) != 1 {
 		t.Fatalf("the store holds %d drafts", len(wraps))
 	}
@@ -99,7 +100,7 @@ func TestALongPageTravelsInParts(t *testing.T) {
 	if got := c.must("journal", "", "read", page); got != body.String() {
 		t.Fatalf("the long page reads back with %d bytes, want %d", len(got), body.Len())
 	}
-	if n := len(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}})); n != 3 {
+	if n := len(testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}}))); n != 3 {
 		t.Errorf("the page has %d parts, want 3", n)
 	}
 
@@ -108,7 +109,7 @@ func TestALongPageTravelsInParts(t *testing.T) {
 	if got := c.must("journal", "", "read", page); got != body.String()+"the end\n" {
 		t.Errorf("after append the page ends %q", got[len(got)-20:])
 	}
-	if n := len(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}})); n != 4 {
+	if n := len(testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}}))); n != 4 {
 		t.Errorf("append made %d parts in all, want 4: three, and one new last part", n)
 	}
 }
@@ -117,9 +118,9 @@ func TestAMissingPartKeepsTheTextBeforeIt(t *testing.T) {
 	c := newCitizen(t)
 	body := strings.Repeat(strings.Repeat("y", 99)+"\n", 800) // 80,000 bytes
 	c.must("journal", body, "write", page)
-	parts := c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}})
+	parts := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}}))
 	// Take away the last part, as a transport that never brought it.
-	wraps := c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}})
+	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
 	opened, _ := draft.Open(context.Background(), c.env.Keyer(), wraps[0])
 	last := opened.Parts()[len(opened.Parts())-1]
 	for _, p := range parts {
@@ -323,7 +324,7 @@ func TestAgoraPostsRepliesAndThreads(t *testing.T) {
 	alice, bob := pair(t)
 	alice.must("agora", "", "post", "--title", "Hello", "first", "post")
 	board := alice.env.net.relays["wss://board.example"]
-	posts := board.Query(nostr.Filter{Kinds: []nostr.Kind{11}})
+	posts := testutil.Must(board.Query(nostr.Filter{Kinds: []nostr.Kind{11}}))
 	if len(posts) != 1 {
 		t.Fatalf("the board holds %d posts", len(posts))
 	}
@@ -341,7 +342,7 @@ func TestAgoraPostsRepliesAndThreads(t *testing.T) {
 	bob.must("agora", "", "reply", root, "welcome")
 	time.Sleep(1100 * time.Millisecond)
 	alice.must("agora", "", "reply", root, "thanks")
-	replies := board.Query(nostr.Filter{Kinds: []nostr.Kind{1111}})
+	replies := testutil.Must(board.Query(nostr.Filter{Kinds: []nostr.Kind{1111}}))
 	if len(replies) != 2 {
 		t.Fatalf("the board holds %d replies", len(replies))
 	}
@@ -367,7 +368,7 @@ func TestAgoraPostsRepliesAndThreads(t *testing.T) {
 	}
 
 	alice.must("agora", "", "remove", root)
-	removals := board.Query(nostr.Filter{Kinds: []nostr.Kind{9005}})
+	removals := testutil.Must(board.Query(nostr.Filter{Kinds: []nostr.Kind{9005}}))
 	if len(removals) != 1 || removals[0].Tags.Find("e")[1] != post.ID.Hex() || removals[0].Tags.Find("h")[1] != "agora" {
 		t.Errorf("the removal is %+v", removals)
 	}
@@ -393,7 +394,7 @@ func TestADryRunSignsNothing(t *testing.T) {
 	if !strings.Contains(out, `"kind": 30023`) || !strings.Contains(out, "secret text") {
 		t.Errorf("the dry run shows %q", out)
 	}
-	if n := len(alice.env.store.Query(nostr.Filter{})); n != 0 {
+	if n := len(testutil.Must(alice.env.store.Query(nostr.Filter{}))); n != 0 {
 		t.Errorf("a dry run stored %d events", n)
 	}
 	alice.must("dm", "", "send", "--dry-run", bob.env.me.Public().Hex(), "hi")
@@ -453,11 +454,11 @@ type listEnv struct {
 	refuse nostr.PubKey
 }
 
-func (l *listEnv) List(name string) []nostr.PubKey {
+func (l *listEnv) List(name string) ([]nostr.PubKey, error) {
 	if name == "pals" {
-		return l.pals
+		return l.pals, nil
 	}
-	return nil
+	return nil, nil
 }
 
 func (l *listEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {

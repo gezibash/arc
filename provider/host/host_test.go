@@ -1,13 +1,36 @@
 package host_test
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gezibash/arc/provider/host"
+	"github.com/gezibash/arc/provider/wire"
 )
+
+func TestBackpressureCannotOutliveTheSendDeadline(t *testing.T) {
+	process, err := host.Start("/bin/sh", []string{"-c", "exec sleep 2"}, "", nil, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err = process.Send(ctx, wire.Event{Op: "request", Message: wire.Text(strings.Repeat("x", 2*1024*1024))})
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("send=%v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("Send waited for the non-reading process")
+	}
+}
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 

@@ -59,3 +59,17 @@ type Live interface {
 	// matching event.
 	Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error)
 }
+
+// Received carries a watched event or a terminal error from its local adapter.
+// A persistence failure must not look like an empty or successful watch.
+type Received struct {
+	nostr.Event
+	Err error
+}
+
+// NotSubmittedError means the transport failed before publishing the request.
+// All other exchange errors leave execution uncertain and must not be retried.
+type NotSubmittedError struct{ Err error }
+
+func (e *NotSubmittedError) Error() string { return e.Err.Error() }
+func (e *NotSubmittedError) Unwrap() error { return e.Err }

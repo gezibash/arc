@@ -64,9 +64,9 @@ func toolCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				defer sess.close()
+				defer sess.Close()
 
-				offer, err := findOffer(command.Context(), sess, provider, install.ID)
+				offer, err := sess.FindOffer(command.Context(), provider, install.ID)
 				if err != nil {
 					return err
 				}
@@ -140,7 +140,7 @@ func infoCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			provider, _, err := installs.Resolve(args[0])
+			provider, _, err := installs.Resolve(command.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -148,10 +148,10 @@ func infoCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
 			if len(args) == 2 {
-				offer, err := findOffer(command.Context(), sess, provider, args[1])
+				offer, err := sess.FindOffer(command.Context(), provider, args[1])
 				if err != nil {
 					return err
 				}
@@ -160,9 +160,13 @@ func infoCommand() *cobra.Command {
 			}
 
 			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
-			reports, errs := sess.node.Pull(command.Context(), mine, sess.relays)
+			reports, errs := sess.Node.Pull(command.Context(), mine, sess.Relays)
 			var offers []catalog.Offer
-			for _, event := range sess.node.Store.Query(mine) {
+			events, err := sess.Node.Store.Query(mine)
+			if err != nil {
+				return err
+			}
+			for _, event := range events {
 				if offer, err := catalog.Read(event); err == nil {
 					offers = append(offers, offer)
 				}
@@ -228,7 +232,7 @@ func resolveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
 			installs, err := installsOf(command)
 			if err != nil {
@@ -242,8 +246,12 @@ func resolveCommand() *cobra.Command {
 				consider(e.Provider, "installed as "+runName(e))
 			}
 
-			reports, errs := sess.node.Pull(command.Context(), announcements, sess.relays)
-			for _, offer := range catalog.Search(sess.node.Store, "") {
+			reports, errs := sess.Node.Pull(command.Context(), announcements, sess.Relays)
+			offers, err := catalog.Search(sess.Node.Store, "")
+			if err != nil {
+				return err
+			}
+			for _, offer := range offers {
 				consider(offer.Provider.Hex(), "announces "+offer.ID)
 			}
 
@@ -281,7 +289,7 @@ func appsCommand() *cobra.Command {
 				return err
 			}
 			fmt.Printf("wrote a bundle in %s\n", files.Root)
-			fmt.Printf("  %s\n  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Interface, files.Runtime)
+			fmt.Printf("  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Runtime)
 			fmt.Printf("\nserve it with: arc serve %s\n", path)
 			return nil
 		},

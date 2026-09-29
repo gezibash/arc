@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/gezibash/arc/internal/atomicfile"
 )
 
 // A citizen remembers the newest channel document that it accepted. Without
@@ -73,8 +75,17 @@ func (c *Checkpoint) Write(publisher []byte, channel *Channel) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	unlock, err := atomicfile.Lock(path)
+	if err != nil {
 		return err
+	}
+	defer unlock()
+	previous, err := c.Read(publisher, channel.Name)
+	if err != nil {
+		return err
+	}
+	if channel.Sequence < previous.LastSequence || channel.Sequence == previous.LastSequence && previous.LastDigest != "" && channel.Digest != previous.LastDigest {
+		return ErrOutOfSequence
 	}
 
 	body, err := json.Marshal(record{Sequence: channel.Sequence, Digest: channel.Digest})
@@ -82,9 +93,5 @@ func (c *Checkpoint) Write(publisher []byte, channel *Channel) error {
 		return err
 	}
 
-	temporary := path + ".new"
-	if err := os.WriteFile(temporary, body, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
+	return atomicfile.Write(path, body, 0600)
 }

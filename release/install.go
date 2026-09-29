@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gezibash/arc/internal/atomicfile"
+	"github.com/gezibash/arc/internal/limitio"
 )
 
 // A release of ARC in Go is one program. The archive holds it, and the
@@ -82,19 +86,32 @@ func Unpack(archive []byte, name string) ([]byte, error) {
 // The new program is written beside the old one, run once to prove that it
 // starts and reports the version that the channel named, and then renamed
 // over it. The old program stays as <name>.previous.
-func Replace(path string, program []byte, version string) error {
+func Replace(ctx context.Context, path string, program []byte, version string) error {
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		target = path
 	}
 
-	candidate := target + ".new"
-	if err := os.WriteFile(candidate, program, 0o755); err != nil {
+	unlock, err := atomicfile.Lock(target)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	file, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+"-candidate-*")
+	if err != nil {
+		return err
+	}
+	candidate := file.Name()
+	file.Close()
+	defer os.Remove(candidate)
+	if err := atomicfile.Write(candidate, program, 0o755); err != nil {
 		return fmt.Errorf("release: the new program did not save: %w", err)
 	}
 
-	if err := probe(candidate, version); err != nil {
-		os.Remove(candidate)
+	if err := probe(ctx, candidate, version); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -104,7 +121,6 @@ func Replace(path string, program []byte, version string) error {
 	// The old program is kept, and the new one takes its place. A rename on
 	// one filesystem never leaves a half written program behind.
 	if err := os.Rename(target, previous); err != nil && !errors.Is(err, os.ErrNotExist) {
-		os.Remove(candidate)
 		return fmt.Errorf("release: the running program did not move aside: %w", err)
 	}
 	if err := os.Rename(candidate, target); err != nil {
@@ -115,10 +131,19 @@ func Replace(path string, program []byte, version string) error {
 }
 
 // probe runs the new program once, and reads the version that it reports.
-func probe(path, version string) error {
-	command := exec.Command(path, "--version")
-
-	out, err := command.CombinedOutput()
+func probe(ctx context.Context, path, version string) error {
+	ctx, cancel := context.WithTimeout(ctx, ProbeLimit)
+	defer cancel()
+	command := exec.CommandContext(ctx, path, "--version")
+	command.WaitDelay = time.Second
+	output := limitio.Buffer{Max: 64 * 1024}
+	command.Stdout = &output
+	command.Stderr = &output
+	err := command.Run()
+	out := output.Bytes()
+	if ctx.Err() != nil {
+		return fmt.Errorf("release: version probe: %w", ctx.Err())
+	}
 	if err != nil {
 		return fmt.Errorf("release: the new program did not start: %w", err)
 	}

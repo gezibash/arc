@@ -38,7 +38,7 @@ func main() {
 }
 
 // HandleRequest answers one ARC request.
-func (s *server) HandleRequest(_ context.Context, request provider.Request) (string, error) {
+func (s *server) HandleRequest(ctx context.Context, request provider.Request) (string, error) {
 	if request.Method() != "EXEC" {
 		return "", provider.ErrInvalidRequest
 	}
@@ -51,6 +51,9 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 		return "", err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	var reply map[string]any
 
 	switch action {
@@ -59,7 +62,7 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	case "status":
 		reply, err = s.jobStatus(request.From, job)
 	default:
-		reply, err = s.run(cmd)
+		reply, err = s.run(ctx, cmd)
 	}
 	if err != nil {
 		return "", err
@@ -73,11 +76,11 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 }
 
 // run holds the lease while the command runs, so the machine stays awake.
-func (s *server) run(cmd *command) (map[string]any, error) {
+func (s *server) run(ctx context.Context, cmd *command) (map[string]any, error) {
 	s.lease.hold()
 	defer s.lease.release()
 
-	result, err := runCommand(s.config, cmd)
+	result, err := runCommand(ctx, s.config, cmd)
 	if err != nil {
 		return nil, err
 	}

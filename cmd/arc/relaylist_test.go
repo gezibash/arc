@@ -62,13 +62,13 @@ func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
 	}
 	announcement := func(at time.Time) nostr.Event {
 		t.Helper()
-		event, err := catalog.AnnounceManifest(provider, manifest, nostr.Timestamp(at.Unix()))
+		event, err := catalog.AnnounceManifest(context.Background(), provider, manifest, nostr.Timestamp(at.Unix()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return event
 	}
-	list, err := relaylist.Make(provider, []string{providerRelay}, nostr.Now())
+	list, err := relaylist.Make(context.Background(), provider, []string{providerRelay}, nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestAnIndexerHoldsOnlyThePublicRelayLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err := (relay.Relay{URL: indexer, Signer: id.keyer}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{10002, 10050, 10013}, Authors: []nostr.PubKey{id.key.Public}})
+	batch, err := (relay.Relay{URL: indexer, Signer: id.signer}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{10002, 10050, 10013}, Authors: []nostr.PubKey{id.key.Public}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,13 +154,13 @@ func TestALiveCallFindsTheProviderThroughAnIndexer(t *testing.T) {
 	}
 	announce := func(at time.Time) nostr.Event {
 		t.Helper()
-		event, err := catalog.AnnounceManifest(provider, manifest, nostr.Timestamp(at.Unix()))
+		event, err := catalog.AnnounceManifest(context.Background(), provider, manifest, nostr.Timestamp(at.Unix()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return event
 	}
-	list, err := relaylist.Make(provider, []string{providerRelay}, nostr.Now())
+	list, err := relaylist.Make(context.Background(), provider, []string{providerRelay}, nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestAMessageFindsTheInboxThroughAnIndexer(t *testing.T) {
 	inbox := testrelay.Start(t)
 	indexer := testrelay.Start(t)
 	recipient := keys.Generate()
-	list, err := mail.RelayList(recipient, []string{inbox}, nostr.Now())
+	list, err := mail.RelayList(context.Background(), recipient, []string{inbox}, nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

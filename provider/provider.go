@@ -53,6 +53,8 @@ import (
 	"os"
 	"strconv"
 	"sync"
+
+	"github.com/gezibash/arc/provider/wire"
 )
 
 // DefaultMaxLineBytes caps one input line. A JSON string grows about six
@@ -148,6 +150,7 @@ const (
 	ErrInvalidRequest  = Error("invalid_request")
 	ErrRequestTooLarge = Error("request_too_large")
 	ErrInternal        = Error("internal_error")
+	ErrBusy            = Error("provider_busy")
 )
 
 // Options changes how the runtime runs.
@@ -161,6 +164,8 @@ type Options struct {
 	Log io.Writer
 	// MaxLineBytes caps one input line. The default is DefaultMaxLineBytes.
 	MaxLineBytes int
+	// MaxConcurrent bounds admitted handlers. Excess requests receive provider_busy.
+	MaxConcurrent int
 }
 
 // Run reads events and writes answers until the input ends or the context is
@@ -180,9 +185,14 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 		opts.MaxLineBytes = DefaultMaxLineBytes
 	}
 
+	if opts.MaxConcurrent <= 0 {
+		opts.MaxConcurrent = wire.MaxConcurrent
+	}
+
 	runtime := &runtime{
 		handler: handler, options: opts, out: bufio.NewWriter(opts.Out),
 		calls: map[string]chan result{}, stopped: make(chan struct{}),
+		requests: map[any]context.CancelFunc{}, slots: make(chan struct{}, opts.MaxConcurrent),
 	}
 	if wants, ok := handler.(WantsCaller); ok {
 		wants.SetCaller(runtime)
@@ -197,7 +207,10 @@ type runtime struct {
 	mu  sync.Mutex
 	out *bufio.Writer
 
-	group sync.WaitGroup
+	group      sync.WaitGroup
+	requestsMu sync.Mutex
+	requests   map[any]context.CancelFunc
+	slots      chan struct{}
 
 	// calls holds each call that waits for its result, by call_id.
 	callsMu sync.Mutex
@@ -216,62 +229,59 @@ type result struct {
 
 func (r *runtime) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	reader := bufio.NewReaderSize(r.options.In, 64*1024)
-	defer r.group.Wait()
-	// A call that waits when the input ends fails, so its request ends too.
-	defer close(r.stopped)
-
+	// Closing a pipe or stdin interrupts an idle read. Other Readers must make
+	// progress themselves; the runtime still stops waiting when ctx ends.
+	defer func() {
+		close(r.stopped)
+		cancel()
+		if closer, ok := r.options.In.(io.Closer); ok {
+			closer.Close()
+		}
+		r.group.Wait()
+	}()
+	type input struct {
+		line []byte
+		err  error
+	}
+	lines := make(chan input)
+	go func() {
+		reader := bufio.NewReaderSize(r.options.In, 64*1024)
+		for {
+			line, err := wire.ReadLine(reader, r.options.MaxLineBytes)
+			select {
+			case lines <- input{line, err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil && !errors.Is(err, wire.ErrLineTooLong) {
+				return
+			}
+		}
+	}()
 	for {
-		line, err := readLine(reader, r.options.MaxLineBytes)
-		switch {
-		case errors.Is(err, errLineTooLong):
-			r.answer(nil, "", ErrRequestTooLarge)
-			continue
-		case errors.Is(err, io.EOF):
-			return nil
-		case err != nil:
-			return err
-		}
-
-		if len(line) == 0 {
-			continue
-		}
-
-		r.group.Add(1)
-		go func() {
-			defer r.group.Done()
-			r.serve(ctx, line)
-		}()
-
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case in := <-lines:
+			switch {
+			case errors.Is(in.err, wire.ErrLineTooLong):
+				r.answer(nil, "", ErrRequestTooLarge)
+			case errors.Is(in.err, io.EOF):
+				return nil
+			case in.err != nil:
+				return in.err
+			case len(in.line) > 0:
+				r.dispatch(ctx, in.line)
+			}
 		}
 	}
 }
 
-// serve answers one line. A panic in the handler fails that one request, and
-// the provider keeps serving the others.
-func (r *runtime) serve(ctx context.Context, line []byte) {
-	var event struct {
-		Op           string         `json:"op"`
-		From         string         `json:"from"`
-		Message      *string        `json:"message"`
-		Meta         map[string]any `json:"meta"`
-		RequestID    any            `json:"request_id"`
-		ArcSessionID string         `json:"arc_session_id"`
-		AppSessionID string         `json:"app_session_id"`
-		Framed       bool           `json:"framed"`
-
-		CallID  string  `json:"call_id"`
-		Reply   *string `json:"reply"`
-		Refused string  `json:"refused"`
-		Error   string  `json:"error"`
-	}
-
+// dispatch handles control messages in read order, even when all handler
+// slots are occupied. Cancellation and nested call results cannot deadlock
+// behind the requests they must unblock.
+func (r *runtime) dispatch(ctx context.Context, line []byte) {
+	var event wire.Event
 	if err := json.Unmarshal(line, &event); err != nil {
 		r.answer(nil, "", ErrInvalidRequest)
 		return
@@ -280,24 +290,49 @@ func (r *runtime) serve(ctx context.Context, line []byte) {
 		r.settle(event.CallID, result{reply: event.Reply, refused: event.Refused, err: event.Error})
 		return
 	}
+	if event.Op == "cancel" && validRequestID(event.RequestID) {
+		r.requestsMu.Lock()
+		if cancel := r.requests[event.RequestID]; cancel != nil {
+			cancel()
+		}
+		r.requestsMu.Unlock()
+		return
+	}
 	if event.Op != "request" || event.Message == nil || event.Meta == nil || !validRequestID(event.RequestID) {
 		r.answer(event.RequestID, "", ErrInvalidRequest)
 		return
 	}
-
-	request := Request{
-		Op:           event.Op,
-		From:         event.From,
-		Message:      *event.Message,
-		Meta:         event.Meta,
-		RequestID:    event.RequestID,
-		ArcSessionID: event.ArcSessionID,
-		AppSessionID: event.AppSessionID,
-		Framed:       event.Framed,
+	select {
+	case r.slots <- struct{}{}:
+	default:
+		r.answer(event.RequestID, "", ErrBusy)
+		return
 	}
-
-	reply, err := r.call(ctx, request)
-	r.answer(event.RequestID, reply, err)
+	ctx, cancel := wire.Budget(ctx, event.DeadlineMS)
+	r.requestsMu.Lock()
+	if _, exists := r.requests[event.RequestID]; exists {
+		r.requestsMu.Unlock()
+		cancel()
+		<-r.slots
+		r.answer(event.RequestID, "", ErrInvalidRequest)
+		return
+	}
+	r.requests[event.RequestID] = cancel
+	r.requestsMu.Unlock()
+	request := Request{Op: event.Op, From: event.From, Message: *event.Message, Meta: event.Meta, RequestID: event.RequestID, ArcSessionID: event.ArcSessionID, AppSessionID: event.AppSessionID, Framed: event.Framed}
+	r.group.Add(1)
+	go func() {
+		defer r.group.Done()
+		defer func() {
+			cancel()
+			r.requestsMu.Lock()
+			delete(r.requests, event.RequestID)
+			r.requestsMu.Unlock()
+			<-r.slots
+		}()
+		reply, err := r.call(ctx, request)
+		r.answer(event.RequestID, reply, err)
+	}()
 }
 
 func (r *runtime) call(ctx context.Context, request Request) (reply string, err error) {
@@ -325,7 +360,7 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 		r.callsMu.Unlock()
 	}()
 
-	line, err := json.Marshal(map[string]any{"op": "call", "call_id": id, "address": address, "body": body})
+	line, err := json.Marshal(wire.Event{Op: "call", CallID: id, Address: address, Body: wire.Text(body), DeadlineMS: wire.Deadline(ctx)})
 	if err != nil {
 		return "", err
 	}
@@ -345,6 +380,13 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 		}
 		return "", &CallError{Reason: "the input ended before the result came"}
 	case <-ctx.Done():
+		select {
+		case <-r.stopped:
+			return "", &CallError{Reason: "the input ended before the result came"}
+		default:
+		}
+		line, _ := json.Marshal(wire.Event{Op: "cancel", CallID: id})
+		_ = r.writeLine(line)
 		return "", ctx.Err()
 	}
 }
@@ -379,13 +421,13 @@ func (r *runtime) settle(id string, got result) {
 // answer writes one line. One writer holds the lock, so two answers never
 // interleave on one line.
 func (r *runtime) answer(requestID any, reply string, err error) {
-	response := map[string]any{"request_id": requestID}
+	response := wire.Event{RequestID: requestID}
 	if err != nil {
-		response["op"] = "error"
-		response["error"] = safeError(r.options.Log, err)
+		response.Op = "error"
+		response.Error = safeError(r.options.Log, err)
 	} else {
-		response["op"] = "reply"
-		response["reply"] = reply
+		response.Op = "reply"
+		response.Reply = wire.Text(reply)
 	}
 
 	line, marshalErr := json.Marshal(response)
@@ -430,54 +472,4 @@ func validRequestID(value any) bool {
 	default:
 		return false
 	}
-}
-
-var errLineTooLong = errors.New("provider: the line is too long")
-
-// readLine reads one line. A line over the cap is dropped to its end, so the
-// next line still parses.
-func readLine(reader *bufio.Reader, max int) ([]byte, error) {
-	var line []byte
-
-	for {
-		chunk, err := reader.ReadSlice('\n')
-		line = append(line, chunk...)
-
-		if errors.Is(err, bufio.ErrBufferFull) {
-			if len(line) > max {
-				if err := drain(reader); err != nil {
-					return nil, err
-				}
-				return nil, errLineTooLong
-			}
-			continue
-		}
-		if err != nil {
-			if len(line) > 0 && errors.Is(err, io.EOF) {
-				return trim(line), nil
-			}
-			return nil, err
-		}
-		if len(line) > max {
-			return nil, errLineTooLong
-		}
-		return trim(line), nil
-	}
-}
-
-func drain(reader *bufio.Reader) error {
-	for {
-		_, err := reader.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		return err
-	}
-}
-
-func trim(line []byte) []byte {
-	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
-		line = line[:len(line)-1]
-	}
-	return line
 }

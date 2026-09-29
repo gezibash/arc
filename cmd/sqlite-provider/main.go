@@ -32,12 +32,12 @@ func main() {
 }
 
 // HandleRequest answers one query.
-func (s *server) HandleRequest(_ context.Context, request provider.Request) (string, error) {
+func (s *server) HandleRequest(ctx context.Context, request provider.Request) (string, error) {
 	if request.Method() != "QUERY" || request.Path() == "" {
 		return "", errInvalidRequest
 	}
 
-	answer, err := s.query(request.From, request.Path(), request.Message)
+	answer, err := s.query(ctx, request.From, request.Path(), request.Message)
 	if err != nil {
 		return "", err
 	}

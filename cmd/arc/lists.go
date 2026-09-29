@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/internal/citizen"
 	"github.com/gezibash/arc/lists"
 	"github.com/spf13/cobra"
 )
@@ -17,20 +17,6 @@ func listsOf(command *cobra.Command) (*lists.Store, error) {
 		return nil, err
 	}
 	return &lists.Store{Dir: dir}, nil
-}
-
-// List returns the members of a list of the running command, as keys.
-func (e *cliEnv) List(name string) []nostr.PubKey {
-	if e.lists == nil {
-		return nil
-	}
-	var out []nostr.PubKey
-	for _, member := range e.lists.Members(e.tool, name) {
-		if pk, err := nostr.PubKeyFromHex(member); err == nil {
-			out = append(out, pk)
-		}
-	}
-	return out
 }
 
 func listsCommand() *cobra.Command {
@@ -50,11 +36,13 @@ func listsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if _, ok := installs.Named(args[0]); !ok {
+				if _, ok, err := installs.Named(args[0]); err != nil {
+					return err
+				} else if !ok {
 					return fmt.Errorf("no installed command %q: see arc tool list", args[0])
 				}
 				// A member is a key, in any form that a key argument takes.
-				env := &cliEnv{installs: installs}
+				env := &citizen.Environment{Installs: installs}
 				var keys []string
 				for _, text := range args[2:] {
 					pk, err := env.ResolveKey(command.Context(), text)
@@ -83,7 +71,7 @@ func listsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				env := &cliEnv{installs: installs}
+				env := &citizen.Environment{Installs: installs}
 				var keys []string
 				for _, text := range args[2:] {
 					pk, err := env.ResolveKey(command.Context(), text)
@@ -117,7 +105,10 @@ func listsCommand() *cobra.Command {
 					return err
 				}
 				if len(args) == 2 {
-					held := store.Members(args[0], args[1])
+					held, err := store.Members(args[0], args[1])
+					if err != nil {
+						return err
+					}
 					if len(held) == 0 {
 						fmt.Printf("no list %s/%s\n", args[0], args[1])
 						return nil
@@ -125,13 +116,20 @@ func listsCommand() *cobra.Command {
 					fmt.Println(strings.Join(held, "\n"))
 					return nil
 				}
-				names := store.Names(args[0])
+				names, err := store.Names(args[0])
+				if err != nil {
+					return err
+				}
 				if len(names) == 0 {
 					fmt.Printf("no lists for %s\n", args[0])
 					return nil
 				}
 				for _, name := range names {
-					fmt.Printf("%s: %s\n", name, strings.Join(store.Members(args[0], name), " "))
+					members, err := store.Members(args[0], name)
+					if err != nil {
+						return err
+					}
+					fmt.Printf("%s: %s\n", name, strings.Join(members, " "))
 				}
 				return nil
 			},

@@ -177,6 +177,10 @@ The node writes the route tag as 32 lower-case hex characters.
 
 ## 7. Transports
 
+For implementation and review, follow the
+[transport implementation contract](TRANSPORTS.md). It defines the current Go
+interfaces, integration requirements, and evidence for a usable transport.
+
 ### 7.1 The interface
 
 The implemented Go contract in `delivery/transport/transport.go` moves signed
@@ -540,9 +544,18 @@ The manifest declares the class of each command:
 | store and forward | 1059 | The router delivers it on any transport, however late. The reply returns the same way. |
 | live | 21059 | The router needs a live path now. If none exists, the call fails at once. |
 
-A provider keeps the IDs of the requests that it answered, and answers each
-request once. Each request rumor carries a `nonce` tag with 8 random bytes as
-hex. Thus two equal requests in one second have two IDs, and the provider
+Receipt and processing are separate. A deferred request remains pending when
+no provider is attached, including across restarts. The mail journal records
+pending, processing and completed requests and commits the encrypted reply's
+forwarding state before transmission. A restarted or interrupted execution
+with no recorded reply returns `outcome_unknown` once its execution window
+has elapsed; it is never automatically executed again. The same conservative
+rule applies to historical receipts without a processing journal. This does
+not promise exactly-once effects in an external service.
+
+Outgoing calls commit their outbox and forwarding state before any send.
+Live replay protection remembers request IDs for the live window. Each request
+rumor carries a `nonce` tag with 8 random bytes as hex. Thus two equal requests in one second have two IDs, and the provider
 answers both.
 
 A call has no acknowledgement. The reply clears the caller's outbox. The
@@ -555,7 +568,10 @@ window, because it can travel for days.
 
 A provider publishes its relay list with NIP-65. A caller sends a live
 request to its own relays, then to each read relay of the provider that it
-does not use. The caller also looks for the provider's announcement on those
+does not use. Failover is allowed only when the transport proves that the
+request was not submitted. After an ambiguous send or a lost reply, the caller
+reports an unknown outcome and does not repeat the operation on another relay.
+The caller also looks for the provider's announcement on those
 relays before the call. The caller finds the provider's list in its store, or
 on its own relays. A store-and-forward request goes to the caller's relays and
 to the provider's NIP-17 relay list, as mail does.

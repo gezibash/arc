@@ -1,6 +1,7 @@
 package private_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 func wrap(t *testing.T, from keys.Key, to nostr.PubKey, text string, form private.Form) nostr.Event {
 	t.Helper()
 	rumor := private.Rumor(from, 14, text, nostr.Tags{{"p", to.Hex()}}, time.Now())
-	w, err := private.Wrap(from, to, rumor, form, private.WrapKind, time.Now().Add(time.Hour))
+	w, err := private.Wrap(context.Background(), from, to, rumor, form, private.WrapKind, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +27,7 @@ func TestOnlyTheRecipientOpensAWrap(t *testing.T) {
 	alice, bob, carol := keys.Generate(), keys.Generate(), keys.Generate()
 	w := wrap(t, alice, bob.Public, "hello bob", private.CourierForm)
 
-	opened, err := private.Unwrap(bob, w)
+	opened, err := private.Unwrap(context.Background(), bob, w)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestOnlyTheRecipientOpensAWrap(t *testing.T) {
 		t.Errorf("opened %q from %s", opened.Rumor.Content, opened.Author().Hex())
 	}
 
-	if _, err := private.Unwrap(carol, w); err == nil {
+	if _, err := private.Unwrap(context.Background(), carol, w); err == nil {
 		t.Error("a third citizen opened the wrap")
 	}
 }
@@ -86,7 +87,7 @@ func TestRefusesARumorThatClaimsAnotherAuthor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := private.OpenSeal(bob, seal); err == nil {
+	if _, err := private.OpenSeal(context.Background(), bob, seal); err == nil {
 		t.Fatal("a rumor that names another author than its seal was opened")
 	}
 }
@@ -97,7 +98,7 @@ func TestRefusesAWrapThatHoldsNoSeal(t *testing.T) {
 		t.Error("a kind 1 event passed as a seal")
 	}
 	w := nostr.Event{Kind: 1, Content: "x"}
-	if _, err := private.Unwrap(bob, w); err == nil {
+	if _, err := private.Unwrap(context.Background(), bob, w); err == nil {
 		t.Error("a kind 1 event passed as a wrap")
 	}
 }
