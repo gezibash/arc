@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/application/citizen"
 	"github.com/gezibash/arc/application/release"
 	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/canonical"
 	"github.com/spf13/cobra"
 )
@@ -119,7 +121,22 @@ func update(command *cobra.Command, apply bool) error {
 
 	ctx, cancel := context.WithTimeout(command.Context(), 10*time.Minute)
 	defer cancel()
-	source := releaseCaller{sess: sess, provider: provider}
+	var source release.Requester = releaseCaller{sess: sess, provider: provider}
+	// Keep the existing updater usable without installation. An installed provider
+	// that advertises streaming selects the session path before any archive request.
+	trusted, err := installs.Trusted(provider, "releases")
+	if err != nil {
+		return err
+	}
+	if trusted {
+		_, offer, _, err := sess.Target(ctx, installs, "releases+arc://"+provider.Hex()+"/releases", "")
+		if err != nil {
+			return err
+		}
+		if offer.SupportsInteraction(session.ServerStream) {
+			source = streamReleaseCaller{releaseCaller{sess: sess, provider: provider}, installs}
+		}
+	}
 	checkpoint := &release.Checkpoint{Dir: dir}
 	platform := release.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
 	newest, err := release.Newest(ctx, source, checkpoint, publisher[:], channel, platform, version)
@@ -305,4 +322,17 @@ func checkSuccessor(target string, unsigned map[string]any) error {
 		return fmt.Errorf("the sequence must be above %d, the sequence of %s", now, target)
 	}
 	return nil
+}
+
+type streamReleaseCaller struct {
+	releaseCaller
+	installs catalog.Installs
+}
+
+func (r streamReleaseCaller) OpenArchive(ctx context.Context, digest string) (release.ArchiveReader, error) {
+	body, err := json.Marshal(map[string]string{"op": "archive", "digest": digest})
+	if err != nil {
+		return nil, err
+	}
+	return r.sess.OpenSessionAddress(ctx, r.installs, "releases+arc://"+r.provider.Hex()+"/releases", string(body), session.ServerStream)
 }

@@ -83,3 +83,27 @@ From the repository root:
 ```sh
 go test ./cmd/releases-provider
 ```
+
+
+## Streaming archives
+
+The updated `interface.json` declares `server_stream`. An initial request
+`{"op":"archive","digest":"sha256:<hex>"}` streams the raw archive bytes.
+The same fixed-path, regular-file and symlink checks used by chunk requests apply.
+The stream reads the file size captured when opened. Cancellation releases it.
+
+```sh
+arc session --mode server_stream 'releases+arc://<provider>/releases' \
+  '{"op":"archive","digest":"sha256:<64 lowercase hex>"}' > archive.tar.gz
+```
+
+Check the command's exit status before using the output file: a failed session
+may leave a partial file. Validate the archive against its signed channel metadata.
+
+After the consumer installs a releases provider that declares streaming,
+`arc update apply` selects this mode automatically. It checks exact byte count,
+SHA-256 and the final core session outcome before unpacking. It retains the
+archive in memory for the existing installer. Providers without an installed
+streaming declaration use the existing chunk path, selected before submission;
+a failed stream never silently falls back or resumes. Channel documents remain
+ordinary request/reply operations and still require publisher verification.

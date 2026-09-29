@@ -131,36 +131,17 @@ func (s *server) channel(name string) (string, error) {
 
 // chunk returns one piece of one archive, as base64.
 func (s *server) chunk(digest string, offset int64, length int) (string, error) {
-	hex, found := strings.CutPrefix(digest, "sha256:")
-	if !found || !digestPattern.MatchString(hex) {
-		return "", errInvalidRequest
-	}
 	if offset < 0 || length <= 0 || length > MaxChunkBytes {
 		return "", errInvalidRequest
 	}
-
-	if err := s.directory(s.root); err != nil {
-		return "", err
-	}
-	blobs := filepath.Join(s.root, "blobs")
-	if err := s.directory(blobs); err != nil {
-		return "", err
-	}
-
-	path := filepath.Join(blobs, hex+".tar.gz")
-	info, err := regularFile(path)
+	file, info, err := s.openBlob(digest)
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
 	if offset > info.Size() {
 		return "", errInvalidRequest
 	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return "", errStorage
-	}
-	defer file.Close()
 
 	size := min(int64(length), info.Size()-offset)
 	data := make([]byte, size)
@@ -169,7 +150,7 @@ func (s *server) chunk(digest string, offset int64, length int) (string, error) 
 	}
 
 	answer, err := json.Marshal(map[string]any{
-		"digest": "sha256:" + hex,
+		"digest": digest,
 		"offset": offset,
 		"data":   base64.StdEncoding.EncodeToString(data),
 	})
@@ -198,4 +179,34 @@ func regularFile(path string) (os.FileInfo, error) {
 		return nil, errStorage
 	}
 	return info, nil
+}
+
+// openBlob is shared by chunk requests and live archive streams.
+func (s *server) openBlob(digest string) (*os.File, os.FileInfo, error) {
+	hex, found := strings.CutPrefix(digest, "sha256:")
+	if !found || !digestPattern.MatchString(hex) {
+		return nil, nil, errInvalidRequest
+	}
+	if err := s.directory(s.root); err != nil {
+		return nil, nil, err
+	}
+	blobs := filepath.Join(s.root, "blobs")
+	if err := s.directory(blobs); err != nil {
+		return nil, nil, err
+	}
+	path := filepath.Join(blobs, hex+".tar.gz")
+	info, err := regularFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, errStorage
+	}
+	actual, err := file.Stat()
+	if err != nil || !actual.Mode().IsRegular() || !os.SameFile(info, actual) {
+		file.Close()
+		return nil, nil, errStorage
+	}
+	return file, actual, nil
 }

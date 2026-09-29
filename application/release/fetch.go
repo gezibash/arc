@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 
@@ -67,6 +68,9 @@ func Download(ctx context.Context, provider Requester, artifact *Artifact, progr
 		return nil, ErrInvalid
 	}
 
+	if streaming, ok := provider.(ArchiveSource); ok {
+		return downloadStream(ctx, streaming, artifact, progress)
+	}
 	out := make([]byte, 0, artifact.Size)
 
 	for int64(len(out)) < artifact.Size {
@@ -160,4 +164,57 @@ func Apply(ctx context.Context, provider Requester, newest *Release, program str
 		return err
 	}
 	return Replace(ctx, program, binary, newest.Version)
+}
+
+// ArchiveReader requires a final protocol outcome in addition to byte EOF.
+type ArchiveReader interface {
+	io.ReadCloser
+	Wait() error
+}
+
+// ArchiveSource is selected before submission, when the provider declares streaming.
+type ArchiveSource interface {
+	OpenArchive(context.Context, string) (ArchiveReader, error)
+}
+
+func downloadStream(ctx context.Context, source ArchiveSource, artifact *Artifact, progress func(int64, int64)) ([]byte, error) {
+	stream, err := source.OpenArchive(ctx, "sha256:"+artifact.SHA256)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	stop := context.AfterFunc(ctx, func() { stream.Close() })
+	defer stop()
+	out := make([]byte, 0, min(artifact.Size, 1024*1024))
+	hash := sha256.New()
+	buf := make([]byte, 32*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, err := stream.Read(buf)
+		if int64(n) > artifact.Size-int64(len(out)) {
+			return nil, fmt.Errorf("release: archive exceeds its declared size")
+		}
+		if n > 0 {
+			out = append(out, buf[:n]...)
+			hash.Write(buf[:n])
+			if progress != nil {
+				progress(int64(len(out)), artifact.Size)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := stream.Wait(); err != nil {
+		return nil, err
+	}
+	if int64(len(out)) != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+		return nil, fmt.Errorf("release: archive does not match its size and hash")
+	}
+	return out, nil
 }
