@@ -107,4 +107,8 @@ func TestCancelingARequestCancelsItsOutboundCall(t *testing.T) {
 	if reply := p.read(t); reply["request_id"] != "parent" {
 		t.Fatalf("reply=%v", reply)
 	}
+	p.request(t, "next", "echo")
+	if reply := p.read(t); reply["request_id"] != "next" || reply["reply"] != "echo" {
+		t.Fatalf("request cancellation damaged the shared stream: %v", reply)
+	}
 }
