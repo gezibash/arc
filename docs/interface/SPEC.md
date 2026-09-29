@@ -601,6 +601,11 @@ default. `arc keys use <name>` changes the default, and `--key <name>` or
 `arc keys gen --encrypt` and `arc keys encrypt` seal a key with a passphrase.
 Core reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
 
+Remote signer setup takes at most 15 seconds. Each operation, including
+NIP-04 encryption and decryption, takes at most 20 seconds. An earlier caller
+deadline applies. Cancellation stops setup and remains identifiable in returned
+Go errors, as it does for a local signer.
+
 `arc keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
 and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
 and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
@@ -707,7 +712,10 @@ tag. A queued request omits it; its execution budget begins when it is served.
 The host passes the deadline to the provider as `deadline_ms` on the request
 line. An outbound `call` line carries the remaining deadline in the same field.
 A missing deadline uses the host's 120-second cap. Go handlers receive a
-context with the earlier of their parent and supplied deadlines.
+context with the earlier of their parent and supplied deadlines. The runtime
+rejects expired requests before dispatch. A canceled outbound call does not
+write a new call to the host. Context failures return `provider_timeout` or
+`provider_canceled`, rather than `internal_error`.
 
 The host cancels a request with
 `{"op":"cancel","request_id":"..."}`. A provider cancels an outbound call with

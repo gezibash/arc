@@ -29,7 +29,10 @@ func (d Dir) events() string { return filepath.Join(d.Path, "events") }
 func (d Dir) Name() string { return "file:" + d.Path }
 
 // Send writes one event, unless the directory already holds it.
-func (d Dir) Send(_ context.Context, event nostr.Event) error {
+func (d Dir) Send(ctx context.Context, event nostr.Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(d.events(), 0o700); err != nil {
 		return err
 	}
@@ -44,8 +47,15 @@ func (d Dir) Send(_ context.Context, event nostr.Event) error {
 		return err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	temporary := path + ".new"
+	defer os.Remove(temporary)
 	if err := os.WriteFile(temporary, body, 0o600); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return os.Rename(temporary, path)
@@ -63,8 +73,15 @@ func (d Dir) SendHops(ctx context.Context, event nostr.Event, hops int) error {
 	if held, ok := readHops(path); ok && held >= hops {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	temporary := path + ".new"
+	defer os.Remove(temporary)
 	if err := os.WriteFile(temporary, []byte(strconv.Itoa(hops)+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return os.Rename(temporary, path)
@@ -84,7 +101,10 @@ func readHops(path string) (int, bool) {
 
 // Fetch reads every event in the directory that matches the filter. A file
 // that does not parse counts as unreadable. The store verifies the rest.
-func (d Dir) Fetch(_ context.Context, filter nostr.Filter) (transport.Batch, error) {
+func (d Dir) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, error) {
+	if err := ctx.Err(); err != nil {
+		return transport.Batch{}, err
+	}
 	entries, err := os.ReadDir(d.events())
 	if errors.Is(err, os.ErrNotExist) {
 		return transport.Batch{}, nil
@@ -95,6 +115,9 @@ func (d Dir) Fetch(_ context.Context, filter nostr.Filter) (transport.Batch, err
 
 	var batch transport.Batch
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return batch, err
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
@@ -120,5 +143,5 @@ func (d Dir) Fetch(_ context.Context, filter nostr.Filter) (transport.Batch, err
 			}
 		}
 	}
-	return batch, nil
+	return batch, ctx.Err()
 }
