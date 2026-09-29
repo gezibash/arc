@@ -9,6 +9,7 @@ import (
 	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/testsession"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -56,5 +57,23 @@ func TestWebSocketCLITextMapping(t *testing.T) {
 	cmd.SetOut(&out)
 	if err := websocketCLI(cmd, stream); err != nil || out.String() != "hello\n" {
 		t.Fatalf("%q %v", out.String(), err)
+	}
+}
+
+func TestHTTPCLIPreservesNestedSessionFailure(t *testing.T) {
+	stream := testsession.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
+		encoder := json.NewEncoder(s)
+		for _, record := range []httpadapter.SessionRecord{{Type: "response", Status: 200}, {Type: "body", Data: []byte("partial")}, {Type: "trailers", Headers: http.Header{"Arc-Session-Error": {`"refused"`}}}, {Type: "end"}} {
+			if err := encoder.Encode(record); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	cmd := sessionCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := httpSessionCLI(cmd, stream); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("nested failure: %v", err)
 	}
 }

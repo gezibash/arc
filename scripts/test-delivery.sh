@@ -339,6 +339,18 @@ old update apply --provider "$rel_key" --publisher "$publisher_key" > "$work/app
 "$work/old/arc.previous" --version | grep "0.9.0" > /dev/null || fail "the previous program is gone"
 say "an older arc reads the channel over the relay, and replaces itself"
 
+# Installing the streaming declaration selects core sessions for a second update.
+mkdir -p "$work/stream-old"
+cp "$work/old/arc.previous" "$work/stream-old/arc"
+stream_old() { "$work/stream-old/arc" --home "$work/caller" "$@"; }
+stream_old install "$rel_key" --yes > /dev/null || fail "install streaming releases"
+stream_old update apply --provider "$rel_key" --publisher "$publisher_key" > "$work/stream-apply.txt" 2>&1 ||
+  fail "streaming update apply: $(cat "$work/stream-apply.txt")"
+"$work/stream-old/arc" --version | grep "9.9.9" > /dev/null || fail "streaming update did not install the release"
+"$work/stream-old/arc.previous" --version | grep "0.9.0" > /dev/null || fail "streaming update lost the old program"
+say "an installed releases provider streams the verified archive through core sessions"
+
+
 if old update check --provider "$rel_key" --publisher "$caller_key" > /dev/null 2> "$work/wrongpub.txt"; then
   fail "a channel of another publisher passed"
 fi

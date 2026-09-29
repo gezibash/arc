@@ -151,6 +151,14 @@ Core also supports live server streaming and duplex sessions. A service declares
 its interaction modes; `arc session <address>` uses the same session machinery
 as provider-to-provider calls. See the [stateful REPL example](examples/repl/README.md)
 and [session protocol](docs/sessions/SPEC.md).
+The bundled [SQLite](cmd/sqlite-provider/README.md#live-sql-sessions),
+[Exec](cmd/exec-provider/README.md#streaming-processes-and-terminals),
+[HTTP](examples/streaming-http/README.md), and
+[Releases](cmd/releases-provider/README.md#streaming-archives) providers implement
+these interactions. Use `--exec`, `--tty`, `--http`, or `--websocket` on
+`arc session` to select their CLI I/O mappings. Existing request/reply commands
+remain available. See the [provider session guide](docs/sessions/PROVIDERS.md).
+
 
 ## Run a relay
 

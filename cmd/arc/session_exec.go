@@ -14,6 +14,7 @@ import (
 	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -50,7 +51,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 	encoder := json.NewEncoder(stream)
 	send := func(r execadapter.Record) error { mu.Lock(); defer mu.Unlock(); return encoder.Encode(r) }
 	if tty {
-		file := input.(*os.File)
+		file := command.InOrStdin().(*os.File)
 		old, err := term.MakeRaw(int(file.Fd()))
 		if err != nil {
 			return err
@@ -79,9 +80,10 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 			}
 		}()
 	}
+	inputFailure := make(chan error, 1)
 	if stream.Mode() == session.Duplex {
-		// Do not close the terminal before its saved attributes have been restored.
-		{
+		// The terminal reader polls its own context and is joined before closing.
+		if !tty {
 			stop := context.AfterFunc(stream.Context(), func() {
 				if closer, ok := input.(io.Closer); ok {
 					closer.Close()
@@ -89,10 +91,23 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 			})
 			defer stop()
 		}
+		readInput := input
+		inputCtx, stopInput := context.WithCancel(stream.Context())
+		if tty {
+			readInput = terminalReader{inputCtx, int(input.(*os.File).Fd())}
+		}
+		inputDone := make(chan struct{})
+		defer func() {
+			stopInput()
+			if tty {
+				<-inputDone
+			}
+		}()
 		go func() {
+			defer close(inputDone)
 			buf := make([]byte, 4096)
 			for {
-				n, err := input.Read(buf)
+				n, err := readInput.Read(buf)
 				if n > 0 {
 					if e := send(execadapter.Record{Type: "stdin", Data: buf[:n]}); e != nil {
 						return
@@ -103,6 +118,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 					return
 				}
 				if err != nil {
+					inputFailure <- err
 					_ = stream.Close()
 					return
 				}
@@ -117,6 +133,11 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 			break
 		}
 		if err != nil {
+			select {
+			case inputErr := <-inputFailure:
+				return fmt.Errorf("Exec input: %w", inputErr)
+			default:
+			}
 			return err
 		}
 		if exit >= 0 {
@@ -149,4 +170,38 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		return iface.ExitError{Code: exit}
 	}
 	return nil
+}
+
+// Some terminal descriptors cannot join the Go poller on macOS. Poll the
+// nonblocking descriptor explicitly so cancellation can always stop input.
+type terminalReader struct {
+	ctx context.Context
+	fd  int
+}
+
+func (r terminalReader) Read(p []byte) (int, error) {
+	for {
+		if err := r.ctx.Err(); err != nil {
+			return 0, err
+		}
+		fds := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN}}
+		n, err := unix.Poll(fds, 100)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			continue
+		}
+		n, err = unix.Read(r.fd, p)
+		if err == unix.EAGAIN || err == unix.EINTR {
+			continue
+		}
+		if err == nil && n == 0 {
+			return 0, io.EOF
+		}
+		return n, err
+	}
 }

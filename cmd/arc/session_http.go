@@ -52,6 +52,13 @@ func httpSessionCLI(cmd *cobra.Command, stream *session.Stream) error {
 				return err
 			}
 		case "trailers":
+			if failure := record.Headers.Get("Arc-Session-Error"); failure != "" {
+				var message string
+				if json.Unmarshal([]byte(failure), &message) != nil {
+					message = failure
+				}
+				return fmt.Errorf("nested session failed: %s", message)
+			}
 		case "end":
 			ended = true
 		default:

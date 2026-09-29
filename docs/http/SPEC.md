@@ -255,6 +255,7 @@ arc session --websocket 'http+arc://<provider>/socket' '{"subprotocols":["echo"]
 
 The capability's manifest supplies the HTTP method; publish an appropriate
 POST service for the upload example. `--http` writes decoded response bytes and
-exits 22 for HTTP error statuses. `--websocket` sends each input line as a text
+exits 22 for HTTP error statuses. It also rejects an `Arc-Session-Error` trailer
+from a nested provider session. `--websocket` sends each input line as a text
 message and displays received messages. Without these flags, `arc session`
 exposes the record protocol directly, including headers and binary messages.

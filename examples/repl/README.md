@@ -33,8 +33,9 @@ a private provider must apply its own caller access policy before handling work.
 
 The same provider supports `--mode server_stream`, which streams its command
 help, and ordinary `arc call` request/reply. No transport-specific code appears
-in the provider. HTTP, WebSocket, terminal/PTY adapters and durable session
-resumption are separate work; this example uses the existing relay and stdio.
+in the provider. The bundled SQLite, Exec (including PTY), HTTP (including WebSockets), and
+Releases providers also use these sessions. Durable session resumption remains
+separate work; this example uses the existing relay and stdio.
 
 Validation: `go test ./cmd/arc -run TestCLISession -count=1` exercises two ARC
 homes, a real local relay and this executable provider, through the normal CLI.

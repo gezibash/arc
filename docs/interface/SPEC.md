@@ -134,6 +134,7 @@ Without `output`, `arc call` writes the reply as it came.
 
 ```json
 "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576,
+              "interactions": ["request_reply", "server_stream", "duplex"],
             "output": {"open": {"parse": "json"}, "format": "rows"}}
 ```
 
@@ -802,6 +803,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
   "interface": 1, "id": "exec", "shape": "service",
   "title": "Exec", "summary": "Runs commands for the citizens that it grants.",
   "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576,
+              "interactions": ["request_reply", "server_stream", "duplex"],
               "output": {"open": {"parse": "json"}, "format": "reply",
                          "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
                                   {"where": [{"field": "state", "is": "lost"}], "code": "1"},
@@ -839,6 +841,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
   "interface": 1, "id": "sqlite", "shape": "service",
   "title": "SQLite", "summary": "Answers SQL for the citizens that it grants.",
   "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576,
+              "interactions": ["request_reply", "server_stream", "duplex"],
               "output": {"open": {"parse": "json"}, "format": "rows"}},
   "kinds": {},
   "formats": {"rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}},
@@ -857,7 +860,8 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 {
   "interface": 1, "id": "releases", "shape": "service",
   "title": "Releases", "summary": "Serves signed release channels and their archives.",
-  "service": {"method": "RAW", "path": "/releases", "max_bytes": 4096},
+  "service": {"method": "RAW", "path": "/releases", "max_bytes": 4096,
+              "interactions": ["request_reply", "server_stream"]},
   "kinds": {},
   "formats": {"channel": {"record": "{{content}}"}},
   "commands": [
