@@ -122,13 +122,30 @@ selecting a characteristic belonging to the right device. Server tests cover
 per-peer isolation, sample expiry, bounded storage, malformed writes, buffer
 ownership, caller checks and simultaneous read/write callbacks.
 
-These tests do not prove controller or BlueZ interoperability. Before treating
-PR 3 as hardware-verified, record Linux/BlueZ versions, adapter models, both
-round-trip results, discovery while advertising, cancellation and restart
-results here or in the PR. Hardware validation is pending; no Linux radio was
-available in the implementation environment. Full phase 5, including the
-three-node mesh proof, remains incomplete.
+These tests do not prove controller or BlueZ interoperability.
 
-PR 4 adds secure direct sessions. Later integration will carry frames from
-`delivery/frame`, supply negotiated usable payload sizes, schedule fragment
-expiry and verify completed events through ARC's store.
+### Hardware evidence (partial, 2026-09-28)
+
+The user tested a Raspberry Pi 3 Model B Plus Rev 1.3 running Debian aarch64
+with an iPhone using nRF Connect. The phone connected to the probe service,
+wrote `000102030405060708090a0b0c0d0e0f10111213`, and read the same 20 bytes
+back, as shown in the supplied screenshot. This confirms the Pi peripheral
+and phone central echo path. The user also reported that the restart check
+behaved as expected: samples do not survive stopping the probe.
+
+Exact Debian/kernel, BlueZ, iOS and app versions and the deployed build revision
+were not recorded. Pi-initiated connections, both Linux-to-Linux directions,
+discovery while advertising and bounded cancellation/disconnect still need
+recorded hardware evidence. This is partial radio validation, not signed ARC
+message delivery or a completed Bluetooth transport. Full phase 5, including
+the three-node mesh proof, remains incomplete.
+
+### Next milestone: direct ARC delivery
+
+PR 4 connects secure direct sessions, compact events and frames to the existing
+ARC transport contracts. PR 5 integrates normal commands and providers and
+records the two-device acceptance evidence in the
+[implementation plan](BLUETOOTH-PLAN.md#direct-delivery-acceptance-gate-before-pr-6).
+That gate includes signed events, private content, disconnect/retry and a live
+capability request/reply with relay fallback disabled. Mesh forwarding follows
+only after this direct workflow works. The probe remains a diagnostic.
