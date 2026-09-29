@@ -227,7 +227,8 @@ func (r *runtime) OpenSession(ctx context.Context, address, body string, mode se
 		err = stream.WaitReady()
 	}
 	if err != nil {
-		stream.Abort(err)
+		// Close sends the cancel notice so the host releases its side.
+		_ = stream.Close()
 		cancel()
 		return nil, err
 	}

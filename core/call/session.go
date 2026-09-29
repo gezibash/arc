@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -141,6 +142,8 @@ type sessionRoute struct {
 	out    chan session.Frame
 	via    transport.Transport
 	once   sync.Once
+	// settled is set once the remote peer has a final frame or sent one.
+	settled atomic.Bool
 }
 
 func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via transport.Transport) {
@@ -226,6 +229,10 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 			defer done()
 			closed := session.Frame{Version: 1, ID: f.ID, Op: "cancel"}
 			_ = s.process.Send(notice, wire.Event{Op: "session", RequestID: f.ID, Session: &closed})
+			if !route.settled.Load() {
+				failed := session.Frame{Version: 1, ID: f.ID, Op: "close", Error: session.ErrDisconnected.Error()}
+				_ = sendSession(notice, s.key, route.from, via, failed, nil)
+			}
 		})
 	}
 	route.in <- wire.Event{Op: "session", RequestID: f.ID, Session: &f, From: rumor.PubKey.Hex(), Message: wire.Text(request.Body),
@@ -240,7 +247,8 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 				if err := s.process.Send(lifetime, e); err != nil {
 					return
 				}
-				if e.Session.Op == "cancel" {
+				if e.Session.Op == "cancel" || e.Session.Op == "close" {
+					route.settled.Store(true)
 					return
 				}
 			}
@@ -257,6 +265,7 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 					return
 				}
 				if frame.Op == "close" || frame.Op == "cancel" {
+					route.settled.Store(true)
 					return
 				}
 			}

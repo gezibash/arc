@@ -47,5 +47,8 @@ func (sess *Session) OpenSessionAddress(ctx context.Context, installs catalog.In
 			break
 		}
 	}
-	return nil, fmt.Errorf("no live session path: %w", errors.Join(append(failures, session.ErrUnsupported)...))
+	if len(failures) == 0 {
+		return nil, fmt.Errorf("no live session path: %w", session.ErrUnsupported)
+	}
+	return nil, fmt.Errorf("no live session path: %w", errors.Join(failures...))
 }

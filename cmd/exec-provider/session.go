@@ -15,6 +15,7 @@ import (
 	execadapter "github.com/gezibash/arc/adapters/exec"
 	"github.com/gezibash/arc/core/provider"
 	"github.com/gezibash/arc/core/session"
+	"golang.org/x/sys/unix"
 )
 
 func (s *server) HandleSession(parent context.Context, req provider.Request, stream *session.Stream) error {
@@ -134,7 +135,9 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	go func() {
 		if len(cmd.Stdin) > 0 {
 			if _, err := input.Write(cmd.Stdin); err != nil {
-				cancel(err)
+				if !inputGone(err) {
+					cancel(err)
+				}
 				return
 			}
 		}
@@ -151,7 +154,7 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 				} else {
 					err = input.Close()
 				}
-				if err != nil && ctx.Err() == nil {
+				if err != nil && ctx.Err() == nil && !inputGone(err) {
 					cancel(err)
 				}
 				return
@@ -167,13 +170,15 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 				if terminal == nil || record.Rows == 0 || record.Cols == 0 {
 					err = provider.ErrInvalidRequest
 				} else {
-					err = pty.Setsize(terminal, &pty.Winsize{Rows: record.Rows, Cols: record.Cols})
+					err = setsize(terminal, record.Rows, record.Cols)
 				}
 			default:
 				err = provider.ErrInvalidRequest
 			}
 			if err != nil {
-				cancel(err)
+				if !inputGone(err) {
+					cancel(err)
+				}
 				return
 			}
 		}
@@ -233,4 +238,26 @@ func (w processChannel) Write(p []byte) (int, error) {
 		p = p[n:]
 	}
 	return total, nil
+}
+
+// inputGone reports that the command no longer reads its input, usually
+// because it exited. The exit status, not the write error, is the outcome.
+func inputGone(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.EIO)
+}
+
+// setsize resizes the terminal through the raw connection. pty.Setsize calls
+// File.Fd, which puts the nonblocking master back into blocking mode.
+func setsize(terminal *os.File, rows, cols uint16) error {
+	conn, err := terminal.SyscallConn()
+	if err != nil {
+		return err
+	}
+	controlErr := conn.Control(func(fd uintptr) {
+		err = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, &unix.Winsize{Row: rows, Col: cols})
+	})
+	if controlErr != nil {
+		return controlErr
+	}
+	return err
 }

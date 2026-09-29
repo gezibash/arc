@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -75,8 +76,11 @@ func (s *server) HandleSession(ctx context.Context, req provider.Request, stream
 			return err
 		}
 	}
-	if scanner.Err() != nil {
-		return errRequestTooLarge
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return errRequestTooLarge
+		}
+		return err
 	}
 	return ctx.Err()
 }
