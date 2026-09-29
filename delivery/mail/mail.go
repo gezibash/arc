@@ -471,9 +471,36 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 	if m.OnRequest == nil {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var entry incoming
+	found, err := m.get(inboxBucket, id, &entry)
+	if err != nil || !found || entry.State == "completed" {
+		return err
+	}
+	if entry.State == "processing" && !entry.Started.IsZero() && m.now().Before(entry.Started.Add(call.Timeout+time.Minute)) {
+		return nil
+	}
+	// Opening the request cannot execute it. A failed read or signer call
+	// must leave pending work retryable. Claim it atomically only afterward.
+	sealID, err := nostr.IDFromHex(entry.Seal)
+	if err != nil {
+		return err
+	}
+	seals, err := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{sealID}})
+	if err != nil {
+		return err
+	}
+	if len(seals) == 0 {
+		return fmt.Errorf("mail: request %s has no saved seal", id)
+	}
+	request, err := private.OpenSeal(ctx, m.key, seals[0])
+	if err != nil {
+		return err
+	}
 	var run, uncertain bool
-	err := m.update(func(tx *bbolt.Tx) error {
+	err = m.update(func(tx *bbolt.Tx) error {
 		data := tx.Bucket(inboxBucket).Get([]byte(id))
 		if data == nil {
 			return nil
@@ -494,26 +521,14 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		default:
 			return fmt.Errorf("mail: unknown request state %q", entry.State)
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entry.State = "processing"
 		entry.Started = m.now().UTC()
 		return put(tx, inboxBucket, id, entry)
 	})
 	if err != nil || !run && !uncertain {
-		return err
-	}
-	sealID, err := nostr.IDFromHex(entry.Seal)
-	if err != nil {
-		return err
-	}
-	seals, err := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{sealID}})
-	if err != nil {
-		return err
-	}
-	if len(seals) == 0 {
-		return fmt.Errorf("mail: request %s has no saved seal", id)
-	}
-	request, err := private.OpenSeal(ctx, m.key, seals[0])
-	if err != nil {
 		return err
 	}
 	reply := call.Reply{Err: "outcome_unknown a previous execution did not record a result"}
@@ -763,6 +778,9 @@ type Message struct {
 // Inbox returns the messages that this citizen received, oldest first. It
 // opens each seal from the store, and stores no text.
 func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var out []Message
 	seen := map[string]bool{}
 
@@ -775,7 +793,10 @@ func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 			continue
 		}
 		rumor, err := private.OpenSeal(ctx, m.key, seal)
-		if err != nil || rumor.Kind != MessageKind || seen[rumor.ID.Hex()] {
+		if err != nil {
+			return nil, fmt.Errorf("mail: open received seal %s: %w", seal.ID.Hex(), err)
+		}
+		if rumor.Kind != MessageKind || seen[rumor.ID.Hex()] {
 			continue
 		}
 		seen[rumor.ID.Hex()] = true
@@ -792,6 +813,9 @@ func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 // Rumors returns the private events of some kinds that this citizen
 // received and sent, oldest first. It opens each seal from the store.
 func (m *Mail) Rumors(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var out []nostr.Event
 	seen := map[nostr.ID]bool{}
 	keep := func(rumor nostr.Event) {
@@ -810,9 +834,11 @@ func (m *Mail) Rumors(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, e
 		if seal.PubKey == m.key.PublicKey() {
 			continue
 		}
-		if rumor, err := private.OpenSeal(ctx, m.key, seal); err == nil {
-			keep(rumor)
+		rumor, err := private.OpenSeal(ctx, m.key, seal)
+		if err != nil {
+			return nil, fmt.Errorf("mail: open received seal %s: %w", seal.ID.Hex(), err)
 		}
+		keep(rumor)
 	}
 	outgoing, err := m.outgoing()
 	if err != nil {

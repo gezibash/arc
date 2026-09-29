@@ -53,6 +53,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gezibash/arc/provider/wire"
 )
@@ -158,7 +159,9 @@ const (
 type Options struct {
 	// In is the source of events. The default is standard input.
 	In io.Reader
-	// Out is where answers go. The default is standard output.
+	// Out is where answers go. The default is standard output. A blocking
+	// writer must implement io.Closer so cancellation can interrupt Write.
+	// The runtime closes it only if output fails or an active write is canceled.
 	Out io.Writer
 	// Log is where the runtime reports what it drops. The default is
 	// standard error.
@@ -191,7 +194,7 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 	}
 
 	runtime := &runtime{
-		handler: handler, options: opts, out: bufio.NewWriter(opts.Out),
+		handler: handler, options: opts, out: newOutput(ctx, opts.Out),
 		calls: map[string]chan result{}, stopped: make(chan struct{}),
 		requests: map[any]context.CancelFunc{}, slots: make(chan struct{}, opts.MaxConcurrent),
 	}
@@ -205,8 +208,7 @@ type runtime struct {
 	handler Handler
 	options Options
 
-	mu  sync.Mutex
-	out *bufio.Writer
+	out *output
 
 	group      sync.WaitGroup
 	requestsMu sync.Mutex
@@ -228,7 +230,7 @@ type result struct {
 	err     string
 }
 
-func (r *runtime) run(ctx context.Context) error {
+func (r *runtime) run(ctx context.Context) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	// Closing a pipe or stdin interrupts an idle read. Other Readers must make
 	// progress themselves; the runtime still stops waiting when ctx ends.
@@ -238,7 +240,21 @@ func (r *runtime) run(ctx context.Context) error {
 		if closer, ok := r.options.In.(io.Closer); ok {
 			closer.Close()
 		}
+		// EOF still lets cooperative handlers return their final replies, but
+		// an unread output stream cannot hold shutdown indefinitely.
+		drained := make(chan struct{})
+		drain := time.AfterFunc(outputGrace, func() {
+			r.out.abort(context.DeadlineExceeded)
+			close(drained)
+		})
 		r.group.Wait()
+		if !drain.Stop() {
+			<-drained
+		}
+		if err == nil {
+			err = context.Cause(r.out.ctx)
+		}
+		r.out.cancel(nil)
 	}()
 	type input struct {
 		line []byte
@@ -263,6 +279,8 @@ func (r *runtime) run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-r.out.ctx.Done():
+			return context.Cause(r.out.ctx)
 		case in := <-lines:
 			switch {
 			case errors.Is(in.err, wire.ErrLineTooLong):
@@ -374,7 +392,7 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if err := r.writeLine(line); err != nil {
+	if err := r.out.write(ctx, line); err != nil {
 		return "", err
 	}
 
@@ -396,7 +414,11 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 		default:
 		}
 		line, _ := json.Marshal(wire.Event{Op: "cancel", CallID: id})
-		_ = r.writeLine(line)
+		// The caller has stopped waiting. Give the cancellation notice a
+		// bounded chance to reach ARC, including time waiting for output.
+		notify, cancel := context.WithTimeout(r.out.ctx, outputGrace)
+		_ = r.out.write(notify, line)
+		cancel()
 		return "", ctx.Err()
 	}
 }
@@ -428,8 +450,7 @@ func (r *runtime) settle(id string, got result) {
 	answer <- got
 }
 
-// answer writes one line. One writer holds the lock, so two answers never
-// interleave on one line.
+// answer writes one complete line through the serialized output.
 func (r *runtime) answer(requestID any, reply string, err error) {
 	response := wire.Event{RequestID: requestID}
 	if err != nil {
@@ -445,19 +466,11 @@ func (r *runtime) answer(requestID any, reply string, err error) {
 		fmt.Fprintf(r.options.Log, "provider: the answer does not encode: %v\n", marshalErr)
 		return
 	}
-	if err := r.writeLine(line); err != nil {
+	ctx, cancel := wire.Budget(r.out.ctx, 0)
+	defer cancel()
+	if err := r.out.write(ctx, line); err != nil {
 		fmt.Fprintf(r.options.Log, "provider: the answer did not reach ARC: %v\n", err)
 	}
-}
-
-// writeLine writes one line under the lock, so two answers never share a line.
-func (r *runtime) writeLine(line []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.out.Write(line)
-	r.out.WriteByte('\n')
-	return r.out.Flush()
 }
 
 // safeError keeps the detail of an unexpected error out of the answer. The

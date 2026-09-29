@@ -53,8 +53,8 @@ Inspect these integration points as required by the declared workflow:
 - [`delivery/mail`](../../delivery/mail/mail.go): queued delivery and acknowledgements.
 - [`delivery/call`](../../delivery/call/call.go): requests, replies, and duplicate handling.
 
-Some callers currently select concrete relay implementations.
-For example, `watchAll` asserts `relay.Relay` in `cmd/arc/capability.go`.
+Live consumers select capability interfaces: `watchAll` uses `transport.Live`
+in `cmd/arc/capability.go`, and live calls use `call.Exchanger`.
 An adapter that compiles does not prove those paths can use it.
 Change only the necessary callers, and preserve existing relay and directory behavior.
 
