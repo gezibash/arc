@@ -177,6 +177,10 @@ The node writes the route tag as 32 lower-case hex characters.
 
 ## 7. Transports
 
+For implementation and review, follow the
+[transport implementation contract](TRANSPORTS.md). It defines the current Go
+interfaces, integration requirements, and evidence for a usable transport.
+
 ### 7.1 The interface
 
 Every transport gives the router the same information:

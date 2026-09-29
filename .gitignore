@@ -17,6 +17,9 @@
 # Identity keyrings (contain secrets)
 .arc/
 
+# Repository instructions must be shared even when a global ignore hides them.
+!/AGENTS.md
+
 # Project skills are tracked even though the global ignore hides .claude/
 !.claude/
 .claude/*
