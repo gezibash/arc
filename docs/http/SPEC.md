@@ -2,12 +2,16 @@
 
 Status: built. Two adapters serve HTTP over ARC:
 
-- `provider.HTTP` serves a Go `http.Handler` in the provider program.
+- `httpadapter.New` serves a Go `http.Handler` in the provider program.
 - `http-provider` serves an HTTP server of any language. See section 10.
 
 `mise run compose` proves both. One notes service runs in the provider
 program, in `examples/notes`, and as a plain HTTP server, in
 `examples/notes-server`.
+
+The Go adapter is `github.com/gezibash/arc/adapters/http` (package
+`httpadapter`). Shared provider contracts are in `core/provider`; process entry
+points call `adapters/provider/stdio.Run`. See [package boundaries](../ARCHITECTURE.md).
 
 ## 1. Purpose
 

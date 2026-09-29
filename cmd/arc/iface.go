@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/gezibash/arc/iface"
-	"github.com/gezibash/arc/internal/citizen"
+	"github.com/gezibash/arc/application/citizen"
+	"github.com/gezibash/arc/application/iface"
 	"github.com/spf13/cobra"
 )
 

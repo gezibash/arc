@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/core/provider"
 )
 
 // command is one command to run.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/core/provider"
 )
 
 func testReleases(t *testing.T) (*server, string) {

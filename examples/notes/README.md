@@ -1,6 +1,6 @@
 # Notes: HTTP over ARC
 
-This example is a `net/http` service in one program. `provider.HTTP` serves
+This example is a `net/http` service in one program. `httpadapter.New` serves
 it as the capability `http`, as docs/http/SPEC.md defines. It keeps its notes
 in SQLite over ARC. It calls a `sqlite` capability that its citizen
 installed, through `provider.Caller`, see docs/interface/SPEC.md, section

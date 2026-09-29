@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/gezibash/arc/provider"
-	"github.com/gezibash/arc/provider/wire"
+	"github.com/gezibash/arc/adapters/providerconfig"
+	"github.com/gezibash/arc/core/provider/wire"
 )
 
 // The limits of a request, and the ceiling of each one.
@@ -86,17 +86,17 @@ type config struct {
 // loadConfig reads EXEC_CONFIG and checks every field. The provider fails
 // closed: a configuration that is not complete stops the program.
 func loadConfig() (*config, error) {
-	path, err := provider.ConfigPath("EXEC_CONFIG")
+	path, err := providerconfig.ConfigPath("EXEC_CONFIG")
 	if err != nil {
 		return nil, err
 	}
 
 	var file configFile
-	if err := provider.ReadConfig(path, &file); err != nil {
+	if err := providerconfig.ReadConfig(path, &file); err != nil {
 		return nil, err
 	}
 
-	grants, err := provider.Grants(file.Grants)
+	grants, err := providerconfig.Grants(file.Grants)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func loadConfig() (*config, error) {
 	if workingDir == "" {
 		workingDir = home
 	}
-	if err := provider.Directory("cwd", workingDir); err != nil {
+	if err := providerconfig.Directory("cwd", workingDir); err != nil {
 		return nil, err
 	}
 
@@ -178,7 +178,7 @@ func checkLimits(given limits) error {
 		{"timeout_ms", given.TimeoutMS, maxLimits.TimeoutMS},
 		{"job_timeout_ms", given.JobTimeoutMS, maxLimits.JobTimeoutMS},
 	} {
-		if err := provider.Limit(limit.name, limit.value, limit.max); err != nil {
+		if err := providerconfig.Limit(limit.name, limit.value, limit.max); err != nil {
 			return err
 		}
 	}

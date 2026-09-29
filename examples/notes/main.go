@@ -1,4 +1,4 @@
-// Command notes is an example of HTTP over ARC in one program. provider.HTTP
+// Command notes is an example of HTTP over ARC in one program. httpadapter.New
 // serves the notes service in this process, as the capability http. The
 // service keeps its notes in SQLite over ARC: it calls a sqlite capability
 // that its citizen installed, through provider.Caller.
@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"os"
 
+	httpadapter "github.com/gezibash/arc/adapters/http"
+	"github.com/gezibash/arc/adapters/provider/stdio"
+	"github.com/gezibash/arc/core/provider"
 	"github.com/gezibash/arc/examples/notes/service"
-	"github.com/gezibash/arc/provider"
 )
 
 // app serves the notes service, and holds the caller that reaches the
@@ -35,11 +37,11 @@ func main() {
 		os.Exit(1)
 	}
 	a := &app{}
-	a.web = provider.HTTP(service.Handler(func(ctx context.Context, body string) (string, error) {
+	a.web = httpadapter.New(service.Handler(func(ctx context.Context, body string) (string, error) {
 		return a.caller.Call(ctx, address, body)
 	}))
 
-	if err := provider.Run(context.Background(), a, provider.Options{}); err != nil {
+	if err := stdio.Run(context.Background(), a, provider.Options{}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

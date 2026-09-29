@@ -346,7 +346,7 @@ bob dm send "$caller_key" see you there 2> /dev/null
 laptop dm open "$bob_key" > "$work/conversation.txt"
 grep "meet at noon" "$work/conversation.txt" > /dev/null && grep "see you there" "$work/conversation.txt" > /dev/null ||
   fail "the conversation is $(cat "$work/conversation.txt")"
-go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
+go test -count=1 -run 'NIP17' ./core/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
 say "a direct message crosses the relay, both ways, and opens in a NIP-17 client"
 
 # A list stands for its members where a command takes a key.
@@ -372,7 +372,7 @@ if bob agora remove "$post" > /dev/null 2> "$work/remove.txt"; then fail "a citi
 grep "only an admin" "$work/remove.txt" > /dev/null || fail "the refusal was $(cat "$work/remove.txt")"
 moderator agora remove "$post" 2> "$work/admin.txt" || fail "the admin could not remove the post: $(cat "$work/admin.txt")"
 bob agora feed | grep "no posts" > /dev/null || fail "the removed post still shows: $(bob agora feed)"
-go test -count=1 -run 'NIP29' ./delivery/groups/ > "$work/nip29.txt" 2>&1 || fail "NIP-29: $(cat "$work/nip29.txt")"
+go test -count=1 -run 'NIP29' ./adapters/relay/groups/ > "$work/nip29.txt" 2>&1 || fail "NIP-29: $(cat "$work/nip29.txt")"
 say "only the admin removes the post, and the post opens in a NIP-29 client"
 
 printf 'phase C holds: private kinds, NIP-29 groups, direct messages and Agora\n\n'

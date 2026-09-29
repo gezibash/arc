@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/adapters/providerconfig"
 )
 
 var databaseNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
@@ -62,7 +62,7 @@ type config struct {
 // loadConfig reads SQLITE_CONFIG and checks every field. A configuration
 // that is not complete stops the program.
 func loadConfig() (*config, error) {
-	path, err := provider.ConfigPath("SQLITE_CONFIG")
+	path, err := providerconfig.ConfigPath("SQLITE_CONFIG")
 	if err != nil {
 		return nil, invalidConfig()
 	}
@@ -71,7 +71,7 @@ func loadConfig() (*config, error) {
 	}
 
 	var file configFile
-	if err := provider.ReadConfig(path, &file); err != nil {
+	if err := providerconfig.ReadConfig(path, &file); err != nil {
 		return nil, invalidConfig()
 	}
 	if len(file.Databases) == 0 {

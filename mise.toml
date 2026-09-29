@@ -49,3 +49,7 @@ raw = true
 description = "Prove HTTP over ARC, and a provider that keeps its state in SQLite over ARC"
 run = "bash scripts/check-compose.sh"
 raw = true
+
+[tasks.boundaries]
+description = "Check core, application and adapter dependency boundaries"
+run = "go test ./internal/architecture -count=1"

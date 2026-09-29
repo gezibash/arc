@@ -5,7 +5,7 @@
 //	arc whoami
 //	arc relay add <url> | rm <url> | ls | serve
 //	arc message send | inbox | outbox
-//	arc serve | announce | discover | install | call
+//	arc serve | announce | discover | install | call | session
 //	arc sync [--dir <path>]
 //	arc tool list | info | remove
 //	arc info | resolve | apps init | version
@@ -34,15 +34,16 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/khatru"
-	"github.com/gezibash/arc/delivery/draft"
-	"github.com/gezibash/arc/delivery/groups"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/limits"
-	"github.com/gezibash/arc/delivery/sealed"
-	"github.com/gezibash/arc/delivery/transport"
-	"github.com/gezibash/arc/delivery/transport/file"
-	"github.com/gezibash/arc/iface"
-	"github.com/gezibash/arc/internal/citizen"
+	"github.com/gezibash/arc/adapters/keyfile"
+	"github.com/gezibash/arc/adapters/relay/groups"
+	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/sealed"
+	"github.com/gezibash/arc/adapters/transport/file"
+	"github.com/gezibash/arc/application/citizen"
+	"github.com/gezibash/arc/application/iface"
+	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/transport"
 	"github.com/spf13/cobra"
 )
 
@@ -75,7 +76,7 @@ func root() *cobra.Command {
 	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc)")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
-		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), syncCommand(),
+		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
 		toolCommand(), infoCommand(), resolveCommand(), appsCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand())
 	command.SetHelpCommand(helpCommand(command))
 	command.Version = version
@@ -369,11 +370,11 @@ func hostGroups(command *cobra.Command, rl *khatru.Relay, db *boltdb.BoltBackend
 		return err
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := keys.Save(path, keys.Generate()); err != nil {
+		if err := keyfile.Save(path, keys.Generate()); err != nil {
 			return err
 		}
 	}
-	key, err := keys.Load(path)
+	key, err := keyfile.Load(path)
 	if err != nil {
 		return err
 	}

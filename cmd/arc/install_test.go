@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gezibash/arc/delivery/keys"
+	"github.com/gezibash/arc/core/keys"
 )
 
 func arc(t *testing.T, home string, args ...string) error {

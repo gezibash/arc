@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/delivery/call"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/provider/host"
+	"github.com/gezibash/arc/adapters/provider/host"
+	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/keys"
 )
 
 var adapterBinary, originBinary string

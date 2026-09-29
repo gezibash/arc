@@ -33,7 +33,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gezibash/arc/provider"
+	httpadapter "github.com/gezibash/arc/adapters/http"
+	"github.com/gezibash/arc/adapters/provider/stdio"
+	"github.com/gezibash/arc/core/provider"
 )
 
 const (
@@ -70,7 +72,7 @@ func run(command []string) error {
 		return err
 	}
 	origin := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", port)}
-	a := &adapter{token: token, web: provider.HTTP(forward(origin))}
+	a := &adapter{token: token, web: httpadapter.New(forward(origin))}
 
 	calls, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -113,7 +115,7 @@ func run(command []string) error {
 		os.Exit(1)
 	}()
 
-	err = provider.Run(context.Background(), a, provider.Options{})
+	err = stdio.Run(context.Background(), a, provider.Options{})
 	stopping.Store(true)
 	s.stop()
 	return err

@@ -1,0 +1,6 @@
+{
+ "interface":1,"id":"repl","shape":"service",
+ "title":"Session REPL","summary":"An isolated key/value REPL for each core ARC session.",
+ "service":{"method":"EVAL","path":"/","max_bytes":4096,"interactions":["request_reply","server_stream","duplex"]},
+ "kinds":{},"formats":{},"commands":[]
+}

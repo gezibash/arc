@@ -16,19 +16,20 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/bundle"
-	"github.com/gezibash/arc/capability"
-	"github.com/gezibash/arc/delivery/call"
-	"github.com/gezibash/arc/delivery/catalog"
-	"github.com/gezibash/arc/delivery/draft"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/mail"
-	"github.com/gezibash/arc/delivery/relaylist"
-	"github.com/gezibash/arc/delivery/transport"
-	"github.com/gezibash/arc/delivery/transport/file"
-	"github.com/gezibash/arc/iface"
-	"github.com/gezibash/arc/internal/citizen"
-	"github.com/gezibash/arc/provider/host"
+	"github.com/gezibash/arc/adapters/provider/host"
+	"github.com/gezibash/arc/adapters/transport/file"
+	"github.com/gezibash/arc/application/bundle"
+	"github.com/gezibash/arc/application/capability"
+	"github.com/gezibash/arc/application/catalog"
+	"github.com/gezibash/arc/application/citizen"
+	"github.com/gezibash/arc/application/iface"
+	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/mail"
+	"github.com/gezibash/arc/core/relaylist"
+	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/core/transport"
 	"github.com/spf13/cobra"
 )
 
@@ -98,7 +99,10 @@ func serve(command *cobra.Command, args []string) error {
 	calls := func(ctx context.Context, out call.Outbound) (call.Reply, error) {
 		return sess.CallAddress(ctx, installs, out.Address, out.Body)
 	}
-	server := call.NewServer(sess.Signer, id, process, limit, calls, log)
+	server := call.NewServer(sess.Signer, id, process, limit, calls, log, definition.Interactions...)
+	server.SetSessionCaller(func(ctx context.Context, out call.Outbound, mode session.Mode) (*session.Stream, error) {
+		return sess.OpenSessionAddress(ctx, installs, out.Address, out.Body, mode)
+	})
 	sess.Mail.OnRequest = server.Handle
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
@@ -457,6 +461,9 @@ func callCapability(command *cobra.Command, args []string) error {
 		return fmt.Errorf("install it first: arc install %s %s", provider.Hex(), offer.ID)
 	}
 
+	if !offer.SupportsInteraction(session.RequestReply) {
+		return fmt.Errorf("%s does not support request/reply: %w", offer.ID, session.ErrUnsupported)
+	}
 	body := strings.Join(args[1:], " ")
 	if body == "" {
 		read, err := io.ReadAll(io.LimitReader(os.Stdin, 1024*1024+1))

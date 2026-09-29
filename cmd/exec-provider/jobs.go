@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gezibash/arc/core/provider"
 	"github.com/gezibash/arc/internal/atomicfile"
-	"github.com/gezibash/arc/provider"
 )
 
 // lostGrace is how long a job may hold no result after its process ended. The

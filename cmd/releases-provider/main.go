@@ -21,7 +21,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/adapters/provider/stdio"
+	"github.com/gezibash/arc/core/provider"
 )
 
 // The limits of the provider.
@@ -68,7 +69,7 @@ func main() {
 	}
 
 	handler := &server{root: root}
-	if err := provider.Run(context.Background(), handler, provider.Options{MaxLineBytes: MaxLineBytes}); err != nil {
+	if err := stdio.Run(context.Background(), handler, provider.Options{MaxLineBytes: MaxLineBytes}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -19,7 +19,7 @@ are not enabled.
 ## Run the proof
 
 ```sh
-go test ./release/...
+go test ./application/release/...
 ```
 
 The tests cover the signature domain, a changed document, an expired

@@ -290,7 +290,7 @@ caller call "$provider_name" '{"argv":["echo","again"]}' > /dev/null 2>&1 || fai
 [ "$(wc -l < "$work/woke" | tr -d ' ')" = 1 ] || fail "the hook ran again for a provider that answered a moment ago"
 say "arc skips the hook of a provider that answered a moment ago"
 
-go test -count=1 -run 'NIP17' ./delivery/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
+go test -count=1 -run 'NIP17' ./core/mail/ > "$work/nip17.txt" 2>&1 || fail "NIP-17: $(cat "$work/nip17.txt")"
 say "an ARC direct message opens in a NIP-17 client, and a NIP-17 message opens in ARC"
 
 # Updates: a publisher signs a channel with a Nostr key, a releases provider

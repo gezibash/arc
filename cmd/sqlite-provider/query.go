@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/core/provider"
 	"zombiezen.com/go/sqlite"
 )
 

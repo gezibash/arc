@@ -546,6 +546,7 @@ the citizen's identity, or core makes them itself:
 | 5 | Deletion. Core makes it, for `delete` only. |
 | 13, 1059, 21059 | Seals and gift wraps. The mail layer makes them. |
 | 62 | Request to vanish. |
+| 3276 | Core live-session interaction frames. |
 | 1234, 31234, 3275 | Checkpoints, drafts, and parts. Core makes them for sealed kinds. |
 | 3272, 3273, 3274 | Calls and acknowledgements. Core makes them. |
 | 9734, 9735 | Zaps. |
@@ -755,6 +756,25 @@ the modern document takes precedence even if the legacy file is missing or
 invalid. Loading produces one validated definition for the announcement,
 capability ID and request limit. An omitted or zero `service.max_bytes`
 normalizes to 1 MiB in both the announcement and the host.
+
+### 14.5 Core sessions
+
+A service can declare `service.interactions` with `request_reply`,
+`server_stream` and/or `duplex`. Omission or an empty list keeps request/reply.
+Unknown and duplicate modes are errors. Ordinary call commands require
+`request_reply`. A service declaring a streaming mode may omit command entries;
+`arc session <address>` provides its interactive entry point.
+
+`arc session <address> [initial request] --mode duplex` streams stdin and stdout
+through the same core used by provider handlers. Input EOF is a half-close, and
+the command waits for the provider's final status. `--mode server_stream` sends
+only the initial request and reads incremental output. Installation consent and
+provider access rules still apply. A provider can consume another session using
+`provider.SessionCaller`, supplied through `SetSessionCaller`.
+
+See [the session protocol](../sessions/SPEC.md) for frame limits, admission,
+cancellation, deadlines and explicit disconnect behavior. Existing `arc call`
+and queued request/reply operations retain their protocol.
 
 ## 15. Versions
 

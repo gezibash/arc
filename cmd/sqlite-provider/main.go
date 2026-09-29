@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/adapters/provider/stdio"
+	"github.com/gezibash/arc/core/provider"
 )
 
 // server answers the requests of one operator configuration.
@@ -25,7 +26,7 @@ func main() {
 	// the cap on one line stands above the body limit.
 	maxLine := held.Limits.BodyBytes*6 + 8*1024
 
-	if err := provider.Run(context.Background(), &server{config: held}, provider.Options{MaxLineBytes: maxLine}); err != nil {
+	if err := stdio.Run(context.Background(), &server{config: held}, provider.Options{MaxLineBytes: maxLine}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

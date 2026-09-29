@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/delivery/catalog"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/mail"
-	"github.com/gezibash/arc/delivery/relaylist"
-	"github.com/gezibash/arc/delivery/testrelay"
-	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/application/catalog"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/mail"
+	"github.com/gezibash/arc/core/relaylist"
+	"github.com/gezibash/arc/internal/testrelay"
 )
 
 // A citizen that adds a relay publishes its NIP-65 relay list there.

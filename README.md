@@ -147,6 +147,11 @@ arc serve "exec://$(command -v exec-provider)?manifest=$PWD/cmd/exec-provider/ma
 and answers carried calls on each sync. It signs the announcement again
 every 2 minutes. `arc apps init` writes a new provider bundle.
 
+Core also supports live server streaming and duplex sessions. A service declares
+its interaction modes; `arc session <address>` uses the same session machinery
+as provider-to-provider calls. See the [stateful REPL example](examples/repl/README.md)
+and [session protocol](docs/sessions/SPEC.md).
+
 ## Run a relay
 
 ```bash
@@ -204,6 +209,8 @@ mise run interface   # the capability interface, end to end
 `mise run build` writes `bin/arc` and one binary for each other command.
 
 ## Docs
+
+- [Architecture and package boundaries](docs/ARCHITECTURE.md).
 
 - [Delivery layer](docs/delivery/SPEC.md): events, transports, sync, calls,
   and the switchover.

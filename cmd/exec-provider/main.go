@@ -8,7 +8,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/adapters/provider/stdio"
+	"github.com/gezibash/arc/core/provider"
 )
 
 // server answers the requests of one operator configuration.
@@ -31,7 +32,7 @@ func main() {
 	// cap on one line therefore stands above the body limit.
 	maxLine := cfg.Limits.BodyBytes*6 + 8*1024
 
-	if err := provider.Run(context.Background(), handler, provider.Options{MaxLineBytes: maxLine}); err != nil {
+	if err := stdio.Run(context.Background(), handler, provider.Options{MaxLineBytes: maxLine}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

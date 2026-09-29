@@ -636,7 +636,7 @@ recipient does not learn who wrote to them.
 | `relay` with routes and federation | relays built on khatru, and the NIP-65 outbox model |
 | `client` | the node: store, router, and transports |
 | `direct` | left out of the first version, see section 16 |
-| `citizen` provider runtime | moved to `provider/host`, which `arc serve` uses: a provider still runs as a process over standard input and output |
+| `citizen` provider runtime | moved to `adapters/provider/host`, which `arc serve` uses: a provider still runs as a process over standard input and output |
 | `capability`, `toolbox`, installed commands | kept; the manifest travels in an announcement |
 | `cmd/dm-provider` | NIP-17 direct messages; no provider needed |
 | `cmd/journal-provider` | data that the citizen keeps for itself; no provider needed |
@@ -657,7 +657,7 @@ Phases 1 and 2 are built: the packages under `delivery/` and the command
 `arc`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
 journal manifest of the capability interface.
 Phase 2 adds `delivery/private` for gift wraps and route tags, and
-`delivery/mail` for the outbox, acknowledgements and couriers. Sync compares
+`core/mail` for the outbox, acknowledgements and couriers. Sync compares
 sets with Negentropy when a relay lists NIP-77 in its information document,
 and fetches every event otherwise.
 
@@ -734,6 +734,7 @@ registry uses these numbers:
 | 3273 | regular | a call reply, inside a gift wrap |
 | 3274 | regular | an acknowledgement, inside a gift wrap |
 | 3275 | regular | one continuation part of sealed content longer than 32 KiB |
+| 3276 | private rumor | core session frames, inside live wraps of kind 21059; see [sessions](../sessions/SPEC.md) |
 | 10272 | replaceable | reserved, and not used, see 5.1 |
 | 30272 | addressable | a capability announcement |
 

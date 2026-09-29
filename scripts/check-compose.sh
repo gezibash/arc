@@ -1,6 +1,6 @@
 #!/bin/bash
 # The proof of HTTP over ARC, and of a provider that calls a provider. One
-# notes service runs twice: in the provider program, served by provider.HTTP,
+# notes service runs twice: in the provider program, served by httpadapter.New,
 # and as a plain HTTP server with no ARC library, served by http-provider.
 # Each keeps its notes in SQLite over ARC. Only the notes services hold a
 # grant on the databases.
@@ -116,7 +116,7 @@ prove() {
   say "$label: an empty note is 400, and arc exits 22, as curl --fail does"
 }
 
-prove notes "$notes_key" "provider.HTTP"
+prove notes "$notes_key" "httpadapter.New"
 prove webnotes "$server_key" "http-provider"
 
 as bob install "$sqlite_key" --yes > /dev/null
