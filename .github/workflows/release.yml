@@ -14,6 +14,7 @@ permissions:
 env:
   GO_VERSION: "1.27.1"
   IMAGE: ghcr.io/${{ github.repository_owner }}/arc
+  DOCKER_BUILD_RECORD_RETENTION_DAYS: "7"
 
 jobs:
   version:
@@ -73,6 +74,7 @@ jobs:
           name: tarballs
           path: dist/*.tar.gz
           if-no-files-found: error
+          retention-days: 7
 
   image:
     name: Image ${{ matrix.arch }}
@@ -103,8 +105,10 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           build-args: VERSION=${{ needs.version.outputs.version }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+          # Registry cache refs are shared across release tags; Actions caches
+          # from a previous tag are not accessible to the next release.
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }},mode=max
       # The file is named by the bare hex: upload-artifact refuses a colon
       # in a path, and the manifest job adds the sha256: prefix back.
       - name: Export digest
@@ -117,6 +121,7 @@ jobs:
           name: digest-${{ matrix.arch }}
           path: digests/*
           if-no-files-found: error
+          retention-days: 7
 
   manifest:
     name: Publish multi-arch image
