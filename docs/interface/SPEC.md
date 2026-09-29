@@ -720,7 +720,15 @@ write a new call to the host. Context failures return `provider_timeout` or
 The host cancels a request with
 `{"op":"cancel","request_id":"..."}`. A provider cancels an outbound call with
 `{"op":"cancel","call_id":"..."}`. Go handlers must stop work when their
-context ends. EOF cancels active handlers before the runtime joins them.
+context ends. EOF cancels active handlers before the runtime joins them and
+allows up to one second to drain their final replies. An unread output stream
+cannot keep shutdown waiting. Cancellation of an outbound call also interrupts
+an active output write; a cancellation notice has at most one second to write.
+Waiting for another writer respects the caller's context without interrupting
+that writer. An interrupted or failed write stops the output stream and the
+runtime, because another JSON line cannot safely follow a partial line.
+Blocking custom Go output writers must implement `io.Closer` so `Close` can
+interrupt `Write`. Output is serialized with at most one active write.
 Intentionally detached jobs retain their explicit job timeout.
 
 The Go runtime admits at most 64 concurrent handlers by default, configurable
