@@ -44,21 +44,9 @@ type result struct {
 
 // query runs the statements of one request against one database.
 func (s *server) query(ctx context.Context, caller, path, message string) (map[string]any, error) {
-	if !publicKeyPattern.MatchString(caller) {
-		return nil, errUnauthorized
-	}
-	if !pathPattern.MatchString(path) {
-		return nil, errInvalidRequest
-	}
-
-	held, ok := s.config.Databases[strings.TrimPrefix(path, "/")]
-	if !ok {
-		return nil, errNotFound
-	}
-
-	role, ok := held.Grants[caller]
-	if !ok {
-		return nil, errUnauthorized
+	held, role, err := s.authorized(caller, path)
+	if err != nil {
+		return nil, err
 	}
 
 	statements, err := s.parseRequest(message)
@@ -107,6 +95,27 @@ func (s *server) query(ctx context.Context, caller, path, message string) (map[s
 	return answer, nil
 }
 
+func (s *server) authorized(caller, path string) (database, string, error) {
+	if !publicKeyPattern.MatchString(caller) {
+		return database{}, "", errUnauthorized
+	}
+	if !pathPattern.MatchString(path) {
+		return database{}, "", errInvalidRequest
+	}
+
+	held, ok := s.config.Databases[strings.TrimPrefix(path, "/")]
+	if !ok {
+		return database{}, "", errNotFound
+	}
+
+	role, ok := held.Grants[caller]
+	if !ok {
+		return database{}, "", errUnauthorized
+	}
+
+	return held, role, nil
+}
+
 // connect opens one database for one role, and puts the authorizer in place.
 func (s *server) connect(ctx context.Context, held database, role string) (*sqlite.Conn, *guard, error) {
 	flags := sqlite.OpenReadOnly
@@ -151,6 +160,10 @@ func (s *server) connect(ctx context.Context, held database, role string) (*sqli
 
 // execute runs one statement and reads its rows.
 func (s *server) execute(ctx context.Context, conn *sqlite.Conn, held *guard, one statement, budget *int) (*result, error) {
+	return s.executeRows(ctx, conn, held, one, budget, nil)
+}
+
+func (s *server) executeRows(ctx context.Context, conn *sqlite.Conn, held *guard, one statement, budget *int, emit func([]string, []any) error) (*result, error) {
 	if ctx.Err() != nil {
 		return nil, errQueryTimeout
 	}
@@ -179,6 +192,12 @@ func (s *server) execute(ctx context.Context, conn *sqlite.Conn, held *guard, on
 		*budget += size(got.Columns)
 	}
 
+	if emit != nil {
+		if err := emit(got.Columns, nil); err != nil {
+			return nil, err
+		}
+	}
+	rowCount := 0
 	for {
 		if ctx.Err() != nil {
 			return nil, errQueryTimeout
@@ -191,7 +210,7 @@ func (s *server) execute(ctx context.Context, conn *sqlite.Conn, held *guard, on
 		if !hasRow {
 			break
 		}
-		if len(got.Rows) >= s.config.Limits.Rows {
+		if rowCount >= s.config.Limits.Rows {
 			return nil, errResultTooLarge
 		}
 
@@ -204,7 +223,14 @@ func (s *server) execute(ctx context.Context, conn *sqlite.Conn, held *guard, on
 		if *budget > s.config.Limits.OutputBytes {
 			return nil, errResultTooLarge
 		}
-		got.Rows = append(got.Rows, row)
+		rowCount++
+		if emit != nil {
+			if err := emit(nil, row); err != nil {
+				return nil, err
+			}
+		} else {
+			got.Rows = append(got.Rows, row)
+		}
 	}
 
 	// A statement that returns no column changed rows instead.

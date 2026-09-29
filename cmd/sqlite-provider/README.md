@@ -104,3 +104,38 @@ every statement, limit, or result-serialization error.
 
 The provider sees query text, parameters, caller public keys, result data, and
 access patterns. It is not a private-compute boundary from its operator.
+
+
+## Live SQL sessions
+
+Use the session-capable ARC binary and serve `interface.json` from this directory.
+After installing the provider, open a connection:
+
+```sh
+arc session --timeout 10m 'sqlite+arc://<provider-public-key>/main'
+```
+
+Enter one SQL statement per line, or one JSON query/batch per line (JSON can
+carry multiline SQL and parameters). `.quit` or EOF ends the session. Output is
+NDJSON: `ready`, then `columns`, `row`, `statement`, and `done` records. Each query
+is bounded by the configured row, byte and execution limits. An `error` record
+ends that query; the connection stays usable. Rows are provisional until `done`.
+
+The connection retains temporary tables. `BEGIN`, `BEGIN TRANSACTION`, `COMMIT`,
+`END`, and `ROLLBACK` are explicit session commands. Every ordinary query/batch
+uses a savepoint and rolls back on failure, including output-limit failures.
+`done.transaction` says whether an explicit transaction remains open. EOF,
+cancellation and disconnection never commit that transaction. Existing grants
+and denials of ATTACH, PRAGMA, and arbitrary transaction/savepoint SQL still apply.
+
+For one streaming query:
+
+```sh
+arc session --mode server_stream 'sqlite+arc://<provider-public-key>/main' \
+  '{"sql":"SELECT 42 AS answer"}'
+```
+
+Server-stream errors are final session failures. Duplex query errors are records.
+A failure after a commit can leave its outcome unknown; never retry writes
+implicitly. Ordinary `arc sqlite` and request/reply calls retain their atomic,
+buffered behavior and existing limits.
