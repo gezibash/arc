@@ -601,6 +601,11 @@ default. `arc keys use <name>` changes the default, and `--key <name>` or
 `arc keys gen --encrypt` and `arc keys encrypt` seal a key with a passphrase.
 Core reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
 
+Remote signer setup takes at most 15 seconds. Each operation, including
+NIP-04 encryption and decryption, takes at most 20 seconds. An earlier caller
+deadline applies. Cancellation stops setup and remains identifiable in returned
+Go errors, as it does for a local signer.
+
 `arc keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
 and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
 and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
@@ -707,20 +712,39 @@ tag. A queued request omits it; its execution budget begins when it is served.
 The host passes the deadline to the provider as `deadline_ms` on the request
 line. An outbound `call` line carries the remaining deadline in the same field.
 A missing deadline uses the host's 120-second cap. Go handlers receive a
-context with the earlier of their parent and supplied deadlines.
+context with the earlier of their parent and supplied deadlines. The runtime
+rejects expired requests before dispatch. A canceled outbound call does not
+write a new call to the host. Context failures return `provider_timeout` or
+`provider_canceled`, rather than `internal_error`.
 
 The host cancels a request with
 `{"op":"cancel","request_id":"..."}`. A provider cancels an outbound call with
 `{"op":"cancel","call_id":"..."}`. Go handlers must stop work when their
-context ends. EOF cancels active handlers before the runtime joins them.
+context ends. EOF cancels active handlers before the runtime joins them and
+allows up to one second to drain their final replies. An unread output stream
+cannot keep shutdown waiting. When an outbound call is canceled, an active
+write has up to one second, within its existing deadline, to finish. A complete
+line can reach the host before its write reports success; that completion
+must preserve the stream and allow the cancellation notice to follow. A write
+that remains blocked is interrupted. A cancellation notice has at most one
+second to write.
+Waiting for another writer respects the caller's context without interrupting
+that writer. An interrupted or failed write stops the output stream and the
+runtime, because another JSON line cannot safely follow a partial line.
+Blocking custom Go output writers must implement `io.Closer` so `Close` can
+interrupt `Write`. Output is serialized with at most one active write.
 Intentionally detached jobs retain their explicit job timeout.
 
 The Go runtime admits at most 64 concurrent handlers by default, configurable
 with `provider.Options.MaxConcurrent`. Excess requests receive `provider_busy`.
-Cancellation and result messages bypass handler admission. The host separately
-bounds incoming live work and outbound calls. Exec drains output while keeping
-only bounded prefixes; output volume cannot grow its in-memory buffers without
-limit.
+Cancellation and result messages bypass handler admission.
+The Go runtime writes rejection replies through one worker with a queue of at
+most 64 pending replies. Blocked rejection output cannot hold up cancellation,
+results, or EOF. A full rejection queue stops the stream with `provider_busy`.
+Earlier rejections finish before a later admitted request starts its handler.
+The host separately bounds incoming live work and outbound calls. Exec drains
+output while keeping only bounded prefixes; output volume cannot grow its
+in-memory buffers without limit.
 
 ### 14.4 Provider bundles
 

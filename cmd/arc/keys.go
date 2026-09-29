@@ -68,6 +68,18 @@ func loadIdentity(ctx context.Context, dir string) (signerIdentity, error) {
 // remoteIdentity connects to a NIP-46 signer. This machine keeps a key of its
 // own for the connection, in <home>/bunker-client; it signs nothing else.
 func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return signerIdentity{}, err
+	}
+	// Keep a successful connection for the command lifetime. Stop a failed or
+	// abandoned handshake so its subscriptions cannot outlive the attempt.
+	connectCtx, stop := context.WithCancel(ctx)
+	connected := false
+	defer func() {
+		if !connected {
+			stop()
+		}
+	}()
 	path := filepath.Join(dir, "bunker-client")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		if err := keys.Save(path, keys.Generate()); err != nil {
@@ -87,26 +99,34 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 	}
 	done := make(chan result, 1)
 	go func() {
-		signer, err := keyer.New(ctx, nil, uri, &keyer.SignerOptions{BunkerClientSecretKey: client.Secret, BunkerSignTimeout: 15 * time.Second})
+		signer, err := keyer.New(connectCtx, nil, uri, &keyer.SignerOptions{BunkerClientSecretKey: client.Secret, BunkerSignTimeout: 15 * time.Second})
 		if err != nil {
 			done <- result{err: fmt.Errorf("the remote signer did not answer: %w", err)}
 			return
 		}
-		pk, err := signer.GetPublicKey(ctx)
+		pk, err := signer.GetPublicKey(connectCtx)
 		if err != nil {
 			err = fmt.Errorf("the remote signer did not give its key: %w", err)
 		}
 		done <- result{signer, pk, err}
 	}()
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
 	select {
 	case r := <-done:
+		if err := ctx.Err(); err != nil {
+			return signerIdentity{}, err
+		}
 		if r.err != nil {
 			return signerIdentity{}, r.err
 		}
+		connected = true
 		remote := timed{r.signer}
 		return signerIdentity{key: keys.Key{Public: r.pk}, signer: keys.Identity{Public: r.pk, Keyer: remote}, remote: true}, nil
-	case <-time.After(15 * time.Second):
-		return signerIdentity{}, errors.New("the remote signer did not answer in 15 seconds")
+	case <-ctx.Done():
+		return signerIdentity{}, ctx.Err()
+	case <-timer.C:
+		return signerIdentity{}, fmt.Errorf("the remote signer did not answer in 15 seconds: %w", context.DeadlineExceeded)
 	}
 }
 
@@ -658,26 +678,70 @@ type timed struct{ nostr.Keyer }
 
 const signerTimeout = 20 * time.Second
 
+// signerError preserves cancellation identity when the remote library returns
+// an untyped network error. A signer refusal under an active context is unchanged.
+func signerError(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 func (t timed) SignEvent(ctx context.Context, event *nostr.Event) error {
 	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
 	defer cancel()
-	return t.Keyer.SignEvent(ctx, event)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return signerError(ctx, t.Keyer.SignEvent(ctx, event))
 }
 
 func (t timed) Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
 	defer cancel()
-	return t.Keyer.Encrypt(ctx, plaintext, to)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	text, err := t.Keyer.Encrypt(ctx, plaintext, to)
+	return text, signerError(ctx, err)
 }
 
 func (t timed) Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
 	defer cancel()
-	return t.Keyer.Decrypt(ctx, ciphertext, from)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	text, err := t.Keyer.Decrypt(ctx, ciphertext, from)
+	return text, signerError(ctx, err)
 }
 
 func (t timed) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
 	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
 	defer cancel()
-	return t.Keyer.GetPublicKey(ctx)
+	if err := ctx.Err(); err != nil {
+		return nostr.PubKey{}, err
+	}
+	pk, err := t.Keyer.GetPublicKey(ctx)
+	return pk, signerError(ctx, err)
+}
+
+func (t timed) Nip04Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	text, err := t.Keyer.Nip04Encrypt(ctx, plaintext, to)
+	return text, signerError(ctx, err)
+}
+
+func (t timed) Nip04Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	text, err := t.Keyer.Nip04Decrypt(ctx, ciphertext, from)
+	return text, signerError(ctx, err)
 }

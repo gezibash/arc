@@ -53,6 +53,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gezibash/arc/provider/wire"
 )
@@ -138,8 +139,9 @@ func (f HandlerFunc) HandleRequest(ctx context.Context, request Request) (string
 	return f(ctx, request)
 }
 
-// Error is an error whose text is safe to send to the caller. Every other
-// error answers "internal_error", and the detail goes to standard error.
+// Error is an error whose text is safe to send to the caller. Context errors
+// answer provider_timeout or provider_canceled. Other errors answer
+// internal_error, and the detail goes to standard error.
 type Error string
 
 // Error returns the code that the caller sees.
@@ -157,7 +159,9 @@ const (
 type Options struct {
 	// In is the source of events. The default is standard input.
 	In io.Reader
-	// Out is where answers go. The default is standard output.
+	// Out is where answers go. The default is standard output. A blocking
+	// writer must implement io.Closer so cancellation can interrupt Write.
+	// The runtime closes it only if output fails or an active write is canceled.
 	Out io.Writer
 	// Log is where the runtime reports what it drops. The default is
 	// standard error.
@@ -190,9 +194,10 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 	}
 
 	runtime := &runtime{
-		handler: handler, options: opts, out: bufio.NewWriter(opts.Out),
+		handler: handler, options: opts, out: newOutput(ctx, opts.Out),
 		calls: map[string]chan result{}, stopped: make(chan struct{}),
 		requests: map[any]context.CancelFunc{}, slots: make(chan struct{}, opts.MaxConcurrent),
+		rejections: make(chan rejection, wire.MaxConcurrent),
 	}
 	if wants, ok := handler.(WantsCaller); ok {
 		wants.SetCaller(runtime)
@@ -204,13 +209,14 @@ type runtime struct {
 	handler Handler
 	options Options
 
-	mu  sync.Mutex
-	out *bufio.Writer
+	out *output
 
 	group      sync.WaitGroup
 	requestsMu sync.Mutex
 	requests   map[any]context.CancelFunc
 	slots      chan struct{}
+	rejections chan rejection
+	rejected   <-chan struct{}
 
 	// calls holds each call that waits for its result, by call_id.
 	callsMu sync.Mutex
@@ -220,6 +226,12 @@ type runtime struct {
 	stopped chan struct{}
 }
 
+type rejection struct {
+	requestID any
+	err       error
+	done      chan struct{}
+}
+
 // result is the answer of ARC to one call.
 type result struct {
 	reply   *string
@@ -227,17 +239,42 @@ type result struct {
 	err     string
 }
 
-func (r *runtime) run(ctx context.Context) error {
+func (r *runtime) run(ctx context.Context) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
+	// One bounded worker writes rejection replies. Input must remain free to
+	// deliver cancellations, nested results and EOF while output is blocked.
+	r.group.Add(1)
+	go func() {
+		defer r.group.Done()
+		for rejected := range r.rejections {
+			r.answer(rejected.requestID, "", rejected.err)
+			close(rejected.done)
+		}
+	}()
 	// Closing a pipe or stdin interrupts an idle read. Other Readers must make
 	// progress themselves; the runtime still stops waiting when ctx ends.
 	defer func() {
 		close(r.stopped)
 		cancel()
+		close(r.rejections)
 		if closer, ok := r.options.In.(io.Closer); ok {
 			closer.Close()
 		}
+		// EOF still lets cooperative handlers return their final replies, but
+		// an unread output stream cannot hold shutdown indefinitely.
+		drained := make(chan struct{})
+		drain := time.AfterFunc(outputGrace, func() {
+			r.out.abort(context.DeadlineExceeded)
+			close(drained)
+		})
 		r.group.Wait()
+		if !drain.Stop() {
+			<-drained
+		}
+		if err == nil {
+			err = context.Cause(r.out.ctx)
+		}
+		r.out.cancel(nil)
 	}()
 	type input struct {
 		line []byte
@@ -262,10 +299,12 @@ func (r *runtime) run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-r.out.ctx.Done():
+			return context.Cause(r.out.ctx)
 		case in := <-lines:
 			switch {
 			case errors.Is(in.err, wire.ErrLineTooLong):
-				r.answer(nil, "", ErrRequestTooLarge)
+				r.reject(nil, ErrRequestTooLarge)
 			case errors.Is(in.err, io.EOF):
 				return nil
 			case in.err != nil:
@@ -283,7 +322,7 @@ func (r *runtime) run(ctx context.Context) error {
 func (r *runtime) dispatch(ctx context.Context, line []byte) {
 	var event wire.Event
 	if err := json.Unmarshal(line, &event); err != nil {
-		r.answer(nil, "", ErrInvalidRequest)
+		r.reject(nil, ErrInvalidRequest)
 		return
 	}
 	if event.Op == "result" {
@@ -299,40 +338,65 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 		return
 	}
 	if event.Op != "request" || event.Message == nil || event.Meta == nil || !validRequestID(event.RequestID) {
-		r.answer(event.RequestID, "", ErrInvalidRequest)
+		r.reject(event.RequestID, ErrInvalidRequest)
 		return
 	}
 	select {
 	case r.slots <- struct{}{}:
 	default:
-		r.answer(event.RequestID, "", ErrBusy)
+		r.reject(event.RequestID, ErrBusy)
 		return
 	}
 	ctx, cancel := wire.Budget(ctx, event.DeadlineMS)
+	if err := ctx.Err(); err != nil {
+		cancel()
+		<-r.slots
+		r.reject(event.RequestID, err)
+		return
+	}
 	r.requestsMu.Lock()
 	if _, exists := r.requests[event.RequestID]; exists {
 		r.requestsMu.Unlock()
 		cancel()
 		<-r.slots
-		r.answer(event.RequestID, "", ErrInvalidRequest)
+		r.reject(event.RequestID, ErrInvalidRequest)
 		return
 	}
 	r.requests[event.RequestID] = cancel
 	r.requestsMu.Unlock()
 	request := Request{Op: event.Op, From: event.From, Message: *event.Message, Meta: event.Meta, RequestID: event.RequestID, ArcSessionID: event.ArcSessionID, AppSessionID: event.AppSessionID, Framed: event.Framed}
+	priorRejection := r.rejected
 	r.group.Add(1)
 	go func() {
 		defer r.group.Done()
-		defer func() {
-			cancel()
-			r.requestsMu.Lock()
-			delete(r.requests, event.RequestID)
-			r.requestsMu.Unlock()
-			<-r.slots
-		}()
+		defer func() { <-r.slots }()
+		// Preserve rejection order before starting later requests. Only this
+		// admitted worker waits; input can still process control messages.
+		if priorRejection != nil {
+			<-priorRejection
+		}
 		reply, err := r.call(ctx, request)
+		cancel()
+		r.requestsMu.Lock()
+		delete(r.requests, event.RequestID)
+		r.requestsMu.Unlock()
+		// The host can reuse this ID as soon as it reads the reply.
+		// Finish admission bookkeeping before publishing that reply.
 		r.answer(event.RequestID, reply, err)
 	}()
+}
+
+func (r *runtime) reject(requestID any, err error) {
+	rejected := rejection{requestID: requestID, err: err, done: make(chan struct{})}
+	select {
+	case r.rejections <- rejected:
+		r.rejected = rejected.done
+	case <-r.out.ctx.Done():
+	default:
+		// A host that does not drain replies must not grow memory or block
+		// control messages. Fail this stream when its bounded backlog fills.
+		r.out.abort(ErrBusy)
+	}
 }
 
 func (r *runtime) call(ctx context.Context, request Request) (reply string, err error) {
@@ -348,6 +412,9 @@ func (r *runtime) call(ctx context.Context, request Request) (reply string, err 
 
 // Call writes one call line, and waits for its result.
 func (r *runtime) Call(ctx context.Context, address, body string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	answer := make(chan result, 1)
 	r.callsMu.Lock()
 	r.next++
@@ -364,7 +431,7 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if err := r.writeLine(line); err != nil {
+	if err := r.out.write(ctx, line); err != nil {
 		return "", err
 	}
 
@@ -386,7 +453,11 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 		default:
 		}
 		line, _ := json.Marshal(wire.Event{Op: "cancel", CallID: id})
-		_ = r.writeLine(line)
+		// The caller has stopped waiting. Give the cancellation notice a
+		// bounded chance to reach ARC, including time waiting for output.
+		notify, cancel := context.WithTimeout(r.out.ctx, outputGrace)
+		_ = r.out.write(notify, line)
+		cancel()
 		return "", ctx.Err()
 	}
 }
@@ -418,8 +489,7 @@ func (r *runtime) settle(id string, got result) {
 	answer <- got
 }
 
-// answer writes one line. One writer holds the lock, so two answers never
-// interleave on one line.
+// answer writes one complete line through the serialized output.
 func (r *runtime) answer(requestID any, reply string, err error) {
 	response := wire.Event{RequestID: requestID}
 	if err != nil {
@@ -435,24 +505,22 @@ func (r *runtime) answer(requestID any, reply string, err error) {
 		fmt.Fprintf(r.options.Log, "provider: the answer does not encode: %v\n", marshalErr)
 		return
 	}
-	if err := r.writeLine(line); err != nil {
+	ctx, cancel := wire.Budget(r.out.ctx, 0)
+	defer cancel()
+	if err := r.out.write(ctx, line); err != nil {
 		fmt.Fprintf(r.options.Log, "provider: the answer did not reach ARC: %v\n", err)
 	}
-}
-
-// writeLine writes one line under the lock, so two answers never share a line.
-func (r *runtime) writeLine(line []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.out.Write(line)
-	r.out.WriteByte('\n')
-	return r.out.Flush()
 }
 
 // safeError keeps the detail of an unexpected error out of the answer. The
 // caller gets a code, and the operator gets the detail on standard error.
 func safeError(log io.Writer, err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "provider_timeout"
+	case errors.Is(err, context.Canceled):
+		return "provider_canceled"
+	}
 	var safe Error
 	if errors.As(err, &safe) {
 		return string(safe)

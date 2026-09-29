@@ -413,6 +413,22 @@ the delivered rumor with an `e` tag. When the sender receives the
 acknowledgement, the outbox removes the event. A node does not acknowledge an
 acknowledgement.
 
+Queued calls keep a durable `pending`, `processing`, or `completed` state.
+Before saving a received request to the event store, the receiver commits its
+pending state and encrypted seal to the mail journal. It removes that extra
+seal after the event-store save succeeds. A restart can finish either write
+without another delivery from the sender. A failed journal write must not
+leave a receipt that looks like an uncertain historical execution.
+The receiver reads and opens a pending request before it atomically claims
+execution. A storage failure, signer refusal, or cancellation before that
+claim leaves the request pending. Concurrent receivers must recheck the state
+when they claim it. A request whose execution started without a recorded
+result remains uncertain; it must not execute again automatically.
+
+Reading recorded incoming or outgoing mail returns storage, signer, and
+cancellation failures. An unreadable stored seal must not appear as an empty
+mailbox or a successful partial history.
+
 ### 10.3 Sync
 
 When two nodes meet, they reconcile their stores for one filter at a time.

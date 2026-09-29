@@ -163,7 +163,9 @@ These rules hold:
 - The standard output of the server goes to the standard error of
   `http-provider`, because standard output carries the ARC protocol.
 - One exchange takes at most 50 seconds. A server that does not answer in
-  that time gives 502.
+  that time gives 502. An earlier caller deadline applies. The HTTP adapter
+  rejects canceled requests before dispatch and reports cancellation if the
+  handler returns after the caller stops. An empty canceled response is not 200.
 - If the server ends, `http-provider` ends, and `arc serve` says that the
   provider stopped.
 - When `arc serve` stops, `http-provider` sends SIGTERM to the server. If

@@ -382,12 +382,19 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 		report.Refused = append(report.Refused, wrap.ID.Hex()+": "+err.Error())
 		return nil
 	}
+	if opened.Rumor.Kind == call.RequestKind {
+		previouslyReceived, err := m.node.Store.Has(opened.Seal.ID)
+		if err != nil {
+			return err
+		}
+		return m.receiveRequest(ctx, opened, previouslyReceived, report)
+	}
 
 	result, err := m.node.Store.Save(opened.Seal)
 	if err != nil {
 		return err
 	}
-	if result.Outcome == store.Duplicate && opened.Rumor.Kind != call.RequestKind && opened.Rumor.Kind != AckKind && opened.Rumor.Kind != call.ReplyKind {
+	if result.Outcome == store.Duplicate && opened.Rumor.Kind != AckKind && opened.Rumor.Kind != call.ReplyKind {
 		return nil
 	}
 	if result.Outcome == store.Refused {
@@ -398,8 +405,6 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 	switch opened.Rumor.Kind {
 	case AckKind:
 		return m.acknowledged(opened, report)
-	case call.RequestKind:
-		return m.receiveRequest(ctx, opened, result.Outcome == store.Duplicate, report)
 	case call.ReplyKind:
 		return m.replied(opened, report)
 	default:
@@ -411,13 +416,15 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 	}
 }
 
-// incoming separates receipt from execution. Only encrypted seal IDs persist.
+// incoming separates receipt from execution. Receipt holds the encrypted seal
+// until the event store has it; committing this journal always comes first.
 // A stale processing record is uncertain, never permission to repeat a mutation.
 type incoming struct {
-	Seal      string    `json:"seal"`
-	State     string    `json:"state"`
-	Started   time.Time `json:"started,omitzero"`
-	ReplySeal string    `json:"reply_seal,omitempty"`
+	Seal      string       `json:"seal"`
+	Receipt   *nostr.Event `json:"receipt,omitempty"`
+	State     string       `json:"state"`
+	Started   time.Time    `json:"started,omitzero"`
+	ReplySeal string       `json:"reply_seal,omitempty"`
 }
 
 func (m *Mail) receiveRequest(ctx context.Context, opened private.Opened, previouslyReceived bool, report *Report) error {
@@ -426,7 +433,7 @@ func (m *Mail) receiveRequest(ctx context.Context, opened private.Opened, previo
 		if tx.Bucket(inboxBucket).Get([]byte(id)) != nil {
 			return nil
 		}
-		entry := incoming{Seal: opened.Seal.ID.Hex(), State: "pending"}
+		entry := incoming{Seal: opened.Seal.ID.Hex(), Receipt: &opened.Seal, State: "pending"}
 		// A seal written by an older ARC version has no execution journal. It
 		// might already have run; do not execute it again during an upgrade.
 		if previouslyReceived {
@@ -441,9 +448,6 @@ func (m *Mail) receiveRequest(ctx context.Context, opened private.Opened, previo
 }
 
 func (m *Mail) pending(ctx context.Context, report *Report) error {
-	if m.OnRequest == nil {
-		return nil
-	}
 	var ids []string
 	if err := m.view(func(tx *bbolt.Tx) error {
 		return tx.Bucket(inboxBucket).ForEach(func(k, v []byte) error {
@@ -468,12 +472,68 @@ func (m *Mail) pending(ctx context.Context, report *Report) error {
 }
 
 func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
-	if m.OnRequest == nil {
-		return nil
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	var entry incoming
+	found, err := m.get(inboxBucket, id, &entry)
+	if err != nil || !found || entry.State == "completed" {
+		return err
+	}
+	if entry.Receipt != nil {
+		// A crash on either side of Save leaves enough ciphertext in the
+		// journal to finish receipt without waiting for another delivery.
+		result, err := m.node.Store.Save(*entry.Receipt)
+		if err != nil {
+			return err
+		}
+		err = m.update(func(tx *bbolt.Tx) error {
+			entry = incoming{}
+			if err := json.Unmarshal(tx.Bucket(inboxBucket).Get([]byte(id)), &entry); err != nil {
+				return err
+			}
+			if entry.Receipt == nil {
+				return nil
+			}
+			entry.Receipt = nil
+			if result.Outcome == store.Refused {
+				entry.State = "completed"
+			}
+			return put(tx, inboxBucket, id, entry)
+		})
+		if err != nil {
+			return err
+		}
+		if result.Outcome == store.Refused {
+			report.Refused = append(report.Refused, id+": "+result.Reason)
+			return nil
+		}
+	}
+	if m.OnRequest == nil || entry.State == "completed" {
+		return nil
+	}
+	if entry.State == "processing" && !entry.Started.IsZero() && m.now().Before(entry.Started.Add(call.Timeout+time.Minute)) {
+		return nil
+	}
+	// Opening the request cannot execute it. A failed read or signer call
+	// must leave pending work retryable. Claim it atomically only afterward.
+	sealID, err := nostr.IDFromHex(entry.Seal)
+	if err != nil {
+		return err
+	}
+	seals, err := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{sealID}})
+	if err != nil {
+		return err
+	}
+	if len(seals) == 0 {
+		return fmt.Errorf("mail: request %s has no saved seal", id)
+	}
+	request, err := private.OpenSeal(ctx, m.key, seals[0])
+	if err != nil {
+		return err
+	}
 	var run, uncertain bool
-	err := m.update(func(tx *bbolt.Tx) error {
+	err = m.update(func(tx *bbolt.Tx) error {
 		data := tx.Bucket(inboxBucket).Get([]byte(id))
 		if data == nil {
 			return nil
@@ -494,26 +554,14 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		default:
 			return fmt.Errorf("mail: unknown request state %q", entry.State)
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entry.State = "processing"
 		entry.Started = m.now().UTC()
 		return put(tx, inboxBucket, id, entry)
 	})
 	if err != nil || !run && !uncertain {
-		return err
-	}
-	sealID, err := nostr.IDFromHex(entry.Seal)
-	if err != nil {
-		return err
-	}
-	seals, err := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{sealID}})
-	if err != nil {
-		return err
-	}
-	if len(seals) == 0 {
-		return fmt.Errorf("mail: request %s has no saved seal", id)
-	}
-	request, err := private.OpenSeal(ctx, m.key, seals[0])
-	if err != nil {
 		return err
 	}
 	reply := call.Reply{Err: "outcome_unknown a previous execution did not record a result"}
@@ -763,6 +811,9 @@ type Message struct {
 // Inbox returns the messages that this citizen received, oldest first. It
 // opens each seal from the store, and stores no text.
 func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var out []Message
 	seen := map[string]bool{}
 
@@ -775,7 +826,10 @@ func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 			continue
 		}
 		rumor, err := private.OpenSeal(ctx, m.key, seal)
-		if err != nil || rumor.Kind != MessageKind || seen[rumor.ID.Hex()] {
+		if err != nil {
+			return nil, fmt.Errorf("mail: open received seal %s: %w", seal.ID.Hex(), err)
+		}
+		if rumor.Kind != MessageKind || seen[rumor.ID.Hex()] {
 			continue
 		}
 		seen[rumor.ID.Hex()] = true
@@ -792,6 +846,9 @@ func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 // Rumors returns the private events of some kinds that this citizen
 // received and sent, oldest first. It opens each seal from the store.
 func (m *Mail) Rumors(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var out []nostr.Event
 	seen := map[nostr.ID]bool{}
 	keep := func(rumor nostr.Event) {
@@ -810,9 +867,11 @@ func (m *Mail) Rumors(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, e
 		if seal.PubKey == m.key.PublicKey() {
 			continue
 		}
-		if rumor, err := private.OpenSeal(ctx, m.key, seal); err == nil {
-			keep(rumor)
+		rumor, err := private.OpenSeal(ctx, m.key, seal)
+		if err != nil {
+			return nil, fmt.Errorf("mail: open received seal %s: %w", seal.ID.Hex(), err)
 		}
+		keep(rumor)
 	}
 	outgoing, err := m.outgoing()
 	if err != nil {

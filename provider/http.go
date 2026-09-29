@@ -48,6 +48,9 @@ type httpResponse struct {
 // opens.
 func HTTP(handler http.Handler) Handler {
 	return HandlerFunc(func(ctx context.Context, r Request) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		request, err := httpRequestOf(ctx, r)
 		if err != nil {
 			return "", ErrInvalidRequest
@@ -55,6 +58,9 @@ func HTTP(handler http.Handler) Handler {
 
 		response := &recorder{header: http.Header{}}
 		handler.ServeHTTP(response, request)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		if response.over {
 			return "", ErrResponseTooLarge
 		}
