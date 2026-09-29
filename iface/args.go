@@ -46,7 +46,7 @@ type Resolver interface {
 // Lister finds a list of keys that the citizen saved for the running
 // command. A key argument that names a list stands for each of its members.
 type Lister interface {
-	List(name string) []nostr.PubKey
+	List(name string) ([]nostr.PubKey, error)
 }
 
 // members is the value of a key argument that named a list, as hex keys.
@@ -200,7 +200,11 @@ func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
 		return n, nil
 	case "key":
 		if l, ok := r.(Lister); ok {
-			if list := l.List(text); len(list) > 0 {
+			list, err := l.List(text)
+			if err != nil {
+				return nil, err
+			}
+			if len(list) > 0 {
 				out := make(members, len(list))
 				for i, pk := range list {
 					out[i] = pk.Hex()
@@ -236,6 +240,8 @@ func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
 	case "path":
 		if _, err := os.Lstat(text); err == nil {
 			return nil, fmt.Errorf("%s exists; arc never replaces a file", text)
+		} else if !os.IsNotExist(err) {
+			return nil, err
 		}
 		return text, nil
 	case "file":

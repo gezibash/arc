@@ -610,7 +610,9 @@ wrap comes from a one-time key that no list can name. The bunker keeps its URI
 when it restarts. `arc keys add <uri>` makes an identity that
 signs through it. That identity seals and opens mail, makes calls, and reads the
 keyed root, all through the signer. The bunker publishes the keyed root to its
-relay when it starts.
+relay when it starts. If it refuses to open locally recorded outgoing mail,
+an inbox or outbox command reports the error instead of treating those
+records as absent.
 
 ## 14. Install and dispatch
 
@@ -671,7 +673,8 @@ The rules are the rules of `arc call`:
   with `not_installed`. An install is the consent to call.
 - The call names the capability by an address, see 14.1. The method is the
   method of the manifest.
-- The call is live. It needs a relay, and it waits at most 30 seconds.
+- The call is live. It needs a relay and has at most 115 seconds, shortened
+  by the remaining deadline of its parent request.
 
 `arc serve` and the provider program speak newline delimited JSON on the
 standard input and the standard output of the program. The program writes
@@ -693,6 +696,41 @@ In Go, a handler that has the method `SetCaller(provider.Caller)` gets a
 caller before its first request. `Caller.Call` returns the reply, or a
 `*provider.CallError`. Its field `Refused` separates a refusal from a
 failure.
+
+### 14.3 Deadlines, cancellation and admission
+
+Live calls have one budget of at most 120 seconds, including wake, relay
+discovery, relay selection and execution. `arc call --timeout` can shorten it. The signed
+request rumor carries the absolute Unix millisecond deadline in a `deadline`
+tag. A queued request omits it; its execution budget begins when it is served.
+
+The host passes the deadline to the provider as `deadline_ms` on the request
+line. An outbound `call` line carries the remaining deadline in the same field.
+A missing deadline uses the host's 120-second cap. Go handlers receive a
+context with the earlier of their parent and supplied deadlines.
+
+The host cancels a request with
+`{"op":"cancel","request_id":"..."}`. A provider cancels an outbound call with
+`{"op":"cancel","call_id":"..."}`. Go handlers must stop work when their
+context ends. EOF cancels active handlers before the runtime joins them.
+Intentionally detached jobs retain their explicit job timeout.
+
+The Go runtime admits at most 64 concurrent handlers by default, configurable
+with `provider.Options.MaxConcurrent`. Excess requests receive `provider_busy`.
+Cancellation and result messages bypass handler admission. The host separately
+bounds incoming live work and outbound calls. Exec drains output while keeping
+only bounded prefixes; output volume cannot grow its in-memory buffers without
+limit.
+
+### 14.4 Provider bundles
+
+New bundles contain one authored interface manifest in `manifest.json`.
+`arc serve` also accepts a modern manifest at another explicit path. Historical
+bundles can still use a legacy manifest with an adjacent `interface.json`;
+the modern document takes precedence even if the legacy file is missing or
+invalid. Loading produces one validated definition for the announcement,
+capability ID and request limit. An omitted or zero `service.max_bytes`
+normalizes to 1 MiB in both the announcement and the host.
 
 ## 15. Versions
 

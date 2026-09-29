@@ -322,6 +322,9 @@ func (m *Manifest) check() error {
 	if m.Shape == "data" && m.Service != nil {
 		return errors.New("a data capability has no service section")
 	}
+	if m.Service != nil && m.Service.MaxBytes < 0 {
+		return errors.New("service.max_bytes must not be negative")
+	}
 	if m.Service != nil && m.Service.Output != nil {
 		o := *m.Service.Output
 		if o.Save != nil || o.Tail != nil {
@@ -529,7 +532,26 @@ func (m *Manifest) checkCommand(c Command) error {
 		return fmt.Errorf("a command has exactly one action, not %d", actions)
 	}
 
+	if c.Output.Save != nil {
+		if _, err := saveArgument(c); err != nil {
+			return err
+		}
+	}
 	return m.checkOutput(c.Output, a.Watch != nil, check)
+}
+
+// A save destination is exactly one explicit path argument. Templates of
+// response fields, defaults and transformations cannot authorize file writes.
+func saveArgument(c Command) (string, error) {
+	t, err := compile(c.Output.Save.To, nil)
+	if err == nil && len(t.parts) == 1 && len(t.parts[0].filters) == 0 {
+		for _, a := range c.Args {
+			if a.Name == t.parts[0].name && a.Type == "path" && a.Kind != "switch" && a.Default == "" {
+				return a.Name, nil
+			}
+		}
+	}
+	return "", errors.New("save.to must name one explicit path argument without filters or a default")
 }
 
 // checkOutput checks an output pipeline. A watch may tail, and may not

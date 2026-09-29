@@ -21,13 +21,13 @@ const Kind nostr.Kind = 10002
 
 // Make signs a relay list that names each relay for both reading and
 // writing.
-func Make(k keys.Signer, urls []string, at nostr.Timestamp) (nostr.Event, error) {
+func Make(ctx context.Context, k keys.Signer, urls []string, at nostr.Timestamp) (nostr.Event, error) {
 	tags := nostr.Tags{}
 	for _, url := range urls {
 		tags = append(tags, nostr.Tag{"r", url})
 	}
 	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags}
-	if err := k.Sign(&event); err != nil {
+	if err := k.SignEvent(ctx, &event); err != nil {
 		return nostr.Event{}, err
 	}
 	return event, nil
@@ -55,18 +55,24 @@ func Read(list nostr.Event) (read, write []string) {
 
 // ReadRelays returns the read relays of a citizen, from the newest list in
 // the store. When the store holds none, it asks the transports first.
-func ReadRelays(ctx context.Context, n *node.Node, who nostr.PubKey, via []transport.Transport) []string {
+func ReadRelays(ctx context.Context, n *node.Node, who nostr.PubKey, via []transport.Transport) ([]string, error) {
 	filter := nostr.Filter{Kinds: []nostr.Kind{Kind}, Authors: []nostr.PubKey{who}}
-	lists := n.Store.Query(filter)
+	lists, err := n.Store.Query(filter)
+	if err != nil {
+		return nil, err
+	}
 	if len(lists) == 0 && len(via) > 0 {
 		n.Pull(ctx, filter, via)
-		lists = n.Store.Query(filter)
+		lists, err = n.Store.Query(filter)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(lists) == 0 {
-		return nil
+		return nil, nil
 	}
 	read, _ := Read(lists[0])
-	return read
+	return read, nil
 }
 
 // Same says whether two relay URLs name one relay. It ignores a trailing

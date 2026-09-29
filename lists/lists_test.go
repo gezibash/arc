@@ -1,16 +1,40 @@
 package lists_test
 
 import (
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
+	"github.com/gezibash/arc/internal/testutil"
 	"github.com/gezibash/arc/lists"
 )
+
+func TestConcurrentAddsDoNotLoseMembers(t *testing.T) {
+	dir := t.TempDir()
+	var group sync.WaitGroup
+	start := make(chan struct{})
+	for n := range 24 {
+		group.Go(func() {
+			<-start
+			store := &lists.Store{Dir: dir}
+			if _, err := store.Add("dm", "friends", []string{fmt.Sprintf("person-%02d", n)}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	close(start)
+	group.Wait()
+	members, err := (&lists.Store{Dir: dir}).Members("dm", "friends")
+	if err != nil || len(members) != 24 {
+		t.Fatalf("members=%v err=%v", members, err)
+	}
+}
 
 func TestAListHoldsItsPeers(t *testing.T) {
 	store := &lists.Store{Dir: filepath.Join(t.TempDir(), "arc")}
 
-	if members := store.Members("dm", "friends"); members != nil {
+	if members := testutil.Must(store.Members("dm", "friends")); members != nil {
 		t.Errorf("a list that is not there holds %v", members)
 	}
 
@@ -39,14 +63,14 @@ func TestAListHoldsItsPeers(t *testing.T) {
 		t.Errorf("the list holds %v", members)
 	}
 
-	if names := store.Names("dm"); len(names) != 1 || names[0] != "friends" {
+	if names := testutil.Must(store.Names("dm")); len(names) != 1 || names[0] != "friends" {
 		t.Errorf("the tool holds %v", names)
 	}
 
 	if _, err := store.Remove("dm", "friends", nil); err != nil {
 		t.Fatal(err)
 	}
-	if members := store.Members("dm", "friends"); members != nil {
+	if members := testutil.Must(store.Members("dm", "friends")); members != nil {
 		t.Errorf("the list stands after the removal: %v", members)
 	}
 }

@@ -159,5 +159,5 @@ func Apply(ctx context.Context, provider Requester, newest *Release, program str
 	if err != nil {
 		return err
 	}
-	return Replace(program, binary, newest.Version)
+	return Replace(ctx, program, binary, newest.Version)
 }

@@ -28,7 +28,7 @@ func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 	provider := keys.Generate()
 	announce := func(at time.Time) {
 		t.Helper()
-		event, err := catalog.AnnounceManifest(provider, manifest, nostr.Timestamp(at.Unix()))
+		event, err := catalog.AnnounceManifest(context.Background(), provider, manifest, nostr.Timestamp(at.Unix()))
 		if err != nil {
 			t.Fatal(err)
 		}

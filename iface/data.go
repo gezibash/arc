@@ -12,6 +12,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/delivery/draft"
+	"github.com/gezibash/arc/delivery/transport"
 )
 
 // Store is what the data actions need from the citizen's machine.
@@ -30,7 +31,7 @@ type Store interface {
 	Fetch(ctx context.Context, filter nostr.Filter, relays []string) ([]nostr.Event, error)
 	// Watch passes on each new event that matches, as it arrives, from the
 	// citizen's relays or from the relays named.
-	Watch(ctx context.Context, filter nostr.Filter, relays []string) (<-chan nostr.Event, error)
+	Watch(ctx context.Context, filter nostr.Filter, relays []string) (<-chan transport.Received, error)
 	// SendPrivate seals a private event to a citizen, and sends it through
 	// the mail layer: relays, couriers and the outbox.
 	SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error
@@ -563,11 +564,17 @@ func (r *run) watch(q *Query) error {
 
 	filter.Since = nostr.Now()
 	filter.Limit = 0
-	live, err := r.env.Watch(r.ctx, filter, relays)
+	ctx, cancel := context.WithCancel(r.ctx)
+	defer cancel()
+	live, err := r.env.Watch(ctx, filter, relays)
 	if err != nil {
 		return err
 	}
-	for event := range live {
+	for received := range live {
+		if received.Err != nil {
+			return received.Err
+		}
+		event := received.Event
 		var entries []*entry
 		if visibility == "sealed" {
 			entries = r.openAll(q, []nostr.Event{event})

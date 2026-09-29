@@ -33,21 +33,16 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
-	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/delivery/draft"
 	"github.com/gezibash/arc/delivery/groups"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/limits"
-	"github.com/gezibash/arc/delivery/mail"
-	"github.com/gezibash/arc/delivery/node"
 	"github.com/gezibash/arc/delivery/sealed"
-	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
-	"github.com/gezibash/arc/delivery/transport/relay"
 	"github.com/gezibash/arc/iface"
-	"github.com/gezibash/arc/wake"
+	"github.com/gezibash/arc/internal/citizen"
 	"github.com/spf13/cobra"
 )
 
@@ -273,8 +268,8 @@ func announceRelays(command *cobra.Command) {
 	if err != nil {
 		return
 	}
-	defer sess.close()
-	if len(sess.relays) > 0 {
+	defer sess.Close()
+	if len(sess.Relays) > 0 {
 		publishRelayList(command.Context(), sess)
 	}
 }
@@ -407,26 +402,7 @@ func hostGroups(command *cobra.Command, rl *khatru.Relay, db *boltdb.BoltBackend
 }
 
 // session is one open store, with the key and the relays of this citizen.
-type session struct {
-	key    keys.Key
-	node   *node.Node
-	mail   *mail.Mail
-	relays []transport.Transport
-	urls   []string
-	// indexers hold only relay lists. A one-time key answers their NIP-42
-	// challenge, so an indexer does not learn who looks up a list.
-	indexers []transport.Transport
-	keyer    nostr.Keyer
-	// remote says that a NIP-46 signer holds the secret key. The key then
-	// holds the public key alone.
-	remote bool
-	// signer signs and seals for the mail layer and for calls.
-	signer keys.Signer
-	// waker runs the wake hook of a citizen before a live call to it.
-	waker *wake.Waker
-}
-
-func open(command *cobra.Command) (*session, error) {
+func open(command *cobra.Command) (*citizen.Session, error) {
 	dir, err := home(command)
 	if err != nil {
 		return nil, err
@@ -435,56 +411,23 @@ func open(command *cobra.Command) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := id.key
-	s, err := store.Open(filepath.Join(dir, "store"))
-	if err != nil {
-		return nil, err
-	}
 	urls, err := readRelays(dir)
 	if err != nil {
-		s.Close()
 		return nil, err
 	}
-
 	indexers, err := readIndexers(dir)
 	if err != nil {
-		s.Close()
 		return nil, err
 	}
-
-	sess := &session{key: k, node: &node.Node{Store: s}, urls: urls, keyer: id.keyer, remote: id.remote, signer: id.signer}
-	for _, url := range urls {
-		sess.relays = append(sess.relays, relay.Relay{URL: url, Signer: sess.keyer})
-	}
-	once := keyer.NewPlainKeySigner(nostr.Generate())
-	for _, url := range indexers {
-		sess.indexers = append(sess.indexers, relay.Relay{URL: url, Signer: once})
-	}
-
-	sess.mail, err = mail.Open(filepath.Join(dir, "store"), sess.signer, sess.node, sess.relays)
-	if err != nil {
-		s.Close()
-		return nil, err
-	}
-	sess.mail.Indexers = sess.indexers
-
-	// The wake hooks belong to the machine, not to one identity.
 	root, err := rootDir(command)
 	if err != nil {
-		sess.close()
 		return nil, err
 	}
-	sess.waker = wake.Load(filepath.Join(root, wake.FileName), filepath.Join(root, wake.StateDirName))
-	return sess, nil
+	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, URLs: urls, IndexerURLs: indexers, Errors: os.Stderr})
 }
 
 func errRemote(what string) error {
 	return fmt.Errorf("%s needs the secret key on this machine; a remote signer cannot do it yet", what)
-}
-
-func (s *session) close() {
-	s.mail.Close()
-	s.node.Store.Close()
 }
 
 func messageCommand() *cobra.Command {
@@ -521,14 +464,14 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
-			out, err := sess.mail.Send(command.Context(), to, text)
+			out, err := sess.Mail.Send(command.Context(), to, text)
 			if err != nil {
 				return err
 			}
 			fmt.Printf("queued for %s until %s\n", keys.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
-			if len(sess.relays) == 0 {
+			if len(sess.Relays) == 0 {
 				fmt.Println("no relays: run arc sync --dir <path> to hand it to a courier")
 			}
 			return nil
@@ -542,16 +485,23 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
-			msgs := sess.mail.Inbox()
+			msgs, err := sess.Mail.Inbox(command.Context())
+			if err != nil {
+				return err
+			}
 			if len(msgs) == 0 {
 				fmt.Println("no messages: run arc sync")
 			}
 			for _, m := range msgs {
 				fmt.Printf("%s  %s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), m.Text)
 			}
-			if n := sess.mail.Carrying(); n > 0 {
+			n, err := sess.Mail.Carrying()
+			if err != nil {
+				return err
+			}
+			if n > 0 {
 				fmt.Printf("\ncarrying %d sealed messages for other citizens\n", n)
 			}
 			return nil
@@ -565,9 +515,12 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
+			defer sess.Close()
 
-			out := sess.mail.Outbox()
+			out, err := sess.Mail.Outbox(command.Context())
+			if err != nil {
+				return err
+			}
 			if len(out) == 0 {
 				fmt.Println("no messages sent")
 			}
@@ -597,10 +550,10 @@ func syncCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer sess.close()
-			sealed := sealedFilter(sess.key.Public)
+			defer sess.Close()
+			sealed := sealedFilter(sess.Key.Public)
 
-			targets := sess.relays
+			targets := sess.Relays
 			if dir, _ := command.Flags().GetString("dir"); dir != "" {
 				targets = []transport.Transport{file.Dir{Path: dir}}
 			}
@@ -610,7 +563,7 @@ func syncCommand() *cobra.Command {
 
 			failed := false
 			for _, t := range targets {
-				report, err := sess.node.Sync(command.Context(), sealed, t)
+				report, err := sess.Node.Sync(command.Context(), sealed, t)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
 					failed = true
@@ -628,11 +581,11 @@ func syncCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
 				}
 
-				if offers, err := sess.node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
+				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
 					fmt.Printf("%s: announcements received %d\n", t.Name(), offers.Received)
 				}
 
-				mails, err := sess.mail.Sync(command.Context(), t)
+				mails, err := sess.Mail.Sync(command.Context(), t)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
 					failed = true

@@ -46,16 +46,21 @@ type pipes struct {
 }
 
 func startPipes(t *testing.T, handler provider.Handler) *pipes {
+	return startPipesWithOptions(t, context.Background(), handler, provider.Options{})
+}
+
+func startPipesWithOptions(t *testing.T, ctx context.Context, handler provider.Handler, opts provider.Options) *pipes {
 	t.Helper()
 	inRead, inWrite := io.Pipe()
 	outRead, outWrite := io.Pipe()
 	p := &pipes{in: inWrite, out: bufio.NewReader(outRead), done: make(chan error, 1)}
+	opts.In, opts.Out, opts.Log = inRead, outWrite, io.Discard
 	go func() {
-		err := provider.Run(context.Background(), handler, provider.Options{In: inRead, Out: outWrite, Log: io.Discard})
+		err := provider.Run(ctx, handler, opts)
 		outWrite.Close()
 		p.done <- err
 	}()
-	t.Cleanup(func() { inWrite.Close() })
+	t.Cleanup(func() { inWrite.Close(); outRead.Close() })
 	return p
 }
 

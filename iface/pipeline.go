@@ -385,12 +385,16 @@ func (r *run) tail(entries []*entry) []*entry {
 // save writes one field of each record to a file that must not exist.
 func (r *run) save(entries []*entry) error {
 	s := r.command.Output.Save
+	name, err := saveArgument(*r.command)
+	if err != nil {
+		return err
+	}
+	to, ok := r.values[name].(string)
+	if !ok || to == "" {
+		return fmt.Errorf("save needs an explicit path in %s", name)
+	}
 	for _, e := range entries {
 		recScope := r.recordScope(e.rec)
-		to, err := r.renderIn(s.To, recScope)
-		if err != nil {
-			return err
-		}
 		data := []byte(str(field(e.rec, s.Field)))
 		if s.Decode == "base64" {
 			if data, err = base64.StdEncoding.DecodeString(string(data)); err != nil {

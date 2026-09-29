@@ -8,15 +8,18 @@ package host
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/gezibash/arc/provider/wire"
 )
 
 // MaxLineBytes caps one line from the provider. A provider that never writes
@@ -29,10 +32,12 @@ const StopGrace = 5 * time.Second
 
 // Process is one running provider program.
 type Process struct {
-	command *exec.Cmd
-	stdin   io.WriteCloser
-	lines   chan map[string]any
-	log     *slog.Logger
+	command   *exec.Cmd
+	stdin     *os.File
+	lines     chan wire.Event
+	writeGate chan struct{}
+	stopped   chan struct{}
+	log       *slog.Logger
 
 	mu     sync.Mutex
 	closed bool
@@ -65,10 +70,11 @@ func Start(path string, args []string, cwd string, environment []string, log *sl
 	}
 
 	provider := &Process{
-		command: command,
-		stdin:   stdin,
-		lines:   make(chan map[string]any, 64),
-		log:     log,
+		command:   command,
+		stdin:     stdin.(*os.File),
+		lines:     make(chan wire.Event, 64),
+		log:       log,
+		writeGate: make(chan struct{}, 1), stopped: make(chan struct{}),
 	}
 
 	go provider.read(stdout)
@@ -77,70 +83,69 @@ func Start(path string, args []string, cwd string, environment []string, log *sl
 }
 
 // Send writes one event to the provider.
-func (r *Process) Send(event map[string]any) error {
+func (r *Process) Send(ctx context.Context, event wire.Event) error {
 	line, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.closed {
+	select {
+	case r.writeGate <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.stopped:
 		return errors.New("host: the provider is not running")
 	}
-
-	line = append(line, '\n')
-	_, err = r.stdin.Write(line)
+	defer func() { <-r.writeGate }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deadline, _ := ctx.Deadline()
+	if err := r.stdin.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { r.stdin.SetWriteDeadline(time.Now()); close(interrupted) })
+	n, err := r.stdin.Write(append(line, '\n'))
+	if !stop() {
+		<-interrupted
+	}
+	r.stdin.SetWriteDeadline(time.Time{})
+	if err != nil && n > 0 {
+		// The next line cannot safely follow a partial JSON document.
+		r.stdin.Close()
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return err
 }
 
-// read joins the chunks of one line, and passes each answer on. A line over
-// the cap goes, and the provider keeps running.
 func (r *Process) read(stdout io.Reader) {
 	defer close(r.lines)
-
 	reader := bufio.NewReaderSize(stdout, 64*1024)
-	var line []byte
-
 	for {
-		chunk, err := reader.ReadSlice('\n')
-		line = append(line, chunk...)
-
-		if errors.Is(err, bufio.ErrBufferFull) {
-			if len(line) > MaxLineBytes {
-				r.log.Warn("the provider wrote a line over the limit", "bytes", len(line))
-				line = nil
-				if err := drain(reader); err != nil {
-					return
-				}
-			}
+		line, err := wire.ReadLine(reader, MaxLineBytes)
+		if errors.Is(err, wire.ErrLineTooLong) {
+			r.log.Warn("the provider wrote a line over the limit")
 			continue
 		}
 		if err != nil {
-			if len(line) > 0 {
-				r.deliver(line)
-			}
 			return
 		}
-
-		r.deliver(line)
-		line = nil
+		if len(line) == 0 {
+			continue
+		}
+		var answer wire.Event
+		if err := json.Unmarshal(line, &answer); err != nil {
+			r.log.Warn("the provider wrote a line that is not JSON", "bytes", len(line))
+			continue
+		}
+		select {
+		case r.lines <- answer:
+		case <-r.stopped:
+			return
+		}
 	}
-}
-
-func (r *Process) deliver(line []byte) {
-	line = []byte(strings.TrimRight(string(line), "\r\n"))
-	if len(line) == 0 {
-		return
-	}
-
-	var answer map[string]any
-	if err := json.Unmarshal(line, &answer); err != nil {
-		r.log.Warn("the provider wrote a line that is not JSON", "bytes", len(line))
-		return
-	}
-	r.lines <- answer
 }
 
 // report passes the standard error of the provider to the log.
@@ -155,7 +160,7 @@ func (r *Process) report(stderr io.Reader) {
 
 // Lines returns each answer of the provider. The channel closes when the
 // provider stops.
-func (r *Process) Lines() <-chan map[string]any { return r.lines }
+func (r *Process) Lines() <-chan wire.Event { return r.lines }
 
 // Stop closes the input of the provider and waits for it to end. A provider
 // that is still running after StopGrace is killed.
@@ -166,6 +171,7 @@ func (r *Process) Stop() error {
 		return nil
 	}
 	r.closed = true
+	close(r.stopped)
 	r.stdin.Close()
 	r.mu.Unlock()
 
@@ -183,14 +189,4 @@ func (r *Process) Stop() error {
 		r.command.Process.Kill()
 	}
 	return <-ended
-}
-
-func drain(reader *bufio.Reader) error {
-	for {
-		_, err := reader.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		return err
-	}
 }

@@ -8,20 +8,22 @@
 package catalog
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/capability"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/store"
 	"github.com/gezibash/arc/iface"
+	"github.com/gezibash/arc/internal/atomicfile"
 )
 
 // Kind is the kind of a capability announcement.
@@ -63,7 +65,7 @@ func (o Offer) Name() string { return keys.Name(o.Provider[:]) }
 
 // Announce makes the announcement of one capability package. The package is
 // the normalized manifest; its capability id becomes the d tag.
-func Announce(k keys.Signer, pkg map[string]any, at nostr.Timestamp) (nostr.Event, error) {
+func Announce(ctx context.Context, k keys.Signer, pkg map[string]any, at nostr.Timestamp) (nostr.Event, error) {
 	fields, _ := pkg["capability"].(map[string]any)
 	id, _ := fields["id"].(string)
 	if id == "" {
@@ -81,7 +83,7 @@ func Announce(k keys.Signer, pkg map[string]any, at nostr.Timestamp) (nostr.Even
 	}
 
 	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
-	if err := k.Sign(&event); err != nil {
+	if err := k.SignEvent(ctx, &event); err != nil {
 		return nostr.Event{}, err
 	}
 	return event, nil
@@ -89,7 +91,7 @@ func Announce(k keys.Signer, pkg map[string]any, at nostr.Timestamp) (nostr.Even
 
 // AnnounceManifest makes the announcement of one manifest of interface
 // version 1. Its id becomes the d tag.
-func AnnounceManifest(k keys.Signer, data []byte, at nostr.Timestamp) (nostr.Event, error) {
+func AnnounceManifest(ctx context.Context, k keys.Signer, data []byte, at nostr.Timestamp) (nostr.Event, error) {
 	m, err := iface.Parse(data)
 	if err != nil {
 		return nostr.Event{}, err
@@ -100,7 +102,7 @@ func AnnounceManifest(k keys.Signer, data []byte, at nostr.Timestamp) (nostr.Eve
 	}
 	tags := nostr.Tags{{"d", m.ID}, {"t", m.ID}, {"t", m.Shape}}
 	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
-	if err := k.Sign(&event); err != nil {
+	if err := k.SignEvent(ctx, &event); err != nil {
 		return nostr.Event{}, err
 	}
 	return event, nil
@@ -182,11 +184,19 @@ func text(v any) string {
 // Search returns the offers in a store that match a query. An empty query
 // matches every offer. A query matches the id, the scheme, the title, the
 // summary, or the provider's petname, without regard to case.
-func Search(s *store.Store, query string) []Offer {
+type EventReader interface {
+	Query(nostr.Filter) ([]nostr.Event, error)
+}
+
+func Search(s EventReader, query string) ([]Offer, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
 
 	var out []Offer
-	for _, event := range s.Query(nostr.Filter{Kinds: []nostr.Kind{Kind}}) {
+	events, err := s.Query(nostr.Filter{Kinds: []nostr.Kind{Kind}})
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
 		offer, err := Read(event)
 		if err != nil {
 			continue
@@ -203,19 +213,23 @@ func Search(s *store.Store, query string) []Offer {
 		}
 		return out[a].ID < out[b].ID
 	})
-	return out
+	return out, nil
 }
 
 // Find returns one offer of a provider from a store. An empty id takes the
 // provider's only offer, or fails when it has several.
-func Find(s *store.Store, provider nostr.PubKey, id string) (Offer, error) {
+func Find(s EventReader, provider nostr.PubKey, id string) (Offer, error) {
 	filter := nostr.Filter{Kinds: []nostr.Kind{Kind}, Authors: []nostr.PubKey{provider}}
 	if id != "" {
 		filter.Tags = nostr.TagMap{"d": {id}}
 	}
 
 	var offers []Offer
-	for _, event := range s.Query(filter) {
+	events, err := s.Query(filter)
+	if err != nil {
+		return Offer{}, err
+	}
+	for _, event := range events {
 		if offer, err := Read(event); err == nil {
 			offers = append(offers, offer)
 		}
@@ -266,6 +280,11 @@ func (i Installs) List() ([]Install, error) {
 // capability of interface version 1 runs as the name as, which no other
 // install can hold.
 func (i Installs) Add(offer Offer, as string) error {
+	unlock, err := atomicfile.Lock(i.Path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	list, err := i.List()
 	if err != nil {
 		return err
@@ -287,16 +306,18 @@ func (i Installs) Add(offer Offer, as string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(i.Path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(i.Path, body, 0o600)
+	return atomicfile.Write(i.Path, body, 0600)
 }
 
 // Remove takes one install out, by the name that runs it, or by the petname
 // of its provider for an install that runs through arc call. It returns the
 // install that it removed.
 func (i Installs) Remove(name string) (Install, error) {
+	unlock, err := atomicfile.Lock(i.Path)
+	if err != nil {
+		return Install{}, err
+	}
+	defer unlock()
 	list, err := i.List()
 	if err != nil {
 		return Install{}, err
@@ -321,38 +342,81 @@ func (i Installs) Remove(name string) (Install, error) {
 	if err != nil {
 		return Install{}, err
 	}
-	return gone, os.WriteFile(i.Path, body, 0o600)
+	return gone, atomicfile.Write(i.Path, body, 0600)
 }
 
 // Trusted says whether the citizen installed a capability of a provider.
-func (i Installs) Trusted(provider nostr.PubKey, id string) bool {
-	list, _ := i.List()
-	return slices.ContainsFunc(list, func(e Install) bool { return e.Provider == provider.Hex() && e.ID == id })
+func (i Installs) Trusted(provider nostr.PubKey, id string) (bool, error) {
+	list, err := i.List()
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(list, func(e Install) bool { return e.Provider == provider.Hex() && e.ID == id }), nil
 }
 
 // Named returns the install that runs as a name.
-func (i Installs) Named(as string) (Install, bool) {
-	list, _ := i.List()
+func (i Installs) Named(as string) (Install, bool, error) {
+	list, err := i.List()
+	if err != nil {
+		return Install{}, false, err
+	}
 	for _, e := range list {
 		if e.As == as {
-			return e, true
+			return e, true, nil
 		}
 	}
-	return Install{}, false
+	return Install{}, false, nil
 }
 
 // Resolve reads a provider as 64 hex characters, or as the petname of an
 // installed capability.
-func (i Installs) Resolve(name string) (nostr.PubKey, string, error) {
-	if key, err := nostr.PubKeyFromHex(name); err == nil {
-		return key, "", nil
+func (i Installs) Resolve(ctx context.Context, name string) (nostr.PubKey, string, error) {
+	if pk, ok := keys.ParsePublic(name); ok {
+		return pk, "", nil
 	}
-	list, _ := i.List()
+	list, err := i.List()
+	if err != nil {
+		return nostr.PubKey{}, "", err
+	}
 	for _, e := range list {
-		if e.As == name || e.Name == name || e.ID == name {
-			key, err := nostr.PubKeyFromHex(e.Provider)
-			return key, e.ID, err
+		if e.As == name {
+			pk, err := nostr.PubKeyFromHex(e.Provider)
+			return pk, e.ID, err
 		}
 	}
-	return nostr.PubKey{}, "", fmt.Errorf("catalog: %q is not a key or an installed capability", name)
+	var matches []Install
+	for _, e := range list {
+		if e.Name == name || e.ID == name {
+			matches = append(matches, e)
+		}
+	}
+	if len(matches) > 0 {
+		first := matches[0]
+		id := first.ID
+		for _, e := range matches[1:] {
+			if e.Provider != first.Provider {
+				return nostr.PubKey{}, "", fmt.Errorf("catalog: %q names several providers; use a key or an installed command name", name)
+			}
+			if e.ID != id {
+				id = ""
+			}
+		}
+		pk, err := nostr.PubKeyFromHex(first.Provider)
+		return pk, id, err
+	}
+	pk, err := keys.ResolvePublic(ctx, name)
+	return pk, "", err
+}
+
+// AnnounceProvider signs the definition already validated by the loader.
+func AnnounceProvider(ctx context.Context, k keys.Signer, p *capability.Provider, at nostr.Timestamp) (nostr.Event, error) {
+	tags := nostr.Tags{{"d", p.ID}}
+	for _, word := range p.Terms {
+		tags = append(tags, nostr.Tag{"t", word})
+	}
+	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: p.Content}
+	if err := k.SignEvent(ctx, &event); err != nil {
+		return nostr.Event{}, err
+	}
+	return event, nil
 }

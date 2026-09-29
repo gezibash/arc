@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/keyer"
+	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/mail"
 	"github.com/gezibash/arc/delivery/node"
@@ -19,10 +21,12 @@ import (
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/internal/testutil"
 )
 
 // citizen is one node with its own key, store and mail.
 type citizen struct {
+	dir  string
 	key  keys.Key
 	node *node.Node
 	mail *mail.Mail
@@ -44,7 +48,10 @@ func newCitizen(t *testing.T, relays ...transport.Transport) citizen {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.Close() })
-	return citizen{key: k, node: n, mail: m}
+	m.InboxRelay = func(url string) transport.Transport {
+		return relay.Relay{URL: url, Signer: keyer.NewPlainKeySigner(nostr.Generate())}
+	}
+	return citizen{dir: dir, key: k, node: n, mail: m}
 }
 
 func (c citizen) sync(t *testing.T, tr transport.Transport) mail.Report {
@@ -65,7 +72,7 @@ func (c citizen) send(t *testing.T, to citizen, text string) {
 
 func inboxText(c citizen) []string {
 	var out []string
-	for _, m := range c.mail.Inbox() {
+	for _, m := range testutil.Must(c.mail.Inbox(context.Background())) {
 		out = append(out, m.Text)
 	}
 	return out
@@ -83,7 +90,7 @@ func TestAMessageCrossesARelayAndIsAcknowledged(t *testing.T) {
 	if got.Received != 1 {
 		t.Fatalf("bob received %d messages", got.Received)
 	}
-	if msgs := bob.mail.Inbox(); len(msgs) != 1 || msgs[0].Text != "hello over the relay" || msgs[0].From != alice.key.Public {
+	if msgs := testutil.Must(bob.mail.Inbox(context.Background())); len(msgs) != 1 || msgs[0].Text != "hello over the relay" || msgs[0].From != alice.key.Public {
 		t.Fatalf("bob's inbox: %+v", msgs)
 	}
 
@@ -91,7 +98,7 @@ func TestAMessageCrossesARelayAndIsAcknowledged(t *testing.T) {
 	if back.Delivered != 1 {
 		t.Errorf("alice saw %d acknowledgements, want 1", back.Delivered)
 	}
-	if out := alice.mail.Outbox(); len(out) != 1 || out[0].State(time.Now()) != "delivered" || out[0].Text != "hello over the relay" {
+	if out := testutil.Must(alice.mail.Outbox(context.Background())); len(out) != 1 || out[0].State(time.Now()) != "delivered" || out[0].Text != "hello over the relay" {
 		t.Errorf("alice's outbox: %+v", out)
 	}
 }
@@ -107,7 +114,7 @@ func TestAMessageReachesAnOfflineRecipientThroughACourier(t *testing.T) {
 	if got := carol.sync(t, first); got.Carried != 1 {
 		t.Fatalf("carol carried %d wraps, want 1", got.Carried)
 	}
-	if len(carol.mail.Inbox()) != 0 {
+	if len(testutil.Must(carol.mail.Inbox(context.Background()))) != 0 {
 		t.Error("carol could read mail that was not for her")
 	}
 	carol.sync(t, second)
@@ -126,7 +133,7 @@ func TestAMessageReachesAnOfflineRecipientThroughACourier(t *testing.T) {
 	if got := alice.sync(t, first); got.Delivered != 1 {
 		t.Errorf("alice saw %d acknowledgements, want 1", got.Delivered)
 	}
-	if out := alice.mail.Outbox(); out[0].State(time.Now()) != "delivered" {
+	if out := testutil.Must(alice.mail.Outbox(context.Background())); out[0].State(time.Now()) != "delivered" {
 		t.Errorf("the message is %s", out[0].State(time.Now()))
 	}
 }
@@ -219,12 +226,12 @@ func TestAReplayedWrapIsHandledOnce(t *testing.T) {
 	if first.Received != 1 || second.Received != 0 {
 		t.Errorf("received %d then %d, want 1 then 0", first.Received, second.Received)
 	}
-	if len(bob.mail.Inbox()) != 1 {
-		t.Errorf("the inbox holds %d messages, want 1", len(bob.mail.Inbox()))
+	if len(testutil.Must(bob.mail.Inbox(context.Background()))) != 1 {
+		t.Errorf("the inbox holds %d messages, want 1", len(testutil.Must(bob.mail.Inbox(context.Background()))))
 	}
 
 	// One acknowledgement, in its two forms, and no more.
-	acks := bob.node.Store.Query(nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}})
+	acks := testutil.Must(bob.node.Store.Query(nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}}))
 	if len(acks) != 2 {
 		t.Errorf("bob holds %d wraps, want the two forms of one acknowledgement", len(acks))
 	}
@@ -243,7 +250,7 @@ func TestACourierCarriesAtMostItsShare(t *testing.T) {
 		carol.sync(t, s)
 	}
 
-	if got := carol.mail.Carrying(); got != mail.MaxCarried {
+	if got := testutil.Must(carol.mail.Carrying()); got != mail.MaxCarried {
 		t.Errorf("carol carries %d wraps, want %d", got, mail.MaxCarried)
 	}
 }
@@ -266,5 +273,40 @@ func TestAChangedWrapIsRefused(t *testing.T) {
 	got := bob.sync(t, s)
 	if got.Received != 0 || len(got.Refused) == 0 {
 		t.Errorf("received %d and refused %d, want 0 and some", got.Received, len(got.Refused))
+	}
+}
+
+// Receipt without a provider must survive a restart and work without the
+// original transport: a stored request is pending work, not a completed call.
+func TestReceivedCallWaitsForAProvider(t *testing.T) {
+	alice, bob := newCitizen(t), newCitizen(t)
+	courier := stick(t)
+	if _, err := alice.mail.Request(context.Background(), bob.key.Public, call.Request{Capability: "counter", Body: "increment"}); err != nil {
+		t.Fatal(err)
+	}
+	alice.sync(t, courier)
+	bob.sync(t, courier)
+	bob.mail.Close()
+	reopened, err := mail.Open(bob.dir, bob.key, bob.node, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	bob.mail = reopened
+	count := 0
+	bob.mail.OnRequest = func(context.Context, nostr.Event) (call.Reply, error) { count++; return call.Reply{Body: "1"}, nil }
+	if report := bob.sync(t, stick(t)); report.Answered != 1 {
+		t.Fatalf("answered=%d, want 1", report.Answered)
+	}
+	bob.sync(t, courier)
+	if count != 1 {
+		t.Fatalf("executions=%d, want 1", count)
+	}
+	alice.sync(t, courier)
+	bob.sync(t, courier)
+	alice.sync(t, courier)
+	out := testutil.Must(alice.mail.Outbox(context.Background()))
+	if len(out) != 1 || out[0].Reply.Body != "1" {
+		t.Fatalf("outbox=%+v", out)
 	}
 }

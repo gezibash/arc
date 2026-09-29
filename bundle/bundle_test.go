@@ -22,7 +22,7 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{files.Arcfile, files.Manifest, files.Interface, files.Runtime} {
+	for _, path := range []string{files.Arcfile, files.Manifest, files.Runtime} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("%s is missing: %v", path, err)
 		}
@@ -37,24 +37,17 @@ func TestInitWritesABundleThatServes(t *testing.T) {
 	}
 
 	// The manifest that Init writes must be a capability that ARC serves.
-	pkg, err := capability.LoadFile(files.Manifest)
+	_, err = capability.LoadProvider(files.Manifest)
 	if err != nil {
 		t.Fatalf("the manifest is not a capability: %v", err)
 	}
 
-	fields, _ := pkg["capability"].(map[string]any)
-	if fields["scheme"] != "weather-bot" {
-		t.Errorf("scheme = %v, want the name of the directory", fields["scheme"])
-	}
-	if fields["title"] != "Weather Bot" {
-		t.Errorf("title = %v", fields["title"])
-	}
-
-	// arc serve announces the interface in place of the manifest, and
-	// refuses an interface that iface.Parse refuses.
-	m := parseInterface(t, files.Interface)
+	m := parseInterface(t, files.Manifest)
 	if m.ID != "weather-bot" {
-		t.Errorf("id = %s, want the name of the directory", m.ID)
+		t.Errorf("scheme = %v, want the name of the directory", m.ID)
+	}
+	if m.Title != "Weather Bot" {
+		t.Errorf("title = %v", m.Title)
 	}
 
 	// The bundle resolves into an address that the runtime reads.
@@ -87,7 +80,7 @@ func TestInitWritesAnInterfaceForAnyDirectoryName(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		parseInterface(t, files.Interface)
+		parseInterface(t, files.Manifest)
 	}
 }
 
@@ -134,19 +127,19 @@ func TestInitWritesAManifestForAnUnusualName(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		pkg, err := capability.LoadFile(files.Manifest)
+		_, err = capability.LoadProvider(files.Manifest)
 		if err != nil {
 			t.Errorf("%q: the manifest is not a capability: %v", name, err)
 			continue
 		}
 
-		fields, _ := pkg["capability"].(map[string]any)
-		if fields["title"] != want {
-			t.Errorf("%q: title = %q, want %q", name, fields["title"], want)
+		m := parseInterface(t, files.Manifest)
+		if m.Title != want {
+			t.Errorf("%q: title = %q, want %q", name, m.Title, want)
 		}
 
 		// arc serve announces the interface, so it must parse too.
-		if m := parseInterface(t, files.Interface); m.Title != want {
+		if m := parseInterface(t, files.Manifest); m.Title != want {
 			t.Errorf("%q: the title of the interface = %q, want %q", name, m.Title, want)
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/internal/testutil"
 	"github.com/gezibash/arc/provider/host"
 )
 
@@ -233,7 +234,7 @@ func TestAStaleLiveRequestIsRefused(t *testing.T) {
 	// A request written ten minutes ago, as a relay replaying it would send.
 	caller := keys.Generate()
 	old := call.RequestRumor(caller, serving.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/", Body: "old"}, time.Now().Add(-10*time.Minute))
-	wrap, err := private.Wrap(caller, serving.Public, old, private.RelayForm, private.LiveWrapKind, time.Now().Add(time.Minute))
+	wrap, err := private.Wrap(context.Background(), caller, serving.Public, old, private.RelayForm, private.LiveWrapKind, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,7 @@ func TestAStoreAndForwardCallCrossesACourier(t *testing.T) {
 	if got := alice.sync(t, first); got.Replies != 1 {
 		t.Fatalf("alice got %d replies", got.Replies)
 	}
-	out := alice.mail.Outbox()
+	out := testutil.Must(alice.mail.Outbox(context.Background()))
 	if len(out) != 1 || out[0].State(time.Now()) != "delivered" || out[0].Reply.Body != "ECHO / by hand" {
 		t.Errorf("alice's outbox: %+v", out)
 	}

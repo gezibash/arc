@@ -14,9 +14,17 @@ import (
 	"github.com/gezibash/arc/delivery/transport"
 )
 
+// EventStore is the persistence needed by a node. Read failures are never
+// represented as missing events.
+type EventStore interface {
+	Save(nostr.Event) (store.Result, error)
+	Query(nostr.Filter) ([]nostr.Event, error)
+	Has(nostr.ID) (bool, error)
+}
+
 // Node is the store of one citizen on one machine.
 type Node struct {
-	Store *store.Store
+	Store EventStore
 }
 
 // Sent is the outcome of one send to one transport.
@@ -62,7 +70,11 @@ func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transp
 	report := Report{Transport: t.Name()}
 
 	if r, ok := t.(transport.Reconciler); ok {
-		need, give, ok, err := r.Reconcile(ctx, filter, n.Store)
+		local, err := n.Store.Query(filter)
+		if err != nil {
+			return report, err
+		}
+		need, give, ok, err := r.Reconcile(ctx, filter, (*store.Events)(&local))
 		if err != nil {
 			return report, err
 		}
@@ -86,7 +98,11 @@ func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transp
 		}
 	}
 
-	for _, event := range n.Store.Query(filter) {
+	events, err := n.Store.Query(filter)
+	if err != nil {
+		return report, err
+	}
+	for _, event := range events {
 		if remote[event.ID] {
 			continue
 		}
@@ -118,7 +134,11 @@ func (n *Node) exchange(ctx context.Context, t transport.Transport, need, give [
 	}
 
 	for i := 0; i < len(give); i += size {
-		for _, event := range n.Store.Query(nostr.Filter{IDs: give[i:min(i+size, len(give))]}) {
+		events, err := n.Store.Query(nostr.Filter{IDs: give[i:min(i+size, len(give))]})
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
 			if err := t.Send(ctx, event); err != nil {
 				report.SendFailed = append(report.SendFailed, err)
 				continue
@@ -165,8 +185,7 @@ func (n *Node) Pull(ctx context.Context, filter nostr.Filter, transports []trans
 		report.Unreadable = batch.Unreadable
 		for _, event := range batch.Events {
 			if err := n.keep(event, &report); err != nil {
-				errs = append(errs, err)
-				break
+				return nil, append(errs, err)
 			}
 		}
 		reports = append(reports, report)
@@ -189,7 +208,11 @@ func Unreached(reports []Report, errs []error) error {
 // and no transport answered, it returns their errors.
 func (n *Node) Obtain(ctx context.Context, ids []nostr.ID, transports []transport.Transport) (map[nostr.ID]nostr.Event, error) {
 	found := make(map[nostr.ID]nostr.Event, len(ids))
-	for _, event := range n.Store.Query(nostr.Filter{IDs: ids}) {
+	events, err := n.Store.Query(nostr.Filter{IDs: ids})
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
 		found[event.ID] = event
 	}
 
@@ -235,23 +258,39 @@ func lacking(ids []nostr.ID, found map[nostr.ID]nostr.Event) []nostr.ID {
 
 // Watch keeps each event that a live transport sends, and passes on the ones
 // that the store accepted.
-func (n *Node) Watch(ctx context.Context, filter nostr.Filter, t transport.Live) (<-chan nostr.Event, error) {
+func (n *Node) Watch(ctx context.Context, filter nostr.Filter, t transport.Live) (<-chan transport.Received, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	in, err := t.Watch(ctx, filter)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
-	out := make(chan nostr.Event)
+	out := make(chan transport.Received)
 	go func() {
 		defer close(out)
-		for event := range in {
+		defer cancel()
+		for {
+			var event nostr.Event
+			select {
+			case e, ok := <-in:
+				if !ok {
+					return
+				}
+				event = e
+			case <-ctx.Done():
+				return
+			}
 			result, err := n.Store.Save(event)
-			if err != nil || result.Outcome == store.Refused || result.Outcome == store.Superseded {
+			if err == nil && (result.Outcome == store.Refused || result.Outcome == store.Superseded) {
 				continue
 			}
 			select {
-			case out <- event:
+			case out <- transport.Received{Event: event, Err: err}:
 			case <-ctx.Done():
+				return
+			}
+			if err != nil {
 				return
 			}
 		}

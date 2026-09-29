@@ -5,6 +5,7 @@
 package keys
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,9 +13,11 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/nip19"
 	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip49"
+	"github.com/gezibash/arc/internal/atomicfile"
 )
 
 // Errors of a key file.
@@ -151,37 +154,44 @@ func Decrypt(text, passphrase string) (Key, error) {
 
 // Write replaces what a key file holds, at once: it writes a new file that
 // only its owner can read, then renames it over the old one.
-func Write(path, text string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temp := path + ".new"
-	if err := os.WriteFile(temp, []byte(text+"\n"), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
-}
+func Write(path, text string) error { return atomicfile.Write(path, []byte(text+"\n"), 0600) }
 
 // Signer is a citizen who signs and seals: with the secret key on this
 // machine, as Key does, or through a remote signer of NIP-46. The mail layer
 // and calls need nothing more.
 type Signer interface {
+	nostr.Keyer
 	PublicKey() nostr.PubKey
-	// Sign sets the author, the ID and the signature of an event.
-	Sign(event *nostr.Event) error
-	// Encrypt and Decrypt use NIP-44 with another citizen.
-	Encrypt(plaintext string, to nostr.PubKey) (string, error)
-	Decrypt(ciphertext string, from nostr.PubKey) (string, error)
 }
+
+// Identity caches a remote signer's public key without introducing another
+// signing/encryption API. All effects use the context-aware Nostr contract.
+type Identity struct {
+	Public nostr.PubKey
+	nostr.Keyer
+}
+
+func (i Identity) PublicKey() nostr.PubKey { return i.Public }
 
 // PublicKey is the address of the citizen.
 func (k Key) PublicKey() nostr.PubKey { return k.Public }
 
-// Sign signs an event with the secret key.
-func (k Key) Sign(event *nostr.Event) error { return event.Sign(k.Secret) }
+// GetPublicKey returns the cached public identity.
+func (k Key) GetPublicKey(ctx context.Context) (nostr.PubKey, error) { return k.Public, ctx.Err() }
+
+// SignEvent signs with the local secret key, respecting cancellation.
+func (k Key) SignEvent(ctx context.Context, event *nostr.Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return event.Sign(k.Secret)
+}
 
 // Encrypt seals text to another citizen with NIP-44.
-func (k Key) Encrypt(plaintext string, to nostr.PubKey) (string, error) {
+func (k Key) Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	conversation, err := nip44.GenerateConversationKey(to, k.Secret)
 	if err != nil {
 		return "", err
@@ -190,10 +200,26 @@ func (k Key) Encrypt(plaintext string, to nostr.PubKey) (string, error) {
 }
 
 // Decrypt opens text that another citizen sealed with NIP-44.
-func (k Key) Decrypt(ciphertext string, from nostr.PubKey) (string, error) {
+func (k Key) Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	conversation, err := nip44.GenerateConversationKey(from, k.Secret)
 	if err != nil {
 		return "", err
 	}
 	return nip44.Decrypt(ciphertext, conversation)
+}
+
+func (k Key) Nip04Encrypt(ctx context.Context, text string, to nostr.PubKey) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return keyer.NewPlainKeySigner(k.Secret).Nip04Encrypt(ctx, text, to)
+}
+func (k Key) Nip04Decrypt(ctx context.Context, text string, from nostr.PubKey) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return keyer.NewPlainKeySigner(k.Secret).Nip04Decrypt(ctx, text, from)
 }

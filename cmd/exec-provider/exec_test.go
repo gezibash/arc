@@ -108,6 +108,24 @@ func TestStopsACommandAtTheTimeout(t *testing.T) {
 	}
 }
 
+func TestCallerCancellationStopsTheCommand(t *testing.T) {
+	s := testServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	body, err := s.HandleRequest(ctx, provider.Request{From: caller, Meta: map[string]any{"method": "EXEC"}, Message: `{"script":"sleep 2","timeout_ms":30000}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got result
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.TimedOut || time.Since(started) > time.Second {
+		t.Fatalf("cancellation result=%+v elapsed=%s", got, time.Since(started))
+	}
+}
+
 // A timeout stops the children of the command as well.
 func TestStopsTheWholeProcessGroup(t *testing.T) {
 	s := testServer(t)

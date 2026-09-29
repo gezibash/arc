@@ -214,25 +214,30 @@ func closed(reason string) error {
 func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (nostr.Event, error) {
 	conn, err := r.connect(ctx)
 	if err != nil {
-		return nostr.Event{}, err
+		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
 	defer conn.Close()
 
 	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange"})
 	if err != nil {
-		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
+		return nostr.Event{}, &transport.NotSubmittedError{Err: fmt.Errorf("relay %s: %w", r.URL, err)}
 	}
 	defer sub.Unsub()
 
 	select {
 	case <-sub.EndOfStoredEvents:
 	case reason := <-sub.ClosedReason:
-		return nostr.Event{}, fmt.Errorf("relay %s: the relay closed the subscription: %s", r.URL, reason)
+		return nostr.Event{}, &transport.NotSubmittedError{Err: fmt.Errorf("relay %s: the relay closed the subscription: %s", r.URL, reason)}
 	case <-ctx.Done():
-		return nostr.Event{}, ctx.Err()
+		return nostr.Event{}, &transport.NotSubmittedError{Err: ctx.Err()}
 	}
 
 	if err := r.publish(ctx, conn, event); err != nil {
+		// This explicit refusal means no subscriber received the ephemeral event.
+		if err.Error() == "msg: mute: no one was listening for this" {
+			return nostr.Event{}, &transport.NotSubmittedError{Err: err}
+		}
+
 		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 

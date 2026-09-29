@@ -16,6 +16,7 @@ import (
 	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/delivery/store"
+	"github.com/gezibash/arc/delivery/transport"
 )
 
 // specManifests are the manifests of section 17 of the spec.
@@ -159,15 +160,34 @@ func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []stri
 func (f *fakeEnv) Fetch(_ context.Context, filter nostr.Filter, relays []string) ([]nostr.Event, error) {
 	f.fetchedIDs += len(filter.IDs)
 	if relays != nil {
-		return f.net.relay(f.t, relays[0]).Query(filter), nil
+		return f.net.relay(f.t, relays[0]).Query(filter)
 	}
-	return f.store.Query(filter), nil
+	return f.store.Query(filter)
 }
-func (f *fakeEnv) Watch(context.Context, nostr.Filter, []string) (<-chan nostr.Event, error) {
+func (f *fakeEnv) Watch(ctx context.Context, _ nostr.Filter, _ []string) (<-chan transport.Received, error) {
 	if f.live == nil {
 		return nil, errors.New("no relay to watch")
 	}
-	return f.live, nil
+	out := make(chan transport.Received)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case event, ok := <-f.live:
+				if !ok {
+					return
+				}
+				select {
+				case out <- transport.Received{Event: event}:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
 }
 func (f *fakeEnv) SendPrivate(_ context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
 	rumor := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), Content: content, Tags: tags, PubKey: f.me.Public()}
@@ -185,7 +205,7 @@ func (f *fakeEnv) Private(_ context.Context, kinds []nostr.Kind) ([]nostr.Event,
 	}
 	return out, nil
 }
-func (f *fakeEnv) Keyed(info []byte, input string) (string, error) {
+func (f *fakeEnv) Keyed(_ context.Context, info []byte, input string) (string, error) {
 	root, err := KeyedRoot(f.me)
 	if err != nil {
 		return "", err
