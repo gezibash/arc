@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/delivery/store"
 )
 
 // Address is a capability address: <scheme>+arc://<provider>/<path>. See
@@ -73,9 +72,13 @@ func ParseAddress(text string) (Address, error) {
 // FindScheme finds the capability of a provider that an address names: the
 // one whose id is the scheme, or else the only one whose manifest has that
 // scheme.
-func FindScheme(s *store.Store, provider nostr.PubKey, scheme string) (Offer, error) {
+func FindScheme(s EventReader, provider nostr.PubKey, scheme string) (Offer, error) {
 	var matches []Offer
-	for _, event := range s.Query(nostr.Filter{Kinds: []nostr.Kind{Kind}, Authors: []nostr.PubKey{provider}}) {
+	events, err := s.Query(nostr.Filter{Kinds: []nostr.Kind{Kind}, Authors: []nostr.PubKey{provider}})
+	if err != nil {
+		return Offer{}, err
+	}
+	for _, event := range events {
 		offer, err := Read(event)
 		if err != nil {
 			continue

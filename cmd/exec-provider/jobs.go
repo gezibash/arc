@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gezibash/arc/internal/atomicfile"
 	"github.com/gezibash/arc/provider"
 )
 
@@ -73,6 +75,11 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 		StartedAt: now(),
 	}
 	if err := writeStatus(dir, status); err != nil {
+		killGroup(process)
+		process.Wait()
+		stdout.Close()
+		stderr.Close()
+		s.lease.release()
 		return nil, err
 	}
 
@@ -81,7 +88,7 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 		defer stdout.Close()
 		defer stderr.Close()
 
-		timedOut := wait(process, time.Duration(cmd.TimeoutMS)*time.Millisecond)
+		timedOut := wait(context.Background(), process, time.Duration(cmd.TimeoutMS)*time.Millisecond)
 		exit := process.ProcessState.ExitCode()
 
 		status.State = "done"
@@ -165,11 +172,7 @@ func writeStatus(dir string, status jobStatus) error {
 		return err
 	}
 
-	temporary := filepath.Join(dir, "status.json.tmp")
-	if err := os.WriteFile(temporary, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, filepath.Join(dir, "status.json"))
+	return atomicfile.Write(filepath.Join(dir, "status.json"), data, 0600)
 }
 
 // tail reads the last bytes of a file.

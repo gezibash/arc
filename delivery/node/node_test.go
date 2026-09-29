@@ -18,6 +18,7 @@ import (
 	"github.com/gezibash/arc/delivery/transport"
 	"github.com/gezibash/arc/delivery/transport/file"
 	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/internal/testutil"
 )
 
 func newNode(t *testing.T) *node.Node {
@@ -76,7 +77,7 @@ func syncBoth(t *testing.T, tr transport.Transport) {
 		t.Fatal(err)
 	}
 	for _, id := range []nostr.ID{first.ID, second.ID} {
-		if !a.Store.Has(id) || !b.Store.Has(id) {
+		if !testutil.Must(a.Store.Has(id)) || !testutil.Must(b.Store.Has(id)) {
 			t.Errorf("event %s did not reach both nodes", id.Hex())
 		}
 	}
@@ -126,7 +127,7 @@ func TestADirectoryCannotSmuggleAChangedEvent(t *testing.T) {
 	if report.Unreadable != 1 {
 		t.Errorf("unreadable = %d, want 1", report.Unreadable)
 	}
-	if b.Store.Has(event.ID) {
+	if testutil.Must(b.Store.Has(event.ID)) {
 		t.Error("the store kept a changed event")
 	}
 }
@@ -151,7 +152,7 @@ func TestObtainAsksTheTransportsOnlyForWhatIsMissing(t *testing.T) {
 	if _, ok := found[event.ID]; !ok {
 		t.Fatal("the event did not come from the relay")
 	}
-	if !b.Store.Has(event.ID) {
+	if !testutil.Must(b.Store.Has(event.ID)) {
 		t.Error("the obtained event is not in the store")
 	}
 }

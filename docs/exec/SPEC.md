@@ -61,7 +61,7 @@ agent instructions.
 - A live call needs a live path now. A store-and-forward call waits in the
   outbox of the caller, and the provider answers it on its next sync.
 - `arc call` waits for one reply of a live call for `--timeout`. The
-  default is 30 seconds.
+  default and maximum are 120 seconds.
 - A direct message waits in the outbox until the recipient acknowledges it,
   for at most 7 days. See docs/delivery/SPEC.md, section 10.2.
 
@@ -199,9 +199,9 @@ Rules:
   `timed_out` to `true`.
 - Standard output and standard error share one output budget. The provider
   cuts the output at the budget and sets `truncated` to `true`.
-- The timeout limit is at most 115 seconds. `arc call` waits 30 seconds by
-  default. For a longer command, the caller passes a larger `--timeout`, for
-  example `--timeout 120`.
+- The timeout limit is at most 115 seconds. `arc call` has a 120-second
+  budget by default; `--timeout` can shorten it. Caller cancellation and
+  deadlines also stop the command group. Detached jobs keep their own timeout.
 
 The operator writes `EXEC_CONFIG`, an absolute path to a JSON file:
 

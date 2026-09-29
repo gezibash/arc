@@ -15,6 +15,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/delivery/call"
 	"github.com/gezibash/arc/internal/canonical"
+	"github.com/gezibash/arc/internal/citizen"
 	"github.com/gezibash/arc/release"
 	"github.com/spf13/cobra"
 )
@@ -56,13 +57,13 @@ func withUpdateFlags(command *cobra.Command) *cobra.Command {
 
 // releaseCaller asks one provider for releases with live calls.
 type releaseCaller struct {
-	sess     *session
+	sess     *citizen.Session
 	provider nostr.PubKey
 }
 
 func (r releaseCaller) Request(ctx context.Context, body []byte) ([]byte, error) {
 	request := call.Request{Capability: "releases", Method: "RAW", Path: "/releases", Body: string(body)}
-	reply, _, _, err := liveCall(ctx, r.sess, r.provider, request, 30*time.Second)
+	reply, _, _, err := r.sess.LiveCall(ctx, r.provider, request, 30*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +97,7 @@ func update(command *cobra.Command, apply bool) error {
 	if err != nil {
 		return err
 	}
-	env := &cliEnv{installs: installs}
+	env := &citizen.Environment{Installs: installs}
 	provider, err := env.ResolveKey(command.Context(), providerText)
 	if err != nil {
 		return fmt.Errorf("--provider: %w", err)
@@ -110,7 +111,7 @@ func update(command *cobra.Command, apply bool) error {
 	if err != nil {
 		return err
 	}
-	defer sess.close()
+	defer sess.Close()
 	dir, err := home(command)
 	if err != nil {
 		return err

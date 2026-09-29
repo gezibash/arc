@@ -8,6 +8,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/store"
+	"github.com/gezibash/arc/internal/testutil"
 )
 
 func open(t *testing.T) *store.Store {
@@ -48,7 +49,7 @@ func TestStoresAndDeduplicates(t *testing.T) {
 	if r := save(t, s, event); r.Outcome != store.Duplicate {
 		t.Errorf("second save: %v, want duplicate", r.Outcome)
 	}
-	if !s.Has(event.ID) {
+	if !testutil.Must(s.Has(event.ID)) {
 		t.Error("the store does not hold the event")
 	}
 }
@@ -68,7 +69,7 @@ func TestRefusesAChangedEvent(t *testing.T) {
 	if r := save(t, s, changed); r.Outcome != store.Refused {
 		t.Errorf("a changed event with a new id gave %v, want refused", r.Outcome)
 	}
-	if s.Has(changed.ID) || s.Has(event.ID) {
+	if testutil.Must(s.Has(changed.ID)) || testutil.Must(s.Has(event.ID)) {
 		t.Error("the store kept a refused event")
 	}
 }
@@ -89,7 +90,7 @@ func TestReplaceableKeepsTheNewest(t *testing.T) {
 		t.Errorf("older after newer: %v, want superseded", r.Outcome)
 	}
 
-	got := s.Query(nostr.Filter{Kinds: []nostr.Kind{30078}, Authors: []nostr.PubKey{k.Public}})
+	got := testutil.Must(s.Query(nostr.Filter{Kinds: []nostr.Kind{30078}, Authors: []nostr.PubKey{k.Public}}))
 	if len(got) != 1 || got[0].ID != newer.ID {
 		t.Errorf("the store holds %d heads, want only the newer one", len(got))
 	}
@@ -128,10 +129,10 @@ func TestADeletionRemovesAndKeepsOut(t *testing.T) {
 		t.Fatalf("the request was %s", got.Outcome)
 	}
 
-	if s.Has(note.ID) || s.Has(draft.ID) {
+	if testutil.Must(s.Has(note.ID)) || testutil.Must(s.Has(draft.ID)) {
 		t.Error("a deleted event is still kept")
 	}
-	if !s.Has(theirs.ID) {
+	if !testutil.Must(s.Has(theirs.ID)) {
 		t.Error("a request deleted the event of another author")
 	}
 
@@ -155,7 +156,7 @@ func TestATieKeepsTheLowerID(t *testing.T) {
 	b := signed(t, k, 30000, 100, "b", nostr.Tag{"d", "x"})
 	save(t, s, a)
 	save(t, s, b)
-	got := s.Query(nostr.Filter{Kinds: []nostr.Kind{30000}})
+	got := testutil.Must(s.Query(nostr.Filter{Kinds: []nostr.Kind{30000}}))
 	winner := a
 	if string(b.ID[:]) < string(a.ID[:]) {
 		winner = b

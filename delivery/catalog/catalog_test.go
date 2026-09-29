@@ -1,6 +1,7 @@
 package catalog_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/gezibash/arc/delivery/catalog"
 	"github.com/gezibash/arc/delivery/keys"
 	"github.com/gezibash/arc/delivery/store"
+	"github.com/gezibash/arc/internal/testutil"
 )
 
 func echoPackage(t *testing.T) map[string]any {
@@ -23,7 +25,7 @@ func echoPackage(t *testing.T) map[string]any {
 
 func TestAnnounceAndRead(t *testing.T) {
 	k := keys.Generate()
-	event, err := catalog.Announce(k, echoPackage(t), nostr.Now())
+	event, err := catalog.Announce(context.Background(), k, echoPackage(t), nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestAnnounceAndRead(t *testing.T) {
 }
 
 func TestRefusesAChangedAnnouncement(t *testing.T) {
-	event, err := catalog.Announce(keys.Generate(), echoPackage(t), nostr.Now())
+	event, err := catalog.Announce(context.Background(), keys.Generate(), echoPackage(t), nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestSearchAndFind(t *testing.T) {
 	defer s.Close()
 
 	k := keys.Generate()
-	event, err := catalog.Announce(k, echoPackage(t), nostr.Now())
+	event, err := catalog.Announce(context.Background(), k, echoPackage(t), nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +78,10 @@ func TestSearchAndFind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := catalog.Search(s, "echo"); len(got) != 1 {
+	if got := testutil.Must(catalog.Search(s, "echo")); len(got) != 1 {
 		t.Errorf("a search for echo found %d offers", len(got))
 	}
-	if got := catalog.Search(s, "nothing-like-it"); len(got) != 0 {
+	if got := testutil.Must(catalog.Search(s, "nothing-like-it")); len(got) != 0 {
 		t.Errorf("a search for nothing found %d offers", len(got))
 	}
 	if _, err := catalog.Find(s, k.Public, ""); err != nil {
@@ -92,7 +94,7 @@ func TestSearchAndFind(t *testing.T) {
 
 func TestInstalls(t *testing.T) {
 	k := keys.Generate()
-	event, err := catalog.Announce(k, echoPackage(t), nostr.Now())
+	event, err := catalog.Announce(context.Background(), k, echoPackage(t), nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +104,7 @@ func TestInstalls(t *testing.T) {
 	}
 
 	installs := catalog.Installs{Path: filepath.Join(t.TempDir(), "installs.json")}
-	if installs.Trusted(k.Public, "primary") {
+	if testutil.Must(installs.Trusted(k.Public, "primary")) {
 		t.Error("an offer was trusted before its install")
 	}
 	if err := installs.Add(offer, ""); err != nil {
@@ -112,11 +114,11 @@ func TestInstalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, _ := installs.List()
-	if len(list) != 1 || !installs.Trusted(k.Public, "primary") {
+	if len(list) != 1 || !testutil.Must(installs.Trusted(k.Public, "primary")) {
 		t.Errorf("installs = %+v", list)
 	}
 
-	key, id, err := installs.Resolve(offer.Name())
+	key, id, err := installs.Resolve(context.Background(), offer.Name())
 	if err != nil || key != k.Public || id != "primary" {
 		t.Errorf("resolve by name: %v %s %v", key, id, err)
 	}
@@ -128,7 +130,7 @@ func TestAnnounceAManifestOfVersionOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event, err := catalog.AnnounceManifest(k, data, nostr.Now())
+	event, err := catalog.AnnounceManifest(context.Background(), k, data, nostr.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,15 +146,15 @@ func TestAnnounceAManifestOfVersionOne(t *testing.T) {
 	if err := installs.Add(offer, "exec"); err != nil {
 		t.Fatal(err)
 	}
-	if e, ok := installs.Named("exec"); !ok || e.Provider != k.Public.Hex() {
+	if e, ok, err := installs.Named("exec"); err != nil || !ok || e.Provider != k.Public.Hex() {
 		t.Errorf("named: %+v %v", e, ok)
 	}
-	if key, id, err := installs.Resolve("exec"); err != nil || key != k.Public || id != "exec" {
+	if key, id, err := installs.Resolve(context.Background(), "exec"); err != nil || key != k.Public || id != "exec" {
 		t.Errorf("resolve: %v %s %v", key, id, err)
 	}
 
 	// Another provider cannot take the same name.
-	other, _ := catalog.AnnounceManifest(keys.Generate(), data, nostr.Now())
+	other, _ := catalog.AnnounceManifest(context.Background(), keys.Generate(), data, nostr.Now())
 	offer2, _ := catalog.Read(other)
 	if err := installs.Add(offer2, "exec"); err == nil {
 		t.Error("two providers run as one name")

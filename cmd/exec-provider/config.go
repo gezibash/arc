@@ -22,6 +22,7 @@ import (
 	"regexp"
 
 	"github.com/gezibash/arc/provider"
+	"github.com/gezibash/arc/provider/wire"
 )
 
 // The limits of a request, and the ceiling of each one.
@@ -38,7 +39,7 @@ var (
 	maxLimits = limits{
 		BodyBytes:    1024 * 1024,
 		OutputBytes:  4 * 1024 * 1024,
-		TimeoutMS:    115_000,
+		TimeoutMS:    int(wire.WorkTimeout.Milliseconds()),
 		JobTimeoutMS: 86_400_000,
 	}
 )

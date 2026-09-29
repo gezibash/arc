@@ -27,7 +27,7 @@ type Env interface {
 	// Keyed returns the first 16 bytes of HMAC-SHA256(HKDF-SHA256(secret
 	// key, info), input), as unpadded base64url.
 	// KeyedValue computes it from a secret key.
-	Keyed(info []byte, input string) (string, error)
+	Keyed(ctx context.Context, info []byte, input string) (string, error)
 	// Name is the name that the citizen knows a key by.
 	Name(nostr.PubKey) string
 	// Call sends one request to a provider. A live call returns the reply. A
@@ -107,7 +107,7 @@ type run struct {
 }
 
 func (r *run) keyed(purpose, input string) (string, error) {
-	return r.env.Keyed(keyedInfo(r.in.Author, r.in.Manifest.ID, purpose), input)
+	return r.env.Keyed(r.ctx, keyedInfo(r.in.Author, r.in.Manifest.ID, purpose), input)
 }
 
 // eventAuthor finds the author of an event: in its coordinate, or by

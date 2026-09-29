@@ -305,7 +305,7 @@ func TestReplaceSwapsOneProgram(t *testing.T) {
 	}
 
 	newer := []byte("#!/bin/sh\necho arc 2.0.0\n")
-	if err := release.Replace(path, newer, "2.0.0"); err != nil {
+	if err := release.Replace(context.Background(), path, newer, "2.0.0"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,7 +320,7 @@ func TestReplaceSwapsOneProgram(t *testing.T) {
 	}
 
 	// A program that reports another version never takes the place.
-	if err := release.Replace(path, []byte("#!/bin/sh\necho arc 9.9.9\n"), "3.0.0"); err == nil {
+	if err := release.Replace(context.Background(), path, []byte("#!/bin/sh\necho arc 9.9.9\n"), "3.0.0"); err == nil {
 		t.Error("a program of another version took the place")
 	}
 
@@ -330,7 +330,7 @@ func TestReplaceSwapsOneProgram(t *testing.T) {
 	}
 
 	// A program that does not run never takes the place either.
-	if err := release.Replace(path, []byte("not a program"), ""); err == nil {
+	if err := release.Replace(context.Background(), path, []byte("not a program"), ""); err == nil {
 		t.Error("a file that does not run took the place")
 	}
 }

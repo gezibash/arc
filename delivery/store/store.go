@@ -252,13 +252,13 @@ func settle(b *boltdb.BoltBackend, event nostr.Event) {
 }
 
 // Has says whether the store keeps an event.
-func (s *Store) Has(id nostr.ID) bool {
+func (s *Store) Has(id nostr.ID) (bool, error) {
 	held := false
-	_ = s.lease.Do(func(b *boltdb.BoltBackend) error {
+	err := s.lease.Do(func(b *boltdb.BoltBackend) error {
 		held = has(b, id)
 		return nil
 	})
-	return held
+	return held, err
 }
 
 func has(b *boltdb.BoltBackend, id nostr.ID) bool {
@@ -268,12 +268,14 @@ func has(b *boltdb.BoltBackend, id nostr.ID) bool {
 	return false
 }
 
-// QueryEvents lets the store stand as a nostr.Querier, for Negentropy.
-func (s *Store) QueryEvents(filter nostr.Filter) iter.Seq[nostr.Event] {
-	events := s.Query(filter)
+// Events is a successfully read snapshot adapted to nostr.Querier. Read errors
+// must be handled before using this adapter for reconciliation.
+type Events []nostr.Event
+
+func (snapshot *Events) QueryEvents(filter nostr.Filter) iter.Seq[nostr.Event] {
 	return func(yield func(nostr.Event) bool) {
-		for _, event := range events {
-			if !yield(event) {
+		for _, event := range *snapshot {
+			if filter.Matches(event) && !yield(event) {
 				return
 			}
 		}
@@ -282,13 +284,13 @@ func (s *Store) QueryEvents(filter nostr.Filter) iter.Seq[nostr.Event] {
 
 // Query returns the events that match a filter, newest first. It leaves out
 // an event whose expiration has passed, and removes it from the store.
-func (s *Store) Query(filter nostr.Filter) []nostr.Event {
+func (s *Store) Query(filter nostr.Filter) ([]nostr.Event, error) {
 	var out []nostr.Event
-	_ = s.lease.Do(func(b *boltdb.BoltBackend) error {
+	err := s.lease.Do(func(b *boltdb.BoltBackend) error {
 		out = s.query(b, filter)
 		return nil
 	})
-	return out
+	return out, err
 }
 
 func (s *Store) query(b *boltdb.BoltBackend, filter nostr.Filter) []nostr.Event {
