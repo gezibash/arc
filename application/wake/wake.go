@@ -8,7 +8,7 @@
 //
 //	[wake."<64 characters of hex>"]
 //	kind = "command"
-//	argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
+//	argv = ["sprite", "exec", "-s", "arc", "--", "/home/sprite/arc-exec/citizen/citizen-up"]
 //
 // Before a request to a citizen with a hook, the caller runs the hook, unless
 // the citizen answered or woke less than Fresh ago. A citizen without a hook

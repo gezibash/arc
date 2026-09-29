@@ -179,26 +179,16 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	var tags nostr.Tags
-	for _, tag := range p.Tags {
-		rendered := nostr.Tag{tag[0]}
-		for _, value := range tag[1:] {
-			text, err := r.template(value)
-			if err != nil {
-				return nil, err
-			}
-			rendered = append(rendered, text)
-		}
-		if len(rendered) > 1 && rendered[1] != "" {
-			tags = append(tags, rendered)
-		}
+	tags, err := r.tagsOf(p)
+	if err != nil {
+		return nil, err
 	}
 
 	old, err := r.current(d)
 	if err != nil {
 		return nil, err
 	}
-	now := after(old, nostr.Now())
+	now := after(old, nostr.Timestamp(r.env.Now().Unix()))
 	var keep []string
 	var keptLines []int
 	head := content
@@ -224,6 +214,25 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 				head = old.Event.Content + content
 			}
 		}
+	}
+	head, err = r.notebookHeader(p, head, old)
+	if err != nil {
+		return nil, err
+	}
+	tags, err = r.enforceFrontmatter(p, head, tags)
+	if err != nil {
+		return nil, err
+	}
+	// An updated timestamp can grow when it gains fractional seconds. If the
+	// first piece no longer fits, repartition the complete append without losing
+	// the previously retained parts. The usual append still changes only its end.
+	if rest != nil && len(head) > draft.PartSize {
+		retained, err := r.partTexts(keep)
+		if err != nil {
+			return nil, err
+		}
+		head += strings.Join(retained, "") + strings.Join(rest, "")
+		keep, keptLines, rest = nil, nil, nil
 	}
 	if rest == nil {
 		pieces := draft.Split(head)
@@ -284,6 +293,13 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	opened, err := draft.Open(r.ctx, k, wrap)
 	if err != nil {
 		return nil, err
+	}
+	if index := kind.NotebookIndex; index != "" {
+		fields, _, _ := frontmatter(head)
+		book, _ := fields["notebook"].(string)
+		if err := r.refreshNotebookIndex(p.Kind, book); err != nil {
+			return nil, fmt.Errorf("page saved; notebook index update failed (rebuild with index): %w", err)
+		}
 	}
 	return []*entry{entryOf(opened, p.Kind)}, nil
 }
@@ -399,6 +415,20 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	}
 	if err := r.env.Publish(r.ctx, []nostr.Event{blank, request}, nil); err != nil {
 		return nil, err
+	}
+	if r.kindOf(dl.Kind).NotebookIndex != "" {
+		opened, err := draft.Open(r.ctx, k, wraps[0])
+		if err != nil {
+			return nil, err
+		}
+		address := opened.Event.Tags.GetD()
+		book, _, _ := strings.Cut(address, "/")
+		if i := strings.LastIndex(address, "/"); i >= 0 {
+			book = address[:i]
+		}
+		if err := r.refreshNotebookIndex(dl.Kind, book); err != nil {
+			return nil, fmt.Errorf("page deleted; notebook index update failed: %w", err)
+		}
 	}
 	return nil, nil
 }
@@ -562,7 +592,7 @@ func (r *run) watch(q *Query) error {
 		return err
 	}
 
-	filter.Since = nostr.Now()
+	filter.Since = nostr.Timestamp(r.env.Now().Unix())
 	filter.Limit = 0
 	ctx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
@@ -575,6 +605,9 @@ func (r *run) watch(q *Query) error {
 			return received.Err
 		}
 		event := received.Event
+		if !filter.Matches(event) {
+			continue
+		}
 		var entries []*entry
 		if visibility == "sealed" {
 			entries = r.openAll(q, []nostr.Event{event})
@@ -771,6 +804,10 @@ func (r *run) publishPrivate(p *Publish) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	tags, err = r.enforceFrontmatter(p, content, tags)
+	if err != nil {
+		return nil, err
+	}
 	if len(p.To) != 1 {
 		return nil, errors.New("a private event goes to one recipient in this arc")
 	}
@@ -801,6 +838,10 @@ func (r *run) publishPlain(p *Publish) ([]*entry, error) {
 		return nil, err
 	}
 	tags, err := r.tagsOf(p)
+	if err != nil {
+		return nil, err
+	}
+	tags, err = r.enforceFrontmatter(p, content, tags)
 	if err != nil {
 		return nil, err
 	}

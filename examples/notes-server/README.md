@@ -1,7 +1,7 @@
 # Notes server: HTTP over ARC for any language
 
 This example is the notes service of `examples/notes`, as a plain HTTP
-server. It uses no ARC library. `http-provider` starts it, and serves it over
+server. It uses no ARC library. `arc-http` starts it, and serves it over
 ARC as the capability `http`. See docs/http/SPEC.md, section 10.
 
 A server in another language does the same three things:
@@ -31,14 +31,14 @@ checks.
 2. Install that provider as the citizen that serves this service:
 
    ```sh
-   arc install <sqlite-provider-key> --yes
+   arc install <arc-sqlite-key> --yes
    ```
 
 3. Serve this directory. `NOTES_DB` names the database:
 
    ```sh
-   NOTES_DB='sqlite+arc://<sqlite-provider-key>/main' arc serve examples/notes-server
+   NOTES_DB='sqlite+arc://<arc-sqlite-key>/main' arc serve examples/notes-server
    ```
 
-`run.sh` builds `http-provider` and this server, and starts the server
-through `http-provider`.
+`run.sh` builds `arc-http` and this server, and starts the server
+through `arc-http`.

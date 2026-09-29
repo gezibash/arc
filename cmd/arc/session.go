@@ -18,8 +18,8 @@ func sessionCmd() *cobra.Command {
 		Use:   "session <address> [initial request]",
 		Short: "Open an installed capability's live interaction",
 		Long: "Open a core ARC session. Duplex sessions read ongoing input from stdin\n" +
-			"and write provider output as it arrives. Input EOF allows final output.\n" +
-			"The provider must declare the selected mode; a disconnect ends the session.",
+			"and write service output as it arrives. Input EOF allows final output.\n" +
+			"The service must declare the selected mode; a disconnect ends the session.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: runSession,
 	}

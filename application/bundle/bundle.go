@@ -1,9 +1,9 @@
-// Package bundle holds a provider that lives in a directory.
+// Package bundle resolves an app directory with a service program.
 //
 // A bundle is a directory with two files:
 //
 //	Arcfile        how to run the program on this machine
-//	manifest.json  the capability that the citizen announces
+//	manifest.json  the interface that the operating identity announces
 //
 // New bundles author one interface manifest in manifest.json. Historical
 // bundles may point to interface.json, or hold it beside a legacy manifest.
@@ -47,7 +47,7 @@ var (
 	ErrManifestAbsent = errors.New("bundle: the manifest file is missing")
 )
 
-// Bundle is one provider directory, read and resolved.
+// Bundle is one app deployment directory, read and resolved.
 type Bundle struct {
 	Root     string
 	Arcfile  string

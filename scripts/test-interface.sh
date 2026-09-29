@@ -7,6 +7,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$root/scripts/journal-proof.sh"
 work="$(mktemp -d)"
 keep="${ARC_KEEP_WORK:-}"
 
@@ -31,8 +32,8 @@ keyfile() { echo "$work/$1"/citizens/*/key; }
 
 cd "$root"
 go build -o "$work/arc" ./cmd/arc
-go build -o "$work/exec-provider" ./cmd/exec-provider
-go build -o "$work/sqlite-provider" ./cmd/sqlite-provider
+go build -o "$work/arc-exec" ./cmd/arc-exec
+go build -o "$work/arc-sqlite" ./cmd/arc-sqlite
 say "arc and two providers build"
 
 "$work/arc" --home "$work/relay" relay serve --listen 127.0.0.1:0 > "$work/relay.log" 2>&1 &
@@ -62,13 +63,13 @@ cat > "$work/sqlite.json" <<JSON
 {"databases": {"main": {"path": "$work/main.db", "grants": {"$caller_key": "write"}}}}
 JSON
 
-# The manifest= of the URI names the older manifest; arc announces the
-# interface.json beside it.
+# Built-in apps serve their canonical interface manifest. The refresh proof
+# below also checks the historical adjacent-interface bundle format.
 EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \
-  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" > "$work/exec.log" 2>&1 &
+  "exec://$work/arc-exec?manifest=$root/apps/exec/manifest.json" > "$work/exec.log" 2>&1 &
 exec_pid=$!
 SQLITE_CONFIG="$work/sqlite.json" "$work/arc" --home "$work/sqlite" serve \
-  "exec://$work/sqlite-provider?manifest=$root/cmd/sqlite-provider/manifest.json" > "$work/sqlite.log" 2>&1 &
+  "exec://$work/arc-sqlite?manifest=$root/apps/sqlite/manifest.json" > "$work/sqlite.log" 2>&1 &
 sqlite_pid=$!
 for log in exec sqlite; do
   for _ in $(seq 1 50); do grep "serves" "$work/$log.log" > /dev/null 2>&1 && break; sleep 0.1; done
@@ -147,10 +148,10 @@ say "a call by address shows the reply as the service says, and --raw as it came
 # machine holds the older announcement.
 for version in old new; do
   mkdir -p "$work/exec2-$version"
-  cp "$root/cmd/exec-provider/manifest.json" "$work/exec2-$version/"
+  cp "$root/application/capability/testdata/exec-legacy.json" "$work/exec2-$version/manifest.json"
 done
-jq 'del(.service.output)' "$root/cmd/exec-provider/interface.json" > "$work/exec2-old/interface.json"
-cp "$root/cmd/exec-provider/interface.json" "$work/exec2-new/"
+jq 'del(.service.output)' "$root/apps/exec/manifest.json" > "$work/exec2-old/interface.json"
+cp "$root/apps/exec/manifest.json" "$work/exec2-new/interface.json"
 "$work/arc" --home "$work/exec2" keys gen > /dev/null
 "$work/arc" --home "$work/exec2" relay add "$url"
 exec2_key="$("$work/arc" --home "$work/exec2" whoami | sed -n 2p)"
@@ -159,7 +160,7 @@ serve_exec2() {
   # NIP-01 keeps the lower ID, so each announcement comes a second later.
   sleep 1
   EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec2" serve \
-    "exec://$work/exec-provider?manifest=$work/exec2-$1/manifest.json" > "$work/exec2-$1.log" 2>&1 &
+    "exec://$work/arc-exec?manifest=$work/exec2-$1/manifest.json" > "$work/exec2-$1.log" 2>&1 &
   exec2_pid=$!
   for _ in $(seq 1 50); do grep "serves" "$work/exec2-$1.log" > /dev/null 2>&1 && break; sleep 0.1; done
   grep "serves" "$work/exec2-$1.log" > /dev/null || fail "exec2 did not serve: $(cat "$work/exec2-$1.log")"
@@ -244,36 +245,36 @@ desktop() { "$work/arc" --home "$work/desktop" "$@"; }
 desktop keys add < "$(keyfile caller)" > /dev/null
 desktop relay add "$url"
 
-laptop announce "$root/manifests/journal.json" > /dev/null
-laptop announce "$root/manifests/files.json" > /dev/null
+laptop announce "$root/apps/journal/manifest.json" > /dev/null
+laptop announce "$root/apps/files/manifest.json" > /dev/null
 for machine in laptop desktop; do
   $machine install "$caller_key" journal --yes > /dev/null || fail "$machine did not install the journal"
   $machine install "$caller_key" files --yes > /dev/null || fail "$machine did not install the files"
 done
 say "two machines install the journal and the files from their author"
 
-printf 'auc 0.871\n' | laptop journal write hrs/ablations/lr-sweep --title "LR sweep"
-laptop journal append hrs/ablations/lr-sweep next: try warmup
-[ "$(desktop journal read hrs/ablations/lr-sweep)" = "$(printf 'auc 0.871\nnext: try warmup')" ] ||
-  fail "the desktop read $(desktop journal read hrs/ablations/lr-sweep)"
-desktop journal ls | grep "hrs/ablations/lr-sweep	LR sweep" > /dev/null || fail "ls shows $(desktop journal ls)"
+printf -- '---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\n' | laptop journal write hrs/ablations/1 --title "LR sweep"
+laptop journal append hrs/ablations/1 next: try warmup
+[ "$(desktop journal read hrs/ablations/1 | journal_doc)" = "$(printf -- '---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup')" ] ||
+  fail "the desktop read $(desktop journal read hrs/ablations/1 | journal_doc)"
+desktop journal ls | grep "hrs/ablations/1	LR sweep" > /dev/null || fail "ls shows $(desktop journal ls)"
 say "a page that is written and appended on one machine reads on the other"
 
 # Two commands of one identity run at once: tail holds a watch, and append
 # writes on the same machine.
-laptop journal tail hrs/ablations/lr-sweep > "$work/tail-same.txt" 2>&1 &
+laptop journal tail hrs/ablations/1 > "$work/tail-same.txt" 2>&1 &
 tail_pid=$!
 for _ in $(seq 1 50); do grep "next: try warmup" "$work/tail-same.txt" > /dev/null 2>&1 && break; sleep 0.1; done
-laptop journal append hrs/ablations/lr-sweep beside the tail 2> "$work/beside.txt" ||
+laptop journal append hrs/ablations/1 beside the tail 2> "$work/beside.txt" ||
   { kill "$tail_pid"; fail "a second command of one identity failed: $(cat "$work/beside.txt")"; }
 for _ in $(seq 1 50); do grep "beside the tail" "$work/tail-same.txt" > /dev/null 2>&1 && break; sleep 0.1; done
 kill "$tail_pid" 2>/dev/null || true
 grep "beside the tail" "$work/tail-same.txt" > /dev/null || fail "the tail did not show the append: $(cat "$work/tail-same.txt")"
 say "two commands of one identity run at once"
 
-[ "$(desktop journal history hrs/ablations/lr-sweep | grep -c '^20')" = 3 ] ||
-  fail "the history is $(desktop journal history hrs/ablations/lr-sweep)"
-desktop journal search warmup | grep "^hrs/ablations/lr-sweep" > /dev/null || fail "search found nothing"
+[ "$(desktop journal history hrs/ablations/1 | grep -c '^20')" = 3 ] ||
+  fail "the history is $(desktop journal history hrs/ablations/1)"
+desktop journal search warmup | grep "^hrs/ablations/1" > /dev/null || fail "search found nothing"
 say "the page has two revisions, and search finds it"
 
 laptop journal kpi set hrs auc 0.85
@@ -291,20 +292,20 @@ say "a binary file of 200000 bytes crosses the relay in parts, and its hash chec
 
 # A stick made before the delete must not bring the page back.
 laptop sync --dir "$work/old-stick" > /dev/null
-laptop journal delete hrs/ablations/lr-sweep
-[ -z "$(desktop journal read hrs/ablations/lr-sweep)" ] || fail "the desktop still reads the deleted page"
+laptop journal delete hrs/ablations/1
+[ -z "$(desktop journal read hrs/ablations/1)" ] || fail "the desktop still reads the deleted page"
 desktop sync --dir "$work/old-stick" > /dev/null 2>&1
-[ -z "$(desktop journal read hrs/ablations/lr-sweep)" ] || fail "an old stick brought the deleted page back"
-desktop journal history hrs/ablations/lr-sweep | grep "no revisions" > /dev/null || fail "the history outlived the delete"
+[ -z "$(desktop journal read hrs/ablations/1)" ] || fail "an old stick brought the deleted page back"
+desktop journal history hrs/ablations/1 | grep "no revisions" > /dev/null || fail "the history outlived the delete"
 say "delete removes the page and its history, and an old stick does not bring it back"
 
 # With no relay, the page crosses a stick.
 laptop relay rm "$url"
 desktop relay rm "$url"
-printf 'carried by hand\n' | laptop journal write hrs/notes/offline
+printf -- '---\ntitle: Offline\npage: 1\nnotebook: hrs/notes\n---\ncarried by hand\n' | laptop journal write hrs/notes/1
 laptop sync --dir "$work/stick" > /dev/null
 desktop sync --dir "$work/stick" > /dev/null
-[ "$(desktop journal read hrs/notes/offline)" = "carried by hand" ] || fail "the stick did not carry the page"
+[ "$(desktop journal read hrs/notes/1 | journal_doc)" = "$(printf -- '---\ntitle: Offline\npage: 1\nnotebook: hrs/notes\n---\ncarried by hand')" ] || fail "the stick did not carry the page"
 say "with no relay, a page crosses a USB stick"
 
 printf 'phase B holds: drafts, checkpoints, parts, delete, the journal and the files\n\n'
@@ -331,8 +332,8 @@ grep "hosts groups agora" "$work/board.log" > /dev/null || fail "the board hosts
 say "a relay hosts the NIP-29 group agora, with one admin"
 
 # The author of Agora names the board relay in the manifest.
-sed "s#wss://board.example#$board#" "$root/manifests/agora.json" > "$work/agora.json"
-laptop announce "$root/manifests/dm.json" > /dev/null
+sed "s#wss://board.example#$board#" "$root/apps/agora/manifest.json" > "$work/agora.json"
+laptop announce "$root/apps/dm/manifest.json" > /dev/null
 laptop announce "$work/agora.json" > /dev/null
 for machine in laptop bob moderator; do
   $machine install "$caller_key" dm --yes > /dev/null || fail "$machine did not install dm"
@@ -380,13 +381,13 @@ printf 'phase C holds: private kinds, NIP-29 groups, direct messages and Agora\n
 # Phase D: what a capability can do stays what the citizen agreed to, and a
 # key can be sealed, or held by a remote signer.
 sed 's/"kind": 14, "visibility": "private"}/"kind": 14, "visibility": "private"}, "profile": {"kind": 0, "visibility": "public"}/' \
-  "$root/manifests/dm.json" > "$work/dm-profile.json"
+  "$root/apps/dm/manifest.json" > "$work/dm-profile.json"
 if laptop announce "$work/dm-profile.json" > /dev/null 2> "$work/reserved.txt"; then fail "a manifest named a reserved kind"; fi
 grep "reserved" "$work/reserved.txt" > /dev/null || fail "the refusal was $(cat "$work/reserved.txt")"
 say "a manifest that names a reserved kind does not announce"
 
 sed 's/"kind": 14, "visibility": "private"}/"kind": 14, "visibility": "private"}, "note": {"kind": 1, "visibility": "public"}/' \
-  "$root/manifests/dm.json" > "$work/dm-note.json"
+  "$root/apps/dm/manifest.json" > "$work/dm-note.json"
 sleep 1
 laptop announce "$work/dm-note.json" > /dev/null
 if bob dm inbox > /dev/null 2> "$work/consent.txt"; then fail "a new kind ran without consent"; fi
@@ -397,9 +398,9 @@ grep "posted in public, signed by you" "$work/reinstall.txt" > /dev/null || fail
 bob dm inbox | grep "meet at noon" > /dev/null || fail "the inbox after consent: $(bob dm inbox)"
 say "a new version that adds a public kind stops until the citizen installs again"
 
-laptop journal write hrs/notes/draft --dry-run < /dev/null > "$work/dry.txt" 2> /dev/null
+printf -- '---\ntitle: Draft\npage: 2\nnotebook: hrs/notes\n---\n' | laptop journal write hrs/notes/2 --dry-run > "$work/dry.txt" 2> /dev/null
 grep '"kind": 30023' "$work/dry.txt" > /dev/null || fail "the dry run showed $(cat "$work/dry.txt")"
-[ -z "$(laptop journal read hrs/notes/draft)" ] || fail "a dry run wrote the page"
+[ -z "$(laptop journal read hrs/notes/2)" ] || fail "a dry run wrote the page"
 say "--dry-run shows the event, and signs nothing"
 
 ARC_PASSPHRASE="correct horse" "$work/arc" --home "$work/sealed" keys gen --encrypt > "$work/sealed.txt"
@@ -440,13 +441,13 @@ if agent agora reply "$agent_post" not allowed > /dev/null 2> "$work/refused-kin
 grep "does not sign kind 1111" "$work/refused-kind.txt" > /dev/null || fail "the refusal was $(cat "$work/refused-kind.txt")"
 say "the bunker signs the kinds its owner allows, and refuses the rest"
 
-printf 'written by the agent\n' | agent journal write ops/agent/notes 2> "$work/agent-journal.txt" ||
+printf -- '---\ntitle: Agent notes\npage: 1\nnotebook: ops/agent\n---\nwritten by the agent\n' | agent journal write ops/agent/1 2> "$work/agent-journal.txt" ||
   fail "the agent could not write a page: $(cat "$work/agent-journal.txt")"
-[ "$(agent journal read ops/agent/notes)" = "written by the agent" ] || fail "the agent read $(agent journal read ops/agent/notes)"
+[ "$(agent journal read ops/agent/1 | journal_doc)" = "$(printf -- '---\ntitle: Agent notes\npage: 1\nnotebook: ops/agent\n---\nwritten by the agent')" ] || fail "the agent read $(agent journal read ops/agent/1 | journal_doc)"
 owner relay add "$url" 2> /dev/null
 owner install "$caller_key" journal --yes > /dev/null
-[ "$(owner journal read ops/agent/notes)" = "written by the agent" ] ||
-  fail "the owner, with the key, read $(owner journal read ops/agent/notes)"
+[ "$(owner journal read ops/agent/1 | journal_doc)" = "$(printf -- '---\ntitle: Agent notes\npage: 1\nnotebook: ops/agent\n---\nwritten by the agent')" ] ||
+  fail "the owner, with the key, read $(owner journal read ops/agent/1 | journal_doc)"
 say "an agent keeps a journal through the bunker, and its owner reads the same page with the key"
 
 # By default the bunker decrypts only what its owner sealed to themselves:

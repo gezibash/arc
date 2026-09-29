@@ -16,7 +16,15 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/internal/search"
 )
+
+// SearchIndex is the full-text search effect consumed by application commands.
+// The implementation refreshes selected source versions before returning hits.
+// A failed refresh returns an error, never results from an older version.
+type SearchIndex interface {
+	Search(context.Context, search.Request) ([]search.Hit, error)
+}
 
 // Env is what a command needs from the citizen's machine.
 type Env interface {
@@ -24,6 +32,10 @@ type Env interface {
 	Store
 	// Me is the citizen's public key.
 	Me() nostr.PubKey
+	// Now supplies the wall clock for data writes and watches.
+	Now() time.Time
+	// SearchIndex supplies the machine's derived local full-text index.
+	SearchIndex() SearchIndex
 	// Keyed returns the first 16 bytes of HMAC-SHA256(HKDF-SHA256(secret
 	// key, info), input), as unpadded base64url.
 	// KeyedValue computes it from a secret key.
@@ -288,6 +300,8 @@ func (r *run) act() ([]*entry, error) {
 		return r.remove(a.Delete)
 	case a.Query != nil:
 		return r.query(a.Query)
+	case a.Notebook != nil:
+		return r.notebookAction(a.Notebook)
 	}
 	return nil, errors.New("the command has no action")
 }
@@ -356,7 +370,10 @@ func open(record Record, parse string) error {
 			}
 		}
 	case "frontmatter":
-		fields, text := frontmatter(content)
+		fields, text, err := frontmatter(content)
+		if err != nil {
+			return err
+		}
 		for key, v := range fields {
 			if !fixed[key] {
 				record[key] = v
@@ -365,25 +382,6 @@ func open(record Record, parse string) error {
 		record["text"] = text
 	}
 	return nil
-}
-
-// frontmatter reads "key: value" lines between two lines of three hyphens.
-func frontmatter(content string) (map[string]any, string) {
-	fields := map[string]any{}
-	if !strings.HasPrefix(content, "---\n") {
-		return fields, content
-	}
-	head, body, found := strings.Cut(content[4:], "\n---\n")
-	if !found {
-		return fields, content
-	}
-	for _, line := range strings.Split(head, "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(key) != "" {
-			fields[strings.TrimSpace(key)] = strings.TrimSpace(value)
-		}
-	}
-	return fields, body
 }
 
 // write shows the records: as JSON lines, with a format, or as their

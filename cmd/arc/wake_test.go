@@ -21,7 +21,7 @@ import (
 // at once with peer_offline, and does not wait for its timeout.
 func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 	url := testrelay.Start(t)
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "interface.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

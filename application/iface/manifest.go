@@ -39,6 +39,9 @@ type Manifest struct {
 type Kind struct {
 	Kind       int    `json:"kind"`
 	Visibility string `json:"visibility"`
+	// Frontmatter names nonempty fields required when this kind is published.
+	Frontmatter   []string `json:"frontmatter,omitempty"`
+	NotebookIndex string   `json:"notebook_index,omitempty"`
 }
 
 // Group is the NIP-29 group of the group kinds.
@@ -94,11 +97,12 @@ type Arg struct {
 
 // Action is what a command does. Exactly one field is set.
 type Action struct {
-	Call    *Call    `json:"call,omitempty"`
-	Publish *Publish `json:"publish,omitempty"`
-	Delete  *Delete  `json:"delete,omitempty"`
-	Query   *Query   `json:"query,omitempty"`
-	Watch   *Query   `json:"watch,omitempty"`
+	Call     *Call     `json:"call,omitempty"`
+	Publish  *Publish  `json:"publish,omitempty"`
+	Delete   *Delete   `json:"delete,omitempty"`
+	Query    *Query    `json:"query,omitempty"`
+	Watch    *Query    `json:"watch,omitempty"`
+	Notebook *Notebook `json:"notebook,omitempty"`
 }
 
 // Call sends one request to the provider.
@@ -111,12 +115,13 @@ type Call struct {
 
 // Publish makes one event.
 type Publish struct {
-	Kind    string     `json:"kind"`
-	D       string     `json:"d,omitempty"`
-	Content Content    `json:"content,omitempty"`
-	Tags    [][]string `json:"tags,omitempty"`
-	Revise  string     `json:"revise,omitempty"`
-	To      []string   `json:"to,omitempty"`
+	Kind               string     `json:"kind"`
+	D                  string     `json:"d,omitempty"`
+	Content            Content    `json:"content,omitempty"`
+	Tags               [][]string `json:"tags,omitempty"`
+	Revise             string     `json:"revise,omitempty"`
+	To                 []string   `json:"to,omitempty"`
+	FrontmatterAddress string     `json:"frontmatter_address,omitempty"`
 }
 
 // Content is a template for text, or an object whose values are templates.
@@ -365,6 +370,24 @@ func (m *Manifest) check() error {
 		if err := checkReserved(name, kind); err != nil {
 			return err
 		}
+		seen := map[string]bool{}
+		for _, field := range kind.Frontmatter {
+			if !namePattern.MatchString(field) || seen[field] {
+				return fmt.Errorf("kind %s: invalid or repeated frontmatter field %q", name, field)
+			}
+			seen[field] = true
+		}
+		if kind.NotebookIndex != "" {
+			index, ok := m.Kinds[kind.NotebookIndex]
+			if !ok || kind.NotebookIndex == name || index.Visibility != "sealed" || index.NotebookIndex != "" || kind.Visibility != "sealed" {
+				return fmt.Errorf("kind %s: notebook_index must name a separate sealed index kind", name)
+			}
+			for _, field := range []string{"title", "page", "notebook"} {
+				if !slices.Contains(kind.Frontmatter, field) {
+					return fmt.Errorf("kind %s: a notebook requires frontmatter field %s", name, field)
+				}
+			}
+		}
 		grouped = grouped || kind.Visibility == "group"
 	}
 	if grouped && (m.Group == nil || m.Group.Relay == "" || m.Group.ID == "") {
@@ -492,7 +515,13 @@ func (m *Manifest) checkCommand(c Command) error {
 		if a.Publish.Revise != "" && a.Publish.Revise != "replace" && a.Publish.Revise != "append" {
 			return fmt.Errorf("revise %q must be replace or append", a.Publish.Revise)
 		}
-		templates := append([]string{a.Publish.D, a.Publish.Content.Text}, a.Publish.To...)
+		if a.Publish.FrontmatterAddress != "" {
+			required := m.Kinds[a.Publish.Kind].Frontmatter
+			if !slices.Contains(required, "page") || !slices.Contains(required, "notebook") {
+				return errors.New("frontmatter_address requires page and notebook fields")
+			}
+		}
+		templates := append([]string{a.Publish.D, a.Publish.Content.Text, a.Publish.FrontmatterAddress}, a.Publish.To...)
 		for _, tag := range a.Publish.Tags {
 			templates = append(templates, tag...)
 		}
@@ -501,6 +530,12 @@ func (m *Manifest) checkCommand(c Command) error {
 			if err := check(t); err != nil {
 				return err
 			}
+		}
+	}
+	if a.Notebook != nil {
+		actions++
+		if err := m.checkNotebook(a.Notebook, check); err != nil {
+			return err
 		}
 	}
 	if a.Delete != nil {

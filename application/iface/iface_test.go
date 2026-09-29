@@ -11,10 +11,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/nip19"
+	blevesearch "github.com/gezibash/arc/adapters/search/bleve"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
@@ -115,11 +117,13 @@ func (n *fakeNet) relay(t *testing.T, url string) *store.Store {
 }
 
 type fakeEnv struct {
-	t     *testing.T
-	net   *fakeNet
-	me    nostr.SecretKey
-	store *store.Store
-	live  chan nostr.Event
+	now    time.Time
+	t      *testing.T
+	net    *fakeNet
+	me     nostr.SecretKey
+	store  *store.Store
+	search *blevesearch.Index
+	live   chan nostr.Event
 	// fetchedIDs counts the events that fetches by ID asked for.
 	fetchedIDs int
 	reply      CallResult
@@ -137,7 +141,20 @@ func (f *fakeEnv) ResolveKey(_ context.Context, text string) (nostr.PubKey, erro
 	}
 	return nostr.PubKey{}, errors.New("unknown key " + text)
 }
-func (f *fakeEnv) Me() nostr.PubKey   { return f.me.Public() }
+func (f *fakeEnv) Me() nostr.PubKey { return f.me.Public() }
+func (f *fakeEnv) Now() time.Time {
+	if !f.now.IsZero() {
+		return f.now
+	}
+	return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+}
+func (f *fakeEnv) SearchIndex() SearchIndex {
+	if f.search == nil {
+		f.search = blevesearch.New("")
+		f.t.Cleanup(f.search.Close)
+	}
+	return f.search
+}
 func (f *fakeEnv) Keyer() nostr.Keyer { return keyer.NewPlainKeySigner(f.me) }
 func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []string) error {
 	for _, event := range events {
@@ -451,9 +468,7 @@ func TestAVariadicKeepsItsFlags(t *testing.T) {
 // The manifest files in the repository are the manifests of the spec.
 func TestTheManifestFilesAreTheSpec(t *testing.T) {
 	spec := specManifests(t)
-	paths, _ := filepath.Glob("../../manifests/*.json")
-	providers, _ := filepath.Glob("../../cmd/*-provider/interface.json")
-	paths = append(paths, providers...)
+	paths, _ := filepath.Glob("../../apps/*/manifest.json")
 	if len(paths) != 7 {
 		t.Fatalf("found %d manifest files, want 7", len(paths))
 	}

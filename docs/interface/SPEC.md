@@ -1,4 +1,4 @@
-# Capability interface, version 1
+# App interface, version 1
 
 Status: phases A to D are built, see section 18. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
@@ -7,9 +7,11 @@ code in core for direct messages, Agora, and files.
 
 ## 1. Purpose
 
-A capability tells `arc` which commands it adds, and what each command does.
-The capability says this in its manifest. The manifest names primitives, and
-core runs them. The manifest holds no code.
+An app tells `arc` which commands it adds, and what each command does. Its
+interface manifest selects bounded application-runtime primitives. Those
+primitives use core ARC for signed events, delivery, calls and sessions. The
+manifest holds no executable code. Capability remains a protocol term for the
+interface that a participant offers. See [the app model](../../apps/README.md).
 
 Three rules follow:
 
@@ -17,7 +19,8 @@ Three rules follow:
   are the same for every capability. A journal, a board, and a file store are
   manifests over the same primitives.
 - **A manifest cannot make a citizen's key do anything outside the
-  primitives.** Core owns every primitive. A provider cannot run code on the
+  primitives.** The application runtime implements these primitives over core
+  protocols. A service cannot run arbitrary manifest code on the
   caller's machine.
 - **Where Nostr has a standard, ARC uses it.** A journal page is a NIP-37
   draft of a NIP-23 article, a direct message is NIP-17, and a board is a
@@ -32,10 +35,10 @@ delivery layer does both for every event.
 
 | Shape | What answers | Example |
 | --- | --- | --- |
-| service | A provider program answers calls. | exec, sqlite, releases |
+| service | An app service program answers calls. | exec, sqlite, releases |
 | data | Nobody answers. The citizen writes events and reads them. | journal, direct messages, Agora, files |
 
-A data capability has no provider. Its manifest still comes from an author,
+A data app needs no service program. Its manifest still comes from an author,
 who signs its announcement. A citizen installs the manifest by trusting that
 author.
 
@@ -62,7 +65,7 @@ author.
   "summary": "A private notebook, sealed to your own key.",
   "shape": "data",
   "kinds": {
-    "page": {"kind": 30023, "visibility": "sealed"}
+    "page": {"kind": 30023, "visibility": "sealed", "frontmatter": ["title", "page", "notebook"]}
   },
   "formats": { },
   "commands": [ ]
@@ -93,6 +96,28 @@ names relays.
 | `sealed` | A NIP-37 draft. The event is sealed to the citizen's own key with NIP-44, and the draft carries `["-"]`, the NIP-70 tag, so only the citizen can publish it to a relay. | The relays of the citizen's NIP-37 list, kind 10013. |
 | `private` | A rumor inside a NIP-59 gift wrap, through the mail layer. | Each recipient's NIP-17 list, kind 10050, and couriers. |
 | `group` | The event, with an `h` tag that names the group, and `["-"]`. | The relay of the group, see 4.2. |
+
+A kind can declare `"frontmatter": ["title"]`. This is a write policy:
+new content and the resulting content of an append must start with a header
+that contains each named field with a nonempty string value. Validation runs
+before signing, storage or delivery, including a dry run. An existing page
+without a header remains readable; rewrite it with a header before appending.
+
+The header starts and ends with a line of `---`, uses at most 4096 bytes, and
+contains flat `key: value` fields. Keys use lowercase letters, digits and
+underscores, starting with a letter. Duplicate keys, nested values, arrays,
+multiline strings and malformed delimiters are refused. Values are plain
+strings, JSON double-quoted strings, or single-quoted strings (`''` escapes a
+quote). LF and CRLF delimiter lines are accepted. This format does not implement
+full YAML. Optional fields are preserved; only declared fields are required.
+If the header has `title`, it supplies the event's title tag. A different
+explicit title is refused. Reads preserve the full document when parsed as
+`text`; the `frontmatter` output parser separates the fields and body.
+
+A sealed kind can name `notebook_index`, a separate sealed kind in the same
+manifest. Notebook pages require title/page/notebook front matter, positive page
+numbers, managed timestamps, and automatic index refresh. Notebook application
+behavior stays outside core; all events use its existing draft protocol.
 
 A command can publish only kinds that the manifest names here. Section 12
 lists the kinds that no manifest can name.
@@ -292,6 +317,7 @@ as 7.2.2 defines.
 | `tags` | Tags, whose values are templates. A tag whose value is empty is left out. |
 | `revise` | For a sealed kind: `replace` or `append`. See 7.2.1. |
 | `to` | For a private kind: the recipients, as `key` arguments. |
+| `frontmatter_address` | An optional address template. It requires `page` and `notebook` in the kind's front-matter policy, and their combined `notebook/page` must equal the rendered address. |
 
 #### 7.2.1 Revisions of a sealed event
 
@@ -322,6 +348,16 @@ parts:
 A Nostr client that does not know kind 3275 reads the first 32 KiB. A page of
 at most 32 KiB is therefore a plain NIP-37 draft. A body holds at most 256
 parts.
+
+#### Notebook views
+
+A `notebook` action names `kind` and `op`. Operations are `read`, `list`,
+`search`, `select`, `next`, `prev`, `index`, and `toc`. The kind must declare
+`notebook_index`. `read` supplies `address` and a keyed `d` template. Navigation
+supplies `address`; `index` and `toc` supply `notebook`. Optional templates are
+`prefix`, `query`, `title`, `page`, `from`, `to`, `order`, `reverse`, `limit`, and
+`section`. These are application selections over verified sealed page events.
+The command's usual output pipeline renders the resulting records.
 
 ### 7.3 delete
 
@@ -883,86 +919,405 @@ A page is a NIP-23 article, kind 30023, inside a NIP-37 draft. The article's
 keyed value of the address. A client that knows NIP-37 opens the page as a
 draft article. The checkpoints of the draft are the history of the page.
 
+The journal is a collection of notebooks. A notebook is namespaced as
+`project/notebook`, such as `arc/architecture`. Each new page has a positive
+integer ordinal, for example `arc/architecture/1`. Page numbers are stable and
+scoped to the notebook. Gaps are allowed; deleting page 2 never renumbers page
+3. Old pages with names remain readable and appear as legacy entries; they are
+not silently renumbered.
+
+The input header requires `title`, `page` and `notebook`. Their combined address
+must match the command address. ARC fills in `created_at` and `updated_at` as
+UTC RFC3339 timestamps. `created_at` stays fixed through replacement and append;
+`updated_at` records the latest write. Caller-supplied timestamps cannot change
+these values. For an older numbered page with no creation field, rewriting uses
+the earliest checkpoint available to this machine. UTC dates come from the
+writer's clock; event replacement still uses core's monotonically newer time.
+
+```sh
+arc journal write arc/architecture/1 <<'MD'
+---
+title: Session boundaries
+page: 1
+notebook: arc/architecture
+---
+# Session boundaries
+
+## Decision
+Interaction behavior belongs in core.
+
+## Evidence
+The CLI session tests pass.
+MD
+arc journal read arc/architecture/1
+arc journal next arc/architecture/1
+arc journal prev arc/architecture/3
+arc journal ls --notebook arc/architecture --from 2026-09-01 --to 2026-09-30
+arc journal ls --notebook arc/architecture --order page --reverse --limit 10
+arc journal select --notebook arc/architecture --page 1 --section decision
+arc journal search --notebook arc/architecture --from 2026-09-01 session
+arc journal index arc/architecture
+arc journal toc arc/architecture
+```
+
+`ls` defaults to creation time, oldest first. `--order` selects `created`,
+`updated`, or numeric `page`; `--reverse` reverses it. Filters can select an
+exact notebook, page number, title substring, and inclusive creation date
+bounds. `--from` and `--to` accept a UTC date or RFC3339 timestamp; a date for
+`--to` includes that whole day. `--limit` is positive. `select` reads the full
+selected pages, or the requested Markdown section. Search filters before
+ranking and limiting. Search options must precede the search terms.
+
+Journal search uses a local Bleve Scorch index with BM25 scoring. Plain queries
+match any Unicode word, without stemming or stop-word removal. `--syntax` enables
+Bleve query syntax: quoted phrases, `+required` and `-excluded` terms, fuzzy terms
+such as `bird~1`, wildcards such as `bird*`, and `title:` or `text:` field searches.
+`AND`, `OR`, and parentheses are not Boolean operators in this syntax. Use `+`
+and `-` for required and excluded terms.
+
+```sh
+arc journal search --syntax --notebook arc/architecture '"bounded flow control"'
+arc journal search --syntax '+session -http'
+arc journal search --syntax 'title:architecture'
+arc journal search --syntax 'bluetooh~1'
+```
+
+Each identity has a private derived index at
+`<citizen-home>/store/search/journal-v1.bleve`. It contains readable search terms
+and positions. It does not store full page bodies or go to relays. The source
+pages remain encrypted ARC events in `events.db`. Protect the local index like
+other private user data; filesystem permissions are not encryption at rest.
+
+Before each search, ARC reads current verified page headers, applies metadata
+filters, and indexes only selected pages whose content version changed. Unchanged
+multipart bodies are not fetched again for ranking. `--json` reads the complete
+Markdown of returned hits to preserve the search record format. Deleted pages
+are removed. A filtered search does not fetch bodies from other notebooks. The first search on a new
+machine builds its own index from synced encrypted pages. Updates received out
+of order are detected by content version, not a wall-clock cursor. If a changed
+selected page has a missing part, or an index update fails, search returns an
+error instead of stale results.
+The index can be rebuilt from source events; it does not replace ARC persistence.
+
+`next` and `prev` read the closest higher or lower page number in the same
+notebook. They skip gaps and deleted pages, and report a boundary when no page
+exists. Chronological views and ordinal navigation are distinct operations.
+
+Each write, append and delete refreshes an encrypted notebook index through the
+normal draft/checkpoint core. The index contains page numbers, titles, creation
+and update timestamps, page references, and a table of Markdown headings.
+Indexes are rebuildable snapshots. Views derive from verified source pages,
+so an old cached index does not hide pages received from another machine.
+`index` rebuilds and persists the snapshot; `toc` renders its page/heading tree.
+An interrupted index update reports that the page was saved and names the
+rebuild operation. Sync before using an index on another machine.
+
+ToC links use `journal+arc://<own-public-key>/<project>/<notebook>/<page>#<anchor>`.
+Pass a link to `arc journal read` to read the page or section. An address with
+`#<anchor>` also works. Sections include their child headings and end at the
+next heading of the same or higher level. ATX and Setext headings are supported;
+fenced and indented code is omitted. Duplicate anchors receive numeric suffixes.
+A journal reference must name the local identity. This does not grant access to
+another identity's private pages or register an OS/browser URL handler.
+
+The operator must announce the updated journal manifest to activate these
+commands. Upgrade ARC first: older binaries reject the new manifest fields.
+The Markdown index uses the already-consented sealed article kind 30023.
+Its two-component notebook address keeps it outside the three-component page
+views, and its event kind keeps it outside KPI JSON queries.
+Existing consent keeps the same event kinds and visibility.
+
 A KPI series is one draft per notebook and key, around an event of kind 30078,
 which NIP-78 defines for the data of one application. The draft holds the
 latest value, and its checkpoints hold every value before it.
 
 ```json
 {
-  "interface": 1, "id": "journal", "shape": "data",
-  "title": "Journal", "summary": "A private notebook, sealed to your own key.",
+  "interface": 1,
+  "id": "journal",
+  "shape": "data",
+  "title": "Journal",
+  "summary": "A private notebook, sealed to your own key.",
   "kinds": {
-    "page": {"kind": 30023, "visibility": "sealed"},
-    "kpi":  {"kind": 30078, "visibility": "sealed"}
+    "page": {"kind": 30023, "visibility": "sealed", "frontmatter": ["title", "page", "notebook"], "notebook_index": "index"},
+    "kpi": {"kind": 30078, "visibility": "sealed"},
+    "index": {"kind": 30023, "visibility": "sealed"}
   },
   "formats": {
-    "page":    {"record": "{{text}}"},
-    "list":    {"record": "{{tags.d}}\t{{tags.title}}\t{{created|date}}", "empty": "no pages"},
-    "hits":    {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}", "empty": "no results"},
+    "page": {"record": "{{text}}"},
+    "list": {"record": "{{tags.d}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no pages"},
+    "hits": {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no results"},
     "history": {"record": "{{created|time}}\n{{text|truncate:200|indent}}", "empty": "no revisions"},
-    "kpi":     {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
+    "kpi": {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
   },
   "commands": [
-    {"path": ["write"], "summary": "Replace a page with the standard input",
-     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
-               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"},
-              {"name": "title", "kind": "option", "type": "text"},
-              {"name": "body", "kind": "positional", "type": "stdin"}],
-     "action": {"publish": {"kind": "page", "d": "{{address|keyed:page}}", "revise": "replace", "content": "{{body}}",
-                            "tags": [["d", "{{address}}"], ["title", "{{title}}"]]}}},
-    {"path": ["append"], "summary": "Add text to the end of a page",
-     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
-               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"},
-              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "page", "d": "{{address|keyed:page}}", "revise": "append", "content": "{{text}}\n",
-                            "tags": [["d", "{{address}}"]]}}},
-    {"path": ["read"], "summary": "Show a page, or a range of its lines",
-     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
-               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"},
-              {"name": "lines", "kind": "option", "type": "lines"}],
-     "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "limit": 1}},
-     "output": {"open": {"parse": "text"}, "join": {"lines": "{{lines}}"}, "format": "page"}},
-    {"path": ["tail"], "summary": "Show each text as it is appended",
-     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
-               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"}],
-     "action": {"watch": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
-     "output": {"open": {"parse": "text"}, "join": {}, "tail": {}, "format": "page"}},
-    {"path": ["history"], "summary": "List the revisions of a page",
-     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
-               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"}],
-     "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
-     "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}},
-    {"path": ["ls"], "summary": "List the pages",
-     "args": [{"name": "prefix", "kind": "positional", "type": "text"}],
-     "action": {"query": {"kinds": ["page"], "authors": "me"}},
-     "output": {"open": {"parse": "text"}, "where": [{"field": "tags.d", "prefix": "{{prefix}}"}],
-                "sort": {"field": "tags.d", "order": "asc"}, "format": "list"}},
-    {"path": ["search"], "summary": "Search the pages",
-     "args": [{"name": "query", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"query": {"kinds": ["page"], "authors": "me"}},
-     "output": {"open": {"parse": "text"}, "join": {},
-                "rank": {"query": "{{query}}", "fields": ["tags.title", "text"], "limit": 20}, "format": "hits"}},
-    {"path": ["delete"], "summary": "Delete a page and its history",
-     "args": [{"name": "address", "kind": "positional", "type": "address", "required": true,
-               "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"}],
-     "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}},
-    {"path": ["kpi", "set"], "summary": "Record one measured value",
-     "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true},
-              {"name": "key", "kind": "positional", "type": "text", "required": true},
-              {"name": "value", "kind": "positional", "type": "text", "required": true},
-              {"name": "note", "kind": "option", "type": "text"}],
-     "action": {"publish": {"kind": "kpi", "d": "{{notebook+key|keyed:kpi}}", "revise": "replace",
-                            "tags": [["d", "{{key}}"], ["notebook", "{{notebook}}"]],
-                            "content": {"json": {"key": "{{key}}", "value": "{{value}}", "note": "{{note}}"}}}}},
-    {"path": ["kpi", "latest"], "summary": "Show the last value of each key",
-     "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
-     "action": {"query": {"kinds": ["kpi"], "authors": "me"}},
-     "output": {"open": {"parse": "json"}, "where": [{"field": "tags.notebook", "is": "{{notebook}}"}], "format": "kpi"}},
-    {"path": ["kpi", "log"], "summary": "Show every value of one key",
-     "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true},
-              {"name": "key", "kind": "positional", "type": "text", "required": true}],
-     "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook+key|keyed:kpi}}", "history": true}},
-     "output": {"open": {"parse": "json"}, "format": "kpi"}}
+    {
+      "path": ["write"],
+      "summary": "Replace a page with the standard input",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
+        },
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "body", "kind": "positional", "type": "stdin"}
+      ],
+      "action": {
+        "publish": {
+          "kind": "page",
+          "d": "{{address|keyed:page}}",
+          "frontmatter_address": "{{address}}",
+          "revise": "replace",
+          "content": "{{body}}",
+          "tags": [["d", "{{address}}"], ["title", "{{title}}"]]
+        }
+      }
+    },
+    {
+      "path": ["append"],
+      "summary": "Add text to the end of a page",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
+        },
+        {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}
+      ],
+      "action": {
+        "publish": {
+          "kind": "page",
+          "d": "{{address|keyed:page}}",
+          "frontmatter_address": "{{address}}",
+          "revise": "append",
+          "content": "{{text}}\n",
+          "tags": [["d", "{{address}}"]]
+        }
+      }
+    },
+    {
+      "path": ["read"],
+      "summary": "Show a page, or a range of its lines",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "text", "required": true},
+        {"name": "lines", "kind": "option", "type": "lines"},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {
+        "notebook": {"op": "read", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "section": "{{section}}"}
+      },
+      "output": {"open": {"parse": "text"}, "join": {"lines": "{{lines}}"}, "format": "page"}
+    },
+    {
+      "path": ["tail"],
+      "summary": "Show each text as it is appended",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
+        }
+      ],
+      "action": {"watch": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "tail": {}, "format": "page"}
+    },
+    {
+      "path": ["history"],
+      "summary": "List the revisions of a page",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
+        }
+      ],
+      "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}
+    },
+    {
+      "path": ["ls"],
+      "summary": "List pages by creation time, with notebook and date filters",
+      "args": [
+        {"name": "prefix", "kind": "positional", "type": "text"},
+        {"name": "notebook", "kind": "option", "type": "text"},
+        {"name": "page", "kind": "option", "type": "integer"},
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "from", "kind": "option", "type": "text"},
+        {"name": "to", "kind": "option", "type": "text"},
+        {"name": "order", "kind": "option", "type": "text"},
+        {"name": "limit", "kind": "option", "type": "integer"},
+        {"name": "reverse", "kind": "switch", "type": "text"}
+      ],
+      "action": {
+        "notebook": {
+          "op": "list",
+          "kind": "page",
+          "prefix": "{{prefix}}",
+          "notebook": "{{notebook}}",
+          "page": "{{page}}",
+          "title": "{{title}}",
+          "from": "{{from}}",
+          "to": "{{to}}",
+          "order": "{{order}}",
+          "limit": "{{limit}}",
+          "reverse": "{{reverse}}"
+        }
+      },
+      "output": {"format": "list"}
+    },
+    {
+      "path": ["search"],
+      "summary": "Search the pages",
+      "args": [
+        {"name": "query", "kind": "positional", "type": "text", "variadic": true, "required": true},
+        {"name": "notebook", "kind": "option", "type": "text"},
+        {"name": "page", "kind": "option", "type": "integer"},
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "from", "kind": "option", "type": "text"},
+        {"name": "to", "kind": "option", "type": "text"},
+        {"name": "limit", "kind": "option", "type": "integer", "default": "20"},
+        {"name": "syntax", "kind": "switch", "type": "text"}
+      ],
+      "action": {
+        "notebook": {
+          "op": "search",
+          "kind": "page",
+          "query": "{{query}}",
+          "notebook": "{{notebook}}",
+          "page": "{{page}}",
+          "title": "{{title}}",
+          "from": "{{from}}",
+          "to": "{{to}}",
+          "limit": "{{limit}}",
+          "syntax": "{{syntax}}"
+        }
+      },
+      "output": {"format": "hits"}
+    },
+    {
+      "path": ["delete"],
+      "summary": "Delete a page and its history",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
+        }
+      ],
+      "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}
+    },
+    {
+      "path": ["kpi", "set"],
+      "summary": "Record one measured value",
+      "args": [
+        {"name": "notebook", "kind": "positional", "type": "text", "required": true},
+        {"name": "key", "kind": "positional", "type": "text", "required": true},
+        {"name": "value", "kind": "positional", "type": "text", "required": true},
+        {"name": "note", "kind": "option", "type": "text"}
+      ],
+      "action": {
+        "publish": {
+          "kind": "kpi",
+          "d": "{{notebook+key|keyed:kpi}}",
+          "revise": "replace",
+          "tags": [["d", "{{key}}"], ["notebook", "{{notebook}}"]],
+          "content": {"json": {"key": "{{key}}", "value": "{{value}}", "note": "{{note}}"}}
+        }
+      }
+    },
+    {
+      "path": ["kpi", "latest"],
+      "summary": "Show the last value of each key",
+      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
+      "action": {"query": {"kinds": ["kpi"], "authors": "me"}},
+      "output": {"open": {"parse": "json"}, "where": [{"field": "tags.notebook", "is": "{{notebook}}"}], "format": "kpi"}
+    },
+    {
+      "path": ["kpi", "log"],
+      "summary": "Show every value of one key",
+      "args": [
+        {"name": "notebook", "kind": "positional", "type": "text", "required": true},
+        {"name": "key", "kind": "positional", "type": "text", "required": true}
+      ],
+      "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook+key|keyed:kpi}}", "history": true}},
+      "output": {"open": {"parse": "json"}, "format": "kpi"}
+    },
+    {
+      "path": ["select"],
+      "summary": "Read pages selected by notebook, number, title and creation date",
+      "args": [
+        {"name": "notebook", "kind": "option", "type": "text"},
+        {"name": "page", "kind": "option", "type": "integer"},
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "from", "kind": "option", "type": "text"},
+        {"name": "to", "kind": "option", "type": "text"},
+        {"name": "order", "kind": "option", "type": "text"},
+        {"name": "limit", "kind": "option", "type": "integer"},
+        {"name": "reverse", "kind": "switch", "type": "text"},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {
+        "notebook": {
+          "op": "select",
+          "kind": "page",
+          "notebook": "{{notebook}}",
+          "page": "{{page}}",
+          "title": "{{title}}",
+          "from": "{{from}}",
+          "to": "{{to}}",
+          "order": "{{order}}",
+          "limit": "{{limit}}",
+          "reverse": "{{reverse}}",
+          "section": "{{section}}"
+        }
+      },
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["next"],
+      "summary": "Read the next numbered page in the same notebook",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "text", "required": true},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {"notebook": {"op": "next", "kind": "page", "address": "{{address}}", "section": "{{section}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["prev"],
+      "summary": "Read the previous numbered page in the same notebook",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "text", "required": true},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {"notebook": {"op": "prev", "kind": "page", "address": "{{address}}", "section": "{{section}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["index"],
+      "summary": "Rebuild the encrypted notebook index and show its Markdown",
+      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
+      "action": {"notebook": {"op": "index", "kind": "page", "notebook": "{{notebook}}", "order": "page"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["toc"],
+      "summary": "Show notebook pages and their Markdown headings",
+      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
+      "action": {"notebook": {"op": "toc", "kind": "page", "notebook": "{{notebook}}", "order": "page"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    }
   ]
 }
 ```

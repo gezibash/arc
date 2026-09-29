@@ -68,7 +68,7 @@ looks. To start again, remove the file.
 
 A release archive is a tarball that the release workflow builds:
 `arc-<version>-<os>-<arch>.tar.gz`, with every member under `arc/`. To offer
-one through the [release provider](../../cmd/releases-provider/README.md),
+one through the [release provider](../../apps/releases/README.md),
 store it as `blobs/<sha256>.tar.gz` and name it in the signed channel
 document:
 

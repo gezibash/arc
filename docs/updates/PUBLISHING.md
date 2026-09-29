@@ -76,7 +76,7 @@ must have a relay. Never give it the key of the publisher:
 
 ```sh
 RELEASES_ROOT=/absolute/provider-root arc --key <provider-name> serve \
-  "exec://$(command -v releases-provider)?manifest=$PWD/cmd/releases-provider/manifest.json"
+  "exec://$(command -v arc-releases)?manifest=$PWD/apps/releases/manifest.json"
 ```
 
 Find the provider with `arc discover releases`. A citizen reads the channel

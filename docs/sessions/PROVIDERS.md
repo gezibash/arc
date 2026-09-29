@@ -13,9 +13,9 @@ from the consumer. Repeat installation after an interface update.
 | Releases | JSON archive operation and sha256 digest | request_reply, server_stream | Raw archive bytes; updater checks size, hash and final session completion. |
 
 Provider configuration and access checks are unchanged. See the guides for
-[SQLite](../../cmd/sqlite-provider/README.md), [Exec](../../cmd/exec-provider/README.md),
+[SQLite](../../apps/sqlite/README.md), [Exec](../../apps/exec/README.md),
 [streaming HTTP](../../examples/streaming-http/README.md), and
-[Releases](../../cmd/releases-provider/README.md).
+[Releases](../../apps/releases/README.md).
 
 A quick local proof builds real provider subprocesses, runs a local relay and
 separate identities, and uses the normal CLI:

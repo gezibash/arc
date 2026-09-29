@@ -8,6 +8,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
 	"github.com/gezibash/arc/adapters/mailbox"
+	blevesearch "github.com/gezibash/arc/adapters/search/bleve"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/application/wake"
@@ -33,6 +34,7 @@ type Session struct {
 	NewRelay func(string) transport.Transport
 	Errors   io.Writer
 	store    *store.Store
+	search   *blevesearch.Index
 }
 
 type Config struct {
@@ -50,7 +52,7 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Node: &node.Node{Store: s}, store: s, URLs: cfg.URLs, Errors: cfg.Errors}
+	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Node: &node.Node{Store: s}, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve"))}
 	sess.NewRelay = func(url string) transport.Transport { return relay.Relay{URL: url, Signer: sess.Signer} }
 	for _, url := range cfg.URLs {
 		sess.Relays = append(sess.Relays, sess.NewRelay(url))
@@ -72,6 +74,9 @@ func Open(cfg Config) (*Session, error) {
 	return sess, nil
 }
 func (s *Session) Close() {
+	if s.search != nil {
+		s.search.Close()
+	}
 	if s.Mail != nil {
 		s.Mail.Close()
 	}

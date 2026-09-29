@@ -3,15 +3,17 @@
 Status: built. Two adapters serve HTTP over ARC:
 
 - `httpadapter.New` serves a Go `http.Handler` in the provider program.
-- `http-provider` serves an HTTP server of any language. See section 10.
+- `arc-http` serves an HTTP server of any language. See section 10.
 
 `mise run compose` proves both. One notes service runs in the provider
 program, in `examples/notes`, and as a plain HTTP server, in
 `examples/notes-server`.
 
 The Go adapter is `github.com/gezibash/arc/adapters/http` (package
-`httpadapter`). Shared provider contracts are in `core/provider`; process entry
-points call `adapters/provider/stdio.Run`. See [package boundaries](../ARCHITECTURE.md).
+`httpadapter`). Shared service contracts are in `core/provider`. The HTTP app
+implementation is in `apps/http/server`; `cmd/arc-http` supplies process streams
+and signals. Other entry points can use `adapters/provider/stdio.Run`. See
+[package boundaries](../ARCHITECTURE.md).
 
 ## 1. Purpose
 
@@ -137,17 +139,17 @@ arc call --method POST 'http+arc://<provider>/notes' '{"body": "hello"}'
 
 An HTTP handler can call another capability, as the citizen that serves it.
 The notes example keeps its notes in SQLite over ARC this way. See
-docs/interface/SPEC.md, section 14.2. A server behind `http-provider` calls
+docs/interface/SPEC.md, section 14.2. A server behind `arc-http` calls
 through a local endpoint, see section 10.2.
 
 ## 10. The adapter for any language
 
-`http-provider` starts an HTTP server as its child, and forwards each call
+`arc-http` starts an HTTP server as its child, and forwards each call
 to it. The server can be in any language. It needs no ARC library:
 
 ```sh
-http-provider <program> [args...]
-arc serve 'exec:///usr/local/bin/http-provider?manifest=/srv/app/manifest.json&args=/srv/app/server'
+arc-http <program> [args...]
+arc serve 'exec:///usr/local/bin/arc-http?manifest=/srv/app/manifest.json&args=/srv/app/server'
 ```
 
 ### 10.1 The server
@@ -163,18 +165,18 @@ The server gets three variables in its environment:
 These rules hold:
 
 - The server listens on `127.0.0.1:$PORT` in 30 seconds. If not, or if it
-  ends first, `http-provider` fails.
+  ends first, `arc-http` fails.
 - The standard output of the server goes to the standard error of
-  `http-provider`, because standard output carries the ARC protocol.
+  `arc-http`, because standard output carries the ARC protocol.
 - One exchange takes at most 50 seconds. A server that does not answer in
   that time gives 502. An earlier caller deadline applies. The HTTP adapter
   rejects canceled requests before dispatch and reports cancellation if the
   handler returns after the caller stops. An empty canceled response is not 200.
-- If the server ends, `http-provider` ends, and `arc serve` says that the
+- If the server ends, `arc-http` ends, and `arc serve` says that the
   provider stopped.
-- When `arc serve` stops, `http-provider` sends SIGTERM to the server. If
+- When `arc serve` stops, `arc-http` sends SIGTERM to the server. If
   the server has not ended after 3 seconds, it sends SIGKILL.
-- If `http-provider` itself gets SIGKILL, the server stays behind.
+- If `arc-http` itself gets SIGKILL, the server stays behind.
 
 ### 10.2 Calls of the server
 
@@ -235,7 +237,7 @@ closure. Output `ws_close` preserves the peer's close code/reason. Abnormal
 closure also fails the core session. Cancellation closes the underlying connection.
 Peer ping/pong frames are handled by the WebSocket library.
 
-Both in-process `httpadapter.New(handler)` and `http-provider` use this mapping.
+Both in-process `httpadapter.New(handler)` and `arc-http` use this mapping.
 Caller identity is assigned by the adapter; a supplied `Arc-Caller` cannot replace
 it. Provider-to-provider calls from hosted applications can use authenticated
 `POST /session` on the same local server as `ARC_CALL_URL`. Query parameters are

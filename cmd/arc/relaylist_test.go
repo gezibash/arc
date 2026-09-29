@@ -49,7 +49,7 @@ func TestRelayAddPublishesTheNIP65RelayList(t *testing.T) {
 func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "interface.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestALiveCallFindsTheProviderThroughAnIndexer(t *testing.T) {
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)
 	indexer := testrelay.Start(t)
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "interface.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

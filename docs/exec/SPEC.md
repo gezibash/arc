@@ -1,7 +1,7 @@
 # Exec: remote commands and wakeable citizens on ARC
 
 Status: proposed. Phases 1, 2, 3a and 3b of section 18 exist.
-`cmd/exec-provider` holds the provider (section 8), the start script
+`apps/exec` holds the provider (section 8), the start script
 (section 10.4), the lease (section 11), and jobs with their result to the
 caller (section 12). `arc` and the `wake` package run the wake flow
 (section 10). The other sections describe work that does not exist yet.
@@ -163,7 +163,7 @@ about 50 USD for each month.
 
 ## 8. Command request (prototype)
 
-The provider bundle is `cmd/exec-provider`. Its scheme is `exec`. Its method is
+The provider bundle is `apps/exec`. Its scheme is `exec`. Its method is
 `EXEC`.
 
 ```sh
@@ -244,7 +244,7 @@ same role as `ProxyCommand` in `~/.ssh/config`.
 ```toml
 [wake."<citizen-public-key>"]
 kind = "command"
-argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/exec-provider/citizen/citizen-up"]
+argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/arc-exec/citizen/citizen-up"]
 ```
 
 - The `command` kind runs a local program. Exit status 0 means that the
@@ -363,8 +363,8 @@ a `lease` object to `EXEC_CONFIG`:
   "grants": ["<64 lowercase hex characters>"],
   "cwd": "/home/sprite",
   "lease": {
-    "hold": ["/home/sprite/exec-provider/citizen/lease", "hold", "300"],
-    "release": ["/home/sprite/exec-provider/citizen/lease", "hold", "60"],
+    "hold": ["/home/sprite/arc-exec/citizen/lease", "hold", "300"],
+    "release": ["/home/sprite/arc-exec/citizen/lease", "hold", "60"],
     "interval_ms": 60000
   }
 }
@@ -453,7 +453,7 @@ operator adds a `notify` object to `EXEC_CONFIG`:
 ```json
 {
   "notify": {
-    "argv": ["/home/sprite/exec-provider/citizen/notify-dm", "{owner}"],
+    "argv": ["/home/sprite/arc-exec/citizen/notify-dm", "{owner}"],
     "timeout_ms": 30000
   }
 }
@@ -602,7 +602,7 @@ token_env = "SPRITES_TOKEN"
 | Phase | Scope |
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
-| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. Done: `cmd/exec-provider/citizen/` and the `lease` object. v0.11.0 removed the wrapper `arc-exec`, because `arc` runs the wake flow. |
+| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. Done: `apps/exec/citizen/` and the `lease` object. v0.11.0 removed the wrapper `arc-exec`, because `arc` runs the wake flow. |
 | 2 | Wake hooks and presence states. Done: the `wake` package, `wake.toml`, `peer_offline` (step 1 of section 10.2), and the wake flow before each live call of `arc`. |
 | 3a | Asynchronous jobs: `start` and `status`, and the installed commands `arc exec start` and `arc exec status`. Done. |
 | 3b | The notify command (section 12.3) and the direct-message script (section 12.4). Done. |

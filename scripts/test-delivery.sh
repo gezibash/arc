@@ -7,6 +7,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$root/scripts/journal-proof.sh"
 work="$(mktemp -d)"
 keep="${ARC_KEEP_WORK:-}"
 
@@ -31,7 +32,7 @@ keyfile() { echo "$work/$1"/citizens/*/key; }
 
 cd "$root"
 go build -o "$work/arc" ./cmd/arc
-go build -o "$work/exec-provider" ./cmd/exec-provider
+go build -o "$work/arc-exec" ./cmd/arc-exec
 say "arc and the exec provider build"
 
 a() { "$work/arc" --home "$work/laptop" "$@"; }
@@ -57,17 +58,17 @@ b relay add "$url"
 
 # The journal is a manifest of interface version 1. Its author announces it,
 # and each machine installs it by trusting that author.
-a announce "$root/manifests/journal.json" > /dev/null
+a announce "$root/apps/journal/manifest.json" > /dev/null
 author="$(a whoami | sed -n 2p)"
 a install "$author" journal --yes > /dev/null
 b install "$author" journal --yes > /dev/null
 say "both machines install the journal"
 
 # Through a relay.
-printf 'auc 0.871\nnext: try warmup\n' | a journal write hrs/ablations/lr-sweep --title "LR sweep" > /dev/null
+printf -- '---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup\n' | a journal write hrs/ablations/1 --title "LR sweep" > /dev/null
 b sync > /dev/null
-[ "$(b journal read hrs/ablations/lr-sweep)" = "$(printf 'auc 0.871\nnext: try warmup')" ] ||
-  fail "the desktop read $(b journal read hrs/ablations/lr-sweep)"
+[ "$(b journal read hrs/ablations/1 | journal_doc)" = "$(printf -- '---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup')" ] ||
+  fail "the desktop read $(b journal read hrs/ablations/1 | journal_doc)"
 say "a page crosses the relay"
 
 # The relay holds ciphertext only.
@@ -78,10 +79,10 @@ say "the relay holds neither the text nor the address"
 # Through a USB stick, with no relay.
 a relay rm "$url"
 b relay rm "$url"
-printf 'the stick carried this\n' | a journal write hrs/ablations/offline > /dev/null
+printf -- '---\ntitle: Offline\npage: 2\nnotebook: hrs/ablations\n---\nthe stick carried this\n' | a journal write hrs/ablations/2 > /dev/null
 a sync --dir "$work/stick" > /dev/null
 b sync --dir "$work/stick" > /dev/null
-[ "$(b journal read hrs/ablations/offline)" = "the stick carried this" ] ||
+[ "$(b journal read hrs/ablations/2 | journal_doc)" = "$(printf -- '---\ntitle: Offline\npage: 2\nnotebook: hrs/ablations\n---\nthe stick carried this')" ] ||
   fail "the desktop did not read the page from the stick"
 say "a page crosses a USB stick"
 
@@ -89,7 +90,7 @@ say "a page crosses a USB stick"
 # the files that appear after the next write belong to the new page alone.
 a sync --dir "$work/stick2" > /dev/null
 ls "$work/stick2/events" > "$work/before.txt"
-printf 'the real text\n' | a journal write hrs/ablations/tamper > /dev/null
+printf -- '---\ntitle: Tamper\npage: 3\nnotebook: hrs/ablations\n---\nthe real text\n' | a journal write hrs/ablations/3 > /dev/null
 a sync --dir "$work/stick2" > /dev/null
 changed=0
 for name in $(ls "$work/stick2/events" | grep -vxF -f "$work/before.txt"); do
@@ -103,7 +104,7 @@ done
 [ "$changed" = 1 ] || fail "found no draft of the new page to change"
 b sync --dir "$work/stick2" > /dev/null 2> "$work/refused.txt" || true
 grep -q "refused" "$work/refused.txt" || fail "the changed event was not refused: $(cat "$work/refused.txt")"
-if b journal read hrs/ablations/tamper 2> /dev/null | grep "the real text" > /dev/null; then
+if b journal read hrs/ablations/3 2> /dev/null | grep "the real text" > /dev/null; then
   fail "the desktop read a changed page"
 fi
 say "a changed event is refused, and the page does not read"
@@ -111,28 +112,29 @@ say "a changed event is refused, and the page does not read"
 # A large page streams in parts, and a range reads only its parts.
 a relay add "$url"
 b relay add "$url"
-for i in $(seq 1 3000); do printf 'line %05d %090d\n' "$i" 0; done > "$work/big.txt"
-a journal write hrs/data/big < "$work/big.txt" || fail "the large page was not written"
-[ "$(b journal read hrs/data/big | wc -l | tr -d ' ')" = 3000 ] || fail "the large page did not read back whole"
-b journal read hrs/data/big > "$work/big-back.txt"
+printf -- '---\ntitle: Big\npage: 1\nnotebook: hrs/data\n---\n' > "$work/big.txt"
+for i in $(seq 1 3000); do printf 'line %05d %090d\n' "$i" 0; done >> "$work/big.txt"
+a journal write hrs/data/1 < "$work/big.txt" || fail "the large page was not written"
+[ "$(b journal read hrs/data/1 | wc -l | tr -d ' ')" = 3007 ] || fail "the large page did not read back whole"
+b journal read hrs/data/1 | journal_doc > "$work/big-back.txt"
 cmp -s "$work/big.txt" "$work/big-back.txt" || fail "the large page came back changed"
 say "a large page of $(wc -c < "$work/big.txt" | tr -d ' ') bytes crosses the relay in parts"
 
 "$work/arc" --home "$work/phone" keys add < "$(keyfile laptop)" > /dev/null
 "$work/arc" --home "$work/phone" relay add "$url"
 "$work/arc" --home "$work/phone" install "$author" journal --yes > /dev/null
-got="$("$work/arc" --home "$work/phone" journal read hrs/data/big --lines 1500:1501)"
-[ "$got" = "$(sed -n '1500,1501p' "$work/big.txt")" ] || fail "the range read gave $got"
+got="$("$work/arc" --home "$work/phone" journal read hrs/data/1 --lines 1500:1501)"
+[ "$got" = "$(sed -n '1498,1499p' "$work/big.txt")" ] || fail "the range read gave $got"
 say "a range of two lines reads on a machine that held nothing"
 
 # Tail streams what is appended.
-"$work/arc" --home "$work/desktop" journal tail hrs/log/live > "$work/tail.txt" 2>&1 &
+"$work/arc" --home "$work/desktop" journal tail hrs/log/1 > "$work/tail.txt" 2>&1 &
 tail_pid=$!
 sleep 0.5
-a journal append hrs/log/live first note > /dev/null
-a journal append hrs/log/live second note > /dev/null
+printf -- '---\ntitle: Live\npage: 1\nnotebook: hrs/log\n---\nfirst note\n' | a journal write hrs/log/1 > /dev/null
+a journal append hrs/log/1 second note > /dev/null
 for _ in $(seq 1 50); do grep -q "second note" "$work/tail.txt" 2>/dev/null && break; sleep 0.1; done
-[ "$(cat "$work/tail.txt")" = "$(printf 'first note\nsecond note')" ] || fail "tail wrote $(cat "$work/tail.txt")"
+[ "$(journal_doc < "$work/tail.txt")" = "$(printf -- '---\ntitle: Live\npage: 1\nnotebook: hrs/log\n---\nfirst note\nsecond note')" ] || fail "tail wrote $(cat "$work/tail.txt")"
 say "tail streams each note as it is appended"
 
 printf 'phase 1 holds: relay, USB stick, refusal, parts, and tail\n\n'
@@ -202,7 +204,7 @@ cat > "$work/exec.json" <<JSON
 JSON
 
 EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \
-  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \
+  "exec://$work/arc-exec?manifest=$root/apps/exec/manifest.json" \
   --sync-dir "$work/stick-p" --interval 1s > "$work/serve.log" 2>&1 &
 serve_pid=$!
 for _ in $(seq 1 50); do grep "serves" "$work/serve.log" > /dev/null 2>&1 && break; sleep 0.1; done
@@ -263,7 +265,7 @@ cat > "$work/wake-exec" <<SCRIPT
 # The start script of the provider: serve again, and exit 0 when it listens.
 echo woke >> "$work/woke"
 EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \\
-  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" \\
+  "exec://$work/arc-exec?manifest=$root/apps/exec/manifest.json" \\
   > "$work/serve-woken.log" 2>&1 < /dev/null &
 echo \$! > "$work/serve-woken.pid"
 for _ in \$(seq 1 50); do
@@ -302,7 +304,7 @@ releases="$work/releases"
 mkdir -p "$releases/channels" "$releases/blobs" "$work/new/arc/bin" "$work/old"
 go build -ldflags "-X main.version=0.9.0" -o "$work/old/arc" ./cmd/arc
 go build -ldflags "-X main.version=9.9.9" -o "$work/new/arc/bin/arc" ./cmd/arc
-go build -o "$work/releases-provider" ./cmd/releases-provider
+go build -o "$work/arc-releases" ./cmd/arc-releases
 tar -czf "$work/new.tar.gz" -C "$work/new" arc
 digest="$(shasum -a 256 "$work/new.tar.gz" | cut -d' ' -f1)"
 size="$(wc -c < "$work/new.tar.gz" | tr -d ' ')"
@@ -325,7 +327,7 @@ say "a publisher signs a channel with a Nostr key, and never the same sequence t
 "$work/arc" --home "$work/rel" relay add "$url"
 rel_key="$("$work/arc" --home "$work/rel" whoami | sed -n 2p)"
 RELEASES_ROOT="$releases" "$work/arc" --home "$work/rel" serve \
-  "exec://$work/releases-provider?manifest=$root/cmd/releases-provider/manifest.json" > "$work/rel.log" 2>&1 &
+  "exec://$work/arc-releases?manifest=$root/apps/releases/manifest.json" > "$work/rel.log" 2>&1 &
 rel_pid=$!
 for _ in $(seq 1 50); do grep "serves" "$work/rel.log" > /dev/null 2>&1 && break; sleep 0.1; done
 grep "serves" "$work/rel.log" > /dev/null || fail "the releases provider did not serve: $(cat "$work/rel.log")"

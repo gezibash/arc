@@ -9,6 +9,7 @@ set -euo pipefail
 
 url="${1:?give the URL of the relay, for example wss://arc-nostr-gezim.fly.dev}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$root/scripts/journal-proof.sh"
 work="$(mktemp -d)"
 
 cleanup() {
@@ -23,7 +24,7 @@ fail() { printf 'FAIL %s\n' "$1"; exit 1; }
 # keyfile names the key file of the one identity of a home.
 keyfile() { echo "$work/$1"/citizens/*/key; }
 
-(cd "$root" && go build -o "$work/arc" ./cmd/arc && go build -o "$work/exec-provider" ./cmd/exec-provider)
+(cd "$root" && go build -o "$work/arc" ./cmd/arc && go build -o "$work/arc-exec" ./cmd/arc-exec)
 a() { "$work/arc" --home "$work/laptop" "$@"; }
 b() { "$work/arc" --home "$work/desktop" "$@"; }
 
@@ -33,13 +34,13 @@ a relay add "$url"
 b relay add "$url"
 say "two machines of one citizen use $url"
 
-a announce "$root/manifests/journal.json" > /dev/null || fail "the relay did not take the announcement"
+a announce "$root/apps/journal/manifest.json" > /dev/null || fail "the relay did not take the announcement"
 author="$(a whoami | sed -n 2p)"
 a install "$author" journal --yes > /dev/null
 b install "$author" journal --yes > /dev/null
 page="check/relay/$(date +%s)"
-printf 'sealed through %s\n' "$url" | a journal write "$page" > /dev/null || fail "the page was not written"
-[ "$(b journal read "$page")" = "sealed through $url" ] || fail "the other machine read $(b journal read "$page" 2>&1)"
+printf -- '---\ntitle: Relay check\npage: %s\nnotebook: check/relay\n---\nsealed through %s\n' "${page##*/}" "$url" | a journal write "$page" > /dev/null || fail "the page was not written"
+[ "$(b journal read "$page" | journal_doc)" = "$(printf -- '---\ntitle: Relay check\npage: %s\nnotebook: check/relay\n---\nsealed through %s' "${page##*/}" "$url")" ] || fail "the other machine read $(b journal read "$page" 2>&1)"
 say "a sealed page crosses the relay, after NIP-42 authentication"
 
 provider() { "$work/arc" --home "$work/exec" "$@"; }
@@ -54,7 +55,7 @@ caller_key="$(caller whoami | sed -n 2p)"
 mkdir -p "$work/jobs"
 printf '{"grants": ["%s"], "cwd": "%s", "jobs_dir": "%s/jobs"}\n' "$caller_key" "$work" "$work" > "$work/exec.json"
 EXEC_CONFIG="$work/exec.json" "$work/arc" --home "$work/exec" serve \
-  "exec://$work/exec-provider?manifest=$root/cmd/exec-provider/manifest.json" > "$work/serve.log" 2>&1 &
+  "exec://$work/arc-exec?manifest=$root/apps/exec/manifest.json" > "$work/serve.log" 2>&1 &
 serve_pid=$!
 for _ in $(seq 1 100); do grep "serves" "$work/serve.log" > /dev/null 2>&1 && break; sleep 0.1; done
 grep "serves" "$work/serve.log" > /dev/null || fail "the provider did not serve: $(cat "$work/serve.log")"

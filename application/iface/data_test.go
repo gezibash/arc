@@ -54,45 +54,56 @@ func (c *citizen) must(id, stdin string, words ...string) string {
 	return out
 }
 
-const page = "hrs/ablations/lr-sweep"
+const page = "hrs/ablations/1"
+const pageHeader = "---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n"
 
 func TestAJournalPageIsWrittenReadAndAppended(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "auc 0.871\n", "write", page, "--title", "LR sweep")
-	if got := c.must("journal", "", "read", page); got != "auc 0.871\n" {
+	c.must("journal", pageHeader+"auc 0.871\n", "write", page, "--title", "LR sweep")
+	if got := c.must("journal", "", "read", page); got != pageHeader+"auc 0.871\n" {
 		t.Fatalf("read %q", got)
 	}
 	c.must("journal", "", "append", page, "next:", "try", "warmup")
-	if got := c.must("journal", "", "read", page); got != "auc 0.871\nnext: try warmup\n" {
+	if got := c.must("journal", "", "read", page); got != pageHeader+"auc 0.871\nnext: try warmup\n" {
 		t.Errorf("after append, read %q", got)
 	}
 	if got := c.must("journal", "", "ls"); !strings.Contains(got, page+"\tLR sweep\t") {
 		t.Errorf("append lost the title: %q", got)
 	}
-	if got := c.must("journal", "", "read", page, "--lines", "2:"); got != "next: try warmup\n" {
-		t.Errorf("lines 2: read %q", got)
+	if got := c.must("journal", "", "read", page, "--lines", "9:"); got != "next: try warmup\n" {
+		t.Errorf("lines 9: read %q", got)
 	}
 }
 
 func TestThePageIsANIP37DraftOfAnArticle(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "short page\n", "write", page, "--title", "T")
+	c.must("journal", "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n", "write", page, "--title", "T")
 	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
-	if len(wraps) != 1 {
+	if len(wraps) != 2 {
 		t.Fatalf("the store holds %d drafts", len(wraps))
 	}
 	if strings.Contains(wraps[0].Tags.GetD(), "hrs") || strings.Contains(wraps[0].Content, "short page") {
 		t.Error("the draft shows the address or the text")
 	}
-	opened, err := draft.Open(context.Background(), c.env.Keyer(), wraps[0])
-	if err != nil || opened.Event.Kind != 30023 || opened.Event.Tags.GetD() != page || opened.Event.Content != "short page\n" || opened.Parts() != nil {
-		t.Errorf("the draft holds %+v %v", opened.Event, err)
+	var opened draft.Draft
+	for _, wrap := range wraps {
+		value, err := draft.Open(context.Background(), c.env.Keyer(), wrap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if value.Event.Kind == 30023 && value.Event.Tags.GetD() == page {
+			opened = value
+		}
+	}
+	if opened.Event.Kind != 30023 || opened.Event.Tags.GetD() != page || opened.Event.Content != "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n" || opened.Parts() != nil {
+		t.Errorf("the draft holds %+v", opened.Event)
 	}
 }
 
 func TestALongPageTravelsInParts(t *testing.T) {
 	c := newCitizen(t)
 	var body strings.Builder
+	body.WriteString(pageHeader)
 	for i := 0; body.Len() < 3*draft.PartSize; i++ {
 		body.WriteString(strings.Repeat("x", 70) + " line " + time.Duration(i).String() + "\n")
 	}
@@ -116,12 +127,21 @@ func TestALongPageTravelsInParts(t *testing.T) {
 
 func TestAMissingPartKeepsTheTextBeforeIt(t *testing.T) {
 	c := newCitizen(t)
-	body := strings.Repeat(strings.Repeat("y", 99)+"\n", 800) // 80,000 bytes
+	body := pageHeader + strings.Repeat(strings.Repeat("y", 99)+"\n", 800) // 80,000 bytes
 	c.must("journal", body, "write", page)
 	parts := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}}))
 	// Take away the last part, as a transport that never brought it.
-	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
-	opened, _ := draft.Open(context.Background(), c.env.Keyer(), wraps[0])
+	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Tags: nostr.TagMap{"k": {"30023"}}}))
+	var opened draft.Draft
+	for _, wrap := range wraps {
+		value, err := draft.Open(context.Background(), c.env.Keyer(), wrap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if value.Event.Tags.GetD() == page {
+			opened = value
+		}
+	}
 	last := opened.Parts()[len(opened.Parts())-1]
 	for _, p := range parts {
 		if p.ID.Hex() == last {
@@ -141,15 +161,15 @@ func TestAMissingPartKeepsTheTextBeforeIt(t *testing.T) {
 
 func TestListSearchHistoryAndDelete(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "warmup helps\n", "write", "hrs/ablations/warmup", "--title", "Warmup")
-	c.must("journal", "the learning rate sweep\n", "write", page, "--title", "LR sweep")
-	c.must("journal", "groceries\n", "write", "home/list/shop")
+	c.must("journal", "---\ntitle: Warmup\npage: 2\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nwarmup helps\n", "write", "hrs/ablations/2", "--title", "Warmup")
+	c.must("journal", pageHeader+"the learning rate sweep\n", "write", page, "--title", "LR sweep")
+	c.must("journal", "---\ntitle: Shopping\npage: 1\nnotebook: home/list\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\ngroceries\n", "write", "home/list/1")
 	c.must("journal", "", "append", page, "second", "revision")
 
-	if got := c.must("journal", "", "ls", "hrs/"); !strings.HasPrefix(got, "hrs/ablations/lr-sweep\t") || strings.Contains(got, "home/") || strings.Count(got, "\n") != 2 {
+	if got := c.must("journal", "", "ls", "hrs/"); !strings.HasPrefix(got, "hrs/ablations/1\t") || strings.Contains(got, "home/") || strings.Count(got, "\n") != 2 {
 		t.Errorf("ls hrs/ shows %q", got)
 	}
-	if got := c.must("journal", "", "search", "warmup"); !strings.HasPrefix(got, "hrs/ablations/warmup\t") || strings.Count(got, "\n") != 1 {
+	if got := c.must("journal", "", "search", "warmup"); !strings.HasPrefix(got, "hrs/ablations/2\t") || strings.Count(got, "\n") != 1 {
 		t.Errorf("search shows %q", got)
 	}
 	history := c.must("journal", "", "history", page)
@@ -171,8 +191,8 @@ func TestListSearchHistoryAndDelete(t *testing.T) {
 		t.Error("a second delete found something to delete")
 	}
 	// A new page at the same address starts again.
-	c.must("journal", "fresh\n", "write", page)
-	if got := c.must("journal", "", "read", page); got != "fresh\n" {
+	c.must("journal", pageHeader+"fresh\n", "write", page)
+	if got := c.must("journal", "", "read", page); got != pageHeader+"fresh\n" {
 		t.Errorf("a new page after delete reads %q", got)
 	}
 }
@@ -223,7 +243,7 @@ func TestFilesGoInAndComeOut(t *testing.T) {
 
 func TestTailShowsOnlyWhatIsAppended(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "first\n", "write", page)
+	c.must("journal", pageHeader+"first\n", "write", page)
 
 	c.env.live = make(chan nostr.Event, 64)
 	done := make(chan string)
@@ -238,12 +258,12 @@ func TestTailShowsOnlyWhatIsAppended(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.must("journal", "", "append", page, "second")
-	c.must("journal", "rewritten\n", "write", page)
+	c.must("journal", pageHeader+"rewritten\n", "write", page)
 	time.Sleep(100 * time.Millisecond)
 	close(c.env.live)
 
 	got := <-done
-	want := "first\nsecond\n--- rewritten ---\nrewritten\n"
+	want := pageHeader + "first\nsecond\n--- rewritten ---\n" + pageHeader + "rewritten\n"
 	if got != want {
 		t.Errorf("tail showed %q, want %q", got, want)
 	}
@@ -251,7 +271,7 @@ func TestTailShowsOnlyWhatIsAppended(t *testing.T) {
 
 func TestSealedDataBelongsToItsAuthor(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "mine\n", "write", page)
+	c.must("journal", pageHeader+"mine\n", "write", page)
 	other := newCitizen(t)
 	other.env.store = c.env.store // the same store, as a relay that holds both
 	other.author = c.author
@@ -263,6 +283,7 @@ func TestSealedDataBelongsToItsAuthor(t *testing.T) {
 func TestARangeFetchesOnlyItsParts(t *testing.T) {
 	c := newCitizen(t)
 	var body strings.Builder
+	body.WriteString(pageHeader)
 	for i := 1; i <= 3000; i++ {
 		body.WriteString(strings.Repeat("z", 90) + " " + time.Duration(i).String() + "\n")
 	}
@@ -277,8 +298,8 @@ func TestARangeFetchesOnlyItsParts(t *testing.T) {
 	if c.env.fetchedIDs > 2 {
 		t.Errorf("a range of two lines fetched %d parts", c.env.fetchedIDs)
 	}
-	if got := c.must("journal", "", "read", page, "--lines", "2999:"); got != lines[2998]+lines[2999] {
-		t.Errorf("lines 2999: read %q", got)
+	if got := c.must("journal", "", "read", page, "--lines", "3006:"); got != lines[3005]+lines[3006] {
+		t.Errorf("lines 3006: read %q", got)
 	}
 	if got := c.must("journal", "", "read", page, "--lines", ":2"); got != lines[0]+lines[1] {
 		t.Errorf("lines :2 read %q", got)
@@ -286,8 +307,8 @@ func TestARangeFetchesOnlyItsParts(t *testing.T) {
 
 	// After an append, the counts still hold.
 	c.must("journal", "", "append", page, "last", "line")
-	if got := c.must("journal", "", "read", page, "--lines", "3001:"); got != "last line\n" {
-		t.Errorf("after append, line 3001 reads %q", got)
+	if got := c.must("journal", "", "read", page, "--lines", "3008:"); got != "last line\n" {
+		t.Errorf("after append, line 3008 reads %q", got)
 	}
 }
 
@@ -390,7 +411,7 @@ func TestThreadOrdersReplies(t *testing.T) {
 
 func TestADryRunSignsNothing(t *testing.T) {
 	alice, bob := pair(t)
-	out := alice.must("journal", "secret text\n", "write", page, "--dry-run")
+	out := alice.must("journal", pageHeader+"secret text\n", "write", page, "--dry-run")
 	if !strings.Contains(out, `"kind": 30023`) || !strings.Contains(out, "secret text") {
 		t.Errorf("the dry run shows %q", out)
 	}
@@ -402,9 +423,9 @@ func TestADryRunSignsNothing(t *testing.T) {
 	if len(alice.env.net.inbox) != 0 || len(alice.env.net.relays) != 0 {
 		t.Errorf("a dry run sent something: %d inboxes, relays %v", len(alice.env.net.inbox), alice.env.net.relays)
 	}
-	alice.must("journal", "real\n", "write", page)
+	alice.must("journal", pageHeader+"real\n", "write", page)
 	alice.must("journal", "", "delete", page, "--dry-run")
-	if got := alice.must("journal", "", "read", page); got != "real\n" {
+	if got := alice.must("journal", "", "read", page); got != pageHeader+"real\n" {
 		t.Errorf("a dry run of delete deleted: %q", got)
 	}
 }

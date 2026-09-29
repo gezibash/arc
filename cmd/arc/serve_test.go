@@ -53,7 +53,7 @@ func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan er
 	if err := build.Run(); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "manifest.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

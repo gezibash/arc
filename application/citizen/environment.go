@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/application/catalog"
@@ -30,7 +31,9 @@ type Environment struct {
 	Lists *lists.Store
 }
 
-func (e *Environment) Me() nostr.PubKey { return e.Session.Key.Public }
+func (e *Environment) Me() nostr.PubKey               { return e.Session.Key.Public }
+func (e *Environment) Now() time.Time                 { return time.Now() }
+func (e *Environment) SearchIndex() iface.SearchIndex { return e.Session.search }
 
 func (e *Environment) Name(pk nostr.PubKey) string { return keys.Name(pk[:]) }
 

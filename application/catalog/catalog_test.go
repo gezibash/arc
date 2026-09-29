@@ -126,7 +126,7 @@ func TestInstalls(t *testing.T) {
 
 func TestAnnounceAManifestOfVersionOne(t *testing.T) {
 	k := keys.Generate()
-	data, err := os.ReadFile(filepath.Join("..", "..", "cmd", "exec-provider", "interface.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

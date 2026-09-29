@@ -1,12 +1,12 @@
 # HTTP sessions through an ordinary web application
 
-Build `arc`, `http-provider`, and this example from this branch. Configure provider
+Build `arc`, `arc-http`, and this example from this branch. Configure provider
 and consumer identities on the same relay, then serve:
 
 ```sh
-mise exec -- go build -o /tmp/http-provider ./cmd/http-provider
+mise exec -- go build -o /tmp/arc-http ./cmd/arc-http
 mise exec -- go build -o /tmp/streaming-http ./examples/streaming-http
-arc serve "exec:///tmp/http-provider?manifest=$PWD/examples/streaming-http/interface.json&args=/tmp/streaming-http"
+arc serve "exec:///tmp/arc-http?manifest=$PWD/examples/streaming-http/interface.json&args=/tmp/streaming-http"
 ```
 
 On the consumer:

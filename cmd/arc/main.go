@@ -7,12 +7,12 @@
 //	arc message send | inbox | outbox
 //	arc serve | announce | discover | install | call | session
 //	arc sync [--dir <path>]
-//	arc tool list | info | remove
+//	arc apps list | info | remove
 //	arc info | resolve | apps init | version
 //	arc lists add | rm | ls
 //	arc update [check | apply]
 //	arc release sign
-//	arc <capability> <command...>
+//	arc <app> <command...>
 package main
 
 import (
@@ -49,7 +49,7 @@ import (
 
 func main() {
 	if err := root().Execute(); err != nil {
-		// A capability set the exit status from its reply, and wrote its
+		// An app set the exit status from its reply, and wrote its
 		// output already.
 		var status iface.ExitError
 		if errors.As(err, &status) {
@@ -65,7 +65,7 @@ func root() *cobra.Command {
 		Use:   "arc",
 		Short: "ARC on signed events, over any transport",
 		Long: "ARC on signed events, over any transport.\n\n" +
-			"An installed capability adds its own commands: arc <name> <command>.\n" +
+			"An installed app adds its own commands: arc <name> <command>.\n" +
 			"arc help <name> lists them.",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
@@ -77,7 +77,7 @@ func root() *cobra.Command {
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
-		toolCommand(), infoCommand(), resolveCommand(), appsCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand())
+		appsCommand(), infoCommand(), resolveCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand())
 	command.SetHelpCommand(helpCommand(command))
 	command.Version = version
 	return command

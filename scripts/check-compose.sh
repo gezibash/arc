@@ -1,7 +1,7 @@
 #!/bin/bash
 # The proof of HTTP over ARC, and of a provider that calls a provider. One
 # notes service runs twice: in the provider program, served by httpadapter.New,
-# and as a plain HTTP server with no ARC library, served by http-provider.
+# and as a plain HTTP server with no ARC library, served by arc-http.
 # Each keeps its notes in SQLite over ARC. Only the notes services hold a
 # grant on the databases.
 #
@@ -37,8 +37,8 @@ serves() {
 
 cd "$root"
 go build -o "$work/arc" ./cmd/arc
-go build -o "$work/sqlite-provider" ./cmd/sqlite-provider
-go build -o "$work/http-provider" ./cmd/http-provider
+go build -o "$work/arc-sqlite" ./cmd/arc-sqlite
+go build -o "$work/arc-http" ./cmd/arc-http
 go build -o "$work/notes-example" ./examples/notes
 go build -o "$work/notes-server" ./examples/notes-server
 say "arc, the sqlite and http providers, and the two notes examples build"
@@ -64,7 +64,7 @@ cat > "$work/sqlite.json" <<JSON
                "plain": {"path": "$work/plain.db", "grants": {"$server_key": "write"}}}}
 JSON
 SQLITE_CONFIG="$work/sqlite.json" as sqlite serve \
-  "exec://$work/sqlite-provider?manifest=$root/cmd/sqlite-provider/manifest.json" > "$work/sqlite.log" 2>&1 &
+  "exec://$work/arc-sqlite?manifest=$root/apps/sqlite/manifest.json" > "$work/sqlite.log" 2>&1 &
 sqlite_pid=$!
 serves sqlite sqlite
 
@@ -75,7 +75,7 @@ NOTES_DB="sqlite+arc://$sqlite_key/main" as notes serve \
   "exec://$work/notes-example?manifest=$root/examples/notes/manifest.json" > "$work/notes.log" 2>&1 &
 notes_pid=$!
 NOTES_DB="sqlite+arc://$sqlite_key/plain" as server serve \
-  "exec://$work/http-provider?manifest=$root/examples/notes/manifest.json&args=$work/notes-server" > "$work/server.log" 2>&1 &
+  "exec://$work/arc-http?manifest=$root/examples/notes/manifest.json&args=$work/notes-server" > "$work/server.log" 2>&1 &
 server_pid=$!
 serves notes http
 serves server http
@@ -117,7 +117,7 @@ prove() {
 }
 
 prove notes "$notes_key" "httpadapter.New"
-prove webnotes "$server_key" "http-provider"
+prove webnotes "$server_key" "arc-http"
 
 as bob install "$sqlite_key" --yes > /dev/null
 if out="$(as bob call "sqlite+arc://$sqlite_key/main" '{"sql":"select body from notes"}' 2>&1)"; then
@@ -126,4 +126,4 @@ fi
 case "$out" in *"refused: unauthorized"*) ;; *) fail "bob's query failed for another reason: $out" ;; esac
 say "bob cannot read the database: the provider refuses him, because only notes holds a grant"
 
-echo "HTTP over ARC works in process and behind http-provider, and each notes service keeps its state in SQLite over ARC"
+echo "HTTP over ARC works in process and behind arc-http, and each notes service keeps its state in SQLite over ARC"

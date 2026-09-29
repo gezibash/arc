@@ -1,7 +1,7 @@
 # SQLite over ARC
 
-The real provider lives in `cmd/sqlite-provider`. Its [provider contract and operator
-configuration](../../cmd/sqlite-provider/README.md) are the source for supported
+The real provider lives in `apps/sqlite`. Its [provider contract and operator
+configuration](../../apps/sqlite/README.md) are the source for supported
 queries and limits. It answers calls of the [delivery layer](../delivery/SPEC.md), section 11.4,
 and announces the `sqlite` scheme.
 

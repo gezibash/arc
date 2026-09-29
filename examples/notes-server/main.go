@@ -1,8 +1,8 @@
 // Command notes-server is the notes service as a plain HTTP server. It uses
 // no ARC library, so a server in any language does the same work:
-// http-provider starts it, and serves it over ARC as the capability http.
+// arc-http starts it, and serves it over ARC as the capability http.
 //
-// The server reads four variables. http-provider sets the first three:
+// The server reads four variables. arc-http sets the first three:
 //
 //	PORT            the port on 127.0.0.1 where the server listens
 //	ARC_CALL_URL    where the server posts a call to a capability
@@ -26,7 +26,7 @@ import (
 func main() {
 	port, address := os.Getenv("PORT"), os.Getenv("NOTES_DB")
 	if port == "" || address == "" {
-		fmt.Fprintln(os.Stderr, "notes-server: http-provider sets PORT, and NOTES_DB must name a database")
+		fmt.Fprintln(os.Stderr, "notes-server: arc-http sets PORT, and NOTES_DB must name a database")
 		os.Exit(1)
 	}
 	server := &http.Server{

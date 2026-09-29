@@ -11,7 +11,7 @@ import (
 )
 
 func TestModernProviderNeedsOnlyOneManifest(t *testing.T) {
-	body, err := os.ReadFile("../../cmd/exec-provider/interface.json")
+	body, err := os.ReadFile("../../apps/exec/manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// dispatch runs a command of an installed capability: arc <name> <path...>.
-// The root command does not parse flags, so the capability reads its own;
+// dispatch runs a command of an installed app: arc <name> <path...>.
+// The root command does not parse flags, so the app reads its own;
 // dispatch reads only a leading --home and --key.
 func dispatch(command *cobra.Command, args []string) error {
 	for len(args) > 0 {
@@ -73,11 +73,11 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
 }
 
-// helpCommand shows the help of a command of arc, or of a capability.
+// helpCommand shows the help of a command of arc, or of an app.
 func helpCommand(root *cobra.Command) *cobra.Command {
 	return &cobra.Command{
 		Use:   "help [command]",
-		Short: "Help about any command, or an installed capability",
+		Short: "Help about any command, or an installed app",
 		RunE: func(command *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return root.Help()

@@ -20,12 +20,13 @@ import (
 // -ldflags "-X main.version=0.9.0".
 var version = "dev"
 
-func toolCommand() *cobra.Command {
-	command := &cobra.Command{Use: "tool", Short: "List, show and remove the capabilities that you installed"}
+func appsCommand() *cobra.Command {
+	command := &cobra.Command{Use: "apps", Short: "Create apps and manage their installed commands"}
 
 	command.AddCommand(
+		appInitCommand(),
 		&cobra.Command{
-			Use: "list", Short: "List the capabilities that you installed", Args: cobra.NoArgs,
+			Use: "list", Short: "List the apps that you installed", Args: cobra.NoArgs,
 			RunE: func(command *cobra.Command, _ []string) error {
 				installs, err := installsOf(command)
 				if err != nil {
@@ -36,7 +37,7 @@ func toolCommand() *cobra.Command {
 					return err
 				}
 				if len(list) == 0 {
-					fmt.Println("no capabilities: install one with arc install <provider>")
+					fmt.Println("no apps: install commands with arc install <author-or-service> [app]")
 					return nil
 				}
 				for _, e := range list {
@@ -46,7 +47,7 @@ func toolCommand() *cobra.Command {
 			},
 		},
 		&cobra.Command{
-			Use: "info <name>", Short: "Show one installed capability", Args: cobra.ExactArgs(1),
+			Use: "info <name>", Short: "Show one installed app", Args: cobra.ExactArgs(1),
 			RunE: func(command *cobra.Command, args []string) error {
 				installs, err := installsOf(command)
 				if err != nil {
@@ -81,7 +82,7 @@ func toolCommand() *cobra.Command {
 			},
 		},
 		&cobra.Command{
-			Use: "remove <name>", Short: "Remove one installed capability", Args: cobra.ExactArgs(1),
+			Use: "remove <name>", Short: "Remove one installed app", Args: cobra.ExactArgs(1),
 			RunE: func(command *cobra.Command, args []string) error {
 				installs, err := installsOf(command)
 				if err != nil {
@@ -119,7 +120,7 @@ func installed(installs catalog.Installs, name string) (catalog.Install, error) 
 			return e, nil
 		}
 	}
-	return catalog.Install{}, fmt.Errorf("nothing installed as %q: see arc tool list", name)
+	return catalog.Install{}, fmt.Errorf("nothing installed as %q: see arc apps list", name)
 }
 
 func showOffer(o catalog.Offer) {
@@ -131,9 +132,9 @@ func showOffer(o catalog.Offer) {
 
 func infoCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "info <provider> [capability]",
-		Short: "Show the capabilities that a provider announces",
-		Long:  "The provider is 64 characters of hex, or the name of an install.",
+		Use:   "info <participant> [app]",
+		Short: "Show the apps that a participant announces",
+		Long:  "The participant is 64 characters of hex, or the name of an install.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
 			installs, err := installsOf(command)
@@ -173,9 +174,9 @@ func infoCommand() *cobra.Command {
 			}
 			if len(offers) == 0 {
 				if unreached := node.Unreached(reports, errs); unreached != nil {
-					return fmt.Errorf("this machine holds no announcement from that provider, and %w", unreached)
+					return fmt.Errorf("this machine holds no announcement from that participant, and %w", unreached)
 				}
-				return errors.New("that provider announces nothing")
+				return errors.New("that participant announces nothing")
 			}
 			for i, offer := range offers {
 				if i > 0 {
@@ -269,17 +270,15 @@ func resolveCommand() *cobra.Command {
 	}
 }
 
-func appsCommand() *cobra.Command {
-	command := &cobra.Command{Use: "apps", Short: "Work with provider bundles"}
-	command.AddCommand(&cobra.Command{
+func appInitCommand() *cobra.Command {
+	return &cobra.Command{
 		Use:   "init [directory]",
-		Short: "Write a new provider bundle",
-		Long: "The bundle holds an Arcfile, a manifest, an interface of version 1,\n" +
-			"and a runtime that answers one message. Serve it with\n" +
-			"arc serve <directory>. A caller who installs it sends a message\n" +
-			"with arc <name> say <message>.",
+		Short: "Create an app with a service program",
+		Long: "Write an Arcfile, an interface manifest and a starter program.\n" +
+			"Serve the app with arc serve <directory>. Installing its interface\n" +
+			"adds arc <name> say <message> on the caller's machine.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(command *cobra.Command, args []string) error {
 			path := "."
 			if len(args) == 1 {
 				path = args[0]
@@ -288,13 +287,12 @@ func appsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("wrote a bundle in %s\n", files.Root)
-			fmt.Printf("  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Runtime)
-			fmt.Printf("\nserve it with: arc serve %s\n", path)
+			fmt.Fprintf(command.OutOrStdout(), "created an app in %s\n", files.Root)
+			fmt.Fprintf(command.OutOrStdout(), "  %s\n  %s\n  %s\n", files.Arcfile, files.Manifest, files.Runtime)
+			fmt.Fprintf(command.OutOrStdout(), "\nserve it with: arc serve %s\n", path)
 			return nil
 		},
-	})
-	return command
+	}
 }
 
 func versionCommand() *cobra.Command {

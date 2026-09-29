@@ -1,8 +1,9 @@
 # Getting started with ARC
 
 ARC lets people and programs exchange private messages and use services offered
-by other participants. A **capability** is something a provider offers, such as
-querying a database. Your **identity** is a cryptographic key pair: the public
+by other participants. An **app** adds commands through an interface manifest.
+Journal runs locally; SQLite commands call a service that can run locally or on
+another machine. Your **identity** is a cryptographic key pair: the public
 key is your address, and the private key proves that you control it.
 
 This guide takes you from installation to a first message or capability call.
@@ -143,25 +144,28 @@ The message can wait in the outbox until the recipient acknowledges it.
 **Checkpoint:** the recipient sees your message. If no recipient is available,
 you can finish local setup now and verify delivery later.
 
-## 5. Try a capability
+## 5. Try an app
 
-A provider is another ARC participant offering a capability. Discovery searches
+A service is an interface offered by a running app program. A participant can
+serve one app and call another. Discovery searches
 announcements available through your configured delivery paths:
 
 ```sh
 arc discover
 ```
 
-Choose a provider you intend to trust. Discovery shows its public key and the
+Choose a service identity you intend to trust. Discovery shows its public key and the
 capability identifier. Replace both placeholders:
 
 ```sh
-arc install PROVIDER_PUBLIC_KEY CAPABILITY_ID
+arc install SERVICE_PUBLIC_KEY APP_ID
 ```
 
 Read the description and trust prompt before accepting. Installing records your
-consent to use that capability; it does not start the provider's service on
-your machine. The provider must be available to answer a live call.
+consent to use that app interface. It installs commands; it does not download a
+program or start a service. The service must be available to answer a live call.
+Use `arc apps list`, `arc apps info INSTALLED_NAME` and `arc apps remove
+INSTALLED_NAME` to manage installed commands.
 
 For a capability that adds commands, the installer prints the installed name:
 

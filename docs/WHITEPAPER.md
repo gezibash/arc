@@ -37,7 +37,7 @@ This whitepaper describes the current implementation of ARC and marks each part 
 - Data capabilities — direct messages (NIP-17), a journal and files sealed to their author (NIP-37), and a board on a NIP-29 group. See interface section 17.
 - Service providers — `exec`, `sqlite`, and `releases`, each one a separate program that `arc serve` runs. See interface section 17.
 - Providers that call — a provider program calls a capability that its citizen installed, as that citizen, and never holds the key. See interface section 14.2.
-- HTTP over ARC — `httpadapter.New` serves a Go HTTP handler, and `http-provider` serves an HTTP server of any language. See [HTTP over ARC](http/SPEC.md).
+- HTTP over ARC — `httpadapter.New` serves a Go HTTP handler, and `arc-http` serves an HTTP server of any language. See [HTTP over ARC](http/SPEC.md).
 - Addresses — `<scheme>+arc://<provider>/<path>` names a capability and its provider, and `arc call` takes one. See section 8 and interface section 14.1.
 - Wake — a hook on the caller wakes a machine that pauses before a live call. See [exec section 10](exec/SPEC.md).
 - A relay — `arc relay serve`, built on khatru, with NIP-42 authentication, NIP-77 sync, sealed data served only to its author, and write limits. See delivery section 12 and [Deploy](DEPLOY.md).
@@ -373,7 +373,7 @@ A scheme works when a provider serves it. Four providers exist:
 exec+arc://<provider>/          run commands              built
 sqlite+arc://<provider>/main    answer SQL                built
 releases+arc://<provider>/...   serve release channels    built
-http+arc://<provider>/<path>    serve an HTTP server      built: http-provider, and httpadapter.New in Go
+http+arc://<provider>/<path>    serve an HTTP server      built: arc-http, and httpadapter.New in Go
 ```
 
 The schemes below are ideas. No provider serves them, and no specification defines them:
@@ -436,7 +436,7 @@ A provider knows exactly who called it, because the seal of each request is sign
 `arc serve` puts a provider on the network. It announces the capability, answers live calls that reach it through a relay, and answers store-and-forward calls on each sync. It signs the announcement again every 2 minutes:
 
 ```bash
-arc serve "exec://$(command -v exec-provider)?manifest=$PWD/cmd/exec-provider/manifest.json"
+arc serve "exec://$(command -v arc-exec)?manifest=$PWD/apps/exec/manifest.json"
 ```
 
 `arc apps init` writes a new provider bundle, and `arc serve <directory>` runs a bundle.

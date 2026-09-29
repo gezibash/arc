@@ -12,14 +12,24 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
 - `adapters/` implements concrete I/O and protocol mappings. HTTP, relay,
   directory, subprocess, standard-stream, key-file and Bolt implementations
   belong here. An adapter may depend on core and shared adapter utilities;
-  it must not depend on `application/`, `cmd/`, or `examples/`.
+  it must not depend on `application/`, `apps/`, `cmd/`, or `examples/`.
 - `application/` owns citizen workflows, consent, routing choices, manifests,
   installed commands, bundle management, wake policy and updates. Concrete
   adapters are selected by composition code, such as `application/citizen.Open`.
-- `cmd/` holds executable entry points and concrete provider applications.
-  Keep reusable citizen orchestration in `application/`.
-- Define a port at the consuming core boundary. Add a port for a real effect;
-  do not add interfaces for pure functions or duplicate an existing contract.
+- `apps/` owns concrete apps: manifests, domain behavior, service programs and
+  app documentation. Manifest-driven data apps need no server or client binary.
+  Reusable service implementations live in `apps/<name>/server`.
+- `cmd/` holds thin executable entry points. They supply process streams,
+  signals and exit status to the app service packages. Reuse core call/session
+  behavior; do not put domain behavior in an entry point.
+- Application runtime and adapters must not import concrete `apps/` packages.
+  Apps use runtime primitives or core protocols to compose with other apps.
+- Define an interface at the layer that consumes its effect. Only interfaces
+  consumed by ARC protocol rules belong in core. Application effects, such as
+  full-text search, keep their interfaces in application code. Shared request
+  and result types can live in `internal/` so adapters need no application import.
+- Add interfaces for real effects; do not add interfaces for pure functions or
+  duplicate an existing contract. Reuse alone does not make a feature core ARC.
 - HTTP over ARC is an application-protocol adapter. A future HTTP event carrier
   is a delivery adapter. Both stay outside core.
 - Shared interaction modes and session behavior live in `core/session`, with
@@ -29,7 +39,7 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
 - Read [the session contract](docs/sessions/SPEC.md) before changing interactions.
   HTTP, SSE and WebSocket mappings belong in adapters. Do not require every
   delivery adapter to support live calls or streams. Keep REPL variables, SQL
-  transaction state and other application state inside their providers.
+  transaction state and other domain state inside their apps.
 - Session identity is distinct from a transport connection. Preserve explicit
   disconnect errors, bounded flow control, half-close and final outcomes.
   Never add implicit replay or resumption after an uncertain result.

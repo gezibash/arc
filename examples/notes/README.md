@@ -10,7 +10,7 @@ Each caller sees only its own notes. The service reads the key of the caller
 from the header field `Arc-Caller`. It has no login code.
 
 The HTTP handlers are in `service`. `examples/notes-server` serves the same
-handlers as a plain HTTP server, behind `http-provider`.
+handlers as a plain HTTP server, behind `arc-http`.
 
 ## Prove it
 
@@ -28,13 +28,13 @@ callers use each one. Only the notes services hold a grant on the databases.
 2. Install that provider as the citizen that serves this service:
 
    ```sh
-   arc install <sqlite-provider-key> --yes
+   arc install <arc-sqlite-key> --yes
    ```
 
 3. Serve this directory. `NOTES_DB` names the database:
 
    ```sh
-   NOTES_DB='sqlite+arc://<sqlite-provider-key>/main' arc serve examples/notes
+   NOTES_DB='sqlite+arc://<arc-sqlite-key>/main' arc serve examples/notes
    ```
 
 A caller installs the service, and keeps a note:

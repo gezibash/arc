@@ -17,7 +17,7 @@ and a relay, a USB stick or another machine carries it without reading it.
 See [the delivery layer](docs/delivery/SPEC.md).
 
 `arc` is the one program. It keeps your identities, talks to relays, calls
-capabilities, serves them, and runs a relay.
+apps, serves their interfaces, and runs a relay.
 
 ## Install
 
@@ -98,31 +98,33 @@ message waits in the outbox until the recipient acknowledges it. `arc sync`
 reconciles this machine with its relays. `arc sync --dir <path>` syncs with
 a directory instead: a USB stick, a shared folder, or a disk that you carry.
 
-## Capabilities
+## Apps
 
-A provider announces capabilities as signed events. Find one, trust it, and
-call it:
+An app adds commands through a signed interface manifest. Journal runs local
+data commands. SQLite adds client commands and has a separate service program.
+Find an app, review its permissions, and install its commands:
 
 ```bash
 arc discover exec
-arc install <provider> --yes
+arc install <author-or-service> <app>
 arc exec run uname -a
 ```
 
-`arc install` shows what the capability can do, and records your consent. An
-installed capability adds its own commands, `arc <name> <command>`. `arc help
-<name>` lists them. If a new version of a capability asks for more, `arc`
-stops until you install it again.
+`arc install` shows the app's permissions and records your consent. It installs
+commands, without downloading a program or starting a service. `arc help <name>`
+lists its commands. `arc apps list`, `info <name>` and `remove <name>` manage
+installs. If a new interface asks for more permissions, ARC requires consent
+again. See [the app model and layout](apps/README.md).
 
-`arc call` sends one request. An address names the capability, the provider
+`arc call` sends one request. An address names the app interface, the service identity
 and the resource:
 
 ```bash
-arc call 'sqlite+arc://<provider>/main' '{"sql":"select 1 as n"}'
+arc call 'sqlite+arc://<service>/main' '{"sql":"select 1 as n"}'
 arc call 'exec+arc://npub1.../' '{"argv":["uname","-a"]}'
 ```
 
-The provider is a key, an npub, an installed name, or a domain for NIP-05.
+The service identity is a key, an npub, an installed name, or a domain for NIP-05.
 `arc call` shows the reply as the manifest of the service says: exec shows the
 output and exits with the code of the command, and sqlite shows a table.
 `--raw` writes the reply as it came. See
@@ -130,34 +132,35 @@ output and exits with the code of the command, and sqlite shows a table.
 is live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 
-Before a live call, `arc` runs the wake hook of the provider from
-`~/.config/arc/wake.toml`. Without a hook, the provider needs a current
-announcement. See [the exec provider](cmd/exec-provider/README.md).
+Before a live call, `arc` runs the wake hook of the service identity from
+`~/.config/arc/wake.toml`. Without a hook, the service needs a current
+announcement. See [the Exec app](apps/exec/README.md).
 
 `arc lists add <command> <name> <citizen>...` saves a set of citizens. Where
 the command takes a key, the name of the list runs it once for each member.
 
-## Serve a capability
+## Run an app service
 
 ```bash
-arc serve "exec://$(command -v exec-provider)?manifest=$PWD/cmd/exec-provider/manifest.json"
+arc serve "exec://$(command -v arc-exec)?manifest=$PWD/apps/exec/manifest.json"
 ```
 
-`arc serve` announces the capability, answers live calls through each relay,
+`arc serve` runs a program, announces its service, answers live calls through each relay,
 and answers carried calls on each sync. It signs the announcement again
-every 2 minutes. `arc apps init` writes a new provider bundle.
+every 2 minutes. `arc apps init` creates an app with a starter service program.
+Apps with an Arcfile can be run with `arc serve <app-directory>`.
 
 Core also supports live server streaming and duplex sessions. A service declares
 its interaction modes; `arc session <address>` uses the same session machinery
-as provider-to-provider calls. See the [stateful REPL example](examples/repl/README.md)
+as calls between app services. See the [stateful REPL example](examples/repl/README.md)
 and [session protocol](docs/sessions/SPEC.md).
-The bundled [SQLite](cmd/sqlite-provider/README.md#live-sql-sessions),
-[Exec](cmd/exec-provider/README.md#streaming-processes-and-terminals),
+The bundled [SQLite](apps/sqlite/README.md#live-sql-sessions),
+[Exec](apps/exec/README.md#streaming-processes-and-terminals),
 [HTTP](examples/streaming-http/README.md), and
-[Releases](cmd/releases-provider/README.md#streaming-archives) providers implement
+[Releases](apps/releases/README.md#streaming-archives) apps implement
 these interactions. Use `--exec`, `--tty`, `--http`, or `--websocket` on
 `arc session` to select their CLI I/O mappings. Existing request/reply commands
-remain available. See the [provider session guide](docs/sessions/PROVIDERS.md).
+remain available. See the [app service session guide](docs/sessions/PROVIDERS.md).
 
 
 ## Run a relay
@@ -214,11 +217,13 @@ mise run delivery    # the delivery layer, end to end
 mise run interface   # the capability interface, end to end
 ```
 
-`mise run build` writes `bin/arc` and one binary for each other command.
+`mise run build` writes `bin/arc`, `bin/arc-exec`, `bin/arc-sqlite`,
+`bin/arc-http` and `bin/arc-releases`. App code and manifests live in `apps/`.
 
 ## Docs
 
 - [Architecture and package boundaries](docs/ARCHITECTURE.md).
+- [Apps, programs, services and sessions](apps/README.md).
 
 - [Delivery layer](docs/delivery/SPEC.md): events, transports, sync, calls,
   and the switchover.

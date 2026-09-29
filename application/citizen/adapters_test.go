@@ -46,7 +46,7 @@ func TestBareAndAddressTargetsShareResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	manifest, err := os.ReadFile("../../cmd/exec-provider/interface.json")
+	manifest, err := os.ReadFile("../../apps/exec/manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}

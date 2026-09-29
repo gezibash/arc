@@ -18,7 +18,7 @@ const module = "github.com/gezibash/arc/"
 // reported even when it would create a Go import cycle.
 func TestPackageBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..")
-	for _, layer := range []string{"core", "adapters", "application"} {
+	for _, layer := range []string{"core", "adapters", "application", "apps"} {
 		err := filepath.WalkDir(filepath.Join(root, layer), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -57,8 +57,11 @@ func forbidden(layer, imported string) string {
 		if layer == "core" && target != "core" && !strings.HasPrefix(target, "core/") {
 			return "core must depend only on core ports and rules"
 		}
-		if (layer == "adapters" || layer == "application") && (strings.HasPrefix(target, "cmd/") || strings.HasPrefix(target, "examples/")) {
-			return "library packages must not depend on executable applications"
+		if (layer == "adapters" || layer == "application" || layer == "apps") && (strings.HasPrefix(target, "cmd/") || strings.HasPrefix(target, "examples/")) {
+			return "reusable packages must not depend on executable entry points or examples"
+		}
+		if (layer == "adapters" || layer == "application") && strings.HasPrefix(target, "apps/") {
+			return "runtime and adapters must not depend on concrete apps"
 		}
 		if layer == "adapters" && strings.HasPrefix(target, "application/") {
 			return "adapters must not depend on application workflows"
@@ -67,7 +70,7 @@ func forbidden(layer, imported string) string {
 	if layer == "core" {
 		for _, concrete := range []string{
 			"os", "syscall", "net", "net/http", "net/rpc", "database/sql",
-			"go.etcd.io/bbolt", "zombiezen.com/go/sqlite", "modernc.org/sqlite",
+			"github.com/blevesearch/bleve/v2", "go.etcd.io/bbolt", "zombiezen.com/go/sqlite", "modernc.org/sqlite",
 			"fiatjaf.com/nostr/eventstore/boltdb", "fiatjaf.com/nostr/khatru",
 			"fiatjaf.com/nostr/nip05", "fiatjaf.com/nostr/nip11",
 			"fiatjaf.com/nostr/nip46", "fiatjaf.com/nostr/nip77",

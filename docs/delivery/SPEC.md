@@ -642,7 +642,7 @@ recipient does not learn who wrote to them.
 | `cmd/journal-provider` | data that the citizen keeps for itself; no provider needed |
 | `cmd/agora-provider` | public events on a relay; no provider needed |
 | `cmd/files-provider` | the files manifest of docs/interface/SPEC.md; no provider needed |
-| `cmd/exec-provider`, `cmd/sqlite-provider`, `cmd/releases-provider` | kept, answering calls |
+| `apps/exec`, `apps/sqlite`, `apps/releases` | kept, answering calls |
 | `wake` | kept; the hook runs before a call on the node, see 15.1 |
 | `control` | removed; the node store answers who this citizen is |
 | `cmd/arc-relay` | `arc relay serve`, a khatru relay |

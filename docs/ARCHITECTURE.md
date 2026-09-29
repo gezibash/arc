@@ -6,10 +6,15 @@ order in which a message travels.
 
 ```mermaid
 flowchart LR
-    ENTRY["cmd and examples<br/>Executable composition and provider applications"]
+    ENTRY["cmd and examples<br/>Executable entry points and demonstrations"]
+    APPS["apps<br/>App manifests and domain behavior"]
     APP["application<br/>Citizen workflows and command policy"]
     ADAPTER["adapters<br/>HTTP, transports, process and storage I/O"]
     CORE["core<br/>ARC rules, protocols and ports"]
+    ENTRY --> APPS
+    APPS --> APP
+    APPS --> ADAPTER
+    APPS --> CORE
     ENTRY --> APP
     ENTRY --> ADAPTER
     ENTRY --> CORE
@@ -28,15 +33,19 @@ flowchart LR
 | `core/journal` | Atomic persistence operations consumed by the durable mail state machine. |
 | `core/compact`, `core/frame`, `core/relaylist` | Event encoding, bounded fragmentation and relay-list protocol. |
 | `application/citizen`, `application/catalog`, `application/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
-| Other `application/` packages | Bundle/configuration models, lists, wake behavior and release/update workflows. |
+| Other `application/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
+| `apps/` | App manifests, domain behavior and reusable service implementations. Data apps can consist of a manifest. |
+| `cmd/arc`, `cmd/arc-*` | CLI and thin service program entry points. |
 | `adapters/http` | HTTP application requests mapped to ARC provider calls. |
 | `adapters/transport/relay`, `adapters/transport/file` | Nostr relay and carried-directory event delivery. |
 | `adapters/provider/host`, `adapters/provider/stdio` | Subprocess hosting and process standard streams. |
 | `adapters/keyfile`, `adapters/nip05` | Identity files and network name resolution. |
+| `adapters/search/bleve` | Bleve indexing, query parsing and local search files. |
 | `adapters/store/bolt`, `adapters/journal/bolt`, `adapters/mailbox` | Bolt persistence and composition with core event/mail rules. |
 | `adapters/relay/*` | Khatru integration for sealed-event access, groups and relay limits. |
 | `adapters/providerconfig` | Provider configuration files and their validation helpers. |
-| `internal/` | Small shared implementation utilities and test infrastructure. Core does not import these packages. |
+| `internal/search` | Shared application search request/result types. No ARC protocol rules. |
+| `internal/` | Small shared types, implementation utilities and test infrastructure. Core does not import these packages. |
 
 ## Dependency rules
 
@@ -55,15 +64,58 @@ constructs a citizen's disk stores, mail journal and relay adapters. An embedded
 caller can construct core components with different implementations. HTTP and
 provider process adapters depend on the same core contracts as other providers.
 
-An adapter must not import application workflows or executable packages. It
-translates a concrete system's operations into a core contract. Concrete provider
-applications can enforce their own shell, SQL or HTTP policies outside core.
+Runtime libraries and adapters must not import concrete apps or executable entry
+points. An adapter must not import application workflows. It implements the interface consumed by the relevant layer. ARC event adapters
+implement core contracts. Application search implements the interface owned by
+`application/iface`, using shared types from `internal/search`. Concrete app
+service implementations can enforce their own shell, SQL or HTTP policies outside core.
 
 `internal/architecture` checks these rules from production imports, including
 platform-specific files. Test imports are exempt so integration tests can use
 real relays, files and subprocesses. Run `mise run boundaries`; the same check is
 included in `go test ./...` and CI. The existing runtime and CLI tests validate
 behavior across the package boundaries.
+
+## Apps, programs and services
+
+ARC extends Unix command composition across authenticated identities and delivery
+paths. An app owns a named interface and optional executable programs. A program
+is code; an instance is a running program under an operating identity. A service
+is the interface that instance exposes. A session is one bounded interaction.
+Provider and consumer remain protocol roles, which one participant can hold at
+the same time. Neither role is an app category.
+
+The CLI uses app names for installed commands. `arc apps init`, `list`, `info`
+and `remove` create service apps and manage command installs. `arc install`
+records consent and installs a signed interface; it does not download a program
+or start a service. `arc serve <app-directory>` reads its Arcfile and runs its
+service program. Local or remote execution follows the selected interface and
+participant, not the app's name.
+
+Journal defines local data commands in `apps/journal/manifest.json`. Shared
+manifest primitives in `application/iface` implement their bounded behavior over
+core events and storage. SQLite defines client commands in its manifest, and SQL
+policy in `apps/sqlite/server`. `cmd/arc-sqlite` supplies process streams and
+signals. No handwritten SQLite client binary is required.
+
+Command stdout holds results; stderr holds diagnostics. Hosted service program
+stdout carries the ARC stdio protocol. Live sessions retain flow control,
+cancellation, half-close and final outcomes. Durable event delivery remains a
+separate operation: a directory carrier need not support a live REPL.
+
+See [the apps directory](../apps/README.md) for the layout and commands.
+
+## Application search
+
+Journal search is an application feature. `application/iface.SearchIndex` defines
+its search effect, and `adapters/search/bleve` supplies Bleve Scorch indexing and
+persistence. Notebook filtering, source selection and decryption remain in the
+application workflow. Core has no search dependency or search interface.
+
+The request and result types in `internal/search` let application consumers and
+adapters share this contract without an adapter importing application code. Other
+ARC applications can use the adapter when they have a concrete search need.
+Reuse does not make search part of the ARC protocol.
 
 ## HTTP and live sessions
 
@@ -102,8 +154,12 @@ core verification and the existing mail/call rules; see
 
 This refactor changes Go import paths. It does not add forwarding packages at
 the old paths. External Go consumers must update their imports and constructors.
-Existing CLI commands, request/reply event formats, provider messages and
-persistent file names/buckets remain compatible. Live sessions add `arc session`,
+Request/reply event formats, provider messages and persistent file names/buckets
+remain compatible. App management moves from `arc tool` to `arc apps`. Service
+programs are named `arc-exec`, `arc-sqlite`, `arc-http` and `arc-releases`. App
+assets move from `cmd/*-provider` and `manifests/` to `apps/<name>`; update source
+paths and process launch configuration when adopting this checkout.
+Live sessions add `arc session`,
 an opt-in manifest declaration, a new private event kind and `session` provider
 messages; these additions require a provider/runtime that supports sessions.
 

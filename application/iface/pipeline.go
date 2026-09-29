@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"sort"
@@ -366,6 +367,23 @@ func (r *run) tail(entries []*entry) []*entry {
 		text := str(e.rec["text"])
 		old, seen := r.seen[e.d]
 		r.seen[e.d] = text
+		if seen && r.kindOf(str(e.rec["kind"])).NotebookIndex != "" {
+			oldFields, oldBody, oldErr := frontmatter(old)
+			newFields, newBody, newErr := frontmatter(text)
+			delete(oldFields, "created_at")
+			delete(oldFields, "updated_at")
+			delete(newFields, "created_at")
+			delete(newFields, "updated_at")
+			if oldErr == nil && newErr == nil && maps.Equal(oldFields, newFields) && strings.HasPrefix(newBody, oldBody) {
+				text = newBody[len(oldBody):]
+				if text == "" {
+					continue
+				}
+				e.rec["text"] = text
+				out = append(out, e)
+				continue
+			}
+		}
 		switch {
 		case !seen:
 		case strings.HasPrefix(text, old):
