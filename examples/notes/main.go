@@ -14,13 +14,14 @@ import (
 	httpadapter "github.com/gezibash/arc/adapters/http"
 	"github.com/gezibash/arc/adapters/provider/stdio"
 	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/examples/notes/service"
 )
 
 // app serves the notes service, and holds the caller that reaches the
 // database.
 type app struct {
-	web    provider.Handler
+	web    *httpadapter.Adapter
 	caller provider.Caller
 }
 
@@ -28,6 +29,10 @@ func (a *app) SetCaller(caller provider.Caller) { a.caller = caller }
 
 func (a *app) HandleRequest(ctx context.Context, r provider.Request) (string, error) {
 	return a.web.HandleRequest(ctx, r)
+}
+
+func (a *app) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
+	return a.web.HandleSession(ctx, req, stream)
 }
 
 func main() {

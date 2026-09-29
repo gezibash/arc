@@ -30,10 +30,13 @@ const ErrResponseTooLarge = provider.Error("response_too_large")
 // the path of the call are the method and the path of the HTTP request. See
 // docs/http/SPEC.md.
 type httpRequest struct {
-	Query      string              `json:"query,omitempty"`
-	Headers    map[string][]string `json:"headers,omitempty"`
-	Body       string              `json:"body,omitempty"`
-	BodyBase64 string              `json:"body_base64,omitempty"`
+	Query        string              `json:"query,omitempty"`
+	Headers      map[string][]string `json:"headers,omitempty"`
+	Body         string              `json:"body,omitempty"`
+	BodyBase64   string              `json:"body_base64,omitempty"`
+	WebSocket    bool                `json:"websocket,omitempty"`
+	StreamBody   bool                `json:"stream_body,omitempty"`
+	Subprotocols []string            `json:"subprotocols,omitempty"`
 }
 
 // httpResponse is the reply of an HTTP capability.
@@ -48,26 +51,28 @@ type httpResponse struct {
 // request to the handler, and the response becomes the reply, as
 // docs/http/SPEC.md defines. The handler runs in this process: no port
 // opens.
-func New(handler http.Handler) provider.Handler {
-	return provider.HandlerFunc(func(ctx context.Context, r provider.Request) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		request, err := httpRequestOf(ctx, r)
-		if err != nil {
-			return "", provider.ErrInvalidRequest
-		}
+type Adapter struct{ handler http.Handler }
 
-		response := &recorder{header: http.Header{}}
-		handler.ServeHTTP(response, request)
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if response.over {
-			return "", ErrResponseTooLarge
-		}
-		return response.reply()
-	})
+func New(handler http.Handler) *Adapter { return &Adapter{handler: handler} }
+
+func (a *Adapter) HandleRequest(ctx context.Context, r provider.Request) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	request, err := httpRequestOf(ctx, r)
+	if err != nil {
+		return "", provider.ErrInvalidRequest
+	}
+
+	response := &recorder{header: http.Header{}}
+	a.handler.ServeHTTP(response, request)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if response.over {
+		return "", ErrResponseTooLarge
+	}
+	return response.reply()
 }
 
 // httpRequestOf turns a call into an HTTP request.

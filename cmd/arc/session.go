@@ -23,6 +23,8 @@ func sessionCmd() *cobra.Command {
 		Args: cobra.RangeArgs(1, 2),
 		RunE: runSession,
 	}
+	command.Flags().Bool("http", false, "decode streaming HTTP response bodies")
+	command.Flags().Bool("websocket", false, "send input lines as WebSocket text messages")
 	command.Flags().Bool("exec", false, "decode Exec output records and encode stdin")
 	command.Flags().Bool("tty", false, "use an Exec PTY and a raw local terminal")
 	command.Flags().String("mode", string(session.Duplex), "request_reply, server_stream, or duplex")
@@ -56,8 +58,27 @@ func runSession(command *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		body = args[1]
 	}
+	httpMode, _ := command.Flags().GetBool("http")
+	wsMode, _ := command.Flags().GetBool("websocket")
 	execMode, _ := command.Flags().GetBool("exec")
 	tty, _ := command.Flags().GetBool("tty")
+	if (execMode || tty) && (httpMode || wsMode) {
+		return fmt.Errorf("choose one session output mapping")
+	}
+	if httpMode || wsMode {
+		if mode == session.RequestReply {
+			return fmt.Errorf("HTTP streaming needs server_stream or duplex")
+		}
+		if wsMode {
+			if mode != session.Duplex {
+				return fmt.Errorf("WebSockets need duplex mode")
+			}
+			body, err = websocketRequest(body)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	if execMode || tty {
 		if mode == session.RequestReply {
 			return fmt.Errorf("Exec I/O needs server_stream or duplex")
@@ -80,6 +101,9 @@ func runSession(command *cobra.Command, args []string) error {
 	if execMode || tty {
 		return execSession(command, stream, tty)
 	}
+	if wsMode {
+		return websocketCLI(command, stream)
+	}
 	if mode == session.Duplex {
 		input := command.InOrStdin()
 		// Owned pipe input can be interrupted when the session closes.
@@ -98,6 +122,9 @@ func runSession(command *cobra.Command, args []string) error {
 				_ = stream.Close()
 			}
 		}()
+	}
+	if httpMode {
+		return httpSessionCLI(command, stream)
 	}
 	_, err = io.Copy(command.OutOrStdout(), stream)
 	if err == nil {

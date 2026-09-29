@@ -72,8 +72,8 @@ There are two different possible HTTP roles:
 - `adapters/http` currently converts an ARC call into an HTTP application request.
 - A future HTTP delivery adapter would move signed ARC events between nodes.
 
-Both roles are outside core. The current HTTP adapter still returns one complete
-reply. HTTP streaming and WebSocket application mappings are not implemented.
+Both roles are outside core. The HTTP application adapter supports buffered calls,
+streaming HTTP bodies, SSE, and WebSocket sessions through the shared core runtime.
 
 Core now defines `request_reply`, `server_stream` and `duplex` interactions.
 `core/session` implements ordering, bounded flow control, cancellation, half-close

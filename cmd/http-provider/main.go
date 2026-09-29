@@ -36,6 +36,7 @@ import (
 	httpadapter "github.com/gezibash/arc/adapters/http"
 	"github.com/gezibash/arc/adapters/provider/stdio"
 	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/core/session"
 )
 
 const (
@@ -123,15 +124,25 @@ func run(command []string) error {
 
 // adapter answers each call with the server, and gives the server a caller.
 type adapter struct {
-	web   provider.Handler
+	web   *httpadapter.Adapter
 	token string
 
-	mu     sync.Mutex
-	caller provider.Caller
+	mu            sync.Mutex
+	caller        provider.Caller
+	sessionCaller provider.SessionCaller
 }
 
 func (a *adapter) HandleRequest(ctx context.Context, r provider.Request) (string, error) {
 	return a.web.HandleRequest(ctx, r)
+}
+
+func (a *adapter) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
+	return a.web.HandleSession(context.WithValue(ctx, sessionHTTPKey{}, true), req, stream)
+}
+func (a *adapter) SetSessionCaller(caller provider.SessionCaller) {
+	a.mu.Lock()
+	a.sessionCaller = caller
+	a.mu.Unlock()
 }
 
 func (a *adapter) SetCaller(caller provider.Caller) {
@@ -145,7 +156,7 @@ func (a *adapter) SetCaller(caller provider.Caller) {
 // this machine calls as this citizen.
 func (a *adapter) calls() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/call" {
+		if r.URL.Path != "/call" && r.URL.Path != "/session" {
 			http.NotFound(w, r)
 			return
 		}
@@ -157,6 +168,10 @@ func (a *adapter) calls() http.Handler {
 		given, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || subtle.ConstantTimeCompare([]byte(given), []byte(a.token)) != 1 {
 			answer(w, http.StatusUnauthorized, "error", "the token is not ARC_CALL_TOKEN")
+			return
+		}
+		if r.URL.Path == "/session" {
+			a.sessionCall(w, r)
 			return
 		}
 		var in struct {
@@ -210,6 +225,10 @@ func forward(origin *url.URL) http.Handler {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Context().Value(sessionHTTPKey{}) != nil {
+			proxy.ServeHTTP(w, r)
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), answerTime)
 		defer cancel()
 		proxy.ServeHTTP(w, r.WithContext(ctx))

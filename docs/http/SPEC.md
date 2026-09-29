@@ -207,3 +207,54 @@ answer is one JSON object:
 | 503 | `{"error": "..."}` | ARC could not make the call, for example `not_installed`. |
 | 400 | `{"error": "..."}` | The request is not a call. |
 | 401 | `{"error": "..."}` | The token is missing or wrong. |
+
+
+## Live session mapping
+
+A service opts into `server_stream` and/or `duplex` in `service.interactions`.
+The existing HTTP call envelope remains valid as the initial session request.
+HTTP sessions emit NDJSON records: `response` (status and headers), `body`
+(base64 data), optional `trailers`, and `end`. Core's final outcome follows
+`end`; clients must check both. Response bodies are incremental and have bounded
+chunks, not the buffered call's 1 MiB total limit. Core deadlines and flow control
+bound lifetime and buffering. Redirects are returned to the caller, never followed.
+
+Set `stream_body: true` in a duplex initial request to stream raw request bytes
+through the session input. Do not also set `body` or `body_base64`. Input EOF
+ends the request body and leaves response output open. SSE uses the same mapping;
+HTTP writes and flushes reach the consumer before the response ends.
+
+For WebSockets, use duplex with `websocket: true`, GET, and optional
+`subprotocols`. The adapter supplies a real HTTP upgrade to the handler. A
+`response` record reports status 101 and the negotiated `protocol`; a failed
+handshake reports its HTTP status and fails the session. After upgrade, NDJSON
+input/output records are `text` with `text`, or `binary` with base64 `data`.
+Each WebSocket message is limited to 1 MiB. An input `ping` yields `pong` after
+the peer responds. Input `close` takes a code and reason; EOF requests normal
+closure. Output `ws_close` preserves the peer's close code/reason. Abnormal
+closure also fails the core session. Cancellation closes the underlying connection.
+Peer ping/pong frames are handled by the WebSocket library.
+
+Both in-process `httpadapter.New(handler)` and `http-provider` use this mapping.
+Caller identity is assigned by the adapter; a supplied `Arc-Caller` cannot replace
+it. Provider-to-provider calls from hosted applications can use authenticated
+`POST /session` on the same local server as `ARC_CALL_URL`. Query parameters are
+`address`, `mode` (default `server_stream`), and `body` (the initial request).
+The HTTP body carries raw duplex input and the response carries raw session output.
+Read to EOF and inspect the `Arc-Session-Error` trailer (a JSON string on failure).
+A 200 response alone does not prove successful session completion. The existing
+bearer token and core installed-capability consent checks apply.
+
+CLI examples, after installing an HTTP service that declares the mode:
+
+```sh
+arc session --http --mode server_stream 'http+arc://<provider>/events'
+printf 'hello' | arc session --http 'http+arc://<provider>/upload' '{"stream_body":true}'
+arc session --websocket 'http+arc://<provider>/socket' '{"subprotocols":["echo"]}'
+```
+
+The capability's manifest supplies the HTTP method; publish an appropriate
+POST service for the upload example. `--http` writes decoded response bytes and
+exits 22 for HTTP error statuses. `--websocket` sends each input line as a text
+message and displays received messages. Without these flags, `arc session`
+exposes the record protocol directly, including headers and binary messages.
