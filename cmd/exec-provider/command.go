@@ -26,6 +26,9 @@ type body struct {
 	Stdin     string   `json:"stdin"`
 	TimeoutMS *int     `json:"timeout_ms"`
 	Job       string   `json:"job"`
+	PTY       bool     `json:"pty,omitempty"`
+	Rows      uint16   `json:"rows,omitempty"`
+	Cols      uint16   `json:"cols,omitempty"`
 }
 
 // parseRequest reads the body of a request. It returns the action, and either
@@ -44,6 +47,10 @@ func parseRequest(cfg *config, message string) (action string, cmd *command, job
 	}
 	if decoder.More() {
 		return "", nil, "", provider.Error("invalid_request")
+	}
+
+	if request.PTY || request.Rows != 0 || request.Cols != 0 {
+		return "", nil, "", provider.Error("use_exec_session")
 	}
 
 	if request.Action == "" {

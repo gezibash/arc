@@ -209,3 +209,33 @@ go test ./cmd/exec-provider
   `jobs_dir` by hand.
 - The provider sees every command and all output. It is not a private-compute
   boundary.
+
+
+## Streaming processes and terminals
+
+Serve the updated `interface.json`, then use the shared session CLI:
+
+```sh
+arc session --exec --mode server_stream 'exec+arc://<provider>/' \
+  '{"argv":["sh","-c","echo first; sleep 1; echo second"]}'
+printf 'hello\n' | arc session --exec 'exec+arc://<provider>/' '{"argv":["cat"]}'
+arc session --tty 'exec+arc://<provider>/' '{"argv":["bash","--noprofile","--norc"]}'
+```
+
+`--exec` forwards stdin and displays stdout/stderr separately. The command exits
+with the process status after core reports successful session completion.
+`--tty` allocates a provider PTY, enters local raw mode, forwards terminal input
+(including control characters), and sends resize events. Terminal output combines
+stdout and stderr. The local terminal is restored when the command ends.
+
+Sessions accept `run` only. Initial command fields and grants remain unchanged;
+`pty`, `rows`, and `cols` are additional terminal options. Input/output use bounded
+NDJSON records. Input records are `stdin` with base64 `data`, and `resize` with
+positive `rows`/`cols`. Output records are `stdout`, `stderr`, and final `exit`.
+
+Existing `limits.timeout_ms` and `limits.output_bytes` apply to live processes;
+requesting a longer core session does not override them. Exceeding the output
+budget fails the session and stops the process group. Cancellation also stops the
+process group and releases the machine lease. Pipe input EOF closes stdin; PTY
+EOF sends the terminal EOF character. Detached `start`/`status` jobs retain their
+existing request/reply and queued-delivery behavior.
