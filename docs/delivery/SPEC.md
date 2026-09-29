@@ -183,17 +183,27 @@ interfaces, integration requirements, and evidence for a usable transport.
 
 ### 7.1 The interface
 
-Every transport gives the router the same information:
+The implemented Go contract in `delivery/transport/transport.go` moves signed
+Nostr events, not radio frames:
 
-| Property | Meaning |
+| Method | Meaning |
 | --- | --- |
-| live | The transport can deliver to a present node now. |
-| frame size | The largest frame that one send can carry. |
-| directed | The transport can send to one named node, not only to all nodes in reach. |
-| cost | The price of one byte: battery, air time, or money. |
+| `Name()` | Names the transport for reports. |
+| `Send(ctx, event)` | Gives one signed event to the transport. |
+| `Fetch(ctx, filter)` | Returns a `Batch` of events matching a filter, with unreadable-item accounting and optional carrier hop metadata. |
 
-A transport does three things: it sends a frame, it receives frames, and it
-reports which nodes it can reach now.
+`transport.Live` extends this contract with `Watch(ctx, filter)`, returning
+matching stored and new events while the context remains active. Optional
+`Carrier` and `Reconciler` interfaces support carried hop limits and event-set
+reconciliation. The store verifies received events regardless of their transport.
+
+Bluetooth must implement these existing contracts. Compact encoding, frames,
+fragment sizes and current radio reachability are adapter concerns; they are
+not methods of the current shared interface. The characteristics in section
+7.2 describe transport design, not fields already exposed by the Go contract.
+Normal command and provider paths must accept the relevant shared interfaces
+before Bluetooth is usable there. Direct delivery and its real-device proof
+come before mesh forwarding; see [the implementation plan](BLUETOOTH-PLAN.md).
 
 ### 7.2 The four transports
 
@@ -227,11 +237,13 @@ not hold, and writes each event that the directory lacks. A person carries
 the directory between the two nodes.
 
 **Bluetooth LE.** Every node takes both roles at once: central and
-peripheral. BlueZ supports both roles at once on Linux. ARC builds on the
-Linux backend of `tinygo.org/x/bluetooth`, which reaches BlueZ over D-Bus, and
-extends it to hold a GATT server and a GATT client together. ARC offers the
-change upstream. On macOS, a node is a central only, so it reaches one hop.
-See section 16.
+peripheral. BlueZ supports both roles at once on Linux, subject to controller
+support. The initial Linux radio probe uses `godbus/dbus` directly, the fallback
+allowed in section 16, because its server needs BlueZ's per-device write context.
+It keeps advertising active while scanning and testing an outbound connection.
+The [Linux probe guide](BLUETOOTH-LINUX.md) describes the experimental test
+profile and pending hardware validation. It is not yet an event transport.
+On macOS, the planned first implementation is central only. See section 16.
 
 **LoRa.** A node reaches LoRa through Reticulum. The node connects to a local
 Reticulum instance over TCP, and that instance drives the radio. Reticulum
