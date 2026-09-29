@@ -197,6 +197,7 @@ func Run(ctx context.Context, handler Handler, opts Options) error {
 		handler: handler, options: opts, out: newOutput(ctx, opts.Out),
 		calls: map[string]chan result{}, stopped: make(chan struct{}),
 		requests: map[any]context.CancelFunc{}, slots: make(chan struct{}, opts.MaxConcurrent),
+		rejections: make(chan rejection, wire.MaxConcurrent),
 	}
 	if wants, ok := handler.(WantsCaller); ok {
 		wants.SetCaller(runtime)
@@ -214,6 +215,8 @@ type runtime struct {
 	requestsMu sync.Mutex
 	requests   map[any]context.CancelFunc
 	slots      chan struct{}
+	rejections chan rejection
+	rejected   <-chan struct{}
 
 	// calls holds each call that waits for its result, by call_id.
 	callsMu sync.Mutex
@@ -221,6 +224,12 @@ type runtime struct {
 	next    uint64
 	// stopped closes when the input ends. No result can come after it.
 	stopped chan struct{}
+}
+
+type rejection struct {
+	requestID any
+	err       error
+	done      chan struct{}
 }
 
 // result is the answer of ARC to one call.
@@ -232,11 +241,22 @@ type result struct {
 
 func (r *runtime) run(ctx context.Context) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
+	// One bounded worker writes rejection replies. Input must remain free to
+	// deliver cancellations, nested results and EOF while output is blocked.
+	r.group.Add(1)
+	go func() {
+		defer r.group.Done()
+		for rejected := range r.rejections {
+			r.answer(rejected.requestID, "", rejected.err)
+			close(rejected.done)
+		}
+	}()
 	// Closing a pipe or stdin interrupts an idle read. Other Readers must make
 	// progress themselves; the runtime still stops waiting when ctx ends.
 	defer func() {
 		close(r.stopped)
 		cancel()
+		close(r.rejections)
 		if closer, ok := r.options.In.(io.Closer); ok {
 			closer.Close()
 		}
@@ -284,7 +304,7 @@ func (r *runtime) run(ctx context.Context) (err error) {
 		case in := <-lines:
 			switch {
 			case errors.Is(in.err, wire.ErrLineTooLong):
-				r.answer(nil, "", ErrRequestTooLarge)
+				r.reject(nil, ErrRequestTooLarge)
 			case errors.Is(in.err, io.EOF):
 				return nil
 			case in.err != nil:
@@ -302,7 +322,7 @@ func (r *runtime) run(ctx context.Context) (err error) {
 func (r *runtime) dispatch(ctx context.Context, line []byte) {
 	var event wire.Event
 	if err := json.Unmarshal(line, &event); err != nil {
-		r.answer(nil, "", ErrInvalidRequest)
+		r.reject(nil, ErrInvalidRequest)
 		return
 	}
 	if event.Op == "result" {
@@ -318,20 +338,20 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 		return
 	}
 	if event.Op != "request" || event.Message == nil || event.Meta == nil || !validRequestID(event.RequestID) {
-		r.answer(event.RequestID, "", ErrInvalidRequest)
+		r.reject(event.RequestID, ErrInvalidRequest)
 		return
 	}
 	select {
 	case r.slots <- struct{}{}:
 	default:
-		r.answer(event.RequestID, "", ErrBusy)
+		r.reject(event.RequestID, ErrBusy)
 		return
 	}
 	ctx, cancel := wire.Budget(ctx, event.DeadlineMS)
 	if err := ctx.Err(); err != nil {
 		cancel()
 		<-r.slots
-		r.answer(event.RequestID, "", err)
+		r.reject(event.RequestID, err)
 		return
 	}
 	r.requestsMu.Lock()
@@ -339,16 +359,22 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 		r.requestsMu.Unlock()
 		cancel()
 		<-r.slots
-		r.answer(event.RequestID, "", ErrInvalidRequest)
+		r.reject(event.RequestID, ErrInvalidRequest)
 		return
 	}
 	r.requests[event.RequestID] = cancel
 	r.requestsMu.Unlock()
 	request := Request{Op: event.Op, From: event.From, Message: *event.Message, Meta: event.Meta, RequestID: event.RequestID, ArcSessionID: event.ArcSessionID, AppSessionID: event.AppSessionID, Framed: event.Framed}
+	priorRejection := r.rejected
 	r.group.Add(1)
 	go func() {
 		defer r.group.Done()
 		defer func() { <-r.slots }()
+		// Preserve rejection order before starting later requests. Only this
+		// admitted worker waits; input can still process control messages.
+		if priorRejection != nil {
+			<-priorRejection
+		}
 		reply, err := r.call(ctx, request)
 		cancel()
 		r.requestsMu.Lock()
@@ -358,6 +384,19 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 		// Finish admission bookkeeping before publishing that reply.
 		r.answer(event.RequestID, reply, err)
 	}()
+}
+
+func (r *runtime) reject(requestID any, err error) {
+	rejected := rejection{requestID: requestID, err: err, done: make(chan struct{})}
+	select {
+	case r.rejections <- rejected:
+		r.rejected = rejected.done
+	case <-r.out.ctx.Done():
+	default:
+		// A host that does not drain replies must not grow memory or block
+		// control messages. Fail this stream when its bounded backlog fills.
+		r.out.abort(ErrBusy)
+	}
 }
 
 func (r *runtime) call(ctx context.Context, request Request) (reply string, err error) {

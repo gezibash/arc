@@ -32,15 +32,16 @@ type outputHarness struct {
 	done   <-chan error
 }
 
-func runWithUnreadOutput(t *testing.T, ctx context.Context, handler provider.Handler) *outputHarness {
+func runWithUnreadOutput(t *testing.T, ctx context.Context, handler provider.Handler, opts provider.Options) *outputHarness {
 	t.Helper()
 	input, send := io.Pipe()
 	read, output := io.Pipe()
 	observed := &observedOutput{WriteCloser: output, writes: make(chan struct{}, 8)}
 	done := make(chan error, 1)
 	finished := make(chan struct{})
+	opts.In, opts.Out, opts.Log = input, observed, io.Discard
 	go func() {
-		done <- provider.Run(ctx, handler, provider.Options{In: input, Out: observed, Log: io.Discard})
+		done <- provider.Run(ctx, handler, opts)
 		output.Close()
 		close(finished)
 	}()
@@ -79,7 +80,7 @@ func TestBlockedOutputStopsOnCancellation(t *testing.T) {
 		t.Run(end, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			p := runWithUnreadOutput(t, ctx, echo{})
+			p := runWithUnreadOutput(t, ctx, echo{}, provider.Options{})
 			if _, err := io.WriteString(p.input, request("reply", "hello", nil)); err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +112,7 @@ func TestOutboundOutputCancellation(t *testing.T) {
 			runCtx, stop := context.WithCancel(context.Background())
 			defer stop()
 			h := &capturedCaller{ready: make(chan provider.Caller, 1)}
-			p := runWithUnreadOutput(t, runCtx, h)
+			p := runWithUnreadOutput(t, runCtx, h, provider.Options{})
 			caller := <-h.ready
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

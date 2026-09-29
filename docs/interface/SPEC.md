@@ -722,8 +722,12 @@ The host cancels a request with
 `{"op":"cancel","call_id":"..."}`. Go handlers must stop work when their
 context ends. EOF cancels active handlers before the runtime joins them and
 allows up to one second to drain their final replies. An unread output stream
-cannot keep shutdown waiting. Cancellation of an outbound call also interrupts
-an active output write; a cancellation notice has at most one second to write.
+cannot keep shutdown waiting. When an outbound call is canceled, an active
+write has up to one second, within its existing deadline, to finish. A complete
+line can reach the host before its write reports success; that completion
+must preserve the stream and allow the cancellation notice to follow. A write
+that remains blocked is interrupted. A cancellation notice has at most one
+second to write.
 Waiting for another writer respects the caller's context without interrupting
 that writer. An interrupted or failed write stops the output stream and the
 runtime, because another JSON line cannot safely follow a partial line.
@@ -733,10 +737,14 @@ Intentionally detached jobs retain their explicit job timeout.
 
 The Go runtime admits at most 64 concurrent handlers by default, configurable
 with `provider.Options.MaxConcurrent`. Excess requests receive `provider_busy`.
-Cancellation and result messages bypass handler admission. The host separately
-bounds incoming live work and outbound calls. Exec drains output while keeping
-only bounded prefixes; output volume cannot grow its in-memory buffers without
-limit.
+Cancellation and result messages bypass handler admission.
+The Go runtime writes rejection replies through one worker with a queue of at
+most 64 pending replies. Blocked rejection output cannot hold up cancellation,
+results, or EOF. A full rejection queue stops the stream with `provider_busy`.
+Earlier rejections finish before a later admitted request starts its handler.
+The host separately bounds incoming live work and outbound calls. Exec drains
+output while keeping only bounded prefixes; output volume cannot grow its
+in-memory buffers without limit.
 
 ### 14.4 Provider bundles
 

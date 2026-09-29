@@ -69,11 +69,32 @@ func (o *output) write(ctx context.Context, line []byte) error {
 	}()
 	select {
 	case err := <-done:
-		if err != nil {
-			o.abort(err)
-		}
 		return err
 	case <-ctx.Done():
+		// The host can receive the whole line and cancel its request before
+		// Write reports completion. Let that write settle before deciding the
+		// stream is partial. A deadline or runtime shutdown still bounds it.
+		grace := outputGrace
+		if deadline, ok := ctx.Deadline(); ok {
+			grace = min(grace, time.Until(deadline))
+		}
+		timer := time.NewTimer(max(grace, 0))
+		defer timer.Stop()
+		select {
+		case err := <-done:
+			return err
+		case <-o.ctx.Done():
+			err := context.Cause(o.ctx)
+			o.abort(err)
+			return err
+		case <-timer.C:
+		}
+		// Prefer a completed write when completion races the drain deadline.
+		select {
+		case err := <-done:
+			return err
+		default:
+		}
 		o.abort(ctx.Err())
 		return ctx.Err()
 	case <-o.ctx.Done():
