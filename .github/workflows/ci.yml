@@ -53,7 +53,13 @@ jobs:
                   continue
               path = PurePosixPath(os.fsdecode(raw))
               # Only known prose files are exempt. Unknown paths run tests.
-              docs = path.suffix == ".md" and (
+              # A spec, a proposal and the two registries are inputs of the
+              # tests in internal/specs, so they are not exempt.
+              checked = (
+                  path.name in {"SPEC.md", "KINDS.md", "GRANDFATHERED.md", "SPEC-TEMPLATE.md"}
+                  or "proposals" in path.parts
+              )
+              docs = not checked and path.suffix == ".md" and (
                   len(path.parts) == 1 or path.parts[0] == "docs"
               )
               code |= not docs
