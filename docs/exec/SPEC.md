@@ -1,10 +1,17 @@
 # Exec: remote commands and wakeable citizens on ARC
 
-Status: proposed. Phases 1, 2, 3a and 3b of section 18 exist.
-`apps/exec` holds the provider (section 8), the start script
-(section 10.4), the lease (section 11), and jobs with their result to the
-caller (section 12). `arc` and the `wake` package run the wake flow
-(section 10). The other sections describe work that does not exist yet.
+- Status: partial
+- Layers: runtime, app
+- Owns: none
+- Proof: go test -count=1 -run '^Test(Delivery|Interface)$' ./internal/proof/
+- Remaining: phase 4 of section 18
+- Unverified: A wake from the cold stage, the start of a stopped HTTP service on a request, and SSH access through section 13. Section 19 measured the older stack; nobody has measured the delivery layer.
+
+Phases 1, 2, 3a and 3b of section 18 exist. `apps/exec` holds the provider
+(section 8), the lease (section 11), and jobs with their result to the
+caller (section 12). The operator supplies the start script (section 10.4).
+`arc` and the `wake` package run the wake flow (section 10). The other
+sections describe work that does not exist yet.
 
 ## 1. Purpose
 
@@ -572,7 +579,7 @@ token_env = "SPRITES_TOKEN"
 - A public wake URL lets each host on the Internet wake the machine for some
   seconds. Use the default URL authentication unless you accept this cost.
 - The provider sees every command and all output. It is not a private-compute
-  boundary. See [private environments](../private-environment/SPEC.md).
+  boundary. See [private environments](../proposals/private-environment.md).
 
 ## 16. Non-goals
 

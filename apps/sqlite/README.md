@@ -106,6 +106,22 @@ connection and an authorizer that denies writes. All callers are denied
 The service creates one transaction for every request and rolls it back on
 every statement, limit, or result-serialization error.
 
+The service answers calls of the [delivery layer](../../docs/delivery/SPEC.md),
+section 11.4, and announces the `sqlite` scheme. It is a query service backed
+by SQLite. It is not a network filesystem for `.db` files, and it does not
+change the stock SQLite client.
+
+Operators can map several citizens to a shared database, or map separate
+resource names to separate databases with different grants. There is no
+implicit public database, and no automatic database creation for strangers.
+Named resources such as `/main` resolve only through operator configuration.
+The URI cannot choose a filesystem path.
+
+Each request is one provider-owned transaction, including single statements
+and atomic batches. Results must fit the configured limits and serialize
+successfully before commit. A lost reply after commit remains an uncertain
+outcome at the transport layer, and is never retried automatically.
+
 The service sees query text, parameters, caller public keys, result data, and
 access patterns. It is not a private-compute boundary from its operator.
 

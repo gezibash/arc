@@ -1,5 +1,11 @@
 # Core interactions and sessions
 
+- Status: built
+- Layers: core, sdk, runtime
+- Owns: core/session
+- Proof: go test -count=1 -run '^TestBundledProviderSessionsThroughCLI$' ./cmd/arc/
+- Unverified: No test runs a session across a network other than loopback.
+
 ARC participants may provide and consume capabilities. Transport connections
 are infrastructure; a session is an ARC interaction with an authenticated peer.
 Core owns the protocol and lifecycle. Providers own their application state.

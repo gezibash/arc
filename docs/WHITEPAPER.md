@@ -45,11 +45,11 @@ This whitepaper describes the current implementation of ARC and marks each part 
 
 **Designed, not built:**
 
-- Bluetooth LE on Linux, the mesh relay, copy budgets for couriers on a mesh link, and Noise sessions on live mesh links. The compact event codec and event framing/fragment reassembly are implemented as standalone packages; radio connections and transport integration remain unbuilt. See the [Bluetooth implementation plan](delivery/BLUETOOTH-PLAN.md) and phase 5 of [delivery section 15](delivery/SPEC.md).
+- Bluetooth LE on Linux, the mesh relay, copy budgets for couriers on a mesh link, and Noise sessions on live mesh links. The compact event codec and event framing/fragment reassembly are implemented as standalone packages; radio connections and transport integration remain unbuilt. See the [Bluetooth implementation plan](proposals/bluetooth.md) and phase 5 of [delivery section 15](delivery/SPEC.md).
 - LoRa through a local Reticulum instance. This is phase 6 of delivery section 15.
 - A full mesh node on macOS, a TLS direct carrier for live calls, and a bridge to bitchat direct messages. See delivery section 17.
 - Asynchronous job results in the mailbox, a wake URL, and signed dormant records. These are phases 3b and 4 of [exec section 18](exec/SPEC.md).
-- Private environments: compute whose operator cannot read the work. The [private environment contract](private-environment/SPEC.md) is a proposal only.
+- Private environments: compute whose operator cannot read the work. The [private environment contract](proposals/private-environment.md) is a proposal only.
 - An official release channel. `arc update` works, but no publisher runs a channel yet.
 
 **Out of scope:**
@@ -493,7 +493,7 @@ wasm+arc://provider/module      → WASM sandbox
 
 ### Private compute (future work)
 
-Compute whose operator cannot read the work, the data, or the results, needs hardware that proves what it runs. The [private environment contract](private-environment/SPEC.md) states the guarantees. Nothing in it is built.
+Compute whose operator cannot read the work, the data, or the results, needs hardware that proves what it runs. The [private environment contract](proposals/private-environment.md) states the guarantees. Nothing in it is built.
 
 ---
 

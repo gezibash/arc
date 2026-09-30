@@ -1,6 +1,13 @@
 # Delivery: ARC over Nostr events, on any transport
 
-Status: phases 1 to 4 are built, see section 15. Phases 5 and 6 are
+- Status: partial
+- Layers: core, adapters, runtime
+- Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
+- Proof: go test -count=1 -run '^TestDelivery$' ./internal/proof/
+- Remaining: phases 5 and 6 of section 15
+- Unverified: Phases 5 and 6 of section 15 have no proof. Section 17 lists the deferred work.
+
+Phases 1 to 4 are built, see section 15. Phases 5 and 6 are
 proposed. Phase 4, section 15.1, made this layer the only ARC stack in
 v0.11.0. The older stack used its own protocol: Ed25519 keys, live sessions,
 and routed relays. Section 14 lists what replaced each part of it.
@@ -263,7 +270,7 @@ Timestamps must fit a nonnegative signed 64-bit integer, and kinds must fit an
 unsigned 16-bit integer. An encoded event is limited to 1 MiB. Decoders reject
 trailing bytes and malformed fields. Decoding reconstructs the ID; the store
 still verifies the signature before accepting the event. See the
-[Bluetooth implementation plan](BLUETOOTH-PLAN.md) for implementation status
+[Bluetooth implementation plan](../proposals/bluetooth.md) for implementation status
 and the sequence of small PRs.
 
 ### 7.4 The frame

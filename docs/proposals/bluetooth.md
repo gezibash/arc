@@ -1,10 +1,12 @@
 # Bluetooth implementation plan
 
+Status: proposed
+
 ARC will let nearby devices exchange events without Wi-Fi or internet. Two
 reachable devices can communicate directly. A nearby ARC node can also carry
 messages between devices that cannot reach each other directly.
 
-This plan follows the current Go delivery design in [SPEC.md](SPEC.md). The
+This plan follows the current Go delivery design in [the delivery spec](../delivery/SPEC.md). The
 shared transport interface already exists, so extracting another transport
 interface is not the first step.
 
@@ -19,7 +21,7 @@ content. The receiver rebuilds the event ID from those fields.
 large events into numbered pieces and rebuilds them when they arrive, including
 out-of-order arrivals. It bounds unfinished work, expires missing pieces after
 30 seconds, and passes completed bytes back to the compact decoder. See
-[section 7.4](SPEC.md#74-the-frame) for the exact byte format and limits.
+[section 7.4](../delivery/SPEC.md#74-the-frame) for the exact byte format and limits.
 
 Run `mise exec -- go test ./core/compact ./core/frame -v` to check both
 layers without Bluetooth hardware. Tests cover frame sizes, reordered and

@@ -1,7 +1,7 @@
 # MLD: the machine lifecycle definition
 
 Status: proposed. No code implements this document. It generalizes the Sprite
-lifecycle of [the exec spec](SPEC.md), sections 6, 10, and 11.
+lifecycle of [the exec spec](../exec/SPEC.md), sections 6, 10, and 11.
 
 ## 1. Purpose
 
@@ -148,7 +148,7 @@ The job request carries `reply_to`, a public key. The default is the caller.
 - On a per-task machine, the machine sends the result before the platform
   limit ends the session.
 - If the machine stops before the result leaves, the job state is `lost`. See
-  [the exec spec](SPEC.md), section 12.1.
+  [the exec spec](../exec/SPEC.md), section 12.1.
 
 A delegate reports to `reply_to` in the same way. The DM comes from the
 delegate key with its delegation attached, so the reader verifies the chain.

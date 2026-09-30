@@ -1,6 +1,12 @@
 # HTTP over ARC
 
-Status: built. Two adapters serve HTTP over ARC:
+- Status: built
+- Layers: sdk, app
+- Owns: sdk/httpadapter
+- Proof: go test -count=1 -run '^TestAGoHandlerAnswersACallThroughARelay$' ./cmd/arc/
+- Unverified: No test serves an HTTP program written in a language other than Go.
+
+Two adapters serve HTTP over ARC:
 
 - `httpadapter.New` serves a Go `http.Handler` in the provider program.
 - `arc-http` serves an HTTP server of any language. See section 10.

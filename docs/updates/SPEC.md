@@ -1,5 +1,11 @@
 # Updates and release channels
 
+- Status: built
+- Layers: runtime, app
+- Owns: none
+- Proof: go test -count=1 -run '^TestDelivery$' ./internal/proof/
+- Unverified: Official signed channels and automatic application are not enabled. The proof signs its own channel and serves it through a local relay.
+
 ## Status and boundary
 
 This document defines the channel and rollout policy. The

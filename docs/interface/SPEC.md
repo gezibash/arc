@@ -1,6 +1,12 @@
 # App interface, version 1
 
-Status: phases A to D are built, see section 18. `arc` runs them, and
+- Status: built
+- Layers: core, sdk, runtime, app
+- Owns: core/draft, core/wire, sdk/provider
+- Proof: go test -count=1 -run '^TestInterface$' ./internal/proof/
+- Unverified: No test runs a manifest command against a relay other than a local relay.
+
+Phases A to D are built, see section 18. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
