@@ -185,8 +185,8 @@ arc update apply --provider <provider> --publisher <publisher>
 checks the signature of the publisher, and replaces this program. The old
 program stays as `<program>.previous`. `ARC_RELEASES` and
 `ARC_RELEASE_PUBLISHER` can name the provider and the publisher. No official
-channel exists yet. See [updating an installation](docs/updates/OPERATIONS.md)
-and [publishing a channel](docs/updates/PUBLISHING.md).
+channel exists yet. See [updates](docs/updates/SPEC.md) and
+[publishing a channel](apps/releases/README.md#publish-a-channel).
 
 ## Upgrade from v0.10.0
 

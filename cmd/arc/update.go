@@ -190,7 +190,7 @@ func releaseCommand() *cobra.Command {
 		Long: "arc checks the size and the hash of each archive that the channel\n" +
 			"names, in <root>/blobs/<sha256>.tar.gz. It then signs the channel with\n" +
 			"the chosen identity, which must be the publisher of the channel, and\n" +
-			"writes <root>/channels/<channel>.json. See docs/updates/PUBLISHING.md.",
+			"writes <root>/channels/<channel>.json. See apps/releases/README.md.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, _ := command.Flags().GetString("root")
