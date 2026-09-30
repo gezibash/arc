@@ -42,6 +42,7 @@ must change its import paths. The programs and their commands did not change.
 
 ### Removed
 
+- `docs/site/`, the illustrated website. It is now a repository of its own.
 - `docker/fly-nostr/`, the Fly.io files of one operator's relay. The image
   `ghcr.io/gezibash/arc` runs a relay on any host. docs/DEPLOY.md shows the
   flags that turn on the write limits.
