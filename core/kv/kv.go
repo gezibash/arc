@@ -1,5 +1,6 @@
-// Package journal defines transactional persistence needed by durable delivery.
-package journal
+// Package kv defines the transactional key-value store that durable delivery
+// needs. It has no relation to the journal app.
+package kv
 
 // Store runs a whole callback atomically. Update commits only when fn succeeds;
 // otherwise it rolls back. Views are read-only. Returned bytes live for the callback.

@@ -4,7 +4,7 @@ package mailbox
 import (
 	"path/filepath"
 
-	boltjournal "github.com/gezibash/arc/adapters/journal/bolt"
+	boltkv "github.com/gezibash/arc/adapters/kv/bolt"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/mail"
 	"github.com/gezibash/arc/core/node"
@@ -12,5 +12,5 @@ import (
 )
 
 func Open(dir string, key keys.Signer, n *node.Node, via []transport.Transport) (*mail.Mail, error) {
-	return mail.New(boltjournal.Open(filepath.Join(dir, "mail.db")), key, n, via)
+	return mail.New(boltkv.Open(filepath.Join(dir, "mail.db")), key, n, via)
 }

@@ -32,7 +32,7 @@ flowchart LR
 | `core/call`, `core/wire` | Calls, replies, deadlines, cancellation and the provider line protocol. |
 | `core/session` | Interaction modes, session identity/lifecycle, ordering, bounded credit, half-close, cancellation and final outcomes. |
 | `core/transport` | Event transport ports: `Transport`, `Live`, `Carrier`, `Reconciler`. |
-| `core/journal` | Atomic persistence operations consumed by the durable mail state machine. |
+| `core/kv` | Atomic key-value persistence operations consumed by the durable mail state machine. |
 | `core/compact`, `core/frame`, `core/relaylist` | Event encoding, bounded fragmentation and relay-list protocol. |
 | `runtime/citizen`, `runtime/catalog`, `runtime/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
 | Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
@@ -46,7 +46,7 @@ flowchart LR
 | `adapters/provider/host` | Subprocess hosting of a provider program. |
 | `adapters/keyfile`, `adapters/nip05` | Identity files and network name resolution. |
 | `adapters/search/bleve` | Bleve indexing, query parsing and local search files. |
-| `adapters/store/bolt`, `adapters/journal/bolt`, `adapters/mailbox` | Bolt persistence and composition with core event/mail rules. |
+| `adapters/store/bolt`, `adapters/kv/bolt`, `adapters/mailbox` | Bolt persistence and composition with core event/mail rules. |
 | `adapters/relay/*` | Khatru integration for sealed-event access, groups and relay limits. |
 | `internal/search` | Shared application search request/result types. No ARC protocol rules. |
 | `internal/` | Small shared types, implementation utilities and test infrastructure. Core does not import these packages. |

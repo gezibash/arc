@@ -24,8 +24,8 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/call"
-	"github.com/gezibash/arc/core/journal"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/kv"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/store"
@@ -100,7 +100,7 @@ type carried struct {
 type Mail struct {
 	key    keys.Signer
 	node   *node.Node
-	db     journal.Store
+	db     kv.Store
 	relays []transport.Transport
 	now    func() time.Time
 
@@ -116,11 +116,11 @@ type Mail struct {
 	OnRequest func(ctx context.Context, rumor nostr.Event) (call.Reply, error)
 }
 
-// New initializes durable mail using an injected transactional journal.
+// New initializes durable mail using an injected transactional key-value store.
 // The relays are where new mail is sent at once.
-func New(db journal.Store, k keys.Signer, n *node.Node, relays []transport.Transport) (*Mail, error) {
+func New(db kv.Store, k keys.Signer, n *node.Node, relays []transport.Transport) (*Mail, error) {
 	m := &Mail{key: k, node: n, db: db, relays: relays, now: time.Now}
-	if err := m.update(func(tx journal.Tx) error {
+	if err := m.update(func(tx kv.Tx) error {
 		for _, name := range [][]byte{outboxBucket, carryBucket, inboxBucket} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
@@ -135,9 +135,9 @@ func New(db journal.Store, k keys.Signer, n *node.Node, relays []transport.Trans
 }
 
 // Close releases the mail state.
-func (m *Mail) Close() error                           { m.db.Close(); return nil }
-func (m *Mail) update(fn func(journal.Tx) error) error { return m.db.Update(fn) }
-func (m *Mail) view(fn func(journal.Tx) error) error   { return m.db.View(fn) }
+func (m *Mail) Close() error                      { m.db.Close(); return nil }
+func (m *Mail) update(fn func(kv.Tx) error) error { return m.db.Update(fn) }
+func (m *Mail) view(fn func(kv.Tx) error) error   { return m.db.View(fn) }
 
 // Send seals a message to a citizen, puts it in the outbox, and sends it to
 // the relays at once. A relay that fails does not fail the send: the outbox
@@ -175,7 +175,7 @@ func (m *Mail) queue(ctx context.Context, to nostr.PubKey, rumor nostr.Event, ki
 		return Outgoing{}, err
 	}
 	out := Outgoing{Kind: kind, Rumor: rumor.ID.Hex(), To: to.Hex(), Seal: seal.ID.Hex(), Created: m.now().UTC(), Expires: expires.UTC(), Text: rumor.Content}
-	err = m.update(func(tx journal.Tx) error {
+	err = m.update(func(tx kv.Tx) error {
 		if err := put(tx, outboxBucket, out.Rumor, out); err != nil {
 			return err
 		}
@@ -213,7 +213,7 @@ func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, 
 	return seal, entries, nil
 }
 
-func putCarried(tx journal.Tx, entries []carried) error {
+func putCarried(tx kv.Tx, entries []carried) error {
 	for _, entry := range entries {
 		if err := put(tx, carryBucket, entry.Wrap, entry); err != nil {
 			return err
@@ -250,7 +250,7 @@ func (m *Mail) post(ctx context.Context, to nostr.PubKey, rumor nostr.Event, exp
 	if err != nil {
 		return nostr.Event{}, err
 	}
-	if err := m.update(func(tx journal.Tx) error { return putCarried(tx, entries) }); err != nil {
+	if err := m.update(func(tx kv.Tx) error { return putCarried(tx, entries) }); err != nil {
 		return nostr.Event{}, err
 	}
 	m.sendPrepared(ctx, to, entries)
@@ -403,7 +403,7 @@ type incoming struct {
 
 func (m *Mail) receiveRequest(ctx context.Context, opened private.Opened, previouslyReceived bool, report *Report) error {
 	id := opened.Rumor.ID.Hex()
-	err := m.update(func(tx journal.Tx) error {
+	err := m.update(func(tx kv.Tx) error {
 		if tx.Bucket(inboxBucket).Get([]byte(id)) != nil {
 			return nil
 		}
@@ -423,7 +423,7 @@ func (m *Mail) receiveRequest(ctx context.Context, opened private.Opened, previo
 
 func (m *Mail) pending(ctx context.Context, report *Report) error {
 	var ids []string
-	if err := m.view(func(tx journal.Tx) error {
+	if err := m.view(func(tx kv.Tx) error {
 		return tx.Bucket(inboxBucket).ForEach(func(k, v []byte) error {
 			var entry incoming
 			if err := json.Unmarshal(v, &entry); err != nil {
@@ -461,7 +461,7 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		if err != nil {
 			return err
 		}
-		err = m.update(func(tx journal.Tx) error {
+		err = m.update(func(tx kv.Tx) error {
 			entry = incoming{}
 			if err := json.Unmarshal(tx.Bucket(inboxBucket).Get([]byte(id)), &entry); err != nil {
 				return err
@@ -507,7 +507,7 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		return err
 	}
 	var run, uncertain bool
-	err = m.update(func(tx journal.Tx) error {
+	err = m.update(func(tx kv.Tx) error {
 		data := tx.Bucket(inboxBucket).Get([]byte(id))
 		if data == nil {
 			return nil
@@ -554,7 +554,7 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 	}
 	entry.State = "completed"
 	entry.ReplySeal = seal.ID.Hex()
-	if err := m.update(func(tx journal.Tx) error {
+	if err := m.update(func(tx kv.Tx) error {
 		if err := putCarried(tx, entries); err != nil {
 			return err
 		}
@@ -673,7 +673,7 @@ func (m *Mail) evict() error {
 	}
 
 	sort.Slice(others, func(a, b int) bool { return others[a].Received.Before(others[b].Received) })
-	return m.update(func(tx journal.Tx) error {
+	return m.update(func(tx kv.Tx) error {
 		for _, c := range others[:len(others)-MaxCarried] {
 			if err := tx.Bucket(carryBucket).Delete([]byte(c.Wrap)); err != nil {
 				return err
@@ -739,7 +739,7 @@ func (m *Mail) give(ctx context.Context, t transport.Transport, carrier transpor
 }
 
 func (m *Mail) attempted(rumor string) error {
-	return m.update(func(tx journal.Tx) error {
+	return m.update(func(tx kv.Tx) error {
 		data := tx.Bucket(outboxBucket).Get([]byte(rumor))
 		if data == nil {
 			return nil
@@ -757,7 +757,7 @@ func (m *Mail) attempted(rumor string) error {
 }
 
 func (m *Mail) expire() error {
-	return m.update(func(tx journal.Tx) error {
+	return m.update(func(tx kv.Tx) error {
 		cursor := tx.Bucket(carryBucket).Cursor()
 		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
 			var entry carried
@@ -864,7 +864,7 @@ func (m *Mail) Rumors(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, e
 
 func (m *Mail) outgoing() ([]Outgoing, error) {
 	var out []Outgoing
-	err := m.view(func(tx journal.Tx) error {
+	err := m.view(func(tx kv.Tx) error {
 		return tx.Bucket(outboxBucket).ForEach(func(_, v []byte) error {
 			var o Outgoing
 			if err := json.Unmarshal(v, &o); err != nil {
@@ -996,7 +996,7 @@ func (m *Mail) Carrying() (int, error) {
 	return count, err
 }
 func (m *Mail) each(fn func(carried)) error {
-	return m.view(func(tx journal.Tx) error {
+	return m.view(func(tx kv.Tx) error {
 		return tx.Bucket(carryBucket).ForEach(func(_, v []byte) error {
 			var c carried
 			if err := json.Unmarshal(v, &c); err != nil {
@@ -1007,7 +1007,7 @@ func (m *Mail) each(fn func(carried)) error {
 		})
 	})
 }
-func put(tx journal.Tx, bucket []byte, key string, value any) error {
+func put(tx kv.Tx, bucket []byte, key string, value any) error {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -1015,12 +1015,12 @@ func put(tx journal.Tx, bucket []byte, key string, value any) error {
 	return tx.Bucket(bucket).Put([]byte(key), body)
 }
 func (m *Mail) put(bucket []byte, key string, value any) error {
-	return m.update(func(tx journal.Tx) error { return put(tx, bucket, key, value) })
+	return m.update(func(tx kv.Tx) error { return put(tx, bucket, key, value) })
 }
 
 func (m *Mail) get(bucket []byte, key string, into any) (bool, error) {
 	var body []byte
-	err := m.view(func(tx journal.Tx) error {
+	err := m.view(func(tx kv.Tx) error {
 		if v := tx.Bucket(bucket).Get([]byte(key)); v != nil {
 			body = append([]byte(nil), v...)
 		}

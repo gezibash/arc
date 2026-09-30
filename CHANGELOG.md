@@ -25,6 +25,8 @@ must change its import paths. The programs and their commands did not change.
   | `adapters/ndjson` | `sdk/ndjson` |
   | `adapters/providerconfig` | `sdk/providerconfig` |
   | `application/...` | `runtime/...` |
+  | `core/journal` | `core/kv` |
+  | `adapters/journal/bolt` | `adapters/kv/bolt` |
 
 - `sdk/provider` gives the session types under its own name: `Stream`, `Mode`,
   `RequestReply`, `ServerStream`, `Duplex`, `MaxChunk`, `ErrUnsupported` and

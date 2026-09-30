@@ -1,22 +1,22 @@
-package boltjournal_test
+package boltkv_test
 
 import (
 	"errors"
 	"path/filepath"
 	"testing"
 
-	boltjournal "github.com/gezibash/arc/adapters/journal/bolt"
-	"github.com/gezibash/arc/core/journal"
+	boltkv "github.com/gezibash/arc/adapters/kv/bolt"
+	"github.com/gezibash/arc/core/kv"
 )
 
 // A pending receipt and its outbox entry must commit together, or neither may
 // become visible. The journal contract in docs/ARCHITECTURE.md requires this.
 func TestTransactionsCommitTogetherAndSurviveReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mail.db")
-	db := boltjournal.Open(path)
+	db := boltkv.Open(path)
 	defer db.Close()
 	requests, outbox := []byte("requests"), []byte("outbox")
-	if err := db.Update(func(tx journal.Tx) error {
+	if err := db.Update(func(tx kv.Tx) error {
 		for _, name := range [][]byte{requests, outbox} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
@@ -28,7 +28,7 @@ func TestTransactionsCommitTogetherAndSurviveReopen(t *testing.T) {
 	}
 
 	refused := errors.New("second state transition failed")
-	err := db.Update(func(tx journal.Tx) error {
+	err := db.Update(func(tx kv.Tx) error {
 		if err := tx.Bucket(requests).Put([]byte("failed"), []byte("pending")); err != nil {
 			return err
 		}
@@ -40,7 +40,7 @@ func TestTransactionsCommitTogetherAndSurviveReopen(t *testing.T) {
 	if !errors.Is(err, refused) {
 		t.Fatalf("update error=%v, want the callback failure", err)
 	}
-	if err := db.View(func(tx journal.Tx) error {
+	if err := db.View(func(tx kv.Tx) error {
 		for _, name := range [][]byte{requests, outbox} {
 			if value := tx.Bucket(name).Get([]byte("failed")); value != nil {
 				t.Errorf("failed transaction retained %s=%q", name, value)
@@ -54,7 +54,7 @@ func TestTransactionsCommitTogetherAndSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.Update(func(tx journal.Tx) error {
+	if err := db.Update(func(tx kv.Tx) error {
 		if err := tx.Bucket(requests).Put([]byte("committed"), []byte("completed")); err != nil {
 			return err
 		}
@@ -63,9 +63,9 @@ func TestTransactionsCommitTogetherAndSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	db = boltjournal.Open(path)
+	db = boltkv.Open(path)
 	defer db.Close()
-	if err := db.View(func(tx journal.Tx) error {
+	if err := db.View(func(tx kv.Tx) error {
 		if got := string(tx.Bucket(requests).Get([]byte("committed"))); got != "completed" {
 			t.Errorf("reopened request=%q, want completed", got)
 		}
