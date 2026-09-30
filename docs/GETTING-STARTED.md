@@ -98,11 +98,10 @@ First check your existing list:
 arc relay ls
 ```
 
-Use a relay you have chosen. The README gives this example; its availability is
-not guaranteed:
+Use a relay you have chosen. [Deploy](DEPLOY.md) shows how to run one:
 
 ```sh
-arc relay add wss://arc-nostr-gezim.fly.dev
+arc relay add wss://<relay>
 arc sync
 ```
 

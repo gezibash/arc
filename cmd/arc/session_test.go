@@ -23,12 +23,12 @@ func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
 		ok(t, home, "", "relay", "add", url)
 	}
 	binary := filepath.Join(t.TempDir(), "repl")
-	build := exec.Command("go", "build", "-o", binary, "../../examples/repl")
+	build := exec.Command("go", "build", "-o", binary, "./testdata/repl")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := filepath.Abs("../../examples/repl/interface.json")
+	manifest, err := filepath.Abs("testdata/repl/interface.json")
 	if err != nil {
 		t.Fatal(err)
 	}

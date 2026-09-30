@@ -124,7 +124,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	sessionDone(t, done, 0)
 	// A second participant consumes SQLite through the hosted HTTP session API.
 	ok(t, httpHome, "", "install", sqlKey, "--yes")
-	serveSessionProvider(t, ctx, httpHome, providerBinary(t, "../arc-http"), "../../examples/streaming-http/interface.json", providerBinary(t, "../../examples/streaming-http"))
+	serveSessionProvider(t, ctx, httpHome, providerBinary(t, "../arc-http"), "testdata/streaming-http/interface.json", providerBinary(t, "./testdata/streaming-http"))
 	ok(t, consumer, "", "install", httpKey, "--yes")
 	input, out, done = startSessionCLI(t, ctx, consumer, "--http", "--mode", "server_stream", "http+arc://"+httpKey+"/events")
 	if !waitFor(out, "data: first", 5*time.Second) {

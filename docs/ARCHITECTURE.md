@@ -6,7 +6,7 @@ order in which a message travels.
 
 ```mermaid
 flowchart LR
-    ENTRY["cmd and examples<br/>Executable entry points and demonstrations"]
+    ENTRY["cmd<br/>Executable entry points"]
     APPS["apps<br/>App manifests and domain behavior"]
     APP["application<br/>Citizen workflows and command policy"]
     ADAPTER["adapters<br/>HTTP, transports, process and storage I/O"]
@@ -132,8 +132,7 @@ Core now defines `request_reply`, `server_stream` and `duplex` interactions.
 and final outcomes. `core/call` carries authenticated session frames over any
 `transport.Live` event adapter, and `core/provider` exposes the same machinery to
 handlers and nested consumers. Relays and provider stdio use this protocol;
-neither adapter implements session behavior. See [the session contract](sessions/SPEC.md)
-and the [REPL example](../examples/repl/README.md).
+neither adapter implements session behavior. See [the session contract](sessions/SPEC.md).
 
 A provider and a consumer are roles a participant can hold at the same time.
 A provider that calls another provider uses the same core interaction contracts.

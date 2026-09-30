@@ -12,7 +12,7 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
 - `adapters/` implements concrete I/O and protocol mappings. HTTP, relay,
   directory, subprocess, standard-stream, key-file and Bolt implementations
   belong here. An adapter may depend on core and shared adapter utilities;
-  it must not depend on `application/`, `apps/`, `cmd/`, or `examples/`.
+  it must not depend on `application/`, `apps/`, or `cmd/`.
 - `application/` owns citizen workflows, consent, routing choices, manifests,
   installed commands, bundle management, wake policy and updates. Concrete
   adapters are selected by composition code, such as `application/citizen.Open`.

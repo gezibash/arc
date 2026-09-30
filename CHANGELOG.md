@@ -6,6 +6,18 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- `docker/fly-nostr/`, the Fly.io files of one operator's relay. The image
+  `ghcr.io/gezibash/arc` runs a relay on any host. docs/DEPLOY.md shows the
+  flags that turn on the write limits.
+- `examples/`. The notes examples are gone. The REPL and streaming HTTP
+  programs are now test fixtures in `cmd/arc/testdata/`.
+- `scripts/check-compose.sh` and `scripts/check-relay.sh`, with the tasks
+  `mise run compose` and `mise run check-relay`.
+- The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
+  documents. Each document now shows `wss://<relay>`.
+
 ## [0.16.0] - 2026-09-23
 
 A provider can call the capabilities of its citizen, and can serve HTTP over

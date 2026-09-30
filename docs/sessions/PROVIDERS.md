@@ -14,7 +14,7 @@ from the consumer. Repeat installation after an interface update.
 
 Provider configuration and access checks are unchanged. See the guides for
 [SQLite](../../apps/sqlite/README.md), [Exec](../../apps/exec/README.md),
-[streaming HTTP](../../examples/streaming-http/README.md), and
+[HTTP](../../apps/http/README.md), and
 [Releases](../../apps/releases/README.md).
 
 A quick local proof builds real provider subprocesses, runs a local relay and

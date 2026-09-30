@@ -34,9 +34,8 @@ that user.
 - On the citizen machine: `arc` and `arc-exec` from an ARC release,
   `bash`, and a copy of this directory. The machine needs no Go toolchain.
 - On the caller: `arc`.
-- A Nostr relay on a machine that does not pause, for example
-  `wss://arc-nostr-gezim.fly.dev`. The citizen and the caller use the same
-  relay.
+- A Nostr relay on a machine that does not pause. The citizen and the caller
+  use the same relay.
 
 ## Set up a citizen
 

@@ -57,8 +57,8 @@ func forbidden(layer, imported string) string {
 		if layer == "core" && target != "core" && !strings.HasPrefix(target, "core/") {
 			return "core must depend only on core ports and rules"
 		}
-		if (layer == "adapters" || layer == "application" || layer == "apps") && (strings.HasPrefix(target, "cmd/") || strings.HasPrefix(target, "examples/")) {
-			return "reusable packages must not depend on executable entry points or examples"
+		if (layer == "adapters" || layer == "application" || layer == "apps") && strings.HasPrefix(target, "cmd/") {
+			return "reusable packages must not depend on executable entry points"
 		}
 		if (layer == "adapters" || layer == "application") && strings.HasPrefix(target, "apps/") {
 			return "runtime and adapters must not depend on concrete apps"

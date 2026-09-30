@@ -69,7 +69,7 @@ arc relay serve --listen 0.0.0.0:7447
 
 Clients use `ws://<host>:7447`. Put a proxy that ends TLS in front of the
 relay, and clients use `wss://`. The write limits are off until their flags
-turn them on, see "Run the Nostr relay on Fly.io" below.
+turn them on, see "Turn on the write limits" below.
 
 Example systemd unit at `/etc/systemd/system/arc-relay.service`:
 
@@ -107,42 +107,26 @@ docker run -d --name arc-relay -p 7447:7447 \
   ghcr.io/gezibash/arc:latest
 ```
 
-To turn on write limits, name the command and its flags, as
-`docker/fly-nostr/Dockerfile` does. Any other command works through the same
-image, for example `docker run --rm ghcr.io/gezibash/arc:latest arc version`.
+To turn on write limits, name the command and its flags, as the next section
+shows. Any other command works through the same image, for example
+`docker run --rm ghcr.io/gezibash/arc:latest arc version`.
 
-## Run the Nostr relay on Fly.io
+## Turn on the write limits
 
-The delivery layer uses Nostr relays, see docs/delivery/SPEC.md. The Fly.io
-app `arc-nostr-gezim` runs `arc relay serve`. Its files are in
-`docker/fly-nostr/`. The relay keeps its events in
-`/data/relay.db`, on a volume. Fly.io ends TLS, so clients use
-`wss://arc-nostr-gezim.fly.dev`.
-
-Before the first deploy, make the app and its volume:
+A public relay needs write limits. Each limit is off when its flag is
+absent, so a local relay takes everything. This command runs the image with
+each limit on, behind a proxy that ends TLS:
 
 ```bash
-fly apps create arc-nostr-gezim
-fly volumes create arc_nostr_data --app arc-nostr-gezim --region ams --size 1
+docker run -d --name arc-relay -p 7447:7447 \
+  -v arc-relay:/home/arc/.config/arc \
+  ghcr.io/gezibash/arc:latest \
+  arc relay serve --listen 0.0.0.0:7447 \
+  --max-event-bytes 262144 --wrap-auth --wrap-pow 20 \
+  --rate 300 --burst 1000 --ip-header Fly-Client-IP --max-store-mb 800
 ```
 
-Deploy from the root of the checkout:
-
-```bash
-fly deploy -c docker/fly-nostr/fly.toml --dockerfile docker/fly-nostr/Dockerfile --build-arg VERSION=X.Y.Z
-```
-
-After each deploy, run the check. It sends a sealed page and a live call to
-`exec` through the relay:
-
-```bash
-mise run check-relay -- wss://arc-nostr-gezim.fly.dev
-```
-
-The Dockerfile turns on the write limits of `arc relay serve`. Each limit
-is off when its flag is absent, so a local relay takes everything.
-
-| Flag | Deploy value | Effect |
+| Flag | Example value | Effect |
 | --- | --- | --- |
 | `--max-event-bytes` | `262144` | The relay refuses an event larger than 256 KiB, as JSON. |
 | `--wrap-auth` | on | The relay takes a gift wrap, kind 1059 or 21059, only after NIP-42 authentication. |
@@ -161,8 +145,8 @@ sync of up to 1000 events through at once. After the burst, a sync of 5
 events each second does not reach the rate.
 
 A client can write any `X-Forwarded-For` header. The relay therefore reads
-only the header that `--ip-header` names. The Fly proxy sets `Fly-Client-IP`.
-If the header is absent, the relay uses the address of the connection.
+only the header that `--ip-header` names. Name the header that your proxy
+sets. For example, the Fly.io proxy sets `Fly-Client-IP`. If the header is absent, the relay uses the address of the connection.
 
 The store cap counts the pages that the store uses. A deletion frees pages,
 and the store uses them again, but the file does not shrink. The relay takes

@@ -11,12 +11,10 @@ The child listens on `127.0.0.1:$PORT`. `ARC_CALL_URL` and `ARC_CALL_TOKEN` let 
 call services installed by its operating identity. The same endpoint supports
 nested sessions. Calls and sessions use the shared core protocol.
 
-Serve the [Notes example](../../examples/notes-server/README.md) with its Arcfile,
-or use the [streaming HTTP example](../../examples/streaming-http/README.md) for
-streamed bodies, SSE and WebSockets. Child stdout and stderr are diagnostics;
+The child can stream bodies, and can serve SSE and WebSockets. See
+[HTTP over ARC](../../docs/http/SPEC.md). Child stdout and stderr are diagnostics;
 the host's stdout is reserved for the ARC protocol.
 
 ```sh
 mise exec -- go test ./apps/http/server
-mise run compose
 ```

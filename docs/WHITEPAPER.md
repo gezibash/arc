@@ -510,7 +510,7 @@ A relay stores and forwards events. ARC uses standard Nostr relays, so any relay
 
 A citizen chooses its relays with `arc relay add`, `arc relay rm`, and `arc relay ls`. A relay is a convenience, not a dependency. If every relay goes away, events still move on a directory, and later on a mesh.
 
-One public relay runs on Fly.io. [Deploy](DEPLOY.md) describes how to run another one.
+[Deploy](DEPLOY.md) describes how to run a relay.
 
 ---
 
@@ -580,7 +580,7 @@ darwin aarch64
 ```bash
 # become a participant
 arc keys gen
-arc relay add wss://arc-nostr-gezim.fly.dev
+arc relay add wss://<relay>
 arc whoami
 
 # find, trust, and call a capability

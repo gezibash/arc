@@ -5,9 +5,10 @@ Status: built. Two adapters serve HTTP over ARC:
 - `httpadapter.New` serves a Go `http.Handler` in the provider program.
 - `arc-http` serves an HTTP server of any language. See section 10.
 
-`mise run compose` proves both. One notes service runs in the provider
-program, in `examples/notes`, and as a plain HTTP server, in
-`examples/notes-server`.
+Go tests prove both: `go test ./adapters/http ./apps/http/server`. The test
+`TestBundledProviderSessionsThroughCLI` in `cmd/arc` runs `arc-http` through a
+local relay and the normal CLI. No test runs a Go handler from
+`httpadapter.New` through a relay.
 
 The Go adapter is `github.com/gezibash/arc/adapters/http` (package
 `httpadapter`). Shared service contracts are in `core/provider`. The HTTP app
@@ -120,8 +121,7 @@ A handler uses `Arc-Caller` as the login. It needs no password and no token.
 
 ## 8. A manifest
 
-The manifest of `examples/notes` shows the reply as its status and its
-content. A status of 4xx or 5xx exits 22, as `curl --fail` does.
+This manifest shows the reply as its status and its content. A status of 4xx or 5xx exits 22, as `curl --fail` does.
 
 ```json
 "service": {"method": "GET", "path": "/", "max_bytes": 262144,
@@ -138,7 +138,7 @@ arc call --method POST 'http+arc://<provider>/notes' '{"body": "hello"}'
 ## 9. A service that calls
 
 An HTTP handler can call another capability, as the citizen that serves it.
-The notes example keeps its notes in SQLite over ARC this way. See
+A notes service can keep its notes in SQLite over ARC this way. See
 docs/interface/SPEC.md, section 14.2. A server behind `arc-http` calls
 through a local endpoint, see section 10.2.
 

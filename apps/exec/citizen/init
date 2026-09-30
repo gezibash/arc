@@ -7,8 +7,7 @@
 #
 # --key       the arc identity of the citizen. Make it first with
 #             `arc keys gen`.
-# --relay     the Nostr relay of the citizen, for example
-#             wss://arc-nostr-gezim.fly.dev. init adds it to the identity.
+# --relay     the Nostr relay of the citizen. init adds it to the identity.
 # --grant     a caller key that can run commands. A grant equals a shell login.
 # --platform  sprite: a Fly.io Sprite that pauses. none: a machine that never
 #             pauses. The default is none.

@@ -61,7 +61,7 @@ Make an identity, and add a relay:
 
 ```bash
 arc keys gen
-arc relay add wss://arc-nostr-gezim.fly.dev
+arc relay add wss://<relay>
 arc whoami
 ```
 
@@ -152,11 +152,10 @@ Apps with an Arcfile can be run with `arc serve <app-directory>`.
 
 Core also supports live server streaming and duplex sessions. A service declares
 its interaction modes; `arc session <address>` uses the same session machinery
-as calls between app services. See the [stateful REPL example](examples/repl/README.md)
-and [session protocol](docs/sessions/SPEC.md).
+as calls between app services. See the [session protocol](docs/sessions/SPEC.md).
 The bundled [SQLite](apps/sqlite/README.md#live-sql-sessions),
 [Exec](apps/exec/README.md#streaming-processes-and-terminals),
-[HTTP](examples/streaming-http/README.md), and
+[HTTP](apps/http/README.md), and
 [Releases](apps/releases/README.md#streaming-archives) apps implement
 these interactions. Use `--exec`, `--tty`, `--http`, or `--websocket` on
 `arc session` to select their CLI I/O mappings. Existing request/reply commands
@@ -173,7 +172,7 @@ The relay is a khatru relay. It serves NIP-42 authentication, NIP-77 sync,
 and sealed data only to its author. Flags turn on write limits: an event
 size cap, authentication or proof of work for gift wraps, a rate for each IP
 address, and a store cap. `--group <id>` hosts a NIP-29 group. See
-[Deploy](docs/DEPLOY.md) for the public relay on Fly.io.
+[Deploy](docs/DEPLOY.md) for how to run a relay.
 
 ## Update
 
@@ -230,6 +229,6 @@ mise run interface   # the capability interface, end to end
 - [Capability interface](docs/interface/SPEC.md): manifests, commands, and
   data that a citizen keeps for itself.
 - [Updates](docs/updates/SPEC.md): signed release channels.
-- [Deploy](docs/DEPLOY.md): releases, relays, Docker, Fly.io.
+- [Deploy](docs/DEPLOY.md): releases, relays, Docker.
 - [Whitepaper](docs/WHITEPAPER.md): protocol design.
 - [Changelog](CHANGELOG.md).

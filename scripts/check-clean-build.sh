@@ -49,7 +49,7 @@ done
 
 # The images. The release builds them from a fresh checkout, with no dist/.
 rm -rf "$work/arc/dist"
-for dockerfile in Dockerfile docker/fly-nostr/Dockerfile; do
+for dockerfile in Dockerfile; do
   image="arc-check-clean-build:$(echo "$dockerfile" | tr '/A-Z' '-a-z')"
   docker build -q --target build -f "$work/arc/$dockerfile" \
     --build-arg VERSION=0.0.0-check -t "$image" "$work/arc" > /dev/null
