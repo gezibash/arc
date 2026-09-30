@@ -23,16 +23,16 @@ that user.
 | --- | --- |
 | `server/*.go` | The service implementation, in Go. An ARC release holds its binary, `arc-exec`. |
 | `run.sh` | Runs the binary that `EXEC_PROVIDER` names. Without it, builds the service from this checkout. |
-| `citizen/init` | Writes `citizen.env` and `config.json` for one machine. |
-| `citizen/citizen-up` | The start script. The caller runs it to wake the citizen. |
-| `citizen/serve` | Runs `arc serve` for this bundle as a plain process. |
-| `citizen/lease` | Holds the machine awake. One case for each platform. |
-| `citizen/notify-dm` | Sends the result of a finished job to its owner as a direct message. |
+| `manifest.json` | The interface that the citizen announces. |
+
+This directory holds no start script and no lease program. The operator
+supplies them for the platform of the machine. The exec spec states what each
+one must do, in sections 10.3 and 10.4.
 
 ## Requirements
 
-- On the citizen machine: `arc` and `arc-exec` from an ARC release,
-  `bash`, and a copy of this directory. The machine needs no Go toolchain.
+- On the citizen machine: `arc` and `arc-exec` from an ARC release, and a
+  copy of `manifest.json`. The machine needs no Go toolchain.
 - On the caller: `arc`.
 - A Nostr relay on a machine that does not pause. The citizen and the caller
   use the same relay.
@@ -48,47 +48,44 @@ Do these steps on the citizen machine.
    curl -fsSL https://raw.githubusercontent.com/gezibash/arc/main/install.sh | sh
    ```
 
-2. Copy this directory to the machine, for example to `~/arc-exec`.
-3. Make an identity for the citizen. The command prints the name, then the
-   public key. Record the name:
+2. Copy `manifest.json` to the machine, for example to `~/arc-exec`.
+3. Make an identity for the citizen, and add the relay. The first command
+   prints the name, then the public key:
 
    ```sh
    arc keys gen
+   arc relay add wss://<relay-host>
    ```
 
-4. Write the configuration. Give one `--grant` for each caller key:
+4. Write the configuration to `~/arc-exec/config.json`. Give one grant for
+   each caller key. [Configuration](#configuration) lists each field:
 
-   ```sh
-   ~/arc-exec/citizen/init \
-     --key <citizen-identity-name> \
-     --relay wss://<relay-host> \
-     --grant <caller-public-key> \
-     --platform sprite
+   ```json
+   {
+     "grants": ["<caller-public-key>"],
+     "cwd": "/home/<user>"
+   }
    ```
 
-   Use `--platform sprite` on a Fly.io Sprite. Use `--platform none` on a
-   machine that never pauses. The script adds the relay to the identity, and
-   prints the public key of the citizen.
-
-   The script finds `arc-exec` in the directory of `arc`, and writes its
-   path to `citizen.env`. To use another binary, set `EXEC_PROVIDER` before
-   you run the script. The script also writes the arc home, `ARC_HOME`, or
-   `~/.config/arc` when it is not set.
-
-   Add `--notify-dm` to send the result of each finished job to its owner as
-   a direct message.
+   On a machine that pauses, add the `lease` object. To send the result of
+   each finished job to its owner, add the `notify` object. See sections 11
+   and 12.3 of the exec spec.
 
 5. Start the citizen one time to test the configuration:
 
    ```sh
-   ~/arc-exec/citizen/citizen-up && echo ready
+   EXEC_CONFIG=~/arc-exec/config.json \
+     arc serve "exec://$(command -v arc-exec)?manifest=$HOME/arc-exec/manifest.json"
    ```
 
-   `citizen-up` exits 0 when `arc serve` writes `serves`. At that time, at
-   least one relay holds the announcement and listens for calls. If a relay
-   does not take the watch, `arc serve` logs it and tries again.
+   `arc serve` writes `serves` when at least one relay holds the
+   announcement and listens for calls. If a relay does not take the watch,
+   `arc serve` logs it and tries again.
 
-CAUTION: On a Sprite, do not run `citizen/serve` or `sshd` as a Sprite
+6. On a machine that pauses, write a start script that runs this command.
+   Section 10.4 of the exec spec lists its steps.
+
+CAUTION: On a Sprite, do not run `arc serve` or `sshd` as a Sprite
 service. A running service stops the pause, and the Sprite costs compute all
 the time.
 
@@ -104,7 +101,7 @@ the time.
    ```toml
    [wake."<citizen-public-key>"]
    kind = "command"
-   argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/arc-exec/citizen/citizen-up"]
+   argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "<start-script>"]
    ```
 
    For a machine that you reach with SSH:
@@ -112,7 +109,7 @@ the time.
    ```toml
    [wake."<citizen-public-key>"]
    kind = "command"
-   argv = ["ssh", "<host>", "~/arc-exec/citizen/citizen-up"]
+   argv = ["ssh", "<host>", "<start-script>"]
    ```
 
    The wake follows these rules:
@@ -181,7 +178,7 @@ job of `start`, and the exit status of the command, or 75 while a job runs.
 
 ## Configuration
 
-`citizen/init` writes `config.json`. `EXEC_CONFIG` gives its absolute path.
+The operator writes `config.json`. `EXEC_CONFIG` gives its absolute path.
 
 | Field | Meaning |
 | --- | --- |

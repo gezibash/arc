@@ -244,7 +244,7 @@ same role as `ProxyCommand` in `~/.ssh/config`.
 ```toml
 [wake."<citizen-public-key>"]
 kind = "command"
-argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "/home/sprite/arc-exec/citizen/citizen-up"]
+argv = ["sprite", "exec", "-s", "<sprite-name>", "--", "<start-script>"]
 ```
 
 - The `command` kind runs a local program. Exit status 0 means that the
@@ -297,32 +297,31 @@ The wake hook is the only reliable sign that the machine is awake. The relay
 can show `online` for a paused machine (section 9). On an awake machine, the
 start script only refreshes the lease, so the hook is fast.
 
-### 10.3 Platform and lease script
+### 10.3 Lease program
 
-The bundle supports two platforms. The setting `CITIZEN_PLATFORM` in
-`citizen.env` selects the platform.
+The operator supplies a lease program for the platform of the machine. ARC
+holds no platform program. A machine that never pauses needs no lease.
 
 | Platform | Machine | Lease |
 | --- | --- | --- |
-| `sprite` | A Fly.io Sprite. It pauses. | The task `arc` of the Sprites Tasks API |
-| `none` | A machine that never pauses | None. Each lease command does nothing. |
+| Fly.io Sprite | It pauses. | A task of the Sprites Tasks API |
+| A machine that never pauses | It does not pause. | None |
 
-The script `citizen/lease` gives one interface for the two platforms:
+The lease program must do these operations:
 
-| Command | Action |
+| Operation | Action |
 | --- | --- |
-| `lease hold SECONDS` | Create or refresh the lease. |
-| `lease create SECONDS` | Create the lease. Exit with status 3 if the lease exists. |
-| `lease delete` | Delete the lease. |
-| `lease pauses` | Exit with status 0 if the platform can pause the machine. |
+| Hold | Create or refresh the lease, with an expiry in seconds. |
+| Create | Create the lease. Report if the lease exists. |
+| Delete | Delete the lease. |
 
-To add a platform, add one case to `citizen/lease`. The provider, the start
+To add a platform, write a lease program for it. The provider, the start
 script, and the caller do not change.
 
 ### 10.4 Start script
 
-The start script is `citizen/citizen-up` in the bundle. It runs on the
-machine. It does these steps:
+The operator supplies the start script. It runs on the machine. It must do
+these steps:
 
 1. If the platform can pause, the script creates the lease with an expiry of
    120 seconds.
@@ -350,7 +349,7 @@ safe. The provider refreshes the lease again in 60 seconds or less
 If no request arrives, the lease expires after 120 seconds. Then the machine
 pauses.
 
-After a wake the network needs a moment, so `citizen/serve` waits until it
+After a wake the network needs a moment. The start script must wait until it
 can reach the relay before it starts `arc serve`.
 
 ## 11. Lease in the provider
@@ -363,8 +362,8 @@ a `lease` object to `EXEC_CONFIG`:
   "grants": ["<64 lowercase hex characters>"],
   "cwd": "/home/sprite",
   "lease": {
-    "hold": ["/home/sprite/arc-exec/citizen/lease", "hold", "300"],
-    "release": ["/home/sprite/arc-exec/citizen/lease", "hold", "60"],
+    "hold": ["/home/sprite/bin/lease", "hold", "300"],
+    "release": ["/home/sprite/bin/lease", "hold", "60"],
     "interval_ms": 60000
   }
 }
@@ -453,7 +452,7 @@ operator adds a `notify` object to `EXEC_CONFIG`:
 ```json
 {
   "notify": {
-    "argv": ["/home/sprite/arc-exec/citizen/notify-dm", "{owner}"],
+    "argv": ["/home/sprite/bin/notify", "{owner}"],
     "timeout_ms": 30000
   }
 }
@@ -474,8 +473,8 @@ Rules:
 
 ### 12.4 Result as a direct message
 
-The script `citizen/notify-dm` sends the result to the caller as a direct
-message:
+A notify command can send the result to the caller as a direct message. It
+runs this command:
 
 ```sh
 arc message send <owner-public-key>
@@ -486,7 +485,6 @@ The message is a NIP-17 direct message, sealed to the key of the caller
 before it leaves the machine. It waits in the outbox of the citizen until the
 caller acknowledges it.
 
-- `citizen/init --notify-dm` writes the `notify` object for this script.
 - The caller reads the result with `arc sync` and `arc message inbox` when it
   is active. The caller does not need to be online when the job ends.
 - A message holds at most 32 KiB.
@@ -602,10 +600,10 @@ token_env = "SPRITES_TOKEN"
 | Phase | Scope |
 | --- | --- |
 | 0 | Prototype provider, request/reply, grants. Done. |
-| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. Done: `apps/exec/citizen/` and the `lease` object. v0.11.0 removed the wrapper `arc-exec`, because `arc` runs the wake flow. |
+| 1 | Start script, lease in the provider, and a wrapper script on the caller that runs the wake flow. Done: the `lease` object. The operator supplies the start script and the lease program. v0.11.0 removed the wrapper `arc-exec`, because `arc` runs the wake flow. |
 | 2 | Wake hooks and presence states. Done: the `wake` package, `wake.toml`, `peer_offline` (step 1 of section 10.2), and the wake flow before each live call of `arc`. |
 | 3a | Asynchronous jobs: `start` and `status`, and the installed commands `arc exec start` and `arc exec status`. Done. |
-| 3b | The notify command (section 12.3) and the direct-message script (section 12.4). Done. |
+| 3b | The notify command (section 12.3). Done. Section 12.4 shows a direct-message command. |
 | 4 | Wake URL and signed dormant records. |
 
 ## 19. Verified

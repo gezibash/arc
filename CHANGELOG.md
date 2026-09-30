@@ -15,6 +15,10 @@ All notable changes to ARC are recorded here. The format follows
   programs are now test fixtures in `cmd/arc/testdata/`.
 - `scripts/check-compose.sh` and `scripts/check-relay.sh`, with the tasks
   `mise run compose` and `mise run check-relay`.
+- `apps/exec/citizen/`, the start, lease and notify scripts of one platform.
+  The operator supplies them. docs/exec/SPEC.md, sections 10.3 and 10.4,
+  states what each one must do.
+- The `arc-journal` skill. It named one operator's relay and journal.
 - The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
   documents. Each document now shows `wss://<relay>`.
 

@@ -200,8 +200,7 @@ mv ~/.config/arc-old/next ~/.config/arc
 ```
 
 `~/.config/arc-old` then holds only the files of the older stack. If a
-`citizen.env` of the exec provider names `ARC_HOME`, change it, or run
-`citizen/init` again.
+start script of the exec app names `ARC_HOME`, change it.
 
 ## Development
 
