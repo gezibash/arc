@@ -128,7 +128,7 @@ The service identity is a key, an npub, an installed name, or a domain for NIP-0
 `arc call` shows the reply as the manifest of the service says: exec shows the
 output and exits with the code of the command, and sqlite shows a table.
 `--raw` writes the reply as it came. See
-[addresses](docs/interface/SPEC.md#141-addresses). With a relay, the call
+[addresses](docs/interface/SPEC.md#318-addresses). With a relay, the call
 is live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 

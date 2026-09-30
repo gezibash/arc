@@ -193,7 +193,7 @@ Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
 data, such as a journal page, a KPI series or a file, is a NIP-37 draft of
 kind 31234, with checkpoints of kind 1234 and a relay list of kind 10013. A
 part of kind 3275 carries only content past the first 32 KiB of a draft. See
-docs/interface/SPEC.md, section 7.2. ARC registers its five kinds in the
+docs/interface/SPEC.md, section 3.9. ARC registers its five kinds in the
 registry. [The kind registry](../KINDS.md) lists every kind that ARC uses.
 
 ### 3.8 Transports
@@ -628,7 +628,7 @@ A provider publishes its relay list with NIP-65:
 Some data belongs to one citizen only, such as a private journal. The citizen
 seals it to its own key, and syncs it between its own nodes and its chosen
 relays. No provider takes part. The data is a NIP-37 draft, and `core/draft`
-makes it. See docs/interface/SPEC.md, section 7.2.
+makes it. See docs/interface/SPEC.md, section 3.9.
 
 A relay takes a draft only from its author, because the draft carries the
 NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay

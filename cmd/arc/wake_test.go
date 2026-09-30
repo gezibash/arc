@@ -17,7 +17,7 @@ import (
 
 // A provider that stopped leaves its last announcement on the relay. Without
 // a wake hook, a live call needs an announcement that is at most 5 minutes
-// old (docs/delivery/SPEC.md, section 15.1, step 3). Otherwise the call stops
+// old (docs/wake/SPEC.md, section 4.3). Otherwise the call stops
 // at once with peer_offline, and does not wait for its timeout.
 func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 	url := testrelay.Start(t)

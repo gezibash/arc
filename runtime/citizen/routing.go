@@ -42,7 +42,7 @@ func (s *Session) online(ctx context.Context, citizen []byte) (bool, error) {
 
 // liveRelays returns the relays that a live call to a provider tries: the
 // relays of this citizen, then each read relay of the provider's NIP-65 list
-// that this citizen does not use. See docs/delivery/SPEC.md, section 11.4.
+// that this citizen does not use. See docs/delivery/SPEC.md, section 4.10.
 func (s *Session) liveRelays(ctx context.Context, provider nostr.PubKey) ([]transport.Transport, error) {
 	out := append([]transport.Transport(nil), s.Relays...)
 	urls, err := relaylist.ReadRelays(ctx, s.Node, provider, slices.Concat(s.Relays, s.Indexers))

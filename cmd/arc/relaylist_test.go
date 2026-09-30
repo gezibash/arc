@@ -45,7 +45,7 @@ func TestRelayAddPublishesTheNIP65RelayList(t *testing.T) {
 // A caller and a provider share no relay. The provider's NIP-65 list, on the
 // caller's relay, names the relay where the provider reads. The live call
 // finds the provider's announcement there, and goes there
-// (docs/delivery/SPEC.md, section 11.4).
+// (docs/delivery/SPEC.md, section 4.10).
 func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)

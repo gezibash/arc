@@ -10,7 +10,7 @@ import (
 )
 
 // Address is a capability address: <scheme>+arc://<provider>/<path>. See
-// docs/interface/SPEC.md, section 14.1.
+// docs/interface/SPEC.md, section 3.18.
 type Address struct {
 	// Scheme names the capability: its id, or the scheme of its manifest.
 	Scheme string

@@ -15,7 +15,7 @@ A service keeps its HTTP code. ARC gives it an identity, sealed calls, and a
 path through relays. The service opens no port.
 
 This document follows the semantics of HTTP in RFC 9110. It maps them onto
-the call of docs/delivery/SPEC.md, section 11.4.
+the call of docs/delivery/SPEC.md, section 4.10.
 
 Two adapters serve HTTP over ARC:
 
@@ -183,7 +183,7 @@ A handler uses `Arc-Caller` as the login. It needs no password and no token.
 
 An HTTP handler can call another capability, as the citizen that serves it.
 A notes service can keep its notes in SQLite over ARC this way. See
-docs/interface/SPEC.md, section 14.2. A server behind `arc-http` calls through
+docs/interface/SPEC.md, section 4.2. A server behind `arc-http` calls through
 a local endpoint, which the [HTTP app](../../apps/http/README.md#calls-of-the-server)
 documents.
 

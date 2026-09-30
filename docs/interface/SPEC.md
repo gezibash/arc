@@ -282,7 +282,7 @@ leaves out these drafts.
 ### 3.8 The action call
 
 Only a service has `call`. It sends one request to the provider, as
-docs/delivery/SPEC.md section 11.4 defines.
+docs/delivery/SPEC.md section 4.10 defines.
 
 ```json
 "call": {

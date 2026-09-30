@@ -107,7 +107,7 @@ The service creates one transaction for every request and rolls it back on
 every statement, limit, or result-serialization error.
 
 The service answers calls of the [delivery layer](../../docs/delivery/SPEC.md),
-section 11.4, and announces the `sqlite` scheme. It is a query service backed
+section 4.10, and announces the `sqlite` scheme. It is a query service backed
 by SQLite. It is not a network filesystem for `.db` files, and it does not
 change the stock SQLite client.
 

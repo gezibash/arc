@@ -9,7 +9,7 @@ import (
 )
 
 // reserved are the kinds that no manifest can name. They speak for the
-// citizen's identity, or core makes them itself. See section 12 of the spec.
+// citizen's identity, or core makes them itself. See section 6 of the spec.
 var reserved = map[int]string{
 	0: "profile", 3: "follows", 5: "deletion",
 	13: "seal", 1059: "gift wrap", 21059: "gift wrap",

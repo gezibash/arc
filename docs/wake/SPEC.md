@@ -246,14 +246,14 @@ Dormant record:
 
 - A call is a private event. Its seal is signed by the caller, so the
   provider knows the caller's public key. See docs/delivery/SPEC.md,
-  section 11.4.
+  section 4.10.
 - The relay carries gift wraps. It cannot read commands or output.
 - A live call needs a live path now. A store-and-forward call waits in the
   outbox of the caller, and the provider answers it on its next sync.
 - `arc call` waits for one reply of a live call for `--timeout`. The default
   and maximum are 120 seconds.
 - A direct message waits in the outbox until the recipient acknowledges it,
-  for at most 7 days. See docs/delivery/SPEC.md, section 10.2.
+  for at most 7 days. See docs/delivery/SPEC.md, section 4.2.
 
 ### 4.2 What ARC does not give the wake flow
 

@@ -320,7 +320,7 @@ trusted compute broker.
 | [Capability announcements](../../runtime/catalog/catalog.go) | Signed provider advertisements, kind 30272, and discovery; evidence-profile advertisement needs an explicit schema design |
 | [Interface manifests](../../runtime/iface/manifest.go) | Existing provider-installed command descriptions of interface version 1; security decisions cannot be delegated to arbitrary provider-authored templates |
 | [Execution adapter](../../apps/exec/server/server.go) | Can host public orchestration; its ordinary process and plaintext input/output are not a protected boundary |
-| [Private events](../../core/private/private.go) | NIP-44 encryption in NIP-59 gift wraps, to one recipient; no attestation binding today, and no forward secrecy (docs/delivery/SPEC.md, section 13) |
+| [Private events](../../core/private/private.go) | NIP-44 encryption in NIP-59 gift wraps, to one recipient; no attestation binding today, and no forward secrecy (docs/delivery/SPEC.md, section 6.3) |
 | [Sealed drafts](../../core/draft/draft.go) | NIP-37 drafts, sealed to their author; data that an owner keeps for itself, not a storage format for a guest, sender authorization, freshness proof, or guest verifier |
 | [Provider grants](../../sdk/providerconfig/config.go) | Local authorization by public key; not the signed, portable run grants defined here |
 

@@ -57,7 +57,7 @@ func note(content string) nostr.Event {
 }
 
 // The deploy caps an event at 256 KiB. Journal content travels in parts of
-// 32 KiB, docs/delivery/SPEC.md section 16.1, so a full part and a full draft
+// 32 KiB, docs/delivery/SPEC.md section 3.7, so a full part and a full draft
 // must pass.
 func TestTheSizeCapTakesAFullPartAndAFullDraft(t *testing.T) {
 	url := start(t, limits.Policy{MaxEventBytes: 256 * 1024})

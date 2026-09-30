@@ -84,7 +84,7 @@ func KeyedRoot(secret [32]byte) ([]byte, error) {
 	return hkdf.Key(sha256.New, secret[:], nil, "arc-keyed-root-v1", 32)
 }
 
-// KeyedValue computes a keyed value, as section 6.1 of the spec defines.
+// KeyedValue computes a keyed value, as section 3.7.1 of the spec defines.
 func KeyedValue(root []byte, info []byte, input string) (string, error) {
 	key, err := hkdf.Key(sha256.New, root, nil, string(info), 32)
 	if err != nil {

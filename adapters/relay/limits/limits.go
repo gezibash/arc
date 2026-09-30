@@ -1,5 +1,5 @@
 // Package limits makes a khatru relay refuse abuse, as docs/delivery/SPEC.md
-// section 12 describes.
+// section 6.2 describes.
 //
 // A one-time key signs each gift wrap, so the relay cannot limit a gift wrap
 // by its author. The relay therefore asks for NIP-42 authentication, or for

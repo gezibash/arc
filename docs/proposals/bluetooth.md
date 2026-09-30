@@ -21,7 +21,7 @@ content. The receiver rebuilds the event ID from those fields.
 large events into numbered pieces and rebuilds them when they arrive, including
 out-of-order arrivals. It bounds unfinished work, expires missing pieces after
 30 seconds, and passes completed bytes back to the compact decoder. See
-[section 7.4](../delivery/SPEC.md#74-the-frame) for the exact byte format and limits.
+[section 3.10](../delivery/SPEC.md#310-the-frame) for the exact byte format and limits.
 
 Run `mise exec -- go test ./core/compact ./core/frame -v` to check both
 layers without Bluetooth hardware. Tests cover frame sizes, reordered and

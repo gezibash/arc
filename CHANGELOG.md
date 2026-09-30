@@ -83,6 +83,18 @@ release.
   the Bluetooth plan, and the machine lifecycle definition.
 - `docs/sqlite/SPEC.md` is now part of `apps/sqlite/README.md`. An app
   documents itself.
+- Each spec has the same sections: purpose, terms, rules, behavior,
+  failures, security, compatibility, proof, and gates. See
+  docs/SPEC-TEMPLATE.md, section 9. `go test ./internal/specs` checks the
+  headings. No rule of a spec changed.
+- `docs/exec/SPEC.md` is now `docs/wake/SPEC.md`, the spec of the wake. The
+  exec app documents its requests, lease and jobs in `apps/exec/README.md`.
+- The interface spec no longer holds a section for each app, or a copy of
+  each app manifest. Each app documents itself, and links its
+  `manifest.json`. The dm, agora and files apps have a README.
+- The guide `docs/sessions/PROVIDERS.md` is a section of `apps/README.md`.
+  `docs/updates/OPERATIONS.md` is part of the updates spec.
+  `docs/updates/PUBLISHING.md` is a section of `apps/releases/README.md`.
 
 ### Removed
 
@@ -100,6 +112,9 @@ release.
   `cmd/exec-provider/citizen/` in v0.16.0. The operator supplies them.
   docs/wake/SPEC.md, sections 3.6 and 3.7, states what each one must do.
 - The `arc-journal` skill. It named one operator's relay and journal.
+- `docs/assets/arc-header.prompt.md`, the prompt of the header image.
+- The notes on one hosting platform in the exec spec, and the measurements
+  taken on it with the older stack.
 - The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
   documents. Each document now shows `wss://<relay>`.
 

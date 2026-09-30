@@ -3,7 +3,7 @@
 //
 // A citizen writes its public events to its write relays, and reads what
 // others send it on its read relays. An r tag without a marker names a relay
-// for both. See docs/delivery/SPEC.md, sections 7.2 and 11.4.
+// for both. See docs/delivery/SPEC.md, sections 3.8 and 4.10.
 package relaylist
 
 import (
