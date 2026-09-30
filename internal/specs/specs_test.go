@@ -8,6 +8,8 @@ package specs
 import (
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,6 +51,8 @@ type tree struct {
 	packages map[string]bool
 	// exempt holds the specs that predate the gates.
 	exempt map[string]bool
+	// code holds each doc.go under core/ and sdk/ that holds a declaration.
+	code []string
 }
 
 // required returns the gates that a spec with these layers must answer.
@@ -276,9 +280,19 @@ func load(t *testing.T) tree {
 			for _, match := range testFunc.FindAllStringSubmatch(string(data), -1) {
 				found.tests[dir] = append(found.tests[dir], match[1])
 			}
-		case strings.HasSuffix(relative, ".go") && entry.Name() != "doc.go":
-			if strings.HasPrefix(dir, "core/") || strings.HasPrefix(dir, "sdk/") {
+		case strings.HasSuffix(relative, ".go") && (strings.HasPrefix(relative, "core/") || strings.HasPrefix(relative, "sdk/")):
+			// A doc.go is documentation. It makes no package that needs a
+			// spec, so it must hold no code.
+			if entry.Name() != "doc.go" {
 				found.packages[dir] = true
+				break
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			if err != nil {
+				return err
+			}
+			if len(file.Decls) != 0 {
+				found.code = append(found.code, relative)
 			}
 		}
 		return nil
@@ -373,6 +387,9 @@ func TestEachCoreAndSDKPackageHasASpec(t *testing.T) {
 		for _, pkg := range Owns(text) {
 			owners[pkg] = append(owners[pkg], path)
 		}
+	}
+	for _, file := range found.code {
+		t.Errorf("%s: a doc.go holds only the package comment. Move its code to another file", file)
 	}
 	_, unowned := grandfathered(t)
 	for pkg := range found.packages {

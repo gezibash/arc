@@ -47,6 +47,9 @@ func TestAPullRequestNamesTheSpecOfEachProtectedPackage(t *testing.T) {
 		"grandfathered":     {"", []Change{{Path: "sdk/strictjson/strictjson.go"}}, base, ""},
 		"tests only":        {"", []Change{{Path: "core/keys/keys_test.go"}, {Path: "core/keys/testdata/vector.json"}, {Path: "core/keys/README.md"}}, base, ""},
 		"other layers":      {"", []Change{{Path: "runtime/iface/run.go"}, {Path: "README.md"}}, base, ""},
+		// A doc.go is documentation. Code in the root of a layer is not.
+		"package comment":   {"", []Change{{Path: "core/doc.go"}, {Path: "core/keys/doc.go"}}, base, ""},
+		"code in the root":  {"", []Change{{Path: "core/extra.go"}}, base, "changes core. Its description must name the spec"},
 		"moved out of core": {"", []Change{{Path: "runtime/keys/keys.go", Previous: "core/keys/keys.go"}}, base, "changes core/keys"},
 		// The spec stops owning a package that the pull request removes.
 		"removed package": {"Spec: docs/delivery/SPEC.md", []Change{{Path: "core/old/old.go", Removed: true}},
@@ -136,4 +139,17 @@ func TestAppendOnly(t *testing.T) {
 			t.Errorf("%s: lost %q, want %q", name, got, held.want)
 		}
 	}
+}
+
+// The pull request that adds the rules has no list at its base. Its own list
+// exempts its packages. After that, only the list of the base counts.
+func TestOnlyTheFirstPullRequestTrustsItsOwnList(t *testing.T) {
+	changes := []Change{{Path: "sdk/strictjson/strictjson.go"}, {Path: grandfatheredPath}}
+	head := files(map[string]string{grandfatheredPath: debtList})
+
+	problems := Check(PullRequest{Changes: changes, Base: files(map[string]string{}), Head: head})
+	expect(t, "first list", problems, "")
+
+	problems = Check(PullRequest{Changes: changes, Base: files(map[string]string{templatePath: "rules"}), Head: head})
+	expect(t, "list of the head, with rules at the base", problems, "changes sdk/strictjson. Its description must name the spec")
 }

@@ -147,3 +147,19 @@ The record moves with it. The record is append-only in a proposal too.
 [GRANDFATHERED.md](GRANDFATHERED.md) lists the specs that predate the gates,
 and the packages that no spec owns. The list only shrinks. An entry leaves it
 when a human answers the gates, or when a spec claims the package.
+
+## 8. A pull request
+
+The check "Spec policy" reads each pull request. It refuses three things:
+
+- A change that edits or deletes a line of a `## Gates` section. A pull
+  request can add lines, and it can delete a whole document.
+- A change that adds a row to [GRANDFATHERED.md](GRANDFATHERED.md).
+- A change to a package under `core/` or `sdk/` whose description does not
+  name the spec that owns the package. Write one line for each spec:
+  `Spec: docs/<name>/SPEC.md`. A package on the grandfathered list of the
+  base branch needs no line. A test, its data, and a `doc.go` need no line; a
+  `doc.go` holds only the package comment.
+
+The check runs the rules of the base branch, so a pull request cannot change
+the rules that judge it.

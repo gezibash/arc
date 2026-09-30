@@ -203,12 +203,13 @@ func isDocument(file string) bool {
 }
 
 // protected returns the package of a file under core/ or sdk/ whose change
-// needs a spec, or "". A test and its data need none.
+// needs a spec, or "". A test, its data, and a doc.go need none: the tests of
+// this package check that a doc.go holds no code.
 func protected(file string) string {
 	if !strings.HasPrefix(file, "core/") && !strings.HasPrefix(file, "sdk/") {
 		return ""
 	}
-	if !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") || strings.Contains(file, "/testdata/") {
+	if !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") || strings.Contains(file, "/testdata/") || path.Base(file) == "doc.go" {
 		return ""
 	}
 	return path.Dir(file)
@@ -261,8 +262,12 @@ func Check(pr PullRequest) []string {
 	old, had := pr.Base(grandfatheredPath)
 	oldSpecs, exempt := Grandfathered(old)
 	_, rules := pr.Base(templatePath)
-	// The pull request that adds the rules also adds the first list.
-	if text, ok := pr.Head(grandfatheredPath); ok && listChanged && (had || rules) {
+	text, ok := pr.Head(grandfatheredPath)
+	if first := !had && !rules; first {
+		// The pull request that adds the rules also adds the first list.
+		// After it, only the list of the base counts.
+		_, exempt = Grandfathered(text)
+	} else if ok && listChanged {
 		specs, unowned := Grandfathered(text)
 		for _, entry := range slices.Concat(specs, unowned) {
 			if !slices.Contains(oldSpecs, entry) && !slices.Contains(exempt, entry) {
