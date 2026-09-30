@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/application/catalog"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 func (sess *Session) FindOffer(ctx context.Context, provider nostr.PubKey, id string) (catalog.Offer, error) {

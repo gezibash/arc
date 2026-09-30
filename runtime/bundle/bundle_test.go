@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/adapters/provider/host"
-	"github.com/gezibash/arc/application/bundle"
-	"github.com/gezibash/arc/application/capability"
-	"github.com/gezibash/arc/application/iface"
+	"github.com/gezibash/arc/runtime/bundle"
+	"github.com/gezibash/arc/runtime/capability"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 func TestInitWritesABundleThatServes(t *testing.T) {

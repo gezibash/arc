@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"fiatjaf.com/nostr/nip19"
-	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 func TestResolvePublicFormsAndReportBrokenInstalls(t *testing.T) {

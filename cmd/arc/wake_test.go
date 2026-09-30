@@ -10,9 +10,9 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/adapters/transport/relay"
-	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/testrelay"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 // A provider that stopped leaves its last announcement on the relay. Without

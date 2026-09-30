@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/application/bundle"
-	"github.com/gezibash/arc/application/catalog"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
+	"github.com/gezibash/arc/runtime/bundle"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 )
 

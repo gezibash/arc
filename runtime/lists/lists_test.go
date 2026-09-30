@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/gezibash/arc/application/lists"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/lists"
 )
 
 func TestConcurrentAddsDoNotLoseMembers(t *testing.T) {

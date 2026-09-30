@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/relaylist"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 // online says whether a citizen has a current announcement on the relays of

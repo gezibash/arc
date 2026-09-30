@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gezibash/arc/application/citizen"
-	"github.com/gezibash/arc/application/lists"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/lists"
 	"github.com/spf13/cobra"
 )
 

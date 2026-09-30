@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 // OpenSessionAddress is shared by the CLI and provider-initiated sessions.

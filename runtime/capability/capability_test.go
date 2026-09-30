@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/gezibash/arc/application/capability"
+	"github.com/gezibash/arc/runtime/capability"
 )
 
 func TestLoadsTOMLAndJSONTheSame(t *testing.T) {

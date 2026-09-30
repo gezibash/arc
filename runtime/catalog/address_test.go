@@ -3,7 +3,7 @@ package catalog_test
 import (
 	"testing"
 
-	"github.com/gezibash/arc/application/catalog"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 const hexKey = "c2be57423e79dfa416b0d81401e619254d5874faf3ec96258cb15c001c502be0"

@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/gezibash/arc/application/release"
 	"github.com/gezibash/arc/core/provider"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/testsession"
+	"github.com/gezibash/arc/runtime/release"
 	"io"
 	"testing"
 )

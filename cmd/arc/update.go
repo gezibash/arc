@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/application/catalog"
-	"github.com/gezibash/arc/application/citizen"
-	"github.com/gezibash/arc/application/release"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/canonical"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/release"
 	"github.com/spf13/cobra"
 )
 

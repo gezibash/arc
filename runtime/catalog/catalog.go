@@ -20,12 +20,12 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/adapters/nip05"
-	"github.com/gezibash/arc/application/capability"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/internal/atomicfile"
+	"github.com/gezibash/arc/runtime/capability"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 // Kind is the kind of a capability announcement.

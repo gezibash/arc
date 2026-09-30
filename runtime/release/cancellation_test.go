@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/application/release"
+	"github.com/gezibash/arc/runtime/release"
 )
 
 func TestCanceledProbeKeepsTheCurrentProgram(t *testing.T) {

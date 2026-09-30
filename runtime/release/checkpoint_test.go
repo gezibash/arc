@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gezibash/arc/application/release"
+	"github.com/gezibash/arc/runtime/release"
 )
 
 // channelOf signs one channel document at a sequence.

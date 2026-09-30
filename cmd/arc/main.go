@@ -39,11 +39,11 @@ import (
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/transport/file"
-	"github.com/gezibash/arc/application/citizen"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 )
 

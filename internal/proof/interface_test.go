@@ -187,7 +187,7 @@ func TestInterface(t *testing.T) {
 
 	// A provider announces a new manifest. The next call uses it, although
 	// this machine holds the older announcement.
-	legacy := read(t, filepath.Join(repo, "application/capability/testdata/exec-legacy.json"))
+	legacy := read(t, filepath.Join(repo, "runtime/capability/testdata/exec-legacy.json"))
 	current := read(t, filepath.Join(repo, "apps/exec/manifest.json"))
 	for _, version := range []string{"old", "new"} {
 		write(t, filepath.Join(work, "exec2-"+version, "manifest.json"), legacy, 0o644)

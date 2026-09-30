@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 func TestServiceDeclaresSupportedInteractions(t *testing.T) {

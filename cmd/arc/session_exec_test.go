@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	execadapter "github.com/gezibash/arc/adapters/exec"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/testsession"
+	"github.com/gezibash/arc/runtime/iface"
 	"strings"
 	"testing"
 )

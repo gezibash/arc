@@ -9,10 +9,10 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
-	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 type liveAdapter struct{ path }

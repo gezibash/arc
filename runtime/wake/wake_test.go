@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/application/wake"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/wake"
 )
 
 // citizen makes the public key of a citizen.

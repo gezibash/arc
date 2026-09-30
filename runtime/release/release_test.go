@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/application/release"
+	"github.com/gezibash/arc/runtime/release"
 )
 
 // channelDocument builds one unsigned channel with the releases given.

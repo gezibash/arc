@@ -8,10 +8,10 @@ import (
 
 	"fiatjaf.com/nostr"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
-	"github.com/gezibash/arc/application/capability"
-	"github.com/gezibash/arc/application/catalog"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/capability"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 func echoPackage(t *testing.T) map[string]any {

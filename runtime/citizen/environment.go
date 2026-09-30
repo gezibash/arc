@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/application/catalog"
-	"github.com/gezibash/arc/application/iface"
-	"github.com/gezibash/arc/application/lists"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/lists"
 )
 
 // Environment is what a capability needs from this machine.

@@ -24,8 +24,8 @@ import (
 	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/transport/relay"
-	"github.com/gezibash/arc/application/citizen"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

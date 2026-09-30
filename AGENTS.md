@@ -12,22 +12,22 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
 - `adapters/` implements concrete I/O and protocol mappings. HTTP, relay,
   directory, subprocess, standard-stream, key-file and Bolt implementations
   belong here. An adapter may depend on core and shared adapter utilities;
-  it must not depend on `application/`, `apps/`, or `cmd/`.
-- `application/` owns citizen workflows, consent, routing choices, manifests,
+  it must not depend on `runtime/`, `apps/`, or `cmd/`.
+- `runtime/` owns citizen workflows, consent, routing choices, manifests,
   installed commands, bundle management, wake policy and updates. Concrete
-  adapters are selected by composition code, such as `application/citizen.Open`.
+  adapters are selected by composition code, such as `runtime/citizen.Open`.
 - `apps/` owns concrete apps: manifests, domain behavior, service programs and
   app documentation. Manifest-driven data apps need no server or client binary.
   Reusable service implementations live in `apps/<name>/server`.
 - `cmd/` holds thin executable entry points. They supply process streams,
   signals and exit status to the app service packages. Reuse core call/session
   behavior; do not put domain behavior in an entry point.
-- Application runtime and adapters must not import concrete `apps/` packages.
+- The runtime and adapters must not import concrete `apps/` packages.
   Apps use runtime primitives or core protocols to compose with other apps.
 - Define an interface at the layer that consumes its effect. Only interfaces
   consumed by ARC protocol rules belong in core. Application effects, such as
-  full-text search, keep their interfaces in application code. Shared request
-  and result types can live in `internal/` so adapters need no application import.
+  full-text search, keep their interfaces in runtime code. Shared request
+  and result types can live in `internal/` so adapters need no runtime import.
 - Add interfaces for real effects; do not add interfaces for pure functions or
   duplicate an existing contract. Reuse alone does not make a feature core ARC.
 - HTTP over ARC is an application-protocol adapter. A future HTTP event carrier

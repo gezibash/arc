@@ -32,8 +32,8 @@ flowchart LR
 | `core/transport` | Event transport ports: `Transport`, `Live`, `Carrier`, `Reconciler`. |
 | `core/journal` | Atomic persistence operations consumed by the durable mail state machine. |
 | `core/compact`, `core/frame`, `core/relaylist` | Event encoding, bounded fragmentation and relay-list protocol. |
-| `application/citizen`, `application/catalog`, `application/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
-| Other `application/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
+| `runtime/citizen`, `runtime/catalog`, `runtime/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
+| Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
 | `apps/` | App manifests, domain behavior and reusable service implementations. Data apps can consist of a manifest. |
 | `cmd/arc`, `cmd/arc-*` | CLI and thin service program entry points. |
 | `adapters/http` | HTTP application requests mapped to ARC provider calls. |
@@ -59,7 +59,7 @@ The upstream Nostr module contains both protocol and network facilities. These
 rules govern the APIs used by ARC production code; they do not claim that the
 upstream module's entire transitive dependency graph is free of network code.
 
-Application composition selects concrete adapters. `application/citizen.Open`
+Application composition selects concrete adapters. `runtime/citizen.Open`
 constructs a citizen's disk stores, mail journal and relay adapters. An embedded
 caller can construct core components with different implementations. HTTP and
 provider process adapters depend on the same core contracts as other providers.
@@ -67,7 +67,7 @@ provider process adapters depend on the same core contracts as other providers.
 Runtime libraries and adapters must not import concrete apps or executable entry
 points. An adapter must not import application workflows. It implements the interface consumed by the relevant layer. ARC event adapters
 implement core contracts. Application search implements the interface owned by
-`application/iface`, using shared types from `internal/search`. Concrete app
+`runtime/iface`, using shared types from `internal/search`. Concrete app
 service implementations can enforce their own shell, SQL or HTTP policies outside core.
 
 `internal/architecture` checks these rules from production imports, including
@@ -93,7 +93,7 @@ service program. Local or remote execution follows the selected interface and
 participant, not the app's name.
 
 Journal defines local data commands in `apps/journal/manifest.json`. Shared
-manifest primitives in `application/iface` implement their bounded behavior over
+manifest primitives in `runtime/iface` implement their bounded behavior over
 core events and storage. SQLite defines client commands in its manifest, and SQL
 policy in `apps/sqlite/server`. `cmd/arc-sqlite` supplies process streams and
 signals. No handwritten SQLite client binary is required.
@@ -107,7 +107,7 @@ See [the apps directory](../apps/README.md) for the layout and commands.
 
 ## Application search
 
-Journal search is an application feature. `application/iface.SearchIndex` defines
+Journal search is an application feature. `runtime/iface.SearchIndex` defines
 its search effect, and `adapters/search/bleve` supplies Bleve Scorch indexing and
 persistence. Notebook filtering, source selection and decryption remain in the
 application workflow. Core has no search dependency or search interface.
@@ -137,7 +137,7 @@ neither adapter implements session behavior. See [the session contract](sessions
 A provider and a consumer are roles a participant can hold at the same time.
 A provider that calls another provider uses the same core interaction contracts.
 Application composition still selects paths and enforces installation consent.
-`application/citizen.Session` is a local application context containing identity,
+`runtime/citizen.Session` is a local application context containing identity,
 stores and configuration; it is not the core interaction/session state machine.
 
 Session v1 is memory-only. A lost watch ends the session explicitly. Reconnecting
@@ -165,7 +165,7 @@ messages; these additions require a provider/runtime that supports sessions.
 | Previous API | Current API |
 | --- | --- |
 | `delivery/{call,keys,mail,node,private,store,transport,...}` | Corresponding `core/` packages; concrete implementations move to `adapters/`. |
-| `internal/citizen`, `iface`, `capability`, `bundle`, `lists`, `release`, `wake`, `delivery/catalog` | Corresponding `application/` packages. |
+| `internal/citizen`, `iface`, `capability`, `bundle`, `lists`, `release`, `wake`, `delivery/catalog` | Corresponding `runtime/` packages. |
 | `provider` | `core/provider` for contracts and runtime. |
 | `provider.HTTP(handler)` | `httpadapter.New(handler)` from `adapters/http`. |
 | `provider.Run` with default process streams | `stdio.Run` from `adapters/provider/stdio`, using `core/provider.Options`. |

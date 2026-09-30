@@ -18,11 +18,6 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/adapters/provider/host"
 	"github.com/gezibash/arc/adapters/transport/file"
-	"github.com/gezibash/arc/application/bundle"
-	"github.com/gezibash/arc/application/capability"
-	"github.com/gezibash/arc/application/catalog"
-	"github.com/gezibash/arc/application/citizen"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
@@ -30,6 +25,11 @@ import (
 	"github.com/gezibash/arc/core/relaylist"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/bundle"
+	"github.com/gezibash/arc/runtime/capability"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 )
 

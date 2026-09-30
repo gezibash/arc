@@ -11,12 +11,12 @@ import (
 	blevesearch "github.com/gezibash/arc/adapters/search/bleve"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/relay"
-	"github.com/gezibash/arc/application/wake"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/mail"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/wake"
 )
 
 // Session is a citizen's application state. Cobra supplies configuration;

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gezibash/arc/application/capability"
-	"github.com/gezibash/arc/application/iface"
+	"github.com/gezibash/arc/runtime/capability"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 func TestModernProviderNeedsOnlyOneManifest(t *testing.T) {

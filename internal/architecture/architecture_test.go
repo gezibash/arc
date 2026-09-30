@@ -18,7 +18,7 @@ const module = "github.com/gezibash/arc/"
 // reported even when it would create a Go import cycle.
 func TestPackageBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..")
-	for _, layer := range []string{"core", "adapters", "application", "apps"} {
+	for _, layer := range []string{"core", "adapters", "runtime", "apps"} {
 		err := filepath.WalkDir(filepath.Join(root, layer), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -57,14 +57,14 @@ func forbidden(layer, imported string) string {
 		if layer == "core" && target != "core" && !strings.HasPrefix(target, "core/") {
 			return "core must depend only on core ports and rules"
 		}
-		if (layer == "adapters" || layer == "application" || layer == "apps") && strings.HasPrefix(target, "cmd/") {
+		if (layer == "adapters" || layer == "runtime" || layer == "apps") && strings.HasPrefix(target, "cmd/") {
 			return "reusable packages must not depend on executable entry points"
 		}
-		if (layer == "adapters" || layer == "application") && strings.HasPrefix(target, "apps/") {
+		if (layer == "adapters" || layer == "runtime") && strings.HasPrefix(target, "apps/") {
 			return "runtime and adapters must not depend on concrete apps"
 		}
-		if layer == "adapters" && strings.HasPrefix(target, "application/") {
-			return "adapters must not depend on application workflows"
+		if layer == "adapters" && strings.HasPrefix(target, "runtime/") {
+			return "adapters must not depend on runtime workflows"
 		}
 	}
 	if layer == "core" {

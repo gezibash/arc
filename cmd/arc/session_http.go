@@ -7,8 +7,8 @@ import (
 	"io"
 
 	httpadapter "github.com/gezibash/arc/adapters/http"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 )
 

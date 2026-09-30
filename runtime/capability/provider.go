@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 // Provider is a validated execution and announcement definition. Runtime code

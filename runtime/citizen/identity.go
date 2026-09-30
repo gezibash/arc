@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/node"
+	"github.com/gezibash/arc/runtime/iface"
 )
 
 // RootFilter matches the draft that holds a citizen's keyed root.

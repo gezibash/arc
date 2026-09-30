@@ -11,8 +11,8 @@ import (
 	"syscall"
 
 	execadapter "github.com/gezibash/arc/adapters/exec"
-	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
