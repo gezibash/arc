@@ -219,7 +219,7 @@ list of its recipient. It syncs with NIP-77 where a relay supports it.
 A citizen publishes three relay lists to its relays: NIP-65, kind 10002; the
 NIP-17 list, kind 10050; and the private NIP-37 list, kind 10013. Each list
 names every relay of the citizen. `arc relay add`, `arc relay rm`, and
-`arc serve` publish them. `delivery/relaylist` holds the NIP-65 list.
+`arc serve` publish them. `core/relaylist` holds the NIP-65 list.
 
 A citizen can also name indexer relays with `arc relay add <url> --index`.
 An indexer holds only relay lists. The citizen publishes its NIP-65 and NIP-17
@@ -291,7 +291,7 @@ A receiver joins fragments by fragment ID. It keeps at most 128 incomplete
 events, and drops an incomplete event after 30 seconds. It refuses an event
 larger than 1 MiB.
 
-`delivery/frame` implements event (type 1) and fragment (type 2) frames.
+`core/frame` implements event (type 1) and fragment (type 2) frames.
 Types 3–6 are reserved for sync, announce, handshake and session, respectively;
 this implementation rejects them until their protocols are implemented. There
 is no frame version byte: a future link handshake must negotiate the framing
@@ -592,7 +592,7 @@ to the provider's NIP-17 relay list, as mail does.
 Some data belongs to one citizen only, such as a private journal. The citizen
 seals it to its own key, and syncs it between its own nodes and its chosen
 relays. No provider takes part. The data is a NIP-37 draft, and
-`delivery/draft` makes it. See docs/interface/SPEC.md, section 7.2.
+`core/draft` makes it. See docs/interface/SPEC.md, section 7.2.
 
 A relay takes a draft only from its author, because the draft carries the
 NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay with
@@ -660,20 +660,20 @@ recipient does not learn who wrote to them.
 Each phase ends with its proof. A phase that does not pass its proof does not
 merge.
 
-Phases 1 and 2 are built: the packages under `delivery/` and the command
-`arc`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
+Phases 1 and 2 are built: the packages under `core/` and `adapters/`, and
+the command `arc`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
 journal manifest of the capability interface.
-Phase 2 adds `delivery/private` for gift wraps and route tags, and
+Phase 2 adds `core/private` for gift wraps and route tags, and
 `core/mail` for the outbox, acknowledgements and couriers. Sync compares
 sets with Negentropy when a relay lists NIP-77 in its information document,
 and fetches every event otherwise.
 
-`delivery/groups` makes a khatru relay host NIP-29 groups, `delivery/draft`
-seals data to its author as NIP-37 drafts, and `delivery/sealed` makes a relay
+`adapters/relay/groups` makes a khatru relay host NIP-29 groups, `core/draft`
+seals data to its author as NIP-37 drafts, and `adapters/relay/sealed` makes a relay
 serve those drafts only to their author, after NIP-42 authentication. The capability interface uses both.
 
-Phase 3 adds `delivery/catalog` for announcements, discovery and installs,
-and `delivery/call` for both classes of call. A live call subscribes, waits
+Phase 3 adds `runtime/catalog` for announcements, discovery and installs,
+and `core/call` for both classes of call. A live call subscribes, waits
 until the relay has taken the subscription, and only then sends, all on one
 connection, because a relay never stores the ephemeral reply. On a local relay,
 a live call to `exec` takes about 10 ms for the round trip. `arc call` calls

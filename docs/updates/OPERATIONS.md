@@ -41,8 +41,10 @@ identity comes from `arc keys use`, from `ARC_KEY`, or from `--key`.
 3. Selects the newest release for this operating system and CPU that carries
    an archive and is eligible. A lower version is never installed.
 4. Reports what it found. `apply` continues.
-5. Downloads the archive through the relay in chunks of 64 KiB, and checks
-   its length and its SHA-256.
+5. Downloads the archive through the relay, and checks its length and its
+   SHA-256. If this identity installed the releases app, and its interface
+   declares `server_stream`, the archive comes as one session stream.
+   Otherwise it comes in chunks of 64 KiB.
 6. Reads one program out of the archive. A member that is not a regular file,
    or whose path escapes its directory, is refused.
 7. Writes the candidate beside the target, runs it once to prove that it

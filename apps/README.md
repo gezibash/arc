@@ -36,8 +36,9 @@ permissions. It does not establish the provenance of a downloaded program.
 
 Manifest-driven data apps need only `manifest.json` and their documentation.
 They run through the shared application runtime. Service apps also have an
-Arcfile, a launcher and a Go package in `server/`. Executable entry points stay
-in `cmd/arc-<name>` and supply streams, signals and process exit status.
+Arcfile, a launcher, a Go package in `server/`, and a program in
+`apps/<name>/cmd/arc-<name>`. The program supplies streams, signals and the
+process exit status.
 
 The client commands are generated from the manifest. Add a client package only
 when an app actually needs its own client code. App source does not belong in

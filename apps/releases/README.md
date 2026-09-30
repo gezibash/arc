@@ -7,8 +7,8 @@ archive streaming. `cmd/arc-releases` is the executable entry point.
 operator-published, already-signed channel documents and immutable archives; it
 does not sign, promote, install, or modify a release.
 
-See [publication instructions](../../docs/updates/PUBLISHING.md) for signing,
-versioned restart-only metadata, and a local Docker proof.
+See [publication instructions](../../docs/updates/PUBLISHING.md) for signing
+and versioned restart-only metadata.
 
 ## Layout
 
@@ -90,7 +90,7 @@ go test ./apps/releases/server
 
 ## Streaming archives
 
-The updated `manifest.json` declares `server_stream`. An initial request
+`manifest.json` declares `server_stream`. An initial request
 `{"op":"archive","digest":"sha256:<hex>"}` streams the raw archive bytes.
 The same fixed-path, regular-file and symlink checks used by chunk requests apply.
 The stream reads the file size captured when opened. Cancellation releases it.

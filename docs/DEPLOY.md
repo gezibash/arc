@@ -3,7 +3,7 @@
 Arc ships as one release per platform. Each release holds one static binary
 for each command, so the target machine needs no runtime and no library.
 `arc` is the program: it is the client, and `arc relay serve` runs a relay.
-Each provider has its own binary.
+Each app service has its own program, for example `arc-exec`.
 
 ## Get a release
 
@@ -123,7 +123,7 @@ docker run -d --name arc-relay -p 7447:7447 \
   ghcr.io/gezibash/arc:latest \
   arc relay serve --listen 0.0.0.0:7447 \
   --max-event-bytes 262144 --wrap-auth --wrap-pow 20 \
-  --rate 300 --burst 1000 --ip-header Fly-Client-IP --max-store-mb 800
+  --rate 300 --burst 1000 --ip-header X-Real-IP --max-store-mb 800
 ```
 
 | Flag | Example value | Effect |
@@ -133,7 +133,7 @@ docker run -d --name arc-relay -p 7447:7447 \
 | `--wrap-pow` | `20` | A gift wrap with NIP-13 work of 20 bits needs no authentication. |
 | `--rate` | `300` | One IP address writes at most 300 events each minute. |
 | `--burst` | `1000` | One IP address writes at most 1000 events at once. |
-| `--ip-header` | `Fly-Client-IP` | The relay reads the client address from this header. |
+| `--ip-header` | `X-Real-IP` | The relay reads the client address from this header. |
 | `--max-store-mb` | `800` | The relay refuses new stored events when the store uses 800 MiB. |
 
 Each journal part holds 32 KiB of text. As JSON, the event that carries it
@@ -146,7 +146,8 @@ events each second does not reach the rate.
 
 A client can write any `X-Forwarded-For` header. The relay therefore reads
 only the header that `--ip-header` names. Name the header that your proxy
-sets. For example, the Fly.io proxy sets `Fly-Client-IP`. If the header is absent, the relay uses the address of the connection.
+sets: for example, `X-Real-IP` from nginx, or `Fly-Client-IP` on Fly.io. If
+the header is absent, the relay uses the address of the connection.
 
 The store cap counts the pages that the store uses. A deletion frees pages,
 and the store uses them again, but the file does not shrink. The relay takes

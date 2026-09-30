@@ -211,26 +211,41 @@ from `mise.toml`.
 mise install
 mise run build       # every command into bin/
 mise run check       # lint and test
+mise run specs       # the specs, their gates, owners and kinds
 mise run delivery    # the delivery layer, end to end
 mise run interface   # the capability interface, end to end
 ```
 
 `mise run build` writes `bin/arc`, `bin/arc-exec`, `bin/arc-sqlite`,
 `bin/arc-http` and `bin/arc-releases`. App code and manifests live in `apps/`.
+Read [AGENTS.md](AGENTS.md) before a change: it holds the package rules and
+the spec rules.
 
 ## Docs
 
-- [Architecture and package boundaries](docs/ARCHITECTURE.md).
+Guides:
+
+- [Getting started](docs/GETTING-STARTED.md): a first identity, relay,
+  message and app call.
 - [Apps, programs, services and sessions](apps/README.md).
+- [Deploy](docs/DEPLOY.md): releases, relays, Docker.
+- [Architecture and package boundaries](docs/ARCHITECTURE.md).
+
+Specs:
 
 - [Delivery layer](docs/delivery/SPEC.md): events, transports, sync, calls,
   and the switchover.
-- [Capability interface](docs/interface/SPEC.md): manifests, commands, and
-  data that a citizen keeps for itself.
+- [App interface](docs/interface/SPEC.md): manifests, commands, and data that
+  a citizen keeps for itself.
+- [Sessions](docs/sessions/SPEC.md): streaming and duplex interactions.
+- [HTTP over ARC](docs/http/SPEC.md).
+- [Exec](docs/exec/SPEC.md): remote commands and wakeable citizens.
 - [Updates](docs/updates/SPEC.md): signed release channels.
 - [How to write a spec](docs/SPEC-TEMPLATE.md): the gates that each spec
   answers, the [event kinds](docs/KINDS.md), and the
   [proposals](docs/proposals/).
-- [Deploy](docs/DEPLOY.md): releases, relays, Docker.
+
+Other:
+
 - [Whitepaper](docs/WHITEPAPER.md): protocol design.
 - [Changelog](CHANGELOG.md).

@@ -147,7 +147,7 @@ The operator of the relay makes the group and names its admins:
 the group with its own key, and names that key in its NIP-11 document as
 `self`. It refuses an event for a group that does not exist, a post to a
 restricted group from a citizen who is not a member, and a moderation event
-from a citizen who is not an admin. `delivery/groups` holds these rules.
+from a citizen who is not an admin. `adapters/relay/groups` holds these rules.
 
 ### 4.3 Service
 
@@ -615,7 +615,7 @@ carries the NIP-70 tag, so a relay accepts it only from its author after NIP-42
 authentication. Nobody else can publish an old version of it again.
 
 **Sealed data is served only to its author.** A relay that `arc` runs, and
-`delivery/sealed` protects, answers a query that names a draft, a checkpoint,
+`adapters/relay/sealed` protects, answers a query that names a draft, a checkpoint,
 a part or a private relay list only after NIP-42 authentication, and only
 when the query names the authenticated citizen as its only author. Every
 other query leaves out the sealed events of other citizens, so nobody else

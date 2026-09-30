@@ -561,7 +561,7 @@ The capability layer adds its own rules. See [interface section 12](interface/SP
 | Keys sealed with a passphrase | NIP-49 | NIP-49 |
 | Route tags | HMAC-SHA256 over the date | delivery section 6.4 |
 | Keyed values | HKDF-SHA256 and HMAC-SHA256 | interface section 6.1 |
-| Petnames | Blake3 | `delivery/keys` |
+| Petnames | Blake3 | `core/keys` |
 | Release channels | BIP-340 over SHA-256, with a domain label | updates |
 | Live mesh links (designed) | Noise XX: Curve25519, ChaCha20-Poly1305, SHA-256 | delivery section 10.6 |
 

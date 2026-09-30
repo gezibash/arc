@@ -1,18 +1,19 @@
-# Running the bundled session providers
+# Sessions of the bundled apps
 
-Build this branch with `mise run build`. Use its `bin/arc` and provider binaries;
-an older installed ARC binary does not contain these commands. Configure a relay
-on each identity. Serve each provider with its `interface.json`, then install it
-from the consumer. Repeat installation after an interface update.
+Build with `mise run build`, and use its `bin/arc` and app programs. A release
+older than this one has no `arc session`. Configure a relay on each identity.
+Serve each app with its `manifest.json`, then install it on the consumer.
+Install it again after an interface update.
 
-| Provider | Initial request | Modes | Input and output |
+| App | Initial request | Modes | Input and output |
 | --- | --- | --- | --- |
 | SQLite | Empty for a REPL, or SQL/JSON for a query | request_reply, server_stream, duplex | One SQL statement or JSON query per line; NDJSON result records. |
 | Exec | JSON argv/script and command options | request_reply, server_stream, duplex | Process I/O records; `--exec` decodes them, `--tty` handles terminals. |
 | HTTP | HTTP envelope, optionally stream_body or websocket | request_reply, server_stream, duplex, as declared by the application | HTTP/WS records; `--http` decodes bodies, `--websocket` maps lines to text messages. |
 | Releases | JSON archive operation and sha256 digest | request_reply, server_stream | Raw archive bytes; updater checks size, hash and final session completion. |
 
-Provider configuration and access checks are unchanged. See the guides for
+A session uses the same configuration and access checks as a single call. See
+the guides for
 [SQLite](../../apps/sqlite/README.md), [Exec](../../apps/exec/README.md),
 [HTTP](../../apps/http/README.md), and
 [Releases](../../apps/releases/README.md).

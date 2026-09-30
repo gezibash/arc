@@ -55,7 +55,7 @@ flowchart LR
 
 Core production packages depend only on other core packages, the standard
 library's non-I/O facilities, and event/cryptographic primitives. They do not
-import application code, concrete adapters, filesystem/process/network APIs,
+import runtime code, concrete adapters, filesystem/process/network APIs,
 or database drivers. `io.Reader`, `io.Writer` and `io.Closer` are ports, so the
 provider runtime can use them without selecting process streams itself.
 
@@ -63,25 +63,27 @@ The upstream Nostr module contains both protocol and network facilities. These
 rules govern the APIs used by ARC production code; they do not claim that the
 upstream module's entire transitive dependency graph is free of network code.
 
-Application composition selects concrete adapters. `runtime/citizen.Open`
-constructs a citizen's disk stores, mail journal and relay adapters. An embedded
-caller can construct core components with different implementations. HTTP and
-provider process adapters depend on the same core contracts as other providers.
+Runtime composition selects concrete adapters. `runtime/citizen.Open`
+constructs a citizen's disk stores, mail store and relay adapters. An embedded
+caller can construct core components with different implementations.
 
-An app imports only `sdk/` and its own packages. `cmd/arc` imports no app. The
-SDK imports only `core/` and `sdk/`. `internal/architecture` checks these rules.
-
-Runtime libraries and adapters must not import concrete apps or executable entry
-points. An adapter must not import application workflows. It implements the interface consumed by the relevant layer. ARC event adapters
-implement core contracts. Application search implements the interface owned by
-`runtime/iface`, using shared types from `internal/search`. Concrete app
-service implementations can enforce their own shell, SQL or HTTP policies outside core.
+An app imports only `sdk/` and its own packages, so it can build in another
+repository. The SDK imports only `core/` and `sdk/`. `cmd/arc` imports no app.
+The runtime and adapters must not import concrete apps or executable entry
+points, and an adapter must not import runtime workflows. An adapter implements
+the interface of the layer that consumes it: ARC event adapters implement core
+contracts, and application search implements the interface that `runtime/iface`
+owns, with shared types from `internal/search`. An app can enforce its own
+shell, SQL or HTTP policy outside core.
 
 `internal/architecture` checks these rules from production imports, including
-platform-specific files. Test imports are exempt so integration tests can use
-real relays, files and subprocesses. Run `mise run boundaries`; the same check is
-included in `go test ./...` and CI. The existing runtime and CLI tests validate
-behavior across the package boundaries.
+platform-specific files. It also checks the tests of each app: they must not
+import an internal package. Other test imports are exempt, so integration tests
+can use real relays, files and subprocesses. Run `mise run boundaries`; the same
+check runs in `go test ./...` and CI.
+
+`internal/specs` checks that each package under `core/` and `sdk/` belongs to a
+spec. See [how to write a spec](SPEC-TEMPLATE.md).
 
 ## Apps, programs and services
 
@@ -156,36 +158,10 @@ supports carried events. Bluetooth remains planned. Adding a carrier must retain
 core verification and the existing mail/call rules; see
 [the transport contract](delivery/TRANSPORTS.md).
 
-## Go API migration
-
-This refactor changes Go import paths. It does not add forwarding packages at
-the old paths. External Go consumers must update their imports and constructors.
-Request/reply event formats, provider messages and persistent file names/buckets
-remain compatible. App management moves from `arc tool` to `arc apps`. Service
-programs are named `arc-exec`, `arc-sqlite`, `arc-http` and `arc-releases`. App
-assets move from `cmd/*-provider` and `manifests/` to `apps/<name>`; update source
-paths and process launch configuration when adopting this checkout.
-Live sessions add `arc session`,
-an opt-in manifest declaration, a new private event kind and `session` provider
-messages; these additions require a provider/runtime that supports sessions.
-
-| Previous API | Current API |
-| --- | --- |
-| `delivery/{call,keys,mail,node,private,store,transport,...}` | Corresponding `core/` packages; concrete implementations move to `adapters/`. |
-| `internal/citizen`, `iface`, `capability`, `bundle`, `lists`, `release`, `wake`, `delivery/catalog` | Corresponding `runtime/` packages. |
-| `provider` | `sdk/provider` for contracts and runtime. |
-| `provider.HTTP(handler)` | `httpadapter.New(handler)` from `sdk/httpadapter`. |
-| `provider.Run` with default process streams | `stdio.Run` from `sdk/stdio`, using `sdk/provider.Options`. |
-| `provider.Run` with injected streams | `sdk/provider.Run`; input and output are required, and omitted logs are discarded. |
-| `provider/host` | `adapters/provider/host`. |
-| `provider.ConfigPath`, `ReadConfig`, `Grants`, `Limit`, `Directory` | `sdk/providerconfig`. |
-| `store.Open(directory)` | `boltstore.Open(directory)` from `adapters/store/bolt`; core tests/embedders can use `store.New(backend)`. |
-| `mail.Open(directory, ...)` | `mailbox.Open(directory, ...)` from `adapters/mailbox`; core embedders use `mail.New(journal, ...)`. |
-| `keys.Save`, `Load`, `Read`, `Write` and key-file errors | `adapters/keyfile`. |
-| `keys.ResolvePublic` | `adapters/nip05.ResolvePublic`; offline parsing remains `core/keys.ParsePublic`. |
+## Persistence
 
 Disk adapters keep `events.db`, `mail.db`, key-file permissions and the existing
-journal buckets. A journal update commits its whole callback or rolls it all
-back. The event-store adapter holds its process lease through verification and
+Bolt buckets of mail. A key-value update commits its whole callback or rolls it
+all back. The event-store adapter holds its process lease through verification and
 persistence. Core remains responsible for refusing invalid events and avoiding
 re-execution after an uncertain outcome.

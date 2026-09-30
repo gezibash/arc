@@ -188,7 +188,7 @@ The operator writes `config.json`. `EXEC_CONFIG` gives its absolute path.
 | `limits.output_bytes` | Output budget for one reply. Default 1 MiB. Maximum 4 MiB. |
 | `limits.timeout_ms` | Time limit for `run`. Default 60 seconds. Maximum 115 seconds. |
 | `limits.job_timeout_ms` | Time limit for a job. Default 1 hour. Maximum 24 hours. |
-| `lease` | The `hold` and `release` commands, and `interval_ms`. `init` writes it for a platform that pauses. |
+| `lease` | The `hold` and `release` commands, and `interval_ms`. Add it on a machine that pauses. |
 | `notify` | The `argv` of a command that runs when a job ends, and an optional `timeout_ms`. `{owner}` becomes the caller key. The result goes to standard input. |
 | `jobs_dir` | The directory for job output. Default `~/.arc/exec/jobs`. |
 
@@ -212,7 +212,7 @@ go test ./apps/exec/server
 
 ## Streaming processes and terminals
 
-Serve the updated `manifest.json`, then use the shared session CLI:
+Serve `manifest.json`, then use the shared session CLI:
 
 ```sh
 arc session --exec --mode server_stream 'exec+arc://<service>/' \
