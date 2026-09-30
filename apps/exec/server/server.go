@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/sdk/provider"
 )
 
 // server answers the requests of one operator configuration.

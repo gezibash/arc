@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gezibash/arc/adapters/providerconfig"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/internal/strictjson"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providerconfig"
+	"github.com/gezibash/arc/sdk/strictjson"
 	"zombiezen.com/go/sqlite"
 )
 

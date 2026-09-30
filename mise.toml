@@ -6,7 +6,7 @@ _.path = ["bin"]
 
 [tasks.build]
 description = "Build every command into bin/"
-run = "go build -o bin/ ./cmd/..."
+run = "go build -o bin/ ./cmd/... ./apps/..."
 
 [tasks.test]
 description = "Run the tests"

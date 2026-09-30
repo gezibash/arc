@@ -6,7 +6,32 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+The layout of the Go packages changed. A Go program that imports ARC packages
+must change its import paths. The programs and their commands did not change.
+
 ### Changed
+
+- `sdk/` is the kit for app authors. An app imports only `sdk/`, so an app
+  can live in another repository. `internal/architecture` checks this rule.
+  The packages moved as this table shows:
+
+  | Before | Now |
+  | --- | --- |
+  | `core/provider` | `sdk/provider` |
+  | `core/provider/wire` | `core/wire` |
+  | `adapters/provider/stdio` | `sdk/stdio` |
+  | `adapters/http` | `sdk/httpadapter` |
+  | `adapters/exec` | `sdk/execadapter` |
+  | `adapters/ndjson` | `sdk/ndjson` |
+  | `adapters/providerconfig` | `sdk/providerconfig` |
+  | `application/...` | `runtime/...` |
+
+- `sdk/provider` gives the session types under its own name: `Stream`, `Mode`,
+  `RequestReply`, `ServerStream`, `Duplex`, `MaxChunk`, `ErrUnsupported` and
+  `WorkTimeout`. `sdk/providertest` gives a real session for the tests of an
+  app.
+- Each app holds its program: `apps/<name>/cmd/arc-<name>`. `cmd/` holds only
+  `arc`, and `arc` imports no app. The release holds the same five programs.
 
 - The end-to-end proofs are Go tests in `internal/proof`. `mise run delivery`
   and `mise run interface` run them. The scripts `scripts/test-delivery.sh`,

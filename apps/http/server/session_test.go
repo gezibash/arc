@@ -2,29 +2,29 @@ package server
 
 import (
 	"context"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/testsession"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providertest"
 )
 
-type nestedCaller func(context.Context, string, string, session.Mode) (*session.Stream, error)
+type nestedCaller func(context.Context, string, string, provider.Mode) (*provider.Stream, error)
 
-func (f nestedCaller) OpenSession(ctx context.Context, address, body string, mode session.Mode) (*session.Stream, error) {
+func (f nestedCaller) OpenSession(ctx context.Context, address, body string, mode provider.Mode) (*provider.Stream, error) {
 	return f(ctx, address, body, mode)
 }
 func TestHTTPNestedSessionStreamsAndPreservesFinalError(t *testing.T) {
 	a := &adapter{token: "test"}
-	a.SetSessionCaller(nestedCaller(func(ctx context.Context, address, body string, mode session.Mode) (*session.Stream, error) {
-		if address != "sqlite+arc://provider/main" || body != "query" || mode != session.ServerStream {
+	a.SetSessionCaller(nestedCaller(func(ctx context.Context, address, body string, mode provider.Mode) (*provider.Stream, error) {
+		if address != "sqlite+arc://provider/main" || body != "query" || mode != provider.ServerStream {
 			t.Errorf("nested arguments: %s %s %s", address, body, mode)
 		}
-		return testsession.Start(t, mode, func(_ context.Context, s *session.Stream) error {
+		return providertest.Start(t, mode, func(_ context.Context, s *provider.Stream) error {
 			if _, err := io.WriteString(s, "first"); err != nil {
 				return err
 			}

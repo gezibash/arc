@@ -17,12 +17,12 @@ package server
 
 import (
 	"fmt"
+	"github.com/gezibash/arc/sdk/provider"
 	"os"
 	"path/filepath"
 	"regexp"
 
-	"github.com/gezibash/arc/adapters/providerconfig"
-	"github.com/gezibash/arc/core/provider/wire"
+	"github.com/gezibash/arc/sdk/providerconfig"
 )
 
 // The limits of a request, and the ceiling of each one.
@@ -39,7 +39,7 @@ var (
 	maxLimits = limits{
 		BodyBytes:    1024 * 1024,
 		OutputBytes:  4 * 1024 * 1024,
-		TimeoutMS:    int(wire.WorkTimeout.Milliseconds()),
+		TimeoutMS:    int(provider.WorkTimeout.Milliseconds()),
 		JobTimeoutMS: 86_400_000,
 	}
 )

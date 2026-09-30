@@ -10,8 +10,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gezibash/arc/adapters/provider/stdio"
-	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/stdio"
 )
 
 type echo struct {

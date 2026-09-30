@@ -5,16 +5,16 @@ Status: built. Two adapters serve HTTP over ARC:
 - `httpadapter.New` serves a Go `http.Handler` in the provider program.
 - `arc-http` serves an HTTP server of any language. See section 10.
 
-Go tests prove both: `go test ./adapters/http ./apps/http/server`. The test
+Go tests prove both: `go test ./sdk/httpadapter ./apps/http/server`. The test
 `TestBundledProviderSessionsThroughCLI` in `cmd/arc` runs `arc-http` through a
 local relay and the normal CLI. The test
 `TestAGoHandlerAnswersACallThroughARelay` runs a Go handler from
 `httpadapter.New` the same way.
 
-The Go adapter is `github.com/gezibash/arc/adapters/http` (package
-`httpadapter`). Shared service contracts are in `core/provider`. The HTTP app
-implementation is in `apps/http/server`; `cmd/arc-http` supplies process streams
-and signals. Other entry points can use `adapters/provider/stdio.Run`. See
+The Go adapter is `github.com/gezibash/arc/sdk/httpadapter` (package
+`httpadapter`). Shared service contracts are in `sdk/provider`. The HTTP app
+implementation is in `apps/http/server`; `apps/http/cmd/arc-http` supplies process streams
+and signals. Other entry points can use `sdk/stdio.Run`. See
 [package boundaries](../ARCHITECTURE.md).
 
 ## 1. Purpose

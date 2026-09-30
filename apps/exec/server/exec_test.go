@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/sdk/provider"
 )
 
 const caller = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

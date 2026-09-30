@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/adapters/provider/host"
-	"github.com/gezibash/arc/core/provider/wire"
+	"github.com/gezibash/arc/core/wire"
 )
 
 func TestBackpressureCannotOutliveTheSendDeadline(t *testing.T) {

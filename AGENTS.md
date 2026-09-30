@@ -9,21 +9,26 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
 - Core production code imports no ARC package outside `core/`. It does not open
   files, connect to networks, spawn processes, or depend on a database driver.
   Inject readers, writers, signing contracts, stores and transport interfaces.
-- `adapters/` implements concrete I/O and protocol mappings. HTTP, relay,
-  directory, subprocess, standard-stream, key-file and Bolt implementations
-  belong here. An adapter may depend on core and shared adapter utilities;
-  it must not depend on `runtime/`, `apps/`, or `cmd/`.
+- `sdk/` is the kit for app authors: the provider runtime, session types,
+  standard streams, configuration helpers, strict JSON, and the HTTP and
+  process I/O mappings. It imports only `core/` and `sdk/`. A change to `sdk/`
+  is a change for each app in another repository.
+- `adapters/` implements concrete I/O for core and the runtime. Relay,
+  directory, subprocess hosting, key-file and Bolt implementations belong
+  here. An adapter may depend on core and the SDK; it must not depend on
+  `runtime/`, `apps/`, or `cmd/`.
 - `runtime/` owns citizen workflows, consent, routing choices, manifests,
   installed commands, bundle management, wake policy and updates. Concrete
   adapters are selected by composition code, such as `runtime/citizen.Open`.
-- `apps/` owns concrete apps: manifests, domain behavior, service programs and
-  app documentation. Manifest-driven data apps need no server or client binary.
-  Reusable service implementations live in `apps/<name>/server`.
-- `cmd/` holds thin executable entry points. They supply process streams,
-  signals and exit status to the app service packages. Reuse core call/session
-  behavior; do not put domain behavior in an entry point.
+- `apps/<name>/` owns one complete app: manifest, Arcfile, service
+  implementation in `server/`, its program in `cmd/arc-<name>`, and its
+  documentation. Manifest-driven data apps need no program.
+- An app imports only `sdk/` and its own packages. It must build in another
+  repository. If an app needs a helper, add the helper to `sdk/`. Do not
+  import `core/`, `adapters/`, `runtime/`, `internal/` or another app.
+- `cmd/arc` is the arc program. It imports no app.
 - The runtime and adapters must not import concrete `apps/` packages.
-  Apps use runtime primitives or core protocols to compose with other apps.
+  Apps use the SDK to compose with other apps.
 - Define an interface at the layer that consumes its effect. Only interfaces
   consumed by ARC protocol rules belong in core. Application effects, such as
   full-text search, keep their interfaces in runtime code. Shared request
@@ -34,10 +39,10 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
   is a delivery adapter. Both stay outside core.
 - Shared interaction modes and session behavior live in `core/session`, with
   authenticated event delivery in `core/call` and provider dispatch in
-  `core/provider`. Reuse this machinery for consumers and providers alike.
+  `sdk/provider`, which gives apps the session types under its own name. Reuse this machinery for consumers and providers alike.
   Adapters must not implement a second session state machine.
 - Read [the session contract](docs/sessions/SPEC.md) before changing interactions.
-  HTTP, SSE and WebSocket mappings belong in adapters. Do not require every
+  HTTP, SSE and WebSocket mappings belong in `sdk/httpadapter`. Do not require every
   delivery adapter to support live calls or streams. Keep REPL variables, SQL
   transaction state and other domain state inside their apps.
 - Session identity is distinct from a transport connection. Preserve explicit

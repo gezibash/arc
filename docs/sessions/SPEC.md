@@ -48,7 +48,7 @@ A new session never silently replays commands from the old session.
 
 `core/session` owns modes, frames, ordering, credit, half-close and cancellation.
 `core/call` authenticates and encrypts live event messages and bridges providers.
-`core/provider` supplies the same session machinery to provider handlers.
+`sdk/provider` supplies the same session machinery to provider handlers.
 Adapters supply event delivery or process I/O. No adapter reimplements sessions.
 Applications select paths, enforce install consent and choose lifetime budgets.
 A provider must apply its access rules before handling a session, just as for

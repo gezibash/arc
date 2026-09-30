@@ -10,9 +10,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gezibash/arc/adapters/provider/stdio"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/stdio"
 )
 
 type repl struct{}
@@ -20,8 +19,8 @@ type repl struct{}
 func (repl) HandleRequest(_ context.Context, r provider.Request) (string, error) {
 	return "echo: " + r.Message, nil
 }
-func (repl) HandleSession(_ context.Context, r provider.Request, s *session.Stream) error {
-	if s.Mode() == session.ServerStream {
+func (repl) HandleSession(_ context.Context, r provider.Request, s *provider.Stream) error {
+	if s.Mode() == provider.ServerStream {
 		for _, line := range []string{"SET name value\n", "GET name\n", "QUIT\n"} {
 			if _, err := io.WriteString(s, line); err != nil {
 				return err

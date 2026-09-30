@@ -10,8 +10,8 @@ import (
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/keys"
-	"github.com/gezibash/arc/core/provider/wire"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/core/wire"
 )
 
 type idleProvider struct{ lines chan wire.Event }

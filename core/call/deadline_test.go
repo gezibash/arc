@@ -10,7 +10,7 @@ import (
 
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/keys"
-	"github.com/gezibash/arc/core/provider/wire"
+	"github.com/gezibash/arc/core/wire"
 )
 
 type protocolClient struct{ sent, replies chan wire.Event }

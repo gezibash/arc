@@ -3,24 +3,24 @@ package server
 import (
 	"context"
 	"encoding/json"
-	execadapter "github.com/gezibash/arc/adapters/exec"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/testsession"
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	execadapter "github.com/gezibash/arc/sdk/execadapter"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providertest"
 )
 
-func execStream(t *testing.T, s *server, from, body string, mode session.Mode) *session.Stream {
-	return testsession.Start(t, mode, func(ctx context.Context, stream *session.Stream) error {
+func execStream(t *testing.T, s *server, from, body string, mode provider.Mode) *provider.Stream {
+	return providertest.Start(t, mode, func(ctx context.Context, stream *provider.Stream) error {
 		return s.HandleSession(ctx, provider.Request{From: from, Message: body, Meta: map[string]any{"method": "EXEC"}}, stream)
 	})
 }
 func TestExecSessionInteractiveIOAndExit(t *testing.T) {
 	s := testServer(t)
-	stream := execStream(t, s, caller, `{"script":"printf ready; read word; printf '%s' \"$word\"; printf problem >&2; exit 7"}`, session.Duplex)
+	stream := execStream(t, s, caller, `{"script":"printf ready; read word; printf '%s' \"$word\"; printf problem >&2; exit 7"}`, provider.Duplex)
 	rd := execadapter.NewReader(stream)
 	first, err := rd.Next()
 	if err != nil || first.Type != "stdout" || string(first.Data) != "ready" {
@@ -54,7 +54,7 @@ func TestExecSessionInteractiveIOAndExit(t *testing.T) {
 }
 func TestExecSessionTerminalResizeAndEOF(t *testing.T) {
 	s := testServer(t)
-	stream := execStream(t, s, caller, `{"script":"stty -echo; printf ready; read word; stty size; printf '%s' \"$word\"","pty":true,"rows":24,"cols":80}`, session.Duplex)
+	stream := execStream(t, s, caller, `{"script":"stty -echo; printf ready; read word; stty size; printf '%s' \"$word\"","pty":true,"rows":24,"cols":80}`, provider.Duplex)
 	rd := execadapter.NewReader(stream)
 	first, err := rd.Next()
 	if err != nil || !strings.Contains(string(first.Data), "ready") {
@@ -85,7 +85,7 @@ func TestExecSessionTerminalResizeAndEOF(t *testing.T) {
 	if !strings.Contains(out.String(), "40 100") || !strings.Contains(out.String(), "terminal") || exit != 0 {
 		t.Fatalf("PTY: %q exit %d", out.String(), exit)
 	}
-	pipe := execStream(t, s, caller, `{"argv":["cat"]}`, session.Duplex)
+	pipe := execStream(t, s, caller, `{"argv":["cat"]}`, provider.Duplex)
 	if err = pipe.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,17 +95,17 @@ func TestExecSessionTerminalResizeAndEOF(t *testing.T) {
 }
 func TestExecSessionGrantsLimitsAndCancellation(t *testing.T) {
 	s := testServer(t)
-	denied := execStream(t, s, stranger, `{"argv":["echo","bad"]}`, session.ServerStream)
+	denied := execStream(t, s, stranger, `{"argv":["echo","bad"]}`, provider.ServerStream)
 	if _, err := io.ReadAll(denied); err == nil || err.Error() != "access_denied" {
 		t.Fatalf("grant: %v", err)
 	}
 	s.config.Limits.OutputBytes = 32
-	limit := execStream(t, s, caller, `{"script":"printf '%100s' x"}`, session.ServerStream)
+	limit := execStream(t, s, caller, `{"script":"printf '%100s' x"}`, provider.ServerStream)
 	if _, err := io.ReadAll(limit); err == nil || !strings.Contains(err.Error(), "output_too_large") {
 		t.Fatalf("limit: %v", err)
 	}
 	s.config.Limits.OutputBytes = 1024
-	active := execStream(t, s, caller, `{"script":"echo ready; sleep 100"}`, session.ServerStream)
+	active := execStream(t, s, caller, `{"script":"echo ready; sleep 100"}`, provider.ServerStream)
 	rd := execadapter.NewReader(active)
 	if _, err := rd.Next(); err != nil {
 		t.Fatal(err)

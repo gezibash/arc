@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/gezibash/arc/internal/atomicfile"
+	"github.com/gezibash/arc/sdk/atomicfile"
 )
 
 // A citizen remembers the newest channel document that it accepted. Without

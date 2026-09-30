@@ -110,7 +110,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SQLITE_CONFIG", sqlConfig)
-	serveSessionProvider(t, ctx, sqlHome, providerBinary(t, "../arc-sqlite"), "../../apps/sqlite/manifest.json")
+	serveSessionProvider(t, ctx, sqlHome, providerBinary(t, "../../apps/sqlite/cmd/arc-sqlite"), "../../apps/sqlite/manifest.json")
 	ok(t, consumer, "", "install", sqlKey, "--yes")
 	input, out, done := startSessionCLI(t, ctx, consumer, "sqlite+arc://"+sqlKey+"/main")
 	if !waitFor(out, `"type":"ready"`, 5*time.Second) {
@@ -124,7 +124,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	sessionDone(t, done, 0)
 	// A second participant consumes SQLite through the hosted HTTP session API.
 	ok(t, httpHome, "", "install", sqlKey, "--yes")
-	serveSessionProvider(t, ctx, httpHome, providerBinary(t, "../arc-http"), "testdata/streaming-http/interface.json", providerBinary(t, "./testdata/streaming-http"))
+	serveSessionProvider(t, ctx, httpHome, providerBinary(t, "../../apps/http/cmd/arc-http"), "testdata/streaming-http/interface.json", providerBinary(t, "./testdata/streaming-http"))
 	ok(t, consumer, "", "install", httpKey, "--yes")
 	input, out, done = startSessionCLI(t, ctx, consumer, "--http", "--mode", "server_stream", "http+arc://"+httpKey+"/events")
 	if !waitFor(out, "data: first", 5*time.Second) {
@@ -157,7 +157,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	data, _ = json.Marshal(map[string]any{"grants": []string{key}, "cwd": t.TempDir()})
 	os.WriteFile(config, data, 0600)
 	t.Setenv("EXEC_CONFIG", config)
-	serveSessionProvider(t, ctx, execHome, providerBinary(t, "../arc-exec"), "../../apps/exec/manifest.json")
+	serveSessionProvider(t, ctx, execHome, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "../../apps/exec/manifest.json")
 	ok(t, consumer, "", "install", execKey, "--yes")
 	input, out, done = startSessionCLI(t, ctx, consumer, "--exec", "exec+arc://"+execKey+"/", `{"script":"printf ready; read word; printf '<%s>' \"$word\"; exit 7"}`)
 	if !waitFor(out, "ready", 5*time.Second) {
@@ -226,7 +226,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	hexDigest := hex.EncodeToString(digest[:])
 	os.WriteFile(filepath.Join(root, "blobs", hexDigest+".tar.gz"), []byte(archive), 0600)
 	t.Setenv("RELEASES_ROOT", root)
-	serveSessionProvider(t, ctx, relHome, providerBinary(t, "../arc-releases"), "../../apps/releases/manifest.json")
+	serveSessionProvider(t, ctx, relHome, providerBinary(t, "../../apps/releases/cmd/arc-releases"), "../../apps/releases/manifest.json")
 	ok(t, consumer, "", "install", relKey, "--yes")
 	input, out, done = startSessionCLI(t, ctx, consumer, "--mode", "server_stream", "releases+arc://"+relKey+"/releases", `{"op":"archive","digest":"sha256:`+hexDigest+`"}`)
 	sessionDone(t, done, 0)

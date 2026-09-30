@@ -5,17 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	httpadapter "github.com/gezibash/arc/adapters/http"
 	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/testsession"
 	"github.com/gezibash/arc/runtime/iface"
+	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
+	"github.com/gezibash/arc/sdk/providertest"
 	"net/http"
 	"strings"
 	"testing"
 )
 
 func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {
-	stream := testsession.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
+	stream := providertest.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
 		encoder := json.NewEncoder(s)
 		for _, v := range []httpadapter.SessionRecord{{Type: "response", Status: 404}, {Type: "body", Data: []byte("missing")}, {Type: "end"}} {
 			if err := encoder.Encode(v); err != nil {
@@ -34,7 +34,7 @@ func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {
 	}
 }
 func TestWebSocketCLITextMapping(t *testing.T) {
-	stream := testsession.Start(t, session.Duplex, func(_ context.Context, s *session.Stream) error {
+	stream := providertest.Start(t, session.Duplex, func(_ context.Context, s *session.Stream) error {
 		encoder := json.NewEncoder(s)
 		if err := encoder.Encode(httpadapter.SessionRecord{Type: "response", Status: 101}); err != nil {
 			return err
@@ -61,7 +61,7 @@ func TestWebSocketCLITextMapping(t *testing.T) {
 }
 
 func TestHTTPCLIPreservesNestedSessionFailure(t *testing.T) {
-	stream := testsession.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
+	stream := providertest.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
 		encoder := json.NewEncoder(s)
 		for _, record := range []httpadapter.SessionRecord{{Type: "response", Status: 200}, {Type: "body", Data: []byte("partial")}, {Type: "trailers", Headers: http.Header{"Arc-Session-Error": {`"refused"`}}}, {Type: "end"}} {
 			if err := encoder.Encode(record); err != nil {

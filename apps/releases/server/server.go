@@ -21,8 +21,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/internal/strictjson"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/strictjson"
 )
 
 // The limits of the provider.

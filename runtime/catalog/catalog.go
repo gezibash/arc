@@ -23,9 +23,9 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/store"
-	"github.com/gezibash/arc/internal/atomicfile"
 	"github.com/gezibash/arc/runtime/capability"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/atomicfile"
 )
 
 // Kind is the kind of a capability announcement.

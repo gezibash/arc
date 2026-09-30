@@ -6,12 +6,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/sdk/provider"
 )
 
 func (e *echo) SetSessionCaller(c provider.SessionCaller) { e.sessions = c }
-func (e *echo) HandleSession(ctx context.Context, r provider.Request, s *session.Stream) error {
+func (e *echo) HandleSession(ctx context.Context, r provider.Request, s *provider.Stream) error {
 	if r.Message == "deny" {
 		return provider.Error("unauthorized")
 	}
@@ -21,13 +20,13 @@ func (e *echo) HandleSession(ctx context.Context, r provider.Request, s *session
 			return err
 		}
 		defer upstream.Close()
-		if s.Mode() == session.Duplex {
+		if s.Mode() == provider.Duplex {
 			go func() { _, _ = io.Copy(upstream, s); _ = upstream.CloseWrite() }()
 		}
 		_, err = io.Copy(s, upstream)
 		return err
 	}
-	if s.Mode() == session.ServerStream {
+	if s.Mode() == provider.ServerStream {
 		for _, part := range []string{"first\n", "second\n"} {
 			if _, err := io.WriteString(s, part); err != nil {
 				return err

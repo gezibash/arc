@@ -8,14 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/sdk/provider"
 	"zombiezen.com/go/sqlite"
 )
 
 // A session owns a connection. SQL and transaction policy remain in this provider.
 // Results are NDJSON: columns, row, statement, then done (or error).
-func (s *server) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
+func (s *server) HandleSession(ctx context.Context, req provider.Request, stream *provider.Stream) error {
 	if req.Method() != "QUERY" {
 		return errInvalidRequest
 	}
@@ -38,7 +37,7 @@ func (s *server) HandleSession(ctx context.Context, req provider.Request, stream
 	run := func(text string) error {
 		err := s.sessionQuery(ctx, conn, guard, text, out)
 		if err != nil {
-			if stream.Mode() == session.ServerStream {
+			if stream.Mode() == provider.ServerStream {
 				return err
 			}
 			if ctx.Err() != nil {
@@ -53,10 +52,10 @@ func (s *server) HandleSession(ctx context.Context, req provider.Request, stream
 		if err := run(req.Message); err != nil {
 			return err
 		}
-	} else if stream.Mode() == session.ServerStream {
+	} else if stream.Mode() == provider.ServerStream {
 		return errInvalidRequest
 	}
-	if stream.Mode() == session.ServerStream {
+	if stream.Mode() == provider.ServerStream {
 		return nil
 	}
 	if err := out.Encode(map[string]string{"type": "ready"}); err != nil {

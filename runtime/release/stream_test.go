@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/gezibash/arc/core/provider"
 	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/testsession"
 	"github.com/gezibash/arc/runtime/release"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providertest"
 	"io"
 	"testing"
 )
@@ -26,7 +26,7 @@ func (s *streamedArchive) Request(context.Context, []byte) ([]byte, error) {
 }
 func (s *streamedArchive) OpenArchive(_ context.Context, digest string) (release.ArchiveReader, error) {
 	s.requested = digest
-	return testsession.Start(s.t, session.ServerStream, func(_ context.Context, stream *session.Stream) error {
+	return providertest.Start(s.t, session.ServerStream, func(_ context.Context, stream *session.Stream) error {
 		if _, err := io.WriteString(stream, s.data); err != nil {
 			return err
 		}

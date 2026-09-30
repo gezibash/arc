@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 
-	httpadapter "github.com/gezibash/arc/adapters/http"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/iface"
+	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/spf13/cobra"
 )
 

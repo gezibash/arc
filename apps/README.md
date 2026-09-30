@@ -73,3 +73,19 @@ Live sessions require a delivery adapter that declares live support. EOF on a
 stream is separate from its final outcome. A failed connection ends the session;
 it does not silently replay SQL, restart a command or resume a transfer. Signed
 events and carried calls remain available for durable or offline delivery.
+
+## An app in another repository
+
+An app needs no code from this directory. Each app here obeys the rules that
+an app in another repository obeys:
+
+- The app holds a manifest, an `Arcfile`, and a program that reads and writes
+  JSON lines on standard input and output. `arc apps init` writes a starter.
+- A Go app imports only `github.com/gezibash/arc/sdk/...`. `sdk/provider` is
+  the runtime, `sdk/stdio.Main` is the entry point, and `sdk/providertest`
+  gives a real session for tests.
+- An operator runs the app with `arc serve <app-directory>`. A caller gets its
+  commands with `arc install <key>`.
+
+`internal/architecture` fails if an app here imports another package of this
+module.

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gezibash/arc/internal/atomicfile"
-	"github.com/gezibash/arc/internal/limitio"
+	"github.com/gezibash/arc/sdk/atomicfile"
+	"github.com/gezibash/arc/sdk/limitio"
 )
 
 // A release of ARC in Go is one program. The archive holds it, and the

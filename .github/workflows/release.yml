@@ -57,7 +57,7 @@ jobs:
             rm -rf dist/stage
             mkdir -p "$stage"
             GOOS="${rest%%:*}" GOARCH="${rest#*:}" CGO_ENABLED=0 \
-              go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$stage/" ./cmd/...
+              go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$stage/" ./cmd/... ./apps/...
             tar -C dist/stage -czf "dist/arc-$VERSION-$name.tar.gz" arc
           done
           rm -rf dist/stage

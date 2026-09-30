@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gezibash/arc/core/provider/wire"
+	"github.com/gezibash/arc/core/wire"
 )
 
 // MaxLineBytes caps one line from the provider. A provider that never writes

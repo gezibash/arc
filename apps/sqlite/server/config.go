@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/gezibash/arc/adapters/providerconfig"
+	"github.com/gezibash/arc/sdk/providerconfig"
 )
 
 var databaseNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)

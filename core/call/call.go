@@ -21,10 +21,10 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
-	"github.com/gezibash/arc/core/provider/wire"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/core/wire"
 )
 
 // The kinds and windows of a call.

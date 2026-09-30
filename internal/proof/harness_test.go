@@ -40,8 +40,13 @@ func run(m *testing.M) int {
 		return 1
 	}
 	defer os.RemoveAll(programs)
-	for _, name := range []string{"arc", "arc-exec", "arc-sqlite", "arc-releases"} {
-		if err := build(filepath.Join(programs, name), "./cmd/"+name, ""); err != nil {
+	for name, pkg := range map[string]string{
+		"arc":          "./cmd/arc",
+		"arc-exec":     "./apps/exec/cmd/arc-exec",
+		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
+		"arc-releases": "./apps/releases/cmd/arc-releases",
+	} {
+		if err := build(filepath.Join(programs, name), pkg, ""); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}

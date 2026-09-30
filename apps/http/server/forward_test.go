@@ -21,7 +21,7 @@ import (
 	httpservice "github.com/gezibash/arc/apps/http/server"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/keys"
-	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/sdk/provider"
 )
 
 var adapterBinary, originBinary string
@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 	}
 	adapterBinary = filepath.Join(dir, "arc-http")
 	originBinary = filepath.Join(dir, "origin")
-	for _, b := range []struct{ out, pkg string }{{adapterBinary, "../../../cmd/arc-http"}, {originBinary, "./testdata/origin"}} {
+	for _, b := range []struct{ out, pkg string }{{adapterBinary, "../cmd/arc-http"}, {originBinary, "./testdata/origin"}} {
 		build := exec.Command("go", "build", "-o", b.out, b.pkg)
 		build.Stderr = os.Stderr
 		if err := build.Run(); err != nil {

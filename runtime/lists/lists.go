@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gezibash/arc/internal/atomicfile"
+	"github.com/gezibash/arc/sdk/atomicfile"
 )
 
 // ErrInvalidName reports a name that a list may not take.

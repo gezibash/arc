@@ -6,5 +6,5 @@ if [ -n "${EXEC_PROVIDER:-}" ]; then
 fi
 cd "$(dirname "$0")"
 binary="${TMPDIR:-/tmp}/arc-exec"
-go build -o "$binary" ../../cmd/arc-exec 1>&2
+go build -o "$binary" ./cmd/arc-exec 1>&2
 exec "$binary" "$@"

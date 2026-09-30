@@ -5,19 +5,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/testsession"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providertest"
 )
 
-func archiveStream(t *testing.T, s *server, digest string) *session.Stream {
+func archiveStream(t *testing.T, s *server, digest string) *provider.Stream {
 	body, _ := json.Marshal(map[string]string{"op": "archive", "digest": digest})
-	return testsession.Start(t, session.ServerStream, func(ctx context.Context, stream *session.Stream) error {
+	return providertest.Start(t, provider.ServerStream, func(ctx context.Context, stream *provider.Stream) error {
 		return s.HandleSession(ctx, provider.Request{Message: string(body), Meta: map[string]any{"method": "RAW", "path": "/releases"}}, stream)
 	})
 }

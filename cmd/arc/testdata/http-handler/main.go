@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"os"
 
-	httpadapter "github.com/gezibash/arc/adapters/http"
-	"github.com/gezibash/arc/adapters/provider/stdio"
-	"github.com/gezibash/arc/core/provider"
+	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/stdio"
 )
 
 func main() {

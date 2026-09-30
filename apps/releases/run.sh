@@ -3,5 +3,5 @@
 set -eu
 cd "$(dirname "$0")"
 binary="${TMPDIR:-/tmp}/arc-releases"
-go build -o "$binary" ../../cmd/arc-releases 1>&2
+go build -o "$binary" ./cmd/arc-releases 1>&2
 exec "$binary" "$@"

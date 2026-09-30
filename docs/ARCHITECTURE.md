@@ -1,49 +1,53 @@
 # ARC package boundaries
 
-Core defines ARC's rules and ports. Concrete transports and application-protocol
-adapters sit outside core. The arrows below show source dependencies, not the
-order in which a message travels.
+Core defines ARC's rules and ports. The SDK is the kit for app authors. Apps
+use only the SDK, so an app can live in another repository. The arrows below
+show source dependencies, not the order in which a message travels.
 
 ```mermaid
 flowchart LR
-    ENTRY["cmd<br/>Executable entry points"]
-    APPS["apps<br/>App manifests and domain behavior"]
-    APP["application<br/>Citizen workflows and command policy"]
-    ADAPTER["adapters<br/>HTTP, transports, process and storage I/O"]
+    ARC["cmd/arc<br/>The arc program"]
+    APPS["apps<br/>Concrete apps and their service programs"]
+    RUNTIME["runtime<br/>Citizen workflows and command policy"]
+    ADAPTER["adapters<br/>Transports, storage and process hosting"]
+    SDK["sdk<br/>The kit for app authors"]
     CORE["core<br/>ARC rules, protocols and ports"]
-    ENTRY --> APPS
-    APPS --> APP
-    APPS --> ADAPTER
-    APPS --> CORE
-    ENTRY --> APP
-    ENTRY --> ADAPTER
-    ENTRY --> CORE
-    APP --> ADAPTER
-    APP --> CORE
+    ARC --> RUNTIME
+    ARC --> ADAPTER
+    ARC --> SDK
+    ARC --> CORE
+    APPS --> SDK
+    RUNTIME --> ADAPTER
+    RUNTIME --> SDK
+    RUNTIME --> CORE
+    ADAPTER --> SDK
     ADAPTER --> CORE
+    SDK --> CORE
 ```
 
 | Directory | Responsibility |
 | --- | --- |
 | `core/keys`, `core/private`, `core/draft` | Identity, signatures and encrypted event formats. |
 | `core/store`, `core/node`, `core/mail` | Verified event retention, sync, durable mail, receipts and recovery. Storage is injected. |
-| `core/call`, `core/provider`, `core/provider/wire` | Calls, replies, deadlines, cancellation and the shared provider runtime/protocol. Runtime I/O is supplied by its caller. |
+| `core/call`, `core/wire` | Calls, replies, deadlines, cancellation and the provider line protocol. |
 | `core/session` | Interaction modes, session identity/lifecycle, ordering, bounded credit, half-close, cancellation and final outcomes. |
 | `core/transport` | Event transport ports: `Transport`, `Live`, `Carrier`, `Reconciler`. |
 | `core/journal` | Atomic persistence operations consumed by the durable mail state machine. |
 | `core/compact`, `core/frame`, `core/relaylist` | Event encoding, bounded fragmentation and relay-list protocol. |
 | `runtime/citizen`, `runtime/catalog`, `runtime/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
 | Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
-| `apps/` | App manifests, domain behavior and reusable service implementations. Data apps can consist of a manifest. |
-| `cmd/arc`, `cmd/arc-*` | CLI and thin service program entry points. |
-| `adapters/http` | HTTP application requests mapped to ARC provider calls. |
+| `apps/<name>/` | One complete app: manifest, Arcfile, service implementation in `server/`, and its program in `cmd/arc-<name>`. Data apps can consist of a manifest. |
+| `cmd/arc` | The arc program. It imports no app. |
+| `sdk/provider`, `sdk/stdio` | The provider runtime for an app, its session types, and process standard streams. |
+| `sdk/httpadapter`, `sdk/execadapter`, `sdk/ndjson` | HTTP and process I/O mapped to ARC calls and sessions, and their record reader. |
+| `sdk/providerconfig`, `sdk/strictjson`, `sdk/atomicfile`, `sdk/limitio` | Configuration files, strict JSON, atomic file writes and bounded buffers. |
+| `sdk/providertest` | A real session for the tests of an app. |
 | `adapters/transport/relay`, `adapters/transport/file` | Nostr relay and carried-directory event delivery. |
-| `adapters/provider/host`, `adapters/provider/stdio` | Subprocess hosting and process standard streams. |
+| `adapters/provider/host` | Subprocess hosting of a provider program. |
 | `adapters/keyfile`, `adapters/nip05` | Identity files and network name resolution. |
 | `adapters/search/bleve` | Bleve indexing, query parsing and local search files. |
 | `adapters/store/bolt`, `adapters/journal/bolt`, `adapters/mailbox` | Bolt persistence and composition with core event/mail rules. |
 | `adapters/relay/*` | Khatru integration for sealed-event access, groups and relay limits. |
-| `adapters/providerconfig` | Provider configuration files and their validation helpers. |
 | `internal/search` | Shared application search request/result types. No ARC protocol rules. |
 | `internal/` | Small shared types, implementation utilities and test infrastructure. Core does not import these packages. |
 
@@ -63,6 +67,9 @@ Application composition selects concrete adapters. `runtime/citizen.Open`
 constructs a citizen's disk stores, mail journal and relay adapters. An embedded
 caller can construct core components with different implementations. HTTP and
 provider process adapters depend on the same core contracts as other providers.
+
+An app imports only `sdk/` and its own packages. `cmd/arc` imports no app. The
+SDK imports only `core/` and `sdk/`. `internal/architecture` checks these rules.
 
 Runtime libraries and adapters must not import concrete apps or executable entry
 points. An adapter must not import application workflows. It implements the interface consumed by the relevant layer. ARC event adapters
@@ -95,7 +102,7 @@ participant, not the app's name.
 Journal defines local data commands in `apps/journal/manifest.json`. Shared
 manifest primitives in `runtime/iface` implement their bounded behavior over
 core events and storage. SQLite defines client commands in its manifest, and SQL
-policy in `apps/sqlite/server`. `cmd/arc-sqlite` supplies process streams and
+policy in `apps/sqlite/server`. `apps/sqlite/cmd/arc-sqlite` supplies process streams and
 signals. No handwritten SQLite client binary is required.
 
 Command stdout holds results; stderr holds diagnostics. Hosted service program
@@ -121,7 +128,7 @@ Reuse does not make search part of the ARC protocol.
 
 There are two different possible HTTP roles:
 
-- `adapters/http` currently converts an ARC call into an HTTP application request.
+- `sdk/httpadapter` currently converts an ARC call into an HTTP application request.
 - A future HTTP delivery adapter would move signed ARC events between nodes.
 
 Both roles are outside core. The HTTP application adapter supports buffered calls,
@@ -130,7 +137,7 @@ streaming HTTP bodies, SSE, and WebSocket sessions through the shared core runti
 Core now defines `request_reply`, `server_stream` and `duplex` interactions.
 `core/session` implements ordering, bounded flow control, cancellation, half-close
 and final outcomes. `core/call` carries authenticated session frames over any
-`transport.Live` event adapter, and `core/provider` exposes the same machinery to
+`transport.Live` event adapter, and `sdk/provider` exposes the same machinery to
 handlers and nested consumers. Relays and provider stdio use this protocol;
 neither adapter implements session behavior. See [the session contract](sessions/SPEC.md).
 
@@ -166,12 +173,12 @@ messages; these additions require a provider/runtime that supports sessions.
 | --- | --- |
 | `delivery/{call,keys,mail,node,private,store,transport,...}` | Corresponding `core/` packages; concrete implementations move to `adapters/`. |
 | `internal/citizen`, `iface`, `capability`, `bundle`, `lists`, `release`, `wake`, `delivery/catalog` | Corresponding `runtime/` packages. |
-| `provider` | `core/provider` for contracts and runtime. |
-| `provider.HTTP(handler)` | `httpadapter.New(handler)` from `adapters/http`. |
-| `provider.Run` with default process streams | `stdio.Run` from `adapters/provider/stdio`, using `core/provider.Options`. |
-| `provider.Run` with injected streams | `core/provider.Run`; input and output are required, and omitted logs are discarded. |
+| `provider` | `sdk/provider` for contracts and runtime. |
+| `provider.HTTP(handler)` | `httpadapter.New(handler)` from `sdk/httpadapter`. |
+| `provider.Run` with default process streams | `stdio.Run` from `sdk/stdio`, using `sdk/provider.Options`. |
+| `provider.Run` with injected streams | `sdk/provider.Run`; input and output are required, and omitted logs are discarded. |
 | `provider/host` | `adapters/provider/host`. |
-| `provider.ConfigPath`, `ReadConfig`, `Grants`, `Limit`, `Directory` | `adapters/providerconfig`. |
+| `provider.ConfigPath`, `ReadConfig`, `Grants`, `Limit`, `Directory` | `sdk/providerconfig`. |
 | `store.Open(directory)` | `boltstore.Open(directory)` from `adapters/store/bolt`; core tests/embedders can use `store.New(backend)`. |
 | `mail.Open(directory, ...)` | `mailbox.Open(directory, ...)` from `adapters/mailbox`; core embedders use `mail.New(journal, ...)`. |
 | `keys.Save`, `Load`, `Read`, `Write` and key-file errors | `adapters/keyfile`. |

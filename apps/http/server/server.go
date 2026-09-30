@@ -31,10 +31,9 @@ import (
 	"syscall"
 	"time"
 
-	httpadapter "github.com/gezibash/arc/adapters/http"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/strictjson"
+	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/strictjson"
 )
 
 const (
@@ -123,7 +122,7 @@ func (a *adapter) HandleRequest(ctx context.Context, r provider.Request) (string
 	return a.web.HandleRequest(ctx, r)
 }
 
-func (a *adapter) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
+func (a *adapter) HandleSession(ctx context.Context, req provider.Request, stream *provider.Stream) error {
 	return a.web.HandleSession(context.WithValue(ctx, sessionHTTPKey{}, true), req, stream)
 }
 func (a *adapter) SetSessionCaller(caller provider.SessionCaller) {

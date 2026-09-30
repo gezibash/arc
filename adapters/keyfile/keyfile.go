@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/core/keys"
-	"github.com/gezibash/arc/internal/atomicfile"
+	"github.com/gezibash/arc/sdk/atomicfile"
 )
 
 // Errors of a key file.

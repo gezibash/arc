@@ -2,7 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/sdk/provider"
 	"io"
 	"net/http"
 )
@@ -13,12 +13,12 @@ type sessionHTTPKey struct{}
 // address, mode and initial body. The HTTP body is the duplex input stream.
 // An error trailer carries the final outcome after streaming headers are sent.
 func (a *adapter) sessionCall(w http.ResponseWriter, r *http.Request) {
-	mode := session.Mode(r.URL.Query().Get("mode"))
+	mode := provider.Mode(r.URL.Query().Get("mode"))
 	if mode == "" {
-		mode = session.ServerStream
+		mode = provider.ServerStream
 	}
 	address, body := r.URL.Query().Get("address"), r.URL.Query().Get("body")
-	if address == "" || !mode.Valid() || len(body) > session.MaxChunk {
+	if address == "" || !mode.Valid() || len(body) > provider.MaxChunk {
 		answer(w, 400, "error", "invalid session request")
 		return
 	}
@@ -40,7 +40,7 @@ func (a *adapter) sessionCall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Trailer", "Arc-Session-Error")
 	w.WriteHeader(200)
 	_ = http.NewResponseController(w).Flush()
-	if mode == session.Duplex {
+	if mode == provider.Duplex {
 		go func() {
 			_, err := io.Copy(stream, r.Body)
 			if err == nil {

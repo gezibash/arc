@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/internal/strictjson"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/strictjson"
 )
 
 // command is one command to run.

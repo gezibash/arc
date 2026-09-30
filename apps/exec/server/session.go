@@ -11,13 +11,12 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	execadapter "github.com/gezibash/arc/adapters/exec"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
+	execadapter "github.com/gezibash/arc/sdk/execadapter"
+	"github.com/gezibash/arc/sdk/provider"
 	"golang.org/x/sys/unix"
 )
 
-func (s *server) HandleSession(parent context.Context, req provider.Request, stream *session.Stream) error {
+func (s *server) HandleSession(parent context.Context, req provider.Request, stream *provider.Stream) error {
 	if req.Method() != "EXEC" {
 		return provider.ErrInvalidRequest
 	}
@@ -31,8 +30,8 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	if request.Action != "" && request.Action != "run" || request.Job != "" {
 		return provider.ErrInvalidRequest
 	}
-	if request.PTY && stream.Mode() != session.Duplex {
-		return session.ErrUnsupported
+	if request.PTY && stream.Mode() != provider.Duplex {
+		return provider.ErrUnsupported
 	}
 	cmd, err := parseCommand(s.config, request, s.config.Limits.TimeoutMS)
 	if err != nil {
@@ -132,7 +131,7 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 				return
 			}
 		}
-		if stream.Mode() != session.Duplex {
+		if stream.Mode() != provider.Duplex {
 			input.Close()
 			return
 		}

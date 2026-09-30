@@ -322,7 +322,7 @@ trusted compute broker.
 | [Execution adapter](../../apps/exec/server/server.go) | Can host public orchestration; its ordinary process and plaintext input/output are not a protected boundary |
 | [Private events](../../core/private/private.go) | NIP-44 encryption in NIP-59 gift wraps, to one recipient; no attestation binding today, and no forward secrecy (docs/delivery/SPEC.md, section 13) |
 | [Sealed drafts](../../core/draft/draft.go) | NIP-37 drafts, sealed to their author; data that an owner keeps for itself, not a storage format for a guest, sender authorization, freshness proof, or guest verifier |
-| [Provider grants](../../adapters/providerconfig/config.go) | Local authorization by public key; not the signed, portable run grants defined here |
+| [Provider grants](../../sdk/providerconfig/config.go) | Local authorization by public key; not the signed, portable run grants defined here |
 
 The private-environment implementation MUST supply the missing verifier,
 protected endpoint, policy enforcement, grant format, key-release controller,

@@ -18,7 +18,7 @@ const module = "github.com/gezibash/arc/"
 // reported even when it would create a Go import cycle.
 func TestPackageBoundaries(t *testing.T) {
 	root := filepath.Join("..", "..")
-	for _, layer := range []string{"core", "adapters", "runtime", "apps"} {
+	for _, layer := range []string{"core", "sdk", "adapters", "runtime", "apps", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, layer), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -26,7 +26,9 @@ func TestPackageBoundaries(t *testing.T) {
 			if entry.IsDir() && entry.Name() == "testdata" {
 				return filepath.SkipDir
 			}
-			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			// The tests of an app are checked too: they must not need a
+			// package that another repository cannot import.
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || (strings.HasSuffix(path, "_test.go") && layer != "apps") {
 				return nil
 			}
 			file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
@@ -38,8 +40,8 @@ func TestPackageBoundaries(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if reason := forbidden(layer, imported); reason != "" {
-					relative, _ := filepath.Rel(root, path)
+				relative, _ := filepath.Rel(root, path)
+				if reason := forbidden(filepath.ToSlash(relative), imported); reason != "" {
 					t.Errorf("%s imports %s: %s", relative, imported, reason)
 				}
 			}
@@ -51,20 +53,47 @@ func TestPackageBoundaries(t *testing.T) {
 	}
 }
 
-func forbidden(layer, imported string) string {
+// forbidden gives the rule that an import breaks, or "" if it breaks none.
+// file is the path of the source file from the root of the repository.
+func forbidden(file, imported string) string {
+	layer, rest, _ := strings.Cut(file, "/")
 	if strings.HasPrefix(imported, module) {
 		target := strings.TrimPrefix(imported, module)
-		if layer == "core" && target != "core" && !strings.HasPrefix(target, "core/") {
-			return "core must depend only on core ports and rules"
-		}
-		if (layer == "adapters" || layer == "runtime" || layer == "apps") && strings.HasPrefix(target, "cmd/") {
-			return "reusable packages must not depend on executable entry points"
-		}
-		if (layer == "adapters" || layer == "runtime") && strings.HasPrefix(target, "apps/") {
-			return "runtime and adapters must not depend on concrete apps"
-		}
-		if layer == "adapters" && strings.HasPrefix(target, "runtime/") {
-			return "adapters must not depend on runtime workflows"
+		in := func(prefix string) bool { return target == prefix || strings.HasPrefix(target, prefix+"/") }
+		switch layer {
+		case "core":
+			if !in("core") {
+				return "core must depend only on core ports and rules"
+			}
+		case "sdk":
+			if !in("core") && !in("sdk") {
+				return "the SDK must depend only on core and the SDK"
+			}
+		case "adapters":
+			if in("runtime") || in("apps") || in("cmd") {
+				return "adapters must not depend on the runtime, on apps, or on entry points"
+			}
+		case "runtime":
+			if in("apps") || in("cmd") {
+				return "the runtime must not depend on concrete apps or on entry points"
+			}
+		case "apps":
+			if strings.HasSuffix(file, "_test.go") {
+				if in("internal") {
+					return "the tests of an app must not depend on internal packages"
+				}
+				break
+			}
+			// An app must build in another repository. It uses the SDK and
+			// its own packages, and nothing else of this module.
+			app, _, _ := strings.Cut(rest, "/")
+			if !in("sdk") && !in("apps/"+app) {
+				return "an app must depend only on the SDK and its own packages"
+			}
+		case "cmd":
+			if in("apps") {
+				return "arc must not depend on a concrete app"
+			}
 		}
 	}
 	if layer == "core" {

@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/gezibash/arc/internal/limitio"
+	"github.com/gezibash/arc/sdk/limitio"
 )
 
 // result is what one command left behind.

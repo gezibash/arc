@@ -5,14 +5,13 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/strictjson"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/strictjson"
 )
 
-func (s *server) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
-	if stream.Mode() != session.ServerStream {
-		return session.ErrUnsupported
+func (s *server) HandleSession(ctx context.Context, req provider.Request, stream *provider.Stream) error {
+	if stream.Mode() != provider.ServerStream {
+		return provider.ErrUnsupported
 	}
 	if req.Method() != "RAW" || req.Path() != "/releases" {
 		return errInvalidRequest

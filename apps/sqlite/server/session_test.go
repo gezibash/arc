@@ -3,16 +3,16 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/internal/testsession"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providertest"
 )
 
-func sqlSession(t *testing.T, s *server, caller string, mode session.Mode, body string) *session.Stream {
-	return testsession.Start(t, mode, func(ctx context.Context, stream *session.Stream) error {
+func sqlSession(t *testing.T, s *server, caller string, mode provider.Mode, body string) *provider.Stream {
+	return providertest.Start(t, mode, func(ctx context.Context, stream *provider.Stream) error {
 		return s.HandleSession(ctx, provider.Request{From: caller, Message: body, Meta: map[string]any{"method": "QUERY", "path": "/main"}}, stream)
 	})
 }
@@ -24,7 +24,7 @@ func sqlRead(t *testing.T, d *json.Decoder) map[string]any {
 	}
 	return v
 }
-func sqlSend(t *testing.T, stream *session.Stream, d *json.Decoder, text string) []map[string]any {
+func sqlSend(t *testing.T, stream *provider.Stream, d *json.Decoder, text string) []map[string]any {
 	t.Helper()
 	if _, err := io.WriteString(stream, text+"\n"); err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestSQLSessionTransactionsAndIsolation(t *testing.T) {
 	s := testServer(t)
 	s.config.Limits.OutputBytes = 4096
 	reply(t, s, aliceKey, map[string]any{"sql": "CREATE TABLE items(n INTEGER)"})
-	stream := sqlSession(t, s, aliceKey, session.Duplex, "")
+	stream := sqlSession(t, s, aliceKey, provider.Duplex, "")
 	d := json.NewDecoder(stream)
 	if sqlRead(t, d)["type"] != "ready" {
 		t.Fatal("no prompt before EOF")
@@ -66,7 +66,7 @@ func TestSQLSessionTransactionsAndIsolation(t *testing.T) {
 	if b, _ := json.Marshal(rowsOf(got)); string(b) != "[[7]]" {
 		t.Fatalf("EOF committed uncommitted changes: %s", b)
 	}
-	other := sqlSession(t, s, aliceKey, session.Duplex, "")
+	other := sqlSession(t, s, aliceKey, provider.Duplex, "")
 	od := json.NewDecoder(other)
 	sqlRead(t, od)
 	events := sqlSend(t, other, od, "SELECT * FROM local")
@@ -82,11 +82,11 @@ func TestSQLSessionAuthorizationAndLimitRollback(t *testing.T) {
 	s := testServer(t)
 	s.config.Limits.OutputBytes = 4096
 	reply(t, s, aliceKey, map[string]any{"sql": "CREATE TABLE items(n INTEGER)"})
-	denied := sqlSession(t, s, carolKey, session.Duplex, "")
+	denied := sqlSession(t, s, carolKey, provider.Duplex, "")
 	if _, err := io.ReadAll(denied); err == nil || err.Error() != "unauthorized" {
 		t.Fatalf("grant: %v", err)
 	}
-	reader := sqlSession(t, s, bobKey, session.Duplex, "")
+	reader := sqlSession(t, s, bobKey, provider.Duplex, "")
 	rd := json.NewDecoder(reader)
 	sqlRead(t, rd)
 	for _, sql := range []string{"INSERT INTO items VALUES(1)", "ATTACH ':memory:' AS other", "PRAGMA user_version=1"} {
@@ -95,7 +95,7 @@ func TestSQLSessionAuthorizationAndLimitRollback(t *testing.T) {
 			t.Fatalf("reader executed %s", sql)
 		}
 	}
-	writer := sqlSession(t, s, aliceKey, session.Duplex, "")
+	writer := sqlSession(t, s, aliceKey, provider.Duplex, "")
 	wd := json.NewDecoder(writer)
 	sqlRead(t, wd)
 	events := sqlSend(t, writer, wd, "INSERT INTO items VALUES(1),(2),(3) RETURNING n")
@@ -110,12 +110,12 @@ func TestSQLSessionAuthorizationAndLimitRollback(t *testing.T) {
 func TestSQLServerStreamAndCancellation(t *testing.T) {
 	s := testServer(t)
 	s.config.Limits.OutputBytes = 4096
-	stream := sqlSession(t, s, aliceKey, session.ServerStream, `{"sql":"SELECT 42 AS answer"}`)
+	stream := sqlSession(t, s, aliceKey, provider.ServerStream, `{"sql":"SELECT 42 AS answer"}`)
 	data, err := io.ReadAll(stream)
 	if err != nil || !strings.Contains(string(data), `"row":[42]`) || stream.Wait() != nil {
 		t.Fatalf("stream: %s %v", data, err)
 	}
-	active := sqlSession(t, s, aliceKey, session.Duplex, "")
+	active := sqlSession(t, s, aliceKey, provider.Duplex, "")
 	d := json.NewDecoder(active)
 	sqlRead(t, d)
 	sqlSend(t, active, d, "BEGIN")

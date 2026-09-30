@@ -5,7 +5,7 @@ The hosted app supplies its own interface manifest. There is no universal
 manifest because routes, permissions and interaction modes belong to that app.
 
 The implementation lives in `server/`; `cmd/arc-http` supplies process streams,
-signals and exit status. Reusable HTTP mappings live in `adapters/http`.
+signals and exit status. Reusable HTTP mappings live in `sdk/httpadapter`.
 
 The child listens on `127.0.0.1:$PORT`. `ARC_CALL_URL` and `ARC_CALL_TOKEN` let it
 call services installed by its operating identity. The same endpoint supports
