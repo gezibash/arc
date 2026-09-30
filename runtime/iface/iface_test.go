@@ -6,8 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -22,32 +20,33 @@ import (
 	"github.com/gezibash/arc/core/transport"
 )
 
-// specManifests are the manifests of section 17 of the spec.
+// specManifests are the manifests of the apps in this repository, by ID.
 func specManifests(t *testing.T) map[string]*Manifest {
 	t.Helper()
-	body, err := os.ReadFile("../../docs/interface/SPEC.md")
+	paths, err := filepath.Glob("../../apps/*/manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(body)
-	text = text[strings.Index(text, "\n## 17. "):]
-	blocks := regexp.MustCompile("(?s)```json\n(\\{\n  \"interface\".*?)```").FindAllStringSubmatch(text, -1)
 	out := map[string]*Manifest{}
-	for _, block := range blocks {
-		m, err := Parse([]byte(block[1]))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("a manifest of the spec does not parse: %v\n%s", err, block[1][:80])
+			t.Fatal(err)
+		}
+		m, err := Parse(data)
+		if err != nil {
+			t.Fatalf("%s does not parse: %v", path, err)
 		}
 		out[m.ID] = m
 	}
 	return out
 }
 
-func TestEveryManifestOfTheSpecParses(t *testing.T) {
+func TestEveryManifestOfTheAppsParses(t *testing.T) {
 	got := specManifests(t)
 	for _, id := range []string{"exec", "sqlite", "releases", "journal", "dm", "agora", "files"} {
 		if got[id] == nil {
-			t.Errorf("the spec has no manifest %s that parses", id)
+			t.Errorf("no app has a manifest %s that parses", id)
 		}
 	}
 }
@@ -462,28 +461,6 @@ func TestAVariadicKeepsItsFlags(t *testing.T) {
 	}
 	if env.request.Body != `{"argv": ["sh","-c","echo --x"]}` {
 		t.Errorf("the body is %s", env.request.Body)
-	}
-}
-
-// The manifest files in the repository are the manifests of the spec.
-func TestTheManifestFilesAreTheSpec(t *testing.T) {
-	spec := specManifests(t)
-	paths, _ := filepath.Glob("../../apps/*/manifest.json")
-	if len(paths) != 7 {
-		t.Fatalf("found %d manifest files, want 7", len(paths))
-	}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m, err := Parse(data)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
-		if !reflect.DeepEqual(m, spec[m.ID]) {
-			t.Errorf("%s is not the manifest of the spec", path)
-		}
 	}
 }
 

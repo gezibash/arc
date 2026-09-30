@@ -8,12 +8,12 @@
 //
 //	[wake."<64 characters of hex>"]
 //	kind = "command"
-//	argv = ["sprite", "exec", "-s", "arc", "--", "<start-script>"]
+//	argv = ["ssh", "<host>", "<start-script>"]
 //
 // Before a request to a citizen with a hook, the caller runs the hook, unless
 // the citizen answered or woke less than Fresh ago. A citizen without a hook
-// must have a current announcement on the relay. See docs/exec/SPEC.md,
-// sections 9 and 10.
+// must have a current announcement on the relay. See docs/wake/SPEC.md,
+// sections 3.3 and 4.3.
 package wake
 
 import (
@@ -65,7 +65,7 @@ var (
 	ErrPeerOffline = errors.New("peer_offline")
 )
 
-// The presence states of a citizen, as a caller sees it (spec section 9).
+// The presence states of a citizen, as a caller sees it (spec section 3.3).
 const (
 	// Online: the relay has a current announcement of the citizen.
 	Online = "online"
@@ -214,7 +214,7 @@ func (w *Waker) State(citizen []byte, announced bool) string {
 	return Offline
 }
 
-// Wake makes the citizen ready for a request (spec section 10.2).
+// Wake makes the citizen ready for a request (spec section 4.3).
 //
 // A citizen with a hook: Wake runs the hook, unless the citizen answered or
 // woke less than Fresh ago. Exit status 0 of the hook means that the citizen

@@ -1,7 +1,8 @@
 # MLD: the machine lifecycle definition
 
-Status: proposed. No code implements this document. It generalizes the Sprite
-lifecycle of [the exec spec](../exec/SPEC.md), sections 6, 10, and 11.
+Status: proposed. No code implements this document. It generalizes the
+lifecycle of a machine that pauses, from [the wake spec](../wake/SPEC.md),
+section 3, and the lease of [the exec app](../../apps/exec/README.md#lease).
 
 ## 1. Purpose
 
@@ -20,7 +21,7 @@ The MLD answers four questions for one machine:
 
 | Shape | Example | Machine after the work | Identity |
 | --- | --- | --- | --- |
-| Persistent | A Fly.io Sprite, a laptop, a server | The machine pauses or stays idle. The disk survives. | The citizen key lives on the machine. |
+| Persistent | A cloud machine that pauses, a laptop, a server | The machine pauses or stays idle. The disk survives. | The citizen key lives on the machine. |
 | Per-task | A Vercel Sandbox, an E2B sandbox | The platform destroys the machine. | The machine holds a delegated key for one task. |
 
 A persistent machine keeps one identity for its life. A per-task machine gets
@@ -56,7 +57,7 @@ Rules:
 
 ```json
 {
-  "platform": "sprite",
+  "platform": "<name>",
   "persists_disk": true,
   "persists_processes": true,
   "max_session_ms": null,
@@ -135,7 +136,7 @@ Rules:
 The citizen delegates. A manager does not delegate for a citizen, because a
 manager does not hold the citizen key.
 
-Example: a citizen on a Sprite receives a task that needs 32 CPUs. The citizen
+Example: a citizen on a small machine receives a task that needs 32 CPUs. The citizen
 creates a machine on another platform, generates a key there, and signs a
 delegation for 20 minutes. The new machine runs the task and reports the
 result. The delegation then expires.
@@ -148,7 +149,7 @@ The job request carries `reply_to`, a public key. The default is the caller.
 - On a per-task machine, the machine sends the result before the platform
   limit ends the session.
 - If the machine stops before the result leaves, the job state is `lost`. See
-  [the exec spec](../exec/SPEC.md), section 12.1.
+  [the exec app](../../apps/exec/README.md#jobs).
 
 A delegate reports to `reply_to` in the same way. The DM comes from the
 delegate key with its delegation attached, so the reader verifies the chain.
@@ -168,7 +169,7 @@ delegate key with its delegation attached, so the reader verifies the chain.
 
 | Platform | Shape | Wake | Hold |
 | --- | --- | --- | --- |
-| `sprite` | Persistent | The Sprites API through the CLI | A task of the Tasks API |
+| `<name>` of a platform that pauses | Persistent | The platform API through its command-line program | A hold of the platform, with an expiry |
 | `none` | Persistent | Start `arc serve` when it does not run | Nothing |
 | `vercel` | Per-task | Create a sandbox. Supply the bundle and the delegation. | The session of the sandbox |
 
@@ -190,7 +191,7 @@ change.
 
 | Phase | Scope |
 | --- | --- |
-| 1 | The machine script and the capability file. Move `sprite` and `none` to them. |
+| 1 | The machine script and the capability file, for `none` and for one platform that pauses. |
 | 2 | The provider refuses a job that exceeds `max_session_ms`. |
 | 3 | The delegation format, and verification in the exec provider. |
 | 4 | The `vercel` platform, with a delegated identity. |

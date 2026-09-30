@@ -163,3 +163,30 @@ The check "Spec policy" reads each pull request. It refuses three things:
 
 The check runs the rules of the base branch, so a pull request cannot change
 the rules that judge it.
+
+## 9. The body
+
+Each `SPEC.md` has exactly these sections, in this order, after its header.
+A section can have numbered subsections, such as `### 3.1 Frames`.
+`go test ./internal/specs` checks the headings.
+
+| Section | What it holds | Gates |
+| --- | --- | --- |
+| `## 1. Purpose` | What the spec defines, for whom, and what it does not do. | A1, A3, C5 |
+| `## 2. Terms` | Each term that the spec defines. A term that another spec owns links to that spec. | B4 |
+| `## 3. Rules` | The normative rules: wire formats, kinds, tags, fields, limits and states. Write each rule with MUST or MUST NOT. | B1, B2, C1 |
+| `## 4. Behavior` | How the parties follow the rules, step by step. | B3 |
+| `## 5. Failures` | Each failure: its cause, what each party does, and what the user sees. | D3 |
+| `## 6. Security` | What a hostile relay, peer, provider or observer can do, and who pays for storage, CPU and bandwidth. | C3 |
+| `## 7. Compatibility` | How an older client behaves, what the spec replaced, and how it can be removed. | C2, C4 |
+| `## 8. Proof` | The tests that prove the rules, the test vectors, and what stays unverified. | D1, D2, D4, D5 |
+| `## Gates` | The record of the gates, see section 4. | |
+
+A spec holds rules and their reasons. It does not hold the history of the
+work, a list of pull requests, or the guide of one app. The history goes in
+the CHANGELOG. An app documents itself in its README, and links to its
+`manifest.json`; a spec does not copy a manifest.
+
+A design with nothing built goes in `docs/proposals/`. A `partial` spec keeps
+its parts that are not built, starts each of them with "Not built.", and names
+them in its `Remaining` item.

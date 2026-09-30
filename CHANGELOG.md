@@ -98,7 +98,7 @@ release.
   `mise run check-relay`.
 - The start, lease and notify scripts of the exec app, in
   `cmd/exec-provider/citizen/` in v0.16.0. The operator supplies them.
-  docs/exec/SPEC.md, sections 10.3 and 10.4, states what each one must do.
+  docs/wake/SPEC.md, sections 3.6 and 3.7, states what each one must do.
 - The `arc-journal` skill. It named one operator's relay and journal.
 - The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
   documents. Each document now shows `wss://<relay>`.

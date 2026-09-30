@@ -295,13 +295,13 @@ func TestAnOldAnswerRunsTheHook(t *testing.T) {
 
 func TestAHookThatFailsGivesWakeFailed(t *testing.T) {
 	key := citizen(t)
-	waker, _ := configure(t, hook(key, "echo 'the sprite is gone' >&2; exit 3"))
+	waker, _ := configure(t, hook(key, "echo 'the machine is gone' >&2; exit 3"))
 
 	err := waker.Wake(context.Background(), key, nil)
 	if !errors.Is(err, wake.ErrFailed) {
 		t.Fatalf("err = %v, and it must be wake_failed", err)
 	}
-	for _, want := range []string{"wake_failed", keys.Name(key), "status 3", "the sprite is gone"} {
+	for _, want := range []string{"wake_failed", keys.Name(key), "status 3", "the machine is gone"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error %q does not say %q", err, want)
 		}

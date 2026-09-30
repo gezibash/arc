@@ -239,7 +239,7 @@ Specs:
   a citizen keeps for itself.
 - [Sessions](docs/sessions/SPEC.md): streaming and duplex interactions.
 - [HTTP over ARC](docs/http/SPEC.md).
-- [Exec](docs/exec/SPEC.md): remote commands and wakeable citizens.
+- [Wake](docs/wake/SPEC.md): presence, wake hooks and machines that pause.
 - [Updates](docs/updates/SPEC.md): signed release channels.
 - [How to write a spec](docs/SPEC-TEMPLATE.md): the gates that each spec
   answers, the [event kinds](docs/KINDS.md), and the

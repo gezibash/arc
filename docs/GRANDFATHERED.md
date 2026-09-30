@@ -20,11 +20,11 @@ Nobody has answered the gates of these specs.
 | Spec | Since |
 | --- | --- |
 | `docs/delivery/SPEC.md` | 2026-09-30 |
-| `docs/exec/SPEC.md` | 2026-09-30 |
 | `docs/http/SPEC.md` | 2026-09-30 |
 | `docs/interface/SPEC.md` | 2026-09-30 |
 | `docs/sessions/SPEC.md` | 2026-09-30 |
 | `docs/updates/SPEC.md` | 2026-09-30 |
+| `docs/wake/SPEC.md` | 2026-09-30 |
 
 ## Packages without a spec
 
