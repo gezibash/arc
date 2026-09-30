@@ -31,6 +31,9 @@ var (
 	coreGates = []string{"B2", "D5"}
 	allGates  = []string{"A1", "A2", "A3", "B1", "B2", "B3", "B4", "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4", "D5"}
 	layers    = []string{"core", "sdk", "adapters", "runtime", "app"}
+	// sections are the headings of the body of a spec, in their order. See
+	// docs/SPEC-TEMPLATE.md, section 9.
+	sections = []string{"1. Purpose", "2. Terms", "3. Rules", "4. Behavior", "5. Failures", "6. Security", "7. Compatibility", "8. Proof", "Gates"}
 )
 
 var (
@@ -220,6 +223,16 @@ func (t tree) checkSpec(path, text string) []string {
 	}
 	if !missing("Unverified") && (placeholder.MatchString(items["Unverified"]) || len(strings.Fields(items["Unverified"])) < 4) {
 		problems = append(problems, fmt.Sprintf("Unverified is %q; say what no test covers", items["Unverified"]))
+	}
+
+	var headings []string
+	for _, line := range lines {
+		if heading, ok := strings.CutPrefix(line, "## "); ok {
+			headings = append(headings, strings.TrimSpace(heading))
+		}
+	}
+	if !slices.Equal(headings, sections) {
+		problems = append(problems, fmt.Sprintf("the sections are %q; they must be %q, see docs/SPEC-TEMPLATE.md, section 9", headings, sections))
 	}
 
 	answers, found := gates(lines)

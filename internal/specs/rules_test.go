@@ -22,11 +22,15 @@ func record(id, answer, attribution, evidence string) string {
 	return fmt.Sprintf("### %s. A question?\n\n> %s\n\n%s\n%s\n\n", id, answer, attribution, evidence)
 }
 
-// document writes a spec with a header and one good record for each gate in
-// ids. change replaces the record of single gates.
+// body is the body of a spec, before its Gates section.
+const body = "## 1. Purpose\n\nText.\n\n## 2. Terms\n\n## 3. Rules\n\n## 4. Behavior\n\n## 5. Failures\n\n" +
+	"## 6. Security\n\n## 7. Compatibility\n\n## 8. Proof\n\n"
+
+// document writes a spec with a header, a body, and one good record for each
+// gate in ids. change replaces the record of single gates.
 func document(head string, ids []string, change map[string]string) string {
 	var out strings.Builder
-	out.WriteString("# A spec\n\n" + head + "\n\n## Gates\n\n")
+	out.WriteString("# A spec\n\n" + head + "\n\n" + body + "## Gates\n\n")
 	for _, id := range ids {
 		if changed, ok := change[id]; ok {
 			out.WriteString(changed)
@@ -80,7 +84,11 @@ func TestASpecThatBreaksARuleHasThatProblem(t *testing.T) {
 		"proof by link":      {document(runtimeHead, baseGates, map[string]string{"D1": record("D1", goodAnswer, by, "Evidence: https://example.com/run/7")}), "D1: the evidence must name a test that exists"},
 		"missing gate":       {document(runtimeHead, baseGates[1:], nil), "A1: the gate has no answer"},
 		"unknown gate":       {document(runtimeHead, append(slices.Clone(baseGates), "Z9"), nil), "unknown gate Z9"},
-		"no gates":           {"# A spec\n\n" + runtimeHead + "\n\n## 1. Purpose\n", `no section "## Gates"`},
+		"no gates":           {"# A spec\n\n" + runtimeHead + "\n\n" + body, `no section "## Gates"`},
+		"missing section":    {strings.Replace(document(runtimeHead, baseGates, nil), "## 6. Security\n\n", "", 1), "they must be"},
+		"sections reordered": {strings.Replace(document(runtimeHead, baseGates, nil), "## 2. Terms\n\n## 3. Rules", "## 3. Rules\n\n## 2. Terms", 1), "they must be"},
+		"extra section":      {strings.Replace(document(runtimeHead, baseGates, nil), "## 8. Proof", "## 8. Proof\n\n## 9. History", 1), "they must be"},
+		"renamed section":    {strings.Replace(document(runtimeHead, baseGates, nil), "## 3. Rules", "## 3. The rules", 1), "they must be"},
 		"sdk skips cost":     {document(head("Layers: runtime", "Layers: sdk"), baseGates, nil), "C3: the gate has no answer"},
 		"core skips wire":    {document(head("Layers: runtime", "Layers: core"), slices.Concat(baseGates, sdkGates), nil), "B2: the gate has no answer"},
 		"core skips oracle":  {document(head("Layers: runtime", "Layers: core"), slices.Concat(baseGates, sdkGates), nil), "D5: the gate has no answer"},
@@ -112,7 +120,7 @@ func TestAGrandfatheredSpec(t *testing.T) {
 	exempt := fixture
 	exempt.exempt = map[string]bool{"docs/a/SPEC.md": true}
 
-	if problems := exempt.checkSpec("docs/a/SPEC.md", "# A spec\n\n"+runtimeHead+"\n\n## 1. Purpose\n"); len(problems) != 0 {
+	if problems := exempt.checkSpec("docs/a/SPEC.md", "# A spec\n\n"+runtimeHead+"\n\n"+body+"## Gates\n"); len(problems) != 0 {
 		t.Errorf("a grandfathered spec with no gates has problems: %q", problems)
 	}
 	problems := exempt.checkSpec("docs/a/SPEC.md", document(runtimeHead, baseGates, nil))
@@ -120,7 +128,7 @@ func TestAGrandfatheredSpec(t *testing.T) {
 		t.Errorf("a grandfathered spec with each gate answered: got %q", problems)
 	}
 	// The header rules hold for a grandfathered spec too.
-	problems = exempt.checkSpec("docs/a/SPEC.md", "# A spec\n\n"+head("TestProof$", "TestNope$")+"\n")
+	problems = exempt.checkSpec("docs/a/SPEC.md", "# A spec\n\n"+head("TestProof$", "TestNope$")+"\n\n"+body+"## Gates\n")
 	if len(problems) != 1 || !strings.Contains(problems[0], "the proof matches no test") {
 		t.Errorf("a grandfathered spec with a false proof: got %q", problems)
 	}
