@@ -159,7 +159,7 @@ The bundled [SQLite](apps/sqlite/README.md#live-sql-sessions),
 [Releases](apps/releases/README.md#streaming-archives) apps implement
 these interactions. Use `--exec`, `--tty`, `--http`, or `--websocket` on
 `arc session` to select their CLI I/O mappings. Existing request/reply commands
-remain available. See the [app service session guide](docs/sessions/PROVIDERS.md).
+remain available. See the [sessions of the bundled apps](apps/README.md#sessions-of-the-bundled-apps).
 
 
 ## Run a relay
