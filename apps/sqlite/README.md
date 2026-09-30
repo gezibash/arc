@@ -1,6 +1,6 @@
 # SQLite app
 
-The manifest generates client commands. `server/` owns SQL policy, grants and
+The [manifest](manifest.json) generates client commands. `server/` owns SQL policy, grants and
 REPL connection state. `cmd/arc-sqlite` is the executable entry point. The
 service can run on the same machine as its client or on another participant.
 

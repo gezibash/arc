@@ -6,10 +6,12 @@
 - Proof: go test -count=1 -run '^TestInterface$' ./internal/proof/
 - Unverified: No test runs a manifest command against a relay other than a local relay.
 
-Phases A to D are built, see section 18. `arc` runs them, and
+Phases A to D are built, see section 8. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
+
+
 
 ## 1. Purpose
 
@@ -37,18 +39,7 @@ This interface runs on the delivery layer of docs/delivery/SPEC.md. Every
 datum is a signed event, so signing and verification are not primitives: the
 delivery layer does both for every event.
 
-## 2. Two shapes
-
-| Shape | What answers | Example |
-| --- | --- | --- |
-| service | An app service program answers calls. | exec, sqlite, releases |
-| data | Nobody answers. The citizen writes events and reads them. | journal, direct messages, Agora, files |
-
-A data app needs no service program. Its manifest still comes from an author,
-who signs its announcement. A citizen installs the manifest by trusting that
-author.
-
-## 3. Terms
+## 2. Terms
 
 | Term | Meaning |
 | --- | --- |
@@ -61,7 +52,20 @@ author.
 | kind name | A name that a manifest gives to one event kind, in its `kinds` section. |
 | draft | A NIP-37 draft wrap: an event of kind 31234 whose content is another event, sealed to its author. |
 
-## 4. The manifest
+### 2.1 Two shapes
+
+| Shape | What answers | Example |
+| --- | --- | --- |
+| service | An app service program answers calls. | exec, sqlite, releases |
+| data | Nobody answers. The citizen writes events and reads them. | journal, direct messages, Agora, files |
+
+A data app needs no service program. Its manifest still comes from an author,
+who signs its announcement. A citizen installs the manifest by trusting that
+author.
+
+## 3. Rules
+
+### 3.1 The manifest
 
 ```json
 {
@@ -84,13 +88,13 @@ author.
 | `id` | The capability id. The announcement uses it as its `d` tag. |
 | `title`, `summary` | Shown by `discover` and at install. |
 | `shape` | `service` or `data`. |
-| `kinds` | Every kind that the commands publish or read, by name. See 4.1. |
-| `group` | For a capability with group kinds: the relay that hosts the group, and the group id. See 4.2. |
-| `service` | For a service: the default method, path, and body limit. See 4.3. |
-| `formats` | Named ways to show records. See section 10. |
-| `commands` | The commands. See 4.4. |
+| `kinds` | Every kind that the commands publish or read, by name. See section 3.2. |
+| `group` | For a capability with group kinds: the relay that hosts the group, and the group id. See section 3.3. |
+| `service` | For a service: the default method, path, and body limit. See section 3.4. |
+| `formats` | Named ways to show records. See section 3.15. |
+| `commands` | The commands. See section 3.5. |
 
-### 4.1 Kinds and visibility
+### 3.2 Kinds and visibility
 
 Each entry names one event kind and its visibility. The visibility decides the
 NIP that carries the event, and the relays that it goes to. A manifest never
@@ -101,7 +105,7 @@ names relays.
 | `public` | The event itself, as its NIP defines. | The citizen's NIP-65 write relays. |
 | `sealed` | A NIP-37 draft. The event is sealed to the citizen's own key with NIP-44, and the draft carries `["-"]`, the NIP-70 tag, so only the citizen can publish it to a relay. | The relays of the citizen's NIP-37 list, kind 10013. |
 | `private` | A rumor inside a NIP-59 gift wrap, through the mail layer. | Each recipient's NIP-17 list, kind 10050, and couriers. |
-| `group` | The event, with an `h` tag that names the group, and `["-"]`. | The relay of the group, see 4.2. |
+| `group` | The event, with an `h` tag that names the group, and `["-"]`. | The relay of the group, see section 3.3. |
 
 A kind can declare `"frontmatter": ["title"]`. This is a write policy:
 new content and the resulting content of an append must start with a header
@@ -125,14 +129,14 @@ manifest. Notebook pages require title/page/notebook front matter, positive page
 numbers, managed timestamps, and automatic index refresh. Notebook application
 behavior stays outside core; all events use its existing draft protocol.
 
-A command can publish only kinds that the manifest names here. Section 12
+A command can publish only kinds that the manifest names here. Section 6
 lists the kinds that no manifest can name.
 
 A sealed kind is the kind of the event inside the draft. A journal page, for
 example, is a kind 30023 article inside a kind 31234 draft. The draft's `k`
 tag names 30023, as NIP-37 requires.
 
-### 4.2 Group
+### 3.3 Group
 
 ```json
 "group": {"relay": "wss://board.example", "id": "agora"}
@@ -149,7 +153,7 @@ the group with its own key, and names that key in its NIP-11 document as
 restricted group from a citizen who is not a member, and a moderation event
 from a citizen who is not an admin. `adapters/relay/groups` holds these rules.
 
-### 4.3 Service
+### 3.4 Service
 
 ```json
 "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576}
@@ -157,8 +161,8 @@ from a citizen who is not an admin. `adapters/relay/groups` holds these rules.
 
 A command of a service can override the method and the path.
 
-`output` is optional. It is an output pipeline, as section 9 defines, for the
-reply of a call by address, `arc call`, see 14.1. It starts from one record
+`output` is optional. It is an output pipeline, as section 3.14 defines, for the
+reply of a call by address, `arc call`, see section 3.18. It starts from one record
 whose `content` is the reply. It can open, filter, format, and set the exit
 status. It cannot `save` or `tail`, and its templates name no arguments.
 Without `output`, `arc call` writes the reply as it came.
@@ -172,7 +176,7 @@ Without `output`, `arc call` writes the reply as it came.
 A manifest with `output` in its service needs a caller of v0.14.0 or later.
 An older caller refuses the manifest, because it does not know the field.
 
-### 4.4 Commands
+### 3.5 Commands
 
 ```json
 {
@@ -190,7 +194,7 @@ An older caller refuses the manifest, because it does not know the field.
 `path` is the words of the command after the capability's name. An empty path
 is the capability's name alone. Every command has exactly one action.
 
-## 5. Arguments
+### 3.6 Arguments
 
 | Kind | Meaning |
 | --- | --- |
@@ -216,7 +220,7 @@ Core shows keys as `npub` and events as `nevent`, as NIP-19 defines. It shows
 a citizen's name from their kind 0 profile when it holds one, and the petname
 otherwise.
 
-## 6. Templates
+### 3.7 Templates
 
 A value in an action can hold placeholders: `{{name}}`, where `name` is an
 argument. A filter changes the value: `{{name|json}}`. Filters apply from left
@@ -227,7 +231,7 @@ to right.
 | `json` | The value as a JSON literal. An absent value is `null`. |
 | `hex` | The value as lower-case hex. |
 | `join` | A list as one text: its words, joined by one space. `{{argv\|json}}` writes a JSON array, and `{{sql\|join\|json}}` writes one JSON string. |
-| `keyed:<purpose>` | An HMAC of the value, as 22 characters. See 6.1. |
+| `keyed:<purpose>` | An HMAC of the value, as 22 characters. See section 3.7.1. |
 | `event_author` | The author of the event that the value names. Core reads the event from the store, then from the transports, and fails the command when it finds none. |
 | `default:<text>` | The text, when the value is absent. |
 
@@ -239,7 +243,7 @@ Each template also knows these names:
 | `author` | The public key of the capability's author. |
 | `now` | The time now, as seconds since 1970. |
 
-### 6.1 Keyed values
+#### 3.7.1 Keyed values
 
 A keyed value names something without revealing it. A journal page, for
 example, is found by a keyed value of its address:
@@ -275,9 +279,7 @@ open it. The root follows from the key, so every machine with the key makes
 the same draft. A `d` tag of a manifest cannot start with `arc-`, and a query
 leaves out these drafts.
 
-## 7. Actions
-
-### 7.1 call
+### 3.8 The action call
 
 Only a service has `call`. It sends one request to the provider, as
 docs/delivery/SPEC.md section 11.4 defines.
@@ -298,9 +300,9 @@ docs/delivery/SPEC.md section 11.4 defines.
 | `body` | A template, `{{stdin}}`, or `{{file}}` for a `file` argument. |
 
 The reply becomes one record. A reply larger than one event travels as parts,
-as 7.2.2 defines.
+as section 3.9.2 defines.
 
-### 7.2 publish
+### 3.9 The action publish
 
 `publish` makes one event, signs it, and sends it where its visibility says.
 
@@ -321,11 +323,11 @@ as 7.2.2 defines.
 | `d` | For an addressable kind, or for any sealed kind, the `d` tag. For a sealed kind, the draft carries it. |
 | `content` | A template for text, or `{"json": ...}` for an object whose values are templates. A `stdin` or `file` argument can supply it. |
 | `tags` | Tags, whose values are templates. A tag whose value is empty is left out. |
-| `revise` | For a sealed kind: `replace` or `append`. See 7.2.1. |
+| `revise` | For a sealed kind: `replace` or `append`. See section 3.9.1. |
 | `to` | For a private kind: the recipients, as `key` arguments. |
 | `frontmatter_address` | An optional address template. It requires `page` and `notebook` in the kind's front-matter policy, and their combined `notebook/page` must equal the rendered address. |
 
-#### 7.2.1 Revisions of a sealed event
+#### 3.9.1 Revisions of a sealed event
 
 A sealed event is a NIP-37 draft, so it can change. Each publish of a draft
 also publishes a checkpoint, kind 1234, whose `a` tag names the draft and whose
@@ -337,7 +339,7 @@ history of the draft, as NIP-37 defines.
   publishes the result. It reads from the store first, then from the relays of
   the citizen's NIP-37 list.
 
-#### 7.2.2 Content larger than one event
+#### 3.9.2 Content larger than one event
 
 A relay caps the size of one event. Content of at most 32 KiB travels inside
 the event itself, so a Nostr client reads it whole. Longer content travels in
@@ -355,7 +357,7 @@ A Nostr client that does not know kind 3275 reads the first 32 KiB. A page of
 at most 32 KiB is therefore a plain NIP-37 draft. A body holds at most 256
 parts.
 
-#### Notebook views
+#### 3.9.3 Notebook views
 
 A `notebook` action names `kind` and `op`. Operations are `read`, `list`,
 `search`, `select`, `next`, `prev`, `index`, and `toc`. The kind must declare
@@ -365,7 +367,7 @@ supplies `address`; `index` and `toc` supply `notebook`. Optional templates are
 `section`. These are application selections over verified sealed page events.
 The command's usual output pipeline renders the resulting records.
 
-### 7.3 delete
+### 3.10 The action delete
 
 `delete` asks relays to remove events, as NIP-09 defines. It can name only the
 citizen's own events of kinds that the manifest names.
@@ -386,7 +388,7 @@ before the delete does not bring the page back.
 A new version of a draft is always newer than the version before it, by at
 least one second, so it replaces that version.
 
-### 7.4 query
+### 3.11 The action query
 
 `query` reads events from the store, and first asks the transports for any
 that the store lacks.
@@ -421,14 +423,14 @@ group kind reads the group's relay, and not the store: a post that an admin
 removed does not show, and a query fails when the group's relay does not
 answer.
 
-### 7.5 watch
+### 3.12 The action watch
 
 `watch` is a query that stays open. It runs for sealed, public and group
 kinds. It does not run for private kinds yet. It runs the pipeline on each event that
 matches, first on the stored events, then on each new one as it arrives. It
 ends when the citizen stops it, or when every relay ends the subscription.
 
-## 8. Records
+### 3.13 Records
 
 The pipeline works on records. Each event becomes one record with these
 fields:
@@ -447,7 +449,7 @@ fields of parsed content. `join` puts the whole content in `text`. A reply to a
 call becomes one record whose `content` is the reply, and whose `error` is set
 when the provider refused.
 
-## 9. The output pipeline
+### 3.14 The output pipeline
 
 A command lists its output primitives. Core runs them in this order, whatever
 the order in the manifest:
@@ -455,16 +457,16 @@ the order in the manifest:
 | Order | Primitive | What it does |
 | --- | --- | --- |
 | 1 | `open` | Opens drafts and private events, and parses content as `text`, `json`, or `frontmatter` into fields. |
-| 2 | `join` | Puts the whole content of each record in `text`, parts included. See 9.1. |
+| 2 | `join` | Puts the whole content of each record in `text`, parts included. See section 3.14.1. |
 | 3 | `where` | Keeps records whose fields match. |
 | 4 | `latest` | Keeps the newest record for each value of a field. |
 | 5 | `rank` | Orders records by BM25 against a query, over named fields. |
 | 6 | `thread` | Orders records as replies, by a field that names the parent. |
 | 7 | `sort`, `limit` | Orders by a field, and cuts. |
-| 8 | `tail` | In a watch: shows only what each new version adds. See 9.3. |
+| 8 | `tail` | In a watch: shows only what each new version adds. See section 3.14.3. |
 | 9 | `save` | Writes a field to a `path` argument, instead of showing it. |
-| 10 | `format` | Shows each record with a named format, see section 10. |
-| 11 | `exit` | Sets the exit status of the command from its first record. See 9.4. |
+| 10 | `format` | Shows each record with a named format, see section 3.15. |
+| 11 | `exit` | Sets the exit status of the command from its first record. See section 3.14.4. |
 
 ```json
 "output": {
@@ -474,7 +476,7 @@ the order in the manifest:
 }
 ```
 
-### 9.1 join
+#### 3.14.1 join
 
 For each record, `join` writes the content inside the event, then the content
 of each part that its `parts` tag lists, in order. It fetches the parts from
@@ -485,7 +487,7 @@ reports the missing part. With `lines`, `join` reads the `lines` tag, and
 fetches only the parts that hold those lines. When `join` is the last primitive before `format`, it writes each
 part as it arrives.
 
-### 9.2 where, latest, rank, thread, sort
+#### 3.14.2 where, latest, rank, thread, sort
 
 ```json
 "where":  [{"field": "tags.t", "lacks": "deleted"}, {"field": "address", "prefix": "{{path}}"}],
@@ -502,14 +504,14 @@ match.
 `rank` uses BM25 with `k1 = 1.2` and `b = 0.75`, over lower-case runs of
 Unicode letters and digits. It adds a field `score`.
 
-### 9.3 tail
+#### 3.14.3 tail
 
 In a watch, `tail` compares each new version of a record with the version
 that it showed before. When the new text starts with the old text, `tail`
 shows only what follows it. Otherwise it shows a line that says the record was
 rewritten, and then the whole new text.
 
-### 9.4 exit
+#### 3.14.4 exit
 
 `exit` sets the exit status of the command, after the output is shown. It is
 a list of rules. Core reads the first record that the pipeline keeps, and
@@ -534,7 +536,7 @@ no `where` meets every record.
 A manifest with `exit` needs a caller of v0.12.0 or later. An older caller
 refuses the manifest, because it does not know the field.
 
-## 10. Formats
+### 3.15 Formats
 
 A format renders records as text:
 
@@ -564,7 +566,7 @@ Core removes every control character except newline and tab from each value
 before it shows it. A value from an event cannot move the cursor, or change
 the terminal.
 
-## 11. Flags of every command
+### 3.16 Flags of every command
 
 | Flag | Meaning |
 | --- | --- |
@@ -572,7 +574,223 @@ the terminal.
 | `--dry-run` | For `publish` and `delete`: writes each event that core would sign, and signs nothing. |
 | `--later` | For a live `call`: waits in the outbox instead. |
 
-## 12. Security
+### 3.17 Keys
+
+A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
+
+| Source | Meaning |
+| --- | --- |
+| `nsec` | The secret key, in a file that only its owner can read. |
+| `ncryptsec` | The secret key, encrypted with a passphrase. Core asks for the passphrase. |
+| `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
+
+Each identity of a machine has its own directory, `<home>/citizens/<name>`,
+with its key, store, relays and installs. `arc keys gen` makes an identity,
+and `arc keys add` adds one that exists already. The first identity is the
+default. `arc keys use <name>` changes the default, and `--key <name>` or
+`ARC_KEY` picks another identity for one command.
+
+`arc keys gen --encrypt` and `arc keys encrypt` seal a key with a passphrase.
+Core reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
+
+Remote signer setup takes at most 15 seconds. Each operation, including
+NIP-04 encryption and decryption, takes at most 20 seconds. An earlier caller
+deadline applies. Cancellation stops setup and remains identifiable in returned
+Go errors, as it does for a local signer.
+
+`arc keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
+and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
+and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
+`self`, the default, which opens only what the owner sealed to their own key,
+such as drafts and the keyed root; or `all`, which mail needs, because a gift
+wrap comes from a one-time key that no list can name. The bunker keeps its URI
+when it restarts. `arc keys add <uri>` makes an identity that
+signs through it. That identity seals and opens mail, makes calls, and reads the
+keyed root, all through the signer. The bunker publishes the keyed root to its
+relay when it starts. If it refuses to open locally recorded outgoing mail,
+an inbox or outbox command reports the error instead of treating those
+records as absent.
+
+### 3.18 Addresses
+
+An address names a capability, its provider, and one resource of it:
+
+```text
+<scheme>+arc://<provider>/<path>
+exec+arc://npub1.../
+sqlite+arc://<64-hex-key>/main
+```
+
+- The scheme names the capability: the capability whose id, the `d` tag of
+  its announcement, is the scheme. Else, the only capability whose manifest
+  has that scheme. The scheme holds lower-case letters, digits and hyphens.
+- The provider is a public key: 64 hex characters, an `npub`, the petname
+  of an installed provider, or an installed name. A domain stands for the
+  NIP-05 name `_@<domain>`. A NIP-05 name with a local part cannot stand in
+  an address, because its `@` is user information.
+- The path is the path of the request. It replaces the path of the manifest.
+  Without a path, the path is `/`. It holds ASCII letters, digits, and
+  `/ . _ ~ -`.
+- An address has no user information, port, query, fragment, percent
+  escape, or dot segment. Core refuses such an address before any call.
+
+`arc call <address> [body]` sends the body to the capability that the
+address names, and shows the reply with the `output` of the service, see section 3.4.
+`--raw` writes the reply as it came. The capability must be installed, as for every call. The
+address carries no trust: the key of the provider and the install do.
+`--capability <id>` names the capability when two have one scheme, and its
+scheme must then match the address.
+
+### 3.19 Provider bundles
+
+New bundles contain one authored interface manifest in `manifest.json`.
+`arc serve` also accepts a modern manifest at another explicit path. Historical
+bundles can still use a legacy manifest with an adjacent `interface.json`;
+the modern document takes precedence even if the legacy file is missing or
+invalid. Loading produces one validated definition for the announcement,
+capability ID and request limit. An omitted or zero `service.max_bytes`
+normalizes to 1 MiB in both the announcement and the host.
+
+## 4. Behavior
+
+### 4.1 Install and dispatch
+
+`arc install <author> [capability]` reads the announcement, verifies it, shows
+what section 6 requires, and asks the citizen once. The capability's name is
+its id, unless the citizen gives another with `--as`.
+
+`arc <name> <path...> [args]` finds the installed capability, then the command
+with the longest matching path, and runs it. `arc help <name>` lists the
+commands.
+
+A new version of a manifest replaces the old one when its author announces
+it. If the new version publishes a kind that the old one did not, makes a kind
+more visible, or names another group relay, core stops each command of it,
+and says what changed, until the citizen installs it again. Core fetches the
+author's newest announcement before each command, so it sees a new version at
+once. Visibility grows in this order: sealed, private, group, public.
+
+### 4.2 Calls of a provider
+
+A provider program can call a capability, as the citizen that serves it.
+`arc serve` makes the call. The provider program never holds the key of the
+citizen. A web service keeps its data in `sqlite` this way, for example.
+
+The rules are the rules of `arc call`:
+
+- The citizen must have installed the capability. If not, the call fails
+  with `not_installed`. An install is the consent to call.
+- The call names the capability by an address, see section 3.18. The method is the
+  method of the manifest.
+- The call is live. It needs a relay and has at most 115 seconds, shortened
+  by the remaining deadline of its parent request.
+
+`arc serve` and the provider program speak newline delimited JSON on the
+standard input and the standard output of the program. The program writes
+one line for each call:
+
+```json
+{"op": "call", "call_id": "7", "address": "sqlite+arc://<key>/main", "body": "{\"sql\": \"select 1\"}"}
+```
+
+`arc serve` writes one result with the same `call_id`:
+
+| Result | Meaning |
+| --- | --- |
+| `{"op": "result", "call_id": "7", "reply": "..."}` | The reply of the provider that got the call. |
+| `{"op": "result", "call_id": "7", "refused": "unauthorized"}` | That provider answered with an error. |
+| `{"op": "result", "call_id": "7", "error": "not_installed: ..."}` | `arc serve` could not make the call. |
+
+In Go, a handler that has the method `SetCaller(provider.Caller)` gets a
+caller before its first request. `Caller.Call` returns the reply, or a
+`*provider.CallError`. Its field `Refused` separates a refusal from a
+failure.
+
+### 4.3 Deadlines, cancellation and admission
+
+Live calls have one budget of at most 120 seconds, including wake, relay
+discovery, relay selection and execution. `arc call --timeout` can shorten it. The signed
+request rumor carries the absolute Unix millisecond deadline in a `deadline`
+tag. A queued request omits it; its execution budget begins when it is served.
+
+The host passes the deadline to the provider as `deadline_ms` on the request
+line. An outbound `call` line carries the remaining deadline in the same field.
+A missing deadline uses the host's 120-second cap. Go handlers receive a
+context with the earlier of their parent and supplied deadlines. The runtime
+rejects expired requests before dispatch. A canceled outbound call does not
+write a new call to the host. Context failures return `provider_timeout` or
+`provider_canceled`, rather than `internal_error`.
+
+The host cancels a request with
+`{"op":"cancel","request_id":"..."}`. A provider cancels an outbound call with
+`{"op":"cancel","call_id":"..."}`. Go handlers must stop work when their
+context ends. EOF cancels active handlers before the runtime joins them and
+allows up to one second to drain their final replies. An unread output stream
+cannot keep shutdown waiting. When an outbound call is canceled, an active
+write has up to one second, within its existing deadline, to finish. A complete
+line can reach the host before its write reports success; that completion
+must preserve the stream and allow the cancellation notice to follow. A write
+that remains blocked is interrupted. A cancellation notice has at most one
+second to write.
+Waiting for another writer respects the caller's context without interrupting
+that writer. An interrupted or failed write stops the output stream and the
+runtime, because another JSON line cannot safely follow a partial line.
+Blocking custom Go output writers must implement `io.Closer` so `Close` can
+interrupt `Write`. Output is serialized with at most one active write.
+Intentionally detached jobs retain their explicit job timeout.
+
+The Go runtime admits at most 64 concurrent handlers by default, configurable
+with `provider.Options.MaxConcurrent`. Excess requests receive `provider_busy`.
+Cancellation and result messages bypass handler admission.
+The Go runtime writes rejection replies through one worker with a queue of at
+most 64 pending replies. Blocked rejection output cannot hold up cancellation,
+results, or EOF. A full rejection queue stops the stream with `provider_busy`.
+Earlier rejections finish before a later admitted request starts its handler.
+The host separately bounds incoming live work and outbound calls. Exec drains
+output while keeping only bounded prefixes; output volume cannot grow its
+in-memory buffers without limit.
+
+### 4.4 Core sessions
+
+A service can declare `service.interactions` with `request_reply`,
+`server_stream` and/or `duplex`. Omission or an empty list keeps request/reply.
+Unknown and duplicate modes are errors. Ordinary call commands require
+`request_reply`. A service declaring a streaming mode may omit command entries;
+`arc session <address>` provides its interactive entry point.
+
+`arc session <address> [initial request] --mode duplex` streams stdin and stdout
+through the same core used by provider handlers. Input EOF is a half-close, and
+the command waits for the provider's final status. `--mode server_stream` sends
+only the initial request and reads incremental output. Installation consent and
+provider access rules still apply. A provider can consume another session using
+`provider.SessionCaller`, supplied through `SetSessionCaller`.
+
+See [the session protocol](../sessions/SPEC.md) for frame limits, admission,
+cancellation, deadlines and explicit disconnect behavior. Existing `arc call`
+and queued request/reply operations retain their protocol.
+
+## 5. Failures
+
+Each rule of section 3 names its own refusal. These are the limits of this
+design that a user meets as a failure or a delay:
+
+- **Rollback on a fresh machine.** A query asks every relay of the citizen's
+  NIP-37 list, and keeps the newest version. If every relay serves an old
+  version, a machine that never saw the newer one cannot tell.
+- **One process per home.** The store is one file that one process opens at
+  a time. A `tail` holds it, so a second command on the same home waits.
+- **Each read asks the relays.** A query fetches from every relay before it
+  reads the store, so a slow relay makes every read slow.
+- **Sealed data syncs by a full fetch.** A Negentropy session opens its own
+  connection, which cannot answer the relay's challenge, so `arc sync` fetches
+  sealed data whole instead of comparing sets.
+- **A remote signer needs the keyed root first.** A machine with the key must
+  run once, and reach a relay or a stick that the remote machine reads, before
+  the remote machine can use a capability that uses `keyed`.
+- **Each seal and each opened message is one request to the signer.** Mail
+  over a remote signer is as slow as the round trips to it.
+
+## 6. Security
 
 **Install shows what a capability can do.** Before a citizen trusts a
 capability, `arc install` shows its author, its shape, each kind that it
@@ -621,212 +839,34 @@ when the query names the authenticated citizen as its only author. Every
 other query leaves out the sealed events of other citizens, so nobody else
 learns how many drafts a citizen has, or when they wrote them.
 
-**Keyed values stay inside a capability.** See 6.1.
+**Keyed values stay inside a capability.** See section 3.7.1.
 
 **A reply is data.** Core never runs, opens, or follows what a reply or an
 event holds.
 
-## 13. Keys
+The limits of this design that bear on security:
 
-A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
+- **The `k` tag of a draft is public.** A relay learns that a draft holds an
+  article, a KPI series, or a file, but not its content or its address.
+- **Mail over a bunker opens everything.** `--decrypt all` lets the machine
+  that uses the bunker open any ciphertext sealed to the owner, not only mail.
+- **Encryption is not limited.** A bunker encrypts for its client without a
+  rule, because a sealed message also needs a signature, which `--allow-kind`
+  limits.
+- **Another relay may serve drafts to anyone.** Only a relay that enforces
+  NIP-42 reads, as `arc relay serve` does, keeps the events themselves from
+  others. The content stays encrypted on every relay.
 
-| Source | Meaning |
-| --- | --- |
-| `nsec` | The secret key, in a file that only its owner can read. |
-| `ncryptsec` | The secret key, encrypted with a passphrase. Core asks for the passphrase. |
-| `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
+## 7. Compatibility
 
-Each identity of a machine has its own directory, `<home>/citizens/<name>`,
-with its key, store, relays and installs. `arc keys gen` makes an identity,
-and `arc keys add` adds one that exists already. The first identity is the
-default. `arc keys use <name>` changes the default, and `--key <name>` or
-`ARC_KEY` picks another identity for one command.
-
-`arc keys gen --encrypt` and `arc keys encrypt` seal a key with a passphrase.
-Core reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
-
-Remote signer setup takes at most 15 seconds. Each operation, including
-NIP-04 encryption and decryption, takes at most 20 seconds. An earlier caller
-deadline applies. Cancellation stops setup and remains identifiable in returned
-Go errors, as it does for a local signer.
-
-`arc keys bunker --relay <url>` serves this citizen's key as a NIP-46 signer,
-and prints its `bunker://` URI. With `--allow-kind`, it signs only those kinds,
-and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
-`self`, the default, which opens only what the owner sealed to their own key,
-such as drafts and the keyed root; or `all`, which mail needs, because a gift
-wrap comes from a one-time key that no list can name. The bunker keeps its URI
-when it restarts. `arc keys add <uri>` makes an identity that
-signs through it. That identity seals and opens mail, makes calls, and reads the
-keyed root, all through the signer. The bunker publishes the keyed root to its
-relay when it starts. If it refuses to open locally recorded outgoing mail,
-an inbox or outbox command reports the error instead of treating those
-records as absent.
-
-## 14. Install and dispatch
-
-`arc install <author> [capability]` reads the announcement, verifies it, shows
-what section 12 requires, and asks the citizen once. The capability's name is
-its id, unless the citizen gives another with `--as`.
-
-`arc <name> <path...> [args]` finds the installed capability, then the command
-with the longest matching path, and runs it. `arc help <name>` lists the
-commands.
-
-A new version of a manifest replaces the old one when its author announces
-it. If the new version publishes a kind that the old one did not, makes a kind
-more visible, or names another group relay, core stops each command of it,
-and says what changed, until the citizen installs it again. Core fetches the
-author's newest announcement before each command, so it sees a new version at
-once. Visibility grows in this order: sealed, private, group, public.
-
-### 14.1 Addresses
-
-An address names a capability, its provider, and one resource of it:
-
-```text
-<scheme>+arc://<provider>/<path>
-exec+arc://npub1.../
-sqlite+arc://<64-hex-key>/main
-```
-
-- The scheme names the capability: the capability whose id, the `d` tag of
-  its announcement, is the scheme. Else, the only capability whose manifest
-  has that scheme. The scheme holds lower-case letters, digits and hyphens.
-- The provider is a public key: 64 hex characters, an `npub`, the petname
-  of an installed provider, or an installed name. A domain stands for the
-  NIP-05 name `_@<domain>`. A NIP-05 name with a local part cannot stand in
-  an address, because its `@` is user information.
-- The path is the path of the request. It replaces the path of the manifest.
-  Without a path, the path is `/`. It holds ASCII letters, digits, and
-  `/ . _ ~ -`.
-- An address has no user information, port, query, fragment, percent
-  escape, or dot segment. Core refuses such an address before any call.
-
-`arc call <address> [body]` sends the body to the capability that the
-address names, and shows the reply with the `output` of the service, see 4.3.
-`--raw` writes the reply as it came. The capability must be installed, as for every call. The
-address carries no trust: the key of the provider and the install do.
-`--capability <id>` names the capability when two have one scheme, and its
-scheme must then match the address.
-
-### 14.2 Calls of a provider
-
-A provider program can call a capability, as the citizen that serves it.
-`arc serve` makes the call. The provider program never holds the key of the
-citizen. A web service keeps its data in `sqlite` this way, for example.
-
-The rules are the rules of `arc call`:
-
-- The citizen must have installed the capability. If not, the call fails
-  with `not_installed`. An install is the consent to call.
-- The call names the capability by an address, see 14.1. The method is the
-  method of the manifest.
-- The call is live. It needs a relay and has at most 115 seconds, shortened
-  by the remaining deadline of its parent request.
-
-`arc serve` and the provider program speak newline delimited JSON on the
-standard input and the standard output of the program. The program writes
-one line for each call:
-
-```json
-{"op": "call", "call_id": "7", "address": "sqlite+arc://<key>/main", "body": "{\"sql\": \"select 1\"}"}
-```
-
-`arc serve` writes one result with the same `call_id`:
-
-| Result | Meaning |
-| --- | --- |
-| `{"op": "result", "call_id": "7", "reply": "..."}` | The reply of the provider that got the call. |
-| `{"op": "result", "call_id": "7", "refused": "unauthorized"}` | That provider answered with an error. |
-| `{"op": "result", "call_id": "7", "error": "not_installed: ..."}` | `arc serve` could not make the call. |
-
-In Go, a handler that has the method `SetCaller(provider.Caller)` gets a
-caller before its first request. `Caller.Call` returns the reply, or a
-`*provider.CallError`. Its field `Refused` separates a refusal from a
-failure.
-
-### 14.3 Deadlines, cancellation and admission
-
-Live calls have one budget of at most 120 seconds, including wake, relay
-discovery, relay selection and execution. `arc call --timeout` can shorten it. The signed
-request rumor carries the absolute Unix millisecond deadline in a `deadline`
-tag. A queued request omits it; its execution budget begins when it is served.
-
-The host passes the deadline to the provider as `deadline_ms` on the request
-line. An outbound `call` line carries the remaining deadline in the same field.
-A missing deadline uses the host's 120-second cap. Go handlers receive a
-context with the earlier of their parent and supplied deadlines. The runtime
-rejects expired requests before dispatch. A canceled outbound call does not
-write a new call to the host. Context failures return `provider_timeout` or
-`provider_canceled`, rather than `internal_error`.
-
-The host cancels a request with
-`{"op":"cancel","request_id":"..."}`. A provider cancels an outbound call with
-`{"op":"cancel","call_id":"..."}`. Go handlers must stop work when their
-context ends. EOF cancels active handlers before the runtime joins them and
-allows up to one second to drain their final replies. An unread output stream
-cannot keep shutdown waiting. When an outbound call is canceled, an active
-write has up to one second, within its existing deadline, to finish. A complete
-line can reach the host before its write reports success; that completion
-must preserve the stream and allow the cancellation notice to follow. A write
-that remains blocked is interrupted. A cancellation notice has at most one
-second to write.
-Waiting for another writer respects the caller's context without interrupting
-that writer. An interrupted or failed write stops the output stream and the
-runtime, because another JSON line cannot safely follow a partial line.
-Blocking custom Go output writers must implement `io.Closer` so `Close` can
-interrupt `Write`. Output is serialized with at most one active write.
-Intentionally detached jobs retain their explicit job timeout.
-
-The Go runtime admits at most 64 concurrent handlers by default, configurable
-with `provider.Options.MaxConcurrent`. Excess requests receive `provider_busy`.
-Cancellation and result messages bypass handler admission.
-The Go runtime writes rejection replies through one worker with a queue of at
-most 64 pending replies. Blocked rejection output cannot hold up cancellation,
-results, or EOF. A full rejection queue stops the stream with `provider_busy`.
-Earlier rejections finish before a later admitted request starts its handler.
-The host separately bounds incoming live work and outbound calls. Exec drains
-output while keeping only bounded prefixes; output volume cannot grow its
-in-memory buffers without limit.
-
-### 14.4 Provider bundles
-
-New bundles contain one authored interface manifest in `manifest.json`.
-`arc serve` also accepts a modern manifest at another explicit path. Historical
-bundles can still use a legacy manifest with an adjacent `interface.json`;
-the modern document takes precedence even if the legacy file is missing or
-invalid. Loading produces one validated definition for the announcement,
-capability ID and request limit. An omitted or zero `service.max_bytes`
-normalizes to 1 MiB in both the announcement and the host.
-
-### 14.5 Core sessions
-
-A service can declare `service.interactions` with `request_reply`,
-`server_stream` and/or `duplex`. Omission or an empty list keeps request/reply.
-Unknown and duplicate modes are errors. Ordinary call commands require
-`request_reply`. A service declaring a streaming mode may omit command entries;
-`arc session <address>` provides its interactive entry point.
-
-`arc session <address> [initial request] --mode duplex` streams stdin and stdout
-through the same core used by provider handlers. Input EOF is a half-close, and
-the command waits for the provider's final status. `--mode server_stream` sends
-only the initial request and reads incremental output. Installation consent and
-provider access rules still apply. A provider can consume another session using
-`provider.SessionCaller`, supplied through `SetSessionCaller`.
-
-See [the session protocol](../sessions/SPEC.md) for frame limits, admission,
-cancellation, deadlines and explicit disconnect behavior. Existing `arc call`
-and queued request/reply operations retain their protocol.
-
-## 15. Versions
+### 7.1 Versions
 
 This interface is version 1. Core refuses a manifest of a later version, and
 says which version it would need. A new primitive, or a new field with a new
 meaning, comes in a new version. The older stack's interfaces, versions 1 to
 4, do not run on the delivery layer.
 
-## 16. What leaves core
+### 7.2 What leaves core
 
 | Today | In version 1 |
 | --- | --- |
@@ -836,620 +876,30 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 | The `private_file` and `sealed_file` inputs | The files manifest: NIP-37 drafts of NIP-94 file metadata. |
 | The `seal`, `pubkey` and `shell` filters | `key` arguments, private kinds, and `json`. |
 
-## 17. The capabilities in version 1
+### 7.3 The apps in version 1
 
-### 17.1 exec
+Each app of version 1 documents itself, and its `manifest.json` is its
+interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.md),
+[sqlite](../../apps/sqlite/README.md), [releases](../../apps/releases/README.md),
+[journal](../../apps/journal/README.md), [dm](../../apps/dm/README.md),
+[agora](../../apps/agora/README.md) and [files](../../apps/files/README.md).
 
-```json
-{
-  "interface": 1, "id": "exec", "shape": "service",
-  "title": "Exec", "summary": "Runs commands for the citizens that it grants.",
-  "service": {"method": "EXEC", "path": "/", "max_bytes": 1048576,
-              "interactions": ["request_reply", "server_stream", "duplex"],
-              "output": {"open": {"parse": "json"}, "format": "reply",
-                         "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
-                                  {"where": [{"field": "state", "is": "lost"}], "code": "1"},
-                                  {"code": "{{exit}}"}]}},
-  "kinds": {},
-  "formats": {
-    "run": {"record": "{{stdout}}{{stderr}}"},
-    "reply": {"record": "{{stdout}}{{stderr}}{{job}}"},
-    "job": {"record": "{{job}}\t{{state}}"}
-  },
-  "commands": [
-    {"path": ["run"], "summary": "Run one command",
-     "args": [{"name": "argv", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"call": {"class": "live", "body": "{\"argv\": {{argv|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "run", "exit": [{"code": "{{exit}}"}]}},
-    {"path": ["start"], "summary": "Start a script as a job",
-     "args": [{"name": "script", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"call": {"class": "later", "body": "{\"action\": \"start\", \"script\": {{script|join|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "job"}},
-    {"path": ["status"], "summary": "Show a job",
-     "args": [{"name": "job", "kind": "positional", "type": "text", "required": true}],
-     "action": {"call": {"class": "live", "body": "{\"action\": \"status\", \"job\": {{job|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "run",
-                "exit": [{"where": [{"field": "state", "is": "running"}], "code": "75"},
-                         {"where": [{"field": "state", "is": "lost"}], "code": "1"},
-                         {"code": "{{exit}}"}]}}
-  ]
-}
-```
+### 7.4 Limits of the Nostr standards
 
-### 17.2 sqlite
+- **Parts are ARC's own.** No NIP carries private content larger than one
+  event. A Nostr client reads the first 32 KiB of a longer page, and no more.
+- **NIP-37 is a draft.** Like NIP-17, it can still change. ARC follows its
+  text as of this document.
+- **A private event goes to one recipient.** NIP-17 allows a message to
+  several, and this arc refuses it.
+- **The group relay is a subset of NIP-29.** It hosts open and restricted
+  groups, admins, removal, and join and leave requests. It does not hide the
+  posts of a private group from readers, and has no invite codes or roles
+  other than admin.
 
-```json
-{
-  "interface": 1, "id": "sqlite", "shape": "service",
-  "title": "SQLite", "summary": "Answers SQL for the citizens that it grants.",
-  "service": {"method": "QUERY", "path": "/main", "max_bytes": 1048576,
-              "interactions": ["request_reply", "server_stream", "duplex"],
-              "output": {"open": {"parse": "json"}, "format": "rows"}},
-  "kinds": {},
-  "formats": {"rows": {"table": {"columns": "results.0.columns", "rows": "results.0.rows"}}},
-  "commands": [
-    {"path": [], "summary": "Run SQL",
-     "args": [{"name": "sql", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"call": {"class": "live", "body": "{\"sql\": {{sql|join|json}}}"}},
-     "output": {"open": {"parse": "json"}, "format": "rows"}}
-  ]
-}
-```
+## 8. Proof
 
-### 17.3 releases
-
-```json
-{
-  "interface": 1, "id": "releases", "shape": "service",
-  "title": "Releases", "summary": "Serves signed release channels and their archives.",
-  "service": {"method": "RAW", "path": "/releases", "max_bytes": 4096,
-              "interactions": ["request_reply", "server_stream"]},
-  "kinds": {},
-  "formats": {"channel": {"record": "{{content}}"}},
-  "commands": [
-    {"path": ["channel"], "summary": "Show a release channel",
-     "args": [{"name": "channel", "kind": "positional", "type": "text", "default": "stable"}],
-     "action": {"call": {"class": "live", "body": "{\"op\": \"channel\", \"channel\": {{channel|json}}}"}},
-     "output": {"format": "channel"}}
-  ]
-}
-```
-
-`arc update` keeps calling the releases provider itself, because it replaces
-`arc` and verifies what it installs.
-
-### 17.4 journal
-
-A page is a NIP-23 article, kind 30023, inside a NIP-37 draft. The article's
-`d` tag is the page address, sealed inside the draft; the draft's `d` tag is a
-keyed value of the address. A client that knows NIP-37 opens the page as a
-draft article. The checkpoints of the draft are the history of the page.
-
-The journal is a collection of notebooks. A notebook is namespaced as
-`project/notebook`, such as `arc/architecture`. Each new page has a positive
-integer ordinal, for example `arc/architecture/1`. Page numbers are stable and
-scoped to the notebook. Gaps are allowed; deleting page 2 never renumbers page
-3. Old pages with names remain readable and appear as legacy entries; they are
-not silently renumbered.
-
-The input header requires `title`, `page` and `notebook`. Their combined address
-must match the command address. ARC fills in `created_at` and `updated_at` as
-UTC RFC3339 timestamps. `created_at` stays fixed through replacement and append;
-`updated_at` records the latest write. Caller-supplied timestamps cannot change
-these values. For an older numbered page with no creation field, rewriting uses
-the earliest checkpoint available to this machine. UTC dates come from the
-writer's clock; event replacement still uses core's monotonically newer time.
-
-```sh
-arc journal write arc/architecture/1 <<'MD'
----
-title: Session boundaries
-page: 1
-notebook: arc/architecture
----
-# Session boundaries
-
-## Decision
-Interaction behavior belongs in core.
-
-## Evidence
-The CLI session tests pass.
-MD
-arc journal read arc/architecture/1
-arc journal next arc/architecture/1
-arc journal prev arc/architecture/3
-arc journal ls --notebook arc/architecture --from 2026-09-01 --to 2026-09-30
-arc journal ls --notebook arc/architecture --order page --reverse --limit 10
-arc journal select --notebook arc/architecture --page 1 --section decision
-arc journal search --notebook arc/architecture --from 2026-09-01 session
-arc journal index arc/architecture
-arc journal toc arc/architecture
-```
-
-`ls` defaults to creation time, oldest first. `--order` selects `created`,
-`updated`, or numeric `page`; `--reverse` reverses it. Filters can select an
-exact notebook, page number, title substring, and inclusive creation date
-bounds. `--from` and `--to` accept a UTC date or RFC3339 timestamp; a date for
-`--to` includes that whole day. `--limit` is positive. `select` reads the full
-selected pages, or the requested Markdown section. Search filters before
-ranking and limiting. Search options must precede the search terms.
-
-Journal search uses a local Bleve Scorch index with BM25 scoring. Plain queries
-match any Unicode word, without stemming or stop-word removal. `--syntax` enables
-Bleve query syntax: quoted phrases, `+required` and `-excluded` terms, fuzzy terms
-such as `bird~1`, wildcards such as `bird*`, and `title:` or `text:` field searches.
-`AND`, `OR`, and parentheses are not Boolean operators in this syntax. Use `+`
-and `-` for required and excluded terms.
-
-```sh
-arc journal search --syntax --notebook arc/architecture '"bounded flow control"'
-arc journal search --syntax '+session -http'
-arc journal search --syntax 'title:architecture'
-arc journal search --syntax 'bluetooh~1'
-```
-
-Each identity has a private derived index at
-`<citizen-home>/store/search/journal-v1.bleve`. It contains readable search terms
-and positions. It does not store full page bodies or go to relays. The source
-pages remain encrypted ARC events in `events.db`. Protect the local index like
-other private user data; filesystem permissions are not encryption at rest.
-
-Before each search, ARC reads current verified page headers, applies metadata
-filters, and indexes only selected pages whose content version changed. Unchanged
-multipart bodies are not fetched again for ranking. `--json` reads the complete
-Markdown of returned hits to preserve the search record format. Deleted pages
-are removed. A filtered search does not fetch bodies from other notebooks. The first search on a new
-machine builds its own index from synced encrypted pages. Updates received out
-of order are detected by content version, not a wall-clock cursor. If a changed
-selected page has a missing part, or an index update fails, search returns an
-error instead of stale results.
-The index can be rebuilt from source events; it does not replace ARC persistence.
-
-`next` and `prev` read the closest higher or lower page number in the same
-notebook. They skip gaps and deleted pages, and report a boundary when no page
-exists. Chronological views and ordinal navigation are distinct operations.
-
-Each write, append and delete refreshes an encrypted notebook index through the
-normal draft/checkpoint core. The index contains page numbers, titles, creation
-and update timestamps, page references, and a table of Markdown headings.
-Indexes are rebuildable snapshots. Views derive from verified source pages,
-so an old cached index does not hide pages received from another machine.
-`index` rebuilds and persists the snapshot; `toc` renders its page/heading tree.
-An interrupted index update reports that the page was saved and names the
-rebuild operation. Sync before using an index on another machine.
-
-ToC links use `journal+arc://<own-public-key>/<project>/<notebook>/<page>#<anchor>`.
-Pass a link to `arc journal read` to read the page or section. An address with
-`#<anchor>` also works. Sections include their child headings and end at the
-next heading of the same or higher level. ATX and Setext headings are supported;
-fenced and indented code is omitted. Duplicate anchors receive numeric suffixes.
-A journal reference must name the local identity. This does not grant access to
-another identity's private pages or register an OS/browser URL handler.
-
-The operator must announce the updated journal manifest to activate these
-commands. Upgrade ARC first: older binaries reject the new manifest fields.
-The Markdown index uses the already-consented sealed article kind 30023.
-Its two-component notebook address keeps it outside the three-component page
-views, and its event kind keeps it outside KPI JSON queries.
-Existing consent keeps the same event kinds and visibility.
-
-A KPI series is one draft per notebook and key, around an event of kind 30078,
-which NIP-78 defines for the data of one application. The draft holds the
-latest value, and its checkpoints hold every value before it.
-
-```json
-{
-  "interface": 1,
-  "id": "journal",
-  "shape": "data",
-  "title": "Journal",
-  "summary": "A private notebook, sealed to your own key.",
-  "kinds": {
-    "page": {"kind": 30023, "visibility": "sealed", "frontmatter": ["title", "page", "notebook"], "notebook_index": "index"},
-    "kpi": {"kind": 30078, "visibility": "sealed"},
-    "index": {"kind": 30023, "visibility": "sealed"}
-  },
-  "formats": {
-    "page": {"record": "{{text}}"},
-    "list": {"record": "{{tags.d}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no pages"},
-    "hits": {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no results"},
-    "history": {"record": "{{created|time}}\n{{text|truncate:200|indent}}", "empty": "no revisions"},
-    "kpi": {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
-  },
-  "commands": [
-    {
-      "path": ["write"],
-      "summary": "Replace a page with the standard input",
-      "args": [
-        {
-          "name": "address",
-          "kind": "positional",
-          "type": "address",
-          "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
-        },
-        {"name": "title", "kind": "option", "type": "text"},
-        {"name": "body", "kind": "positional", "type": "stdin"}
-      ],
-      "action": {
-        "publish": {
-          "kind": "page",
-          "d": "{{address|keyed:page}}",
-          "frontmatter_address": "{{address}}",
-          "revise": "replace",
-          "content": "{{body}}",
-          "tags": [["d", "{{address}}"], ["title", "{{title}}"]]
-        }
-      }
-    },
-    {
-      "path": ["append"],
-      "summary": "Add text to the end of a page",
-      "args": [
-        {
-          "name": "address",
-          "kind": "positional",
-          "type": "address",
-          "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
-        },
-        {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}
-      ],
-      "action": {
-        "publish": {
-          "kind": "page",
-          "d": "{{address|keyed:page}}",
-          "frontmatter_address": "{{address}}",
-          "revise": "append",
-          "content": "{{text}}\n",
-          "tags": [["d", "{{address}}"]]
-        }
-      }
-    },
-    {
-      "path": ["read"],
-      "summary": "Show a page, or a range of its lines",
-      "args": [
-        {"name": "address", "kind": "positional", "type": "text", "required": true},
-        {"name": "lines", "kind": "option", "type": "lines"},
-        {"name": "section", "kind": "option", "type": "text"}
-      ],
-      "action": {
-        "notebook": {"op": "read", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "section": "{{section}}"}
-      },
-      "output": {"open": {"parse": "text"}, "join": {"lines": "{{lines}}"}, "format": "page"}
-    },
-    {
-      "path": ["tail"],
-      "summary": "Show each text as it is appended",
-      "args": [
-        {
-          "name": "address",
-          "kind": "positional",
-          "type": "address",
-          "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
-        }
-      ],
-      "action": {"watch": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
-      "output": {"open": {"parse": "text"}, "join": {}, "tail": {}, "format": "page"}
-    },
-    {
-      "path": ["history"],
-      "summary": "List the revisions of a page",
-      "args": [
-        {
-          "name": "address",
-          "kind": "positional",
-          "type": "address",
-          "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
-        }
-      ],
-      "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
-      "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}
-    },
-    {
-      "path": ["ls"],
-      "summary": "List pages by creation time, with notebook and date filters",
-      "args": [
-        {"name": "prefix", "kind": "positional", "type": "text"},
-        {"name": "notebook", "kind": "option", "type": "text"},
-        {"name": "page", "kind": "option", "type": "integer"},
-        {"name": "title", "kind": "option", "type": "text"},
-        {"name": "from", "kind": "option", "type": "text"},
-        {"name": "to", "kind": "option", "type": "text"},
-        {"name": "order", "kind": "option", "type": "text"},
-        {"name": "limit", "kind": "option", "type": "integer"},
-        {"name": "reverse", "kind": "switch", "type": "text"}
-      ],
-      "action": {
-        "notebook": {
-          "op": "list",
-          "kind": "page",
-          "prefix": "{{prefix}}",
-          "notebook": "{{notebook}}",
-          "page": "{{page}}",
-          "title": "{{title}}",
-          "from": "{{from}}",
-          "to": "{{to}}",
-          "order": "{{order}}",
-          "limit": "{{limit}}",
-          "reverse": "{{reverse}}"
-        }
-      },
-      "output": {"format": "list"}
-    },
-    {
-      "path": ["search"],
-      "summary": "Search the pages",
-      "args": [
-        {"name": "query", "kind": "positional", "type": "text", "variadic": true, "required": true},
-        {"name": "notebook", "kind": "option", "type": "text"},
-        {"name": "page", "kind": "option", "type": "integer"},
-        {"name": "title", "kind": "option", "type": "text"},
-        {"name": "from", "kind": "option", "type": "text"},
-        {"name": "to", "kind": "option", "type": "text"},
-        {"name": "limit", "kind": "option", "type": "integer", "default": "20"},
-        {"name": "syntax", "kind": "switch", "type": "text"}
-      ],
-      "action": {
-        "notebook": {
-          "op": "search",
-          "kind": "page",
-          "query": "{{query}}",
-          "notebook": "{{notebook}}",
-          "page": "{{page}}",
-          "title": "{{title}}",
-          "from": "{{from}}",
-          "to": "{{to}}",
-          "limit": "{{limit}}",
-          "syntax": "{{syntax}}"
-        }
-      },
-      "output": {"format": "hits"}
-    },
-    {
-      "path": ["delete"],
-      "summary": "Delete a page and its history",
-      "args": [
-        {
-          "name": "address",
-          "kind": "positional",
-          "type": "address",
-          "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
-        }
-      ],
-      "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}
-    },
-    {
-      "path": ["kpi", "set"],
-      "summary": "Record one measured value",
-      "args": [
-        {"name": "notebook", "kind": "positional", "type": "text", "required": true},
-        {"name": "key", "kind": "positional", "type": "text", "required": true},
-        {"name": "value", "kind": "positional", "type": "text", "required": true},
-        {"name": "note", "kind": "option", "type": "text"}
-      ],
-      "action": {
-        "publish": {
-          "kind": "kpi",
-          "d": "{{notebook+key|keyed:kpi}}",
-          "revise": "replace",
-          "tags": [["d", "{{key}}"], ["notebook", "{{notebook}}"]],
-          "content": {"json": {"key": "{{key}}", "value": "{{value}}", "note": "{{note}}"}}
-        }
-      }
-    },
-    {
-      "path": ["kpi", "latest"],
-      "summary": "Show the last value of each key",
-      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
-      "action": {"query": {"kinds": ["kpi"], "authors": "me"}},
-      "output": {"open": {"parse": "json"}, "where": [{"field": "tags.notebook", "is": "{{notebook}}"}], "format": "kpi"}
-    },
-    {
-      "path": ["kpi", "log"],
-      "summary": "Show every value of one key",
-      "args": [
-        {"name": "notebook", "kind": "positional", "type": "text", "required": true},
-        {"name": "key", "kind": "positional", "type": "text", "required": true}
-      ],
-      "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook+key|keyed:kpi}}", "history": true}},
-      "output": {"open": {"parse": "json"}, "format": "kpi"}
-    },
-    {
-      "path": ["select"],
-      "summary": "Read pages selected by notebook, number, title and creation date",
-      "args": [
-        {"name": "notebook", "kind": "option", "type": "text"},
-        {"name": "page", "kind": "option", "type": "integer"},
-        {"name": "title", "kind": "option", "type": "text"},
-        {"name": "from", "kind": "option", "type": "text"},
-        {"name": "to", "kind": "option", "type": "text"},
-        {"name": "order", "kind": "option", "type": "text"},
-        {"name": "limit", "kind": "option", "type": "integer"},
-        {"name": "reverse", "kind": "switch", "type": "text"},
-        {"name": "section", "kind": "option", "type": "text"}
-      ],
-      "action": {
-        "notebook": {
-          "op": "select",
-          "kind": "page",
-          "notebook": "{{notebook}}",
-          "page": "{{page}}",
-          "title": "{{title}}",
-          "from": "{{from}}",
-          "to": "{{to}}",
-          "order": "{{order}}",
-          "limit": "{{limit}}",
-          "reverse": "{{reverse}}",
-          "section": "{{section}}"
-        }
-      },
-      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
-    },
-    {
-      "path": ["next"],
-      "summary": "Read the next numbered page in the same notebook",
-      "args": [
-        {"name": "address", "kind": "positional", "type": "text", "required": true},
-        {"name": "section", "kind": "option", "type": "text"}
-      ],
-      "action": {"notebook": {"op": "next", "kind": "page", "address": "{{address}}", "section": "{{section}}"}},
-      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
-    },
-    {
-      "path": ["prev"],
-      "summary": "Read the previous numbered page in the same notebook",
-      "args": [
-        {"name": "address", "kind": "positional", "type": "text", "required": true},
-        {"name": "section", "kind": "option", "type": "text"}
-      ],
-      "action": {"notebook": {"op": "prev", "kind": "page", "address": "{{address}}", "section": "{{section}}"}},
-      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
-    },
-    {
-      "path": ["index"],
-      "summary": "Rebuild the encrypted notebook index and show its Markdown",
-      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
-      "action": {"notebook": {"op": "index", "kind": "page", "notebook": "{{notebook}}", "order": "page"}},
-      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
-    },
-    {
-      "path": ["toc"],
-      "summary": "Show notebook pages and their Markdown headings",
-      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
-      "action": {"notebook": {"op": "toc", "kind": "page", "notebook": "{{notebook}}", "order": "page"}},
-      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
-    }
-  ]
-}
-```
-
-### 17.5 dm
-
-```json
-{
-  "interface": 1, "id": "dm", "shape": "data",
-  "title": "Direct messages", "summary": "Private messages, as NIP-17 defines.",
-  "kinds": {"message": {"kind": 14, "visibility": "private"}},
-  "formats": {
-    "inbox": {"record": "{{created|time}}  {{author|name}}\n{{content|indent}}", "empty": "no messages"}
-  },
-  "commands": [
-    {"path": ["send"], "summary": "Send a message",
-     "args": [{"name": "to", "kind": "positional", "type": "key", "required": true},
-              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "message", "to": ["{{to}}"], "content": "{{text}}", "tags": [["p", "{{to}}"]]}}},
-    {"path": ["inbox"], "summary": "Show the messages you received",
-     "action": {"query": {"kinds": ["message"], "authors": "any"}},
-     "output": {"open": {"parse": "text"}, "where": [{"field": "author", "not": "{{me}}"}],
-                "sort": {"field": "created", "order": "asc"}, "format": "inbox"}},
-    {"path": ["open"], "summary": "Show one conversation",
-     "args": [{"name": "peer", "kind": "positional", "type": "key", "required": true}],
-     "action": {"query": {"kinds": ["message"], "authors": "any"}},
-     "output": {"open": {"parse": "text"},
-                "where": [{"any": [{"field": "author", "is": "{{peer}}"}, {"field": "tags.p", "is": "{{peer}}"}]}],
-                "sort": {"field": "created", "order": "asc"}, "format": "inbox"}}
-  ]
-}
-```
-
-### 17.6 agora
-
-A board is a NIP-29 group. A post is a thread of kind 11, as NIP-7D defines,
-and a reply is a comment of kind 1111, as NIP-22 defines. The group's relay
-decides who may post, and its admins moderate. Any client that knows NIP-29
-opens the board.
-
-A reply here answers the post itself, so the post is both the root and the
-parent. NIP-22 needs both scopes: `E`, `K` and `P` for the root, and `e`, `k`
-and `p` for the parent.
-
-```json
-{
-  "interface": 1, "id": "agora", "shape": "data",
-  "title": "Agora", "summary": "A public board of signed posts and replies.",
-  "group": {"relay": "wss://board.example", "id": "agora"},
-  "kinds": {
-    "post":   {"kind": 11, "visibility": "group"},
-    "reply":  {"kind": 1111, "visibility": "group"},
-    "remove": {"kind": 9005, "visibility": "group"}
-  },
-  "formats": {
-    "feed": {"record": "{{id|nevent}}  {{author|name}}  {{created|time}}\n{{tags.title}}\n{{content|truncate:240|indent}}", "empty": "no posts"}
-  },
-  "commands": [
-    {"path": ["post"], "summary": "Publish one post",
-     "args": [{"name": "title", "kind": "option", "type": "text"},
-              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "post", "content": "{{text}}", "tags": [["title", "{{title}}"]]}}},
-    {"path": ["reply"], "summary": "Reply to a post",
-     "args": [{"name": "root", "kind": "positional", "type": "event", "required": true},
-              {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
-     "action": {"publish": {"kind": "reply", "content": "{{text}}",
-                            "tags": [["E", "{{root}}", "", "{{root|event_author}}"], ["K", "11"], ["P", "{{root|event_author}}"],
-                                     ["e", "{{root}}", "", "{{root|event_author}}"], ["k", "11"], ["p", "{{root|event_author}}"]]}}},
-    {"path": ["feed"], "summary": "Show the newest posts",
-     "args": [{"name": "limit", "kind": "option", "type": "integer", "default": "20"}],
-     "action": {"query": {"kinds": ["post"], "authors": "any", "limit": "{{limit}}"}},
-     "output": {"sort": {"field": "created", "order": "desc"}, "format": "feed"}},
-    {"path": ["thread"], "summary": "Show the replies to a post",
-     "args": [{"name": "root", "kind": "positional", "type": "event", "required": true}],
-     "action": {"query": {"kinds": ["reply"], "authors": "any", "tags": {"E": "{{root}}"}}},
-     "output": {"thread": {"parent": "tags.e"}, "format": "feed"}},
-    {"path": ["remove"], "summary": "Remove a post from the board, if you are its admin",
-     "args": [{"name": "id", "kind": "positional", "type": "event", "required": true}],
-     "action": {"publish": {"kind": "remove", "tags": [["e", "{{id}}"]]}}}
-  ]
-}
-```
-
-### 17.7 files
-
-A file is a NIP-94 file metadata event, kind 1063, inside a NIP-37 draft. The
-metadata holds the name, the media type, the size, and the SHA-256 hash, in
-the tags that NIP-94 defines. The bytes travel as the content, and in parts
-past 32 KiB, as 7.2.2 defines.
-
-```json
-{
-  "interface": 1, "id": "files", "shape": "data",
-  "title": "Files", "summary": "Private files, sealed to your own key.",
-  "kinds": {"file": {"kind": 1063, "visibility": "sealed"}},
-  "formats": {
-    "list": {"record": "{{tags.d}}\t{{tags.alt}}\t{{tags.size}} bytes\t{{created|date}}", "empty": "no files"},
-    "put":  {"record": "{{tags.d}}"}
-  },
-  "commands": [
-    {"path": ["put"], "summary": "Store a file",
-     "args": [{"name": "file", "kind": "positional", "type": "file", "required": true}],
-     "action": {"publish": {"kind": "file", "d": "{{file.sha256|keyed:file}}", "revise": "replace", "content": "{{file}}",
-                            "tags": [["d", "{{file.sha256}}"], ["alt", "{{file.name}}"], ["m", "{{file.type}}"],
-                                     ["x", "{{file.sha256}}"], ["size", "{{file.size}}"]]}},
-     "output": {"format": "put"}},
-    {"path": ["list"], "summary": "List your files",
-     "action": {"query": {"kinds": ["file"], "authors": "me"}},
-     "output": {"open": {"parse": "text"}, "sort": {"field": "created", "order": "desc"}, "format": "list"}},
-    {"path": ["get"], "summary": "Write one file back to disk",
-     "args": [{"name": "id", "kind": "positional", "type": "text", "required": true},
-              {"name": "output", "kind": "option", "type": "path", "required": true}],
-     "action": {"query": {"kinds": ["file"], "authors": "me", "d": "{{id|keyed:file}}", "limit": 1}},
-     "output": {"open": {"parse": "text"}, "join": {}, "save": {"field": "text", "to": "{{output}}", "decode": "base64", "sha256": "{{tags.x}}"}}},
-    {"path": ["delete"], "summary": "Delete a file",
-     "args": [{"name": "id", "kind": "positional", "type": "text", "required": true}],
-     "action": {"delete": {"kind": "file", "d": "{{id|keyed:file}}"}}}
-  ]
-}
-```
-
-A `file` argument offers `name`, `type`, `size`, and `sha256` to templates.
-Its bytes go into the content as base64. `save` decodes them, checks the
-SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
-
-## 18. Phases
+`mise run interface` proves phases A to D.
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
@@ -1458,40 +908,6 @@ SHA-256 hash of what it writes against the `x` tag, and refuses a mismatch.
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
 
-## 19. Limits of this design
+## Gates
 
-- **Parts are ARC's own.** No NIP carries private content larger than one
-  event. A Nostr client reads the first 32 KiB of a longer page, and no more.
-- **NIP-37 is a draft.** Like NIP-17, it can still change. ARC follows its
-  text as of this document.
-- **The `k` tag of a draft is public.** A relay learns that a draft holds an
-  article, a KPI series, or a file, but not its content or its address.
-- **Rollback on a fresh machine.** A query asks every relay of the citizen's
-  NIP-37 list, and keeps the newest version. If every relay serves an old
-  version, a machine that never saw the newer one cannot tell.
-- **Mail over a bunker opens everything.** `--decrypt all` lets the machine
-  that uses the bunker open any ciphertext sealed to the owner, not only mail.
-- **Encryption is not limited.** A bunker encrypts for its client without a
-  rule, because a sealed message also needs a signature, which `--allow-kind`
-  limits.
-- **A private event goes to one recipient.** NIP-17 allows a message to
-  several, and this arc refuses it.
-- **The group relay is a subset of NIP-29.** It hosts open and restricted
-  groups, admins, removal, and join and leave requests. It does not hide the
-  posts of a private group from readers, and has no invite codes or roles
-  other than admin.
-- **One process per home.** The store is one file that one process opens at
-  a time. A `tail` holds it, so a second command on the same home waits.
-- **Each read asks the relays.** A query fetches from every relay before it
-  reads the store, so a slow relay makes every read slow.
-- **Sealed data syncs by a full fetch.** A Negentropy session opens its own
-  connection, which cannot answer the relay's challenge, so `arc sync` fetches
-  sealed data whole instead of comparing sets.
-- **Another relay may serve drafts to anyone.** Only a relay that enforces
-  NIP-42 reads, as `arc relay serve` does, keeps the events themselves from
-  others. The content stays encrypted on every relay.
-- **A remote signer needs the keyed root first.** A machine with the key must
-  run once, and reach a relay or a stick that the remote machine reads, before
-  the remote machine can use a capability that uses `keyed`.
-- **Each seal and each opened message is one request to the signer.** Mail
-  over a remote signer is as slow as the round trips to it.
+This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).
