@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The end-to-end proofs are Go tests in `internal/proof`. `mise run delivery`
+  and `mise run interface` run them. The scripts `scripts/test-delivery.sh`,
+  `scripts/test-interface.sh` and `scripts/journal-proof.sh` are gone.
+- The release build check is `.github/scripts/check-clean-build.sh`.
+
 ### Removed
 
 - `docker/fly-nostr/`, the Fly.io files of one operator's relay. The image

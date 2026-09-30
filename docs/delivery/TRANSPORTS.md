@@ -106,7 +106,7 @@ If the transport claims a mesh, test its hop limits, duplicate suppression, and 
 
 Apply the rows that match the declared scope. List unsupported capabilities explicitly.
 Test the same user workflow as an existing transport when both claim that capability.
-Use existing delivery tests and [`scripts/test-delivery.sh`](../../scripts/test-delivery.sh) as examples.
+Use existing delivery tests and [`internal/proof/delivery_test.go`](../../internal/proof/delivery_test.go) as examples.
 Add transport-specific integration proof to CI where the environment supports it.
 
 Run formatting, vet, build, and relevant tests for the changed paths.

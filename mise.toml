@@ -27,17 +27,17 @@ depends = ["lint", "test"]
 
 [tasks.delivery]
 description = "Prove phase 1 of the delivery layer: relay, USB stick, refusal, parts, tail"
-run = "bash scripts/test-delivery.sh"
+run = "go test -count=1 -v -run '^TestDelivery' ./internal/proof/"
 raw = true
 
 [tasks.check-clean-build]
 description = "Prove that each release build of a commit stamps vcs.modified=false"
-run = "bash scripts/check-clean-build.sh"
+run = "bash .github/scripts/check-clean-build.sh"
 raw = true
 
 [tasks.interface]
 description = "Prove phases A to D of the capability interface"
-run = "bash scripts/test-interface.sh"
+run = "go test -count=1 -v -run '^TestInterface' ./internal/proof/"
 raw = true
 
 [tasks.boundaries]

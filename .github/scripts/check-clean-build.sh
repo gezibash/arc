@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ref="${1:-HEAD}"
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

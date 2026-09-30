@@ -26,7 +26,7 @@ mise exec -- go test ./cmd/arc -run TestBundledProviderSessionsThroughCLI -count
 
 It covers SQL state, SSE, WebSocket echo, HTTP-to-SQLite sessions, incremental
 process I/O, the terminal CLI and terminal restoration, and archive transfer.
-`scripts/test-delivery.sh` also checks a signed archive update through both the
+`TestDelivery` in `internal/proof` also checks a signed archive update through both the
 existing chunk path and the installed provider's streaming path.
 
 Core owns authentication, framing, flow control and session lifetime. Providers
