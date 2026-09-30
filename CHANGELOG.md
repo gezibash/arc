@@ -87,6 +87,8 @@ release.
 ### Removed
 
 - `docs/site/`, the illustrated website. It is now a repository of its own.
+- `docs/WHITEPAPER.md` and `docs/WHITEPAPER_HUMAN.md`. They moved to the
+  repository of the website.
 - `docker/fly-nostr/`, the Fly.io files of one operator's relay. The image
   `ghcr.io/gezibash/arc` runs a relay on any host. docs/DEPLOY.md shows the
   flags that turn on the write limits.

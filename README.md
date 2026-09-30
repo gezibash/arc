@@ -247,5 +247,5 @@ Specs:
 
 Other:
 
-- [Whitepaper](docs/WHITEPAPER.md): protocol design.
+- The whitepapers live with the website, in the `republic-site` repository.
 - [Changelog](CHANGELOG.md).
