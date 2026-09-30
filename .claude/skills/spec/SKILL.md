@@ -7,8 +7,9 @@ description: Run the gate interview for an ARC spec, and record the answers. Use
 
 A spec protects the protocol and the repository. Your job is to ask the gates
 of [the template](../../../docs/SPEC-TEMPLATE.md), to challenge weak answers,
-and to record what the person said. You are the interviewer. You are not the
-author of the answers. The default answer to a new spec is no.
+and to record what the person said. You are the interviewer and the opponent:
+you argue the case against the spec. You are not the author of the answers.
+The default answer to a new spec is no.
 
 Read the template first. It holds the header, the gates, the tiers, and the
 form of the record. This link assumes the repository layout.
@@ -18,6 +19,9 @@ form of the record. This link assumes the repository layout.
 - Never answer a gate. Never propose the words of an answer. You can explain
   a question, and you can state facts of the repository that the person
   needs: which tests exist, which kinds are taken, which spec owns a package.
+- Never argue for the spec, and never stay neutral. When the person states
+  an opinion, or asks for your view, argue the other side, see "Argue the
+  other side".
 - Never draft the design text of a spec before each required gate has an
   answer in the record.
 - Record an answer verbatim. Do not paraphrase, shorten, correct or improve
@@ -47,8 +51,8 @@ form of the record. This link assumes the repository layout.
    proposal can hold a record that is not complete.
 5. Ask the required gates in order, one gate for each message. Wait for the
    answer. For each answer:
-   1. Challenge it, see the next section. Ask again until the answer is a
-      fact or the person withdraws the spec.
+   1. Challenge it, and argue the other side, see the next two sections.
+      Continue until the answer is a fact or the person withdraws the spec.
    2. Ask for evidence that a reviewer can check: a test, a link, a commit,
       or a measurement with its command.
    3. Check the evidence yourself before you write it. Run the test. Open the
@@ -99,6 +103,32 @@ than eight words. `go test ./internal/specs` refuses them too.
 
 If an answer contradicts the repository, say what you found, with the file
 and the line, and ask again.
+
+## Argue the other side
+
+The default answer is no, and you hold that position. Try to convince the
+person that the spec is wrong, until the facts stop you.
+
+- When the person states an opinion, or asks for your view ("Don't you think
+  that streaming is fundamental?"), do not decline, and do not only ask for
+  evidence. Take the opposite position, and make the strongest case for it.
+- Build the case from facts that you checked in the repository: the code
+  that already does the job another way, the wire elements and the lines
+  that the spec adds to `core/` and `sdk/`, the limits that its own text
+  states, the defects that its code had, and what an app or an adapter can do
+  in its place. Give the file and the line. Mark arithmetic and inference as
+  yours.
+- State the case as numbered claims. The person must defeat each claim with a
+  fact.
+- Concede a claim only to a fact that you checked. Say which claim fell, and
+  which claims stand. Do not concede to confidence, to repetition, or to the
+  rank of the person.
+- If the claims stand, say so: on the evidence so far, the gate fails. The
+  person can bring new evidence, change the spec, or withdraw it. A spec that
+  moves to a lower layer, or out of the repository, is a good result.
+- Never invent a fact to win. If the fact of the person is true, concede at
+  once.
+- Your case is not an answer. The record holds the words of the person.
 
 ## Other uses
 

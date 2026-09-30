@@ -62,6 +62,8 @@ answer to a new spec is no.
 
 - A human answers the gates. An agent never answers a gate, and never drafts
   the design text of a spec before a human has answered each required gate.
+- In the interview, argue the case against the spec. Do not stay neutral,
+  and do not argue for it. Concede a point only to a fact that you checked.
 - Record each answer verbatim, with the name of the person, the date, the
   commit, and evidence that a reviewer can check. Do not paraphrase, shorten
   or improve an answer.
