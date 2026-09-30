@@ -40,6 +40,10 @@ description = "Prove phases A to D of the capability interface"
 run = "go test -count=1 -v -run '^TestInterface' ./internal/proof/"
 raw = true
 
+[tasks.specs]
+description = "Check the specs, the gates, the proofs, the owners and the kind registry"
+run = "go test ./internal/specs -count=1"
+
 [tasks.boundaries]
 description = "Check core, application and adapter dependency boundaries"
 run = "go test ./internal/architecture -count=1"
