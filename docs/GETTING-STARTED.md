@@ -98,7 +98,7 @@ First check your existing list:
 arc relay ls
 ```
 
-Use a relay you have chosen. [Deploy](DEPLOY.md) shows how to run one:
+Use a relay you have chosen. [The README](../README.md#run-a-relay) shows how to run one:
 
 ```sh
 arc relay add wss://<relay>

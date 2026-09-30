@@ -676,7 +676,7 @@ A public event, such as a capability announcement, is readable by everyone.
   NIP-13 proof of work, before it accepts a gift wrap.
 
 `arc relay serve` applies these limits when its flags turn them on, see
-docs/DEPLOY.md. A relay also caps the size of one event and the rate of
+`arc relay serve --help`. A relay also caps the size of one event and the rate of
 events from one IP address.
 
 The relay transport answers the NIP-42 challenge of a relay and sends the

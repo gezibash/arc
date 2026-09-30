@@ -102,8 +102,8 @@ release.
 - `docs/WHITEPAPER.md` and `docs/WHITEPAPER_HUMAN.md`. They moved to the
   repository of the website.
 - `docker/fly-nostr/`, the Fly.io files of one operator's relay. The image
-  `ghcr.io/gezibash/arc` runs a relay on any host. docs/DEPLOY.md shows the
-  flags that turn on the write limits.
+  `ghcr.io/gezibash/arc` runs a relay on any host. `arc relay serve --help`
+  lists the flags that turn on the write limits.
 - `examples/`, with the notes examples. Tests keep their own programs in
   `testdata/`.
 - The shell proofs in `scripts/`, and the tasks `mise run compose` and
@@ -113,6 +113,8 @@ release.
   docs/wake/SPEC.md, sections 3.6 and 3.7, states what each one must do.
 - The `arc-journal` skill. It named one operator's relay and journal.
 - `docs/assets/arc-header.prompt.md`, the prompt of the header image.
+- `docs/DEPLOY.md`. The README shows how to install `arc` and run a relay.
+  `arc relay serve --help` lists the write limits.
 - The notes on one hosting platform in the exec spec, and the measurements
   taken on it with the older stack.
 - The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
