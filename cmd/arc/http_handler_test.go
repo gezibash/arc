@@ -13,8 +13,8 @@ import (
 // A Go http.Handler behind httpadapter.New answers a call that crosses a
 // relay. The handler sees the method, the path, the query and the content of
 // the call, and the key of the caller. The caller sees the status, the header
-// fields and the content of the response. See docs/http/SPEC.md, sections 3
-// to 5.
+// fields and the content of the response. See docs/http/SPEC.md, sections
+// 3.2 to 3.4.
 func TestAGoHandlerAnswersACallThroughARelay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
