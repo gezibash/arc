@@ -7,8 +7,9 @@ Status: built. Two adapters serve HTTP over ARC:
 
 Go tests prove both: `go test ./adapters/http ./apps/http/server`. The test
 `TestBundledProviderSessionsThroughCLI` in `cmd/arc` runs `arc-http` through a
-local relay and the normal CLI. No test runs a Go handler from
-`httpadapter.New` through a relay.
+local relay and the normal CLI. The test
+`TestAGoHandlerAnswersACallThroughARelay` runs a Go handler from
+`httpadapter.New` the same way.
 
 The Go adapter is `github.com/gezibash/arc/adapters/http` (package
 `httpadapter`). Shared service contracts are in `core/provider`. The HTTP app
