@@ -228,6 +228,9 @@ mise run interface   # the capability interface, end to end
 - [Capability interface](docs/interface/SPEC.md): manifests, commands, and
   data that a citizen keeps for itself.
 - [Updates](docs/updates/SPEC.md): signed release channels.
+- [How to write a spec](docs/SPEC-TEMPLATE.md): the gates that each spec
+  answers, the [event kinds](docs/KINDS.md), and the
+  [proposals](docs/proposals/).
 - [Deploy](docs/DEPLOY.md): releases, relays, Docker.
 - [Whitepaper](docs/WHITEPAPER.md): protocol design.
 - [Changelog](CHANGELOG.md).

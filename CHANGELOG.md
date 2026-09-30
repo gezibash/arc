@@ -9,7 +9,30 @@ All notable changes to ARC are recorded here. The format follows
 The layout of the Go packages changed. A Go program that imports ARC packages
 must change its import paths. The programs and their commands did not change.
 
+### Added
+
+- Rules for specs, in docs/SPEC-TEMPLATE.md. Each spec has a fixed header:
+  its status, its layers, the packages that it owns, the test that proves it,
+  and what no test covers. A new spec answers a set of gates before anyone
+  writes its design. A human answers; the spec records each answer verbatim,
+  with evidence. The record only grows.
+- `go test ./internal/specs`, and `mise run specs`, check each spec against
+  those rules. Each package under `core/` and `sdk/` must belong to a spec.
+- docs/KINDS.md, the registry of each event kind that ARC reads, writes or
+  reserves. A test checks it against the code and the manifests.
+- docs/GRANDFATHERED.md, the list of the specs and packages that predate the
+  rules. The list only shrinks.
+- The pull request check "Spec policy". It refuses a change that edits a
+  record of gates, that adds to the grandfathered list, or that changes
+  `core/` or `sdk/` and does not name a spec.
+- The `spec` skill, which runs the gate interview.
+
 ### Changed
+
+- The proposals moved to `docs/proposals/`: the private environment contract,
+  the Bluetooth plan, and the machine lifecycle definition.
+- `docs/sqlite/SPEC.md` is now part of `apps/sqlite/README.md`. An app
+  documents itself.
 
 - `sdk/` is the kit for app authors. An app imports only `sdk/`, so an app
   can live in another repository. `internal/architecture` checks this rule.
