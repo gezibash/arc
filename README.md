@@ -247,5 +247,6 @@ Specs:
 
 Other:
 
-- The whitepapers live with the website, in the `republic-site` repository.
+- [Whitepaper](https://republic.sh/whitepaper/WHITEPAPER.md): protocol
+  design, and [the human version](https://republic.sh/whitepaper/WHITEPAPER_HUMAN.md).
 - [Changelog](CHANGELOG.md).
