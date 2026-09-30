@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,17 +24,9 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	if !s.config.Grants[req.From] {
 		return provider.Error("access_denied")
 	}
-	if len(req.Message) > s.config.Limits.BodyBytes {
-		return provider.Error("request_too_large")
-	}
-	var request body
-	decoder := json.NewDecoder(strings.NewReader(req.Message))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		return provider.ErrInvalidRequest
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return provider.ErrInvalidRequest
+	request, err := decodeBody(s.config, req.Message)
+	if err != nil {
+		return err
 	}
 	if request.Action != "" && request.Action != "run" || request.Job != "" {
 		return provider.ErrInvalidRequest

@@ -84,12 +84,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 	if stream.Mode() == session.Duplex {
 		// The terminal reader polls its own context and is joined before closing.
 		if !tty {
-			stop := context.AfterFunc(stream.Context(), func() {
-				if closer, ok := input.(io.Closer); ok {
-					closer.Close()
-				}
-			})
-			defer stop()
+			defer closeOnEnd(stream, input)()
 		}
 		readInput := input
 		inputCtx, stopInput := context.WithCancel(stream.Context())

@@ -2,11 +2,13 @@ package providerconfig
 
 import (
 	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/gezibash/arc/internal/strictjson"
 )
 
 var publicKeyPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -36,16 +38,18 @@ func ReadConfig(path string, into any) error {
 		return fmt.Errorf("%s is not readable", path)
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(into); err != nil {
-		return fmt.Errorf("%s: %v", filepath.Base(path), err)
-	}
-	if decoder.More() {
+	err = strictjson.Decode(bytes.NewReader(data), into)
+	if errors.Is(err, strictjson.ErrTrailing) {
 		return fmt.Errorf("%s holds more than one document", filepath.Base(path))
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %v", filepath.Base(path), err)
 	}
 	return nil
 }
+
+// PublicKey reports whether key is 64 characters of lower case hex.
+func PublicKey(key string) bool { return publicKeyPattern.MatchString(key) }
 
 // Grants turns a list of public keys into the set that a provider checks. The
 // list must hold at least one key, and each key is 64 characters of lower

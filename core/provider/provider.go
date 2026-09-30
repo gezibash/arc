@@ -400,7 +400,13 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 }
 
 func (r *runtime) reject(requestID any, err error) {
-	rejected := rejection{requestID: requestID, err: err, done: make(chan struct{})}
+	r.enqueue(rejection{requestID: requestID, err: err})
+}
+
+// enqueue queues one rejection. A later request waits for its done channel,
+// so the rejection is answered first.
+func (r *runtime) enqueue(rejected rejection) {
+	rejected.done = make(chan struct{})
 	select {
 	case r.rejections <- rejected:
 		r.rejected = rejected.done

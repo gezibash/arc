@@ -92,7 +92,7 @@ func loadConfig() (*config, error) {
 			return nil, invalidConfig()
 		}
 		for key, role := range held.Grants {
-			if !publicKeyPattern.MatchString(key) || (role != "read" && role != "write") {
+			if !providerconfig.PublicKey(key) || (role != "read" && role != "write") {
 				return nil, invalidConfig()
 			}
 		}
@@ -155,5 +155,3 @@ func checkLimits(given limits) error {
 }
 
 func invalidConfig() error { return fmt.Errorf("invalid SQLITE_CONFIG") }
-
-var publicKeyPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)

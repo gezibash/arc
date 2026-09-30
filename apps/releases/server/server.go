@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/internal/strictjson"
 )
 
 // The limits of the provider.
@@ -78,9 +79,7 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 		Length  int    `json:"length"`
 	}
 
-	decoder := json.NewDecoder(strings.NewReader(request.Message))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil || decoder.More() {
+	if err := strictjson.Decode(strings.NewReader(request.Message), &body); err != nil {
 		return "", errInvalidRequest
 	}
 

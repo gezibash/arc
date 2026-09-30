@@ -31,6 +31,17 @@ func sessionCmd() *cobra.Command {
 	command.Flags().Duration("timeout", 2*time.Minute, "session lifetime, at most 30 minutes")
 	return command
 }
+
+// closeOnEnd closes owned input when the session ends, so a blocked read
+// returns. The returned function stops the close.
+func closeOnEnd(stream *session.Stream, input io.Reader) func() bool {
+	return context.AfterFunc(stream.Context(), func() {
+		if closer, ok := input.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	})
+}
+
 func runSession(command *cobra.Command, args []string) error {
 	modeText, _ := command.Flags().GetString("mode")
 	mode := session.Mode(modeText)
@@ -106,13 +117,7 @@ func runSession(command *cobra.Command, args []string) error {
 	}
 	if mode == session.Duplex {
 		input := command.InOrStdin()
-		// Owned pipe input can be interrupted when the session closes.
-		interrupt := context.AfterFunc(stream.Context(), func() {
-			if closer, ok := input.(io.Closer); ok {
-				_ = closer.Close()
-			}
-		})
-		defer interrupt()
+		defer closeOnEnd(stream, input)()
 		go func() {
 			_, err := io.Copy(stream, input)
 			if err == nil {

@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gezibash/arc/adapters/providerconfig"
 	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/internal/strictjson"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -96,7 +98,7 @@ func (s *server) query(ctx context.Context, caller, path, message string) (map[s
 }
 
 func (s *server) authorized(caller, path string) (database, string, error) {
-	if !publicKeyPattern.MatchString(caller) {
+	if !providerconfig.PublicKey(caller) {
 		return database{}, "", errUnauthorized
 	}
 	if !pathPattern.MatchString(path) {
@@ -368,9 +370,7 @@ func (s *server) parseRequest(message string) ([]statement, error) {
 		Statements []statement     `json:"statements"`
 	}
 
-	decoder := json.NewDecoder(strings.NewReader(message))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil || decoder.More() {
+	if err := strictjson.Decode(strings.NewReader(message), &body); err != nil {
 		return nil, errInvalidRequest
 	}
 

@@ -1,12 +1,12 @@
 package server
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/internal/strictjson"
 )
 
 // command is one command to run.
@@ -31,22 +31,24 @@ type body struct {
 	Cols      uint16   `json:"cols,omitempty"`
 }
 
+// decodeBody checks the size of a request body and reads it.
+func decodeBody(cfg *config, message string) (body, error) {
+	var request body
+	if len(message) > cfg.Limits.BodyBytes {
+		return request, provider.Error("request_too_large")
+	}
+	if err := strictjson.Decode(strings.NewReader(message), &request); err != nil {
+		return request, provider.ErrInvalidRequest
+	}
+	return request, nil
+}
+
 // parseRequest reads the body of a request. It returns the action, and either
 // a command or a job id.
 func parseRequest(cfg *config, message string) (action string, cmd *command, job string, err error) {
-	if len(message) > cfg.Limits.BodyBytes {
-		return "", nil, "", provider.Error("request_too_large")
-	}
-
-	decoder := json.NewDecoder(strings.NewReader(message))
-	decoder.DisallowUnknownFields()
-
-	var request body
-	if err := decoder.Decode(&request); err != nil {
-		return "", nil, "", provider.Error("invalid_request")
-	}
-	if decoder.More() {
-		return "", nil, "", provider.Error("invalid_request")
+	request, err := decodeBody(cfg, message)
+	if err != nil {
+		return "", nil, "", err
 	}
 
 	if request.PTY || request.Rows != 0 || request.Cols != 0 {

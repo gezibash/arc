@@ -2,11 +2,12 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"github.com/gezibash/arc/core/provider"
-	"github.com/gezibash/arc/core/session"
 	"io"
 	"strings"
+
+	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/internal/strictjson"
 )
 
 func (s *server) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
@@ -20,12 +21,7 @@ func (s *server) HandleSession(ctx context.Context, req provider.Request, stream
 		Op     string `json:"op"`
 		Digest string `json:"digest"`
 	}
-	decoder := json.NewDecoder(strings.NewReader(req.Message))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		return errInvalidRequest
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF || request.Op != "archive" {
+	if err := strictjson.Decode(strings.NewReader(req.Message), &request); err != nil || request.Op != "archive" {
 		return errInvalidRequest
 	}
 	if err := ctx.Err(); err != nil {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -31,18 +30,11 @@ type SessionRecord struct {
 }
 
 func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
-	var in httpRequest
-	decoder := json.NewDecoder(strings.NewReader(req.Message))
-	decoder.DisallowUnknownFields()
-	if req.Message != "" {
-		if err := decoder.Decode(&in); err != nil {
-			return provider.ErrInvalidRequest
-		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
-			return provider.ErrInvalidRequest
-		}
+	in, err := decodeHTTPRequest(req.Message)
+	if err != nil {
+		return provider.ErrInvalidRequest
 	}
-	request, err := httpRequestOf(ctx, req)
+	request, err := httpRequestOf(ctx, req, in)
 	if err != nil {
 		return provider.ErrInvalidRequest
 	}

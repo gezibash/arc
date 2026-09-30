@@ -34,6 +34,7 @@ import (
 	httpadapter "github.com/gezibash/arc/adapters/http"
 	"github.com/gezibash/arc/core/provider"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/internal/strictjson"
 )
 
 const (
@@ -164,9 +165,7 @@ func (a *adapter) calls() http.Handler {
 			Address string  `json:"address"`
 			Body    *string `json:"body"`
 		}
-		decoder := json.NewDecoder(io.LimitReader(r.Body, maxCall))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&in); err != nil || in.Address == "" || in.Body == nil {
+		if err := strictjson.Decode(io.LimitReader(r.Body, maxCall), &in); err != nil || in.Address == "" || in.Body == nil {
 			answer(w, http.StatusBadRequest, "error", `a call is {"address": "<scheme>+arc://<provider>/<path>", "body": "..."}`)
 			return
 		}

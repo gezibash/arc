@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gezibash/arc/core/provider"
+	"github.com/gezibash/arc/internal/strictjson"
 )
 
 // CallerHeader is the header field that carries the public key of the
@@ -59,7 +60,11 @@ func (a *Adapter) HandleRequest(ctx context.Context, r provider.Request) (string
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	request, err := httpRequestOf(ctx, r)
+	in, err := decodeHTTPRequest(r.Message)
+	if err != nil {
+		return "", provider.ErrInvalidRequest
+	}
+	request, err := httpRequestOf(ctx, r, in)
 	if err != nil {
 		return "", provider.ErrInvalidRequest
 	}
@@ -75,16 +80,19 @@ func (a *Adapter) HandleRequest(ctx context.Context, r provider.Request) (string
 	return response.reply()
 }
 
-// httpRequestOf turns a call into an HTTP request.
-func httpRequestOf(ctx context.Context, r provider.Request) (*http.Request, error) {
+// decodeHTTPRequest reads the message of a call. An empty message is a
+// request with no query, headers or body.
+func decodeHTTPRequest(message string) (httpRequest, error) {
 	var in httpRequest
-	if strings.TrimSpace(r.Message) != "" {
-		decoder := json.NewDecoder(strings.NewReader(r.Message))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&in); err != nil {
-			return nil, err
-		}
+	if strings.TrimSpace(message) == "" {
+		return in, nil
 	}
+	err := strictjson.Decode(strings.NewReader(message), &in)
+	return in, err
+}
+
+// httpRequestOf turns a call and its decoded message into an HTTP request.
+func httpRequestOf(ctx context.Context, r provider.Request, in httpRequest) (*http.Request, error) {
 	if in.Body != "" && in.BodyBase64 != "" {
 		return nil, errors.New("provider: a request has body or body_base64, not both")
 	}

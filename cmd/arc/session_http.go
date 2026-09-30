@@ -2,14 +2,14 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+
 	httpadapter "github.com/gezibash/arc/adapters/http"
 	"github.com/gezibash/arc/application/iface"
 	"github.com/gezibash/arc/core/session"
 	"github.com/spf13/cobra"
-	"io"
 )
 
 func websocketRequest(body string) (string, error) {
@@ -78,12 +78,7 @@ func httpSessionCLI(cmd *cobra.Command, stream *session.Stream) error {
 }
 func websocketCLI(cmd *cobra.Command, stream *session.Stream) error {
 	input := cmd.InOrStdin()
-	stop := context.AfterFunc(stream.Context(), func() {
-		if c, ok := input.(io.Closer); ok {
-			c.Close()
-		}
-	})
-	defer stop()
+	defer closeOnEnd(stream, input)()
 	go func() {
 		scanner := bufio.NewScanner(input)
 		scanner.Buffer(make([]byte, 4096), httpadapter.MaxHTTPBody)

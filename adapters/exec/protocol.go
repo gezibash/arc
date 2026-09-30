@@ -2,10 +2,9 @@
 package execadapter
 
 import (
-	"bufio"
-	"encoding/json"
-	"github.com/gezibash/arc/core/provider"
 	"io"
+
+	"github.com/gezibash/arc/adapters/ndjson"
 )
 
 // Data is base64 in JSON. Terminal sessions combine stdout and stderr.
@@ -17,23 +16,9 @@ type Record struct {
 	Cols uint16 `json:"cols,omitempty"`
 }
 
-type Reader struct{ scanner *bufio.Scanner }
+type Reader = ndjson.Reader[Record]
 
+// NewReader reads Exec records. One record carries at most 16 KiB of data.
 func NewReader(r io.Reader) *Reader {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 4096), 32*1024)
-	return &Reader{scanner: s}
-}
-func (r *Reader) Next() (Record, error) {
-	if !r.scanner.Scan() {
-		if r.scanner.Err() != nil {
-			return Record{}, r.scanner.Err()
-		}
-		return Record{}, io.EOF
-	}
-	var record Record
-	if err := json.Unmarshal(r.scanner.Bytes(), &record); err != nil || len(record.Data) > 16*1024 {
-		return Record{}, provider.ErrInvalidRequest
-	}
-	return record, nil
+	return ndjson.NewReader(r, 32*1024, func(record Record) bool { return len(record.Data) <= 16*1024 })
 }

@@ -60,14 +60,7 @@ func safeSessionError(log io.Writer, err error) string {
 	return safeError(log, err)
 }
 func (r *runtime) rejectSession(id string, err error) {
-	rejected := rejection{sessionID: id, err: err, done: make(chan struct{})}
-	select {
-	case r.rejections <- rejected:
-		r.rejected = rejected.done
-	case <-r.out.ctx.Done():
-	default:
-		r.out.abort(ErrBusy)
-	}
+	r.enqueue(rejection{sessionID: id, err: err})
 }
 func (r *runtime) dispatchSession(ctx context.Context, e wire.Event) {
 	f := *e.Session
