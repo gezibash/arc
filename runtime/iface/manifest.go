@@ -284,9 +284,6 @@ var (
 // builtins are the names that every action template knows.
 var builtins = []string{"me", "author", "now"}
 
-// fileFields are the fields that a file argument offers to templates.
-var fileFields = []string{"name", "type", "size", "sha256"}
-
 // Parse reads and checks one manifest. It refuses a field that version 1
 // does not define, so a typing error does not pass unseen.
 func Parse(data []byte) (*Manifest, error) {

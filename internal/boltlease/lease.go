@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 // A bolt file takes one process at a time. A command of arc can run for
@@ -82,7 +82,7 @@ func (l *Lease[T]) wait() (T, error) {
 	deadline := time.Now().Add(Wait)
 	for {
 		value, err := l.open()
-		if err == nil || !errors.Is(err, bbolt.ErrTimeout) {
+		if err == nil || !errors.Is(err, bolterrors.ErrTimeout) {
 			return value, err
 		}
 		if time.Now().After(deadline) {

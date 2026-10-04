@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
+	"testing"
+
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/release"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/providertest"
-	"io"
-	"testing"
 )
 
 type streamedArchive struct {

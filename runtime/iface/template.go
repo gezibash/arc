@@ -161,15 +161,6 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 	return out.String(), nil
 }
 
-// value renders a template that is one placeholder as its value, so a list
-// stays a list. Other templates render as text.
-func (t *template) value(s scope, h helpers) (any, error) {
-	if len(t.parts) == 1 && t.parts[0].name != "" {
-		return t.parts[0].value(s, h)
-	}
-	return t.render(s, h, false)
-}
-
 func (p part) value(s scope, h helpers) (any, error) {
 	var value any
 	if names := strings.Split(p.name, "+"); len(names) > 1 {

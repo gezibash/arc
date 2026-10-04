@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"testing"
+
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/iface"
 	execadapter "github.com/gezibash/arc/sdk/execadapter"
 	"github.com/gezibash/arc/sdk/providertest"
-	"strings"
-	"testing"
 )
 
 func TestExecSessionCLIOutputAndExit(t *testing.T) {

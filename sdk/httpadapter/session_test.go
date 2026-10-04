@@ -3,15 +3,16 @@ package httpadapter
 import (
 	"context"
 	"encoding/json"
-	"github.com/coder/websocket"
-	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/sdk/provider"
-	"github.com/gezibash/arc/sdk/providertest"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/providertest"
 )
 
 func httpStream(t *testing.T, handler http.Handler, mode session.Mode, method, body string) *session.Stream {
@@ -32,7 +33,7 @@ func TestHTTPStreamFlushHeadersTrailersAndLargeBody(t *testing.T) {
 	ctx := t.Context()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(CallerHeader) != "alice" {
-			http.Error(w, "forged", 403)
+			http.Error(w, "forged", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -121,7 +122,7 @@ func TestHTTPDuplexRequestBodyAndCancellation(t *testing.T) {
 func TestHTTPWebSocketMessagesPingAndClose(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(CallerHeader) != "alice" {
-			http.Error(w, "forged", 403)
+			http.Error(w, "forged", http.StatusForbidden)
 			return
 		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"echo"}})
@@ -174,7 +175,7 @@ func TestHTTPWebSocketMessagesPingAndClose(t *testing.T) {
 	}
 }
 func TestHTTPWebSocketHandshakeRefusal(t *testing.T) {
-	stream := httpStream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 403) }), session.Duplex, "GET", `{"websocket":true}`)
+	stream := httpStream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", http.StatusForbidden) }), session.Duplex, "GET", `{"websocket":true}`)
 	head := httpRecord(t, NewSessionReader(stream))
 	if head.Status != 403 {
 		t.Fatal(head)

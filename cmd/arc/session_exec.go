@@ -131,13 +131,13 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		if err != nil {
 			select {
 			case inputErr := <-inputFailure:
-				return fmt.Errorf("Exec input: %w", inputErr)
+				return fmt.Errorf("exec input: %w", inputErr)
 			default:
 			}
 			return err
 		}
 		if exit >= 0 {
-			return fmt.Errorf("Exec output after exit status")
+			return fmt.Errorf("exec output after exit status")
 		}
 		switch record.Type {
 		case "stdout":
@@ -160,7 +160,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		return err
 	}
 	if exit < 0 {
-		return fmt.Errorf("Exec session ended without exit status")
+		return fmt.Errorf("exec session ended without exit status")
 	}
 	if exit != 0 {
 		return iface.ExitError{Code: exit}

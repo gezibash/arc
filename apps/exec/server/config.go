@@ -17,10 +17,11 @@ package server
 
 import (
 	"fmt"
-	"github.com/gezibash/arc/sdk/provider"
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/gezibash/arc/sdk/provider"
 
 	"github.com/gezibash/arc/sdk/providerconfig"
 )

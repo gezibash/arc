@@ -4,9 +4,10 @@ package providertest
 
 import (
 	"context"
-	"github.com/gezibash/arc/core/session"
 	"testing"
 	"time"
+
+	"github.com/gezibash/arc/core/session"
 )
 
 func Start(t *testing.T, mode session.Mode, handler func(context.Context, *session.Stream) error) *session.Stream {

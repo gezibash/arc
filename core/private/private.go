@@ -149,7 +149,7 @@ func Wrap(ctx context.Context, author keys.Signer, recipient nostr.PubKey, rumor
 // pastTime is a created_at up to two days in the past, as NIP-17 suggests,
 // so that a seal or a wrap does not reveal when it was made.
 func pastTime() nostr.Timestamp {
-	return nostr.Now() - nostr.Timestamp(rand.Int64N(2*24*3600))
+	return nostr.Now() - nostr.Timestamp(rand.Int64N(2*24*3600)) //nolint:gosec // Timestamp jitter, not a key. The math/rand/v2 global source is ChaCha8 with a random seed.
 }
 
 // Opened is a wrap that opened: the seal that proves the author, and the

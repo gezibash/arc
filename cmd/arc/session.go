@@ -92,7 +92,7 @@ func runSession(command *cobra.Command, args []string) error {
 	}
 	if execMode || tty {
 		if mode == session.RequestReply {
-			return fmt.Errorf("Exec I/O needs server_stream or duplex")
+			return fmt.Errorf("exec I/O needs server_stream or duplex")
 		}
 		if tty {
 			if mode != session.Duplex {

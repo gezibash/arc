@@ -2,9 +2,10 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/gezibash/arc/sdk/provider"
 	"io"
 	"net/http"
+
+	"github.com/gezibash/arc/sdk/provider"
 )
 
 type sessionHTTPKey struct{}

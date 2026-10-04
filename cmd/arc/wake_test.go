@@ -44,13 +44,13 @@ func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
-	call := func() (error, time.Duration) {
+	call := func() (time.Duration, error) {
 		start := time.Now()
 		err := arc(t, home, "call", provider.Public.Hex(), `{"argv":["true"]}`, "--timeout", "3s")
-		return err, time.Since(start)
+		return time.Since(start), err
 	}
 
-	err, took := call()
+	took, err := call()
 	if err == nil || !strings.Contains(err.Error(), "peer_offline") || took > 2*time.Second {
 		t.Fatalf("a call to a provider announced 10 minutes ago returned %v after %s, want peer_offline at once", err, took)
 	}
@@ -60,7 +60,7 @@ func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "wake.toml"), []byte(hook), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err, _ := call(); err == nil || !strings.Contains(err.Error(), "wake_failed") || !strings.Contains(err.Error(), "the machine is gone") {
+	if _, err := call(); err == nil || !strings.Contains(err.Error(), "wake_failed") || !strings.Contains(err.Error(), "the machine is gone") {
 		t.Fatalf("a call whose wake hook failed returned %v, want wake_failed with the hook's error", err)
 	}
 	if err := os.Remove(filepath.Join(home, "wake.toml")); err != nil {
@@ -70,7 +70,7 @@ func TestALiveCallNeedsACurrentAnnouncementOrAWakeHook(t *testing.T) {
 	// A current announcement lets the call go out. Nobody serves, so the
 	// relay says that no one listened.
 	announce(time.Now())
-	if err, _ := call(); err == nil || !strings.Contains(err.Error(), "no one was listening") {
+	if _, err := call(); err == nil || !strings.Contains(err.Error(), "no one was listening") {
 		t.Fatalf("a call to a provider announced now returned %v, want the relay's answer", err)
 	}
 }

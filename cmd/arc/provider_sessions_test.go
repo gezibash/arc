@@ -6,10 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/creack/pty"
-	"github.com/gezibash/arc/internal/testrelay"
-	"github.com/gezibash/arc/runtime/iface"
-	"golang.org/x/term"
 	"io"
 	"net/url"
 	"os"
@@ -19,6 +15,11 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
+	"github.com/gezibash/arc/internal/testrelay"
+	"github.com/gezibash/arc/runtime/iface"
+	"golang.org/x/term"
 )
 
 func providerBinary(t *testing.T, pkg string) string {

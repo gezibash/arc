@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"strings"
+	"testing"
+
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/iface"
 	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/gezibash/arc/sdk/providertest"
-	"net/http"
-	"strings"
-	"testing"
 )
 
 func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {

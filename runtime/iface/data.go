@@ -423,8 +423,8 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 		}
 		address := opened.Event.Tags.GetD()
 		book, _, _ := strings.Cut(address, "/")
-		if i := strings.LastIndex(address, "/"); i >= 0 {
-			book = address[:i]
+		if before, _, ok := strings.CutLast(address, "/"); ok {
+			book = before
 		}
 		if err := r.refreshNotebookIndex(dl.Kind, book); err != nil {
 			return nil, fmt.Errorf("page deleted; notebook index update failed: %w", err)

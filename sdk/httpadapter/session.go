@@ -137,7 +137,7 @@ func (l *singleListener) Close() error   { l.once.Do(func() { close(l.done) }); 
 func (l *singleListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 func websocketSession(ctx context.Context, client *http.Client, request *http.Request, protocols []string, stream *session.Stream) error {
-	conn, response, err := websocket.Dial(ctx, request.URL.String(), &websocket.DialOptions{HTTPClient: client, HTTPHeader: request.Header, Subprotocols: protocols})
+	conn, response, err := websocket.Dial(ctx, request.URL.String(), &websocket.DialOptions{HTTPClient: client, HTTPHeader: request.Header, Subprotocols: protocols}) //nolint:bodyclose // websocket.Dial owns the body; its docs say the caller never closes it.
 	out := json.NewEncoder(stream)
 	var mu sync.Mutex
 	send := func(v SessionRecord) error { mu.Lock(); defer mu.Unlock(); return out.Encode(v) }
