@@ -57,7 +57,7 @@ func Open(cfg Config) (*Session, error) {
 	}
 	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve"))}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
-	sess.Node = &node.Node{Store: receipts{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
+	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
 	sess.NewRelay = func(url string) transport.Transport { return relay.Relay{URL: url, Signer: sess.Signer} }
 	for _, url := range cfg.URLs {
 		sess.Relays = append(sess.Relays, sess.NewRelay(url))

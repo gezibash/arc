@@ -19,10 +19,10 @@ var (
 	receiptNext   = []byte("next")
 )
 
-// receipts records the order in which this machine stores the seals of other
+// receiptStore records the order in which this machine stores the seals of other
 // citizens. The clock of a sender does not change this order. Each arc
 // command that opens a home records it, because Open composes it.
-type receipts struct {
+type receiptStore struct {
 	node.EventStore
 	db kv.Store
 	me nostr.PubKey
@@ -31,7 +31,7 @@ type receipts struct {
 // Save records the receipt, and then saves the event. If the process stops
 // between the two writes, a receipt with no seal stays. It matches no
 // message.
-func (r receipts) Save(event nostr.Event) (store.Result, error) {
+func (r receiptStore) Save(event nostr.Event) (store.Result, error) {
 	if event.Kind == private.SealKind && event.PubKey != r.me {
 		err := r.db.Update(func(tx kv.Tx) error {
 			b, err := tx.CreateBucketIfNotExists(receiptBucket)

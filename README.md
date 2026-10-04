@@ -118,8 +118,9 @@ arc message watch --json --since <message id> --from <public key>
     message that this machine stored after that message, but not that
     message. The clock of a sender does not change this order. If arc
     stored a message before it kept receipts, the output always includes
-    that message. If the id is not in the inbox, the command stops with an
-    error.
+    that message. If arc stored the message of the id before it kept
+    receipts, the output includes each other message. If the id is not in
+    the inbox, the command stops with an error.
 - `--from <public key>` prints only the messages from that key. You can give
   the flag more than one time. The command drops other messages without
   output.
