@@ -1,0 +1,228 @@
+{
+  "description": "Gift wraps of core/private, recorded once. A recipient opens each wrap in open, and refuses each wrap or seal in refuse.",
+  "keys": {
+    "alice": {
+      "secret": "83d438b2ca8a677d055f1cdcc283ad405ff185e8e555c29d9df82dc22552a3ff",
+      "public": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12"
+    },
+    "bob": {
+      "secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "public": "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+    },
+    "carol": {
+      "secret": "312c9c1da4064516f9bd2a3d6713647d66b3cb95764ce23f79d3b209c22ee1b8",
+      "public": "690e4f96143dd8ecdbbe977cb81f8dda98b4d2c918b58560e1112472da19824b"
+    },
+    "mallory": {
+      "secret": "416bfac6913a5a15429c2998fc8b9760ba6a7ab9beb2ac6b53e02a73ebc631ac",
+      "public": "6e403e679fbe6039f4d8352343214f7fa24e4863e536de466ac61050cfe5d0ef"
+    }
+  },
+  "open": [
+    {
+      "description": "a message from alice to bob, in the relay form",
+      "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "form": "relay",
+      "expires": 1791720000,
+      "wrap": {
+        "kind": 1059,
+        "id": "cc0aec7d2b937c6dac7dba5406fe7c323e791432083fb073fd1ffed7388126ac",
+        "pubkey": "c3959e032fba902ed6a67bd041a861865b660d0fe6bafa3bbf0f592188dacee7",
+        "created_at": 1791099407,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ],
+          [
+            "expiration",
+            "1791720000"
+          ]
+        ],
+        "content": "Al+9GJzV4iIDYQeNFAW6BsXROPOlzInRpDMDYVzXFogdKudqkr0V4NkG9vjrzu9BypqKLVsI3zF0+j4juNSCcco8zG/xhJKDnXBofIDCOAIujpvxImu1XeWqf/lgvgyTM8hG5DtivvG0L/C0JHBtry3Fmwd4XXgLgaBK7kxKbUXNFVPXhfbJm0pzvUZgtZAJOAzSqV2+UGmI00m7wh9xz5Y7MDLcvwia13gWxGAGvIlrS0cuSOF7RqmyekPobe5Mns5tNXaQThIBU2dNZGL5z1yY/kTucA9GUOSbexRwp/fzKafqsl0FIHTWdCe+jQadThgd7LO5TZs+cca2BxT0nzmtvoVQigZRxcaA0+O4FFa7lTfPQYq/yETmAEzZI5UWQ6wsXwub2GO32b1G03YG9WQ+oEjsbNA5JFh8buBEf53HlacZruwTyg7KoZu/O2dyju1GD7SnZiKyzC+N9L17RW2rweFxVDH3AMAuyQspmlPvv4sWWDW8uvtPxU3pkY1lanfzOWc/vsNuYugEcDjG3MtPZBZrH+/Jtl20Ky54hGHNryQSIdPwd4h8SrYMIx3EY3IrM/+gRQ0sXNEZjxi4qPiJTA+CpwXSPX3pJ51HoyEOCabG+eBMoLkqOSBTZ8B5y4H1qDz3LMEPoSkHW3HFgk9w+PdX6DUxQBNvkzLd7YsdWDMhkXxQayY94IlPI784Wof8g8pPSQMB/EFU59vi/ZtFB1HCy+TSKPITdkFbPYBs5JVR1tsku0ouDY/Q8JolrCq482PgY7r5z/At6/288u+dvsL6vPJgQEALEN0Ke3GukmEz5MqurrrEnleRBsqiFSfdv5RZxwSwd5BK0Q/E451MhXPcp/msB85u947fTizVccyxk/2ZZNNO32B3IW7J4frAKvGmRHGRdDdeORmu1h5jM9Fyh3DY5nzkgJbUJgrA/OQF/m1zqxwWhviPis9uX8ca5qm8vIoIzTYtccYstyihL6TmYuto+78mWqnEp4Wd9ubS/FM/DAxO5VuPX6AtvoaRsDClfGIXievDX3/bw9dVosJSZaLp3Ax645vMBTDq1+T/rEWPwCl2Qg0/8SwN3pbATgO3oYai1Jq7J7FUQDYPhFb36J2Hwxhb8IKYbvkoD/uKoOMnBsLSNgEKJPyvq1kwA+mfbVE3fTDAyHL48TVr+1P7nUHFau3dzOR0qQSxj5EiLQuC8SGS75DRykLp29//YYNL/5F6rvHzJjKbk0fXKvGGqQzwJGTGpJHyJtmBo/+ooW4MzYzoWabDnNc6rB/L",
+        "sig": "800a6979e67b56b172463fd999949325553f22f0ce02d5fa83aec84e07aca5274376d7f1ae021e3cd2f331f52f9de35d519b43a71f70253e19c32f5ce672c0d1"
+      },
+      "seal": {
+        "kind": 13,
+        "id": "5af3f15fab2960c5879b5226995ac5166705a5c3c70f0af4ecebd99007c3672d",
+        "pubkey": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12",
+        "created_at": 1790981568,
+        "tags": [],
+        "content": "AjulvYB+Zqg8CZnEaVqSfiB0YMqOrVXVjElnqHzJ0Dm2TRTf8a0XbsLNgpJa5nhgbNJG6qI201LPbVAN0TUagePFSO+V1uDkjIbm+/AxIvljl5HuMTTHTVyqXa9gpQ6XBUtC4CurPv0paU4E767X9ITsGUL3OKOIzzb5A2f3kCLSmsyfJ626XZ4IrLsxqZxqHsF/F4NwsPTvPvYoWLAXV87TXZ0jkf2hqObNZK/Qi5sA0Yuonpj3nT8WikJcnmCaB4C170gRW/XCy3Rb6ZNe3ziY852JmlsLMLc9ZQ3K5SLxYzHia/f34YRYsefuEwYJfrNIKImjNEYZEyrEUSlyaFpJpcGukX3uPpythBOIFy1qIjzV6TQftXZMK86n2uK7yrgis6libzfSJhI2LVwWXFVn3eTvw4YPZRbe2JhuNXHErBrhfvI/2ofKk1VxBkgl8zpZVPJX0/FhE/aA/fqf7tX6fzLcTzVmJ+reBITvqF+hAuU4F3Ap5D5xqfqmMv50Z5mB",
+        "sig": "69059a4e543c1ed1da5bdcc52f8f5c4d20c57aac80c5e893734196dbe287509c41f6eb74ccdd9c31fc358270604e95c7d6735362ba06668e438d1c2ce931e067"
+      },
+      "seal_plaintext": "{\"kind\":14,\"id\":\"b6493dddb48664dba81ceee06781ce6c22336cc41ae2543b7085b5eac0d08812\",\"pubkey\":\"67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12\",\"created_at\":1791115200,\"tags\":[[\"p\",\"1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d\"]],\"content\":\"hello bob\"}",
+      "author": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12",
+      "rumor": {
+        "id": "b6493dddb48664dba81ceee06781ce6c22336cc41ae2543b7085b5eac0d08812",
+        "pubkey": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12",
+        "created_at": 1791115200,
+        "kind": 14,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ]
+        ],
+        "content": "hello bob"
+      }
+    },
+    {
+      "description": "a message from alice to bob, in the courier form",
+      "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "form": "courier",
+      "route_day": "2026-10-04",
+      "expires": 1791720000,
+      "wrap": {
+        "kind": 1059,
+        "id": "16abf6eafdc8e1a727a6a75abdfe257c0de0cdd8a7180785e4023bb940a3b8c7",
+        "pubkey": "7968fcd7acabdc71b7f3727535d9aca1377919ccc6dd38401a53327df508c792",
+        "created_at": 1790973424,
+        "tags": [
+          [
+            "w",
+            "25deb1113398fdd8164d7e3137867ad0"
+          ],
+          [
+            "expiration",
+            "1791720000"
+          ]
+        ],
+        "content": "AmhUyPH+/1xBWew/3Texq0Vz2vJP0SDtpEGLmyiKvOg+uD5+mrHpNOKNCsmO4AdRVHuQSjLig+3qSvrqS/kf9tSk+E3QE9CwRRAHQOuy56Pq3O7CNYpBLhev32WIWBnjQQm+YDX49gb54YUL3Xoj7vc16s/VEKXsveIUGMA8Wa8J4qi4OCivZJNDPHMbhXMAWIyw/2fzw2o+h9mq2UBwCd7f+SKNEpe04WWCC07MEpgEpX/zmOa8iLLC+aoPWEfrbx7BVV+7nT8pbiQe+HYvN0/uJXeX9aBqHgaEMBW4B+HMHSy3kIaJOHn2nNLRw+uvcfKckajdMNhs4NyEyzxhZ/T5yBGApmLYDzJN6SfqAU5aSI09xIOZft5f04RnQ40yBR4tjWWbi9JnuiSzx5i2iwi/N04sqW235WT8gQdbuPFrAERVgcIongk4HgkMzp/gmR7tCXvdnO87sVOTVcqC/m2D57Y9OsXABmA0DejagWlhV8+3OGhd54mtwok/C+mpe6ar8gsM0pAMyrpttcGqKndp6wpa+noE2FJe9hSUysg5Rct33u+sB0PFpL9dAQ/UOS5XYFDHeQIf/FasGgIDZbreZHlKhJPH88Hn4fZ4gKHj8YsDmEWpCjsoSGYlhjegV1m8JIo4judJi0EHlZ1VO52+Jkt/ylL7vhkE639tTDRJ28SzVmHXQDwdyHwdNlRqFaQndH1wr2z9cGEVoPyIb/8jRq18ndZ7213UbHc1+Gy+PwHzZC+4EoK/028hP6qr7ngfqYW2JyebbAGNR38GXw7eG6ZRlUQ0J9t2uh97XEP02yL0acU9MvXxUq+8PrJojiC3Zy4fjStfUriyauGZp5XG7BGe6qn/GhuulQk4zv4xgb+5pXjzcf2EMCJWxF2q5crEjDDzEqXSRlt9wzQsx0lcNmyAmhsqK2hALDkaUKWm5d+U2t2GH3cLiwn8W9DRAy8Q5Y38STEg1yc4aWXOA8bswdb1CN853G1xgh35+5LEYFBPzF5B8uzNJSQ7+478cfX8SaRaDJi+4pbMS2ykwjuq8SlshOk8En8o1Z/5l+oRSGFlYb/HWtPQmUMIZpIq0ONc9mkXt73fNYlYCAqzFxosxXGgao7tIUvtCqr6Z1ON1lkB7YFIoSLXRXP96ySVY4/c5g876KyH1FVLs/0d2IwbW/UIx3tZrsOHSF9awyqxTH8eyu8A3qSvGH3iS9krVr1Db3XxM8/3SQEkUTz22wq72cLw8ZTpQp6BeqWUxe5L0c6/Krd7pvHUhpfCOMa86ur4",
+        "sig": "9e758fa80b1cc98805d195fb7b465e77f6c64c8844976511e385b8f6b0659beef4dfce01745c5816c8e2da80ace5c2408d889a7963de32cdbfc0928a94d09d39"
+      },
+      "seal": {
+        "kind": 13,
+        "id": "5af3f15fab2960c5879b5226995ac5166705a5c3c70f0af4ecebd99007c3672d",
+        "pubkey": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12",
+        "created_at": 1790981568,
+        "tags": [],
+        "content": "AjulvYB+Zqg8CZnEaVqSfiB0YMqOrVXVjElnqHzJ0Dm2TRTf8a0XbsLNgpJa5nhgbNJG6qI201LPbVAN0TUagePFSO+V1uDkjIbm+/AxIvljl5HuMTTHTVyqXa9gpQ6XBUtC4CurPv0paU4E767X9ITsGUL3OKOIzzb5A2f3kCLSmsyfJ626XZ4IrLsxqZxqHsF/F4NwsPTvPvYoWLAXV87TXZ0jkf2hqObNZK/Qi5sA0Yuonpj3nT8WikJcnmCaB4C170gRW/XCy3Rb6ZNe3ziY852JmlsLMLc9ZQ3K5SLxYzHia/f34YRYsefuEwYJfrNIKImjNEYZEyrEUSlyaFpJpcGukX3uPpythBOIFy1qIjzV6TQftXZMK86n2uK7yrgis6libzfSJhI2LVwWXFVn3eTvw4YPZRbe2JhuNXHErBrhfvI/2ofKk1VxBkgl8zpZVPJX0/FhE/aA/fqf7tX6fzLcTzVmJ+reBITvqF+hAuU4F3Ap5D5xqfqmMv50Z5mB",
+        "sig": "69059a4e543c1ed1da5bdcc52f8f5c4d20c57aac80c5e893734196dbe287509c41f6eb74ccdd9c31fc358270604e95c7d6735362ba06668e438d1c2ce931e067"
+      },
+      "seal_plaintext": "{\"kind\":14,\"id\":\"b6493dddb48664dba81ceee06781ce6c22336cc41ae2543b7085b5eac0d08812\",\"pubkey\":\"67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12\",\"created_at\":1791115200,\"tags\":[[\"p\",\"1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d\"]],\"content\":\"hello bob\"}",
+      "author": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12",
+      "rumor": {
+        "id": "b6493dddb48664dba81ceee06781ce6c22336cc41ae2543b7085b5eac0d08812",
+        "pubkey": "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12",
+        "created_at": 1791115200,
+        "kind": 14,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ]
+        ],
+        "content": "hello bob"
+      }
+    }
+  ],
+  "refuse": [
+    {
+      "description": "a wrap for bob, opened by carol",
+      "recipient_secret": "312c9c1da4064516f9bd2a3d6713647d66b3cb95764ce23f79d3b209c22ee1b8",
+      "wrap": {
+        "kind": 1059,
+        "id": "cc0aec7d2b937c6dac7dba5406fe7c323e791432083fb073fd1ffed7388126ac",
+        "pubkey": "c3959e032fba902ed6a67bd041a861865b660d0fe6bafa3bbf0f592188dacee7",
+        "created_at": 1791099407,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ],
+          [
+            "expiration",
+            "1791720000"
+          ]
+        ],
+        "content": "Al+9GJzV4iIDYQeNFAW6BsXROPOlzInRpDMDYVzXFogdKudqkr0V4NkG9vjrzu9BypqKLVsI3zF0+j4juNSCcco8zG/xhJKDnXBofIDCOAIujpvxImu1XeWqf/lgvgyTM8hG5DtivvG0L/C0JHBtry3Fmwd4XXgLgaBK7kxKbUXNFVPXhfbJm0pzvUZgtZAJOAzSqV2+UGmI00m7wh9xz5Y7MDLcvwia13gWxGAGvIlrS0cuSOF7RqmyekPobe5Mns5tNXaQThIBU2dNZGL5z1yY/kTucA9GUOSbexRwp/fzKafqsl0FIHTWdCe+jQadThgd7LO5TZs+cca2BxT0nzmtvoVQigZRxcaA0+O4FFa7lTfPQYq/yETmAEzZI5UWQ6wsXwub2GO32b1G03YG9WQ+oEjsbNA5JFh8buBEf53HlacZruwTyg7KoZu/O2dyju1GD7SnZiKyzC+N9L17RW2rweFxVDH3AMAuyQspmlPvv4sWWDW8uvtPxU3pkY1lanfzOWc/vsNuYugEcDjG3MtPZBZrH+/Jtl20Ky54hGHNryQSIdPwd4h8SrYMIx3EY3IrM/+gRQ0sXNEZjxi4qPiJTA+CpwXSPX3pJ51HoyEOCabG+eBMoLkqOSBTZ8B5y4H1qDz3LMEPoSkHW3HFgk9w+PdX6DUxQBNvkzLd7YsdWDMhkXxQayY94IlPI784Wof8g8pPSQMB/EFU59vi/ZtFB1HCy+TSKPITdkFbPYBs5JVR1tsku0ouDY/Q8JolrCq482PgY7r5z/At6/288u+dvsL6vPJgQEALEN0Ke3GukmEz5MqurrrEnleRBsqiFSfdv5RZxwSwd5BK0Q/E451MhXPcp/msB85u947fTizVccyxk/2ZZNNO32B3IW7J4frAKvGmRHGRdDdeORmu1h5jM9Fyh3DY5nzkgJbUJgrA/OQF/m1zqxwWhviPis9uX8ca5qm8vIoIzTYtccYstyihL6TmYuto+78mWqnEp4Wd9ubS/FM/DAxO5VuPX6AtvoaRsDClfGIXievDX3/bw9dVosJSZaLp3Ax645vMBTDq1+T/rEWPwCl2Qg0/8SwN3pbATgO3oYai1Jq7J7FUQDYPhFb36J2Hwxhb8IKYbvkoD/uKoOMnBsLSNgEKJPyvq1kwA+mfbVE3fTDAyHL48TVr+1P7nUHFau3dzOR0qQSxj5EiLQuC8SGS75DRykLp29//YYNL/5F6rvHzJjKbk0fXKvGGqQzwJGTGpJHyJtmBo/+ooW4MzYzoWabDnNc6rB/L",
+        "sig": "800a6979e67b56b172463fd999949325553f22f0ce02d5fa83aec84e07aca5274376d7f1ae021e3cd2f331f52f9de35d519b43a71f70253e19c32f5ce672c0d1"
+      },
+      "error": "wrap-does-not-open"
+    },
+    {
+      "description": "a signed wrap whose ciphertext has one byte changed",
+      "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "wrap": {
+        "kind": 1059,
+        "id": "185ec591a71a716dc0f1d18bca27f4b4215cd2b7bde54a11146216007c9cb7dc",
+        "pubkey": "7c660d1bc8ecae5f056555379194331243c3fbc1df7256ac0d33ff7787cb8f81",
+        "created_at": 1790981568,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ],
+          [
+            "expiration",
+            "1791720000"
+          ]
+        ],
+        "content": "Agt2fDYA0MQND+fA10IKBSdrksWMIasUVoE+J6LZitSRxhImo5Ya5unqiLJHOdW9UYSX7hMsagM0XPde2v9cGdLXs0ZDt09K9GGtUcDeHH3fufQYnWadPtY/oUnoAvTPGMqP6TqgQZtxZo+PrS0BluqxOYqjwgYh53M8QcX6jmZuutBb/n1jBi4q0Ijo+nDy6Y7E1Dh6rmssPyqC8opJpgxxRdPAqvE829yuGWlfssmb+3TpOIxxrLpyiD8lICpX3B5HnGBSrN4A3K4nsPj0RLzOc9v2V2SfW/jAZlgIPABhwkyYlK0rc7IByECC+KSqr0hVsujJOL3XaIjQDHQHEPTzkT+mRosunhYEYKjsMTNAFsG7h+OCyFYd2dDVvyK0vHBdefhHY8MfpwqEGxnG1gBxCkLFE47jhmwLG9STCh2jGZ6BKSE6EimoGbY/3u+kBJ/xBHe5BjfpusAZ/i5WE3tyvAKXGlLNIcZ2LUKXu9/Cqu1n490EKV5uVgM4MmK6CAU6WfKMocoQHCA+pCparenXV9tOSVXsDF/VzOZ7+JJFZsAEFZx3T3Z1flR59oAY3sjSGdfMALDNtbwypKRtQqHmJXo/mHXExzU/8Tifohhwf+T98yzo/bRIDxvHODkJytsZuVbrF0QeTX96dUyARiVF82kB5KjAOBXovQDydk9Gxe7BVEkSNDQUYMULS87EWJ9KM/VkjKe4g0dTx3SplhwX8hftZjCIVB6UILIPHh8f5O42FWvedR6Pdk5iR5d1wazVsSAqdF5hyNqKiDXynVopxCXvz2b2suGG26DYX9D4bESNXM8qHRkpjqN/I6x3CBUOj4fCTdWHlyd3gfqLuSkHGD6wpgpvRAxJt7a06Aj87P47Nu711S0Jk9vgpxO/a64Pn9cLeLaX/n+84LrxGjlWAfX9d+TegRxXLImWTQTgfauB3TsQFycdvtPrNmytmPmOuqUCZND5wA2LKrwUjioYJF3rmYtuyqk51okdFgMq4xt1yyNG3vSju5XUzScdaTHgea7/MRqedvfNIgA05gb55sxXv8qR0rAE+r9xFW5xdGvNUQi8xc3Mv8VLKchaXlj8QUB+Np2ytnG2p6NKwBFFxusboFZQ3h4O6ucGgnRT1Khxtu7yCMI+IfT/F/XBqWKnP1W54h3tKezwDyP1MnXrXSc26pRiP1nIv/j62OaOctdo48Wy/KldNXD6VsGff6XB6jRpR6Q88tXuTCVAtqouPK3V0XFL49ayQYOZ5kKzootu7nuK3LJITtiE5SBiMHFx",
+        "sig": "fb7c59a92c38cf366c291b03f108c899b244edf9c9ece29f726323055809295623d141b31c111c2976467ed97d54f27f4c2bff6adc5f1ee37461af292cd8d85d"
+      },
+      "error": "wrap-does-not-open"
+    },
+    {
+      "description": "a wrap around a signed seal whose ciphertext has one byte changed",
+      "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "wrap": {
+        "kind": 1059,
+        "id": "6f31f16bd79560a874eb45eedd13ef101e4f01a46472dbd5e02fe4c79d33bb82",
+        "pubkey": "be475d4c956797bde49a82327b586691fde0d824a5fff622b3061d16d7b1be17",
+        "created_at": 1791029962,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ],
+          [
+            "expiration",
+            "1791720000"
+          ]
+        ],
+        "content": "AqfaNkTHliVZTk0XZ8kLbiPQakbSLg2p/1XN7vJqOn/sMWx3YV4Ufe7CuQXsdOkAl5yhipJv2pR9Rj/+BaWHFVQw5OLPmTgnhG+E16RP33bapW56v122OTMcgJSFc9FpIszJFmZ43/bQYq1HsZVgeqf4t8KHYL9DtZBMtink51yTV5YKsRSxMdR1sp0A48I9KLZ0n6oDQ4/cOdhTd0nm/4TtosnuGWxMFnkiylrdPHMjtoBqRCTco0E2+Qlq2DJbbvC/qBbAKUBjMJdqH6GAgkFddwZdJzoHkwsebdnYB8Tw/H9rBO3yOVo2nF3bV32pXcWY3zE/CXTb6qKE4ZDRoW9avcEA+NBHUjQwJ5i3J+BxGLF/BK6IchIkqKwN1Wo/9A4GaqmtQlR26+UK+oy+sG2OjevZwsV3MycqHYsK67KgcbqcRP3aUWHMNAKZ5ywBKSqFMg48kxcJTriwQNxPhEMgiVxQxte3WCvj7jWn8mqZ74UIUytbQuEx/V7URLsyo4aliBlkz7ndrNRXfr1oYKm0hD8vMI7P4BnEG35X+RY+QX4ZG76vvylTyQN0tI/gVRAhkwcLyJ5C6NvkGuxLMfpY49v8EEr2D8QTKUPtq7gDpchuMBrCkwWw58YXYwd3qfMOZHK7Yf2DXJ0LQrQeEmoN0hctv1SSr+kcnmkzRgiaeXHJpUj3u5+W6CrP4IEPfTokkMzldQgwiy8431yj/ZhaboQyOz6sIjbgd6wn6bAf1b8KCp36pP43gkMtgw2rPGggNYP3jiczcTnfKltc1gsxTW2t0U9VjAxZo+gmCXfNgwIdbtXqGDjK+pqNP6CM/hSlfPGUUvYn04QY5Wsef9I8JRRxSfWjqn6LGngz6/oy7tdaKIrx0/DF38GwKu66a73aL36B4PR1XuqLsvIuqNdLrUjy2Dc38pRzqWLyOzgwFuPMI8mjOZMOILnFqcMNWgmueQEgvAsBOzXCR3AVhGzPgZfn5vDn0kpINza0+SZKp2gA6W7OlEU9Cfr5COAY7A2Ygw2DRobZqmb1R/CV4ypLRkkASe+ctZdNHoqI3WsMWPpTAMrWupp5EY/MJV4Rm4dEUow6gZ0dt8cs7aIqQW2XsrC8DB/GAwPpCCyux6eLYrLXRnyTHi7WOWsbPESspJxGzuMxmJeGPhWsDLp9AG3T4gp79fo49FnJCmwQ9Hui1qL9ibtVnXH+d6nGGLU+d2+8GRKW5DztroVi9Z48p2nGWhdsf6/nl2B3FxQo5PrBupYUpDL3X42csvKyGVwuPE98",
+        "sig": "59c25f8ec394c41cc40fc7dab0e6ed96121cae00a5065d12df91b075037fe72980781a5be09acfa2a5b624d2a150bee00df2c09601dac3a8a208925a72ae380c"
+      },
+      "error": "seal-does-not-open"
+    },
+    {
+      "description": "a wrap around a seal by mallory, whose rumor names alice as its author",
+      "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "wrap": {
+        "kind": 1059,
+        "id": "0835d6cef5dd56a03d7abf4a2534caa4c950b87fd6ad1b3d0cfd40aa51146e95",
+        "pubkey": "b3dd62859903efe2e9a03f080515ed6ba33db319581c5d53f1e9a2bd71239323",
+        "created_at": 1790966066,
+        "tags": [
+          [
+            "p",
+            "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d"
+          ],
+          [
+            "expiration",
+            "1791720000"
+          ]
+        ],
+        "content": "AjSdqfSfaJf2wGYryu+tandzZi/7ivhz81P9t4Hy+ByCRaY2xy+9VTKqbGYgg5ULjgwV/fS/12BPDQtj2azEO1KXJtZOWJtyzIWoYaTpigaM369VT5ccnDBCLS777a6eaSVj56ABwTg0ucHTmeXlunWVSKTNNij7cJU7pE4o2e/9wv2J5D8qUrp91Goi/OnqZNCQCIrdGas0XXKa1JgJ5UXOPMKz4ldQsQ07RrT2J+im+0mi0XxQKpMHjVVSFwnneAtKVG7jXpspMwEHt/IOAYE3x8k7muVozTZlB/+wwIKnQLYGObW9tzQvqMqRdiOhRwfLLuZ2m0stObM3G9Or2kANgoK2UryjuI1bBo2TTQ2cOZfcuGC65fDqNqma3hyXYw1VwWGc+CaN98rGk2BUYaBmGQaTjXdVZUH9ABw81/tzUdw5iOiotWLj+tBujmzNv0mhok4QtJyoSDI4egLjCB1Tz5wU1LSfnEWzfZXV2bM2qMxYk3JvpoMAjbLv9S/M0+a/E44/YIaUaRc5E//3cJrI7x9F0QTxMyCpPOliWWOjlE14XFd+RZsR/eVvtZ1sTw9L/uvAD7p06FtMXInNUdNCcKZcH3sew7tftI8HuJiDU4lb2rldvmnIigBuTwkh9ogEPdl8rqUvG+ypaU4uMZxXqOqqZ9TPi0ie+VLsSoRpmPKuAd1sUDfDJsBJ0ufyBOTO+GM3XaleaipfM1v9xPDxiqbmu3CUY3XVFuGkYFjNrgqsYKOmjS3RwqS9RvBBEtbwf937EA28FWa9SZJrhrZDub4MHdy2zWAoFMPMHzGYGRpbEQbssyDCkZBfPEA+2sPtt717+eQE0CPMlaIFjTtWMzAnzWa6yUf7+WtYnbSbK9sOEZlNgjbQs+M7i/0o5JhYQq4yS4NWZHAbeFC1hSafYec1WwfaS7SFzDdU4FuhiF7w0zoIZSrimBnpsKaPC6cbtg499vcPE/IgR396+lbwgLvV5Vo7zuCctvo8vl0LOK+AJ+uAmwHXf/dVGMYK5Qustf/Oo9CukZ6crBt3ou0WqgCIGp3001GRt1QyGWs9V7fgAtbLd41oaNsUa7Yuznb+ZR3GDqf8TVTTwULxqhhT8Eobs97mmlohfwcK/ja2L/azVTQbWEtzSdw4MXiHQswdsVb1A7CLHyeo0y9PJe0ntSHuHpnAshEASkt4P2xJhMfT30PcsZPG8ErO2QRlWYciWeBL6cy44+t3UDx7Py6xSuB9dchcjrhoAMr0f3LRuZHiGx5Kx/ptulfy6usXKzQN",
+        "sig": "8328f41fb0da8705e7a8deb311f2747ff3a035a3a7ca122102cb05e0024d2e661e72c8a8d036f5d068092285efc06e773f98a16830c1e1da70574f143a476061"
+      },
+      "error": "rumor-author-mismatch"
+    },
+    {
+      "description": "a seal by mallory, whose rumor names alice as its author",
+      "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "seal": {
+        "kind": 13,
+        "id": "ce5d1f3393333b9f807ecd880bd79e6e4747b9376fa21320770dc8b11bbc1e30",
+        "pubkey": "6e403e679fbe6039f4d8352343214f7fa24e4863e536de466ac61050cfe5d0ef",
+        "created_at": 1791115200,
+        "tags": [],
+        "content": "Asj2G2FJU+y+M1AxeQX4LYYLhclsemLyUO4As9+TFwJNsk0CKhX6LfK8Oruk++wi80Yd+i+jJf8G1TaqAd620PkBMuLcIRlR9EIixleRRsYrth8G9CiYWBX8OFZYoLQCn9nxUPUmb2K+H4+TUedT1ORMUdY6EzYHqzvj9Yizf3RFy5eoZaVHKGLg4I6oCv6XT1HX4rGZ1rkf95/+nebTpGNeB2ioRgacKxDm8tCJ0ia6rYYJPlwxH62VHAIpnDBOQsePbkWzO14ML466HrncEhiVxldhTtMK3c22vDcQD9MHsgVdrNwD79w9TExZ96NfNPe511qGyTShpSyuP9dka9sQYZU8GGTnvr+MuBWnUev2TMtMQdzRqNodgCxKZShD5WsZUzjmynMDiMcgHXyPgjJHQHgxwXzKREhFY27RYO3GK85H0qvBzCaqamd1RJtA92r4svMSngWh8CIlwRV6tyuaaCw8sq0a8nStGfXCorfMlKdgOG63GOzAJUMSQ4TQQzyl",
+        "sig": "8d740eecdf125141b241a4547782c842934c3277205be5fd6c83e449a8e20ba47d1d29b9cb8fe3b523443d2a2721e410f6edab73bc481232e46a0d95782f7014"
+      },
+      "error": "rumor-author-mismatch"
+    }
+  ]
+}
