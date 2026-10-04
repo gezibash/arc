@@ -6,6 +6,10 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+`arc serve` takes mail from a watch on each relay. A message or a
+store-and-forward call reaches a provider when the relay gets it, and an
+idle provider sends nothing to its relays.
+
 The Arcfile has version 2. `arc serve <app-directory>` stops on an Arcfile of
 version 1, and the error gives the steps of the rewrite. An address such as
 `exec://...` is not affected.
@@ -27,6 +31,10 @@ version 1, and the error gives the steps of the rewrite. An address such as
 
 - A command name without a slash in the Arcfile comes from `PATH`, as in a
   shell. A name with a slash is a path from `cwd`.
+- `arc serve` keeps a watch for mail on each relay, and syncs only
+  directories and relays that have no watch on each tick. Before, it fetched
+  the mail of each relay every `--interval`, 2 seconds by default.
+  `core/mail` adds `Watch` and `Flush`.
 
 ## [0.17.0] - 2026-10-04
 

@@ -158,6 +158,33 @@ func serve(command *cobra.Command, args []string) error {
 	// relays in this list. An indexer that was down gets it on a later tick.
 	owed := publishRelayList(ctx, sess)
 
+	// A watch takes the mail of a live relay as it arrives. A tick syncs a
+	// directory, or a relay that cannot watch, because neither can push.
+	mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind, relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.Key.Public}}
+	dirs, _ := command.Flags().GetStringArray("sync-dir")
+	interval, _ := command.Flags().GetDuration("interval")
+	var watched []transport.Live
+	var fetched []transport.Transport
+	for _, t := range sess.Relays {
+		if live, ok := t.(transport.Live); ok {
+			watched = append(watched, live)
+		} else {
+			fetched = append(fetched, t)
+		}
+	}
+	for _, dir := range dirs {
+		fetched = append(fetched, file.Dir{Path: dir})
+	}
+	for _, r := range watched {
+		// A relay that was down gets the announcement and the relay lists
+		// again when its watch begins again.
+		go keepMail(ctx, sess.Mail, r, func() {
+			if _, err := sess.Node.Sync(ctx, mine, r); err != nil {
+				log.Debug("the announcement did not sync", "transport", r.Name(), "error", err)
+			}
+		}, log)
+	}
+
 	// Say "serves" only when a relay has the watch, so that a caller that
 	// waits for the line can call at once.
 	missing, err := watchAll(ctx, server, sess.Relays, log)
@@ -174,13 +201,6 @@ func serve(command *cobra.Command, args []string) error {
 		if err := announce(); err != nil {
 			log.Warn("the announcement was not signed again", "error", err)
 		}
-	}
-
-	dirs, _ := command.Flags().GetStringArray("sync-dir")
-	interval, _ := command.Flags().GetDuration("interval")
-	targets := append([]transport.Transport(nil), sess.Relays...)
-	for _, dir := range dirs {
-		targets = append(targets, file.Dir{Path: dir})
 	}
 
 	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.Key.Name(), id, sess.Key.Public.Hex())
@@ -201,10 +221,8 @@ func serve(command *cobra.Command, args []string) error {
 				log.Warn("the announcement was not signed again", "error", err)
 			}
 		case <-ticker.C:
-			// The sync sends the relay lists too, so a relay that was down
-			// gets them when it comes back.
-			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind, relaylist.Kind, mail.RelayListKind}, Authors: []nostr.PubKey{sess.Key.Public}}
-			for _, t := range targets {
+			// The sync sends the relay lists too, so a directory gets them.
+			for _, t := range fetched {
 				if _, err := sess.Node.Sync(ctx, mine, t); err != nil {
 					log.Debug("the announcement did not sync", "transport", t.Name(), "error", err)
 				}
@@ -215,6 +233,18 @@ func serve(command *cobra.Command, args []string) error {
 				}
 				if report.Answered > 0 {
 					log.Info("answered store-and-forward calls", "transport", t.Name(), "calls", report.Answered)
+				}
+			}
+			// A watched relay needs only a flush. It sends nothing when the
+			// relay holds each wrap, so an idle provider stays quiet.
+			for _, r := range watched {
+				report, err := sess.Mail.Flush(ctx, r)
+				if err != nil {
+					log.Debug("mail did not flush", "transport", r.Name(), "error", err)
+					continue
+				}
+				if report.Answered > 0 {
+					log.Info("answered store-and-forward calls", "transport", r.Name(), "calls", report.Answered)
 				}
 			}
 			// An indexer holds only relay lists, so it gets a sync only
@@ -360,6 +390,27 @@ func keepServing(ctx context.Context, server *call.Server, r transport.Live, rep
 			report(err)
 			log.Warn("the relay did not take the watch; trying again", "relay", r.Name(), "error", err)
 		}
+		select {
+		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// keepMail watches the mail of one relay, and watches again when the relay
+// drops the connection. A watch that ends at midnight starts again at once,
+// with the route tags of the new day.
+func keepMail(ctx context.Context, box *mail.Mail, r transport.Live, ready func(), log *slog.Logger) {
+	for {
+		err := box.Watch(ctx, r, ready)
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			continue
+		}
+		log.Warn("the mail watch ended; watching again", "relay", r.Name(), "error", err)
 		select {
 		case <-time.After(3 * time.Second):
 		case <-ctx.Done():

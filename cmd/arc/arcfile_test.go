@@ -12,11 +12,11 @@ import (
 	"github.com/gezibash/arc/internal/testrelay"
 )
 
-// serveDir runs arc serve <dir>, and waits until it serves.
-func serveDir(t *testing.T, ctx context.Context, home, dir string) *output {
+// serveDir runs arc serve <dir> with the flags, and waits until it serves.
+func serveDir(t *testing.T, ctx context.Context, home, dir string, flags ...string) *output {
 	t.Helper()
 	cmd := root()
-	cmd.SetArgs([]string{"--home", home, "serve", dir})
+	cmd.SetArgs(append([]string{"--home", home, "serve", dir}, flags...))
 	out := &output{}
 	cmd.SetOut(out)
 	ctx, cancel := context.WithCancel(ctx)

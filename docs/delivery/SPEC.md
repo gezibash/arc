@@ -485,6 +485,22 @@ A node syncs these filters, in this order:
    owns.
 3. Public events that it chose to keep.
 
+A node that serves does not sync a live relay on a timer. It keeps a watch
+on the relay instead:
+
+- The watch has two filters: wraps that name the key of the node in a `p`
+  tag, and wraps with a route tag of the node. The relay sends the stored
+  wraps first, and then each new wrap at once.
+- When a watch begins, the node gives the relay each wrap of its outbox that
+  the relay does not hold yet, and answers each pending call.
+- The route tags change at midnight UTC. Then the node ends the watch, and
+  starts a new watch with the tags of the new day.
+- If the relay ends the watch, the node watches again after 3 seconds.
+- On each tick, the node gives a watched relay only the wraps that the relay
+  does not hold yet. If the relay holds each wrap, the node sends nothing.
+- A directory cannot send a new event, so the node syncs each directory on
+  each tick. A relay that has no watch also gets a sync on each tick.
+
 ### 4.4 Couriers
 
 When no transport can deliver a private event now, other nodes carry its

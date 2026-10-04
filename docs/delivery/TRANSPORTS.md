@@ -55,7 +55,9 @@ Inspect these integration points as required by the declared workflow:
 - [`core/call`](../../core/call/call.go): requests, replies, and duplicate handling.
 
 Live consumers select capability interfaces: `watchAll` uses `transport.Live`
-in `cmd/arc/capability.go`, and live calls use `call.Exchanger`. Core sessions
+in `cmd/arc/capability.go`, and live calls use `call.Exchanger`. `arc serve`
+also takes the mail of each `transport.Live` through `core/mail.Watch`, and
+syncs only the transports that are not live. Core sessions
 use `transport.Live` through `core/call.OpenSession`; providers and consumers
 share `core/session` rather than adding adapter-specific state machines.
 An adapter that compiles does not prove those paths can use it.

@@ -146,7 +146,7 @@ arc serve "exec://$(command -v arc-exec)?manifest=$PWD/apps/exec/manifest.json"
 ```
 
 `arc serve` runs a program, announces its service, answers live calls through each relay,
-and answers carried calls on each sync. It signs the announcement again
+and answers carried calls as each relay delivers them. It signs the announcement again
 every 2 minutes. `arc apps init` creates an app with a starter service program.
 Apps with an Arcfile can be run with `arc serve <app-directory>`.
 
