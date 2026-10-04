@@ -26,7 +26,7 @@ func sessionCmd() *cobra.Command {
 	command.Flags().Bool("http", false, "decode streaming HTTP response bodies")
 	command.Flags().Bool("websocket", false, "send input lines as WebSocket text messages")
 	command.Flags().Bool("exec", false, "decode Exec output records and encode stdin")
-	command.Flags().Bool("tty", false, "use an Exec PTY and a raw local terminal")
+	command.Flags().Bool("tty", false, "use an Exec PTY and a raw local terminal; Enter ~ . detaches")
 	command.Flags().String("mode", string(session.Duplex), "request_reply, server_stream, or duplex")
 	command.Flags().Duration("timeout", 2*time.Minute, "session lifetime, at most 30 minutes")
 	return command

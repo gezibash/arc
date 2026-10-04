@@ -239,3 +239,108 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 		t.Fatalf("archive bytes: %d", len(out.String()))
 	}
 }
+
+// ttyRun is the arc program under a terminal, as a person runs it.
+type ttyRun struct {
+	command  *exec.Cmd
+	terminal *os.File
+	slave    *os.File
+	original *term.State
+	out      *output
+}
+
+func startTTY(t *testing.T, ctx context.Context, arc string, args ...string) *ttyRun {
+	t.Helper()
+	terminal, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pty.Setsize(terminal, &pty.Winsize{Rows: 24, Cols: 80}); err != nil {
+		t.Fatal(err)
+	}
+	// The shell keeps the terminal open after arc ends, so the test can read
+	// the terminal state. It prints the exit status of arc.
+	script := `"$@"; result=$?; printf "\narc-exit-%s\n" "$result"; read stop`
+	command := exec.CommandContext(ctx, "sh", append([]string{"-c", script, "sh", arc}, args...)...)
+	r := &ttyRun{command: command, terminal: terminal, slave: slave, out: &output{}}
+	if r.original, err = term.GetState(int(slave.Fd())); err != nil {
+		t.Fatal(err)
+	}
+	r.command.Stdin, r.command.Stdout, r.command.Stderr = slave, slave, slave
+	r.command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err = r.command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { io.Copy(r.out, terminal) }()
+	t.Cleanup(func() {
+		_ = r.command.Process.Kill()
+		slave.Close()
+		terminal.Close()
+	})
+	return r
+}
+
+// detach types the escape, and checks that arc ends with status 0 and
+// restores the terminal.
+func (r *ttyRun) detach(t *testing.T) {
+	t.Helper()
+	io.WriteString(r.terminal, "\r~.")
+	if !waitFor(r.out, "arc-exit-", 5*time.Second) {
+		t.Fatalf("arc did not end after the detach escape: %s", r.out.String())
+	}
+	if !waitFor(r.out, "arc-exit-0\r\n", time.Second) || !strings.Contains(r.out.String(), "arc: detached") {
+		t.Fatalf("detach: %s", r.out.String())
+	}
+	restored, err := term.GetState(int(r.slave.Fd()))
+	if err != nil || *restored != *r.original {
+		t.Fatalf("the terminal was not restored: %v", err)
+	}
+	io.WriteString(r.terminal, "\n")
+	if err := r.command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A person starts a kept process under a terminal, detaches with the escape,
+// and attaches again. The process runs while no terminal is attached.
+func TestTerminalDetachAndAttachThroughCLI(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	relay := testrelay.Start(t)
+	consumer, key := providerHome(t, relay)
+	execHome, execKey := providerHome(t, relay)
+	config := filepath.Join(t.TempDir(), "exec.json")
+	data, _ := json.Marshal(map[string]any{"grants": []string{key}, "cwd": t.TempDir()})
+	os.WriteFile(config, data, 0600)
+	t.Setenv("EXEC_CONFIG", config)
+	serveSessionProvider(t, ctx, execHome, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "../../apps/exec/manifest.json")
+	ok(t, consumer, "", "install", execKey, "--yes")
+	arc := providerBinary(t, ".")
+	address := "exec+arc://" + execKey + "/"
+
+	first := startTTY(t, ctx, arc, "--home", consumer, "session", "--tty", "--timeout", "30s", address,
+		`{"script":"stty -echo; printf tty-ready; while read w; do printf 'got-%s\\n' \"$w\"; done","keep":"alfred"}`)
+	if !waitFor(first.out, "tty-ready", 5*time.Second) {
+		t.Fatalf("CLI PTY: %s", first.out.String())
+	}
+	// A tilde inside a line goes to the process.
+	io.WriteString(first.terminal, "one~.\r")
+	if !waitFor(first.out, "got-one~.", 5*time.Second) {
+		t.Fatalf("input: %s", first.out.String())
+	}
+	first.detach(t)
+	if list := ok(t, consumer, "", "exec", "list"); !strings.Contains(list, "alfred") || !strings.Contains(list, "running") {
+		t.Fatalf("the process ended with the detach: %s", list)
+	}
+
+	second := startTTY(t, ctx, arc, "--home", consumer, "session", "--tty", "--timeout", "30s", address, `{"attach":"alfred"}`)
+	if !waitFor(second.out, "got-one~.", 5*time.Second) {
+		t.Fatalf("the attach did not show the buffer: %s", second.out.String())
+	}
+	io.WriteString(second.terminal, "two\r")
+	if !waitFor(second.out, "got-two", 5*time.Second) {
+		t.Fatalf("input after attach: %s", second.out.String())
+	}
+	second.detach(t)
+	ok(t, consumer, "", "exec", "kill", "alfred")
+}

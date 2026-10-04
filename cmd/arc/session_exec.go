@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/gezibash/arc/core/session"
@@ -85,6 +86,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		}()
 	}
 	inputFailure := make(chan error, 1)
+	detached := new(atomic.Bool)
 	if stream.Mode() == session.Duplex {
 		// The terminal reader polls its own context and is joined before closing.
 		if !tty {
@@ -106,10 +108,22 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		go func() {
 			defer close(inputDone)
 			buf := make([]byte, 4096)
+			var escape detachEscape
 			for {
 				n, err := readInput.Read(buf)
 				if n > 0 {
-					if e := send(execadapter.Record{Type: "stdin", Data: buf[:n]}); e != nil {
+					data, detach := buf[:n], false
+					if tty {
+						data, detach = escape.filter(data)
+					}
+					if len(data) > 0 {
+						if e := send(execadapter.Record{Type: "stdin", Data: data}); e != nil {
+							return
+						}
+					}
+					if detach {
+						detached.Store(true)
+						_ = stream.Close()
 						return
 					}
 				}
@@ -129,6 +143,11 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 	exit := -1
 	for {
 		record, err := reader.Next()
+		if detached.Load() && err != nil {
+			// The terminal is still raw, so the line needs a carriage return.
+			_, _ = io.WriteString(command.ErrOrStderr(), "\r\narc: detached\r\n")
+			return nil
+		}
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -170,6 +189,41 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		return iface.ExitError{Code: exit}
 	}
 	return nil
+}
+
+// detachEscape finds the detach sequence of a terminal session: "~" then "."
+// at the start of a line, as in ssh. "~~" at the start of a line sends one
+// "~". A "~" at another place goes to the process.
+type detachEscape struct {
+	// typed is true after the first byte that is not at the start of a line.
+	typed bool
+	tilde bool
+}
+
+// filter returns the bytes to send, and true when the input holds the
+// sequence. It keeps a "~" at the start of a line until the next byte comes.
+func (e *detachEscape) filter(in []byte) ([]byte, bool) {
+	out := make([]byte, 0, len(in)+1)
+	for _, b := range in {
+		if e.tilde {
+			e.tilde = false
+			if b == '.' {
+				return out, true
+			}
+			out = append(out, '~')
+			if b == '~' {
+				e.typed = true
+				continue
+			}
+		}
+		if !e.typed && b == '~' {
+			e.tilde = true
+			continue
+		}
+		out = append(out, b)
+		e.typed = b != '\r' && b != '\n'
+	}
+	return out, false
 }
 
 // Some terminal descriptors cannot join the Go poller on macOS. Poll the
