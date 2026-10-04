@@ -1,0 +1,111 @@
+{
+  "description": "Gift wraps of acknowledgements to the sender of the message in ack_rumor.json, recorded once. The sender opens each wrap.",
+  "vectors": [
+    {
+      "description": "bob acknowledges the message",
+      "sender_secret": "83d438b2ca8a677d055f1cdcc283ad405ff185e8e555c29d9df82dc22552a3ff",
+      "wrap": {
+        "kind": 1059,
+        "id": "57e0902eee3e83fcf06ff68a474b08594edb788614d03e1898c9e5622e0697f0",
+        "pubkey": "58d012f6ee78d792c1ac5fc350c3085a09bbf9ac822c519a722f0d2f5a3ed0ce",
+        "created_at": 1791057835,
+        "tags": [
+          [
+            "p",
+            "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12"
+          ],
+          [
+            "expiration",
+            "4103049660"
+          ]
+        ],
+        "content": "An5ZV0HWUD2gHBlXfW5sOPgPj1D7qdrwvjkSGyG8pvEZ+j7ytE2Dc1a+jHjEq7rY0WWQqZwx+LM95PutRxvvXYPncbgcbEgx2ltNYHEgodVgpy5qA3fxDD5am7S0tNSgjtRK0/qZ+xI8KlkC/dygWBOgW8BSLIdihfFu3ye8KgYF4akUYj9bKSCppsQzleOLtvw4rBGwRScHApPBZMEsfBqfpZphJFkZ1wSrFQ8Uee77IRemCs40GKg7Ssyrenzxrzj4jUIK90qECjcWR+Z4QQ1rXZnxypPOhQ4Q5MU+LRpQkPfBTBGVlu4Uv1j191XhSEdfsq5UVKQ/JT61s6XalyFuk5OPjM0PFwq60kHfkmIIFHtOkWa4/qOEUWZzqr+o6w8zfxFA5hETqWoD2pvaDyNUtrb8fVsVtU+wqEt9OLqx5A7TxKU0W/LxYYXArd+zDz2yq0ZKh583zu9hZU1539iybh5jslkL3zIHVPpBFWc0mz484MIPyuUjR8ekqYY6luRqtAmse6oBtAmfyZrocGwJv5IS4amPlGR8m2gIPG70ebO8RR0RfQkHUP9ea+n4hHe5zVUghHDy44otX2PEPkV/xsntD30z2bp2tMqDmc5RfaGYgiDfE2LRHJGg8DtyoyMUPx58fzD4wIShgq1ug92PtWPOJC6oFgYvLuoi3JjvRVzXiUnNnXPA7NIfohCtEUJ5gandgXgVj9gXZy5xCKMo0Y1GOW1VaScJI19Y4nQBG+XTH1r4R/fOIvc+FrpaJ0fEtYbacnwYYSIxR+ftD+lrHN3/+x2gqu7aLUmgpeQLRY0AAdq6UA7DWZimWOxhvA6M6A/fHZb94E216DXJSREwZOrkW5wd0kM0PhanStizJPRouIAWyXhe8tWaoi1Ptvrwd8KaBLUcPLW89YcyAHFvWG0jeFFW/6dxbKnG4ZW7KkaEEO35U23nnSacUJaZWlotowxgKSBTXCUgdUdYvaW5w0dVUH5bXU3gfpeNJ7bzoybzzzKupzoUKYb3tajYtCYrW7qpbDRuddoKRr3hP89H9wIOvjtKFFferOVy0ywwSne4f3+W63J94n3tRNh9zNimMTc9ieDrNibX+Jcbg6Nmf17SnYHLArHPASzwZG14tH+jlw13uZDaytawFSiZxYzMrE40xo9wRU+79IH5gzJyzz8srjFLsNKmLDUw3S/RBV/kpe2gEi6rqP/YDxFrzHqKT+1R1G4OYvo3BNlokH2v6it5BzVheMm+UvFkyagLGQdGdiMRIgbRfhSnMC8fF/IQ",
+        "sig": "8837c7d174b3bc6f39f3479bb29c1145538482827920e0e893daa19021b863e24254b90453569344fa67deebe5c134a95e6be1d690544227da3f623e8876714a"
+      },
+      "rumor": {
+        "id": "32df0deee12d7ba213ee538d5b7d0385f905a592e90b3068f0dbb8fdd48afabd",
+        "pubkey": "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d",
+        "created_at": 4102444860,
+        "kind": 3274,
+        "tags": [
+          [
+            "e",
+            "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a"
+          ]
+        ],
+        "content": ""
+      },
+      "acknowledges": "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a",
+      "delivers": true
+    },
+    {
+      "description": "carol acknowledges the message, but bob is its recipient",
+      "sender_secret": "83d438b2ca8a677d055f1cdcc283ad405ff185e8e555c29d9df82dc22552a3ff",
+      "wrap": {
+        "kind": 1059,
+        "id": "3e23a562d43efaf010d6fcb535da40ecbf6e3725f5e91cfbba6615d0e0c63a02",
+        "pubkey": "98b727609c06cf97e37cd3617a74a8174da2e3aaa54ce9fa6774acbc558f6279",
+        "created_at": 1791013633,
+        "tags": [
+          [
+            "p",
+            "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12"
+          ],
+          [
+            "expiration",
+            "4103049660"
+          ]
+        ],
+        "content": "Aizorjno3bmXcMMNDJal+JgDfSoB4VJc7YPZXfs9yd1dyRjtsOZWivnKJB1kpHh7pAOo71CCM2wZFkLHjhEY69p5RE5WYJW4Ppumb52p06AhqcVfsD8tEkIMgs8zuyCJw9qBfhbKY9t/WC9LJ4tcFXa+uMmA9GZ1ZGmyg3Hm1l1Y6WwdqudfVtMdASZ10G/KOFES1n+7jqXiyVx1Gx+jm4NjzGUAyt6Gdq+V+KwNUIroy8q/TM4KODwOyQQgd/F4a1M0sgLr2pHxPZyeueRsUV/2JBaYjWh2c+6QGjytw+pbsjmDj01RwZQmzrFLHU2ZGmTPdCTZDK+Ld3KowJ3C74QJculCeMkEo8zf3VV9PX075cycF0E/gqBfWsu2RPyG9FQEaqHFDOwdcacXyPbQ1ZlYkqy5rMxtr8EepHEjpBrgT9EjA06I2vi3lFxFwgYvXszIVd+5YC7TokEmDWxvA38OiEcb058oGwOi1tRPMWE06UD1zkKo80NJU/rnjyL9cdhAzmVwEH3k2uHKrMVjcp2X9A/KhCliDyFRkQQqptfjAd9pvytvh4Q/Dh3qwgPQ53k2dtQmCMGogQ00rXaAKNN9+/VqCiKsD/pYn5SQINCtJn7g276SdknmVGXkJ6UoDtfYzxnpNq28/4tYNM8LTup/kJU0KY3dI97jUGrFX9SncRnJtM3q4rKs8ddZtJ/roNEEMfCZN+6D1UBL4gC33Dab/gPCi4pnkN1/oZYqvB+M4lnFozZLQduINtBIIDzIgCSWWKrhPWehaRREpnZYg8shOEBS6CAgMAKT7LodgiJ7ibRGr8Y2gTpLmJLetjx7QIFsldRxSL6HrzazwJJlyLz1SvsGbqS0RvP3f9B0rx0PTM5nsaZ0tM0rQkEmlyqNm99pjXCtGfMyaQQ5UMjpfc6TH0/zdStjVsLyp1W6KJ62dxhCAA3pI0fZyt7uJpPp1ocF98cozA3W/8/beTa2pPkvqk0LxkhoJbt3sCiomYKEjWV4AT4bgwYxEbTkggpE3pRMB6kr9pB0X5ZcfDXITQViiWL0bHFczM63GnKgtGyobf/GFbEAKoXTyGL54h+4cVgCB3qhdi4NHC2ug1FNBZJrtmaS0O2L6EBMPaYnGtzj4KQ2EwMVf7ZEF6UAKzE37xD48WzCDfYkWtWslQw8/e6a8LzUud4N+mKH8JDkVcY9wcqk0CioksrdkRZL74ZvcsAlKZ0QsyPcQT5frRD34BSVuCLA8UV0trzwg1eIrf0JD+7M7XxWqT5hDTaex5xGpKF8",
+        "sig": "cfaa731d131d5f31f15634aa9dd8a395c86207141c1ad1a8979c2824f645028286f305bb226243fe2f9cb7dd5b25df6e908bf07aa89a27d9b0ec4b39a805ed9e"
+      },
+      "rumor": {
+        "id": "6f7e16dd0def8884dc2dc656e7f6468800fedc10819ce60642ec6119191db234",
+        "pubkey": "690e4f96143dd8ecdbbe977cb81f8dda98b4d2c918b58560e1112472da19824b",
+        "created_at": 4102444860,
+        "kind": 3274,
+        "tags": [
+          [
+            "e",
+            "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a"
+          ]
+        ],
+        "content": ""
+      },
+      "acknowledges": "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a",
+      "delivers": false
+    },
+    {
+      "description": "bob sends an acknowledgement with no e tag",
+      "sender_secret": "83d438b2ca8a677d055f1cdcc283ad405ff185e8e555c29d9df82dc22552a3ff",
+      "wrap": {
+        "kind": 1059,
+        "id": "8ecc917092d9a679ac6e7fc4e48d96d9bdfc1ceecc028649c56d8a5484aac929",
+        "pubkey": "0e82be222c9b2b92be476d16fb8f5b9ebf29fae9b2e605561e3e0c109c74921b",
+        "created_at": 1791035743,
+        "tags": [
+          [
+            "p",
+            "67e87acd10baced05d058ef632e02cc5db0c06a2542bde12e484d21b48441a12"
+          ],
+          [
+            "expiration",
+            "4103049660"
+          ]
+        ],
+        "content": "AqAjfJlm6HTzms+IY3wzPZ4Umu/HPZhfR3bj8K25RAp3GjB1LL+44vascPKjCY4eR3PbsWWIidzahodwLwugBUsMAiCoNZ+kiJxK9uKgrtShnV/o0ufUD3+l5Bo63R01TEE8ax6ECYTcYVTMCz4vuo+UMJawJWeu0OHtPPhaatqUzKXbCtyCsGkt60Ye14LRwAMxSSZH1KLn74yyxBjx820wly6MKB6zErc5x/+TlCZAZcavvBYk317u0Xv93gkCVQn+xATkyWoIe9uD8NX0qj6CoUwsj4lVWe8tWOxPeamwzYRQZt+d3j37Of9AkWXGaqjqa8GpqXqStNBqtX8bZonkgap2uuanUUl7NLtESdN6+l1wr0AZj8fPOHvnug/Clry0gWdAI9mtQKneSOs/1pJ44hEDHSJVmS8htD6/d9/BUBVEMBePNxRDzV732zZLkSWskCrszPB3o/wDOTYk8f00XHY1YOJhxWs/IpDUmQBaj7FIcd1m9YDrFzn7VvcGKoNc4/Ky2Q88Ee4NN5ZZVPK4i8wo0doSoz3Wr5kJLK0nG3MzwJhlj+oRdt1Th7n8WbVz1+Y1iG1PvePLvpL/ONnESTyu+Xk0rJbXgtczstV9p06dX2OA3h6euA10jZtJWMCaiU85Fn9kIbJ9MdB9//AYhHkikiGCkSeQDHOyTHbpYoaEXtKnrvYardnbtjvlXVe2vHL9RSKehE2IWnfGaF0wO/OaLdq7iSTCN+k7P+QGWpOk6bhIN0AdGrue583x9gZi/+SG3TtqO+Ukbr/nr7meR9JG6JcrxCamHGSTAiM+DmCGoWnCORmL0qXBw+uVGvTDdYrya9MH7zJGRIeXOAsq1uDOilw4FOOitk2VDfOzIA9oghwfrW9NTxFXfkgS0M6UdUI63RgRc1oDm5AYnxpqCOoAOA/Re0uATjp47s4ey5kb87HeSTopw5rwU//gpEmqohzwehDnHOZJV2TOPKY9op4OX1WEZOsMaURxjbGTGkGL/UGXM4X8zuZF2reL5ZEw/NtgJPjBwCd55BNIXkncz6sDnqqAFNv1EUdN6uSIX1vNpSdPBdFiuvwXDAeMnA4R9tinYTihyRjtNrQJoCnBKA==",
+        "sig": "f9aed6447c94b576853e380d9c6477eaaf10596ffd1fb3b82a097a2b9f1edf5f45e2acaf1c52b5caa2c4dd67fc78fb559f3be0d4f15b3f9b87aeab8890ca181e"
+      },
+      "rumor": {
+        "id": "759561801ec49031b1c1e3528eb4ca02bf9f7c851892b281bb124d57f66c51da",
+        "pubkey": "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d",
+        "created_at": 4102444860,
+        "kind": 3274,
+        "tags": [],
+        "content": ""
+      },
+      "acknowledges": "",
+      "delivers": false
+    }
+  ]
+}
