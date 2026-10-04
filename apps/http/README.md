@@ -12,7 +12,25 @@ sessions.
 ## Run a server of any language
 
 `arc-http` starts an HTTP server as its child, and forwards each call to it.
-The server can be in any language. It needs no ARC library:
+The server can be in any language. It needs no ARC library. Write
+`protocol = "http"` in the [Arcfile](../README.md#the-arcfile), and
+`arc serve` runs `arc-http` for the server:
+
+```toml
+version = 2
+
+[serve]
+command = "sh"
+args = ["-c", "uvicorn main:app --host 127.0.0.1 --port $PORT"]
+protocol = "http"
+manifest = "./manifest.json"
+```
+
+```sh
+arc serve ./my-app
+```
+
+Without an Arcfile, give `arc serve` the address of `arc-http`:
 
 ```sh
 arc-http <program> [args...]
