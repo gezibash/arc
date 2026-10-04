@@ -8,7 +8,7 @@ RUN go mod download
 
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/...
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/ ./cmd/... ./apps/...
 
 # Runtime stage: the binaries and the certificates, and nothing else.
 FROM debian:bookworm-slim AS runtime

@@ -1,9 +1,16 @@
 # Delivery: ARC over Nostr events, on any transport
 
-Status: phases 1 to 4 are built, see section 15. Phases 5 and 6 are
-proposed. Phase 4, section 15.1, made this layer the only ARC stack in
-v0.11.0. The older stack used its own protocol: Ed25519 keys, live sessions,
-and routed relays. Section 14 lists what replaced each part of it.
+- Status: partial
+- Layers: core, adapters, runtime
+- Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
+- Proof: go test -count=1 -run '^TestDelivery$' ./internal/proof/
+- Remaining: phases 5 and 6 of section 8.1
+- Unverified: Phases 5 and 6 of section 8.1 have no proof. Section 8.3 lists the deferred work.
+
+Phases 1 to 4 are built, see section 8.1. Phases 5 and 6 are not built.
+Phase 4 made this layer the only ARC stack in v0.11.0. The older stack used
+its own protocol: Ed25519 keys, live sessions, and routed relays. Section 7.2
+lists what replaced each part of it.
 
 ## 1. Purpose
 
@@ -27,8 +34,6 @@ providers.
 The delivery design follows bitchat, whose iOS source is in the public
 domain. ARC ports the design to Go. It does not share bitchat's wire format.
 
-## 2. Scope
-
 This document defines:
 
 - The identity of a citizen.
@@ -42,7 +47,7 @@ These are out of scope, and have their own documents:
 - The capability interface and its primitives.
 - The journal, which becomes the first consumer of this layer.
 
-## 3. Terms
+## 2. Terms
 
 | Term | Meaning |
 | --- | --- |
@@ -60,7 +65,9 @@ These are out of scope, and have their own documents:
 | route tag | A short tag that names the recipient of a private event for one day. |
 | provider | A citizen that answers calls to a capability. |
 
-## 4. Layers
+## 3. Rules
+
+### 3.1 Layers
 
 ```text
 capability layer    manifests · install · providers · calls        ARC
@@ -69,10 +76,10 @@ unit                event, gift wrap (NIP-01, NIP-44, NIP-59)      Nostr
 transports          relay | file | Bluetooth LE | LoRa             Nostr for relays, ARC for the rest
 ```
 
-A layer uses only the layer below it. The capability layer never selects a
-transport. The delivery layer never reads a private payload.
+A layer MUST use only the layer below it. The capability layer never selects
+a transport. The delivery layer never reads a private payload.
 
-## 5. Identity
+### 3.2 Identity
 
 - A citizen is one secp256k1 key pair. Signatures are BIP-340 Schnorr, as
   NIP-01 requires.
@@ -83,20 +90,11 @@ transport. The delivery layer never reads a private payload.
 - A citizen uses one key on every transport. ARC does not keep a second key
   for the mesh.
 
-### 5.1 Ed25519 keys
+### 3.3 Events
 
-ARC does not move an Ed25519 key to a secp256k1 key. A citizen of the older
-stack makes a new key, installs its capabilities again, and trusts their
-signers again. One operator runs all the Ed25519 citizens, so a migration
-record costs more than it saves.
+Every datum that ARC moves is an event, as NIP-01 defines.
 
-## 6. The unit
-
-### 6.1 Events
-
-Every datum that ARC moves is an event, as NIP-01 defines it.
-
-A node verifies every event before it stores, forwards, or shows it:
+A node MUST verify every event before it stores, forwards, or shows it:
 
 1. Compute the event ID from the NIP-01 serialization.
 2. Check that the ID matches the `id` field.
@@ -116,7 +114,7 @@ The kind of an event sets how nodes keep it, as NIP-01 defines:
 | 20000–29999 | ephemeral | never |
 | 30000–39999 | addressable | the newest for each author, kind, and `d` tag |
 
-### 6.2 Private events
+### 3.4 Private events
 
 A private event follows NIP-59:
 
@@ -127,9 +125,9 @@ A private event follows NIP-59:
 3. The author encrypts the seal to the recipient with NIP-44, and puts it in
    a gift wrap. A new one-time key signs the gift wrap.
 
-The recipient must check that the `pubkey` of the seal equals the `pubkey`
-of the rumor. If they differ, the recipient drops the event. Without this
-check, any author can impersonate another, as NIP-17 states.
+The recipient MUST check that the `pubkey` of the seal equals the `pubkey` of
+the rumor. If they differ, the recipient drops the event. Without this check,
+any author can impersonate another, as NIP-17 states.
 
 The kind of the gift wrap sets how long it lives:
 
@@ -141,7 +139,7 @@ The kind of the gift wrap sets how long it lives:
 The author randomizes `created_at` on the seal and the gift wrap, up to two
 days in the past, as NIP-17 describes. The real time stays inside the rumor.
 
-### 6.3 Routing a private event
+### 3.5 Routing a private event
 
 A gift wrap names its recipient with one routing tag. It has one of two
 forms:
@@ -153,11 +151,12 @@ forms:
   and mesh nodes use this form, because a route tag does not reveal the
   recipient's key.
 
-The letter `w` is unused in every NIP and in the Nostr kind registry. Relays
-index single-letter tags, so a recipient finds its events with a filter on
-`#w`.
+The letter `w` is unused in every NIP and in the Nostr kind registry. The
+letters `b`, `j`, `o` and `w` are unused in every NIP; the registry also uses
+`v`. Relays index single-letter tags, so a recipient finds its events with a
+filter on `#w`.
 
-### 6.4 Route tags
+### 3.6 Route tags
 
 ```text
 route tag = first 16 bytes of HMAC-SHA256(key = recipient public key,
@@ -175,54 +174,72 @@ The node writes the route tag as 32 lower-case hex characters.
   A route tag hides the recipient from a courier that does not know them. It
   does not hide the recipient from an observer who looks for that one key.
 
-## 7. Transports
+### 3.7 Kind numbers
+
+"272" spells ARC on a phone keypad. No NIP and no entry in the Nostr kind
+registry uses these numbers:
+
+| Kind | Class | Use |
+| --- | --- | --- |
+| 3272 | regular | a call request, inside a gift wrap |
+| 3273 | regular | a call reply, inside a gift wrap |
+| 3274 | regular | an acknowledgement, inside a gift wrap |
+| 3275 | regular | one continuation part of sealed content longer than 32 KiB |
+| 3276 | private rumor | core session frames, inside live wraps of kind 21059; see [sessions](../sessions/SPEC.md) |
+| 10272 | replaceable | reserved, and not used, see section 7.1 |
+| 30272 | addressable | a capability announcement |
+
+Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
+data, such as a journal page, a KPI series or a file, is a NIP-37 draft of
+kind 31234, with checkpoints of kind 1234 and a relay list of kind 10013. A
+part of kind 3275 carries only content past the first 32 KiB of a draft. See
+docs/interface/SPEC.md, section 3.9. ARC registers its five kinds in the
+registry. [The kind registry](../KINDS.md) lists every kind that ARC uses.
+
+### 3.8 Transports
 
 For implementation and review, follow the
 [transport implementation contract](TRANSPORTS.md). It defines the current Go
 interfaces, integration requirements, and evidence for a usable transport.
 
-### 7.1 The interface
-
-The implemented Go contract in `delivery/transport/transport.go` moves signed
-Nostr events, not radio frames:
+The Go contract in `core/transport/transport.go` moves signed Nostr events,
+not radio frames:
 
 | Method | Meaning |
 | --- | --- |
 | `Name()` | Names the transport for reports. |
 | `Send(ctx, event)` | Gives one signed event to the transport. |
-| `Fetch(ctx, filter)` | Returns a `Batch` of events matching a filter, with unreadable-item accounting and optional carrier hop metadata. |
+| `Fetch(ctx, filter)` | Returns a `Batch` of the events that match a filter. A batch counts unreadable items and can carry hop data. |
 
-`transport.Live` extends this contract with `Watch(ctx, filter)`, returning
-matching stored and new events while the context remains active. Optional
-`Carrier` and `Reconciler` interfaces support carried hop limits and event-set
-reconciliation. The store verifies received events regardless of their transport.
+`transport.Live` adds `Watch(ctx, filter)`. It returns the matching stored and
+new events while the context is active. The optional `Carrier` and
+`Reconciler` interfaces add carried hop limits and event-set reconciliation.
+The store verifies each received event, whatever its transport.
 
-Bluetooth must implement these existing contracts. Compact encoding, frames,
-fragment sizes and current radio reachability are adapter concerns; they are
-not methods of the current shared interface. The characteristics in section
-7.2 describe transport design, not fields already exposed by the Go contract.
-Normal command and provider paths must accept the relevant shared interfaces
-before Bluetooth is usable there. Direct delivery and its real-device proof
-come before mesh forwarding; see [the implementation plan](BLUETOOTH-PLAN.md).
-
-### 7.2 The four transports
+Bluetooth must implement these contracts. Compact encoding, frames, fragment
+sizes and radio reachability belong to the adapter. They are not methods of
+the shared interface. The table below describes transport design, not fields
+of the Go contract. The normal command and provider paths must accept the
+shared interfaces before Bluetooth is usable there. Direct delivery and its
+proof on real devices come before mesh forwarding.
 
 | Transport | Live | Frame size | Directed | Notes |
 | --- | --- | --- | --- | --- |
 | relay | yes, while connected | the relay's limit | through tags | NIP-01 over WebSocket. |
 | file | no | none | no | A directory: a USB stick, a shared folder, a disk. |
-| Bluetooth LE | yes | about 469 bytes per fragment | yes | Mesh. Linux first. |
-| LoRa | yes, slowly | 233 bytes per packet | yes | Mesh. Later. |
+| Bluetooth LE | yes | about 469 bytes per fragment | yes | Mesh. Linux first. Not built. |
+| LoRa | yes, slowly | 233 bytes per packet | yes | Mesh. Later. Not built. |
 
 **Relay.** A node connects to relays over WebSocket, as NIP-01 defines. It
 authenticates with NIP-42 where a relay asks. It finds where to send with
-NIP-65 relay lists, see 11.4, and sends a direct message to the NIP-17 relay
-list of its recipient. It syncs with NIP-77 where a relay supports it.
+NIP-65 relay lists, see section 4.10, and sends a direct message to the
+NIP-17 relay list of its recipient. It syncs with NIP-77 where a relay
+supports it.
 
 A citizen publishes three relay lists to its relays: NIP-65, kind 10002; the
 NIP-17 list, kind 10050; and the private NIP-37 list, kind 10013. Each list
 names every relay of the citizen. `arc relay add`, `arc relay rm`, and
-`arc serve` publish them. `delivery/relaylist` holds the NIP-65 list.
+`arc serve` publish them. `core/relaylist` holds the NIP-65 list.
 
 A citizen can also name indexer relays with `arc relay add <url> --index`.
 An indexer holds only relay lists. The citizen publishes its NIP-65 and NIP-17
@@ -236,21 +253,35 @@ each line. Another node reads the directory, imports each event that it does
 not hold, and writes each event that the directory lacks. A person carries
 the directory between the two nodes.
 
-**Bluetooth LE.** Every node takes both roles at once: central and
-peripheral. BlueZ supports both roles at once on Linux, subject to controller
-support. The initial Linux radio probe uses `godbus/dbus` directly, the fallback
-allowed in section 16, because its server needs BlueZ's per-device write context.
-It keeps advertising active while scanning and testing an outbound connection.
-The [Linux probe guide](BLUETOOTH-LINUX.md) describes the experimental test
-profile and pending hardware validation. It is not yet an event transport.
-On macOS, the planned first implementation is central only. See section 16.
+**Bluetooth LE.** Not built as an event transport. Every node takes both
+roles at once: central and peripheral. BlueZ supports both roles at once on
+Linux, if the controller supports them. The Linux radio probe calls BlueZ
+through `godbus/dbus` directly, because its server needs the BlueZ write
+context of each device. The probe keeps advertising active while it scans and
+tests an outbound connection. [The Linux probe guide](BLUETOOTH-LINUX.md)
+describes the test profile. Hardware validation is pending.
+`muka/go-bluetooth` is archived, so ARC does not use it. On macOS, the first
+implementation is central only, so a node reaches one hop. The CoreBluetooth
+bindings under the Go library aim to cover all of CoreBluetooth, which
+includes the peripheral manager. A spike after phase 5 decides whether a
+macOS node can become a full mesh node.
 
-**LoRa.** A node reaches LoRa through Reticulum. The node connects to a local
-Reticulum instance over TCP, and that instance drives the radio. Reticulum
-moves a payload larger than one radio packet itself, so the node sends each
-compact event whole. See section 16.
+**LoRa.** Not built. A node reaches LoRa through Reticulum. The node connects
+to a local Reticulum instance over TCP, and that instance drives the radio.
+Reticulum moves a payload larger than one radio packet itself, so the node
+sends each compact event whole. ARC uses Reticulum, not Meshtastic:
 
-### 7.3 The compact form
+- Reticulum is a network stack. It runs over LoRa, serial links, packet
+  radio, TCP, UDP and I2P, and it moves payloads larger than one packet.
+- Meshtastic is firmware for chat radios. Its packets hold 233 bytes, and it
+  runs its own flood. ARC would be a guest on it.
+
+Three Go implementations of Reticulum exist. Only one drives a LoRa radio, and
+one person maintains it. ARC therefore connects to a local Reticulum instance
+over TCP, and does not embed a Go port. The Python instance works today. A Go
+port can replace it later without a change in ARC.
+
+### 3.9 The compact form
 
 A small link cannot carry an event as JSON. A short event is 300 to 600 bytes
 of JSON, and a LoRa packet holds 233 bytes. On Bluetooth LE and LoRa, a node
@@ -270,15 +301,20 @@ The compact form leaves out `id`. The receiver computes the ID from the
 NIP-01 serialization of the other fields, then checks the signature. The form
 therefore loses nothing that the signature covers.
 
-Version 1 uses shortest-form unsigned base-128 varints and UTF-8 byte lengths.
-Timestamps must fit a nonnegative signed 64-bit integer, and kinds must fit an
-unsigned 16-bit integer. An encoded event is limited to 1 MiB. Decoders reject
-trailing bytes and malformed fields. Decoding reconstructs the ID; the store
-still verifies the signature before accepting the event. See the
-[Bluetooth implementation plan](BLUETOOTH-PLAN.md) for implementation status
-and the sequence of small PRs.
+- Version 1 uses shortest-form unsigned base-128 varints and UTF-8 byte
+  lengths.
+- Timestamps MUST fit a nonnegative signed 64-bit integer, and kinds MUST fit
+  an unsigned 16-bit integer.
+- An encoded event is limited to 1 MiB.
+- Decoders MUST reject trailing bytes and malformed fields.
+- Decoding reconstructs the ID; the store still verifies the signature before
+  accepting the event.
 
-### 7.4 The frame
+`core/compact` implements the compact form. See the
+[Bluetooth implementation plan](../proposals/bluetooth.md) for implementation
+status and the sequence of small PRs.
+
+### 3.10 The frame
 
 On a mesh transport, a frame carries one event, or one fragment of an event:
 
@@ -296,26 +332,30 @@ A receiver joins fragments by fragment ID. It keeps at most 128 incomplete
 events, and drops an incomplete event after 30 seconds. It refuses an event
 larger than 1 MiB.
 
-`delivery/frame` implements event (type 1) and fragment (type 2) frames.
-Types 3–6 are reserved for sync, announce, handshake and session, respectively;
-this implementation rejects them until their protocols are implemented. There
-is no frame version byte: a future link handshake must negotiate the framing
-profile before exchanging frames. A transport supplies exactly one complete
-frame per decode; the body occupies all remaining bytes.
+`core/frame` implements event (type 1) and fragment (type 2) frames.
 
-An event frame has a 2-byte header. A fragment frame has a 14-byte header;
-indices start at zero and totals range from 2 to 4096. Bodies must be nonempty.
-The fragment ID is the first 8 bytes of SHA-256 of the complete compact event,
-including its signature. Reassembly checks that ID before compact decoding.
-This short digest detects inconsistent assembly; it is not authentication.
-Every completed event still needs store verification. Frame headers, including
-hop limits, are not signed by the event.
+- Types 3–6 are reserved for sync, announce, handshake and session,
+  respectively; this implementation rejects them until their protocols are
+  implemented.
+- There is no frame version byte: a future link handshake must negotiate the
+  framing profile before exchanging frames.
+- A transport supplies exactly one complete frame per decode; the body
+  occupies all remaining bytes.
+- An event frame has a 2-byte header. A fragment frame has a 14-byte header;
+  indices start at zero and totals range from 2 to 4096. Bodies must be
+  nonempty.
+- The fragment ID is the first 8 bytes of SHA-256 of the complete compact
+  event, including its signature. Reassembly checks that ID before compact
+  decoding. This short digest detects inconsistent assembly; it is not
+  authentication. Every completed event still needs store verification.
+- Frame headers, including hop limits, are not signed by the event.
 
-The splitter takes the usable application frame size, including these headers,
-from the link adapter. This is not the raw BLE ATT MTU. Events that fit use one
-event frame. Others use fragment frames; a size requiring more than 4096 pieces
-is refused. Different fragment sizes for the same event should not be mixed in
-one assembly; a link must finish, expire or reset that transfer before reframing.
+The splitter takes the usable application frame size, including these
+headers, from the link adapter. This is not the raw BLE ATT MTU. Events that
+fit use one event frame. Others use fragment frames; a size requiring more
+than 4096 pieces is refused. Different fragment sizes for the same event
+should not be mixed in one assembly; a link must finish, expire or reset that
+transfer before reframing.
 
 The assembler accepts pieces out of order and ignores identical duplicates.
 Conflicting totals or different bodies for one index discard that assembly.
@@ -324,15 +364,19 @@ allows local receipt but grants no forwarding permission. Forwarding is future
 work. Completing an event removes its assembly, so replay suppression remains
 with the store and future mesh layer.
 
-The 30-second deadline starts at the first piece and is never extended. `Add`
-expires stale assemblies; the adapter must also call `Expire` on a timer while
-idle. Use a monotonic clock and serialize calls to an assembler. Buffered bodies
-across all incomplete events are capped at 8 MiB; count and byte capacity
-failures reject the incoming piece without evicting unrelated events. The 4096
-piece limit also bounds per-assembly bookkeeping. Exceeding the 1 MiB limit for
-one event discards that assembly. The limits are local receiver policy.
+The 30-second deadline starts at the first piece and is never extended.
 
-## 8. The node and its store
+- `Add` expires stale assemblies; the adapter must also call `Expire` on a
+  timer while idle.
+- Use a monotonic clock, and serialize calls to an assembler.
+- Buffered bodies across all incomplete events are capped at 8 MiB; count and
+  byte capacity failures reject the incoming piece without evicting unrelated
+  events.
+- The 4096 piece limit also bounds per-assembly bookkeeping. Exceeding the
+  1 MiB limit for one event discards that assembly.
+- The limits are local receiver policy.
+
+### 3.11 The store
 
 Each node keeps a store. The store is the source of truth for the node.
 Transports write into it. The capability layer reads from it.
@@ -343,27 +387,15 @@ A node keeps these events:
 | --- | --- | --- |
 | own | events that this citizen signed | none |
 | addressed | private events for this citizen | none |
-| carried | private events that this node carries as a courier | 40 events, see 10.4 |
+| carried | private events that this node carries as a courier | 40 events, see section 4.4 |
 | public | capability announcements, public posts | a quota that the citizen sets |
 
-The store refuses an event that fails verification. It keeps one copy of each
-event, by ID. It removes an event when its `expiration` tag passes.
+The store MUST refuse an event that fails verification. It keeps one copy of
+each event, by ID. It removes an event when its `expiration` tag passes.
 
-## 9. What each party sees
+## 4. Behavior
 
-| Party | Sees | Does not see |
-| --- | --- | --- |
-| relay | the one-time key, the routing tag, the size, the arrival time | the author, the content, the real time |
-| mesh neighbour | the frame type, the size, the timing, the Bluetooth address | the author and content of a private event |
-| courier | the route tag, the size | the recipient, unless it already knows their key; the author; the content |
-| recipient | everything | — |
-| provider | the caller and the call, because it is the recipient | — |
-
-A public event, such as a capability announcement, is readable by everyone.
-
-## 10. Delivery
-
-### 10.1 The router
+### 4.1 The router
 
 The router takes an event from the capability layer and gets it to its
 recipient. For each event:
@@ -372,7 +404,7 @@ recipient. For each event:
 2. Send the event to each relay in the recipient's relay list.
 3. If no transport delivers now, put the event in the outbox.
 4. If the event is private and can take the courier form, deposit it with
-   couriers, see 10.4.
+   couriers, see section 4.4.
 
 The router sends one event over more than one path. The receiver keeps one
 copy, by ID. Redundancy therefore costs bytes, not correctness.
@@ -394,7 +426,7 @@ The size of an event limits its paths:
 If an event cannot take any path that exists now, the router tells the caller
 which path it needs.
 
-### 10.2 The outbox
+### 4.2 The outbox
 
 The outbox keeps each undelivered event until the recipient acknowledges it.
 
@@ -408,36 +440,37 @@ The outbox keeps each undelivered event until the recipient acknowledges it.
   sender reads its own message by opening its seal, because a NIP-44
   conversation key is the same from both ends.
 
-An acknowledgement is a private event whose rumor has kind 3274. The rumor names
-the delivered rumor with an `e` tag. When the sender receives the
+An acknowledgement is a private event whose rumor has kind 3274. The rumor
+names the delivered rumor with an `e` tag. When the sender receives the
 acknowledgement, the outbox removes the event. A node does not acknowledge an
 acknowledgement.
 
-Queued calls keep a durable `pending`, `processing`, or `completed` state.
-Before saving a received request to the event store, the receiver commits its
-pending state and encrypted seal to the mail journal. It removes that extra
-seal after the event-store save succeeds. A restart can finish either write
-without another delivery from the sender. A failed journal write must not
-leave a receipt that looks like an uncertain historical execution.
-The receiver reads and opens a pending request before it atomically claims
-execution. A storage failure, signer refusal, or cancellation before that
-claim leaves the request pending. Concurrent receivers must recheck the state
-when they claim it. A request whose execution started without a recorded
-result remains uncertain; it must not execute again automatically.
+Queued calls keep a durable `pending`, `processing`, or `completed` state:
 
-Reading recorded incoming or outgoing mail returns storage, signer, and
-cancellation failures. An unreadable stored seal must not appear as an empty
-mailbox or a successful partial history.
+- Before saving a received request to the event store, the receiver commits
+  its pending state and encrypted seal to the mail journal. It removes that
+  extra seal after the event-store save succeeds. A restart can finish either
+  write without another delivery from the sender.
+- A failed journal write must not leave a receipt that looks like an
+  uncertain historical execution.
+- The receiver reads and opens a pending request before it atomically claims
+  execution. A storage failure, signer refusal, or cancellation before that
+  claim leaves the request pending. Concurrent receivers must recheck the
+  state when they claim it.
+- A request whose execution started without a recorded result remains
+  uncertain; it must not execute again automatically.
 
-### 10.3 Sync
+### 4.3 Sync
 
 When two nodes meet, they reconcile their stores for one filter at a time.
 Sync uses the Negentropy protocol that NIP-77 wraps.
 
 - Over a relay, the node uses NIP-77 where the relay supports it. Otherwise
-  it sends a NIP-01 `REQ` with `since`.
+  it sends a NIP-01 `REQ` with `since`. Sync compares sets with Negentropy
+  when a relay lists NIP-77 in its information document, and fetches every
+  event otherwise.
 - Over a mesh link, the nodes send the same Negentropy messages as binary, in
-  frames of type `sync`.
+  frames of type `sync`. Not built.
 - Over a file transport, the node reads the event IDs in the directory, and
   copies what each side lacks.
 
@@ -452,7 +485,7 @@ A node syncs these filters, in this order:
    owns.
 3. Public events that it chose to keep.
 
-### 10.4 Couriers
+### 4.4 Couriers
 
 When no transport can deliver a private event now, other nodes carry its
 courier form. How a courier bounds the spread depends on the transport.
@@ -472,8 +505,8 @@ A directory does not say who wrote an event to it, so a courier cannot count
 deposits for each node there. It keeps at most 40 carried events, and drops
 the oldest past that.
 
-**On a mesh link.** Two nodes on a mesh link know each other, so a copy
-budget holds:
+**On a mesh link.** Not built. Two nodes on a mesh link know each other, so a
+copy budget holds:
 
 - The router deposits each event with at most 3 couriers.
 - Each event carries a copy budget. The budget starts at 4, and is never more
@@ -488,7 +521,8 @@ budget holds:
 **On both:**
 
 - A courier accepts an event of at most 64 KiB. A larger event moves only over
-  relays and files.
+  relays and files. A capability announcement is public, so it moves by sync,
+  not by couriers.
 - On a mesh link, a courier that meets the recipient delivers the event and
   removes it. On a directory, a courier cannot know who reads it, so the event
   stays until it expires.
@@ -497,10 +531,10 @@ budget holds:
 
 The courier cannot read what it carries. It knows only the route tag.
 
-### 10.5 Mesh relay
+### 4.5 Mesh relay
 
-On a mesh transport, a node relays events to nodes that it does not reach
-directly. It uses a controlled flood:
+Not built. On a mesh transport, a node relays events to nodes that it does
+not reach directly. It uses a controlled flood:
 
 - An event starts with a hop limit of 7.
 - Each relay lowers the hop limit by 1. If the node has 6 or more neighbours,
@@ -511,20 +545,18 @@ directly. It uses a controlled flood:
 - A node remembers the IDs of the last 1,000 events for 5 minutes, and relays
   each one once.
 
-### 10.6 Live links
+### 4.6 Live links
 
-Two nodes with a live mesh link open a Noise session with the XX pattern,
-with Curve25519, ChaCha20-Poly1305, and SHA-256. The session authenticates
-both nodes and gives forward secrecy on that link.
+Not built. Two nodes with a live mesh link open a Noise session with the XX
+pattern, with Curve25519, ChaCha20-Poly1305, and SHA-256. The session
+authenticates both nodes and gives forward secrecy on that link.
 
 A live call over the mesh travels inside the session. Store-and-forward
 events do not need the session, because their content is already sealed.
 
 A live call over a relay has no forward secrecy. NIP-44 does not give it.
 
-## 11. The capability layer on top
-
-### 11.1 Announcement
+### 4.7 Announcement
 
 A provider announces a capability with an addressable event of kind 30272:
 
@@ -536,19 +568,19 @@ A provider announces a capability with an addressable event of kind 30272:
 Announcements are public. Nodes keep them and sync them. A new version of the
 manifest replaces the old one, because the event is addressable.
 
-### 11.2 Discovery
+### 4.8 Discovery
 
 `arc discover` reads announcements from the local store and from relays.
 Search terms match the `t` tags of an announcement, and full text where a
 relay supports NIP-50.
 
-### 11.3 Install and trust
+### 4.9 Install and trust
 
 `arc install <provider>` reads the announcement, verifies it, and asks the
 citizen to trust its author once. The installed commands come from the
 manifest, as today.
 
-### 11.4 Calls
+### 4.10 Calls
 
 A call is a private event. The request is a rumor of kind 3272. The reply is
 a rumor of kind 3273. The reply names the request rumor with an `e` tag.
@@ -560,52 +592,90 @@ The manifest declares the class of each command:
 | store and forward | 1059 | The router delivers it on any transport, however late. The reply returns the same way. |
 | live | 21059 | The router needs a live path now. If none exists, the call fails at once. |
 
-Receipt and processing are separate. A deferred request remains pending when
-no provider is attached, including across restarts. The mail journal records
-pending, processing and completed requests and commits the encrypted reply's
-forwarding state before transmission. A restarted or interrupted execution
-with no recorded reply returns `outcome_unknown` once its execution window
-has elapsed; it is never automatically executed again. The same conservative
-rule applies to historical receipts without a processing journal. This does
-not promise exactly-once effects in an external service.
+A live call subscribes, waits until the relay has taken the subscription, and
+only then sends, all on one connection, because a relay never stores the
+ephemeral reply.
+
+Receipt and processing are separate:
+
+- A deferred request remains pending when no provider is attached, including
+  across restarts.
+- The mail journal records pending, processing and completed requests, and
+  commits the encrypted reply's forwarding state before transmission.
+- A restarted or interrupted execution with no recorded reply returns
+  `outcome_unknown` once its execution window has elapsed; it is never
+  automatically executed again. The same conservative rule applies to
+  historical receipts without a processing journal. This does not promise
+  exactly-once effects in an external service.
 
 Outgoing calls commit their outbox and forwarding state before any send.
 Live replay protection remembers request IDs for the live window. Each request
-rumor carries a `nonce` tag with 8 random bytes as hex. Thus two equal requests in one second have two IDs, and the provider
-answers both.
+rumor carries a `nonce` tag with 8 random bytes as hex. Thus two equal
+requests in one second have two IDs, and the provider answers both.
 
 A call has no acknowledgement. The reply clears the caller's outbox. The
 provider sends its reply again on each sync until the reply expires, so a
 caller whose reply was lost still gets it.
 
-A provider refuses a live request whose rumor is more than 5 minutes old.
+A provider MUST refuse a live request whose rumor is more than 5 minutes old.
 This window applies to live calls only. A store-and-forward call has no
 window, because it can travel for days.
 
-A provider publishes its relay list with NIP-65. A caller sends a live
-request to its own relays, then to each read relay of the provider that it
-does not use. Failover is allowed only when the transport proves that the
-request was not submitted. After an ambiguous send or a lost reply, the caller
-reports an unknown outcome and does not repeat the operation on another relay.
-The caller also looks for the provider's announcement on those
-relays before the call. The caller finds the provider's list in its store, or
-on its own relays. A store-and-forward request goes to the caller's relays and
-to the provider's NIP-17 relay list, as mail does.
+A provider publishes its relay list with NIP-65:
 
-### 11.5 Data that a citizen keeps for itself
+- A caller sends a live request to its own relays, then to each read relay of
+  the provider that it does not use.
+- Failover is allowed only when the transport proves that the request was not
+  submitted. After an ambiguous send or a lost reply, the caller reports an
+  unknown outcome and does not repeat the operation on another relay.
+- The caller also looks for the provider's announcement on those relays
+  before the call. The caller finds the provider's list in its store, or on
+  its own relays.
+- A store-and-forward request goes to the caller's relays and to the
+  provider's NIP-17 relay list, as mail does.
+
+### 4.11 Data that a citizen keeps for itself
 
 Some data belongs to one citizen only, such as a private journal. The citizen
 seals it to its own key, and syncs it between its own nodes and its chosen
-relays. No provider takes part. The data is a NIP-37 draft, and
-`delivery/draft` makes it. See docs/interface/SPEC.md, section 7.2.
+relays. No provider takes part. The data is a NIP-37 draft, and `core/draft`
+makes it. See docs/interface/SPEC.md, section 3.9.
 
 A relay takes a draft only from its author, because the draft carries the
-NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay with
-the citizen's key. The store applies a NIP-09 deletion of an author to the
-events of that author, and refuses them after that, so a stick or a relay
+NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay
+with the citizen's key. The store applies a NIP-09 deletion of an author to
+the events of that author, and refuses them after that, so a stick or a relay
 cannot bring a deleted event back.
 
-## 12. Abuse limits
+## 5. Failures
+
+| Failure | What happens |
+| --- | --- |
+| An event fails verification | The node drops the event, and does not forward it. The store refuses it. |
+| The seal and the rumor name different authors | The recipient drops the event. |
+| No path delivers a live call now | The call fails at once, and the router tells the caller. |
+| No path exists for the size of an event | The router tells the caller which path it needs. |
+| A message is not acknowledged in 7 days | The outbox shows it as expired. The failure never stays silent. |
+| An execution started, and no reply was recorded | The request returns `outcome_unknown` once its execution window has elapsed. It never executes again automatically. |
+| A send is ambiguous, or a reply is lost | The caller reports an unknown outcome, and does not repeat the operation on another relay. |
+| A stored seal cannot be read | Reading recorded mail returns the storage, signer or cancellation failure. An unreadable stored seal must not appear as an empty mailbox or a successful partial history. |
+| A live request is more than 5 minutes old | The provider refuses it. |
+
+## 6. Security
+
+### 6.1 What each party sees
+
+| Party | Sees | Does not see |
+| --- | --- | --- |
+| relay | the one-time key, the routing tag, the size, the arrival time | the author, the content, the real time |
+| mesh neighbour | the frame type, the size, the timing, the Bluetooth address | the author and content of a private event |
+| courier | the route tag, the size | the recipient, unless it already knows their key; the author; the content |
+| recipient | everything | — |
+| provider | the caller and the call, because it is the recipient | — |
+
+A public event, such as a capability announcement, is readable by everyone.
+
+### 6.2 Abuse limits
 
 - Copy budgets are capped, so one event cannot amplify itself through
   couriers.
@@ -617,7 +687,7 @@ cannot bring a deleted event back.
   NIP-13 proof of work, before it accepts a gift wrap.
 
 `arc relay serve` applies these limits when its flags turn them on, see
-docs/DEPLOY.md. A relay also caps the size of one event and the rate of
+`arc relay serve --help`. A relay also caps the size of one event and the rate of
 events from one IP address.
 
 The relay transport answers the NIP-42 challenge of a relay and sends the
@@ -625,7 +695,7 @@ gift wrap again. On the relays of the citizen, the citizen's key answers. On
 the inbox relay of a recipient, a one-time key answers. Thus the relay of the
 recipient does not learn who wrote to them.
 
-## 13. Security properties
+### 6.3 Security properties
 
 | Property | Holds | Why |
 | --- | --- | --- |
@@ -633,12 +703,26 @@ recipient does not learn who wrote to them.
 | Integrity | yes | The ID covers every field, and the signature covers the ID. |
 | Confidentiality of content | yes | NIP-44 inside a seal inside a gift wrap. |
 | Recipient hidden from relays | no, in relay form | The `p` tag names the recipient. |
-| Recipient hidden from couriers | partly | See 6.4. |
+| Recipient hidden from couriers | partly | See section 3.6. |
 | Forward secrecy | live mesh links only | Noise gives it. NIP-44 does not. |
 | Replay | harmless | A node keeps one copy of each event, by ID. A provider answers each request once. |
 | Key loss | fatal | Nothing recovers a lost key. |
 
-## 14. What replaced the older stack
+## 7. Compatibility
+
+### 7.1 Ed25519 keys
+
+ARC does not move an Ed25519 key to a secp256k1 key. A citizen of the older
+stack makes a new key, installs its capabilities again, and trusts their
+signers again. One operator runs all the Ed25519 citizens, so a migration
+record costs more than it saves. Kind 10272 stays reserved for that record,
+and is not used.
+
+### 7.2 What replaced the older stack
+
+The CHANGELOG entries of 0.10.0 and 0.11.0 record the switchover: `arcn`
+became `arc`, the older program was `arc-legacy` for one release, and 0.11.0
+removed the older stack and moved the home of `arc` to `~/.config/arc`.
 
 | Before v0.11.0 | From v0.11.0 |
 | --- | --- |
@@ -647,162 +731,74 @@ recipient does not learn who wrote to them.
 | `announce` | capability announcement events |
 | `relay` with routes and federation | relays built on khatru, and the NIP-65 outbox model |
 | `client` | the node: store, router, and transports |
-| `direct` | left out of the first version, see section 16 |
-| `citizen` provider runtime | moved to `provider/host`, which `arc serve` uses: a provider still runs as a process over standard input and output |
+| `direct` | left out of the first version |
+| `citizen` provider runtime | moved to `adapters/provider/host`, which `arc serve` uses: a provider still runs as a process over standard input and output |
 | `capability`, `toolbox`, installed commands | kept; the manifest travels in an announcement |
 | `cmd/dm-provider` | NIP-17 direct messages; no provider needed |
 | `cmd/journal-provider` | data that the citizen keeps for itself; no provider needed |
 | `cmd/agora-provider` | public events on a relay; no provider needed |
 | `cmd/files-provider` | the files manifest of docs/interface/SPEC.md; no provider needed |
-| `cmd/exec-provider`, `cmd/sqlite-provider`, `cmd/releases-provider` | kept, answering calls |
-| `wake` | kept; the hook runs before a call on the node, see 15.1 |
+| `apps/exec`, `apps/sqlite`, `apps/releases` | kept, answering calls |
+| `wake` | kept; the hook runs before a call on the node |
 | `control` | removed; the node store answers who this citizen is |
 | `cmd/arc-relay` | `arc relay serve`, a khatru relay |
-| `cmd/arc` and `cmd/arcn` | one program, `arc`, built from the former `cmd/arcn`, see 15.1 |
+| `cmd/arc` and `cmd/arcn` | one program, `arc`, built from the former `cmd/arcn` |
 
-## 15. Phases
+Commands of the older `arc` that the switchover removed:
+
+| Command | Why |
+| --- | --- |
+| `tool pin`, `unpin` | An announcement keeps only its newest version. Consent stops a version that asks for more, see docs/interface/SPEC.md. |
+| `trust list`, `allow`, `deny` | An install trusts the author of the capability. |
+| `cache` | It needs an output filter that manifests of interface version 1 do not have. |
+| `publish` | The node store replaces the control plane. |
+
+This spec states no plan for its own removal.
+
+## 8. Proof
+
+### 8.1 Phases
 
 Each phase ends with its proof. A phase that does not pass its proof does not
-merge.
+merge. `mise run delivery` runs the proofs of phases 1 to 3.
 
-Phases 1 and 2 are built: the packages under `delivery/` and the command
-`arc`. `mise run delivery` runs both proofs. The journal of phase 1 is now the
-journal manifest of the capability interface.
-Phase 2 adds `delivery/private` for gift wraps and route tags, and
-`delivery/mail` for the outbox, acknowledgements and couriers. Sync compares
-sets with Negentropy when a relay lists NIP-77 in its information document,
-and fetches every event otherwise.
+| Phase | Scope | Proof | State |
+| --- | --- | --- | --- |
+| 1 | Identity, events, the store, the router, and the relay and file transports | Two machines sync a journal through a relay, then through a USB stick. A changed event is refused. | Built |
+| 2 | The outbox, acknowledgements, route tags, couriers, and sync | A message reaches an offline recipient through a third machine that carries a USB stick. | Built |
+| 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay, and the round-trip time is recorded. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. | Built |
+| 4 | The switchover: `arc` runs on this layer only, and the older stack is removed | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `arc update apply` of v0.10.0 installs a later signed build. | Built |
+| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. | Not built. `core/compact` and `core/frame` exist; no transport uses them. |
+| 6 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. | Not built |
 
-`delivery/groups` makes a khatru relay host NIP-29 groups, `delivery/draft`
-seals data to its author as NIP-37 drafts, and `delivery/sealed` makes a relay
-serve those drafts only to their author, after NIP-42 authentication. The capability interface uses both.
+Phases 1 and 2 are built: the packages under `core/` and `adapters/`, and
+the command `arc`. Phase 2 added `core/private` for gift wraps and route
+tags, and `core/mail` for the outbox, acknowledgements and couriers.
+`adapters/relay/groups` makes a khatru relay host NIP-29 groups, `core/draft`
+seals data to its author as NIP-37 drafts, and `adapters/relay/sealed` makes a
+relay serve those drafts only to their author, after NIP-42 authentication.
+The capability interface uses both. Phase 3 added `runtime/catalog` for
+announcements, discovery and installs, and `core/call` for both classes of
+call. `arc call` calls a capability with a raw body.
 
-Phase 3 adds `delivery/catalog` for announcements, discovery and installs,
-and `delivery/call` for both classes of call. A live call subscribes, waits
-until the relay has taken the subscription, and only then sends, all on one
-connection, because a relay never stores the ephemeral reply. On a local relay,
-a live call to `exec` takes about 10 ms for the round trip. `arc call` calls
-a capability with a raw body. The capability interface, docs/interface/SPEC.md,
-now declares the commands of a capability. The journal adds one thing that
-the phase names: a page travels as parts of at most 32 KiB, so it fits the
-event limit of common relays, and `arc journal tail` streams text as it is
-appended.
+The journal of phase 1 is now the journal manifest of the capability
+interface. The capability interface, docs/interface/SPEC.md, declares the
+commands of a capability. The journal adds one thing that phase 3 names: a
+page travels as parts of at most 32 KiB, so it fits the event limit of common
+relays, and `arc journal tail` streams text as it is appended.
 
-| Phase | Scope | Proof |
-| --- | --- | --- |
-| 1 | Identity, events, the store, the router, and the relay and file transports | Two machines sync a journal through a relay, then through a USB stick. A changed event is refused. |
-| 2 | The outbox, acknowledgements, route tags, couriers, and sync | A message reaches an offline recipient through a third machine that carries a USB stick. |
-| 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay, and the round-trip time is recorded. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. |
-| 4 | The switchover: `arc` runs on this layer only, and the older stack is removed, see 15.1 | See 15.1. |
-| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. |
-| 6 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. |
+### 8.2 Measurements
 
-### 15.1 The switchover
+On a local relay, a live call to `exec` takes about 10 ms for the round trip.
 
-Phase 4 makes the delivery layer the only ARC stack. Until step 4, the
-program of this layer was `arcn`, built from `cmd/arcn`. Step 4 moves it to
-`cmd/arc`, as the program `arc`. The older program stays for one release as
-`arc-legacy`, built from `cmd/arc-legacy`, and is then removed. Each step below is one pull request.
-
-| Step | Work | Proof |
-| --- | --- | --- |
-| 1 | Port the commands of the older `arc` that the table below marks "port". | Each ported command has a test at the command line. `mise run delivery` and `mise run interface` pass. |
-| 2 | Deploy a khatru relay on Fly. The operator runs the deploy. The older relay on Fly is stopped. | `arc relay add` takes the new relay, and a live call to `exec` crosses it. |
-| 3 | Port `update` and `lists`, see the table below. Port the wake flow to the node. Before a call to a citizen with a wake hook, the node runs the hook, as `wake` does today. A citizen without a hook must have a current announcement of kind 30272. The Sprite serves `exec` on this layer through the relay of step 2. | A call to `exec` on a paused Sprite wakes it, and the reply arrives. |
-| 4 | Move `cmd/arcn` to `cmd/arc`, and the older `cmd/arc` to `cmd/arc-legacy`. `arc-legacy` writes a deprecation notice to standard error on each run. `arc` reads `ARC_HOME`, `ARC_KEY` and `ARC_PASSPHRASE`, and its home stays `~/.config/arc/next` until step 5. `arc-legacy` and `arc-relay` read `ARC_LEGACY_KEY`. Release v0.10.0. A machine of v0.9.0 installs v0.10.0 with `install.sh`, because `arc update` of v0.9.0 reads only the older stack. | `arc update apply` of v0.10.0 installs a later signed build. `mise run delivery` proves it, from a build that reports 0.9.0 to 9.9.9. |
-| 5 | Remove the older stack: the packages that section 14 replaces, `cmd/arc-legacy`, `cmd/arc-relay`, and the providers that section 14 marks "no provider needed". Move the home of `arc` from `~/.config/arc/next` to `~/.config/arc`. Release v0.11.0. | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `mise run test` passes. |
-
-The commands of `arc` after step 4:
-
-| Command | Source | Note |
-| --- | --- | --- |
-| `keys gen`, `add`, `list`, `use`, `remove`, `encrypt`, `bunker`, and `whoami` | port | Each identity has its own directory, `<home>/citizens/<name>`, because its store, relays and installs belong to its key. A key can be a NIP-49 sealed key or a NIP-46 bunker. |
-| `tool list`, `info`, `remove` | port | They read the installs of the node, not the toolbox. |
-| `apps init` | port | Bundles are kept. |
-| `resolve` | port | It searches the identities of the machine, the installs, and the announcements. |
-| `info <provider> [capability]` | port | It reads the announcements of kind 30272. |
-| `version` | port | — |
-| `lists add`, `rm`, `ls` | port in step 3 | Members are secp256k1 public keys. The capability interface resolves a list name to its members. |
-| `update check`, `update apply` | port in step 3 | The release provider must answer calls on this layer first. |
-| `discover`, `install`, `call`, `results`, `serve`, `announce` | `arcn` | — |
-| `relay add`, `rm`, `ls`, `serve` | `arcn` | They replace `join` and `relay status`. `relay ls` shows the NIP-11 document of each relay. |
-| `message send`, `inbox`, `outbox` | `arcn` | They replace `send` and `listen`. |
-| `sync` | `arcn` | — |
-| `tool pin`, `unpin` | removed | An announcement keeps only its newest version. Consent stops a version that asks for more, see docs/interface/SPEC.md. |
-| `trust list`, `allow`, `deny` | removed | An install trusts the author of the capability. |
-| `cache` | removed | It needs an output filter that manifests of interface version 1 do not have. |
-| `publish` | removed | The node store replaces the control plane. |
-
-## 16. Decisions
-
-### 16.1 Kind numbers
-
-"272" spells ARC on a phone keypad. No NIP and no entry in the Nostr kind
-registry uses these numbers:
-
-| Kind | Class | Use |
-| --- | --- | --- |
-| 3272 | regular | a call request, inside a gift wrap |
-| 3273 | regular | a call reply, inside a gift wrap |
-| 3274 | regular | an acknowledgement, inside a gift wrap |
-| 3275 | regular | one continuation part of sealed content longer than 32 KiB |
-| 10272 | replaceable | reserved, and not used, see 5.1 |
-| 30272 | addressable | a capability announcement |
-
-Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
-data, such as a journal page, a KPI series or a file, is a NIP-37 draft of
-kind 31234, with checkpoints of kind 1234 and a relay list of kind 10013. A
-part of kind 3275 carries only content past the first 32 KiB of a draft. See
-docs/interface/SPEC.md, section 7.2. ARC registers its five kinds in the
-registry.
-
-### 16.2 The route tag
-
-The route tag uses the letter `w`. The letters `b`, `j`, `o` and `w` are unused
-in every NIP. The registry also uses `v`.
-
-### 16.3 Bluetooth from Go
-
-`muka/go-bluetooth` is archived, so ARC does not use it. ARC extends the Linux
-backend of `tinygo.org/x/bluetooth`, which is maintained and reaches BlueZ over
-D-Bus. If the change does not fit that library, ARC calls BlueZ through
-`godbus/dbus` directly.
-
-### 16.4 macOS
-
-A macOS node is a Bluetooth central only in the first version. The
-CoreBluetooth bindings under the Go library aim to cover all of CoreBluetooth,
-which includes the peripheral manager. A spike after phase 5 decides whether a
-macOS node can become a full mesh node.
-
-### 16.5 LoRa
-
-ARC uses Reticulum, not Meshtastic:
-
-- Reticulum is a network stack. It runs over LoRa, serial links, packet radio,
-  TCP, UDP and I2P, and it moves payloads larger than one packet.
-- Meshtastic is firmware for chat radios. Its packets hold 233 bytes, and it
-  runs its own flood. ARC would be a guest on it.
-
-Three Go implementations of Reticulum exist. Only one drives a LoRa radio, and
-one person maintains it. ARC therefore connects to a local Reticulum instance
-over TCP, and does not embed a Go port. The Python instance works today. A Go
-port can replace it later without a change in ARC.
-
-### 16.6 Sync
-
-ARC uses Negentropy from `fiatjaf.com/nostr`, as section 10.3 states. A relay
-without NIP-77 gets a `REQ` with `since`.
-
-### 16.7 Courier size
-
-Couriers keep the 64 KiB cap. Section 10.1 lists the paths for larger events.
-A capability announcement is public, so it moves by sync, not by couriers.
-
-## 17. Deferred work
+### 8.3 Deferred work
 
 | Item | Why it waits | When to decide |
 | --- | --- | --- |
 | The TLS direct carrier as a live transport | Relays can carry live calls: about 10 ms for a round trip on a local relay. | After a round trip is measured through a public relay. |
-| A full macOS mesh node | It needs a peripheral backend in Go. | After phase 5, see 16.4. |
+| A full macOS mesh node | It needs a peripheral backend in Go. | After phase 5, see section 3.8. |
 | A bridge to bitchat direct messages | bitchat's Nostr envelopes are not NIP-17. Only the citizen's own node can translate them, because translation needs the private key. | When ARC direct messages must reach bitchat users. |
+
+## Gates
+
+This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).

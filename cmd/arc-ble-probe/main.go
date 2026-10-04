@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gezibash/arc/delivery/transport/ble"
+	"github.com/gezibash/arc/adapters/transport/ble"
 )
 
 func main() {

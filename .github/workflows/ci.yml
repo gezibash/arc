@@ -53,14 +53,20 @@ jobs:
                   continue
               path = PurePosixPath(os.fsdecode(raw))
               # Only known prose files are exempt. Unknown paths run tests.
-              docs = path.suffix == ".md" and (
+              # A spec, a proposal and the two registries are inputs of the
+              # tests in internal/specs, so they are not exempt.
+              checked = (
+                  path.name in {"SPEC.md", "KINDS.md", "GRANDFATHERED.md", "SPEC-TEMPLATE.md"}
+                  or "proposals" in path.parts
+              )
+              docs = not checked and path.suffix == ".md" and (
                   len(path.parts) == 1 or path.parts[0] == "docs"
               )
               code |= not docs
               release |= (
                   path.name in {"Dockerfile", ".dockerignore", ".gitignore"}
-                  or str(path) in {"go.mod", "go.sum", "mise.toml", "scripts/check-clean-build.sh"}
-                  or str(path).startswith(".github/workflows/")
+                  or str(path) in {"go.mod", "go.sum", "mise.toml"}
+                  or str(path).startswith(".github/")
               )
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print(f"code={str(code).lower()}", file=output)
@@ -78,10 +84,19 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: true
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
+      # The version must match golangci-lint in mise.toml.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+      - name: Check that go fix has nothing to apply
+        run: test -z "$(go fix -diff ./...)"
+      # The version must match govulncheck in mise.toml.
+      - name: Check for known vulnerabilities that the code calls
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: go build ./...
-      - run: go test ./...
+      # The proofs build the programs and run them end to end. They have
+      # their own jobs below.
+      - run: go test $(go list ./... | grep -v '/internal/proof$')
 
   delivery:
     needs: changes
@@ -95,7 +110,7 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: true
-      - run: bash scripts/test-delivery.sh
+      - run: go test -count=1 -run '^TestDelivery' ./internal/proof/
 
   interface:
     needs: changes
@@ -109,7 +124,7 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: true
-      - run: bash scripts/test-interface.sh
+      - run: go test -count=1 -run '^TestInterface' ./internal/proof/
 
   # Check the actual release recipe only when its inputs change.
   # Skipped jobs still satisfy the existing required status checks.
@@ -125,4 +140,4 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: true
-      - run: bash scripts/check-clean-build.sh
+      - run: bash .github/scripts/check-clean-build.sh

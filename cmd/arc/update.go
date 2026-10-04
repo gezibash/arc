@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/delivery/call"
+	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/canonical"
-	"github.com/gezibash/arc/internal/citizen"
-	"github.com/gezibash/arc/release"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/release"
 	"github.com/spf13/cobra"
 )
 
@@ -119,7 +121,22 @@ func update(command *cobra.Command, apply bool) error {
 
 	ctx, cancel := context.WithTimeout(command.Context(), 10*time.Minute)
 	defer cancel()
-	source := releaseCaller{sess: sess, provider: provider}
+	var source release.Requester = releaseCaller{sess: sess, provider: provider}
+	// Keep the existing updater usable without installation. An installed provider
+	// that advertises streaming selects the session path before any archive request.
+	trusted, err := installs.Trusted(provider, "releases")
+	if err != nil {
+		return err
+	}
+	if trusted {
+		_, offer, _, err := sess.Target(ctx, installs, "releases+arc://"+provider.Hex()+"/releases", "")
+		if err != nil {
+			return err
+		}
+		if offer.SupportsInteraction(session.ServerStream) {
+			source = streamReleaseCaller{releaseCaller{sess: sess, provider: provider}, installs}
+		}
+	}
 	checkpoint := &release.Checkpoint{Dir: dir}
 	platform := release.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
 	newest, err := release.Newest(ctx, source, checkpoint, publisher[:], channel, platform, version)
@@ -173,7 +190,7 @@ func releaseCommand() *cobra.Command {
 		Long: "arc checks the size and the hash of each archive that the channel\n" +
 			"names, in <root>/blobs/<sha256>.tar.gz. It then signs the channel with\n" +
 			"the chosen identity, which must be the publisher of the channel, and\n" +
-			"writes <root>/channels/<channel>.json. See docs/updates/PUBLISHING.md.",
+			"writes <root>/channels/<channel>.json. See apps/releases/README.md.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, _ := command.Flags().GetString("root")
@@ -299,10 +316,31 @@ func checkSuccessor(target string, unsigned map[string]any) error {
 	if current["publisher"] != unsigned["publisher"] {
 		return fmt.Errorf("%s has another publisher: a new publisher needs an explicit trust transition", target)
 	}
-	now, _ := current["sequence"].(json.Number).Int64()
-	next, _ := unsigned["sequence"].(json.Number).Int64()
+	nowNumber, _ := current["sequence"].(json.Number)
+	now, err := nowNumber.Int64()
+	if err != nil {
+		return fmt.Errorf("%s has no whole-number sequence", target)
+	}
+	nextNumber, _ := unsigned["sequence"].(json.Number)
+	next, err := nextNumber.Int64()
+	if err != nil {
+		return fmt.Errorf("the new channel document has no whole-number sequence")
+	}
 	if next <= now {
 		return fmt.Errorf("the sequence must be above %d, the sequence of %s", now, target)
 	}
 	return nil
+}
+
+type streamReleaseCaller struct {
+	releaseCaller
+	installs catalog.Installs
+}
+
+func (r streamReleaseCaller) OpenArchive(ctx context.Context, digest string) (release.ArchiveReader, error) {
+	body, err := json.Marshal(map[string]string{"op": "archive", "digest": digest})
+	if err != nil {
+		return nil, err
+	}
+	return r.sess.OpenSessionAddress(ctx, r.installs, "releases+arc://"+r.provider.Hex()+"/releases", string(body), session.ServerStream)
 }

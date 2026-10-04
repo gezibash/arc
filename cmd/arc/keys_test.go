@@ -158,7 +158,7 @@ func TestRemovingTheDefaultLetsTheNextOneTakeItsPlace(t *testing.T) {
 	}
 }
 
-// tool remove takes out the install that a name runs, and leaves the others.
+// apps remove takes out the install that a name runs, and leaves the others.
 func TestToolRemoveTakesOutOneInstall(t *testing.T) {
 	home := t.TempDir()
 	name := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
@@ -169,12 +169,12 @@ func TestToolRemoveTakesOutOneInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok(t, home, "", "tool", "remove", "journal")
-	out := ok(t, home, "", "tool", "list")
+	ok(t, home, "", "apps", "remove", "journal")
+	out := ok(t, home, "", "apps", "list")
 	if strings.Contains(out, "journal") || !strings.Contains(out, "arc call y") {
-		t.Fatalf("tool list after removing journal gave %q", out)
+		t.Fatalf("apps list after removing journal gave %q", out)
 	}
-	if _, err := run(t, home, "", "tool", "remove", "journal"); err == nil {
+	if _, err := run(t, home, "", "apps", "remove", "journal"); err == nil {
 		t.Fatal("removing journal twice succeeded")
 	}
 }

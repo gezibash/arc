@@ -17,7 +17,7 @@ and a relay, a USB stick or another machine carries it without reading it.
 See [the delivery layer](docs/delivery/SPEC.md).
 
 `arc` is the one program. It keeps your identities, talks to relays, calls
-capabilities, serves them, and runs a relay.
+apps, serves their interfaces, and runs a relay.
 
 ## Install
 
@@ -61,7 +61,7 @@ Make an identity, and add a relay:
 
 ```bash
 arc keys gen
-arc relay add wss://arc-nostr-gezim.fly.dev
+arc relay add wss://<relay>
 arc whoami
 ```
 
@@ -98,54 +98,69 @@ message waits in the outbox until the recipient acknowledges it. `arc sync`
 reconciles this machine with its relays. `arc sync --dir <path>` syncs with
 a directory instead: a USB stick, a shared folder, or a disk that you carry.
 
-## Capabilities
+## Apps
 
-A provider announces capabilities as signed events. Find one, trust it, and
-call it:
+An app adds commands through a signed interface manifest. Journal runs local
+data commands. SQLite adds client commands and has a separate service program.
+Find an app, review its permissions, and install its commands:
 
 ```bash
 arc discover exec
-arc install <provider> --yes
+arc install <author-or-service> <app>
 arc exec run uname -a
 ```
 
-`arc install` shows what the capability can do, and records your consent. An
-installed capability adds its own commands, `arc <name> <command>`. `arc help
-<name>` lists them. If a new version of a capability asks for more, `arc`
-stops until you install it again.
+`arc install` shows the app's permissions and records your consent. It installs
+commands, without downloading a program or starting a service. `arc help <name>`
+lists its commands. `arc apps list`, `info <name>` and `remove <name>` manage
+installs. If a new interface asks for more permissions, ARC requires consent
+again. See [the app model and layout](apps/README.md).
 
-`arc call` sends one request. An address names the capability, the provider
+`arc call` sends one request. An address names the app interface, the service identity
 and the resource:
 
 ```bash
-arc call 'sqlite+arc://<provider>/main' '{"sql":"select 1 as n"}'
+arc call 'sqlite+arc://<service>/main' '{"sql":"select 1 as n"}'
 arc call 'exec+arc://npub1.../' '{"argv":["uname","-a"]}'
 ```
 
-The provider is a key, an npub, an installed name, or a domain for NIP-05.
+The service identity is a key, an npub, an installed name, or a domain for NIP-05.
 `arc call` shows the reply as the manifest of the service says: exec shows the
 output and exits with the code of the command, and sqlite shows a table.
 `--raw` writes the reply as it came. See
-[addresses](docs/interface/SPEC.md#141-addresses). With a relay, the call
+[addresses](docs/interface/SPEC.md#318-addresses). With a relay, the call
 is live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 
-Before a live call, `arc` runs the wake hook of the provider from
-`~/.config/arc/wake.toml`. Without a hook, the provider needs a current
-announcement. See [the exec provider](cmd/exec-provider/README.md).
+Before a live call, `arc` runs the wake hook of the service identity from
+`~/.config/arc/wake.toml`. Without a hook, the service needs a current
+announcement. See [the Exec app](apps/exec/README.md).
 
 `arc lists add <command> <name> <citizen>...` saves a set of citizens. Where
 the command takes a key, the name of the list runs it once for each member.
 
-## Serve a capability
+## Run an app service
 
 ```bash
-arc serve "exec://$(command -v exec-provider)?manifest=$PWD/cmd/exec-provider/manifest.json"
+arc serve "exec://$(command -v arc-exec)?manifest=$PWD/apps/exec/manifest.json"
 ```
 
-`arc serve` announces the capability, answers live calls through each relay,
+`arc serve` runs a program, announces its service, answers live calls through each relay,
 and answers carried calls on each sync. It signs the announcement again
-every 2 minutes. `arc apps init` writes a new provider bundle.
+every 2 minutes. `arc apps init` creates an app with a starter service program.
+Apps with an Arcfile can be run with `arc serve <app-directory>`.
+
+Core also supports live server streaming and duplex sessions. A service declares
+its interaction modes; `arc session <address>` uses the same session machinery
+as calls between app services. See the [session protocol](docs/sessions/SPEC.md).
+The bundled [SQLite](apps/sqlite/README.md#live-sql-sessions),
+[Exec](apps/exec/README.md#streaming-processes-and-terminals),
+[HTTP](apps/http/README.md), and
+[Releases](apps/releases/README.md#streaming-archives) apps implement
+these interactions. Use `--exec`, `--tty`, `--http`, or `--websocket` on
+`arc session` to select their CLI I/O mappings. Existing request/reply commands
+remain available. See the [sessions of the bundled apps](apps/README.md#sessions-of-the-bundled-apps).
+
 
 ## Run a relay
 
@@ -156,8 +171,8 @@ arc relay serve --listen 127.0.0.1:7447
 The relay is a khatru relay. It serves NIP-42 authentication, NIP-77 sync,
 and sealed data only to its author. Flags turn on write limits: an event
 size cap, authentication or proof of work for gift wraps, a rate for each IP
-address, and a store cap. `--group <id>` hosts a NIP-29 group. See
-[Deploy](docs/DEPLOY.md) for the public relay on Fly.io.
+address, and a store cap. `--group <id>` hosts a NIP-29 group.
+`arc relay serve --help` lists the flags.
 
 ## Update
 
@@ -170,8 +185,8 @@ arc update apply --provider <provider> --publisher <publisher>
 checks the signature of the publisher, and replaces this program. The old
 program stays as `<program>.previous`. `ARC_RELEASES` and
 `ARC_RELEASE_PUBLISHER` can name the provider and the publisher. No official
-channel exists yet. See [updating an installation](docs/updates/OPERATIONS.md)
-and [publishing a channel](docs/updates/PUBLISHING.md).
+channel exists yet. See [updates](docs/updates/SPEC.md) and
+[publishing a channel](apps/releases/README.md#publish-a-channel).
 
 ## Upgrade from v0.10.0
 
@@ -185,8 +200,7 @@ mv ~/.config/arc-old/next ~/.config/arc
 ```
 
 `~/.config/arc-old` then holds only the files of the older stack. If a
-`citizen.env` of the exec provider names `ARC_HOME`, change it, or run
-`citizen/init` again.
+start script of the exec app names `ARC_HOME`, change it.
 
 ## Development
 
@@ -197,19 +211,41 @@ from `mise.toml`.
 mise install
 mise run build       # every command into bin/
 mise run check       # lint and test
+mise run specs       # the specs, their gates, owners and kinds
 mise run delivery    # the delivery layer, end to end
 mise run interface   # the capability interface, end to end
 ```
 
-`mise run build` writes `bin/arc` and one binary for each other command.
+`mise run build` writes `bin/arc`, `bin/arc-exec`, `bin/arc-sqlite`,
+`bin/arc-http` and `bin/arc-releases`. App code and manifests live in `apps/`.
+Read [AGENTS.md](AGENTS.md) before a change: it holds the package rules and
+the spec rules.
 
 ## Docs
 
+Guides:
+
+- [Getting started](docs/GETTING-STARTED.md): a first identity, relay,
+  message and app call.
+- [Apps, programs, services and sessions](apps/README.md).
+- [Architecture and package boundaries](docs/ARCHITECTURE.md).
+
+Specs:
+
 - [Delivery layer](docs/delivery/SPEC.md): events, transports, sync, calls,
   and the switchover.
-- [Capability interface](docs/interface/SPEC.md): manifests, commands, and
-  data that a citizen keeps for itself.
+- [App interface](docs/interface/SPEC.md): manifests, commands, and data that
+  a citizen keeps for itself.
+- [Sessions](docs/sessions/SPEC.md): streaming and duplex interactions.
+- [HTTP over ARC](docs/http/SPEC.md).
+- [Wake](docs/wake/SPEC.md): presence, wake hooks and machines that pause.
 - [Updates](docs/updates/SPEC.md): signed release channels.
-- [Deploy](docs/DEPLOY.md): releases, relays, Docker, Fly.io.
-- [Whitepaper](docs/WHITEPAPER.md): protocol design.
+- [How to write a spec](docs/SPEC-TEMPLATE.md): the gates that each spec
+  answers, the [event kinds](docs/KINDS.md), and the
+  [proposals](docs/proposals/).
+
+Other:
+
+- [Whitepaper](https://republic.sh/whitepaper/WHITEPAPER.md): protocol
+  design, and [the human version](https://republic.sh/whitepaper/WHITEPAPER_HUMAN.md).
 - [Changelog](CHANGELOG.md).

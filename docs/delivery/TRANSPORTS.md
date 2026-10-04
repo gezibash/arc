@@ -5,7 +5,8 @@ It defines completion for contributors and reviewers.
 
 ## 1. Define the supported workflow
 
-A transport moves signed Nostr events between ARC nodes.
+A transport moves signed Nostr events between ARC participants, including
+consumers, providers, relays and a citizen's devices.
 It connects to the existing delivery core and normal ARC commands.
 A byte echo, codec, or radio probe proves only its own component.
 
@@ -23,7 +24,7 @@ A separate diagnostic command is permitted. It does not replace CLI integration.
 ## 2. Use the existing contract
 
 The current Go interfaces are in
-[`delivery/transport/transport.go`](../../delivery/transport/transport.go).
+[`core/transport/transport.go`](../../core/transport/transport.go).
 Use the code contract when the delivery specification describes a future design.
 
 | Interface | Required behavior |
@@ -38,8 +39,8 @@ If the medium requires a contract change, specify and test that change with its 
 Do not create a competing transport abstraction.
 
 Preserve the event's signed fields, identity, and signature during encoding and fragmentation.
-Reuse [`compact`](../../delivery/compact/compact.go) and
-[`frame`](../../delivery/frame/frame.go) when their formats fit the link.
+Reuse [`compact`](../../core/compact/compact.go) and
+[`frame`](../../core/frame/frame.go) when their formats fit the link.
 Compact encoding does not encrypt or authenticate an event.
 
 ## 3. Integrate both endpoints
@@ -49,12 +50,14 @@ Inspect these integration points as required by the declared workflow:
 
 - [`cmd/arc/main.go`](../../cmd/arc/main.go): session configuration and sync targets.
 - [`cmd/arc/capability.go`](../../cmd/arc/capability.go): discovery, calls, and provider watches.
-- [`delivery/node`](../../delivery/node/node.go): publish, fetch, sync, and verified watches.
-- [`delivery/mail`](../../delivery/mail/mail.go): queued delivery and acknowledgements.
-- [`delivery/call`](../../delivery/call/call.go): requests, replies, and duplicate handling.
+- [`core/node`](../../core/node/node.go): publish, fetch, sync, and verified watches.
+- [`core/mail`](../../core/mail/mail.go): queued delivery and acknowledgements.
+- [`core/call`](../../core/call/call.go): requests, replies, and duplicate handling.
 
 Live consumers select capability interfaces: `watchAll` uses `transport.Live`
-in `cmd/arc/capability.go`, and live calls use `call.Exchanger`.
+in `cmd/arc/capability.go`, and live calls use `call.Exchanger`. Core sessions
+use `transport.Live` through `core/call.OpenSession`; providers and consumers
+share `core/session` rather than adding adapter-specific state machines.
 An adapter that compiles does not prove those paths can use it.
 Change only the necessary callers, and preserve existing relay and directory behavior.
 
@@ -103,7 +106,7 @@ If the transport claims a mesh, test its hop limits, duplicate suppression, and 
 
 Apply the rows that match the declared scope. List unsupported capabilities explicitly.
 Test the same user workflow as an existing transport when both claim that capability.
-Use existing delivery tests and [`scripts/test-delivery.sh`](../../scripts/test-delivery.sh) as examples.
+Use existing delivery tests and [`internal/proof/delivery_test.go`](../../internal/proof/delivery_test.go) as examples.
 Add transport-specific integration proof to CI where the environment supports it.
 
 Run formatting, vet, build, and relevant tests for the changed paths.

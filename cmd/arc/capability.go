@@ -16,19 +16,20 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/bundle"
-	"github.com/gezibash/arc/capability"
-	"github.com/gezibash/arc/delivery/call"
-	"github.com/gezibash/arc/delivery/catalog"
-	"github.com/gezibash/arc/delivery/draft"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/mail"
-	"github.com/gezibash/arc/delivery/relaylist"
-	"github.com/gezibash/arc/delivery/transport"
-	"github.com/gezibash/arc/delivery/transport/file"
-	"github.com/gezibash/arc/iface"
-	"github.com/gezibash/arc/internal/citizen"
-	"github.com/gezibash/arc/provider/host"
+	"github.com/gezibash/arc/adapters/provider/host"
+	"github.com/gezibash/arc/adapters/transport/file"
+	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/mail"
+	"github.com/gezibash/arc/core/relaylist"
+	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/bundle"
+	"github.com/gezibash/arc/runtime/capability"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 )
 
@@ -45,9 +46,9 @@ func installsOf(command *cobra.Command) (catalog.Installs, error) {
 
 func serveCmd() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "serve <exec://...|bundle directory>",
-		Short: "Offer a capability, and answer its calls",
-		Long: "arc announces the capability, answers live calls that reach it\n" +
+		Use:   "serve <exec://...|app directory>",
+		Short: "Run an app program and expose its service",
+		Long: "arc announces the service interface, answers live calls that reach it\n" +
 			"through a relay, and answers store-and-forward calls on each sync.\n" +
 			"With --sync-dir, it also syncs with that directory on each tick, so\n" +
 			"calls that couriers carry reach it.",
@@ -92,13 +93,16 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer process.Stop()
+	defer func() { _ = process.Stop() }()
 
 	// The program can call what this citizen installed, as this citizen.
 	calls := func(ctx context.Context, out call.Outbound) (call.Reply, error) {
 		return sess.CallAddress(ctx, installs, out.Address, out.Body)
 	}
-	server := call.NewServer(sess.Signer, id, process, limit, calls, log)
+	server := call.NewServer(sess.Signer, id, process, limit, calls, log, definition.Interactions...)
+	server.SetSessionCaller(func(ctx context.Context, out call.Outbound, mode session.Mode) (*session.Stream, error) {
+		return sess.OpenSessionAddress(ctx, installs, out.Address, out.Body, mode)
+	})
 	sess.Mail.OnRequest = server.Handle
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
@@ -125,7 +129,7 @@ func serve(command *cobra.Command, args []string) error {
 	// waits for the line can call at once.
 	missing, err := watchAll(ctx, server, sess.Relays, log)
 	if ctx.Err() != nil {
-		fmt.Fprintln(os.Stderr, "the provider is stopping")
+		fmt.Fprintln(os.Stderr, "the service is stopping")
 		return nil
 	}
 	if err != nil {
@@ -155,10 +159,10 @@ func serve(command *cobra.Command, args []string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintln(os.Stderr, "the provider is stopping")
+			fmt.Fprintln(os.Stderr, "the service is stopping")
 			return nil
 		case <-server.Done():
-			return errors.New("the provider program stopped")
+			return errors.New("the app program stopped")
 		case <-refresh.C:
 			if err := announce(); err != nil {
 				log.Warn("the announcement was not signed again", "error", err)
@@ -234,7 +238,7 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 			}
 			answered[r.index] = true
 		case <-server.Done():
-			return nil, errors.New("the provider program stopped")
+			return nil, errors.New("the app program stopped")
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -273,7 +277,7 @@ func keepServing(ctx context.Context, server *call.Server, r transport.Live, rep
 func discoverCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "discover [query]",
-		Short: "Find capabilities that providers announce",
+		Short: "Find apps announced by participants",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			sess, err := open(command)
@@ -296,7 +300,7 @@ func discoverCmd() *cobra.Command {
 				return err
 			}
 			if len(offers) == 0 {
-				fmt.Println("no capabilities found: add a relay, or sync with a directory")
+				fmt.Println("no apps found: add a relay, or sync with a directory")
 			}
 			for _, o := range offers {
 				fmt.Printf("%s/%s  %s\n  %s\n  %s\n", o.Name(), o.ID, o.Title, o.Summary, o.Provider.Hex())
@@ -308,9 +312,11 @@ func discoverCmd() *cobra.Command {
 
 func installCmd() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "install <provider> [capability]",
-		Short: "Trust a capability, so that you can call it",
-		Args:  cobra.RangeArgs(1, 2),
+		Use:   "install <author-or-service> [app]",
+		Short: "Install an app's commands and record your consent",
+		Long: "Install the signed interface and permissions; no executable is downloaded.\n" +
+			"A data app runs locally. A service app calls the selected participant.",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
 			sess, err := open(command)
 			if err != nil {
@@ -340,7 +346,7 @@ func installCmd() *cobra.Command {
 				fmt.Print(iface.Describe(m))
 			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
-				fmt.Print("Trust this provider? [y/N] ")
+				fmt.Print("Trust this app and its signing identity? [y/N] ")
 				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					return errors.New("not installed")
@@ -367,8 +373,8 @@ func installCmd() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().Bool("yes", false, "trust the provider without asking")
-	command.Flags().String("as", "", "the name that runs the capability (default: its id)")
+	command.Flags().Bool("yes", false, "accept the app's permissions without asking")
+	command.Flags().String("as", "", "the name that runs the app (default: its id)")
 	return command
 }
 
@@ -377,7 +383,7 @@ func installCmd() *cobra.Command {
 func callCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "call <provider|address> [body...]",
-		Short: "Call an installed capability",
+		Short: "Call an installed app service",
 		Long: "Name the capability by an address, <scheme>+arc://<provider>/<path>, or\n" +
 			"by its provider and --capability. The provider is a key, an npub, or an\n" +
 			"installed name.\n\n" +
@@ -457,6 +463,9 @@ func callCapability(command *cobra.Command, args []string) error {
 		return fmt.Errorf("install it first: arc install %s %s", provider.Hex(), offer.ID)
 	}
 
+	if !offer.SupportsInteraction(session.RequestReply) {
+		return fmt.Errorf("%s does not support request/reply: %w", offer.ID, session.ErrUnsupported)
+	}
 	body := strings.Join(args[1:], " ")
 	if body == "" {
 		read, err := io.ReadAll(io.LimitReader(os.Stdin, 1024*1024+1))

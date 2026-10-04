@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/delivery/call"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/relaylist"
-	"github.com/gezibash/arc/delivery/testrelay"
-	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/relaylist"
+	"github.com/gezibash/arc/internal/testrelay"
 )
 
 // output keeps what a command writes, for a test that reads it while the
@@ -48,12 +48,12 @@ func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan er
 	t.Helper()
 	dir := t.TempDir()
 	echo := filepath.Join(dir, "echo")
-	build := exec.Command("go", "build", "-o", echo, "../../provider/host/testdata/echo")
+	build := exec.Command("go", "build", "-o", echo, "../../adapters/provider/host/testdata/echo")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "manifest.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

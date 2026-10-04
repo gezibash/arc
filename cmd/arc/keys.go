@@ -22,9 +22,10 @@ import (
 	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip46"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/transport/relay"
-	"github.com/gezibash/arc/internal/citizen"
+	"github.com/gezibash/arc/adapters/keyfile"
+	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -40,7 +41,7 @@ type signerIdentity struct {
 // loadIdentity reads the key file. It holds a secret key as hex or nsec, an
 // ncryptsec of NIP-49 that a passphrase opens, or a bunker URI of NIP-46.
 func loadIdentity(ctx context.Context, dir string) (signerIdentity, error) {
-	text, err := keys.Read(keyPath(dir))
+	text, err := keyfile.Read(keyPath(dir))
 	if err != nil {
 		return signerIdentity{}, err
 	}
@@ -82,11 +83,11 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 	}()
 	path := filepath.Join(dir, "bunker-client")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := keys.Save(path, keys.Generate()); err != nil {
+		if err := keyfile.Save(path, keys.Generate()); err != nil {
 			return signerIdentity{}, err
 		}
 	}
-	client, err := keys.Load(path)
+	client, err := keyfile.Load(path)
 	if err != nil {
 		return signerIdentity{}, err
 	}
@@ -139,7 +140,7 @@ func askPassphrase(prompt string) (string, error) {
 	if err != nil {
 		return "", errors.New("the key needs its passphrase: set ARC_PASSPHRASE, or run arc on a terminal")
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	fmt.Fprint(tty, prompt)
 	value, err := term.ReadPassword(int(tty.Fd()))
 	fmt.Fprintln(tty)
@@ -226,7 +227,7 @@ func defaultName(root string) string {
 // that does not answer, leaves nothing behind. The first identity becomes the
 // default. A caller that made the key passes it as known, so a sealed key does
 // not ask for its passphrase again.
-func addCitizen(ctx context.Context, root, text string, known *keys.Key) (keys.Key, error) {
+func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys.Key, err error) {
 	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
 		return keys.Key{}, err
 	}
@@ -234,9 +235,9 @@ func addCitizen(ctx context.Context, root, text string, known *keys.Key) (keys.K
 	if err != nil {
 		return keys.Key{}, err
 	}
-	defer os.RemoveAll(staging)
+	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
 
-	if err := keys.Write(keyPath(staging), text); err != nil {
+	if err := keyfile.Write(keyPath(staging), text); err != nil {
 		return keys.Key{}, err
 	}
 	var k keys.Key
@@ -420,7 +421,7 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			k, err := keys.Load(keyPath(dir))
+			k, err := keyfile.Load(keyPath(dir))
 			if err != nil {
 				return err
 			}
@@ -428,7 +429,7 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := keys.Write(keyPath(dir), sealed); err != nil {
+			if err := keyfile.Write(keyPath(dir), sealed); err != nil {
 				return err
 			}
 			fmt.Println("the key is sealed; arc asks for the passphrase, or reads ARC_PASSPHRASE")

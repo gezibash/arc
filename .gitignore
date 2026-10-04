@@ -1,8 +1,8 @@
-# What the Go build writes. `go build ./cmd/<name>` at the root writes /<name>.
+# What the Go build writes. `go build ./cmd/arc` at the root writes /arc, and
+# `go build ./apps/<name>/cmd/arc-<name>` writes /arc-<name>.
 /bin/
 /arc
 /arc-*
-/*-provider
 
 # The release workflow writes its tarballs here. Git must not see them, or each
 # later build of the loop stamps vcs.modified=true.
@@ -10,9 +10,6 @@
 
 # Temporary files, for example, from tests.
 /tmp/
-
-# Machine-local Docker Compose settings.
-/.env
 
 # Identity keyrings (contain secrets)
 .arc/

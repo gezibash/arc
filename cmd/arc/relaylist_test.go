@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/gezibash/arc/delivery/catalog"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/mail"
-	"github.com/gezibash/arc/delivery/relaylist"
-	"github.com/gezibash/arc/delivery/testrelay"
-	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/mail"
+	"github.com/gezibash/arc/core/relaylist"
+	"github.com/gezibash/arc/internal/testrelay"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 // A citizen that adds a relay publishes its NIP-65 relay list there.
@@ -45,11 +45,11 @@ func TestRelayAddPublishesTheNIP65RelayList(t *testing.T) {
 // A caller and a provider share no relay. The provider's NIP-65 list, on the
 // caller's relay, names the relay where the provider reads. The live call
 // finds the provider's announcement there, and goes there
-// (docs/delivery/SPEC.md, section 11.4).
+// (docs/delivery/SPEC.md, section 4.10).
 func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "interface.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestALiveCallFindsTheProviderThroughAnIndexer(t *testing.T) {
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)
 	indexer := testrelay.Start(t)
-	manifest, err := os.ReadFile(filepath.Join("..", "exec-provider", "interface.json"))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

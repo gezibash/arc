@@ -13,9 +13,9 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip46"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/testrelay"
-	"github.com/gezibash/arc/delivery/transport/relay"
+	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/internal/testrelay"
 )
 
 // remoteForTest exercises the actual NIP-46 adapter through a loopback relay.

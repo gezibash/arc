@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gezibash/arc/internal/citizen"
-	"github.com/gezibash/arc/lists"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/lists"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +39,7 @@ func listsCommand() *cobra.Command {
 				if _, ok, err := installs.Named(args[0]); err != nil {
 					return err
 				} else if !ok {
-					return fmt.Errorf("no installed command %q: see arc tool list", args[0])
+					return fmt.Errorf("no installed command %q: see arc apps list", args[0])
 				}
 				// A member is a key, in any form that a key argument takes.
 				env := &citizen.Environment{Installs: installs}

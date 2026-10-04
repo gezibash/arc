@@ -1,12 +1,14 @@
 [tools]
 go = "1.27.1"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
+golangci-lint = "2.14.0"
 
 [env]
 _.path = ["bin"]
 
 [tasks.build]
 description = "Build every command into bin/"
-run = "go build -o bin/ ./cmd/..."
+run = "go build -o bin/ ./cmd/... ./apps/..."
 
 [tasks.test]
 description = "Run the tests"
@@ -14,38 +16,40 @@ run = "go test ./..."
 raw = true
 
 [tasks.lint]
-description = "Check the formatting and vet the packages"
-run = ["test -z \"$(gofmt -l .)\"", "go vet ./..."]
+description = "Check the formatting, run the linters, and check that go fix has nothing to apply"
+run = ["golangci-lint run ./...", "test -z \"$(go fix -diff ./...)\""]
 
 [tasks.fmt]
-description = "Format the code"
-run = "gofmt -w ."
+description = "Format the code and apply the go fix modernizers"
+run = ["golangci-lint fmt", "go fix ./..."]
+
+[tasks.vuln]
+description = "Check for known vulnerabilities that the code calls"
+run = "govulncheck ./..."
 
 [tasks.check]
-description = "Lint and test"
-depends = ["lint", "test"]
+description = "Lint, check for vulnerabilities, and test"
+depends = ["lint", "vuln", "test"]
 
 [tasks.delivery]
 description = "Prove phase 1 of the delivery layer: relay, USB stick, refusal, parts, tail"
-run = "bash scripts/test-delivery.sh"
-raw = true
-
-[tasks.check-relay]
-description = "Prove that one running relay carries sealed data and live calls"
-run = "bash scripts/check-relay.sh"
+run = "go test -count=1 -v -run '^TestDelivery' ./internal/proof/"
 raw = true
 
 [tasks.check-clean-build]
 description = "Prove that each release build of a commit stamps vcs.modified=false"
-run = "bash scripts/check-clean-build.sh"
+run = "bash .github/scripts/check-clean-build.sh"
 raw = true
 
 [tasks.interface]
 description = "Prove phases A to D of the capability interface"
-run = "bash scripts/test-interface.sh"
+run = "go test -count=1 -v -run '^TestInterface' ./internal/proof/"
 raw = true
 
-[tasks.compose]
-description = "Prove HTTP over ARC, and a provider that keeps its state in SQLite over ARC"
-run = "bash scripts/check-compose.sh"
-raw = true
+[tasks.specs]
+description = "Check the specs, the gates, the proofs, the owners and the kind registry"
+run = "go test ./internal/specs -count=1"
+
+[tasks.boundaries]
+description = "Check core, application and adapter dependency boundaries"
+run = "go test ./internal/architecture -count=1"

@@ -1,0 +1,288 @@
+{
+  "interface": 1,
+  "id": "journal",
+  "shape": "data",
+  "title": "Journal",
+  "summary": "A private notebook, sealed to your own key.",
+  "kinds": {
+    "page": {"kind": 30023, "visibility": "sealed", "frontmatter": ["title", "page", "notebook"], "notebook_index": "index"},
+    "kpi": {"kind": 30078, "visibility": "sealed"},
+    "index": {"kind": 30023, "visibility": "sealed"}
+  },
+  "formats": {
+    "page": {"record": "{{text}}"},
+    "list": {"record": "{{tags.d}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no pages"},
+    "hits": {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no results"},
+    "history": {"record": "{{created|time}}\n{{text|truncate:200|indent}}", "empty": "no revisions"},
+    "kpi": {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
+  },
+  "commands": [
+    {
+      "path": ["write"],
+      "summary": "Replace a page with the standard input",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
+        },
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "body", "kind": "positional", "type": "stdin"}
+      ],
+      "action": {
+        "publish": {
+          "kind": "page",
+          "d": "{{address|keyed:page}}",
+          "frontmatter_address": "{{address}}",
+          "revise": "replace",
+          "content": "{{body}}",
+          "tags": [["d", "{{address}}"], ["title", "{{title}}"]]
+        }
+      }
+    },
+    {
+      "path": ["append"],
+      "summary": "Add text to the end of a page",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
+        },
+        {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}
+      ],
+      "action": {
+        "publish": {
+          "kind": "page",
+          "d": "{{address|keyed:page}}",
+          "frontmatter_address": "{{address}}",
+          "revise": "append",
+          "content": "{{text}}\n",
+          "tags": [["d", "{{address}}"]]
+        }
+      }
+    },
+    {
+      "path": ["read"],
+      "summary": "Show a page, or a range of its lines",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "text", "required": true},
+        {"name": "lines", "kind": "option", "type": "lines"},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {
+        "notebook": {"op": "read", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "section": "{{section}}"}
+      },
+      "output": {"open": {"parse": "text"}, "join": {"lines": "{{lines}}"}, "format": "page"}
+    },
+    {
+      "path": ["tail"],
+      "summary": "Show each text as it is appended",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
+        }
+      ],
+      "action": {"watch": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "tail": {}, "format": "page"}
+    },
+    {
+      "path": ["history"],
+      "summary": "List the revisions of a page",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
+        }
+      ],
+      "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}
+    },
+    {
+      "path": ["ls"],
+      "summary": "List pages by creation time, with notebook and date filters",
+      "args": [
+        {"name": "prefix", "kind": "positional", "type": "text"},
+        {"name": "notebook", "kind": "option", "type": "text"},
+        {"name": "page", "kind": "option", "type": "integer"},
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "from", "kind": "option", "type": "text"},
+        {"name": "to", "kind": "option", "type": "text"},
+        {"name": "order", "kind": "option", "type": "text"},
+        {"name": "limit", "kind": "option", "type": "integer"},
+        {"name": "reverse", "kind": "switch", "type": "text"}
+      ],
+      "action": {
+        "notebook": {
+          "op": "list",
+          "kind": "page",
+          "prefix": "{{prefix}}",
+          "notebook": "{{notebook}}",
+          "page": "{{page}}",
+          "title": "{{title}}",
+          "from": "{{from}}",
+          "to": "{{to}}",
+          "order": "{{order}}",
+          "limit": "{{limit}}",
+          "reverse": "{{reverse}}"
+        }
+      },
+      "output": {"format": "list"}
+    },
+    {
+      "path": ["search"],
+      "summary": "Search the pages",
+      "args": [
+        {"name": "query", "kind": "positional", "type": "text", "variadic": true, "required": true},
+        {"name": "notebook", "kind": "option", "type": "text"},
+        {"name": "page", "kind": "option", "type": "integer"},
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "from", "kind": "option", "type": "text"},
+        {"name": "to", "kind": "option", "type": "text"},
+        {"name": "limit", "kind": "option", "type": "integer", "default": "20"},
+        {"name": "syntax", "kind": "switch", "type": "text"}
+      ],
+      "action": {
+        "notebook": {
+          "op": "search",
+          "kind": "page",
+          "query": "{{query}}",
+          "notebook": "{{notebook}}",
+          "page": "{{page}}",
+          "title": "{{title}}",
+          "from": "{{from}}",
+          "to": "{{to}}",
+          "limit": "{{limit}}",
+          "syntax": "{{syntax}}"
+        }
+      },
+      "output": {"format": "hits"}
+    },
+    {
+      "path": ["delete"],
+      "summary": "Delete a page and its history",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
+        }
+      ],
+      "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}
+    },
+    {
+      "path": ["kpi", "set"],
+      "summary": "Record one measured value",
+      "args": [
+        {"name": "notebook", "kind": "positional", "type": "text", "required": true},
+        {"name": "key", "kind": "positional", "type": "text", "required": true},
+        {"name": "value", "kind": "positional", "type": "text", "required": true},
+        {"name": "note", "kind": "option", "type": "text"}
+      ],
+      "action": {
+        "publish": {
+          "kind": "kpi",
+          "d": "{{notebook+key|keyed:kpi}}",
+          "revise": "replace",
+          "tags": [["d", "{{key}}"], ["notebook", "{{notebook}}"]],
+          "content": {"json": {"key": "{{key}}", "value": "{{value}}", "note": "{{note}}"}}
+        }
+      }
+    },
+    {
+      "path": ["kpi", "latest"],
+      "summary": "Show the last value of each key",
+      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
+      "action": {"query": {"kinds": ["kpi"], "authors": "me"}},
+      "output": {"open": {"parse": "json"}, "where": [{"field": "tags.notebook", "is": "{{notebook}}"}], "format": "kpi"}
+    },
+    {
+      "path": ["kpi", "log"],
+      "summary": "Show every value of one key",
+      "args": [
+        {"name": "notebook", "kind": "positional", "type": "text", "required": true},
+        {"name": "key", "kind": "positional", "type": "text", "required": true}
+      ],
+      "action": {"query": {"kinds": ["kpi"], "authors": "me", "d": "{{notebook+key|keyed:kpi}}", "history": true}},
+      "output": {"open": {"parse": "json"}, "format": "kpi"}
+    },
+    {
+      "path": ["select"],
+      "summary": "Read pages selected by notebook, number, title and creation date",
+      "args": [
+        {"name": "notebook", "kind": "option", "type": "text"},
+        {"name": "page", "kind": "option", "type": "integer"},
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "from", "kind": "option", "type": "text"},
+        {"name": "to", "kind": "option", "type": "text"},
+        {"name": "order", "kind": "option", "type": "text"},
+        {"name": "limit", "kind": "option", "type": "integer"},
+        {"name": "reverse", "kind": "switch", "type": "text"},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {
+        "notebook": {
+          "op": "select",
+          "kind": "page",
+          "notebook": "{{notebook}}",
+          "page": "{{page}}",
+          "title": "{{title}}",
+          "from": "{{from}}",
+          "to": "{{to}}",
+          "order": "{{order}}",
+          "limit": "{{limit}}",
+          "reverse": "{{reverse}}",
+          "section": "{{section}}"
+        }
+      },
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["next"],
+      "summary": "Read the next numbered page in the same notebook",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "text", "required": true},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {"notebook": {"op": "next", "kind": "page", "address": "{{address}}", "section": "{{section}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["prev"],
+      "summary": "Read the previous numbered page in the same notebook",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "text", "required": true},
+        {"name": "section", "kind": "option", "type": "text"}
+      ],
+      "action": {"notebook": {"op": "prev", "kind": "page", "address": "{{address}}", "section": "{{section}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["index"],
+      "summary": "Rebuild the encrypted notebook index and show its Markdown",
+      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
+      "action": {"notebook": {"op": "index", "kind": "page", "notebook": "{{notebook}}", "order": "page"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["toc"],
+      "summary": "Show notebook pages and their Markdown headings",
+      "args": [{"name": "notebook", "kind": "positional", "type": "text", "required": true}],
+      "action": {"notebook": {"op": "toc", "kind": "page", "notebook": "{{notebook}}", "order": "page"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    }
+  ]
+}

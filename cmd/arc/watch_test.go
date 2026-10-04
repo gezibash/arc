@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/delivery/call"
-	"github.com/gezibash/arc/delivery/keys"
-	"github.com/gezibash/arc/delivery/transport"
-	"github.com/gezibash/arc/delivery/transport/file"
-	"github.com/gezibash/arc/provider/wire"
+	"github.com/gezibash/arc/adapters/transport/file"
+	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/core/wire"
 )
 
 type idleProvider struct{ lines chan wire.Event }

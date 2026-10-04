@@ -30,8 +30,8 @@ for a newer version.
   not missing keys. Create an identity for a requested fresh setup only after
   checking existing identities; resolve ambiguity with the user. Never replace
   a key or silently migrate an older home.
-- Use the user's relay choice. The guide's public URL is an example, not a
-  requirement or a guarantee of availability. Adding a relay may publish relay
+- Use the user's relay choice. The guide shows the placeholder `wss://<relay>`;
+  ask which relay to use, and do not pick one. Adding a relay may publish relay
   lists; explain that briefly before configuring it. Do not add an indexer or
   start a relay server merely to finish basic setup.
 - Continue with the requested first message or capability. If no preference

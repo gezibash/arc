@@ -113,7 +113,7 @@ and [TinyGo Linux server](https://github.com/tinygo-org/bluetooth/blob/release/g
 ## Automated checks and remaining proof
 
 ```sh
-mise exec -- go test -race ./delivery/transport/ble ./cmd/arc-ble-probe
+mise exec -- go test -race ./adapters/transport/ble ./cmd/arc-ble-probe
 ```
 
 Fake-radio tests cover the client round trip, corrupted replies, connection and

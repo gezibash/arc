@@ -1,0 +1,18 @@
+{
+  "interface": 1,
+  "id": "http",
+  "shape": "service",
+  "title": "HTTP handler fixture",
+  "summary": "One Go handler that repeats what it saw.",
+  "service": {
+    "method": "GET",
+    "path": "/",
+    "max_bytes": 16384,
+    "interactions": [
+      "request_reply",
+      "server_stream"
+    ]
+  },
+  "kinds": {},
+  "commands": []
+}

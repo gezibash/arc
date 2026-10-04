@@ -6,6 +6,120 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+The Go packages have a new layout, `arc tool` is now `arc apps`, and the app
+programs have new names. Signed events, request/reply calls, provider
+messages, and the files and buckets on disk stay compatible. Live sessions
+are new: an app that declares only streaming modes needs a client of this
+release.
+
+### Added
+
+- Live sessions. An app declares `server_stream` or `duplex` in its manifest,
+  and `arc session <address>` opens one. Session frames travel as kind 3276,
+  inside live gift wraps. See docs/sessions/SPEC.md. SQLite serves a SQL
+  prompt, exec streams a process and serves a terminal, HTTP streams bodies,
+  SSE and WebSockets, and releases streams an archive.
+- Journal notebooks: front matter, Markdown views, and full-text search with
+  Bleve.
+- `core/compact` and `core/frame`: a compact event codec, and frames with
+  bounded reassembly, for small links. No transport uses them yet.
+- `sdk/`, the kit for app authors. `sdk/provider` gives the session types
+  under its own name: `Stream`, `Mode`, `RequestReply`, `ServerStream`,
+  `Duplex`, `MaxChunk`, `ErrUnsupported` and `WorkTimeout`. `sdk/stdio.Main`
+  runs an app program, and `sdk/providertest` gives a real session for the
+  tests of an app.
+- Rules for specs, in docs/SPEC-TEMPLATE.md. Each spec has a fixed header:
+  its status, its layers, the packages that it owns, the test that proves it,
+  and what no test covers. A new spec answers a set of gates before anyone
+  writes its design. A human answers; the spec records each answer verbatim,
+  with evidence. The record only grows.
+- `go test ./internal/specs`, and `mise run specs`, check each spec against
+  those rules. Each package under `core/` and `sdk/` must belong to a spec.
+- docs/KINDS.md, the registry of each event kind that ARC reads, writes or
+  reserves. A test checks it against the code and the manifests.
+- docs/GRANDFATHERED.md, the list of the specs and packages that predate the
+  rules. The list only shrinks.
+- The pull request check "Spec policy". It refuses a change that edits a
+  record of gates, that adds to the grandfathered list, or that changes
+  `core/` or `sdk/` and does not name a spec.
+- The `spec` skill, which runs the gate interview.
+
+### Changed
+
+- `arc tool` is now `arc apps`. `arc apps init` creates an app.
+- The app programs are `arc-exec`, `arc-sqlite`, `arc-http` and
+  `arc-releases`. They were `exec-provider`, `sqlite-provider`,
+  `http-provider` and `releases-provider`. Update each `arc serve` command
+  and each launch configuration.
+- Each app lives in `apps/<name>/`: its manifest, its Arcfile, its service,
+  and its program in `apps/<name>/cmd/arc-<name>`. The manifests moved from
+  `manifests/`. `cmd/` holds only `arc`, and `arc` imports no app.
+- The Go packages moved, and no package stays at its old path. An app imports
+  only `sdk/`, so an app can live in another repository.
+  `internal/architecture` checks this rule.
+
+  | v0.16.0 | Now |
+  | --- | --- |
+  | `delivery/call`, `draft`, `keys`, `mail`, `node`, `private`, `relaylist`, `store`, `transport` | `core/<name>` |
+  | `delivery/groups`, `limits`, `sealed` | `adapters/relay/<name>` |
+  | `delivery/transport/file`, `delivery/transport/relay` | `adapters/transport/file`, `adapters/transport/relay` |
+  | `delivery/catalog` | `runtime/catalog` |
+  | `delivery/testrelay` | `internal/testrelay` |
+  | `iface`, `capability`, `bundle`, `lists`, `release`, `wake` | `runtime/<name>` |
+  | `provider` | `sdk/provider` |
+  | `provider.HTTP(handler)` | `httpadapter.New(handler)`, from `sdk/httpadapter` |
+  | `provider.Run` with the process streams | `stdio.Run` or `stdio.Main`, from `sdk/stdio`. `provider.Run` needs its input and output. |
+  | `provider.ConfigPath`, `ReadConfig`, `Grants`, `Limit`, `Directory` | `sdk/providerconfig` |
+  | `provider/host` | `adapters/provider/host` |
+  | `store.Open(directory)` | `boltstore.Open(directory)`, from `adapters/store/bolt`. A core embedder uses `store.New`. |
+  | `mail.Open(directory, ...)` | `mailbox.Open(directory, ...)`, from `adapters/mailbox`. A core embedder uses `mail.New` with a `core/kv` store. |
+  | `keys.Save`, `Load`, `Read`, `Write` | `adapters/keyfile` |
+  | `keys.ResolvePublic` | `nip05.ResolvePublic`, from `adapters/nip05`. `core/keys.ParsePublic` parses a key offline. |
+
+- The end-to-end proofs are Go tests in `internal/proof`. `mise run delivery`
+  and `mise run interface` run them.
+- The release build check is `.github/scripts/check-clean-build.sh`.
+- The proposals moved to `docs/proposals/`: the private environment contract,
+  the Bluetooth plan, and the machine lifecycle definition.
+- `docs/sqlite/SPEC.md` is now part of `apps/sqlite/README.md`. An app
+  documents itself.
+- Each spec has the same sections: purpose, terms, rules, behavior,
+  failures, security, compatibility, proof, and gates. See
+  docs/SPEC-TEMPLATE.md, section 9. `go test ./internal/specs` checks the
+  headings. No rule of a spec changed.
+- `docs/exec/SPEC.md` is now `docs/wake/SPEC.md`, the spec of the wake. The
+  exec app documents its requests, lease and jobs in `apps/exec/README.md`.
+- The interface spec no longer holds a section for each app, or a copy of
+  each app manifest. Each app documents itself, and links its
+  `manifest.json`. The dm, agora and files apps have a README.
+- The guide `docs/sessions/PROVIDERS.md` is a section of `apps/README.md`.
+  `docs/updates/OPERATIONS.md` is part of the updates spec.
+  `docs/updates/PUBLISHING.md` is a section of `apps/releases/README.md`.
+
+### Removed
+
+- `docs/site/`, the illustrated website. It is now a repository of its own.
+- `docs/WHITEPAPER.md` and `docs/WHITEPAPER_HUMAN.md`. They moved to the
+  repository of the website.
+- `docker/fly-nostr/`, the Fly.io files of one operator's relay. The image
+  `ghcr.io/gezibash/arc` runs a relay on any host. `arc relay serve --help`
+  lists the flags that turn on the write limits.
+- `examples/`, with the notes examples. Tests keep their own programs in
+  `testdata/`.
+- The shell proofs in `scripts/`, and the tasks `mise run compose` and
+  `mise run check-relay`.
+- The start, lease and notify scripts of the exec app, in
+  `cmd/exec-provider/citizen/` in v0.16.0. The operator supplies them.
+  docs/wake/SPEC.md, sections 3.6 and 3.7, states what each one must do.
+- The `arc-journal` skill. It named one operator's relay and journal.
+- `docs/assets/arc-header.prompt.md`, the prompt of the header image.
+- `docs/DEPLOY.md`. The README shows how to install `arc` and run a relay.
+  `arc relay serve --help` lists the write limits.
+- The notes on one hosting platform in the exec spec, and the measurements
+  taken on it with the older stack.
+- The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
+  documents. Each document now shows `wss://<relay>`.
+
 ## [0.16.0] - 2026-09-23
 
 A provider can call the capabilities of its citizen, and can serve HTTP over

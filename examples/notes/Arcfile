@@ -1,9 +1,0 @@
-version = 1
-
-[runtime]
-type = "exec"
-command = "./run.sh"
-cwd = "."
-
-[manifest]
-path = "./manifest.json"

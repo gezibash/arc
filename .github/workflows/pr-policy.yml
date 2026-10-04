@@ -29,3 +29,27 @@ jobs:
               raise SystemExit('PR title must use Conventional Commits, e.g. fix(delivery): handle expired fragments')
           print('Conventional PR title: passed')
           PY
+
+  # The rules of docs/SPEC-TEMPLATE.md that one pull request can break: the
+  # record of the gates only grows, the grandfathered list only shrinks, and a
+  # change to core/ or sdk/ names its spec.
+  specs:
+    name: Spec policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # This checks out the base branch: the trusted rules of main. The job
+      # reads the pull request as data, through the API. Never check out or
+      # execute PR code here.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Check the pull request against the spec rules
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: go run ./internal/specs/prpolicy
