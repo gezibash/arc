@@ -1,0 +1,50 @@
+version: "2"
+
+# The merge gate holds only linters that find defects.
+# Style and complexity linters stay out, because they produce suppressions, not fixes.
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - modernize
+    - nolintlint
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      check-type-assertions: true
+      # Output to a terminal has no useful failure path.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    errorlint:
+      # A %v in fmt.Errorf can hide an internal error on purpose.
+      errorf: false
+    gosec:
+      includes:
+        - G101 # Hardcoded credentials.
+        - G401 # Weak cryptographic hash.
+        - G402 # Bad TLS settings.
+        - G404 # Weak random number source.
+        - G501 # Import of a weak cryptographic package.
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: strict
+    rules:
+      # Tests ignore errors on purpose, and a failure shows up as a failed test.
+      - path: _test\.go$
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
