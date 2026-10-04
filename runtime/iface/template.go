@@ -65,7 +65,7 @@ func compile(text string, known func(string) bool) (*template, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, name := range strings.Split(p.name, "+") {
+		for name := range strings.SplitSeq(p.name, "+") {
 			if known != nil && !known(strings.SplitN(name, ".", 2)[0]) {
 				return nil, fmt.Errorf("the template names %q, which is not an argument", name)
 			}

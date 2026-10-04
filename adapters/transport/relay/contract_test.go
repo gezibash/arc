@@ -35,8 +35,7 @@ func TestExchangeRetryContract(t *testing.T) {
 			}
 			received := make(chan nostr.Event, 1)
 			if state == "reply_lost" {
-				watchCtx, cancel := context.WithCancel(context.Background())
-				defer cancel()
+				watchCtx := t.Context()
 				events, err := r.Watch(watchCtx, nostr.Filter{Kinds: []nostr.Kind{21059}, Tags: nostr.TagMap{"p": {recipient.Public.Hex()}}})
 				if err != nil {
 					t.Fatal(err)

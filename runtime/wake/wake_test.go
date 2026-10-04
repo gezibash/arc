@@ -401,13 +401,11 @@ func TestTwoRequestsAtOnceRunTheHookOnce(t *testing.T) {
 
 	var group sync.WaitGroup
 	for range 4 {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			if err := waker.Wake(context.Background(), key, nil); err != nil {
 				t.Errorf("wake: %v", err)
 			}
-		}()
+		})
 	}
 	group.Wait()
 

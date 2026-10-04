@@ -17,8 +17,7 @@ func TestRejectedOutputDoesNotBlockControl(t *testing.T) {
 	for _, rejection := range []string{"busy", "invalid", "oversized", "expired", "duplicate"} {
 		for _, end := range []string{"cancel", "EOF"} {
 			t.Run(rejection+"/"+end, func(t *testing.T) {
-				ctx, stop := context.WithCancel(context.Background())
-				defer stop()
+				ctx := t.Context()
 				entered, canceled := make(chan struct{}), make(chan struct{})
 				var calls atomic.Int32
 				handler := provider.HandlerFunc(func(ctx context.Context, _ provider.Request) (string, error) {
@@ -79,8 +78,7 @@ func TestRejectedOutputDoesNotBlockControl(t *testing.T) {
 }
 
 func TestRejectionBacklogIsBounded(t *testing.T) {
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
+	ctx := t.Context()
 	entered := make(chan struct{})
 	p := runWithUnreadOutput(t, ctx, provider.HandlerFunc(func(ctx context.Context, _ provider.Request) (string, error) {
 		close(entered)

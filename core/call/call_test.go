@@ -127,8 +127,7 @@ func TestAProgramWithNoCallerCannotCall(t *testing.T) {
 }
 
 func TestALiveCallOverARelay(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	r := relay.Relay{URL: testrelay.Start(t)}
 	serving := keys.Generate()
@@ -157,8 +156,7 @@ func TestALiveCallOverARelay(t *testing.T) {
 // provider is ready only when the relay delivers a call to it. The relay here
 // takes the provider's subscription late, and the caller's at once.
 func TestALiveCallThroughARelayThatSubscribesLate(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serving := keys.Generate()
 	r := relay.Relay{URL: testrelay.StartSlow(t, 300*time.Millisecond, serving.Public)}
@@ -182,8 +180,7 @@ func TestALiveCallThroughARelayThatSubscribesLate(t *testing.T) {
 // The same request twice in one second is two calls. The provider refuses a
 // replay of one request, not a second request with the same body.
 func TestTwoEqualCallsAreBothAnswered(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	r := relay.Relay{URL: testrelay.Start(t)}
 	serving := keys.Generate()
@@ -223,8 +220,7 @@ func TestTheProviderSeesTheCallerAsFrom(t *testing.T) {
 }
 
 func TestAStaleLiveRequestIsRefused(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	r := relay.Relay{URL: testrelay.Start(t)}
 	serving := keys.Generate()

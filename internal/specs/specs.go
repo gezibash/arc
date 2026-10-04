@@ -57,7 +57,7 @@ func header(lines []string) (items map[string]string, repeated []string) {
 // list splits a comma list.
 func list(value string) []string {
 	var out []string
-	for _, part := range strings.Split(value, ",") {
+	for part := range strings.SplitSeq(value, ",") {
 		if part = strings.TrimSpace(part); part != "" {
 			out = append(out, part)
 		}

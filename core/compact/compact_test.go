@@ -94,7 +94,7 @@ func TestRejectsMalformedInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for n := 0; n < len(wire); n++ {
+	for n := range wire {
 		if _, err := compact.Decode(wire[:n]); err == nil {
 			t.Fatalf("accepted prefix of %d bytes", n)
 		}

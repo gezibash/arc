@@ -335,8 +335,7 @@ func (w *Waker) run(ctx context.Context, citizen []byte, argv []string) error {
 		return ctx.Err()
 	}
 
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		return fmt.Errorf("%w: the hook of %s exited with status %d%s", ErrFailed, name, exit.ExitCode(), stderr.lastLine())
 	}
 	return fmt.Errorf("%w: the hook of %s did not start: %v", ErrFailed, name, err)

@@ -237,7 +237,7 @@ func startRelay(t *testing.T, dir string, flags ...string) string {
 	if !p.waitFor("relay listens on ", 10*time.Second) {
 		t.Fatalf("the relay did not start:\n%s", p.output())
 	}
-	for _, text := range strings.Split(p.output(), "\n") {
+	for text := range strings.SplitSeq(p.output(), "\n") {
 		if url, ok := strings.CutPrefix(text, "relay listens on "); ok {
 			return strings.TrimSpace(url)
 		}

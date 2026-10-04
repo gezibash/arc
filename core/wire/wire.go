@@ -39,7 +39,8 @@ type Event struct {
 	Error        string         `json:"error,omitempty"`
 }
 
-func Text(s string) *string { return &s }
+//go:fix inline
+func Text(s string) *string { return new(s) }
 
 // Budget bounds an operation by the parent's deadline, a supplied deadline,
 // and the protocol's maximum request lifetime, whichever comes first.

@@ -29,8 +29,7 @@ func httpRecord(t *testing.T, r *SessionReader) SessionRecord {
 }
 func TestHTTPStreamFlushHeadersTrailersAndLargeBody(t *testing.T) {
 	next := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(CallerHeader) != "alice" {
 			http.Error(w, "forged", 403)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,8 +34,8 @@ func TestRoundTrip(t *testing.T) {
 		var got *Completed
 		now := time.Now()
 		// Reverse arrival order, with every incomplete piece duplicated.
-		for i := len(frames) - 1; i >= 0; i-- {
-			wire, err := Encode(frames[i])
+		for i, frame := range slices.Backward(frames) {
+			wire, err := Encode(frame)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +129,7 @@ func piece(id byte, body []byte) Frame {
 func TestTimeoutAndCapacity(t *testing.T) {
 	now := time.Now()
 	var a Assembler
-	for i := 0; i < MaxAssemblies; i++ {
+	for i := range MaxAssemblies {
 		if _, err := a.Add(piece(byte(i), []byte{1}), now); err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +143,7 @@ func TestTimeoutAndCapacity(t *testing.T) {
 	if n := a.Expire(now.Add(AssemblyLifetime)); n != MaxAssemblies || a.buffered != 0 {
 		t.Fatal("duplicates extended deadline or leaked memory")
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if _, err := a.Add(piece(byte(i), make([]byte, compact.MaxBytes)), now); err != nil {
 			t.Fatal(err)
 		}

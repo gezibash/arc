@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -237,9 +238,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	failed := 0
 	for _, member := range list {
 		one := Values{}
-		for name, value := range values {
-			one[name] = value
-		}
+		maps.Copy(one, values)
 		one[listed] = member
 		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
 			pk, _ := nostr.PubKeyFromHex(member)

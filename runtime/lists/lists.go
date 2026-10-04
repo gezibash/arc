@@ -55,7 +55,7 @@ func (s *Store) Members(tool, name string) ([]string, error) {
 	}
 
 	var members []string
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			members = append(members, line)
 		}

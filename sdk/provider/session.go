@@ -66,8 +66,7 @@ func (r *runtime) sessionError(id string, err error) {
 	_ = r.sessionSend(ctx, f, false)
 }
 func safeSessionError(log io.Writer, err error) string {
-	var remote session.RemoteError
-	if errors.As(err, &remote) {
+	if remote, ok := errors.AsType[session.RemoteError](err); ok {
 		return remote.Error()
 	}
 	if errors.Is(err, session.ErrUnsupported) {
@@ -150,9 +149,7 @@ func (r *runtime) dispatchSession(ctx context.Context, e wire.Event) {
 	r.requestsMu.Unlock()
 	req := Request{Op: "session", RequestID: f.ID, From: e.From, Message: *e.Message, Meta: e.Meta, ArcSessionID: f.ID, Framed: true}
 	prior := r.rejected
-	r.group.Add(1)
-	go func() {
-		defer r.group.Done()
+	r.group.Go(func() {
 		defer func() {
 			cancel()
 			r.requestsMu.Lock()
@@ -176,7 +173,7 @@ func (r *runtime) dispatchSession(ctx context.Context, e wire.Event) {
 			code = safeSessionError(r.options.Log, err)
 		}
 		_ = stream.Finish(code)
-	}()
+	})
 }
 func (r *runtime) handleSession(ctx context.Context, handler SessionHandler, req Request, stream *session.Stream) (err error) {
 	defer func() {
@@ -234,7 +231,7 @@ func (r *runtime) OpenSession(ctx context.Context, address, body string, mode se
 		r.requestsMu.Unlock()
 	}()
 	f := session.Frame{Version: 1, ID: id, Op: "open", Mode: mode}
-	encoded, err := json.Marshal(wire.Event{Op: "session", CallID: id, Session: &f, Address: address, Body: wire.Text(body), DeadlineMS: wire.Deadline(ctx)})
+	encoded, err := json.Marshal(wire.Event{Op: "session", CallID: id, Session: &f, Address: address, Body: new(body), DeadlineMS: wire.Deadline(ctx)})
 	if err == nil {
 		err = r.out.write(ctx, encoded)
 	}

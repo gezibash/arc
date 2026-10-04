@@ -49,7 +49,7 @@ func run(t *testing.T, handler provider.Handler, input string, opts provider.Opt
 	}
 
 	var answers []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
 		if line == "" {
 			continue
 		}
@@ -207,7 +207,7 @@ func TestAnswersNeverInterleave(t *testing.T) {
 	})
 
 	var input strings.Builder
-	for index := 0; index < 50; index++ {
+	for index := range 50 {
 		input.WriteString(request(fmt.Sprintf("r%d", index), fmt.Sprintf("%d", index%10), nil))
 	}
 

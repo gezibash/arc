@@ -57,8 +57,8 @@ func TestPackageBoundaries(t *testing.T) {
 // file is the path of the source file from the root of the repository.
 func forbidden(file, imported string) string {
 	layer, rest, _ := strings.Cut(file, "/")
-	if strings.HasPrefix(imported, module) {
-		target := strings.TrimPrefix(imported, module)
+	if after, ok := strings.CutPrefix(imported, module); ok {
+		target := after
 		in := func(prefix string) bool { return target == prefix || strings.HasPrefix(target, prefix+"/") }
 		switch layer {
 		case "core":

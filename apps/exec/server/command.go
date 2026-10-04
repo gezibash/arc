@@ -128,9 +128,9 @@ func parseCommand(cfg *config, request body, timeoutLimitMS int) (*command, erro
 // resolve joins a path of the request to the directory of the provider. An
 // absolute path of the request stands on its own, as it does in the shell.
 func resolve(base, path string) string {
-	if strings.HasPrefix(path, "~") {
+	if after, ok := strings.CutPrefix(path, "~"); ok {
 		if home, err := os.UserHomeDir(); err == nil {
-			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+			path = filepath.Join(home, after)
 		}
 	}
 	if filepath.IsAbs(path) {

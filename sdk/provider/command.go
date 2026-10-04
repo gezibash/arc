@@ -38,8 +38,8 @@ var (
 // SplitMessage splits a request into its command line and its body. The body
 // is everything after the first newline.
 func SplitMessage(message string) (line string, body string, hasBody bool) {
-	if index := strings.Index(message, "\n"); index >= 0 {
-		return message[:index], message[index+1:], true
+	if before, after, ok := strings.Cut(message, "\n"); ok {
+		return before, after, true
 	}
 	return message, "", false
 }

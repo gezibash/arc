@@ -86,7 +86,7 @@ func (a *api) file(repo, sha, path string) (string, bool, error) {
 		return *text, true, nil
 	}
 	var escaped []string
-	for _, part := range strings.Split(path, "/") {
+	for part := range strings.SplitSeq(path, "/") {
 		escaped = append(escaped, url.PathEscape(part))
 	}
 	body, err := a.get("/repos/"+repo+"/contents/"+strings.Join(escaped, "/")+"?ref="+url.QueryEscape(sha), "application/vnd.github.raw+json")

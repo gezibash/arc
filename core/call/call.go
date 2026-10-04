@@ -353,7 +353,7 @@ func (s *Server) Handle(ctx context.Context, rumor nostr.Event) (Reply, error) {
 	s.mu.Unlock()
 
 	err := s.process.Send(ctx, wire.Event{
-		Op: "request", Message: wire.Text(request.Body), From: rumor.PubKey.Hex(),
+		Op: "request", Message: new(request.Body), From: rumor.PubKey.Hex(),
 		Meta:      map[string]any{"method": request.Method, "path": request.Path, "capability": request.Capability},
 		RequestID: id, Framed: true, DeadlineMS: wire.Deadline(ctx),
 	})
@@ -400,7 +400,7 @@ func (s *Server) call(ctx context.Context, line wire.Event) {
 		case reply.Err != "":
 			result.Refused = reply.Err
 		default:
-			result.Reply = wire.Text(reply.Body)
+			result.Reply = new(reply.Body)
 		}
 	}
 	if err := s.process.Send(ctx, result); err != nil {
@@ -446,8 +446,7 @@ func (s *Server) ServeLive(ctx context.Context, relay transport.Live, ready func
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			group.Add(1)
-			go func() { defer group.Done(); defer func() { <-s.slots }(); s.answerLive(ctx, wrap, relay) }()
+			group.Go(func() { ; defer func() { <-s.slots }(); s.answerLive(ctx, wrap, relay) })
 		}
 	}
 }

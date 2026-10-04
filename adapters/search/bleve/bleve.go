@@ -51,7 +51,7 @@ func New(path string) *Index {
 			if err != nil {
 				return nil, err
 			}
-			idx, err := bleve.OpenUsing(path, map[string]interface{}{"bolt_timeout": "100ms"})
+			idx, err := bleve.OpenUsing(path, map[string]any{"bolt_timeout": "100ms"})
 			if errors.Is(err, bleve.ErrorIndexPathDoesNotExist) {
 				idx, err = createIndex(path)
 			}
@@ -74,7 +74,7 @@ func New(path string) *Index {
 
 func createIndex(path string) (bleve.Index, error) {
 	m := bleve.NewIndexMapping()
-	err := m.AddCustomAnalyzer("arc_words", map[string]interface{}{
+	err := m.AddCustomAnalyzer("arc_words", map[string]any{
 		"type": custom.Name, "tokenizer": unicode.Name, "token_filters": []string{lowercase.Name},
 	})
 	if err != nil {
@@ -91,7 +91,7 @@ func createIndex(path string) (bleve.Index, error) {
 		d.AddFieldMappingsAt(name, f)
 	}
 	m.DefaultMapping = d
-	return bleve.NewUsing(path, m, "scorch", bleve.Config.DefaultMemKVStore, map[string]interface{}{"bolt_timeout": "100ms"})
+	return bleve.NewUsing(path, m, "scorch", bleve.Config.DefaultMemKVStore, map[string]any{"bolt_timeout": "100ms"})
 }
 
 func (i *Index) Close() {

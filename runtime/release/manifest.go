@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -133,9 +134,7 @@ func Sign(secret nostr.SecretKey, unsigned map[string]any) (map[string]any, erro
 	}
 
 	signed := make(map[string]any, len(unsigned)+1)
-	for key, value := range unsigned {
-		signed[key] = value
-	}
+	maps.Copy(signed, unsigned)
 	signed["signature"] = map[string]any{
 		"algorithm": Algorithm,
 		"value":     hex.EncodeToString(signature.Serialize()),

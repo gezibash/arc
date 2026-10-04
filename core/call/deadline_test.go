@@ -69,7 +69,7 @@ func TestServerCancelsAnOutboundCall(t *testing.T) {
 		close(canceled)
 		return call.Reply{}, ctx.Err()
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	client.replies <- wire.Event{Op: "call", CallID: "child", Address: "x+arc://provider/", Body: wire.Text("work")}
+	client.replies <- wire.Event{Op: "call", CallID: "child", Address: "x+arc://provider/", Body: new("work")}
 	<-entered
 	client.replies <- wire.Event{Op: "cancel", CallID: "child"}
 	select {

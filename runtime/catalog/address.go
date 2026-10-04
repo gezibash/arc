@@ -61,7 +61,7 @@ func ParseAddress(text string) (Address, error) {
 	case !pathPattern.MatchString(path):
 		return Address{}, fmt.Errorf("the path %q holds a character that an address does not allow", path)
 	}
-	for _, segment := range strings.Split(path, "/") {
+	for segment := range strings.SplitSeq(path, "/") {
 		if segment == "." || segment == ".." {
 			return Address{}, errors.New("an address has no dot segment")
 		}

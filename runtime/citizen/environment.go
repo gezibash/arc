@@ -217,9 +217,7 @@ func (e *Environment) Watch(ctx context.Context, filter nostr.Filter, urls []str
 			continue
 		}
 		started++
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				var received transport.Received
 				select {
@@ -246,7 +244,7 @@ func (e *Environment) Watch(ctx context.Context, filter nostr.Filter, urls []str
 					return
 				}
 			}
-		}()
+		})
 	}
 	if started == 0 {
 		cancel()

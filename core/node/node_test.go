@@ -201,7 +201,7 @@ func TestSyncReconcilesWhenTheRelaySupportsIt(t *testing.T) {
 		r := relay.Relay{URL: c.url}
 		filter := nostr.Filter{Authors: []nostr.PubKey{k.Public}}
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			if _, err := a.Store.Save(note(t, k, fmt.Sprintf("note %d", i))); err != nil {
 				t.Fatal(err)
 			}

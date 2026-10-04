@@ -248,9 +248,7 @@ func (r *runtime) run(ctx context.Context) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	// One bounded worker writes rejection replies. Input must remain free to
 	// deliver cancellations, nested results and EOF while output is blocked.
-	r.group.Add(1)
-	go func() {
-		defer r.group.Done()
+	r.group.Go(func() {
 		for rejected := range r.rejections {
 			if rejected.sessionID != "" {
 				r.sessionError(rejected.sessionID, rejected.err)
@@ -259,7 +257,7 @@ func (r *runtime) run(ctx context.Context) (err error) {
 			}
 			close(rejected.done)
 		}
-	}()
+	})
 	// Closing a pipe or stdin interrupts an idle read. Other Readers must make
 	// progress themselves; the runtime still stops waiting when ctx ends.
 	defer func() {
@@ -379,9 +377,7 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 	r.requestsMu.Unlock()
 	request := Request{Op: event.Op, From: event.From, Message: *event.Message, Meta: event.Meta, RequestID: event.RequestID, ArcSessionID: event.ArcSessionID, AppSessionID: event.AppSessionID, Framed: event.Framed}
 	priorRejection := r.rejected
-	r.group.Add(1)
-	go func() {
-		defer r.group.Done()
+	r.group.Go(func() {
 		defer func() { <-r.slots }()
 		// Preserve rejection order before starting later requests. Only this
 		// admitted worker waits; input can still process control messages.
@@ -396,7 +392,7 @@ func (r *runtime) dispatch(ctx context.Context, line []byte) {
 		// The host can reuse this ID as soon as it reads the reply.
 		// Finish admission bookkeeping before publishing that reply.
 		r.answer(event.RequestID, reply, err)
-	}()
+	})
 }
 
 func (r *runtime) reject(requestID any, err error) {
@@ -446,7 +442,7 @@ func (r *runtime) Call(ctx context.Context, address, body string) (string, error
 		r.callsMu.Unlock()
 	}()
 
-	line, err := json.Marshal(wire.Event{Op: "call", CallID: id, Address: address, Body: wire.Text(body), DeadlineMS: wire.Deadline(ctx)})
+	line, err := json.Marshal(wire.Event{Op: "call", CallID: id, Address: address, Body: new(body), DeadlineMS: wire.Deadline(ctx)})
 	if err != nil {
 		return "", err
 	}
@@ -516,7 +512,7 @@ func (r *runtime) answer(requestID any, reply string, err error) {
 		response.Error = safeError(r.options.Log, err)
 	} else {
 		response.Op = "reply"
-		response.Reply = wire.Text(reply)
+		response.Reply = new(reply)
 	}
 
 	line, marshalErr := json.Marshal(response)
@@ -540,8 +536,7 @@ func safeError(log io.Writer, err error) string {
 	case errors.Is(err, context.Canceled):
 		return "provider_canceled"
 	}
-	var safe Error
-	if errors.As(err, &safe) {
+	if safe, ok := errors.AsType[Error](err); ok {
 		return string(safe)
 	}
 	fmt.Fprintf(log, "provider: %v\n", err)

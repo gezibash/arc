@@ -172,8 +172,7 @@ func websocketSession(ctx context.Context, client *http.Client, request *http.Re
 				}
 			default:
 			}
-			var closed websocket.CloseError
-			if errors.As(err, &closed) {
+			if closed, ok := errors.AsType[websocket.CloseError](err); ok {
 				if err = send(SessionRecord{Type: "ws_close", Code: int(closed.Code), Reason: closed.Reason}); err != nil {
 					return err
 				}

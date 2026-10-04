@@ -109,8 +109,7 @@ func (*capturedCaller) HandleRequest(context.Context, provider.Request) (string,
 func TestOutboundOutputCancellation(t *testing.T) {
 	for _, stage := range []string{"call", "cancel_notice", "waiting_writer"} {
 		t.Run(stage, func(t *testing.T) {
-			runCtx, stop := context.WithCancel(context.Background())
-			defer stop()
+			runCtx := t.Context()
 			h := &capturedCaller{ready: make(chan provider.Caller, 1)}
 			p := runWithUnreadOutput(t, runCtx, h, provider.Options{})
 			caller := <-h.ready

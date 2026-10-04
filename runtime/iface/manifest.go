@@ -81,7 +81,7 @@ type Command struct {
 	Summary string   `json:"summary"`
 	Args    []Arg    `json:"args,omitempty"`
 	Action  Action   `json:"action"`
-	Output  Output   `json:"output,omitempty"`
+	Output  Output   `json:"output"`
 }
 
 // Arg is one argument of a command.
@@ -117,7 +117,7 @@ type Call struct {
 type Publish struct {
 	Kind               string     `json:"kind"`
 	D                  string     `json:"d,omitempty"`
-	Content            Content    `json:"content,omitempty"`
+	Content            Content    `json:"content"`
 	Tags               [][]string `json:"tags,omitempty"`
 	Revise             string     `json:"revise,omitempty"`
 	To                 []string   `json:"to,omitempty"`

@@ -953,7 +953,7 @@ func (r *run) plainFilter(q *Query, visibility string) (nostr.Filter, []string, 
 	if ids, err := r.template(q.IDs); err != nil {
 		return filter, nil, err
 	} else if ids != "" {
-		for _, word := range strings.Fields(ids) {
+		for word := range strings.FieldsSeq(ids) {
 			id, err := nostr.IDFromHex(word)
 			if err != nil {
 				return filter, nil, fmt.Errorf("%q is not an event ID", word)

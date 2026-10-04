@@ -38,8 +38,7 @@ func (sess *Session) OpenSessionAddress(ctx context.Context, installs catalog.In
 			sess.Waker.Answered(provider[:])
 			return stream, nil
 		}
-		var before *transport.NotSubmittedError
-		if !errors.As(err, &before) {
+		if _, ok := errors.AsType[*transport.NotSubmittedError](err); !ok {
 			return nil, err
 		}
 		failures = append(failures, err)

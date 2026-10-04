@@ -48,7 +48,7 @@ func Unpack(archive []byte, name string) ([]byte, error) {
 
 	reader := tar.NewReader(unzipped)
 
-	for entries := 0; entries < MaxArchiveEntries; entries++ {
+	for range MaxArchiveEntries {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
 			break

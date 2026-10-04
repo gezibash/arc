@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -196,10 +197,7 @@ func (f *fakeProvider) Request(_ context.Context, body []byte) ([]byte, error) {
 		return encoded, nil
 
 	default:
-		end := request.Offset + int64(request.Length)
-		if end > int64(len(f.archive)) {
-			end = int64(len(f.archive))
-		}
+		end := min(request.Offset+int64(request.Length), int64(len(f.archive)))
 
 		encoded, err := json.Marshal(map[string]any{
 			"digest": request.Digest, "offset": request.Offset,
@@ -359,8 +357,6 @@ func tarball(t *testing.T, name string, body []byte) []byte {
 
 func copyDocument(document map[string]any) map[string]any {
 	out := make(map[string]any, len(document))
-	for key, value := range document {
-		out[key] = value
-	}
+	maps.Copy(out, document)
 	return out
 }

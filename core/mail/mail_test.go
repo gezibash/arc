@@ -172,7 +172,7 @@ func TestTheHopLimitBoundsTheSpread(t *testing.T) {
 
 	// Each courier reads the last stick and writes a new one.
 	carried := []int{}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		c := newCitizen(t)
 		carried = append(carried, c.sync(t, sticks[len(sticks)-1]).Carried)
 		next := stick(t)
@@ -243,7 +243,7 @@ func TestACourierCarriesAtMostItsShare(t *testing.T) {
 	carol := newCitizen(t)
 	recipient := newCitizen(t)
 
-	for i := 0; i < mail.MaxCarried+5; i++ {
+	for i := range mail.MaxCarried + 5 {
 		sender := newCitizen(t)
 		sender.send(t, recipient, fmt.Sprintf("message %d", i))
 		s := stick(t)

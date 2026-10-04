@@ -23,7 +23,7 @@ func TestBackpressureCannotOutliveTheSendDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	err = process.Send(ctx, wire.Event{Op: "request", Message: wire.Text(strings.Repeat("x", 2*1024*1024))})
+	err = process.Send(ctx, wire.Event{Op: "request", Message: new(strings.Repeat("x", 2*1024*1024))})
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("send=%v", err)
 	}

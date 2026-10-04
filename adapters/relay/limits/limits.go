@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -85,12 +86,7 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 }
 
 func isWrap(k nostr.Kind) bool {
-	for _, w := range WrapKinds {
-		if k == w {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(WrapKinds, k)
 }
 
 // clientIP is the IP address of the client. A client can set any header, so

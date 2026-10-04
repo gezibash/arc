@@ -21,8 +21,7 @@ func ifaceExit(err error) int {
 	if err == nil {
 		return 0
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		return exit.ExitCode()
 	}
 	return -1
@@ -53,7 +52,7 @@ func ifaceTrim(text string) string { return strings.TrimRight(text, "\n") }
 
 // ifaceLineStarts reports whether a line of text starts with prefix.
 func ifaceLineStarts(text, prefix string) bool {
-	for _, one := range strings.Split(text, "\n") {
+	for one := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(one, prefix) {
 			return true
 		}
@@ -330,7 +329,7 @@ func TestInterface(t *testing.T) {
 
 	revisions := 0
 	history := desktop.run("journal", "history", "hrs/ablations/1")
-	for _, one := range strings.Split(history, "\n") {
+	for one := range strings.SplitSeq(history, "\n") {
 		if strings.HasPrefix(one, "20") {
 			revisions++
 		}

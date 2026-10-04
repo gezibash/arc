@@ -10,6 +10,7 @@ import (
 	"maps"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -173,12 +174,7 @@ func contains(value any, want string) bool {
 		}
 		return false
 	case []string:
-		for _, item := range v {
-			if item == want {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(v, want)
 	}
 	return str(value) == want
 }

@@ -51,8 +51,7 @@ func main() {
 	if err := root().Execute(); err != nil {
 		// An app set the exit status from its reply, and wrote its
 		// output already.
-		var status iface.ExitError
-		if errors.As(err, &status) {
+		if status, ok := errors.AsType[iface.ExitError](err); ok {
 			os.Exit(status.Code)
 		}
 		fmt.Fprintln(os.Stderr, "arc:", err)
@@ -131,7 +130,7 @@ func readURLs(path string) ([]string, error) {
 		return nil, err
 	}
 	var out []string
-	for _, line := range strings.Split(string(body), "\n") {
+	for line := range strings.SplitSeq(string(body), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			out = append(out, line)
 		}

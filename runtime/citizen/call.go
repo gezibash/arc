@@ -28,8 +28,7 @@ func LiveCall(ctx context.Context, signer keys.Signer, provider nostr.PubKey, re
 		if err == nil {
 			return reply, elapsed, t.Name(), nil
 		}
-		var before *transport.NotSubmittedError
-		if !errors.As(err, &before) {
+		if _, ok := errors.AsType[*transport.NotSubmittedError](err); !ok {
 			return call.Reply{}, 0, t.Name(), fmt.Errorf("call outcome unknown via %s; the operation may have executed: %w", t.Name(), err)
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", t.Name(), err))

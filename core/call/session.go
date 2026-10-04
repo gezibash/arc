@@ -235,7 +235,7 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 			}
 		})
 	}
-	route.in <- wire.Event{Op: "session", RequestID: f.ID, Session: &f, From: rumor.PubKey.Hex(), Message: wire.Text(request.Body),
+	route.in <- wire.Event{Op: "session", RequestID: f.ID, Session: &f, From: rumor.PubKey.Hex(), Message: new(request.Body),
 		Meta: map[string]any{"method": request.Method, "path": request.Path, "capability": request.Capability}, DeadlineMS: wire.Deadline(lifetime)}
 	go func() {
 		defer cleanup()

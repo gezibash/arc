@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,9 +126,7 @@ func normalizeDocument(document map[string]any) (map[string]any, error) {
 	// A document may hold the examples beside the capability. They belong to
 	// the capability.
 	capability := make(map[string]any, len(fields)+1)
-	for key, value := range fields {
-		capability[key] = value
-	}
+	maps.Copy(capability, fields)
 	if _, held := capability["examples"]; !held && document["examples"] != nil {
 		capability["examples"] = document["examples"]
 	}
