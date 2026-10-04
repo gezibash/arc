@@ -95,6 +95,18 @@ func TestExecKeep(t *testing.T) {
 		t.Fatalf("the sleeper did not start:\n%s", sleeper.output())
 	}
 	sleeper.stop()
+
+	// A second attach takes over. The first session ends with detached.
+	viewer := caller.start("session", "--exec", "--timeout", "1m", address, `{"attach":"sleeper"}`)
+	if !viewer.waitFor("up", limit) {
+		t.Fatalf("the attach did not show the buffer:\n%s", viewer.output())
+	}
+	takeover := caller.start("session", "--exec", "--timeout", "1m", address, `{"attach":"sleeper"}`)
+	if !takeover.waitFor("up", limit) || !viewer.waitFor("detached", limit) {
+		t.Fatalf("the second attach did not take over:\nfirst: %s\nsecond: %s", viewer.output(), takeover.output())
+	}
+	t.Logf("ok: a second attach takes over, and the first session ends with: %q", viewer.output())
+	takeover.stop()
 	if killed := caller.run("exec", "kill", "sleeper"); !strings.HasPrefix(killed, "sleeper\tkilled\t") {
 		t.Fatalf("arc exec kill: %q", killed)
 	}

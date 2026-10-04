@@ -462,6 +462,10 @@ arc exec kill alfred
 | `{"action":"list"}` | Request/reply. Show each kept process. |
 | `{"action":"kill","name":"<name>"}` | Request/reply. Stop the process group, and free the name. |
 
+Use `arc exec list` and `arc exec kill`. With `arc call`, the reply of
+`list` or `kill` has no `exit` field, so `arc call` shows nothing and exits 1.
+`arc call --raw` writes the reply JSON and exits 0.
+
 A name has 1 to 64 characters: letters, digits, `.`, `_` and `-`. The first
 character is a letter or a digit.
 
