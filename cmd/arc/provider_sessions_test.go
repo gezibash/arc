@@ -210,7 +210,10 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	}
 	io.WriteString(terminal, "done\n")
 	if err = command.Wait(); err != nil {
-		t.Fatal(err)
+		slave.Close()
+		terminal.Close()
+		<-copied
+		t.Fatalf("%v: %s", err, terminalOut.String())
 	}
 
 	slave.Close()
