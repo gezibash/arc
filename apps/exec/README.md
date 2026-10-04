@@ -428,6 +428,26 @@ process group and releases the machine lease. Pipe input EOF closes stdin; PTY
 EOF sends the terminal EOF character. Detached `start`/`status` jobs retain their
 existing request/reply and queued-delivery behavior.
 
+### Detach a terminal
+
+In `--tty` mode, the local terminal is raw. Each key goes to the process. To
+end the session from the keyboard, use the escape sequence of `arc`, as in
+`ssh`:
+
+| Keys | Result |
+| --- | --- |
+| Enter, `~`, `.` | `arc` ends the session, restores the terminal, writes `arc: detached`, and exits 0. |
+| Enter, `~`, `~` | `arc` sends one `~` to the process. |
+| `~` at another place in a line | `arc` sends the `~` to the process. |
+
+The sequence starts at the start of the session, or after Enter. After `~`
+at the start of a line, `arc` waits for the next key before it sends the
+`~`.
+
+If the process is a [kept process](#kept-processes), the process continues
+after the detach. If the process is not kept, the end of the session stops
+the process group.
+
 ### Kept processes
 
 A kept process outlives the session that starts it. A later session attaches
@@ -495,9 +515,8 @@ Rules:
   `SIGWINCH` to the process group, so that the program draws its screen
   again.
 - In `--tty` mode, the local terminal sends each key to the process,
-  `Ctrl-C` too. No key detaches the session. To detach, stop `arc` from
-  another terminal, close the terminal, or let the session reach its
-  `--timeout`.
+  `Ctrl-C` too. To detach, press Enter, then `~`, then `.`. The process
+  continues. See [Detach a terminal](#detach-a-terminal).
 
 Output buffer:
 
