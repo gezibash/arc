@@ -245,3 +245,61 @@ func TestSessionWatchLossIsExplicitAndDoesNotResume(t *testing.T) {
 		t.Fatalf("write after disconnect = %v", err)
 	}
 }
+
+// swapFirst delivers the second watched event before the first. A relay
+// subscription gives no order guarantee for live events.
+type swapFirst struct{ relay.Relay }
+
+func (w swapFirst) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error) {
+	events, err := w.Relay.Watch(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan nostr.Event)
+	go func() {
+		defer close(out)
+		var held []nostr.Event
+		for event := range events {
+			if len(held) == 0 {
+				held = append(held, event)
+				continue
+			}
+			for _, e := range append([]nostr.Event{event}, held...) {
+				select {
+				case out <- e:
+				case <-ctx.Done():
+					return
+				}
+			}
+			break
+		}
+		for event := range events {
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+func TestSessionOpensWhenDataArrivesBeforeAccept(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	owner := keys.Generate()
+	client := keys.Generate()
+	liveSessionProvider(t, ctx, owner, r, session.Duplex)
+	s, err := call.OpenSession(ctx, client, owner.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/"}, session.Duplex, swapFirst{r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	reader := bufio.NewReader(s)
+	line(t, reader, "ready\n")
+	if _, err = io.WriteString(s, "SET kept\n"); err != nil {
+		t.Fatal(err)
+	}
+	line(t, reader, "kept\n")
+}

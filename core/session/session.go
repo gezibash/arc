@@ -187,6 +187,13 @@ func (s *Stream) Receive(f Frame) error {
 		s.mu.Unlock()
 		return s.err()
 	}
+	// Live delivery does not keep the order of frames. Only an accepting
+	// responder sends data, end or a successful close, so each one accepts.
+	// A later accept must still confirm the mode.
+	if s.initiator && !s.accepted && (f.Op == "data" || f.Op == "end" || f.Op == "close" && f.Error == "") {
+		s.accepted = true
+		close(s.ready)
+	}
 	switch f.Op {
 	case "accept":
 		if !s.initiator || f.Mode != s.mode {

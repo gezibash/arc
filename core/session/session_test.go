@@ -159,3 +159,34 @@ func TestHalfCloseDoesNotHideTheFinalOutcome(t *testing.T) {
 		t.Fatalf("final outcome = %v", err)
 	}
 }
+
+func TestInitiatorTakesAnEarlyResultAsAcceptance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	open := func(mode session.Mode) *session.Stream {
+		s, err := session.New(ctx, session.ID(), mode, true, func(context.Context, session.Frame) error { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	// An empty reply sends accept and close with no ack between them.
+	empty := open(session.RequestReply)
+	if err := empty.Receive(session.Frame{Version: 1, ID: empty.ID(), Op: "close"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := empty.WaitReady(); err != nil {
+		t.Fatalf("early close = %v", err)
+	}
+	if _, err := empty.Read(make([]byte, 8)); !errors.Is(err, io.EOF) {
+		t.Fatalf("empty reply = %v", err)
+	}
+	// A late accept still confirms the mode.
+	duplex := open(session.Duplex)
+	if err := duplex.Receive(session.Frame{Version: 1, ID: duplex.ID(), Op: "data", Seq: 1, Data: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := duplex.Receive(session.Frame{Version: 1, ID: duplex.ID(), Op: "accept", Mode: session.ServerStream}); !errors.Is(err, session.ErrProtocol) {
+		t.Fatalf("late accept with another mode = %v", err)
+	}
+}
