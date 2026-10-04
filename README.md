@@ -112,7 +112,8 @@ arc message watch --json --since <message id> --from <public key>
 - `--since <time or id>` first prints the stored messages from that point,
   and then watches. A time is RFC 3339, and the output includes the messages
   at that time. An id is the id of a message in the inbox. The output then
-  includes the other messages of the same second, but not that message.
+  includes the other messages of the same second, but not that message. If
+  the id is not in the inbox, the command stops with an error.
 - `--from <public key>` prints only the messages from that key. You can give
   the flag more than one time. The command drops other messages without
   output.
