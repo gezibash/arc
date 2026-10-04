@@ -13,9 +13,8 @@ HTTP or the stdio protocol, and `arc serve` takes mail from a watch on each
 relay. The exec app keeps named processes across sessions.
 
 The version is a minor bump, because #147 is breaking. `arc serve
-<app-directory>` stops on an Arcfile of
-version 1, and the error gives the steps of the rewrite. An address such as
-`exec://...` is not affected.
+<app-directory>` stops on an Arcfile of version 1, and the error gives the
+steps of the rewrite. An address such as `exec://...` is not affected.
 
 ### Added
 
