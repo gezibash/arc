@@ -145,4 +145,28 @@ func TestMessageWatch(t *testing.T) {
 	want(slices.Equal(all, []string{"four", "one", "three", "two"}), "watch --since <time> printed %v", texts(lines(w.stdout())))
 	want(w.exitCode() == 0, "watch did not exit 0 on SIGTERM:\n%s", w.output())
 	t.Log("ok: watch --since <time> prints the stored messages from that time")
+
+	// A courier brings a message late. Dave writes it before Alice writes
+	// the mark, but Bob stores it after the mark. The clock of a sender must
+	// not hide it from watch --since <id>. Dave has no relay, and no relay
+	// list of Bob, so only the stick carries his message.
+	stick := filepath.Join(work, "stick")
+	dave := arc(t, filepath.Join(work, "dave"))
+	dave.run("keys", "gen")
+	late := send(dave, "late")
+	dave.run("sync", "--dir", stick)
+	time.Sleep(1100 * time.Millisecond)
+	mark := send(alice, "mark")
+	bob.run("sync")
+	bob.run("sync", "--dir", stick)
+	written := map[string]string{}
+	for _, fields := range lines(bob.run("message", "inbox", "--json")) {
+		written[fields["id"]] = fields["at"]
+	}
+	want(written[late] != "" && written[mark] != "" && written[late] < written[mark], "late is at %q, mark is at %q; want late first", written[late], written[mark])
+	w = watch("--since", mark)
+	printed(w, 1)
+	want(w.exitCode() == 0, "watch did not exit 0 on SIGTERM:\n%s", w.output())
+	want(slices.Equal(texts(lines(w.stdout())), []string{"late"}), "watch --since <mark> printed %v; want late", texts(lines(w.stdout())))
+	t.Log("ok: watch --since <id> prints a message that arrived later, though its sender wrote it earlier")
 }

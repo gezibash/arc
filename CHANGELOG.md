@@ -10,8 +10,10 @@ All notable changes to ARC are recorded here. The format follows
 
 - `arc message watch` prints each new message when a relay delivers it, and
   runs until a signal stops it. `--since` first prints the stored messages
-  from a time or a message id. `--from` prints only the messages from some
-  keys. `watch` uses the mail watch of `arc serve`, and never marks a
+  from a time or a message id. With an id, `--since` uses the order in which
+  this machine stored the messages, not the clock of the sender: each `arc`
+  command records that order in `store/receipts.db`. `--from` prints only
+  the messages from some keys. `watch` uses the mail watch of `arc serve`, and never marks a
   message read. See README.md, section "Watch the inbox".
 - `arc message inbox --json` prints one JSON object for each message:
   `id`, `from`, `name`, `at` and `text`. `arc message watch --json` prints

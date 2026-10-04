@@ -110,10 +110,16 @@ arc message watch --json --since <message id> --from <public key>
 
 - `--json` prints one JSON object on each line.
 - `--since <time or id>` first prints the stored messages from that point,
-  and then watches. A time is RFC 3339, and the output includes the messages
-  at that time. An id is the id of a message in the inbox. The output then
-  includes the other messages of the same second, but not that message. If
-  the id is not in the inbox, the command stops with an error.
+  and then watches.
+  - A time is RFC 3339. The output includes the messages at or after that
+    time, by the `at` of each message. `at` comes from the clock of the
+    sender.
+  - An id is the id of a message in the inbox. The output includes each
+    message that this machine stored after that message, but not that
+    message. The clock of a sender does not change this order. If arc
+    stored a message before it kept receipts, the output always includes
+    that message. If the id is not in the inbox, the command stops with an
+    error.
 - `--from <public key>` prints only the messages from that key. You can give
   the flag more than one time. The command drops other messages without
   output.
@@ -121,7 +127,9 @@ arc message watch --json --since <message id> --from <public key>
 `watch` never marks a message read. Delivery is at least once: a message
 can come two times, for example after a restart. Remove duplicates by `id`.
 To lose no message after a restart, give the last `id` to `--since`.
-The time of a message comes from the clock of the sender.
+Each `arc` command that stores a message records the order of receipt in
+`store/receipts.db` of the home. A message that a courier brings late
+therefore comes after the last `id`.
 
 Other `arc` commands work on the same home while `watch` runs. To reply,
 run `arc message send`.

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/spf13/cobra"
 )
 
@@ -123,7 +125,7 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	after, err := sinceFilter(since, msgs)
+	after, err := sinceFilter(ctx, sess, since, msgs)
 	if err != nil {
 		return err
 	}
@@ -174,22 +176,29 @@ func watchMessages(command *cobra.Command, _ []string) error {
 }
 
 // sinceFilter says which stored messages watch prints before it watches.
-// With no point, it prints none. A time includes the messages at that time.
-// A message id includes the other messages at the time of that message,
-// because the inbox does not order messages of the same second.
-func sinceFilter(since string, msgs []mail.Message) (func(mail.Message) bool, error) {
+// With no point, it prints none. A time includes the messages at that time,
+// by the clock of each sender. A message id selects the messages that this
+// machine stored after that message, and each message that it stored before
+// it kept receipts.
+func sinceFilter(ctx context.Context, sess *citizen.Session, since string, msgs []mail.Message) (func(mail.Message) bool, error) {
 	if since == "" {
 		return func(mail.Message) bool { return false }, nil
 	}
 	if at, err := time.Parse(time.RFC3339, since); err == nil {
 		return func(m mail.Message) bool { return !m.At.Before(at) }, nil
 	}
-	for _, mark := range msgs {
-		if mark.ID == since {
-			return func(m mail.Message) bool { return m.ID != mark.ID && !m.At.Before(mark.At) }, nil
-		}
+	if !slices.ContainsFunc(msgs, func(m mail.Message) bool { return m.ID == since }) {
+		return nil, fmt.Errorf("--since %q is not an RFC 3339 time or the id of a message in the inbox", since)
 	}
-	return nil, fmt.Errorf("--since %q is not an RFC 3339 time or the id of a message in the inbox", since)
+	order, err := sess.ReceiptOrder(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mark := order[since]
+	return func(m mail.Message) bool {
+		position, ok := order[m.ID]
+		return m.ID != since && (!ok || position > mark)
+	}, nil
 }
 
 // sealNotice tells a watch that the store saved a seal. A seal that the store
