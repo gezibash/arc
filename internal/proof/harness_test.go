@@ -161,6 +161,7 @@ type process struct {
 	command *exec.Cmd
 	mu      sync.Mutex
 	log     bytes.Buffer
+	out     bytes.Buffer
 	done    chan struct{}
 }
 
@@ -170,11 +171,34 @@ func (p *process) Write(data []byte) (int, error) {
 	return p.log.Write(data)
 }
 
+// stdoutOf keeps standard output apart, and also adds it to the log.
+type stdoutOf struct{ *process }
+
+func (s stdoutOf) Write(data []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.out.Write(data)
+	return s.log.Write(data)
+}
+
 // output returns what the process wrote to standard output and error.
 func (p *process) output() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.log.String()
+}
+
+// stdout returns what the process wrote to standard output alone.
+func (p *process) stdout() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.out.String()
+}
+
+// exitCode stops the process, and returns its exit status.
+func (p *process) exitCode() int {
+	p.stop()
+	return p.command.ProcessState.ExitCode()
 }
 
 // waitFor waits until the output holds text.
@@ -209,7 +233,7 @@ func (p *process) stop() {
 func (m machine) start(args ...string) *process {
 	m.t.Helper()
 	p := &process{command: m.command(args...), done: make(chan struct{})}
-	p.command.Stdout, p.command.Stderr = p, p
+	p.command.Stdout, p.command.Stderr = stdoutOf{p}, p
 	// A process group lets stop end the provider program too.
 	p.command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := p.command.Start(); err != nil {
