@@ -6,16 +6,27 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
-`arc serve` takes mail from a watch on each relay. A message or a
-store-and-forward call reaches a provider when the relay gets it, and an
-idle provider sends nothing to its relays.
+## [0.18.0] - 2026-10-04
 
-The Arcfile has version 2. `arc serve <app-directory>` stops on an Arcfile of
+The Arcfile has version 2, a program of any language can serve an app over
+HTTP or the stdio protocol, and `arc serve` takes mail from a watch on each
+relay. The exec app keeps named processes across sessions.
+
+The version is a minor bump, because #147 is breaking. `arc serve
+<app-directory>` stops on an Arcfile of
 version 1, and the error gives the steps of the rewrite. An address such as
 `exec://...` is not affected.
 
 ### Added
 
+- Kept processes in the exec app. A session starts a process with `keep`,
+  and a later session attaches to it with `attach`. The process outlives the
+  session. `arc exec list` and `arc exec kill` manage kept processes. See
+  apps/exec/README.md, section "Kept processes".
+- A detach key for `arc session --tty`: Enter, `~`, `.`. A kept process
+  continues after the detach.
+- apps/README.md documents the stdio protocol between `arc serve` and an
+  app program, for an author in any language.
 - Arcfile version 2. `[serve]` names the command, its protocol, its manifest
   and the callers that it allows. `[uses]` names the installed apps that the
   program calls. See apps/README.md, section "The Arcfile".
