@@ -140,3 +140,130 @@ an app in another repository obeys:
 
 `internal/architecture` fails if an app here imports another package of this
 module.
+
+## The stdio protocol
+
+`arc serve` starts the program of an app, and speaks to it on standard
+input and standard output. Each message is one line: one JSON object,
+then a newline. The program writes its log to standard error, and
+`arc serve` copies that log to its own log.
+
+`arc serve` holds the key, signs and verifies events, and uses the relays.
+The program holds no key and opens no ARC connection. Thus a program in any
+language can serve an app. The Go package `sdk/provider` implements this
+protocol for Go programs. The type `wire.Event` in `core/wire` defines each
+field.
+
+### Start and stop
+
+- `arc serve` runs the `command` and `args` of the `Arcfile`, in the
+  directory that `cwd` names. A relative `command` is relative to that
+  directory. Thus `command = "node"` names `./node`. Use a script, for
+  example `./run.sh` with `exec node server.js`, or an absolute path.
+- The program gets the environment of `arc serve`, and two more variables:
+  `ARC_IDENTITY` is the name of the operating identity, and
+  `ARC_PUBLIC_KEY` is its public key in hex.
+- To stop the program, `arc serve` closes standard input. The program must
+  then finish its work and exit. If the program runs 5 seconds after
+  that, `arc serve` kills it.
+
+### Requests
+
+`arc serve` writes one line for each call that reaches the app:
+
+```json
+{"op":"request","request_id":"9f2c…","from":"<64 hex>","message":"Tirana","meta":{"method":"RAW","path":"/","capability":"weather"},"framed":true,"deadline_ms":1791112345000}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `request_id` | A string. Copy it exactly into the answer. |
+| `from` | The public key of the caller, in hex. ARC verified the signature. |
+| `message` | The body of the request, as text. |
+| `meta` | The `method` and `path` of the call, and the `capability` id. |
+| `deadline_ms` | The deadline of the request, in Unix milliseconds. |
+| `framed` | Ignore this field. |
+
+The program writes one answer for each request:
+
+```json
+{"op":"reply","request_id":"9f2c…","reply":"{\"forecast\":\"sunny\"}"}
+{"op":"error","request_id":"9f2c…","error":"unknown_city"}
+```
+
+Rules:
+
+- `reply` is text. To send JSON, encode it as a string.
+- If `error` is not empty, the request failed. The caller sees
+  `the provider refused: <error>`. Use a short code, for example
+  `access_denied`.
+- An answer with no `reply` and no `error` gives the caller `invalid_reply`.
+- Requests can arrive before the program answers earlier requests. The
+  program can answer in any order.
+- `arc serve` does not check grants. Any citizen can send a request. If the
+  app must limit its callers, compare `from` with a list of keys.
+- `arc serve` ignores an answer to an unknown `request_id`.
+
+### Cancel
+
+When the caller stops waiting, or the deadline passes, `arc serve` writes:
+
+```json
+{"op":"cancel","request_id":"9f2c…"}
+```
+
+The program must stop the work of that request. `arc serve` ignores a later
+answer to it. The caller gets no answer. Its `arc` reports that the outcome
+is unknown, because the work can have run. A live request has at most
+120 seconds.
+
+### Calls to other apps
+
+A program can call an app that its operating identity installed. `arc serve`
+signs the call. The program writes:
+
+```json
+{"op":"call","call_id":"7","address":"geo+arc://<key>/","body":"Tirana"}
+```
+
+Each active call needs its own `call_id`. `arc serve` writes one result with
+the same `call_id`:
+
+| Result | Meaning |
+| --- | --- |
+| `{"op":"result","call_id":"7","reply":"…"}` | The reply of the other app. |
+| `{"op":"result","call_id":"7","refused":"…"}` | The other app answered with an error. |
+| `{"op":"result","call_id":"7","error":"…"}` | `arc serve` could not make the call, for example `not_installed`. |
+
+To stop a call, the program writes `{"op":"cancel","call_id":"7"}`. The
+section "Calls of a provider" of [the interface spec](../docs/interface/SPEC.md)
+gives the deadline rules.
+
+### Sessions
+
+A session line has `"op":"session"`, and carries one frame of
+[the session protocol](../docs/sessions/SPEC.md). `arc serve` sends session
+lines for the modes in `service.interactions` of the manifest. Only Go has a
+library for sessions: `sdk/provider`.
+
+A manifest with no `interactions` permits `request_reply`. A caller can
+still open a `request_reply` session, for example with
+`arc session --mode request_reply`. That session arrives as a session line
+with the frame op `open`, not as a request line. If the program does not
+serve sessions, it must refuse each `open` frame. Otherwise the caller
+waits until its timeout. Copy the `id` of the frame into `request_id` and
+into the frame:
+
+```json
+{"op":"session","request_id":"<id>","session":{"version":1,"id":"<id>","op":"close","error":"unsupported"}}
+```
+
+### Rules for lines
+
+- Standard output carries protocol lines only. A line that is not JSON is
+  dropped, and `arc serve` logs a warning.
+- Write each line in one write. Two threads must not write parts of their
+  lines between each other.
+- A line from the program can hold at most 64 MiB. `arc serve` drops a
+  longer line.
+- Ignore a line with an `op` that the program does not know.
