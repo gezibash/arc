@@ -369,9 +369,10 @@ func (s *Stream) Read(p []byte) (int, error) {
 	s.mu.Unlock()
 	ack := s.frame("ack")
 	ack.Seq = f.Seq
+	// The chunk has arrived, so the reader gets it even if the ack fails. The
+	// peer can close as soon as it has the ack, which cancels a pending send.
 	if err := s.send(s.ctx, ack); err != nil {
 		s.Abort(err)
-		return 0, err
 	}
 	n := copy(p, f.Data)
 	s.remainder = f.Data[n:]
