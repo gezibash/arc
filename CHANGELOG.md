@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-04
+
+`arc message watch` prints the inbox as it arrives, and three message
+commands print JSON. A program can read the mail of a citizen with no
+polling and no parsing of text.
+
 ### Added
 
 - `arc message watch` prints each new message when a relay delivers it, and
