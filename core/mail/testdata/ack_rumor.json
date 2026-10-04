@@ -1,0 +1,67 @@
+{
+  "description": "The acknowledgement rumor of core/mail: an unsigned event of kind 3274, with an e tag that names the id of the message rumor. Only an acknowledgement by the recipient of the message marks the message delivered.",
+  "message": {
+    "sender_secret": "83d438b2ca8a677d055f1cdcc283ad405ff185e8e555c29d9df82dc22552a3ff",
+    "recipient_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+    "text": "hello bob",
+    "unix": 4102444800,
+    "id": "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a"
+  },
+  "vectors": [
+    {
+      "description": "bob acknowledges the message",
+      "author_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "unix": 4102444860,
+      "rumor": {
+        "id": "32df0deee12d7ba213ee538d5b7d0385f905a592e90b3068f0dbb8fdd48afabd",
+        "pubkey": "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d",
+        "created_at": 4102444860,
+        "kind": 3274,
+        "tags": [
+          [
+            "e",
+            "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a"
+          ]
+        ],
+        "content": ""
+      },
+      "serialized": "[0,\"1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d\",4102444860,3274,[[\"e\",\"776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a\"]],\"\"]",
+      "delivers": true
+    },
+    {
+      "description": "carol acknowledges the message, but bob is its recipient",
+      "author_secret": "312c9c1da4064516f9bd2a3d6713647d66b3cb95764ce23f79d3b209c22ee1b8",
+      "unix": 4102444860,
+      "rumor": {
+        "id": "6f7e16dd0def8884dc2dc656e7f6468800fedc10819ce60642ec6119191db234",
+        "pubkey": "690e4f96143dd8ecdbbe977cb81f8dda98b4d2c918b58560e1112472da19824b",
+        "created_at": 4102444860,
+        "kind": 3274,
+        "tags": [
+          [
+            "e",
+            "776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a"
+          ]
+        ],
+        "content": ""
+      },
+      "serialized": "[0,\"690e4f96143dd8ecdbbe977cb81f8dda98b4d2c918b58560e1112472da19824b\",4102444860,3274,[[\"e\",\"776d48daa50723f379ca01e4faf9433667e3af374458d7a1ea4b4344d3a9004a\"]],\"\"]",
+      "delivers": false
+    },
+    {
+      "description": "bob sends an acknowledgement with no e tag",
+      "author_secret": "c27420231544396cf0790e9aecb037d6a84a11c87cc9c96a8a664d9adc5198f7",
+      "unix": 4102444860,
+      "rumor": {
+        "id": "759561801ec49031b1c1e3528eb4ca02bf9f7c851892b281bb124d57f66c51da",
+        "pubkey": "1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d",
+        "created_at": 4102444860,
+        "kind": 3274,
+        "tags": [],
+        "content": ""
+      },
+      "serialized": "[0,\"1f9d80b218ac477fb1340d38272782a58c5bad535a21531b70188003dacda17d\",4102444860,3274,[],\"\"]",
+      "delivers": false
+    }
+  ]
+}

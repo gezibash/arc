@@ -313,9 +313,20 @@ func recordWraps(t *testing.T) {
 	}
 	alice, bob, carol, mallory := known["alice"], known["bob"], known["carol"], known["mallory"]
 
-	at := time.Unix(1791115200, 0)
+	// The rumor is the first message rumor of core/mail.
+	var messages struct {
+		Vectors []struct {
+			Text string `json:"text"`
+			Unix int64  `json:"unix"`
+		} `json:"vectors"`
+	}
+	readVectors(t, "../mail/testdata/message_rumor.json", &messages)
+	if len(messages.Vectors) == 0 {
+		t.Fatal("no message vectors")
+	}
+	at := time.Unix(messages.Vectors[0].Unix, 0)
 	expires := at.Add(private.MaxAge)
-	rumor := private.Rumor(alice, 14, "hello bob", nostr.Tags{{"p", bob.Public.Hex()}}, at)
+	rumor := private.Rumor(alice, 14, messages.Vectors[0].Text, nostr.Tags{{"p", bob.Public.Hex()}}, at)
 	seal, err := private.Seal(ctx, alice, bob.Public, rumor)
 	if err != nil {
 		t.Fatal(err)
