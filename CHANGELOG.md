@@ -6,6 +6,8 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-04
+
 The Go packages have a new layout, `arc tool` is now `arc apps`, and the app
 programs have new names. Signed events, request/reply calls, provider
 messages, and the files and buckets on disk stay compatible. Live sessions
@@ -23,6 +25,10 @@ release.
   Bleve.
 - `core/compact` and `core/frame`: a compact event codec, and frames with
   bounded reassembly, for small links. No transport uses them yet.
+- `arc-ble-probe`, a Linux diagnostic for Bluetooth LE. It registers a BlueZ
+  GATT echo service, advertises it, scans for peers, and checks a 20-byte
+  write and read-back. It is not an ARC transport: it carries no events. See
+  docs/delivery/BLUETOOTH-LINUX.md.
 - `sdk/`, the kit for app authors. `sdk/provider` gives the session types
   under its own name: `Stream`, `Mode`, `RequestReply`, `ServerStream`,
   `Duplex`, `MaxChunk`, `ErrUnsupported` and `WorkTimeout`. `sdk/stdio.Main`
@@ -119,6 +125,23 @@ release.
   taken on it with the older stack.
 - The relay `wss://arc-nostr-gezim.fly.dev` as the example relay in the
   documents. Each document now shows `wss://<relay>`.
+
+### Fixed
+
+- A canceled operation no longer crosses an adapter. Directory sends,
+  remote signers, provider requests and HTTP handlers refuse canceled or
+  expired work. A canceled HTTP request no longer returns an empty 200.
+- Remote signers keep the deadline of the caller, with a cap of 20 seconds
+  for each method.
+- A temporary signer or store failure no longer turns a queued call into
+  `outcome_unknown`. The call runs once after recovery.
+- Incoming mail returns storage, signer and cancellation errors. It no
+  longer returns an empty result.
+- Blocked provider output no longer stops cancellation or shutdown. Output
+  has one writer at a time, and a failed write stops the runtime.
+- A queued request no longer stays uncertain when receipt storage stops
+  early. The pending journal and the sealed request are stored first.
+- Two session tests no longer fail at random under load.
 
 ## [0.16.0] - 2026-09-23
 
