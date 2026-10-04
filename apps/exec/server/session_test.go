@@ -117,3 +117,30 @@ func TestExecSessionGrantsLimitsAndCancellation(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 }
+
+// A slow peer delays each ack. The terminal output that the command wrote
+// before it exited must still arrive in full, with the exit status.
+func TestExecSessionTerminalOutputOutlivesASlowPeer(t *testing.T) {
+	s := testServer(t)
+	stream := execStream(t, s, caller, `{"script":"stty -echo; printf one; sleep 0.2; printf two","pty":true}`, provider.Duplex)
+	time.Sleep(1500 * time.Millisecond)
+	rd := execadapter.NewReader(stream)
+	var out strings.Builder
+	exit := -1
+	for {
+		v, err := rd.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("after %q: %v", out.String(), err)
+		}
+		out.Write(v.Data)
+		if v.Type == "exit" {
+			exit = v.Exit
+		}
+	}
+	if out.String() != "onetwo" || exit != 0 || stream.Wait() != nil {
+		t.Fatalf("PTY: %q exit %d", out.String(), exit)
+	}
+}

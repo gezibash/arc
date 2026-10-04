@@ -69,6 +69,12 @@ is bound to the authenticated caller and provider for the session's lifetime.
 - Sequences start at one in each direction.
 - A sender MUST NOT have more than one unacknowledged chunk in each
   direction.
+- Live delivery does not keep the order of frames. Only an accepting
+  responder sends `data`, `end` or a `close` without an error. An initiator
+  MUST take the first of these as acceptance. A later `accept` MUST still
+  confirm the mode.
+- A received chunk MUST reach the reader, also when its `ack` fails. The
+  peer can close as soon as it has the `ack`.
 - Duplicate data MUST NOT be delivered twice.
 - A sequence gap, excess credit or unsupported input MUST end the session
   with an explicit protocol error.

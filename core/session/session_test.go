@@ -159,3 +159,66 @@ func TestHalfCloseDoesNotHideTheFinalOutcome(t *testing.T) {
 		t.Fatalf("final outcome = %v", err)
 	}
 }
+
+func TestInitiatorTakesAnEarlyResultAsAcceptance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	open := func(mode session.Mode) *session.Stream {
+		s, err := session.New(ctx, session.ID(), mode, true, func(context.Context, session.Frame) error { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	// An empty reply sends accept and close with no ack between them.
+	empty := open(session.RequestReply)
+	if err := empty.Receive(session.Frame{Version: 1, ID: empty.ID(), Op: "close"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := empty.WaitReady(); err != nil {
+		t.Fatalf("early close = %v", err)
+	}
+	if _, err := empty.Read(make([]byte, 8)); !errors.Is(err, io.EOF) {
+		t.Fatalf("empty reply = %v", err)
+	}
+	// A late accept still confirms the mode.
+	duplex := open(session.Duplex)
+	if err := duplex.Receive(session.Frame{Version: 1, ID: duplex.ID(), Op: "data", Seq: 1, Data: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := duplex.Receive(session.Frame{Version: 1, ID: duplex.ID(), Op: "accept", Mode: session.ServerStream}); !errors.Is(err, session.ErrProtocol) {
+		t.Fatalf("late accept with another mode = %v", err)
+	}
+}
+
+func TestReadKeepsAChunkWhenItsAckFails(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	id := session.ID()
+	var s *session.Stream
+	s, err := session.New(ctx, id, session.ServerStream, true, func(ctx context.Context, f session.Frame) error {
+		if f.Op != "ack" {
+			return nil
+		}
+		// The peer finishes when the ack reaches it. Its close can arrive
+		// before the transport confirms the ack, and cancels the send.
+		if err := s.Receive(session.Frame{Version: 1, ID: id, Op: "close"}); err != nil {
+			return err
+		}
+		return context.Cause(ctx)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []session.Frame{{Version: 1, ID: id, Op: "accept", Mode: session.ServerStream}, {Version: 1, ID: id, Op: "data", Seq: 1, Data: []byte("last")}} {
+		if err = s.Receive(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := io.ReadAll(s); err != nil || string(got) != "last" {
+		t.Fatalf("output = %q, %v", got, err)
+	}
+	if err = s.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
