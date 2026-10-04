@@ -204,9 +204,8 @@ func OpenSealJSON(body string) (nostr.Event, error) {
 	return seal, nil
 }
 
-// OpenSeal opens a seal that this key can read: one sealed to this key, or
-// one this key sealed to someone else. A NIP-44 conversation key is the same
-// from both ends.
+// OpenSeal opens a seal that its author sealed to this key. To open a seal
+// that this key sealed to someone else, use OpenOwnSeal.
 func OpenSeal(ctx context.Context, me keys.Signer, seal nostr.Event) (nostr.Event, error) {
 	return openSealWith(ctx, me, seal, seal.PubKey)
 }
