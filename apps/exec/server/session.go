@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -47,6 +48,7 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	var input io.WriteCloser
 	var terminal *os.File
 	var outputDone chan error
+	commandDone := new(atomic.Bool)
 	if request.PTY {
 		rows, cols := request.Rows, request.Cols
 		if rows == 0 {
@@ -80,12 +82,14 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		input = terminal
 		outputDone = make(chan error, 1)
 		go func() {
-			_, err := io.Copy(processChannel{output, "stdout"}, terminal)
-			if err != nil && !errors.Is(err, syscall.EIO) {
-				cancel(err)
-			}
-			if errors.Is(err, syscall.EIO) {
+			_, err := io.Copy(processChannel{output, "stdout"}, ptyOutput{terminal, commandDone})
+			// EIO: no process holds the terminal open. A deadline: no output
+			// came for drainIdle after the command exited.
+			if errors.Is(err, syscall.EIO) || errors.Is(err, os.ErrDeadlineExceeded) {
 				err = nil
+			}
+			if err != nil {
+				cancel(err)
 			}
 			outputDone <- err
 		}()
@@ -178,9 +182,11 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	waitErr := process.Wait()
 	killGroup(process)
 	if terminal != nil {
-		timer := time.AfterFunc(time.Second, func() { _ = terminal.Close() })
+		commandDone.Store(true)
+		// This deadline also ends a read that started before the exit. If
+		// it fails, the next read reports the failure.
+		_ = terminal.SetReadDeadline(time.Now().Add(drainIdle))
 		err = <-outputDone
-		timer.Stop()
 		if err != nil && ctx.Err() == nil {
 			return err
 		}
@@ -197,6 +203,27 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		exit = 1
 	}
 	return output.encoder.Encode(execadapter.Record{Type: "exit", Exit: exit})
+}
+
+// drainIdle bounds the wait for terminal output after the command exits,
+// because a background process can hold the terminal open.
+const drainIdle = time.Second
+
+// ptyOutput reads the terminal. After the command exits, each read waits at
+// most drainIdle for new output. The time that a slow peer takes to
+// acknowledge earlier output does not count.
+type ptyOutput struct {
+	terminal *os.File
+	exited   *atomic.Bool
+}
+
+func (r ptyOutput) Read(p []byte) (int, error) {
+	if r.exited.Load() {
+		if err := r.terminal.SetReadDeadline(time.Now().Add(drainIdle)); err != nil {
+			return 0, err
+		}
+	}
+	return r.terminal.Read(p)
 }
 
 type processOutput struct {
