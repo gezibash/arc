@@ -98,6 +98,66 @@ message waits in the outbox until the recipient acknowledges it. `arc sync`
 reconciles this machine with its relays. `arc sync --dir <path>` syncs with
 a directory instead: a USB stick, a shared folder, or a disk that you carry.
 
+### Watch the inbox
+
+`arc message watch` holds a watch on each relay. It prints each new message
+on standard output when the relay delivers it. It runs until it gets SIGINT
+or SIGTERM, and then exits with status 0. Logs go to standard error.
+
+```bash
+arc message watch --json --since <message id> --from <public key>
+```
+
+- `--json` prints one JSON object on each line.
+- `--since <time or id>` first prints the stored messages from that point,
+  and then watches.
+  - A time is RFC 3339. The output includes the messages at or after that
+    time, by the `at` of each message. `at` comes from the clock of the
+    sender.
+  - An id is the id of a message in the inbox. The output includes each
+    message that this machine stored after that message, but not that
+    message. The clock of a sender does not change this order. If arc
+    stored a message before it kept receipts, the output always includes
+    that message. If arc stored the message of the id before it kept
+    receipts, the output includes each other message. If the id is not in
+    the inbox, the command stops with an error.
+- `--from <public key>` prints only the messages from that key. You can give
+  the flag more than one time. The command drops other messages without
+  output.
+
+`watch` never marks a message read. Delivery is at least once: a message
+can come two times, for example after a restart. Remove duplicates by `id`.
+`watch` prints messages in the order in which this machine stored them.
+To lose no message after a restart, handle the messages in that order, and
+give the last `id` that you handled to `--since`.
+Each `arc` command that stores a message records the order of receipt in
+`store/receipts.db` of the home. A message that a courier brings late
+therefore comes after the last `id`.
+
+Other `arc` commands work on the same home while `watch` runs. To reply,
+run `arc message send`.
+
+`arc message inbox --json` and `arc message watch --json` print the same
+object for each message:
+
+```json
+{"id":"<64 hex>","from":"<64 hex>","name":"<petname>","at":"2026-10-04T13:58:02Z","text":"hello"}
+```
+
+| Field | Value |
+| --- | --- |
+| `id` | The id of the message. `send --json` prints the same id. |
+| `from` | The public key of the sender, 64 characters of hex. |
+| `name` | The name that `arc` gives to the key of the sender. |
+| `at` | The time of the message, RFC 3339 in UTC. |
+| `text` | The text of the message. |
+
+`arc message send --json` prints one object:
+`{"id":"<64 hex>","to":"<64 hex>","state":"pending"}`.
+
+Programs outside this repository read these objects. A change to a field is
+a breaking change.
+
 ## Apps
 
 An app adds commands through a signed interface manifest. Journal runs local

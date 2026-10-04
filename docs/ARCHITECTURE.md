@@ -167,3 +167,8 @@ Bolt buckets of mail. A key-value update commits its whole callback or rolls it
 all back. The event-store adapter holds its process lease through verification and
 persistence. Core remains responsible for refusing invalid events and avoiding
 re-execution after an uncertain outcome.
+
+`runtime/citizen` keeps `receipts.db` beside them. It records the order in
+which a home first stored each seal of another citizen. It shares no
+transaction with `events.db`. The runtime writes the receipt first, so a
+crash can leave only a receipt that matches no seal.

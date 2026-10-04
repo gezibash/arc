@@ -4,7 +4,7 @@
 //	arc keys gen | add | list | use | remove | encrypt | bunker
 //	arc whoami
 //	arc relay add <url> | rm <url> | ls | serve
-//	arc message send | inbox | outbox
+//	arc message send | inbox | outbox | watch
 //	arc serve | announce | discover | install | call | session
 //	arc sync [--dir <path>]
 //	arc apps list | info | remove
@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -470,6 +471,16 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON, _ := command.Flags().GetBool("json"); asJSON {
+				if len(sess.Relays) == 0 {
+					fmt.Fprintln(os.Stderr, "no relays: run arc sync --dir <path> to hand it to a courier")
+				}
+				return json.NewEncoder(os.Stdout).Encode(struct {
+					ID    string `json:"id"`
+					To    string `json:"to"`
+					State string `json:"state"`
+				}{out.Rumor, out.To, out.State(time.Now())})
+			}
 			fmt.Printf("queued for %s until %s\n", keys.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
 			if len(sess.Relays) == 0 {
 				fmt.Println("no relays: run arc sync --dir <path> to hand it to a courier")
@@ -491,11 +502,23 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			asJSON, _ := command.Flags().GetBool("json")
+			printer := newMessagePrinter(os.Stdout, asJSON)
+			if asJSON {
+				for _, m := range msgs {
+					if err := printer.print(m); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 			if len(msgs) == 0 {
 				fmt.Println("no messages: run arc sync")
 			}
 			for _, m := range msgs {
-				fmt.Printf("%s  %s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), m.Text)
+				if err := printer.print(m); err != nil {
+					return err
+				}
 			}
 			n, err := sess.Mail.Carrying()
 			if err != nil {
@@ -534,7 +557,9 @@ func messageCommand() *cobra.Command {
 		},
 	}
 
-	command.AddCommand(send, inbox, outbox)
+	send.Flags().Bool("json", false, "print the queued message as one JSON object")
+	inbox.Flags().Bool("json", false, "print one JSON object for each message")
+	command.AddCommand(send, inbox, outbox, messageWatchCommand())
 	return command
 }
 

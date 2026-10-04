@@ -7,11 +7,13 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
+	boltkv "github.com/gezibash/arc/adapters/kv/bolt"
 	"github.com/gezibash/arc/adapters/mailbox"
 	blevesearch "github.com/gezibash/arc/adapters/search/bleve"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/kv"
 	"github.com/gezibash/arc/core/mail"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/store"
@@ -34,6 +36,7 @@ type Session struct {
 	NewRelay func(string) transport.Transport
 	Errors   io.Writer
 	store    *store.Store
+	receipts kv.Store
 	search   *blevesearch.Index
 }
 
@@ -52,7 +55,9 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Node: &node.Node{Store: s}, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve"))}
+	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve"))}
+	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
+	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
 	sess.NewRelay = func(url string) transport.Transport { return relay.Relay{URL: url, Signer: sess.Signer} }
 	for _, url := range cfg.URLs {
 		sess.Relays = append(sess.Relays, sess.NewRelay(url))
@@ -63,6 +68,7 @@ func Open(cfg Config) (*Session, error) {
 	}
 	sess.Mail, err = mailbox.Open(filepath.Join(cfg.Home, "store"), cfg.Signer, sess.Node, sess.Relays)
 	if err != nil {
+		sess.receipts.Close()
 		s.Close()
 		return nil, err
 	}
@@ -79,6 +85,9 @@ func (s *Session) Close() {
 	}
 	if s.Mail != nil {
 		_ = s.Mail.Close()
+	}
+	if s.receipts != nil {
+		s.receipts.Close()
 	}
 	if s.store != nil {
 		s.store.Close()
