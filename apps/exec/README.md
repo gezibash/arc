@@ -330,7 +330,7 @@ Rules:
   default is `~/.arc/exec/jobs`. The provider does not delete old jobs.
 - The wake flow applies to each live call. `arc exec start` is a
   store-and-forward call, so it does not wake the machine. The provider
-  answers it when `arc serve` next syncs.
+  answers it when the relay delivers it to `arc serve`.
 
 ### Result to the caller
 
