@@ -141,6 +141,77 @@ an app in another repository obeys:
 `internal/architecture` fails if an app here imports another package of this
 module.
 
+## The Arcfile
+
+`arc serve <app-directory>` reads the `Arcfile` of the directory. The file
+says how the program goes into ARC, and how the program goes out of ARC. It
+does not build the program. The operator builds it.
+
+```toml
+version = 2
+
+# Into ARC: the program, its protocol, its manifest and its callers.
+[serve]
+command = "./run.sh"
+args = []
+cwd = "."
+protocol = "stdio"
+manifest = "./manifest.json"
+allow = ["<key>", "<key>"]
+
+# Out of ARC: the installed apps that the program calls.
+[uses]
+warehouse = "warehouse"
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Must be 2. |
+| `serve.command` | Required. The program. A name with a slash is a path from `cwd`. A name without a slash comes from `PATH`, as in a shell. |
+| `serve.args` | The arguments of the program. No shell reads them, so `$PORT` stays as text. |
+| `serve.cwd` | The directory of the program, from the directory of the `Arcfile`. The default is the directory of the `Arcfile`. |
+| `serve.protocol` | The protocol of the program. The default is `stdio`, see [The stdio protocol](#the-stdio-protocol). Another value runs the translator `arc-<protocol>`, and the translator runs the program. |
+| `serve.manifest` | Required. The interface manifest that `arc serve` announces. |
+| `serve.allow` | Optional. The callers that reach the program, as keys in each form that a command takes. Leave it out to allow every citizen. |
+| `[uses]` | Optional. One line for each installed app that the program calls: `<name> = "<installed name>"`. |
+
+Rules:
+
+- A field that version 2 does not define is an error. An `Arcfile` of
+  version 1 is an error. The error message gives the steps of the rewrite.
+- `arc serve` finds the translator `arc-<protocol>` in the directory of
+  `arc` first, and then in `PATH`. A release puts `arc-http` beside `arc`.
+  If there is no translator, `arc serve` does not start.
+- If a caller is not in `allow`, the caller gets `access_denied`. The
+  program does not see the request or the session. `allow` comes before the
+  checks of the app. The exec app keeps its own grants in `EXEC_CONFIG`.
+- For each name in `[uses]`, the program gets the variable `ARC_USE_<NAME>`
+  with the address of the app, for example
+  `ARC_USE_WAREHOUSE=warehouse+arc://<key>/`. A `-` in the name becomes
+  `_`.
+- If `[uses]` is present, a call or a session of the program to another app
+  fails with `not_in_uses`. An empty `[uses]` allows no call. If `[uses]` is
+  absent, the program can call each app that its operating identity
+  installed.
+- The operating identity must install each app that `[uses]` names. If not,
+  `arc serve` does not start. `[uses]` names installed apps, not keys, so
+  one `Arcfile` works for each operator.
+- `arc serve` reads `allow` and `[uses]` when it starts. After a change,
+  restart `arc serve`.
+
+An HTTP server, for example FastAPI, needs no ARC library. The translator
+`arc-http` gives it `PORT`, see [the HTTP app](http/README.md):
+
+```toml
+version = 2
+
+[serve]
+command = "sh"
+args = ["-c", "uvicorn main:app --host 127.0.0.1 --port $PORT"]
+protocol = "http"
+manifest = "./manifest.json"
+```
+
 ## The stdio protocol
 
 `arc serve` starts the program of an app, and speaks to it on standard
@@ -157,9 +228,8 @@ field.
 ### Start and stop
 
 - `arc serve` runs the `command` and `args` of the `Arcfile`, in the
-  directory that `cwd` names. A relative `command` is relative to that
-  directory. Thus `command = "node"` names `./node`. Use a script, for
-  example `./run.sh` with `exec node server.js`, or an absolute path.
+  directory that `cwd` names. [The Arcfile](#the-arcfile) says how
+  `command` resolves.
 - The program gets the environment of `arc serve`, and two more variables:
   `ARC_IDENTITY` is the name of the operating identity, and
   `ARC_PUBLIC_KEY` is its public key in hex.

@@ -1,9 +1,6 @@
-version = 1
+version = 2
 
-[runtime]
-type = "exec"
+[serve]
 command = "./run.sh"
 cwd = "."
-
-[manifest]
-path = "./manifest.json"
+manifest = "./manifest.json"

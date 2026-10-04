@@ -98,7 +98,9 @@ The CLI uses app names for installed commands. `arc apps init`, `list`, `info`
 and `remove` create service apps and manage command installs. `arc install`
 records consent and installs a signed interface; it does not download a program
 or start a service. `arc serve <app-directory>` reads its Arcfile and runs its
-service program. Local or remote execution follows the selected interface and
+service program, directly or through the translator of its protocol. The
+Arcfile also limits the callers and the calls of the program; see
+[the Arcfile](../apps/README.md#the-arcfile). Local or remote execution follows the selected interface and
 participant, not the app's name.
 
 Journal defines local data commands in `apps/journal/manifest.json`. Shared

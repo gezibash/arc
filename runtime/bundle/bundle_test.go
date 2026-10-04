@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -192,13 +193,11 @@ func write(t *testing.T, arcfile string) string {
 }
 
 func TestCarriesTheArgumentsOfTheRuntime(t *testing.T) {
-	root := write(t, `version = 1
-[runtime]
-type = "exec"
+	root := write(t, `version = 2
+[serve]
 command = "/usr/bin/python3"
 args = ["-u", "server.py"]
-[manifest]
-path = "./manifest.json"
+manifest = "./manifest.json"
 `)
 
 	address, held, err := bundle.Resolve(root)
@@ -216,13 +215,11 @@ path = "./manifest.json"
 }
 
 func TestTheRuntimeGetsEachArgumentOfTheArcfile(t *testing.T) {
-	root := write(t, `version = 1
-[runtime]
-type = "exec"
+	root := write(t, `version = 2
+[serve]
 command = "./run.sh"
 args = ["-u", "server.py", "--greeting", "hello world", "a+b&c=%41"]
-[manifest]
-path = "./manifest.json"
+manifest = "./manifest.json"
 `)
 	if err := os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -244,13 +241,11 @@ path = "./manifest.json"
 }
 
 func TestAnArcfileNamesThePathsFromItsOwnDirectory(t *testing.T) {
-	root := write(t, `version = 1
-[runtime]
-type = "exec"
+	root := write(t, `version = 2
+[serve]
 command = "./run.sh"
 cwd = "."
-[manifest]
-path = "./manifest.json"
+manifest = "./manifest.json"
 `)
 
 	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
@@ -270,30 +265,48 @@ path = "./manifest.json"
 
 func TestRefusesAnArcfileThatSaysTooLittle(t *testing.T) {
 	cases := map[string]string{
-		"another version": `version = 2
-[runtime]
-type = "exec"
+		"no version": `[serve]
 command = "./run.sh"
-[manifest]
-path = "./manifest.json"
+manifest = "./manifest.json"
 `,
-		"another runtime": `version = 1
-[runtime]
-type = "docker"
+		"a later version": `version = 3
+[serve]
 command = "./run.sh"
-[manifest]
-path = "./manifest.json"
+manifest = "./manifest.json"
 `,
-		"no command": `version = 1
-[runtime]
-type = "exec"
-[manifest]
-path = "./manifest.json"
+		"no command": `version = 2
+[serve]
+manifest = "./manifest.json"
 `,
-		"no manifest": `version = 1
-[runtime]
-type = "exec"
+		"no manifest": `version = 2
+[serve]
 command = "./run.sh"
+`,
+		"a misspelt field": `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+protcol = "http"
+`,
+		"a protocol that is not a name": `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+protocol = "../http"
+`,
+		"a use with no app": `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+[uses]
+geo = ""
+`,
+		"a use name with capitals": `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+[uses]
+Geo = "geo"
 `,
 	}
 
@@ -304,11 +317,153 @@ command = "./run.sh"
 	}
 }
 
+// An Arcfile of version 1 stops with the steps that rewrite it.
+func TestRefusesVersionOneWithTheRewrite(t *testing.T) {
+	root := write(t, `version = 1
+[runtime]
+type = "exec"
+command = "./run.sh"
+[manifest]
+path = "./manifest.json"
+`)
+	_, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if !errors.Is(err, bundle.ErrVersion1) || !strings.Contains(err.Error(), "[serve]") {
+		t.Fatalf("error = %v, want the rewrite to version 2", err)
+	}
+}
+
+// A command without a slash comes from PATH, as in a shell. A command with
+// a slash is a path from the directory of the program.
+func TestABareCommandComesFromPath(t *testing.T) {
+	root := write(t, `version = 2
+[serve]
+command = "sh"
+manifest = "./manifest.json"
+`)
+	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want, _ := exec.LookPath("sh"); held.Command != want {
+		t.Errorf("command = %s, want %s", held.Command, want)
+	}
+
+	root = write(t, `version = 2
+[serve]
+command = "no-such-arc-command"
+manifest = "./manifest.json"
+`)
+	_, err = bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err == nil || !strings.Contains(err.Error(), "not on PATH") {
+		t.Errorf("error = %v, want a command that is not on PATH", err)
+	}
+}
+
+// A protocol other than stdio runs the translator arc-<protocol>, and the
+// translator runs the program.
+func TestAProtocolRunsItsTranslator(t *testing.T) {
+	bin := t.TempDir()
+	translator := filepath.Join(bin, "arc-fake")
+	if err := os.WriteFile(translator, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	root := write(t, `version = 2
+[serve]
+command = "./server"
+args = ["--port-from-env"]
+protocol = "fake"
+manifest = "./manifest.json"
+`)
+	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Command != translator || held.Protocol != "fake" {
+		t.Errorf("command = %s, protocol = %s", held.Command, held.Protocol)
+	}
+	if want := []string{filepath.Join(root, "server"), "--port-from-env"}; !slices.Equal(held.Args, want) {
+		t.Errorf("args = %q, want %q", held.Args, want)
+	}
+
+	root = write(t, `version = 2
+[serve]
+command = "./server"
+protocol = "no-such-protocol"
+manifest = "./manifest.json"
+`)
+	_, err = bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err == nil || !strings.Contains(err.Error(), "arc-no-such-protocol") {
+		t.Errorf("error = %v, want the name of the missing translator", err)
+	}
+}
+
+func TestStdioIsTheDefaultProtocol(t *testing.T) {
+	root := write(t, `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+`)
+	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Protocol != bundle.Stdio || held.Command != filepath.Join(root, "run.sh") {
+		t.Errorf("protocol = %s, command = %s", held.Protocol, held.Command)
+	}
+	if held.Allow != nil || held.Uses != nil {
+		t.Errorf("allow = %v, uses = %v, want neither", held.Allow, held.Uses)
+	}
+}
+
+// [uses] gives each name an environment variable. An empty [uses] allows no
+// call, and a missing one allows every installed app.
+func TestUsesNamesEachInstalledApp(t *testing.T) {
+	root := write(t, `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+allow = ["npub1example", "aaaa"]
+[uses]
+warehouse = "warehouse"
+geo-data = "geo"
+`)
+	held, err := bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []bundle.Use{{Name: "geo-data", Installed: "geo"}, {Name: "warehouse", Installed: "warehouse"}}
+	if !slices.Equal(held.Uses, want) {
+		t.Errorf("uses = %v, want %v", held.Uses, want)
+	}
+	if got := held.Uses[0].Env(); got != "ARC_USE_GEO_DATA" {
+		t.Errorf("env = %s", got)
+	}
+	if !slices.Equal(held.Allow, []string{"npub1example", "aaaa"}) {
+		t.Errorf("allow = %v", held.Allow)
+	}
+
+	root = write(t, `version = 2
+[serve]
+command = "./run.sh"
+manifest = "./manifest.json"
+[uses]
+`)
+	held, err = bundle.Load(filepath.Join(root, bundle.ArcfileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Uses == nil || len(held.Uses) != 0 {
+		t.Errorf("uses = %#v, want an empty list that allows no call", held.Uses)
+	}
+}
+
 func TestRefusesAMissingManifest(t *testing.T) {
 	root := t.TempDir()
 	arcfile := filepath.Join(root, bundle.ArcfileName)
 
-	body := "version = 1\n[runtime]\ntype = \"exec\"\ncommand = \"./run.sh\"\n[manifest]\npath = \"./manifest.json\"\n"
+	body := "version = 2\n[serve]\ncommand = \"./run.sh\"\nmanifest = \"./manifest.json\"\n"
 	if err := os.WriteFile(arcfile, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

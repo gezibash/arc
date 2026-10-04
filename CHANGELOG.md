@@ -6,6 +6,28 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+The Arcfile has version 2. `arc serve <app-directory>` stops on an Arcfile of
+version 1, and the error gives the steps of the rewrite. An address such as
+`exec://...` is not affected.
+
+### Added
+
+- Arcfile version 2. `[serve]` names the command, its protocol, its manifest
+  and the callers that it allows. `[uses]` names the installed apps that the
+  program calls. See apps/README.md, section "The Arcfile".
+- `protocol` in the Arcfile. A protocol other than `stdio` runs the
+  translator `arc-<protocol>`. `protocol = "http"` serves an HTTP server of
+  any language through `arc-http`, with no `exec://` address.
+- `allow` in the Arcfile. Other callers get `access_denied`, for calls and
+  sessions, and the program does not see them.
+- `[uses]` in the Arcfile. The program gets `ARC_USE_<NAME>` with the address
+  of each app, and a call to another app fails with `not_in_uses`.
+
+### Changed
+
+- A command name without a slash in the Arcfile comes from `PATH`, as in a
+  shell. A name with a slash is a path from `cwd`.
+
 ## [0.17.0] - 2026-10-04
 
 The Go packages have a new layout, `arc tool` is now `arc apps`, and the app
