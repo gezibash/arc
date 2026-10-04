@@ -10,6 +10,9 @@
 // that syncs with a directory also carries the courier form of other
 // citizens' mail, which it cannot read: it knows only a route tag. A hop limit
 // beside each event bounds how many couriers carry it on.
+//
+// A sync fetches the mail from a transport. A watch keeps a subscription on
+// a live transport instead, and takes each wrap as it arrives.
 package mail
 
 import (
@@ -20,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -103,6 +107,9 @@ type Mail struct {
 	db     kv.Store
 	relays []transport.Transport
 	now    func() time.Time
+	// receiving serializes the work on received mail. Syncs and watches of
+	// several transports can take the same wrap at the same time.
+	receiving sync.Mutex
 
 	// Indexers are relays that hold relay lists. Mail looks up the NIP-17
 	// list of a recipient there when its own relays do not hold it.
@@ -282,31 +289,33 @@ type Report struct {
 // gives the transport every wrap that this node moves.
 func (m *Mail) Sync(ctx context.Context, t transport.Transport) (Report, error) {
 	report := Report{Transport: t.Name()}
-	if err := m.expire(); err != nil {
-		return report, err
-	}
-	if err := m.pending(ctx, &report); err != nil {
+	m.receiving.Lock()
+	err := m.settle(ctx, &report)
+	m.receiving.Unlock()
+	if err != nil {
 		return report, err
 	}
 
 	carrier, isCarrier := t.(transport.Carrier)
 	mine := private.RouteTags(m.key.PublicKey(), m.now())
-
-	var filters []nostr.Filter
-	if isCarrier {
-		filters = []nostr.Filter{{Kinds: []nostr.Kind{private.WrapKind}}}
-	} else {
-		filters = []nostr.Filter{
-			{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {m.key.PublicKey().Hex()}}},
-			{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"w": mine}},
-		}
+	filters := []nostr.Filter{{Kinds: []nostr.Kind{private.WrapKind}}}
+	if !isCarrier {
+		filters = m.filters(mine)
 	}
 
+	// The fetch holds no lock, so a watch can take mail while it runs.
+	var batches []transport.Batch
 	for _, filter := range filters {
 		batch, err := t.Fetch(ctx, filter)
 		if err != nil {
 			return report, err
 		}
+		batches = append(batches, batch)
+	}
+
+	m.receiving.Lock()
+	defer m.receiving.Unlock()
+	for _, batch := range batches {
 		for _, wrap := range batch.Events {
 			if err := m.take(ctx, wrap, mine, isCarrier, batch.Hops, &report); err != nil {
 				return report, err
@@ -316,8 +325,97 @@ func (m *Mail) Sync(ctx context.Context, t transport.Transport) (Report, error) 
 	if err := m.evict(); err != nil {
 		return report, err
 	}
-
 	return report, m.give(ctx, t, carrier, isCarrier, &report)
+}
+
+// Flush does the work of a sync that needs no fetch. It ends expired mail,
+// answers each pending call, and gives a relay each wrap that the relay does
+// not hold yet. A watch takes the mail, so a relay that a watch covers needs
+// only a flush. Flush sends nothing when the relay holds each wrap already.
+func (m *Mail) Flush(ctx context.Context, t transport.Transport) (Report, error) {
+	report := Report{Transport: t.Name()}
+	m.receiving.Lock()
+	defer m.receiving.Unlock()
+	if err := m.settle(ctx, &report); err != nil {
+		return report, err
+	}
+	if err := m.evict(); err != nil {
+		return report, err
+	}
+	carrier, isCarrier := t.(transport.Carrier)
+	return report, m.give(ctx, t, carrier, isCarrier, &report)
+}
+
+// Watch takes the mail for this citizen from a live transport as it arrives.
+// It watches the filters that a sync fetches, flushes, and then calls
+// ready. The transport sends the mail that it holds first, then each new
+// wrap. Watch returns nil at the next midnight UTC, because the route tags
+// change each day. It returns an error when the transport ends a watch, or
+// when the context ends.
+func (m *Mail) Watch(ctx context.Context, t transport.Live, ready func()) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	now := m.now()
+	mine := private.RouteTags(m.key.PublicKey(), now)
+	var watches []<-chan nostr.Event
+	for _, filter := range m.filters(mine) {
+		events, err := t.Watch(ctx, filter)
+		if err != nil {
+			return err
+		}
+		watches = append(watches, events)
+	}
+	if _, err := m.Flush(ctx, t); err != nil {
+		return err
+	}
+	if ready != nil {
+		ready()
+	}
+
+	midnight := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	day := time.NewTimer(midnight.Sub(now))
+	defer day.Stop()
+	for {
+		var wrap nostr.Event
+		var open bool
+		select {
+		case <-day.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case wrap, open = <-watches[0]:
+		case wrap, open = <-watches[1]:
+		}
+		if !open {
+			return fmt.Errorf("mail: %s ended the watch", t.Name())
+		}
+		report := Report{Transport: t.Name()}
+		m.receiving.Lock()
+		err := m.take(ctx, wrap, mine, false, nil, &report)
+		m.receiving.Unlock()
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// filters are the two filters of the mail for this citizen: by its key, and
+// by its route tags. One filter cannot hold both, because a filter joins
+// its tags with AND.
+func (m *Mail) filters(mine []string) []nostr.Filter {
+	return []nostr.Filter{
+		{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {m.key.PublicKey().Hex()}}},
+		{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"w": mine}},
+	}
+}
+
+// settle ends expired mail, and answers each pending call. The caller holds
+// the receiving lock.
+func (m *Mail) settle(ctx context.Context, report *Report) error {
+	if err := m.expire(); err != nil {
+		return err
+	}
+	return m.pending(ctx, report)
 }
 
 // take handles one wrap that a transport held.
