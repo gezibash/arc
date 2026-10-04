@@ -1,7 +1,8 @@
 // Command echo is the provider that the tests of the citizen serve. It
 // answers with the body that it receives, and fails a body that says "fail".
 // A body "call <address> <body>" calls that capability through the host, and
-// answers with what came back.
+// answers with what came back. A body "env <name>" answers with that
+// environment variable.
 package main
 
 import (
@@ -27,6 +28,9 @@ func (e *echo) HandleRequest(ctx context.Context, request provider.Request) (str
 		return "", provider.Error("refused_on_purpose")
 	case "panic":
 		panic("the provider broke")
+	}
+	if name, ok := strings.CutPrefix(request.Message, "env "); ok {
+		return os.Getenv(name), nil
 	}
 	if rest, ok := strings.CutPrefix(request.Message, "call "); ok {
 		address, body, _ := strings.Cut(rest, " ")

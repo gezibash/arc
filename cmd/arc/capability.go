@@ -29,6 +29,7 @@ import (
 	"github.com/gezibash/arc/runtime/capability"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/gate"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 )
@@ -61,7 +62,7 @@ func serveCmd() *cobra.Command {
 }
 
 func serve(command *cobra.Command, args []string) error {
-	address, _, err := bundle.Resolve(args[0])
+	address, held, err := bundle.Resolve(args[0])
 	if err != nil {
 		return err
 	}
@@ -86,21 +87,53 @@ func serve(command *cobra.Command, args []string) error {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	process, err := host.Start(path, programArgs, cwd, []string{
+	environment := []string{
 		"ARC_IDENTITY=" + sess.Key.Name(),
 		"ARC_PUBLIC_KEY=" + sess.Key.Public.Hex(),
-	}, log)
+	}
+	// The Arcfile can limit who reaches the program, and what it calls. Both
+	// resolve once, at the start: a change needs a restart.
+	var allowed map[string]bool
+	var uses map[string]string
+	if held != nil {
+		if allowed, err = allowList(command.Context(), installs, held.Allow); err != nil {
+			return err
+		}
+		var useEnv []string
+		if uses, useEnv, err = useList(installs, held.Uses); err != nil {
+			return err
+		}
+		environment = append(environment, useEnv...)
+		if allowed != nil {
+			log.Info("the Arcfile allows only some callers", "callers", len(allowed))
+		}
+		if uses != nil {
+			log.Info("the Arcfile limits the calls of the program", "uses", useEnv)
+		}
+	}
+	process, err := host.Start(path, programArgs, cwd, environment, log)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = process.Stop() }()
+	var program call.Client = process
+	if allowed != nil {
+		program = gate.New(process, func(from string) bool { return allowed[from] })
+	}
 
 	// The program can call what this citizen installed, as this citizen.
+	// [uses] in the Arcfile narrows that to the apps that it names.
 	calls := func(ctx context.Context, out call.Outbound) (call.Reply, error) {
+		if err := inUses(ctx, installs, uses, out.Address); err != nil {
+			return call.Reply{}, err
+		}
 		return sess.CallAddress(ctx, installs, out.Address, out.Body)
 	}
-	server := call.NewServer(sess.Signer, id, process, limit, calls, log, definition.Interactions...)
+	server := call.NewServer(sess.Signer, id, program, limit, calls, log, definition.Interactions...)
 	server.SetSessionCaller(func(ctx context.Context, out call.Outbound, mode session.Mode) (*session.Stream, error) {
+		if err := inUses(ctx, installs, uses, out.Address); err != nil {
+			return nil, err
+		}
 		return sess.OpenSessionAddress(ctx, installs, out.Address, out.Body, mode)
 	})
 	sess.Mail.OnRequest = server.Handle
@@ -193,6 +226,67 @@ func serve(command *cobra.Command, args []string) error {
 			})
 		}
 	}
+}
+
+// allowList resolves allow of the Arcfile to public keys in hex. An entry
+// takes any form of a key that a command takes. Nil allows every caller. An
+// entry that does not resolve stops the start, so the list fails closed.
+func allowList(ctx context.Context, installs catalog.Installs, entries []string) (map[string]bool, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	env := &citizen.Environment{Installs: installs}
+	allowed := map[string]bool{}
+	for _, entry := range entries {
+		pk, err := env.ResolveKey(ctx, entry)
+		if err != nil {
+			return nil, fmt.Errorf("allow in the Arcfile: %q is not a key: %w", entry, err)
+		}
+		allowed[pk.Hex()] = true
+	}
+	return allowed, nil
+}
+
+// useList resolves [uses] of the Arcfile to the installed apps. It returns
+// the apps as "<id> <key>", and the environment that names each address.
+// Nil allows calls to every installed app.
+func useList(installs catalog.Installs, uses []bundle.Use) (map[string]string, []string, error) {
+	if uses == nil {
+		return nil, nil, nil
+	}
+	apps := map[string]string{}
+	var env []string
+	for _, use := range uses {
+		app, ok, err := installs.Named(use.Installed)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			return nil, nil, fmt.Errorf("[uses] in the Arcfile: %s names %q, which this citizen has not installed: run arc install <key> --as %s", use.Name, use.Installed, use.Installed)
+		}
+		apps[app.ID+" "+app.Provider] = use.Name
+		env = append(env, use.Env()+"="+app.ID+"+arc://"+app.Provider+"/")
+	}
+	return apps, env, nil
+}
+
+// inUses refuses a call of the program to an app that [uses] does not name.
+func inUses(ctx context.Context, installs catalog.Installs, uses map[string]string, address string) error {
+	if uses == nil {
+		return nil
+	}
+	parsed, err := catalog.ParseAddress(address)
+	if err != nil {
+		return err
+	}
+	pk, _, err := installs.Resolve(ctx, parsed.Provider)
+	if err != nil {
+		return err
+	}
+	if _, ok := uses[parsed.Scheme+" "+pk.Hex()]; !ok {
+		return fmt.Errorf("not_in_uses: %s is not in [uses] of the Arcfile", address)
+	}
+	return nil
 }
 
 // watchAll starts a live watch on each relay. It returns when each relay
