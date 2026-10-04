@@ -1,6 +1,7 @@
 package bundle_test
 
 import (
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -312,7 +313,7 @@ func TestRefusesAMissingManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := bundle.Load(arcfile); err != bundle.ErrManifestAbsent {
+	if _, err := bundle.Load(arcfile); !errors.Is(err, bundle.ErrManifestAbsent) {
 		t.Errorf("error = %v, want the missing manifest", err)
 	}
 }

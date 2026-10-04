@@ -182,8 +182,8 @@ func downloadStream(ctx context.Context, source ArchiveSource, artifact *Artifac
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
-	stop := context.AfterFunc(ctx, func() { stream.Close() })
+	defer func() { _ = stream.Close() }()
+	stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
 	defer stop()
 	out := make([]byte, 0, min(artifact.Size, 1024*1024))
 	hash := sha256.New()

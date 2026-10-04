@@ -51,7 +51,7 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 	}
 	stderr, err := os.Create(filepath.Join(dir, "stderr"))
 	if err != nil {
-		stdout.Close()
+		_ = stdout.Close()
 		return nil, err
 	}
 
@@ -63,8 +63,8 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 	s.lease.hold()
 	if err := process.Start(); err != nil {
 		s.lease.release()
-		stdout.Close()
-		stderr.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
 		return nil, err
 	}
 
@@ -76,17 +76,17 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 	}
 	if err := writeStatus(dir, status); err != nil {
 		killGroup(process)
-		process.Wait()
-		stdout.Close()
-		stderr.Close()
+		_ = process.Wait()
+		_ = stdout.Close()
+		_ = stderr.Close()
 		s.lease.release()
 		return nil, err
 	}
 
 	go func() {
 		defer s.lease.release()
-		defer stdout.Close()
-		defer stderr.Close()
+		defer func() { _ = stdout.Close() }()
+		defer func() { _ = stderr.Close() }()
 
 		timedOut := wait(context.Background(), process, time.Duration(cmd.TimeoutMS)*time.Millisecond)
 		exit := process.ProcessState.ExitCode()
@@ -181,7 +181,7 @@ func tail(path string, limit int) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	size, err := file.Seek(0, io.SeekEnd)
 	if err != nil {

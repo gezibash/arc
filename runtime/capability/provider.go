@@ -48,8 +48,8 @@ func LoadProvider(path string) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	fields := legacy["capability"].(map[string]any)
-	invocation := fields["invocation"].(map[string]any)
+	fields, _ := legacy["capability"].(map[string]any)
+	invocation, _ := fields["invocation"].(map[string]any)
 	limit := 1024 * 1024
 	if body, ok := invocation["request_body"].(map[string]any); ok {
 		if v, ok := body["max_bytes"]; ok {

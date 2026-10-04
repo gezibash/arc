@@ -52,9 +52,13 @@ func Start(path string, args []string, cwd string, environment []string, log *sl
 	// Environ sets PWD to cwd, so PWD names the directory of the program.
 	command.Env = append(command.Environ(), environment...)
 
-	stdin, err := command.StdinPipe()
+	pipe, err := command.StdinPipe()
 	if err != nil {
 		return nil, err
+	}
+	stdin, ok := pipe.(*os.File)
+	if !ok {
+		return nil, errors.New("host: the standard input of the provider is not a file")
 	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -71,7 +75,7 @@ func Start(path string, args []string, cwd string, environment []string, log *sl
 
 	provider := &Process{
 		command:   command,
-		stdin:     stdin.(*os.File),
+		stdin:     stdin,
 		lines:     make(chan wire.Event, 64),
 		log:       log,
 		writeGate: make(chan struct{}, 1), stopped: make(chan struct{}),
@@ -104,15 +108,15 @@ func (r *Process) Send(ctx context.Context, event wire.Event) error {
 		return err
 	}
 	interrupted := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { r.stdin.SetWriteDeadline(time.Now()); close(interrupted) })
+	stop := context.AfterFunc(ctx, func() { _ = r.stdin.SetWriteDeadline(time.Now()); close(interrupted) })
 	n, err := r.stdin.Write(append(line, '\n'))
 	if !stop() {
 		<-interrupted
 	}
-	r.stdin.SetWriteDeadline(time.Time{})
+	_ = r.stdin.SetWriteDeadline(time.Time{})
 	if err != nil && n > 0 {
 		// The next line cannot safely follow a partial JSON document.
-		r.stdin.Close()
+		_ = r.stdin.Close()
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -172,7 +176,10 @@ func (r *Process) Stop() error {
 	}
 	r.closed = true
 	close(r.stopped)
-	r.stdin.Close()
+	// A partial write in Send can have closed the input already.
+	if err := r.stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		r.log.Warn("the input of the provider did not close", "error", err)
+	}
 	r.mu.Unlock()
 
 	ended := make(chan error, 1)
@@ -186,7 +193,7 @@ func (r *Process) Stop() error {
 
 	r.log.Warn("the provider did not end after its input closed, so it is killed", "grace", StopGrace)
 	if r.command.Process != nil {
-		r.command.Process.Kill()
+		_ = r.command.Process.Kill()
 	}
 	return <-ended
 }

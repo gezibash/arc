@@ -93,7 +93,7 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer process.Stop()
+	defer func() { _ = process.Stop() }()
 
 	// The program can call what this citizen installed, as this citizen.
 	calls := func(ctx context.Context, out call.Outbound) (call.Reply, error) {

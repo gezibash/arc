@@ -130,7 +130,7 @@ func (s *server) chunk(digest string, offset int64, length int) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if offset > info.Size() {
 		return "", errInvalidRequest
 	}
@@ -197,7 +197,7 @@ func (s *server) openBlob(digest string) (*os.File, os.FileInfo, error) {
 	}
 	actual, err := file.Stat()
 	if err != nil || !actual.Mode().IsRegular() || !os.SameFile(info, actual) {
-		file.Close()
+		_ = file.Close()
 		return nil, nil, errStorage
 	}
 	return file, actual, nil

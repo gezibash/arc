@@ -1,6 +1,7 @@
 package capability_test
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -81,7 +82,7 @@ func TestRefusesAFileThatIsNotAPackage(t *testing.T) {
 	}
 
 	write(t, filepath.Join(dir, "bad.yaml"), "x: 1")
-	if _, err := capability.LoadFile(filepath.Join(dir, "bad.yaml")); err != capability.ErrUnsupportedFile {
+	if _, err := capability.LoadFile(filepath.Join(dir, "bad.yaml")); !errors.Is(err, capability.ErrUnsupportedFile) {
 		t.Error("a file that is not JSON or TOML passed")
 	}
 }

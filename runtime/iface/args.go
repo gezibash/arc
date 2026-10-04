@@ -262,9 +262,16 @@ func eventRef(text string) (string, error) {
 	}
 	switch prefix {
 	case "note", "nevent":
-		return value.(nostr.EventPointer).ID.Hex(), nil
+		p, ok := value.(nostr.EventPointer)
+		if !ok {
+			return "", fmt.Errorf("%q is not an event: use hex, note, nevent or naddr", text)
+		}
+		return p.ID.Hex(), nil
 	case "naddr":
-		p := value.(nostr.EntityPointer)
+		p, ok := value.(nostr.EntityPointer)
+		if !ok {
+			return "", fmt.Errorf("%q is not an event: use hex, note, nevent or naddr", text)
+		}
 		return fmt.Sprintf("%d:%s:%s", p.Kind, p.PublicKey.Hex(), p.Identifier), nil
 	}
 	return "", fmt.Errorf("%q is an %s, not an event", text, prefix)
@@ -303,7 +310,7 @@ func readFile(path string) (fileValue, error) {
 	if err != nil {
 		return fileValue{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, MaxInput+1))
 	if err != nil {
 		return fileValue{}, err

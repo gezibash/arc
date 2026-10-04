@@ -20,10 +20,10 @@ func Lock(path string) (func(), error) {
 		return nil, err
 	}
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
-	return func() { _ = unix.Flock(int(file.Fd()), unix.LOCK_UN); file.Close() }, nil
+	return func() { _ = unix.Flock(int(file.Fd()), unix.LOCK_UN); _ = file.Close() }, nil
 }
 
 // Write replaces path after flushing a unique temporary file in its directory.
@@ -38,8 +38,8 @@ func Write(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
+	defer func() { _ = os.Remove(file.Name()) }()
+	defer func() { _ = file.Close() }()
 	if err := file.Chmod(mode); err != nil {
 		return err
 	}
@@ -59,6 +59,6 @@ func Write(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	return parent.Sync()
 }

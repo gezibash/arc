@@ -214,7 +214,7 @@ func TestTheProviderSeesTheCallerAsFrom(t *testing.T) {
 	}
 
 	// The same request again is refused: a relay cannot replay it.
-	if _, err := server.Handle(ctx, rumor); err != call.ErrDuplicate {
+	if _, err := server.Handle(ctx, rumor); !errors.Is(err, call.ErrDuplicate) {
 		t.Errorf("a second handle gave %v, want ErrDuplicate", err)
 	}
 }

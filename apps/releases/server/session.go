@@ -30,7 +30,7 @@ func (s *server) HandleSession(ctx context.Context, req provider.Request, stream
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	_, err = io.Copy(stream, io.NewSectionReader(file, 0, info.Size()))
 	return err
 }

@@ -3,6 +3,7 @@ package httpadapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -65,7 +66,7 @@ func TestHTTPStreamFlushHeadersTrailersAndLargeBody(t *testing.T) {
 	ended := false
 	for {
 		v, err := rd.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

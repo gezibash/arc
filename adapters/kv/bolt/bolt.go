@@ -15,7 +15,7 @@ type Store struct{ lease *boltlease.Lease[*bbolt.DB] }
 func Open(path string) *Store {
 	return &Store{boltlease.NewLease(path, func() (*bbolt.DB, error) {
 		return bbolt.Open(path, 0600, &bbolt.Options{Timeout: 2 * time.Second})
-	}, func(db *bbolt.DB) { db.Close() })}
+	}, func(db *bbolt.DB) { _ = db.Close() })}
 }
 func (s *Store) View(fn func(kv.Tx) error) error {
 	return s.lease.Do(func(db *bbolt.DB) error { return db.View(func(t *bbolt.Tx) error { return fn(tx{t}) }) })

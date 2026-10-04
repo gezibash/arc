@@ -51,7 +51,7 @@ func (d Dir) Send(ctx context.Context, event nostr.Event) error {
 		return err
 	}
 	temporary := path + ".new"
-	defer os.Remove(temporary)
+	defer func() { _ = os.Remove(temporary) }()
 	if err := os.WriteFile(temporary, body, 0o600); err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (d Dir) SendHops(ctx context.Context, event nostr.Event, hops int) error {
 		return err
 	}
 	temporary := path + ".new"
-	defer os.Remove(temporary)
+	defer func() { _ = os.Remove(temporary) }()
 	if err := os.WriteFile(temporary, []byte(strconv.Itoa(hops)+"\n"), 0o600); err != nil {
 		return err
 	}

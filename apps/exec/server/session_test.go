@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func TestExecSessionInteractiveIOAndExit(t *testing.T) {
 	exit := -1
 	for {
 		v, err := rd.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -71,7 +72,7 @@ func TestExecSessionTerminalResizeAndEOF(t *testing.T) {
 	exit := -1
 	for {
 		v, err := rd.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

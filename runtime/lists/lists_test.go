@@ -1,6 +1,7 @@
 package lists_test
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -79,11 +80,11 @@ func TestANameMustHold(t *testing.T) {
 	store := &lists.Store{Dir: filepath.Join(t.TempDir(), "arc")}
 
 	for _, name := range []string{"", "-bad", "../escape", "Upper"} {
-		if _, err := store.Add("dm", name, []string{"ada"}); err != lists.ErrInvalidName {
+		if _, err := store.Add("dm", name, []string{"ada"}); !errors.Is(err, lists.ErrInvalidName) {
 			t.Errorf("the name %q gave %v", name, err)
 		}
 	}
-	if _, err := store.Add("../escape", "friends", []string{"ada"}); err != lists.ErrInvalidName {
+	if _, err := store.Add("../escape", "friends", []string{"ada"}); !errors.Is(err, lists.ErrInvalidName) {
 		t.Error("a tool name that climbs passed")
 	}
 }

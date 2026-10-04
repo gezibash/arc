@@ -45,7 +45,7 @@ func TestSaveRefusesToOverwrite(t *testing.T) {
 	if err := keyfile.Save(path, keys.Generate()); err != nil {
 		t.Fatal(err)
 	}
-	if err := keyfile.Save(path, keys.Generate()); err != keyfile.ErrExists {
+	if err := keyfile.Save(path, keys.Generate()); !errors.Is(err, keyfile.ErrExists) {
 		t.Errorf("a second save gave %v, want ErrExists", err)
 	}
 }
@@ -64,7 +64,7 @@ func TestLoadRefusesAFileOthersCanRead(t *testing.T) {
 }
 
 func TestLoadWithoutAFile(t *testing.T) {
-	if _, err := keyfile.Load(filepath.Join(t.TempDir(), "nothing")); err != keyfile.ErrNotFound {
+	if _, err := keyfile.Load(filepath.Join(t.TempDir(), "nothing")); !errors.Is(err, keyfile.ErrNotFound) {
 		t.Errorf("error = %v, want ErrNotFound", err)
 	}
 }

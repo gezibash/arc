@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -77,17 +78,17 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := release.Verify(signed, release.Expect{Publisher: other.PublicKey}); err != release.ErrPublisher {
+	if _, err := release.Verify(signed, release.Expect{Publisher: other.PublicKey}); !errors.Is(err, release.ErrPublisher) {
 		t.Errorf("another publisher gave %v", err)
 	}
-	if _, err := release.Verify(signed, release.Expect{Publisher: publisher.PublicKey, Channel: "beta"}); err != release.ErrChannel {
+	if _, err := release.Verify(signed, release.Expect{Publisher: publisher.PublicKey, Channel: "beta"}); !errors.Is(err, release.ErrChannel) {
 		t.Errorf("another channel gave %v", err)
 	}
 
 	// A changed field breaks the signature.
 	changed := copyDocument(signed)
 	changed["sequence"] = 99
-	if _, err := release.Verify(changed, release.Expect{Publisher: publisher.PublicKey}); err != release.ErrSignature {
+	if _, err := release.Verify(changed, release.Expect{Publisher: publisher.PublicKey}); !errors.Is(err, release.ErrSignature) {
 		t.Errorf("a changed document gave %v", err)
 	}
 
@@ -96,21 +97,21 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 	old["expires_at"] = time.Now().Add(-time.Hour).Unix()
 	expired, _ := release.Sign(publisher.secret, old)
 
-	if _, err := release.Verify(expired, release.Expect{Publisher: publisher.PublicKey}); err != release.ErrExpired {
+	if _, err := release.Verify(expired, release.Expect{Publisher: publisher.PublicKey}); !errors.Is(err, release.ErrExpired) {
 		t.Errorf("an expired document gave %v", err)
 	}
 
 	// A channel never goes backwards.
 	if _, err := release.Verify(signed, release.Expect{
 		Publisher: publisher.PublicKey, LastSequence: 10,
-	}); err != release.ErrOutOfSequence {
+	}); !errors.Is(err, release.ErrOutOfSequence) {
 		t.Errorf("an older sequence gave %v", err)
 	}
 
 	// One sequence never names two documents.
 	if _, err := release.Verify(signed, release.Expect{
 		Publisher: publisher.PublicKey, LastSequence: 3, LastDigest: strings.Repeat("cd", 32),
-	}); err != release.ErrOutOfSequence {
+	}); !errors.Is(err, release.ErrOutOfSequence) {
 		t.Errorf("another document of one sequence gave %v", err)
 	}
 
@@ -157,15 +158,15 @@ func TestSelectsTheNewestReleaseOfThisMachine(t *testing.T) {
 	}
 
 	// A machine that runs the newest already takes nothing.
-	if _, err := channel.Select(release.Platform{OS: "linux", Arch: "amd64"}, "1.2.0"); err != release.ErrNoRelease {
+	if _, err := channel.Select(release.Platform{OS: "linux", Arch: "amd64"}, "1.2.0"); !errors.Is(err, release.ErrNoRelease) {
 		t.Errorf("a machine at the newest gave %v", err)
 	}
-	if _, err := channel.Select(release.Platform{OS: "linux", Arch: "amd64"}, "2.0.0"); err != release.ErrNoRelease {
+	if _, err := channel.Select(release.Platform{OS: "linux", Arch: "amd64"}, "2.0.0"); !errors.Is(err, release.ErrNoRelease) {
 		t.Errorf("a machine above the newest gave %v", err)
 	}
 
 	// A machine of another platform finds nothing.
-	if _, err := channel.Select(release.Platform{OS: "windows", Arch: "amd64"}, "1.0.0"); err != release.ErrNoRelease {
+	if _, err := channel.Select(release.Platform{OS: "windows", Arch: "amd64"}, "1.0.0"); !errors.Is(err, release.ErrNoRelease) {
 		t.Errorf("another platform gave %v", err)
 	}
 }
@@ -272,7 +273,7 @@ func TestUnpackRefusesAnArchiveThatDoesNotHold(t *testing.T) {
 	if _, err := release.Unpack([]byte("not gzip"), "arc"); err == nil {
 		t.Error("a file that is not an archive passed")
 	}
-	if _, err := release.Unpack(tarball(t, "other", []byte("x")), "arc"); err != release.ErrNotInArchive {
+	if _, err := release.Unpack(tarball(t, "other", []byte("x")), "arc"); !errors.Is(err, release.ErrNotInArchive) {
 		t.Error("an archive without the program passed")
 	}
 	if _, err := release.Unpack(tarball(t, "../escape", []byte("x")), "escape"); err == nil {

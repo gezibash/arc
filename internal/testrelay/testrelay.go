@@ -51,10 +51,10 @@ func StartKillable(t *testing.T) (string, func()) {
 	}
 	listener := &tracking{Listener: inner}
 	server := &http.Server{Handler: relay}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 
 	kill := func() {
-		listener.Close()
+		_ = listener.Close()
 		listener.closeAll()
 	}
 	t.Cleanup(kill)
@@ -83,7 +83,7 @@ func (l *tracking) closeAll() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, conn := range l.conns {
-		conn.Close()
+		_ = conn.Close()
 	}
 	l.conns = nil
 }
@@ -135,8 +135,8 @@ func StartDown(t *testing.T) (string, func()) {
 	}
 	listener := &gated{Listener: inner}
 	server := &http.Server{Handler: relay}
-	go server.Serve(listener)
-	t.Cleanup(func() { server.Close() })
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
 	return "ws://" + inner.Addr().String(), func() { listener.up.Store(true) }
 }
 
@@ -153,7 +153,7 @@ func (l *gated) Accept() (net.Conn, error) {
 		if err != nil || l.up.Load() {
 			return conn, err
 		}
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 

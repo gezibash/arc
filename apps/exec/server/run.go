@@ -66,7 +66,7 @@ func runCommand(ctx context.Context, cfg *config, cmd *command) (*result, error)
 func wait(ctx context.Context, process *exec.Cmd, timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {
-		process.Wait()
+		_ = process.Wait()
 		close(done)
 	}()
 
@@ -89,7 +89,7 @@ func killGroup(process *exec.Cmd) {
 		return
 	}
 	if err := syscall.Kill(-process.Process.Pid, syscall.SIGKILL); err != nil {
-		process.Process.Kill()
+		_ = process.Process.Kill()
 	}
 }
 

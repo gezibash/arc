@@ -31,7 +31,7 @@ func (o *output) abort(err error) {
 	o.cancel(err)
 	o.closeOnce.Do(func() {
 		if closer, ok := o.writer.(io.Closer); ok {
-			closer.Close()
+			_ = closer.Close()
 		}
 	})
 }

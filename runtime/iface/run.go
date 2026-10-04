@@ -234,7 +234,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	if command.Action.Watch != nil {
 		return fmt.Errorf("%s names a list, and a watch takes one key", listed)
 	}
-	list := values[listed].(members)
+	list, _ := values[listed].(members)
 	failed := 0
 	for _, member := range list {
 		one := Values{}
@@ -386,14 +386,18 @@ func open(record Record, parse string) error {
 // write shows the records: as JSON lines, with a format, or as their
 // content. A command with save writes files instead, and shows only its
 // format.
-func (r *run) write(entries []*entry, out io.Writer) error {
+func (r *run) write(entries []*entry, out io.Writer) (err error) {
 	if r.command.Output.Save != nil {
 		if err := r.save(entries); err != nil {
 			return err
 		}
 	}
 	w := bufio.NewWriter(out)
-	defer w.Flush()
+	defer func() {
+		if flushErr := w.Flush(); err == nil {
+			err = flushErr
+		}
+	}()
 
 	records := make([]Record, len(entries))
 	for i, e := range entries {
@@ -420,7 +424,9 @@ func (r *run) write(entries []*entry, out io.Writer) error {
 			if !ok {
 				text = record["content"]
 			}
-			line(w, sanitize(str(text)))
+			if err := line(w, sanitize(str(text))); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -440,8 +446,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		line(w, out)
-		return nil
+		return line(w, out)
 	}
 
 	if len(records) == 0 {
@@ -453,7 +458,9 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 	for _, record := range records {
 		s := r.recordScope(record)
 		if f.Table != nil {
-			table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows))
+			if err := table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows)); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := render(f.Record, s); err != nil {
@@ -464,7 +471,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 }
 
 // table writes rows as aligned columns, under a line of column names.
-func table(w io.Writer, columns, rows any) {
+func table(w io.Writer, columns, rows any) error {
 	cell := func(v any) string {
 		text := sanitize(str(v))
 		return strings.NewReplacer("\t", " ", "\n", " ").Replace(text)
@@ -486,19 +493,24 @@ func table(w io.Writer, columns, rows any) {
 		}
 		fmt.Fprintln(tw, strings.Join(words, "\t"))
 	}
-	tw.Flush()
+	return tw.Flush()
 }
 
 // line writes text and ends it with a newline, when it has none.
-func line(w io.Writer, text string) {
+func line(w io.Writer, text string) error {
 	// Text that renders to nothing shows nothing, not an empty line.
 	if text == "" {
-		return
+		return nil
 	}
-	io.WriteString(w, text)
+	if _, err := io.WriteString(w, text); err != nil {
+		return err
+	}
 	if !strings.HasSuffix(text, "\n") {
-		io.WriteString(w, "\n")
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Help lists the commands of a capability.
@@ -514,7 +526,7 @@ func Help(in Installed) string {
 		c := &in.Manifest.Commands[i]
 		fmt.Fprintf(tw, "  %s\t%s\n", usage(in, c), c.Summary)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 	return b.String()
 }
 
@@ -534,7 +546,7 @@ func commandHelp(in Installed, c *Command) string {
 			}
 			fmt.Fprintf(tw, "  %s\t%s\n", usageOf(a), note)
 		}
-		tw.Flush()
+		_ = tw.Flush()
 	}
 	b.WriteString("\nevery command takes --json; a live call takes --later\n")
 	return b.String()
@@ -564,8 +576,7 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {
-		line(stdio.Out, body)
-		return fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err)
+		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, body))
 	}
 	if err := r.write(entries, stdio.Out); err != nil {
 		return err

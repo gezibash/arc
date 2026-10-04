@@ -63,7 +63,7 @@ func (s *server) query(ctx context.Context, caller, path, message string) (map[s
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	begin := "BEGIN"
 	if role == "write" {
@@ -79,7 +79,7 @@ func (s *server) query(ctx context.Context, caller, path, message string) (map[s
 	for _, one := range statements {
 		got, err := s.execute(ctx, conn, guard, one, &budget)
 		if err != nil {
-			guard.internal(conn, "ROLLBACK")
+			_ = guard.internal(conn, "ROLLBACK")
 			return nil, err
 		}
 		results = append(results, got)
@@ -87,11 +87,11 @@ func (s *server) query(ctx context.Context, caller, path, message string) (map[s
 
 	answer := map[string]any{"results": results}
 	if err := s.withinOutput(answer); err != nil {
-		guard.internal(conn, "ROLLBACK")
+		_ = guard.internal(conn, "ROLLBACK")
 		return nil, err
 	}
 	if err := guard.internal(conn, "COMMIT"); err != nil {
-		guard.internal(conn, "ROLLBACK")
+		_ = guard.internal(conn, "ROLLBACK")
 		return nil, errQueryFailed
 	}
 	return answer, nil
@@ -143,7 +143,7 @@ func (s *server) connect(ctx context.Context, held database, role string) (*sqli
 
 	held_guard := &guard{role: role, reason: errQueryDenied}
 	if err := conn.SetAuthorizer(held_guard); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, nil, errQueryFailed
 	}
 
@@ -153,7 +153,7 @@ func (s *server) connect(ctx context.Context, held database, role string) (*sqli
 		"PRAGMA foreign_keys=ON",
 	} {
 		if err := held_guard.internal(conn, pragma); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, nil, errQueryFailed
 		}
 	}
@@ -174,7 +174,7 @@ func (s *server) executeRows(ctx context.Context, conn *sqlite.Conn, held *guard
 	if err != nil {
 		return nil, held.failure(ctx, err)
 	}
-	defer stmt.Finalize()
+	defer func() { _ = stmt.Finalize() }()
 
 	// One request holds one statement. Anything after it is a second
 	// statement that nothing checked.
@@ -300,7 +300,7 @@ func (g *guard) internal(conn *sqlite.Conn, sql string) error {
 	if err != nil {
 		return err
 	}
-	defer stmt.Finalize()
+	defer func() { _ = stmt.Finalize() }()
 
 	for {
 		hasRow, err := stmt.Step()

@@ -78,7 +78,7 @@ func (s *Session) Close() {
 		s.search.Close()
 	}
 	if s.Mail != nil {
-		s.Mail.Close()
+		_ = s.Mail.Close()
 	}
 	if s.store != nil {
 		s.store.Close()

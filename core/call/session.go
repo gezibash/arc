@@ -355,7 +355,7 @@ func (s *Server) startSessionCall(e wire.Event) {
 			fail(err)
 			return
 		}
-		defer up.Close()
+		defer func() { _ = up.Close() }()
 		if err = down.Accept(); err != nil {
 			return
 		}

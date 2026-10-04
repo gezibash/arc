@@ -35,7 +35,7 @@ func (a *adapter) sessionCall(w http.ResponseWriter, r *http.Request) {
 		answer(w, 502, "error", err.Error())
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	_ = http.NewResponseController(w).EnableFullDuplex()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Trailer", "Arc-Session-Error")
@@ -48,7 +48,7 @@ func (a *adapter) sessionCall(w http.ResponseWriter, r *http.Request) {
 				err = stream.CloseWrite()
 			}
 			if err != nil {
-				stream.Close()
+				_ = stream.Close()
 			}
 		}()
 	}

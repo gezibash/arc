@@ -13,9 +13,11 @@ func ParsePublic(text string) (nostr.PubKey, bool) {
 	if prefix, value, err := nip19.Decode(text); err == nil {
 		switch prefix {
 		case "npub":
-			return value.(nostr.PubKey), true
+			pk, ok := value.(nostr.PubKey)
+			return pk, ok
 		case "nprofile":
-			return value.(nostr.ProfilePointer).PublicKey, true
+			pointer, ok := value.(nostr.ProfilePointer)
+			return pointer.PublicKey, ok
 		}
 	}
 	return nostr.PubKey{}, false

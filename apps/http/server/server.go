@@ -75,8 +75,12 @@ func Run(ctx context.Context, command []string, opts provider.Options) error {
 		return err
 	}
 	endpoint := &http.Server{Handler: a.calls(), ReadHeaderTimeout: 10 * time.Second}
-	go endpoint.Serve(calls)
-	defer endpoint.Close()
+	go func() {
+		if err := endpoint.Serve(calls); !errors.Is(err, http.ErrServerClosed) {
+			cancel(fmt.Errorf("the call endpoint stopped: %w", err))
+		}
+	}()
+	defer func() { _ = endpoint.Close() }()
 	s, err := start(command, []string{
 		"PORT=" + port,
 		"ARC_CALL_URL=http://" + calls.Addr().String() + "/call",
@@ -195,7 +199,7 @@ func (a *adapter) calls() http.Handler {
 func answer(w http.ResponseWriter, status int, field, value string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{field: value})
+	_ = json.NewEncoder(w).Encode(map[string]string{field: value})
 }
 
 // forward sends each request to the server. A server that does not answer
@@ -256,7 +260,7 @@ func (s *server) listening(ctx context.Context, host string) error {
 		default:
 		}
 		if conn, err := net.DialTimeout("tcp", host, time.Second); err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -271,11 +275,11 @@ func (s *server) stop() {
 		return
 	default:
 	}
-	s.command.Process.Signal(syscall.SIGTERM)
+	_ = s.command.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-s.done:
 	case <-time.After(stopGrace):
-		s.command.Process.Kill()
+		_ = s.command.Process.Kill()
 		<-s.done
 	}
 }
@@ -294,7 +298,7 @@ func freePort() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	_, port, err := net.SplitHostPort(l.Addr().String())
 	return port, err
 }

@@ -321,7 +321,7 @@ func serveCommand() *cobra.Command {
 			defer stop()
 
 			server := &http.Server{Handler: rl}
-			go func() { <-ctx.Done(); server.Close() }()
+			go func() { <-ctx.Done(); _ = server.Close() }()
 			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}

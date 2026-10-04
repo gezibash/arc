@@ -430,7 +430,7 @@ func (r *run) save(entries []*entry) error {
 			return err
 		}
 		if _, err := file.Write(data); err != nil {
-			file.Close()
+			_ = file.Close()
 			return err
 		}
 		if err := file.Close(); err != nil {
@@ -484,6 +484,7 @@ func (r *run) stream(entries []*entry) error {
 	if len(entries) == 0 && o.Format != "" {
 		return r.format(r.in.Manifest.Formats[o.Format], nil, r.stdio.Out)
 	}
+	var writeErr error
 	for _, e := range entries {
 		if o.Open != nil {
 			if err := open(e.rec, o.Open.Parse); err != nil {
@@ -492,8 +493,8 @@ func (r *run) stream(entries []*entry) error {
 		}
 		ended := true
 		write := func(text string) {
-			if text != "" {
-				io.WriteString(r.stdio.Out, sanitize(text))
+			if text != "" && writeErr == nil {
+				_, writeErr = io.WriteString(r.stdio.Out, sanitize(text))
 				ended = strings.HasSuffix(text, "\n")
 			}
 		}
@@ -517,7 +518,10 @@ func (r *run) stream(entries []*entry) error {
 			}
 		}
 		if !ended {
-			io.WriteString(r.stdio.Out, "\n")
+			write("\n")
+		}
+		if writeErr != nil {
+			return writeErr
 		}
 	}
 	return r.missing

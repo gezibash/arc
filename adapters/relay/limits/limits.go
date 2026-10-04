@@ -114,7 +114,7 @@ func clientIP(ctx context.Context, header string) string {
 // shrink.
 func used(db *bbolt.DB) int64 {
 	var size int64
-	db.View(func(tx *bbolt.Tx) error {
+	_ = db.View(func(tx *bbolt.Tx) error {
 		size = tx.Size()
 		return nil
 	})

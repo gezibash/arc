@@ -54,10 +54,11 @@ func Parse(text string) (Key, error) {
 		return Key{}, ErrRemote
 	case strings.HasPrefix(text, "nsec1"):
 		prefix, value, err := nip19.Decode(text)
-		if err != nil || prefix != "nsec" {
+		secret, ok := value.(nostr.SecretKey)
+		if err != nil || prefix != "nsec" || !ok {
 			return Key{}, errors.New("keys: the nsec does not decode")
 		}
-		return FromSecret(value.(nostr.SecretKey)), nil
+		return FromSecret(secret), nil
 	}
 	secret, err := nostr.SecretKeyFromHex(text)
 	if err != nil {

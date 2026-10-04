@@ -97,7 +97,7 @@ func TestSessionIsInteractiveIsolatedAndIdentityBound(t *testing.T) {
 	if err = s.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = reader.ReadByte(); err != io.EOF {
+	if _, err = reader.ReadByte(); !errors.Is(err, io.EOF) {
 		t.Fatalf("final close = %v", err)
 	}
 	if err = other.Close(); err != nil {

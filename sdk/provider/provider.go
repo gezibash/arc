@@ -265,7 +265,7 @@ func (r *runtime) run(ctx context.Context) (err error) {
 		cancel()
 		close(r.rejections)
 		if closer, ok := r.options.In.(io.Closer); ok {
-			closer.Close()
+			_ = closer.Close()
 		}
 		// EOF still lets cooperative handlers return their final replies, but
 		// an unread output stream cannot hold shutdown indefinitely.

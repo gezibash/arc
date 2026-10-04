@@ -140,7 +140,7 @@ func askPassphrase(prompt string) (string, error) {
 	if err != nil {
 		return "", errors.New("the key needs its passphrase: set ARC_PASSPHRASE, or run arc on a terminal")
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	fmt.Fprint(tty, prompt)
 	value, err := term.ReadPassword(int(tty.Fd()))
 	fmt.Fprintln(tty)
@@ -227,7 +227,7 @@ func defaultName(root string) string {
 // that does not answer, leaves nothing behind. The first identity becomes the
 // default. A caller that made the key passes it as known, so a sealed key does
 // not ask for its passphrase again.
-func addCitizen(ctx context.Context, root, text string, known *keys.Key) (keys.Key, error) {
+func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys.Key, err error) {
 	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
 		return keys.Key{}, err
 	}
@@ -235,7 +235,7 @@ func addCitizen(ctx context.Context, root, text string, known *keys.Key) (keys.K
 	if err != nil {
 		return keys.Key{}, err
 	}
-	defer os.RemoveAll(staging)
+	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
 
 	if err := keyfile.Write(keyPath(staging), text); err != nil {
 		return keys.Key{}, err

@@ -68,14 +68,14 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		}
 		if dupErr != nil {
 			if fd >= 0 {
-				syscall.Close(fd)
+				_ = syscall.Close(fd)
 			}
 			killGroup(process)
-			process.Wait()
-			terminal.Close()
+			_ = process.Wait()
+			_ = terminal.Close()
 			return dupErr
 		}
-		terminal.Close()
+		_ = terminal.Close()
 		terminal = os.NewFile(uintptr(fd), "exec-pty")
 		input = terminal
 		outputDone = make(chan error, 1)
@@ -98,21 +98,21 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		process.Stdout = processChannel{output, "stdout"}
 		process.Stderr = processChannel{output, "stderr"}
 		err = process.Start()
-		rd.Close()
+		_ = rd.Close()
 		if err != nil {
-			wr.Close()
+			_ = wr.Close()
 			return err
 		}
 		input = wr
 	}
 	s.lease.hold()
 	defer s.lease.release()
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 	interruptDone := make(chan struct{})
 	interrupt := context.AfterFunc(ctx, func() {
 		defer close(interruptDone)
 		killGroup(process)
-		input.Close()
+		_ = input.Close()
 		stream.Abort(context.Cause(ctx))
 	})
 	defer func() {
@@ -132,7 +132,9 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 			}
 		}
 		if stream.Mode() != provider.Duplex {
-			input.Close()
+			if err := input.Close(); err != nil && ctx.Err() == nil && !inputGone(err) {
+				cancel(err)
+			}
 			return
 		}
 		reader := execadapter.NewReader(stream)
@@ -176,7 +178,7 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	waitErr := process.Wait()
 	killGroup(process)
 	if terminal != nil {
-		timer := time.AfterFunc(time.Second, func() { terminal.Close() })
+		timer := time.AfterFunc(time.Second, func() { _ = terminal.Close() })
 		err = <-outputDone
 		timer.Stop()
 		if err != nil && ctx.Err() == nil {

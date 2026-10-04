@@ -56,17 +56,17 @@ func New(path string) *Index {
 				idx, err = createIndex(path)
 			}
 			if err != nil {
-				lock.Close()
+				_ = lock.Close()
 				return nil, err
 			}
 			// Restrict the root before indexing decrypted text, independent of umask.
 			if err := os.Chmod(path, 0700); err != nil {
-				idx.Close()
-				lock.Close()
+				_ = idx.Close()
+				_ = lock.Close()
 				return nil, err
 			}
 			return &diskIndex{index: idx, lock: lock}, nil
-		}, func(raw *diskIndex) { raw.index.Close(); raw.lock.Close() })
+		}, func(raw *diskIndex) { _ = raw.index.Close(); _ = raw.lock.Close() })
 
 	}
 	return i
@@ -102,7 +102,7 @@ func (i *Index) Close() {
 		i.lease.Close()
 	}
 	if i.memory != nil {
-		i.memory.Close()
+		_ = i.memory.Close()
 		i.memory = nil
 	}
 }

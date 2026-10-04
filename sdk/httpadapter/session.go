@@ -57,7 +57,7 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 	if err != nil {
 		return provider.Error("http_exchange_failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	encoder := json.NewEncoder(stream)
 	if err = encoder.Encode(SessionRecord{Type: "response", Status: response.StatusCode, Headers: response.Header}); err != nil {
 		return err
@@ -94,7 +94,7 @@ func handlerClient(ctx context.Context, handler http.Handler) (*http.Client, fun
 		_ = http.NewResponseController(w).EnableFullDuplex()
 		handler.ServeHTTP(w, r)
 	})}
-	go httpServer.Serve(listener)
+	go func() { _ = httpServer.Serve(listener) }()
 	var dial sync.Once
 	transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
 		var conn net.Conn
@@ -105,10 +105,10 @@ func handlerClient(ctx context.Context, handler http.Handler) (*http.Client, fun
 		return conn, nil
 	}}
 	cleanup := func() {
-		client.Close()
-		server.Close()
-		httpServer.Close()
-		listener.Close()
+		_ = client.Close()
+		_ = server.Close()
+		_ = httpServer.Close()
+		_ = listener.Close()
 		transport.CloseIdleConnections()
 	}
 	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, cleanup
@@ -147,8 +147,8 @@ func websocketSession(ctx context.Context, client *http.Client, request *http.Re
 		}
 		return provider.Error("websocket_handshake_failed")
 	}
-	defer conn.CloseNow()
-	stop := context.AfterFunc(ctx, func() { conn.CloseNow() })
+	defer func() { _ = conn.CloseNow() }()
+	stop := context.AfterFunc(ctx, func() { _ = conn.CloseNow() })
 	defer stop()
 	conn.SetReadLimit(MaxHTTPBody)
 	if err = send(SessionRecord{Type: "response", Status: 101, Headers: response.Header, Protocol: conn.Subprotocol()}); err != nil {
@@ -159,7 +159,7 @@ func websocketSession(ctx context.Context, client *http.Client, request *http.Re
 		err := websocketInput(ctx, conn, stream, send)
 		inputResult <- err
 		if err != nil {
-			conn.CloseNow()
+			_ = conn.CloseNow()
 		}
 	}()
 	for {

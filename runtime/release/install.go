@@ -44,7 +44,7 @@ func Unpack(archive []byte, name string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("release: the archive is not gzip: %w", err)
 	}
-	defer unzipped.Close()
+	defer func() { _ = unzipped.Close() }()
 
 	reader := tar.NewReader(unzipped)
 
@@ -102,8 +102,8 @@ func Replace(ctx context.Context, path string, program []byte, version string) e
 		return err
 	}
 	candidate := file.Name()
-	file.Close()
-	defer os.Remove(candidate)
+	_ = file.Close()
+	defer func() { _ = os.Remove(candidate) }()
 	if err := atomicfile.Write(candidate, program, 0o755); err != nil {
 		return fmt.Errorf("release: the new program did not save: %w", err)
 	}
@@ -116,7 +116,7 @@ func Replace(ctx context.Context, path string, program []byte, version string) e
 	}
 
 	previous := target + ".previous"
-	os.Remove(previous)
+	_ = os.Remove(previous)
 
 	// The old program is kept, and the new one takes its place. A rename on
 	// one filesystem never leaves a half written program behind.

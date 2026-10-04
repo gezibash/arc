@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,7 +57,7 @@ func TestTheCheckpointRefusesAnOlderDocument(t *testing.T) {
 		t.Fatalf("the checkpoint remembered sequence %d, want 7", expect.LastSequence)
 	}
 
-	if _, err := release.Verify(channelOf(t, publisher, 6), expect); err != release.ErrOutOfSequence {
+	if _, err := release.Verify(channelOf(t, publisher, 6), expect); !errors.Is(err, release.ErrOutOfSequence) {
 		t.Errorf("an older document gave %v, want the sequence error", err)
 	}
 
@@ -68,7 +69,7 @@ func TestTheCheckpointRefusesAnOlderDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := release.Verify(again, expect); err != release.ErrOutOfSequence {
+	if _, err := release.Verify(again, expect); !errors.Is(err, release.ErrOutOfSequence) {
 		t.Errorf("a second document at one sequence gave %v, want the sequence error", err)
 	}
 

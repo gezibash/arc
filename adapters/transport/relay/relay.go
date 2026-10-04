@@ -68,7 +68,7 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := r.publish(ctx, conn, event); err != nil {
 		return fmt.Errorf("relay %s: %w", r.URL, err)
@@ -117,7 +117,7 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 	if err != nil {
 		return transport.Batch{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	seen := map[nostr.ID]bool{}
 	var batch transport.Batch
@@ -216,7 +216,7 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange"})
 	if err != nil {
@@ -350,7 +350,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		probe.Limit = 1
 		if _, err := stored(ctx, conn, probe); errors.Is(err, errAuthRequired) {
 			if err := r.authenticate(ctx, conn); err != nil {
-				conn.Close()
+				_ = conn.Close()
 				return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 			}
 		}
@@ -361,7 +361,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		MaxWaitForEOSE: time.Duration(math.MaxInt64),
 	})
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 
@@ -373,14 +373,14 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 	cancel()
 	if err != nil {
 		sub.Unsub()
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("relay %s: the relay did not take the subscription: %w", r.URL, err)
 	}
 
 	out := make(chan nostr.Event)
 	go func() {
 		defer close(out)
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		defer sub.Unsub()
 
 		for _, event := range pending {

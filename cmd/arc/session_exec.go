@@ -45,19 +45,22 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		if err != nil {
 			return err
 		}
-		defer held.Close()
+		defer func() { _ = held.Close() }()
 		input = held
 	}
 	var mu sync.Mutex
 	encoder := json.NewEncoder(stream)
 	send := func(r execadapter.Record) error { mu.Lock(); defer mu.Unlock(); return encoder.Encode(r) }
 	if tty {
-		file := command.InOrStdin().(*os.File)
+		file, ok := command.InOrStdin().(*os.File)
+		if !ok {
+			return fmt.Errorf("--tty requires a terminal")
+		}
 		old, err := term.MakeRaw(int(file.Fd()))
 		if err != nil {
 			return err
 		}
-		defer term.Restore(int(file.Fd()), old)
+		defer func() { _ = term.Restore(int(file.Fd()), old) }()
 		resize := make(chan os.Signal, 1)
 		signal.Notify(resize, syscall.SIGWINCH)
 		defer signal.Stop(resize)
@@ -90,7 +93,8 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 		readInput := input
 		inputCtx, stopInput := context.WithCancel(stream.Context())
 		if tty {
-			readInput = terminalReader{inputCtx, int(input.(*os.File).Fd())}
+			held, _ := input.(*os.File)
+			readInput = terminalReader{inputCtx, int(held.Fd())}
 		}
 		inputDone := make(chan struct{})
 		defer func() {

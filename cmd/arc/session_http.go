@@ -90,7 +90,7 @@ func websocketCLI(cmd *cobra.Command, stream *session.Stream) error {
 			}
 		}
 		if scanner.Err() != nil {
-			stream.Close()
+			_ = stream.Close()
 			return
 		}
 		_ = stream.CloseWrite()
