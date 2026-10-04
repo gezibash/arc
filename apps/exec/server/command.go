@@ -29,6 +29,9 @@ type body struct {
 	PTY       bool     `json:"pty,omitempty"`
 	Rows      uint16   `json:"rows,omitempty"`
 	Cols      uint16   `json:"cols,omitempty"`
+	Keep      string   `json:"keep,omitempty"`
+	Attach    string   `json:"attach,omitempty"`
+	Name      string   `json:"name,omitempty"`
 }
 
 // decodeBody checks the size of a request body and reads it.
@@ -44,19 +47,22 @@ func decodeBody(cfg *config, message string) (body, error) {
 }
 
 // parseRequest reads the body of a request. It returns the action, and either
-// a command or a job id.
-func parseRequest(cfg *config, message string) (action string, cmd *command, job string, err error) {
+// a command, a job id or the name of a kept process.
+func parseRequest(cfg *config, message string) (action string, cmd *command, target string, err error) {
 	request, err := decodeBody(cfg, message)
 	if err != nil {
 		return "", nil, "", err
 	}
 
-	if request.PTY || request.Rows != 0 || request.Cols != 0 {
+	if request.PTY || request.Rows != 0 || request.Cols != 0 || request.Keep != "" || request.Attach != "" {
 		return "", nil, "", provider.Error("use_exec_session")
 	}
 
 	if request.Action == "" {
 		request.Action = "run"
+	}
+	if request.Name != "" && request.Action != "kill" {
+		return "", nil, "", provider.ErrInvalidRequest
 	}
 
 	switch request.Action {
@@ -65,6 +71,19 @@ func parseRequest(cfg *config, message string) (action string, cmd *command, job
 			return "", nil, "", provider.Error("status needs exactly one valid job")
 		}
 		return "status", nil, request.Job, nil
+
+	case "list", "kill":
+		if request.Argv != nil || request.Script != "" || request.Job != "" || request.CWD != "" ||
+			request.Stdin != "" || request.TimeoutMS != nil {
+			return "", nil, "", provider.ErrInvalidRequest
+		}
+		if request.Action == "kill" && request.Name == "" {
+			return "", nil, "", provider.Error("kill needs a name")
+		}
+		if request.Action == "list" && request.Name != "" {
+			return "", nil, "", provider.ErrInvalidRequest
+		}
+		return request.Action, nil, request.Name, nil
 
 	case "run", "start":
 		if request.Job != "" {
@@ -83,7 +102,7 @@ func parseRequest(cfg *config, message string) (action string, cmd *command, job
 		return request.Action, cmd, "", nil
 
 	default:
-		return "", nil, "", provider.Error("action must be run, start, or status")
+		return "", nil, "", provider.Error("action must be run, start, status, list or kill")
 	}
 }
 

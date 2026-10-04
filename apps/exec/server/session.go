@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -28,7 +29,10 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	if err != nil {
 		return err
 	}
-	if request.Action != "" && request.Action != "run" || request.Job != "" {
+	if request.Keep != "" || request.Attach != "" {
+		return s.keptSession(parent, req.From, request, stream)
+	}
+	if request.Action != "" && request.Action != "run" || request.Job != "" || request.Name != "" {
 		return provider.ErrInvalidRequest
 	}
 	if request.PTY && stream.Mode() != provider.Duplex {
@@ -50,35 +54,10 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	var outputDone chan error
 	commandDone := new(atomic.Bool)
 	if request.PTY {
-		rows, cols := request.Rows, request.Cols
-		if rows == 0 {
-			rows = 24
-		}
-		if cols == 0 {
-			cols = 80
-		}
-		terminal, err = pty.StartWithSize(process, &pty.Winsize{Rows: rows, Cols: cols})
+		terminal, err = startTerminal(process, request.Rows, request.Cols)
 		if err != nil {
 			return err
 		}
-		// Register a nonblocking duplicate with Go's poller. The original
-		// pty descriptor was wrapped before O_NONBLOCK was set.
-		fd, dupErr := syscall.Dup(int(terminal.Fd()))
-		if dupErr == nil {
-			syscall.CloseOnExec(fd)
-			dupErr = syscall.SetNonblock(fd, true)
-		}
-		if dupErr != nil {
-			if fd >= 0 {
-				_ = syscall.Close(fd)
-			}
-			killGroup(process)
-			_ = process.Wait()
-			_ = terminal.Close()
-			return dupErr
-		}
-		_ = terminal.Close()
-		terminal = os.NewFile(uintptr(fd), "exec-pty")
 		input = terminal
 		outputDone = make(chan error, 1)
 		go func() {
@@ -203,6 +182,79 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		exit = 1
 	}
 	return output.encoder.Encode(execadapter.Record{Type: "exit", Exit: exit})
+}
+
+// keptSession starts a kept process or attaches to one. Both need a duplex
+// session.
+func (s *server) keptSession(ctx context.Context, from string, request body, stream *provider.Stream) error {
+	if request.Action != "" && request.Action != "run" || request.Job != "" || request.Name != "" {
+		return provider.ErrInvalidRequest
+	}
+	if stream.Mode() != provider.Duplex {
+		return provider.ErrUnsupported
+	}
+	if request.Attach != "" {
+		if request.Keep != "" || request.Argv != nil || request.Script != "" || request.CWD != "" ||
+			request.Stdin != "" || request.TimeoutMS != nil {
+			return provider.ErrInvalidRequest
+		}
+		k := s.find(request.Attach)
+		if k == nil {
+			return provider.Error("not_found")
+		}
+		if request.PTY != (k.terminal != nil) {
+			return provider.Error("pty_mismatch")
+		}
+		return s.attach(ctx, k, stream, request.Rows, request.Cols)
+	}
+	if !keepNamePattern.MatchString(request.Keep) {
+		return provider.Error("keep must be 1 to 64 letters, digits, '.', '_' or '-'")
+	}
+	if request.TimeoutMS != nil {
+		return provider.Error("a kept process has no timeout_ms")
+	}
+	cmd, err := parseCommand(s.config, request, s.config.Limits.TimeoutMS)
+	if err != nil {
+		return err
+	}
+	k, err := s.keep(from, request.Keep, cmd, request)
+	if err != nil {
+		return err
+	}
+	return s.attach(ctx, k, stream, 0, 0)
+}
+
+// startTerminal starts the process on a new terminal, 24 by 80 by default.
+// It returns the nonblocking master of the terminal.
+func startTerminal(process *exec.Cmd, rows, cols uint16) (*os.File, error) {
+	if rows == 0 {
+		rows = 24
+	}
+	if cols == 0 {
+		cols = 80
+	}
+	terminal, err := pty.StartWithSize(process, &pty.Winsize{Rows: rows, Cols: cols})
+	if err != nil {
+		return nil, err
+	}
+	// Register a nonblocking duplicate with Go's poller. The original
+	// pty descriptor was wrapped before O_NONBLOCK was set.
+	fd, dupErr := syscall.Dup(int(terminal.Fd()))
+	if dupErr == nil {
+		syscall.CloseOnExec(fd)
+		dupErr = syscall.SetNonblock(fd, true)
+	}
+	if dupErr != nil {
+		if fd >= 0 {
+			_ = syscall.Close(fd)
+		}
+		killGroup(process)
+		_ = process.Wait()
+		_ = terminal.Close()
+		return nil, dupErr
+	}
+	_ = terminal.Close()
+	return os.NewFile(uintptr(fd), "exec-pty"), nil
 }
 
 // drainIdle bounds the wait for terminal output after the command exits,

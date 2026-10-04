@@ -9,6 +9,11 @@
 //	run     run the command, and reply with the result. This is the default.
 //	start   start the command as a job, and reply with its id at once.
 //	status  reply with the state and the output of one job.
+//	list    reply with a table of the kept processes.
+//	kill    stop one kept process, and free its name.
+//
+// A session can keep a process with a name. The process outlives the
+// session, and a later session attaches to it by the name. See keep.go.
 //
 // When a job ends, the provider runs the notify command of the operator, if
 // the configuration holds one. The result of the job goes to its standard
