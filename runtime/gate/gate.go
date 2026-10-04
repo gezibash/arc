@@ -60,7 +60,6 @@ func (g *Gate) Send(ctx context.Context, e wire.Event) error {
 		shut := g.shut[id]
 		if e.Session.Op == "open" && !shut && !g.allowed(e.From) {
 			g.shut[id] = true
-			shut = true
 			g.mu.Unlock()
 			closed := session.Frame{Version: session.Version, ID: id, Op: "close", Error: Refused}
 			return g.answer(ctx, wire.Event{Op: "session", RequestID: id, Session: &closed})
