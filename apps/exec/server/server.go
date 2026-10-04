@@ -14,6 +14,7 @@ type server struct {
 	config *config
 	lease  *lease
 	log    io.Writer
+	kept   keeper
 }
 
 // Run reads the operator configuration and serves the app through core ARC.
@@ -29,7 +30,10 @@ func Run(ctx context.Context, opts provider.Options) error {
 	handler := &server{config: cfg, lease: newLease(cfg.Lease, opts.Log), log: opts.Log}
 	// Escaped JSON can grow to six times the configured request body size.
 	opts.MaxLineBytes = cfg.Limits.BodyBytes*6 + 8*1024
-	return provider.Run(ctx, handler, opts)
+	err = provider.Run(ctx, handler, opts)
+	// A kept process does not outlive the provider.
+	handler.stopKept()
+	return err
 }
 
 // HandleRequest answers one ARC request.
@@ -41,7 +45,7 @@ func (s *server) HandleRequest(ctx context.Context, request provider.Request) (s
 		return "", provider.Error("access_denied")
 	}
 
-	action, cmd, job, err := parseRequest(s.config, request.Message)
+	action, cmd, target, err := parseRequest(s.config, request.Message)
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +59,11 @@ func (s *server) HandleRequest(ctx context.Context, request provider.Request) (s
 	case "start":
 		reply, err = s.startJob(request.From, cmd)
 	case "status":
-		reply, err = s.jobStatus(request.From, job)
+		reply, err = s.jobStatus(request.From, target)
+	case "list":
+		reply = s.list()
+	case "kill":
+		reply, err = s.kill(ctx, target)
 	default:
 		reply, err = s.run(ctx, cmd)
 	}
