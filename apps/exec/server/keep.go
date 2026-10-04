@@ -424,11 +424,21 @@ type outputChunk struct {
 	data    []byte
 }
 
-// add appends the output, and drops the oldest bytes above the limit.
+// add appends the output, and drops the oldest bytes above the limit. Small
+// writes join the last chunk, so the number of chunks stays near
+// limit/4096 when a program writes one byte at a time.
 func (b *outputBuffer) add(channel string, data []byte) {
 	for len(data) > 0 {
-		n := min(len(data), 4096, b.limit)
-		b.chunks = append(b.chunks, outputChunk{channel, bytes.Clone(data[:n])})
+		var n int
+		if last := len(b.chunks) - 1; last >= 0 && b.chunks[last].channel == channel && len(b.chunks[last].data) < 4096 {
+			// A reader holds only bytes below the old length, and append
+			// never changes them.
+			n = min(len(data), 4096-len(b.chunks[last].data))
+			b.chunks[last].data = append(b.chunks[last].data, data[:n]...)
+		} else {
+			n = min(len(data), 4096, b.limit)
+			b.chunks = append(b.chunks, outputChunk{channel, bytes.Clone(data[:n])})
+		}
 		b.size += n
 		b.next += int64(n)
 		data = data[n:]

@@ -316,3 +316,23 @@ func TestProviderStopEndsKeptProcesses(t *testing.T) {
 		t.Fatalf("keep after stop: %v", err)
 	}
 }
+
+// A program that writes one byte at a time must not grow the buffer by one
+// chunk for each byte. The bound counts bytes, so chunks must be large.
+func TestKeptOutputBufferJoinsSmallWrites(t *testing.T) {
+	b := outputBuffer{limit: 64 * 1024}
+	for range 100_000 {
+		b.add("stdout", []byte{'x'})
+	}
+	if b.size != 64*1024 || len(b.chunks) > 17 {
+		t.Fatalf("size %d in %d chunks, want 65536 in at most 17", b.size, len(b.chunks))
+	}
+	chunks, next := b.since(0)
+	total := 0
+	for _, chunk := range chunks {
+		total += len(chunk.data)
+	}
+	if total != 64*1024 || next != 100_000 {
+		t.Fatalf("since: %d bytes, next %d", total, next)
+	}
+}
