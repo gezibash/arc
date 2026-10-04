@@ -75,6 +75,31 @@ func TestAJournalPageIsWrittenReadAndAppended(t *testing.T) {
 	}
 }
 
+// failingWriter stands for a stdout that is a closed pipe or a full disk.
+type failingWriter struct{}
+
+var errOutputGone = errors.New("output gone")
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errOutputGone }
+
+func TestAFailedWriteToStdoutIsAnError(t *testing.T) {
+	c := newCitizen(t)
+	c.must("journal", pageHeader+"auc 0.871\n", "write", page, "--title", "LR sweep")
+	for _, words := range [][]string{
+		{"read", page},           // streams each part
+		{"read", page, "--json"}, // buffers JSON lines
+		{"ls"},                   // buffers a table
+	} {
+		t.Run(strings.Join(words, " "), func(t *testing.T) {
+			err := Run(context.Background(), c.env, Installed{Manifest: specManifests(t)["journal"], Author: c.author, Name: "journal"}, words,
+				Stdio{In: strings.NewReader(""), Out: failingWriter{}, Err: &bytes.Buffer{}})
+			if !errors.Is(err, errOutputGone) {
+				t.Fatalf("a failed write to stdout returned %v, want %v", err, errOutputGone)
+			}
+		})
+	}
+}
+
 func TestThePageIsANIP37DraftOfAnArticle(t *testing.T) {
 	c := newCitizen(t)
 	c.must("journal", "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n", "write", page, "--title", "T")
