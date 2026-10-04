@@ -84,8 +84,15 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: true
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
+      # The version must match golangci-lint in mise.toml.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+      - name: Check that go fix has nothing to apply
+        run: test -z "$(go fix -diff ./...)"
+      # The version must match govulncheck in mise.toml.
+      - name: Check for known vulnerabilities that the code calls
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: go build ./...
       # The proofs build the programs and run them end to end. They have
       # their own jobs below.

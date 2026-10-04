@@ -482,8 +482,10 @@ func exitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	var coded interface{ ExitCode() int }
-	if errors.As(err, &coded) {
+	if coded, ok := errors.AsType[interface {
+		ExitCode() int
+		error
+	}](err); ok {
 		return coded.ExitCode()
 	}
 	return -1
