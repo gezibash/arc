@@ -48,9 +48,9 @@ characters. Use this vector to check how your code escapes JSON.
 
 ## How the file was made
 
-The file was calculated with the Python standard library, not with the Go
-code. Do not change the file to agree with a change in the Go code. If the
-Go code does not agree with the file, the wire format changed.
+The Python standard library calculated this file. The Go code did not.
+Do not change the file to agree with a change in the Go code. If the Go code
+does not agree with the file, the wire format changed.
 
 ## How the Go code uses the file
 

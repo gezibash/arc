@@ -119,16 +119,16 @@ names, map them to these classes. The Go code has no error values for these
 classes. The Go test compares the text of the error.
 
 The wrap with a changed ciphertext has a valid signature. Thus your code
-gets to the NIP-44 check, also if it checks the signature of a wrap first.
+gets to the NIP-44 check, even if it checks the signature of a wrap first.
 
 ## How the files were made
 
-`route_tags.json` and `../../mail/testdata/message_rumor.json` were
-calculated with the Python standard library, not with this package. Do not
+The Python standard library calculated `route_tags.json` and
+`../../mail/testdata/message_rumor.json`. This package did not. Do not
 change them to agree with a change in the Go code. If the Go code does not
 agree with them, the wire format changed.
 
-`wraps.json` was recorded with this command:
+This command records `wraps.json`:
 
 ```sh
 go test ./core/private -run '^TestWrapVectors$' -update
