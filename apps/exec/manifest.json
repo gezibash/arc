@@ -53,6 +53,15 @@
     },
     "job": {
       "record": "{{job}}\t{{state}}"
+    },
+    "kept": {
+      "table": {
+        "columns": "columns",
+        "rows": "rows"
+      }
+    },
+    "killed": {
+      "record": "{{name}}\t{{state}}\t{{exit}}"
     }
   },
   "commands": [
@@ -162,6 +171,50 @@
             "code": "{{exit}}"
           }
         ]
+      }
+    },
+    {
+      "path": [
+        "list"
+      ],
+      "summary": "List the kept processes",
+      "action": {
+        "call": {
+          "class": "live",
+          "body": "{\"action\": \"list\"}"
+        }
+      },
+      "output": {
+        "open": {
+          "parse": "json"
+        },
+        "format": "kept"
+      }
+    },
+    {
+      "path": [
+        "kill"
+      ],
+      "summary": "Stop a kept process",
+      "args": [
+        {
+          "name": "name",
+          "kind": "positional",
+          "type": "text",
+          "required": true
+        }
+      ],
+      "action": {
+        "call": {
+          "class": "live",
+          "body": "{\"action\": \"kill\", \"name\": {{name|json}}}"
+        }
+      },
+      "output": {
+        "open": {
+          "parse": "json"
+        },
+        "format": "killed"
       }
     }
   ]

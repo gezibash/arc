@@ -11,8 +11,8 @@ The machine can pause when it is idle. The caller wakes the machine before
 each request, and the machine holds a lease while it works. See
 [the wake spec](../../docs/wake/SPEC.md) for the design of the wake.
 
-Status: experimental. Request/reply, grants, the lease, jobs and the notify
-command are built.
+Status: experimental. Request/reply, grants, the lease, jobs, the notify
+command, streaming sessions and kept processes are built.
 
 WARNING: A grant equals a shell login. A granted key runs any command as the
 operating-system user of the service. It can read and change every file of
@@ -130,14 +130,19 @@ machine costs compute all the time.
 
 ## Run commands
 
-After `arc install <citizen-public-key>`, the capability adds three commands:
+After `arc install <citizen-public-key>`, the capability adds five commands:
 
 ```sh
 arc exec run uname -a
 arc exec run sh -c 'cd ~/arc && git status --short'
 arc exec start 'cd ~/arc && go test ./...'
 arc exec status <job>
+arc exec list
+arc exec kill <name>
 ```
+
+`list` and `kill` operate on kept processes, see
+[Kept processes](#kept-processes).
 
 `run` is a live call. It writes the output of the command, and exits with the
 exit code of the command. A code that is missing, below 0 or above 255 gives
@@ -162,6 +167,8 @@ operation:
 | `run` (default) | `argv` or `script`, and optional `cwd`, `stdin`, `timeout_ms` | `exit`, `stdout`, `stderr`, `timed_out`, `truncated` |
 | `start` | The same fields as `run` | `job` and `state` |
 | `status` | `job` | `state`, the output, and the result after the job ends |
+| `list` | No other field | `columns` and `rows`: one row for each kept process |
+| `kill` | `name` | `name`, `state` and `exit` of the kept process |
 
 With `arc`, send a request with `arc call`:
 
@@ -388,6 +395,8 @@ go test ./apps/exec/server
   access to another citizen.
 - A `shell+arc://` scheme and TCP forwarding (`tcp+arc://`) are separate
   work. Terminals use the sessions below.
+- Kept processes live in the memory of the provider. If the provider
+  restarts, each kept process ends, and its name and output are lost.
 
 
 ## Streaming processes and terminals
@@ -407,7 +416,7 @@ with the process status after core reports successful session completion.
 (including control characters), and sends resize events. Terminal output combines
 stdout and stderr. The local terminal is restored when the command ends.
 
-Sessions accept `run` only. Initial command fields and grants remain unchanged;
+Sessions accept `run`, and the `keep` and `attach` fields of [kept processes](#kept-processes). Initial command fields and grants remain unchanged;
 `pty`, `rows`, and `cols` are additional terminal options. Input/output use bounded
 NDJSON records. Input records are `stdin` with base64 `data`, and `resize` with
 positive `rows`/`cols`. Output records are `stdout`, `stderr`, and final `exit`.
@@ -418,3 +427,110 @@ budget fails the session and stops the process group. Cancellation also stops th
 process group and releases the machine lease. Pipe input EOF closes stdin; PTY
 EOF sends the terminal EOF character. Detached `start`/`status` jobs retain their
 existing request/reply and queued-delivery behavior.
+
+### Kept processes
+
+A kept process outlives the session that starts it. A later session attaches
+to it by its name. Use a kept process for a program that must run when no
+caller is connected, for example an agent that runs all the time.
+
+Start a kept process with the body field `keep`. The value is the name of
+the process:
+
+```sh
+arc session --tty --timeout 30m 'exec+arc://<service>/' \
+  '{"argv":["claude"],"keep":"alfred"}'
+```
+
+Attach to the process with the body field `attach`:
+
+```sh
+arc session --tty --timeout 30m 'exec+arc://<service>/' '{"attach":"alfred"}'
+```
+
+List and stop kept processes with the installed commands:
+
+```sh
+arc exec list
+arc exec kill alfred
+```
+
+| Body | Meaning |
+| --- | --- |
+| `keep` | With `argv` or `script`: start a kept process with this name. The session attaches to it. |
+| `attach` | Attach to the kept process with this name. Give no other command field. |
+| `{"action":"list"}` | Request/reply. Show each kept process. |
+| `{"action":"kill","name":"<name>"}` | Request/reply. Stop the process group, and free the name. |
+
+A name has 1 to 64 characters: letters, digits, `.`, `_` and `-`. The first
+character is a letter or a digit.
+
+Rules:
+
+- Only a key in `grants` can start, attach, list or kill a kept process.
+  Other keys get `access_denied`.
+- The provider has one set of names. Each granted key can attach to, list
+  and kill each kept process. `list` shows the key that started each process.
+- `keep` and `attach` need a duplex session. A request/reply call with
+  `keep` or `attach` gets `use_exec_session`.
+- If the name is in use, `keep` gets `name_in_use`. If no process has the
+  name, `attach` and `kill` get `not_found`.
+- `attach` must use the same terminal mode as `keep`. Use `--tty` for a
+  process with `pty`, and `--exec` for a process without it. If the modes
+  are different, `attach` gets `pty_mismatch`.
+- When the session ends, the process continues. This is true for each way
+  that a session ends: the caller stops `arc`, the connection fails, or the
+  session reaches its `--timeout`.
+- When the session input ends (EOF), the input of the process stays open.
+  A later session can write to it.
+- One session at a time attaches to a process. If a second session
+  attaches, the first session ends with the error `detached`. The second
+  session gets the input and the output.
+- An attach with `--tty` sets the terminal size of the process to the size
+  of the local terminal. If the size does not change, the provider sends
+  `SIGWINCH` to the process group, so that the program draws its screen
+  again.
+- In `--tty` mode, the local terminal sends each key to the process,
+  `Ctrl-C` too. No key detaches the session. To detach, stop `arc` from
+  another terminal, close the terminal, or let the session reach its
+  `--timeout`.
+
+Output buffer:
+
+- The provider keeps the newest output of each kept process in memory. The
+  bound is `limits.output_bytes`: 1 MiB by default, 4 MiB at most. The
+  provider drops the oldest bytes above the bound.
+- The provider keeps the buffer while a session is attached, and while no
+  session is attached.
+- An attach first sends all output in the buffer, then the new output. The
+  buffer can hold output that an earlier session showed.
+- A slow session does not stop the process. If a session falls behind by more
+  than the bound, it does not get the bytes that the provider dropped.
+- For a terminal, the buffer holds the raw terminal output. A full-screen
+  program can show a partial screen until it draws the screen again.
+
+Limits and end of a kept process:
+
+- A kept process has no time limit. `limits.timeout_ms` and
+  `limits.job_timeout_ms` do not apply to it. Use `kill` to stop it.
+- `limits.output_bytes` is the bound of the output buffer. It is not a limit
+  on the total output, so a kept process does not fail with
+  `output_too_large`.
+- Each session is still limited by its `--timeout`, at most 30 minutes. At
+  the timeout the session ends, and the process continues.
+- A kept process holds the lease while it runs. A machine that pauses does
+  not pause while a kept process runs.
+- When the process exits, the provider keeps its output and its exit status.
+  The next session that attaches gets the output and the exit status. Then
+  the provider frees the name.
+- If a session is attached when the process exits, the session gets the exit
+  status, and the provider frees the name.
+- `kill` stops the whole process group. The reply has `state` `killed`, or
+  `exited` if the process exited before. `kill` frees the name.
+- When the provider stops, it stops each kept process group. If the provider
+  stops without a clean shutdown, for example with `SIGKILL`, the operating
+  system closes the terminal of a `pty` process. Most programs end on that
+  hangup. A process without `pty` can continue with no provider. Stop it by
+  hand.
+- No session attaches automatically. A caller attaches by the name, with a
+  new session.

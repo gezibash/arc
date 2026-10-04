@@ -138,7 +138,7 @@ func TestAnnounceAManifestOfVersionOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if offer.Manifest == nil || offer.ID != "exec" || offer.Method != "EXEC" || offer.Path != "/" || len(offer.Manifest.Commands) != 3 {
+	if offer.Manifest == nil || offer.ID != "exec" || offer.Method != "EXEC" || offer.Path != "/" || len(offer.Manifest.Commands) != 5 {
 		t.Fatalf("offer = %+v", offer)
 	}
 

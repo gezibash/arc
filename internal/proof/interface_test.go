@@ -129,7 +129,7 @@ func TestInterface(t *testing.T) {
 	t.Log("ok: two providers announce manifests of interface version 1")
 
 	install := caller.run("install", execKey, "--yes")
-	contains(install, "a service with 3 commands, interface version 1", "the install did not show the manifest")
+	contains(install, "a service with 5 commands, interface version 1", "the install did not show the manifest")
 	contains(install, "installed exec", "exec did not install as exec")
 	contains(caller.run("install", sqliteKey, "--as", "db", "--yes"), "installed db", "sqlite did not install as db")
 	t.Log("ok: the caller installs exec as exec, and sqlite as db")

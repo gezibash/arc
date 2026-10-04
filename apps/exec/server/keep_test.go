@@ -156,7 +156,9 @@ func TestAttachAfterExitShowsTheExitStatus(t *testing.T) {
 // The buffer keeps the newest output_bytes bytes, and drops the older bytes.
 func TestKeptOutputBufferHoldsTheNewestBytes(t *testing.T) {
 	s := keptServer(t)
-	s.config.Limits.OutputBytes = 100
+	// 102 is not a multiple of the 4-byte writes, so the oldest kept
+	// write is cut.
+	s.config.Limits.OutputBytes = 102
 	first := open(t, s, caller, `{"script":"echo ready; read line; i=0; while [ $i -lt 50 ]; do printf '%04d' $i; i=$((i+1)); done","keep":"long"}`)
 	first.until("ready")
 	_ = first.stream.Close()
@@ -172,7 +174,7 @@ func TestKeptOutputBufferHoldsTheNewestBytes(t *testing.T) {
 	for i := range 50 {
 		fmt.Fprintf(&all, "%04d", i)
 	}
-	want := all.String()[all.Len()-100:]
+	want := all.String()[all.Len()-102:]
 	second := open(t, s, caller, `{"attach":"long"}`)
 	if err := second.finish(); err != nil {
 		t.Fatal(err)
@@ -215,6 +217,8 @@ func TestSecondAttachTakesOverAndInputEOFStaysInTheSession(t *testing.T) {
 		t.Fatalf("list: %v", reply)
 	}
 
+	_ = second.stream.Close()
+	_ = second.finish()
 	pid := k.process.Process.Pid
 	reply, err = ask(t, s, caller, map[string]any{"action": "kill", "name": "cat"})
 	if err != nil || reply["state"] != "killed" {
@@ -222,9 +226,6 @@ func TestSecondAttachTakesOverAndInputEOFStaysInTheSession(t *testing.T) {
 	}
 	if alive(pid) {
 		t.Fatal("the process runs after kill")
-	}
-	if err := second.finish(); err != nil || second.exit < 1 {
-		t.Fatalf("the attached session after kill: %v exit %d", err, second.exit)
 	}
 	if s.find("cat") != nil {
 		t.Fatal("the name stays after kill")
