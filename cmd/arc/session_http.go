@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -29,7 +30,7 @@ func httpSessionCLI(cmd *cobra.Command, stream *session.Stream) error {
 	ended := false
 	for {
 		record, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -98,7 +99,7 @@ func websocketCLI(cmd *cobra.Command, stream *session.Stream) error {
 	opened, closed := false, false
 	for {
 		record, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

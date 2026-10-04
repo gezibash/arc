@@ -202,7 +202,7 @@ func websocketInput(ctx context.Context, conn *websocket.Conn, stream *session.S
 	reader := NewSessionReader(stream)
 	for {
 		record, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return conn.Close(websocket.StatusNormalClosure, "")
 		}
 		if err != nil {

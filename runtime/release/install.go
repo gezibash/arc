@@ -124,7 +124,9 @@ func Replace(ctx context.Context, path string, program []byte, version string) e
 		return fmt.Errorf("release: the running program did not move aside: %w", err)
 	}
 	if err := os.Rename(candidate, target); err != nil {
-		os.Rename(previous, target)
+		if restoreErr := os.Rename(previous, target); restoreErr != nil {
+			return fmt.Errorf("release: the new program did not take its place: %w, and the old program did not return from %s: %w", err, previous, restoreErr)
+		}
 		return fmt.Errorf("release: the new program did not take its place: %w", err)
 	}
 	return nil

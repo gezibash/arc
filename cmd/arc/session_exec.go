@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -108,7 +109,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 						return
 					}
 				}
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					_ = stream.CloseWrite()
 					return
 				}
@@ -124,7 +125,7 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 	exit := -1
 	for {
 		record, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

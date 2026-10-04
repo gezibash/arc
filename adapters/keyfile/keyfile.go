@@ -37,10 +37,11 @@ func Save(path string, k keys.Key) error {
 		}
 		return err
 	}
-	defer file.Close()
-
-	_, err = fmt.Fprintln(file, k.Secret.Hex())
-	return err
+	if _, err := fmt.Fprintln(file, k.Secret.Hex()); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // Read returns what a key file holds. It refuses a file that other users can

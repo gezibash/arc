@@ -203,7 +203,7 @@ func downloadStream(ctx context.Context, source ArchiveSource, artifact *Artifac
 				progress(int64(len(out)), artifact.Size)
 			}
 		}
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

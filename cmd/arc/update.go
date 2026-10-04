@@ -316,8 +316,16 @@ func checkSuccessor(target string, unsigned map[string]any) error {
 	if current["publisher"] != unsigned["publisher"] {
 		return fmt.Errorf("%s has another publisher: a new publisher needs an explicit trust transition", target)
 	}
-	now, _ := current["sequence"].(json.Number).Int64()
-	next, _ := unsigned["sequence"].(json.Number).Int64()
+	nowNumber, _ := current["sequence"].(json.Number)
+	now, err := nowNumber.Int64()
+	if err != nil {
+		return fmt.Errorf("%s has no whole-number sequence", target)
+	}
+	nextNumber, _ := unsigned["sequence"].(json.Number)
+	next, err := nextNumber.Int64()
+	if err != nil {
+		return fmt.Errorf("the new channel document has no whole-number sequence")
+	}
 	if next <= now {
 		return fmt.Errorf("the sequence must be above %d, the sequence of %s", now, target)
 	}

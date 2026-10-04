@@ -138,7 +138,7 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		reader := execadapter.NewReader(stream)
 		for {
 			record, err := reader.Next()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				if terminal != nil {
 					_, err = input.Write([]byte{4})
 				} else {

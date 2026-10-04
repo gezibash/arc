@@ -84,7 +84,9 @@ func (r *run) enforceFrontmatter(p *Publish, content string, tags nostr.Tags) (n
 		if err != nil {
 			return nil, err
 		}
-		if fields["notebook"].(string)+"/"+fields["page"].(string) != address {
+		notebook, _ := fields["notebook"].(string)
+		page, _ := fields["page"].(string)
+		if notebook+"/"+page != address {
 			return nil, fmt.Errorf("frontmatter: notebook/page must match address %q", address)
 		}
 	}
