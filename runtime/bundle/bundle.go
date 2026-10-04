@@ -261,6 +261,11 @@ func findCommand(cwd, command string) (string, error) {
 func findTranslator(protocol string) (string, error) {
 	name := "arc-" + protocol
 	if self, err := os.Executable(); err == nil {
+		// A link to arc, for example in ~/.local/bin, names another
+		// directory than the release.
+		if real, err := filepath.EvalSymlinks(self); err == nil {
+			self = real
+		}
 		beside := filepath.Join(filepath.Dir(self), name)
 		if info, err := os.Stat(beside); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
 			return beside, nil
