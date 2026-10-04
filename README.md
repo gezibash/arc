@@ -127,7 +127,9 @@ arc message watch --json --since <message id> --from <public key>
 
 `watch` never marks a message read. Delivery is at least once: a message
 can come two times, for example after a restart. Remove duplicates by `id`.
-To lose no message after a restart, give the last `id` to `--since`.
+`watch` prints messages in the order in which this machine stored them.
+To lose no message after a restart, handle the messages in that order, and
+give the last `id` that you handled to `--since`.
 Each `arc` command that stores a message records the order of receipt in
 `store/receipts.db` of the home. A message that a courier brings late
 therefore comes after the last `id`.

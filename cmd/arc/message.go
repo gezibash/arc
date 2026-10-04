@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,14 +130,37 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// showNew prints the messages that it did not print before, in the
+	// order of receipt. An adapter that gives the last id to --since after
+	// a restart then loses no message.
 	seen := map[string]bool{}
-	for _, m := range msgs {
-		seen[m.ID] = true
-		if after(m) {
+	showNew := func(msgs []mail.Message, include func(mail.Message) bool) error {
+		var fresh []mail.Message
+		for _, m := range msgs {
+			if !seen[m.ID] {
+				seen[m.ID] = true
+				if include(m) {
+					fresh = append(fresh, m)
+				}
+			}
+		}
+		if len(fresh) > 1 {
+			order, err := sess.ReceiptOrder(ctx)
+			if err != nil {
+				return err
+			}
+			// A message with no receipt comes first, in the order of the inbox.
+			slices.SortStableFunc(fresh, func(a, b mail.Message) int { return cmp.Compare(order[a.ID], order[b.ID]) })
+		}
+		for _, m := range fresh {
 			if err := show(m); err != nil {
 				return err
 			}
 		}
+		return nil
+	}
+	if err := showNew(msgs, after); err != nil {
+		return err
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -163,14 +187,11 @@ func watchMessages(command *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		for _, m := range msgs {
-			if seen[m.ID] {
-				continue
+		if err := showNew(msgs, func(mail.Message) bool { return true }); err != nil {
+			if ctx.Err() != nil {
+				return nil
 			}
-			seen[m.ID] = true
-			if err := show(m); err != nil {
-				return err
-			}
+			return err
 		}
 	}
 }

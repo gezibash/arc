@@ -158,6 +158,8 @@ func TestMessageWatch(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	mark := send(alice, "mark")
 	bob.run("sync")
+	send(alice, "after")
+	bob.run("sync")
 	bob.run("sync", "--dir", stick)
 	written := map[string]string{}
 	for _, fields := range lines(bob.run("message", "inbox", "--json")) {
@@ -165,8 +167,8 @@ func TestMessageWatch(t *testing.T) {
 	}
 	want(written[late] != "" && written[mark] != "" && written[late] < written[mark], "late is at %q, mark is at %q; want late first", written[late], written[mark])
 	w = watch("--since", mark)
-	printed(w, 1)
+	printed(w, 2)
 	want(w.exitCode() == 0, "watch did not exit 0 on SIGTERM:\n%s", w.output())
-	want(slices.Equal(texts(lines(w.stdout())), []string{"late"}), "watch --since <mark> printed %v; want late", texts(lines(w.stdout())))
-	t.Log("ok: watch --since <id> prints a message that arrived later, though its sender wrote it earlier")
+	want(slices.Equal(texts(lines(w.stdout())), []string{"after", "late"}), "watch --since <mark> printed %v; want after, then late", texts(lines(w.stdout())))
+	t.Log("ok: watch --since <id> prints the messages that arrived later in the order of receipt, though a sender wrote one earlier")
 }
