@@ -6,6 +6,18 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc message watch` prints each new message when a relay delivers it, and
+  runs until a signal stops it. `--since` first prints the stored messages
+  from a time or a message id. `--from` prints only the messages from some
+  keys. `watch` uses the mail watch of `arc serve`, and never marks a
+  message read. See README.md, section "Watch the inbox".
+- `arc message inbox --json` prints one JSON object for each message:
+  `id`, `from`, `name`, `at` and `text`. `arc message watch --json` prints
+  the same object. A change to this object is a breaking change.
+- `arc message send --json` prints one JSON object: `id`, `to` and `state`.
+
 ## [0.18.0] - 2026-10-04
 
 The Arcfile has version 2, a program of any language can serve an app over

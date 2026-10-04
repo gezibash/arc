@@ -48,7 +48,7 @@ func TestMessageWatch(t *testing.T) {
 	lines := func(text string) []map[string]string {
 		t.Helper()
 		var parsed []map[string]string
-		for _, raw := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		for raw := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 			if raw == "" {
 				continue
 			}
