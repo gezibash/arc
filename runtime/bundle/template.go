@@ -5,15 +5,22 @@ import (
 	"fmt"
 )
 
-const arcfileTemplate = `version = 1
+const arcfileTemplate = `version = 2
 
-[runtime]
-type = "exec"
+# How the program goes into ARC.
+[serve]
 command = "./run.sh"
 cwd = "."
+protocol = "stdio"
+manifest = "./manifest.json"
+# Only these callers reach the program. Leave it out to allow every caller.
+# allow = ["<key>"]
 
-[manifest]
-path = "./manifest.json"
+# How the program goes out of ARC: the installed apps that it calls. Each
+# name gives the program ARC_USE_<NAME>, the address of the app. Leave the
+# table out to allow calls to every installed app.
+# [uses]
+# weather = "weather"
 `
 
 // manifestTemplate writes the commands of the capability, as interface
