@@ -1,0 +1,6 @@
+version = 2
+
+[serve]
+command = "./run.sh"
+cwd = "."
+manifest = "./manifest.json"

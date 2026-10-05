@@ -1,0 +1,43 @@
+{
+  "interface": 1,
+  "id": "transfer",
+  "shape": "service",
+  "title": "Transfer",
+  "summary": "Gives files to citizens on a direct connection. The program arc-transfer gets a file.",
+  "service": {
+    "method": "RAW",
+    "path": "/",
+    "max_bytes": 65536
+  },
+  "kinds": {},
+  "formats": {
+    "answer": {
+      "record": "{{content}}"
+    }
+  },
+  "commands": [
+    {
+      "path": [
+        "fetch"
+      ],
+      "summary": "Send a fetch request, and show the answer; arc-transfer get does this",
+      "args": [
+        {
+          "name": "request",
+          "kind": "positional",
+          "type": "text",
+          "required": true
+        }
+      ],
+      "action": {
+        "call": {
+          "class": "live",
+          "body": "{{request}}"
+        }
+      },
+      "output": {
+        "format": "answer"
+      }
+    }
+  ]
+}

@@ -6,6 +6,17 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The transfer app gives a file to a citizen on a direct connection. One
+  live call carries a WebRTC offer and answer, and the bytes go on a data
+  channel between the two programs, not through a relay. `arc-transfer
+  offer <file>` records a file and prints a link, and `arc-transfer get
+  <link>` gets the file, continues from a part file, and checks the SHA-256.
+  A release now includes the program `arc-transfer`. The app adds the module
+  `github.com/pion/webrtc/v4` and 17 indirect modules; `arc` itself does
+  not import them. See apps/transfer/README.md.
+
 ## [0.19.0] - 2026-10-04
 
 `arc message watch` prints the inbox as it arrives, and three message
