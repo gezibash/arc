@@ -1,11 +1,8 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -50,7 +47,7 @@ func Record(state, file string, to []string) (direct.Offer, error) {
 	if !info.Mode().IsRegular() {
 		return o, fmt.Errorf("%s is not a regular file", path)
 	}
-	sum, err := hashFile(path)
+	sum, err := direct.HashFile(path)
 	if err != nil {
 		return o, err
 	}
@@ -81,19 +78,6 @@ func load(state, sum string) (direct.Offer, error) {
 		return o, err
 	}
 	return o, json.Unmarshal(raw, &o)
-}
-
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-	sum := sha256.New()
-	if _, err := io.Copy(sum, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(sum.Sum(nil)), nil
 }
 
 func deliveryFile(state, sum, to string) string {

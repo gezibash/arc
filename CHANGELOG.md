@@ -20,6 +20,12 @@ All notable changes to ARC are recorded here. The format follows
   command. It records the offers, serves the app for that citizen only,
   sends one message with the links, and waits until the citizen has each
   file. No service of the sender must run before.
+- `arc-transfer put <key> <file>` gives a file to the transfer app of a
+  citizen. A phone can give a file this way: it is open only while the
+  person sends, and cannot serve the file later. The app keeps the file in
+  `received/<key>/<sha256>` of its state directory, and `arc-transfer get`
+  takes it from there with the link, with no connection. The app takes puts
+  only if `TRANSFER_PUT_MAX_MIB` is set. See apps/transfer/README.md.
 
 ### Fixed
 

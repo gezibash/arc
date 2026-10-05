@@ -1,23 +1,21 @@
 // Package client gets the file of a link from the transfer app of a
-// sender. It makes the ARC call with the arc program, so ARC signs the call
-// with the key of this citizen.
+// sender, and gives a file to the transfer app of a receiver. It makes the
+// ARC call with the arc program, so ARC signs the call with the key of this
+// citizen.
 package client
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer/direct"
@@ -31,10 +29,6 @@ const holdWait = time.Second
 // errNoPath says that one attempt found no direct path. The next attempt
 // uses the other order of the first packets.
 var errNoPath = errors.New("no direct path")
-
-// errTooManyBytes says that the sender wrote more bytes than the size in the
-// link. The receiver does not write these bytes.
-var errTooManyBytes = errors.New("the sender wrote more bytes than the link says")
 
 // Arc names the arc program and the arc home of this citizen.
 type Arc struct {
@@ -85,6 +79,10 @@ type Get struct {
 	HoldFirst bool
 	// Notes gets one line for each event that a person wants to know.
 	Notes io.Writer
+	// State is the state directory of the transfer app of this citizen. If
+	// the sender gave the file to this app with a put, Run takes it from
+	// there, with no connection.
+	State string
 }
 
 // Result is what Run did.
@@ -103,10 +101,7 @@ type getter struct {
 	Get
 	sender string
 	offer  direct.Offer
-	file   *os.File
-	sum    hash.Hash
-	// have is the number of bytes of the file that the part file holds.
-	have atomic.Int64
+	part   *direct.Part
 }
 
 // Run gets the file. It writes <output>.part, and renames it when the
@@ -126,13 +121,19 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 	if _, err := os.Stat(g.Output); err == nil {
 		return result, fmt.Errorf("%s is there already", g.Output)
 	}
-	run := &getter{Get: g, sender: sender, offer: offer, sum: sha256.New()}
-	part := g.Output + ".part"
-	if err := run.openPart(part); err != nil {
+	if g.State != "" {
+		if taken, err := takePushed(direct.ReceivedFile(g.State, sender, offer.SHA256), offer.Size, g.Output); taken || err != nil {
+			result.Output, result.Path = g.Output, "put"
+			return result, err
+		}
+	}
+	part, err := direct.OpenPart(g.Output, offer.SHA256, offer.Size)
+	if err != nil {
 		return result, err
 	}
-	defer func() { _ = run.file.Close() }()
-	resumed := run.have.Load()
+	defer part.Close()
+	run := &getter{Get: g, sender: sender, offer: offer, part: part}
+	resumed := part.Have()
 	if resumed > 0 {
 		fmt.Fprintf(g.Notes, "the part file holds %d bytes; getting the rest\n", resumed)
 	}
@@ -153,56 +154,57 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 			fmt.Fprintln(g.Notes, "no direct path in the first order of the packets; trying the other order")
 		}
 	}
-	if errors.Is(err, errTooManyBytes) {
+	if errors.Is(err, direct.ErrTooManyBytes) {
 		// The part file is not a start of the file of the link.
-		_ = run.file.Close()
-		_ = os.Remove(part)
+		part.Discard()
 		return result, fmt.Errorf("%w; the part file is removed", err)
 	}
 	if err != nil {
-		if run.have.Load() > resumed {
-			return result, fmt.Errorf("%w; %s holds %d of %d bytes, run the command again to get the rest", err, part, run.have.Load(), offer.Size)
+		if part.Have() > resumed {
+			return result, fmt.Errorf("%w; %s.part holds %d of %d bytes, run the command again to get the rest", err, g.Output, part.Have(), offer.Size)
 		}
 		return result, err
 	}
-
-	if err := run.file.Close(); err != nil {
+	if err := part.Finish(); err != nil {
 		return result, err
 	}
-	if got := hex.EncodeToString(run.sum.Sum(nil)); run.have.Load() != offer.Size || got != offer.SHA256 {
-		_ = os.Remove(part)
-		return result, fmt.Errorf("the bytes do not have the SHA-256 of the link (%d bytes, %s); the part file is removed", run.have.Load(), got)
-	}
-	if err := os.Rename(part, g.Output); err != nil {
-		return result, err
-	}
-	result.Output, result.Bytes, result.Elapsed = g.Output, run.have.Load()-resumed, time.Since(started)
+	result.Output, result.Bytes, result.Elapsed = g.Output, part.Have()-resumed, time.Since(started)
 	return result, nil
 }
 
-// openPart opens the part file to add bytes, and reads the bytes that it
-// holds into the SHA-256.
-func (g *getter) openPart(part string) error {
-	f, err := os.OpenFile(part, os.O_RDWR|os.O_CREATE, 0o600)
+// takePushed moves a file that the sender gave with a put to output. It
+// says false if no such file of this size is there. The app checked the
+// SHA-256 when the file arrived.
+func takePushed(file string, size int64, output string) (bool, error) {
+	info, err := os.Stat(file)
+	if err != nil || info.Size() != size {
+		return false, nil
+	}
+	if os.Rename(file, output) == nil {
+		return true, nil
+	}
+	// The state directory can be on another file system than the output.
+	in, err := os.Open(file)
 	if err != nil {
-		return err
+		return true, err
 	}
-	info, err := f.Stat()
-	if err == nil && info.Size() > g.offer.Size {
-		// The part file is not a start of this file.
-		err = f.Truncate(0)
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(output+".part", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return true, err
 	}
-	var n int64
+	_, err = io.Copy(out, in)
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
 	if err == nil {
-		n, err = io.Copy(g.sum, f)
+		err = os.Rename(output+".part", output)
 	}
 	if err != nil {
-		_ = f.Close()
-		return err
+		_ = os.Remove(output + ".part")
+		return true, err
 	}
-	g.file = f
-	g.have.Store(n)
-	return nil
+	return true, os.Remove(file)
 }
 
 // attempt opens one connection and takes bytes from it. It returns
@@ -235,18 +237,9 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 			finish(nil)
 			return
 		}
-		// The size in the link is the limit. A sender that writes more must
-		// not fill the disk.
-		if g.have.Load()+int64(len(m.Data)) > g.offer.Size {
-			finish(errTooManyBytes)
-			return
-		}
-		if _, err := g.file.Write(m.Data); err != nil {
+		if err := g.part.Write(m.Data); err != nil {
 			finish(err)
-			return
 		}
-		g.sum.Write(m.Data)
-		g.have.Add(int64(len(m.Data)))
 	})
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
@@ -261,11 +254,11 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 	if err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(direct.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.have.Load(), HoldMS: int(hold / time.Millisecond), SDP: local})
+	body, err := json.Marshal(direct.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), SDP: local})
 	if err != nil {
 		return "", err
 	}
-	reply, err := g.call(ctx, string(body))
+	reply, err := call(ctx, g.Arc, g.sender, string(body))
 	if err != nil {
 		return "", err
 	}
@@ -302,9 +295,9 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 	return path, nil
 }
 
-// call makes the ARC call to the app of the sender.
-func (g *getter) call(ctx context.Context, body string) ([]byte, error) {
-	command := g.Arc.Command(ctx, "call", "transfer+arc://"+g.sender+"/", body, "--raw", "--timeout", "30s")
+// call makes the ARC call to the transfer app of a citizen.
+func call(ctx context.Context, arc Arc, key, body string) ([]byte, error) {
+	command := arc.Command(ctx, "call", "transfer+arc://"+key+"/", body, "--raw", "--timeout", "30s")
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	reply, err := command.Output()
@@ -318,7 +311,164 @@ func (g *getter) call(ctx context.Context, body string) ([]byte, error) {
 	case strings.Contains(text, "file_changed"):
 		return nil, errors.New("the file of the sender changed after the offer")
 	case strings.Contains(text, "busy"):
-		return nil, errors.New("the sender runs too many transfers now; try again later")
+		return nil, errors.New("the app runs too many transfers now; try again later")
+	case strings.Contains(text, "put_refused"):
+		return nil, errors.New("the app takes no files; its owner must set TRANSFER_PUT_MAX_MIB")
+	case strings.Contains(text, "too_large"):
+		return nil, errors.New("the file is larger than the app takes")
 	}
-	return nil, fmt.Errorf("the ARC call failed: %s\nif the app of the sender is not installed, run: arc install %s transfer", text, g.sender)
+	return nil, fmt.Errorf("the ARC call failed: %s\nif the app of the citizen is not installed, run: arc install %s transfer", text, key)
+}
+
+// Put gives a file to the transfer app of a receiver. The app keeps the
+// bytes. The receiver then takes the file with the link, with no second
+// connection.
+type Put struct {
+	Arc Arc
+	// To is the public key of the receiver.
+	To string
+	// File is the file to give.
+	File string
+	// Options are the settings of the connection.
+	Options direct.Options
+	// HoldFirst asks the receiver to wait in the first attempt, not in the
+	// second.
+	HoldFirst bool
+	// Notes gets one line for each event that a person wants to know.
+	Notes io.Writer
+}
+
+// PutResult is what Put.Run did.
+type PutResult struct {
+	// Link is the link of the file, for a message to the receiver.
+	Link string
+	// Bytes is the number of bytes that this run gave.
+	Bytes int64
+	// Path names the kinds of the two addresses of the connection.
+	Path    string
+	Elapsed time.Duration
+}
+
+// Run gives the file. If the receiver has a start of the file, Run gives
+// only the rest. If the receiver has all of it, Run gives nothing.
+func (p Put) Run(ctx context.Context) (PutResult, error) {
+	var result PutResult
+	if p.Notes == nil {
+		p.Notes = io.Discard
+	}
+	if !direct.IsHex64(p.To) {
+		return result, errors.New("the key of the receiver is not 64 hex digits")
+	}
+	me, err := p.Arc.PublicKey(ctx)
+	if err != nil {
+		return result, err
+	}
+	info, err := os.Stat(p.File)
+	if err != nil {
+		return result, err
+	}
+	if !info.Mode().IsRegular() {
+		return result, fmt.Errorf("%s is not a regular file", p.File)
+	}
+	sum, err := direct.HashFile(p.File)
+	if err != nil {
+		return result, err
+	}
+	offer := direct.Offer{SHA256: sum, Name: filepath.Base(p.File), Size: info.Size()}
+	result.Link = direct.Link(me, offer)
+
+	holds := []time.Duration{0, holdWait}
+	if p.HoldFirst {
+		holds = []time.Duration{holdWait, 0}
+	}
+	started := time.Now()
+	for i, hold := range holds {
+		result.Path, result.Bytes, err = p.attempt(ctx, offer, hold)
+		if !errors.Is(err, errNoPath) {
+			break
+		}
+		if i == 0 {
+			fmt.Fprintln(p.Notes, "no direct path in the first order of the packets; trying the other order")
+		}
+	}
+	result.Elapsed = time.Since(started)
+	return result, err
+}
+
+// attempt opens one connection and gives the bytes that the receiver does
+// not have. It returns errNoPath if the data channel did not open.
+func (p Put) attempt(ctx context.Context, offer direct.Offer, hold time.Duration) (path string, sent int64, err error) {
+	pc, err := direct.NewConnection(p.Options)
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { _ = pc.Close() }()
+	dc, err := pc.CreateDataChannel("file", nil)
+	if err != nil {
+		return "", 0, err
+	}
+	opened := make(chan struct{})
+	answered := make(chan string, 1)
+	dc.OnOpen(func() { close(opened) })
+	dc.OnMessage(func(m webrtc.DataChannelMessage) {
+		if m.IsString {
+			select {
+			case answered <- string(m.Data):
+			default:
+			}
+		}
+	})
+
+	local, err := pc.CreateOffer(nil)
+	if err == nil {
+		local, err = direct.Describe(pc, local)
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	body, err := json.Marshal(direct.Fetch{Version: 1, Op: direct.OpPut, SHA256: offer.SHA256, Size: offer.Size, HoldMS: int(hold / time.Millisecond), SDP: local})
+	if err != nil {
+		return "", 0, err
+	}
+	reply, err := call(ctx, p.Arc, p.To, string(body))
+	if err != nil {
+		return "", 0, err
+	}
+	var remote direct.Answer
+	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 || remote.Offset < 0 || remote.Offset > offer.Size {
+		return "", 0, fmt.Errorf("the receiver gave no answer: %.200q", reply)
+	}
+	if remote.Offset == offer.Size {
+		fmt.Fprintln(p.Notes, "the receiver has the file already")
+		return "", 0, nil
+	}
+	if remote.Offset > 0 {
+		fmt.Fprintf(p.Notes, "the receiver holds %d bytes; giving the rest\n", remote.Offset)
+	}
+	if err := pc.SetRemoteDescription(remote.SDP); err != nil {
+		return "", 0, err
+	}
+	select {
+	case <-opened:
+	case <-time.After(direct.OpenWait + hold):
+		return "", 0, errNoPath
+	case <-ctx.Done():
+		return "", 0, ctx.Err()
+	}
+	path = direct.SelectedPath(pc)
+	if err := direct.Send(dc, p.File, remote.Offset, offer.Size); err != nil {
+		return path, 0, err
+	}
+	// The receiver checks the SHA-256 of all the bytes, and then says "ok".
+	select {
+	case text := <-answered:
+		if text != "ok" {
+			return path, 0, fmt.Errorf("the receiver refused the file: %s", text)
+		}
+	case <-time.After(30 * time.Second):
+		return path, 0, errors.New("the receiver did not confirm the file")
+	case <-ctx.Done():
+		return path, 0, ctx.Err()
+	}
+	return path, offer.Size - remote.Offset, nil
 }

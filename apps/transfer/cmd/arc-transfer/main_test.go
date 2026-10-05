@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -22,9 +24,10 @@ import (
 // The tests build the arc program and this program, and run them as a
 // person does: a relay on this machine, three citizens, and arc serve.
 var env struct {
-	arc, program, state      string
-	sender, receiver, other  string // arc homes
-	receiverKey, strangerKey string
+	arc, program, state     string
+	sender, receiver, other string // arc homes
+	senderKey, receiverKey  string
+	strangerKey             string
 }
 
 // output collects what a background process prints.
@@ -116,12 +119,12 @@ func setup(m *testing.M) int {
 		}
 	}
 	env.sender, env.receiver, env.other = filepath.Join(root, "sender"), filepath.Join(root, "receiver"), filepath.Join(root, "stranger")
-	env.receiverKey, env.strangerKey = keys["receiver"], keys["stranger"]
+	env.senderKey, env.receiverKey, env.strangerKey = keys["sender"], keys["receiver"], keys["stranger"]
 
 	// The app of the sender. The two ends are on one machine, so they use
 	// the loopback address and no STUN server.
 	serve := exec.Command(env.arc, "--home", env.sender, "serve", app)
-	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1")
+	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1", "TRANSFER_PUT_MAX_MIB=4")
 	served := &output{}
 	serve.Stdout, serve.Stderr = served, served
 	if err := serve.Start(); err != nil {
@@ -475,4 +478,91 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 		t.Fatalf("a send of the same file ended with no new delivery: %v\n%s", err, notes.String())
 	default:
 	}
+}
+
+// give runs arc-transfer put as a citizen, to the app of the sender. It
+// returns the link and what put printed on standard error.
+func give(home, file string) (link, log string, err error) {
+	command := exec.Command(env.program, "put", "-arc", env.arc, "-home", home, "-stun", "none", env.senderKey, file)
+	command.Env = append(os.Environ(), "TRANSFER_LOOPBACK=1")
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err = command.Run()
+	return strings.TrimSpace(stdout.String()), stderr.String(), err
+}
+
+// A phone gives a photo to the app of an agent, and sends the link in a
+// message. The agent then takes the file with get, with no connection.
+func TestPutGivesAFileThatGetThenTakes(t *testing.T) {
+	data := random(t, 2<<20+321)
+	path := filepath.Join(t.TempDir(), "photo of a bird.jpg")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	link, log, err := give(env.receiver, path)
+	if err != nil {
+		t.Fatalf("put: %v\n%s", err, log)
+	}
+	want := fmt.Sprintf("transfer+arc://%s/", env.receiverKey)
+	if !strings.HasPrefix(link, want) || !strings.Contains(link, fmt.Sprintf("size=%d", len(data))) {
+		t.Fatalf("put printed the link %q", link)
+	}
+	if _, log, err := give(env.receiver, path); err != nil || !strings.Contains(log, "has the file already") {
+		t.Fatalf("a second put of the same file: %v\n%s", err, log)
+	}
+
+	output := filepath.Join(t.TempDir(), "got.jpg")
+	log, err = fetch(env.sender, link, output, "-state", env.state)
+	if err != nil {
+		t.Fatalf("get of a file that came with put: %v\n%s", err, log)
+	}
+	if !strings.Contains(log, "gave the file before, with put") {
+		t.Errorf("get made a connection for a file that it has:\n%s", log)
+	}
+	if got, _ := os.ReadFile(output); !bytes.Equal(got, data) {
+		t.Fatal("the file that get took is not the file of the put")
+	}
+}
+
+func TestPutGivesOnlyTheRestAfterAPartFile(t *testing.T) {
+	data := random(t, 3<<20)
+	have := 1<<20 + 77
+	path := filepath.Join(t.TempDir(), "photo.jpg")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	received := direct.ReceivedFile(env.state, env.receiverKey, hex.EncodeToString(sum[:]))
+	if err := os.MkdirAll(filepath.Dir(received), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(received+".part", data[:have], 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, log, err := give(env.receiver, path)
+	if err != nil {
+		t.Fatalf("put: %v\n%s", err, log)
+	}
+	if want := fmt.Sprintf("%d bytes in", len(data)-have); !strings.Contains(log, want) {
+		t.Fatalf("put did not give only the rest, want %q in:\n%s", want, log)
+	}
+	if got, _ := os.ReadFile(received); !bytes.Equal(got, data) {
+		t.Fatal("the app has other bytes after a part file")
+	}
+}
+
+// The owner of the app sets the size of the largest file that it takes, so
+// that a caller cannot fill the disk.
+func TestTheAppRefusesAPutLargerThanItsLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.bin")
+	if err := os.WriteFile(path, random(t, 4<<20+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, log, err := give(env.receiver, path)
+	if err == nil || !strings.Contains(log, "larger than the app takes") {
+		t.Fatalf("put of a file over the limit: %v\n%s", err, log)
+	}
+	absent(t, filepath.Join(env.state, "received", env.receiverKey, "large.bin"))
 }
