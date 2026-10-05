@@ -17,6 +17,13 @@ All notable changes to ARC are recorded here. The format follows
   `github.com/pion/webrtc/v4` and 17 indirect modules; `arc` itself does
   not import them. See apps/transfer/README.md.
 
+### Fixed
+
+- `arc-transfer get` stops a sender that writes more bytes than the size in
+  the link. It does not write these bytes to the disk, and it removes the
+  part file. Before, the receiver wrote all the bytes and removed them only
+  after the SHA-256 check, so a sender could fill the disk of the receiver.
+
 ## [0.19.0] - 2026-10-04
 
 `arc message watch` prints the inbox as it arrives, and three message

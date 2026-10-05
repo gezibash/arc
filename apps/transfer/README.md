@@ -172,6 +172,8 @@ A refused request has one of these errors:
   part, with no directory.
 - If the bytes do not have the SHA-256 of the link, `get` removes the part
   file, and writes no file.
+- If the sender writes more bytes than the size in the link, `get` does not
+  write them, removes the part file, and writes no file.
 
 ## The order of the first packets
 
