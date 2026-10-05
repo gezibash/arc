@@ -20,6 +20,11 @@ func TestTransportContextContract(t *testing.T) {
 	factories := map[string]func(*testing.T) transport.Transport{
 		"directory": func(t *testing.T) transport.Transport { return file.Dir{Path: t.TempDir()} },
 		"relay":     func(t *testing.T) transport.Transport { return relay.Relay{URL: testrelay.Start(t)} },
+		"relay, kept connection": func(t *testing.T) transport.Transport {
+			r := relay.New(testrelay.Start(t), nil)
+			t.Cleanup(func() { _ = r.Close() })
+			return r
+		},
 	}
 	for name, factory := range factories {
 		t.Run(name, func(t *testing.T) {

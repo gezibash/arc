@@ -37,17 +37,113 @@ func sealedKinds(filter nostr.Filter) bool {
 	return false
 }
 
-// Relay is one relay, by its WebSocket URL.
+// reuseWait bounds the wait for an answer on a connection that Send used
+// before. A connection can end without notice, for example while the machine
+// sleeps. Send then opens a new connection, and sends the event again.
+var reuseWait = 5 * time.Second
+
+// Relay is one relay, by its WebSocket URL. A Relay opens a connection for
+// each call. A Relay from New keeps one connection for Send.
 type Relay struct {
 	URL string
 	// Signer answers the NIP-42 challenge of a relay, when one is set. A
 	// relay accepts a protected event, NIP-70, only from its author after
 	// this authentication.
 	Signer nostr.Signer
+	// kept holds the connection of a relay from New.
+	kept *kept
+}
+
+// kept is the connection that Send uses again. It carries one Send at a
+// time. A relay sends a new NIP-42 challenge with each refusal, and the
+// library cannot answer a challenge while a second one arrives.
+type kept struct {
+	// turn holds one token. The Send that put it there owns conn.
+	turn chan struct{}
+	conn *nostr.Relay
+}
+
+// New returns a relay that keeps one connection for Send. An event then does
+// not pay for a new connection and a new authentication. Send opens the
+// connection, and opens it again after it ended. Close ends it.
+func New(url string, signer nostr.Signer) Relay {
+	return Relay{URL: url, Signer: signer, kept: &kept{turn: make(chan struct{}, 1)}}
+}
+
+// Close ends the kept connection. A later Send opens a new one.
+func (r Relay) Close() error {
+	if r.kept == nil {
+		return nil
+	}
+	r.kept.turn <- struct{}{}
+	defer func() { <-r.kept.turn }()
+	return r.kept.drop()
+}
+
+// drop closes the kept connection, so the next Send connects.
+func (k *kept) drop() error {
+	if k.conn == nil {
+		return nil
+	}
+	conn := k.conn
+	k.conn = nil
+	return conn.Close()
 }
 
 // Name says which relay this is.
 func (r Relay) Name() string { return r.URL }
+
+// sendKept publishes one event on the kept connection. If a connection that
+// Send used before gives no answer of the relay, sendKept sends the event
+// one more time on a new connection. The relay keeps one copy, by ID.
+func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
+	k := r.kept
+	select {
+	case k.turn <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-k.turn }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if k.conn != nil && k.conn.IsConnected() {
+		first, cancel := context.WithTimeout(ctx, reuseWait)
+		err := r.publish(first, k.conn, event)
+		cancel()
+		// A refusal is an answer of the relay: the connection works.
+		if err == nil || refused(err) {
+			return r.named(err)
+		}
+		if err := ctx.Err(); err != nil {
+			_ = k.drop()
+			return err
+		}
+	}
+	_ = k.drop()
+	conn, err := r.connect(ctx)
+	if err != nil {
+		return err
+	}
+	k.conn = conn
+	if err = r.publish(ctx, conn, event); err != nil && !refused(err) {
+		_ = k.drop()
+	}
+	return r.named(err)
+}
+
+// refused says whether an error is the answer of a relay that did not take
+// an event.
+func refused(err error) bool { return strings.HasPrefix(err.Error(), "msg: ") }
+
+// named adds the relay to an error.
+func (r Relay) named(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("relay %s: %w", r.URL, err)
+}
 
 func (r Relay) connect(ctx context.Context) (*nostr.Relay, error) {
 	conn, err := nostr.RelayConnect(ctx, r.URL, nostr.RelayOptions{
@@ -64,16 +160,16 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
+	if r.kept != nil {
+		return r.sendKept(ctx, event)
+	}
 	conn, err := r.connect(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
 
-	if err := r.publish(ctx, conn, event); err != nil {
-		return fmt.Errorf("relay %s: %w", r.URL, err)
-	}
-	return nil
+	return r.named(r.publish(ctx, conn, event))
 }
 
 // publish sends one event on a connection. If the relay asks for

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -38,6 +39,9 @@ type Session struct {
 	store    *store.Store
 	receipts kv.Store
 	search   *blevesearch.Index
+	// kept holds the relay of each URL that NewRelay gave.
+	keptMu sync.Mutex
+	kept   map[string]relay.Relay
 }
 
 type Config struct {
@@ -55,10 +59,21 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve"))}
+	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
 	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
-	sess.NewRelay = func(url string) transport.Transport { return relay.Relay{URL: url, Signer: sess.Signer} }
+	// Each relay keeps one connection for its sends. One URL gives one relay,
+	// so a long run does not open a connection for each call.
+	sess.NewRelay = func(url string) transport.Transport {
+		sess.keptMu.Lock()
+		defer sess.keptMu.Unlock()
+		r, ok := sess.kept[url]
+		if !ok {
+			r = relay.New(url, sess.Signer)
+			sess.kept[url] = r
+		}
+		return r
+	}
 	for _, url := range cfg.URLs {
 		sess.Relays = append(sess.Relays, sess.NewRelay(url))
 	}
@@ -80,6 +95,11 @@ func Open(cfg Config) (*Session, error) {
 	return sess, nil
 }
 func (s *Session) Close() {
+	s.keptMu.Lock()
+	for _, r := range s.kept {
+		_ = r.Close()
+	}
+	s.keptMu.Unlock()
 	if s.search != nil {
 		s.search.Close()
 	}
