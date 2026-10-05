@@ -199,6 +199,10 @@ Rules:
   one `Arcfile` works for each operator.
 - `arc serve` reads `allow` and `[uses]` when it starts. After a change,
   restart `arc serve`.
+- One identity can serve several apps. Run one `arc serve` for each app,
+  with the same arc home. Each `arc serve` gets all the calls to the
+  identity, and answers only the calls to its own app. A call to an app
+  that no `arc serve` of the identity serves gets no answer.
 
 An HTTP server, for example FastAPI, needs no ARC library. The translator
 `arc-http` gives it `PORT`, see [the HTTP app](http/README.md):

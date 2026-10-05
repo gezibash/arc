@@ -178,8 +178,9 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 		_ = sendSession(ctx, s.key, rumor.PubKey, via, session.Frame{Version: 1, ID: f.ID, Op: "close", Error: reason}, nil)
 	}
 	request := m.Request
+	// Another server of this citizen can serve the capability, and answers
+	// the session. See ErrNotServed.
 	if request.Capability != s.capability {
-		reject("unknown_capability")
 		return
 	}
 	if len(request.Body) > min(s.maxBytes, session.MaxChunk) {

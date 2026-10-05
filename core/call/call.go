@@ -310,6 +310,18 @@ func (s *Server) read() {
 // ErrDuplicate says that the server has answered this request before.
 var ErrDuplicate = errors.New("call: this request was answered before")
 
+// ErrNotServed says that the server does not serve the capability of a
+// request. One citizen can serve several apps, each with its own server, and
+// each server watches all the calls to the citizen. A server therefore does
+// not answer a call to another capability: the server of that capability
+// answers it. A call to a capability that no server serves gets no answer.
+var ErrNotServed = errors.New("call: this server does not serve the capability")
+
+// Serves says whether the server serves the capability of a request rumor.
+func (s *Server) Serves(rumor nostr.Event) bool {
+	return rumor.Kind == RequestKind && ReadRequest(rumor).Capability == s.capability
+}
+
 // Handle passes one request rumor to the provider, and returns its answer.
 // The author of the rumor is the caller, and the provider sees them as from.
 func (s *Server) Handle(ctx context.Context, rumor nostr.Event) (Reply, error) {
@@ -317,11 +329,11 @@ func (s *Server) Handle(ctx context.Context, rumor nostr.Event) (Reply, error) {
 		return Reply{}, fmt.Errorf("call: kind %d is not a request", rumor.Kind)
 	}
 	request := ReadRequest(rumor)
+	if request.Capability != s.capability {
+		return Reply{}, ErrNotServed
+	}
 	if !session.Supports(s.interactions, session.RequestReply) {
 		return Reply{Err: session.ErrUnsupported.Error()}, nil
-	}
-	if request.Capability != s.capability {
-		return Reply{Err: "unknown_capability " + request.Capability}, nil
 	}
 	if len(request.Body) > s.maxBytes {
 		return Reply{Err: "request_too_large the body is over the limit"}, nil

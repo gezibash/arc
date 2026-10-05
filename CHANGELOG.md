@@ -23,6 +23,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Fixed
 
+- One identity can serve several apps, with one `arc serve` for each app.
+  Before, each `arc serve` refused the calls and the sessions to the other
+  apps with `unknown_capability`, and a caller took the first answer. A
+  call to an app often got that refusal. Now an `arc serve` does not answer
+  a call or a session to another app, and a store-and-forward call to
+  another app stays in the mailbox. A call to an app that no `arc serve` of
+  the identity serves therefore gets no answer, and fails at its timeout.
 - `arc-transfer get` stops a sender that writes more bytes than the size in
   the link. It does not write these bytes to the disk, and it removes the
   part file. Before, the receiver wrote all the bytes and removed them only
