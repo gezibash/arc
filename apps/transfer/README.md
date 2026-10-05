@@ -259,6 +259,15 @@ machine in a data center, each behind a NAT, with no TURN server:
 `sha256sum` on the two machines gave the same value for each file. Each
 path was `srflx to srflx`.
 
+A second test by hand on 2026-10-05 used `send` on the Mac, and a Claude
+Code agent with the files adapter of gezibash/arc-harness on the virtual
+machine:
+
+| Sent with one `send` | Result |
+| --- | --- |
+| An image of 830 bytes | `send` printed the path and ended. The agent replied with the four colors of the image in the correct order. |
+| A spoken sentence, WAV, 83244 bytes | `send` printed the path and ended. `sha256sum` gave the same value on the two machines. The agent replied that it cannot hear the file, because the machine has no tool that makes text from speech. |
+
 What no automated test covers:
 
 - Two machines on different networks.
@@ -267,5 +276,8 @@ What no automated test covers:
 - A transfer that stops in the middle. The test of the part file starts from
   a part file that the test writes.
 - The limit of 4 transfers at a time, and the error `busy`.
-- `send` between two machines, and `send` to an agent.
+- `send` between two machines in an automated test.
+- `send` to a receiver that has the file already. The files adapter of
+  gezibash/arc-harness does not get a file two times, so `send` then waits
+  until its time ends.
 - A TURN server, a phone network, and a symmetric NAT.
