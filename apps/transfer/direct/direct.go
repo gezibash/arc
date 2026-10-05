@@ -28,21 +28,34 @@ const (
 	MaxHold = 3 * time.Second
 )
 
-// Fetch is the body of the ARC call of a receiver.
+// OpPut is the operation of a request that gives a file to the app.
+const OpPut = "put"
+
+// Fetch is the body of the ARC call to the app. With no operation, a
+// receiver asks for an offered file. With the operation "put", a citizen
+// gives a file to the app.
 type Fetch struct {
-	Version int    `json:"v"`
-	SHA256  string `json:"sha256"`
-	Offset  int64  `json:"offset"`
-	// HoldMS is the time that the sender waits before it sends its first
-	// packet, in milliseconds. The receiver then sends first.
+	Version int `json:"v"`
+	// Op is empty for a fetch, or OpPut.
+	Op     string `json:"op,omitempty"`
+	SHA256 string `json:"sha256"`
+	// Offset is the number of bytes that a receiver has. A put leaves it 0.
+	Offset int64 `json:"offset"`
+	// Size is the size of the file of a put.
+	Size int64 `json:"size,omitempty"`
+	// HoldMS is the time that the app waits before it sends its first
+	// packet, in milliseconds. The caller then sends first.
 	HoldMS int                       `json:"hold_ms,omitempty"`
 	SDP    webrtc.SessionDescription `json:"sdp"`
 }
 
-// Answer is the reply of the sender.
+// Answer is the reply of the app.
 type Answer struct {
-	Version int                       `json:"v"`
-	SDP     webrtc.SessionDescription `json:"sdp"`
+	Version int `json:"v"`
+	// Offset is the number of bytes of a put that the app has. If it is
+	// the size of the file, the answer has no description, and no bytes go.
+	Offset int64                     `json:"offset,omitempty"`
+	SDP    webrtc.SessionDescription `json:"sdp,omitzero"`
 }
 
 // Options are the settings of one end of a connection.

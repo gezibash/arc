@@ -5,6 +5,7 @@
 //	arc-transfer send <key> <file>   give a file to a citizen in one command
 //	arc-transfer offer <file>        record a file to give, and print its link
 //	arc-transfer get <link>      get the file of a link
+//	arc-transfer put <key> <file>    give a file to the app of a citizen
 package main
 
 import (
@@ -28,6 +29,7 @@ const usage = `usage:
   arc-transfer send [flags] <key> <file>...   give files to a citizen in one command
   arc-transfer offer [flags] <file>   record a file to give, and print its link
   arc-transfer get [flags] <link>     get the file of a link
+  arc-transfer put [flags] <key> <file>   give a file to the app of a citizen
 
 arc-transfer <command> -h shows the flags of a command.`
 
@@ -36,7 +38,7 @@ func main() {
 		stdio.Main("arc-transfer", server.Run)
 		return
 	}
-	commands := map[string]func(context.Context, []string) error{"send": send, "offer": offer, "get": get}
+	commands := map[string]func(context.Context, []string) error{"send": send, "offer": offer, "get": get, "put": put}
 	run, ok := commands[os.Args[1]]
 	if !ok {
 		fmt.Fprintln(os.Stderr, usage)
@@ -84,6 +86,7 @@ func get(ctx context.Context, args []string) error {
 	output := flags.String("o", "", "the file to write (default: the name in the link, in this directory)")
 	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or "+direct.DefaultSTUN+")")
 	hold := flags.Bool("hold", false, "ask the sender to wait in the first attempt, not in the second")
+	state := flags.String("state", "", "the state directory, for a file that the sender gave with put (default TRANSFER_STATE, or ~/.local/state/arc-transfer)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -92,14 +95,47 @@ func get(ctx context.Context, args []string) error {
 	}
 	result, err := client.Get{
 		Arc: *arc, Link: flags.Arg(0), Output: *output, HoldFirst: *hold, Notes: os.Stderr,
+		State:   server.StateDir(*state),
 		Options: direct.Options{STUN: direct.STUNURL(*stun), Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
 	}.Run(ctx)
 	if err != nil {
 		return err
 	}
 	fmt.Println(result.Output)
+	if result.Path == "put" {
+		fmt.Fprintln(os.Stderr, "the sender gave the file before, with put")
+		return nil
+	}
 	seconds := result.Elapsed.Seconds()
 	fmt.Fprintf(os.Stderr, "%d bytes in %.1f s, %.2f MiB/s, path %s\n", result.Bytes, seconds, float64(result.Bytes)/(1<<20)/seconds, result.Path)
+	return nil
+}
+
+// put gives a file to the app of a citizen. It prints the link of the file
+// on standard output, for a message to the citizen.
+func put(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("arc-transfer put", flag.ContinueOnError)
+	arc := arcFlags(flags)
+	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or "+direct.DefaultSTUN+")")
+	hold := flags.Bool("hold", false, "ask the receiver to wait in the first attempt, not in the second")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 2 {
+		return errors.New("usage: arc-transfer put [flags] <key> <file>")
+	}
+	result, err := client.Put{
+		Arc: *arc, To: flags.Arg(0), File: flags.Arg(1), HoldFirst: *hold, Notes: os.Stderr,
+		Options: direct.Options{STUN: direct.STUNURL(*stun), Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
+	}.Run(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Println(result.Link)
+	if result.Bytes > 0 {
+		seconds := result.Elapsed.Seconds()
+		fmt.Fprintf(os.Stderr, "%d bytes in %.1f s, %.2f MiB/s, path %s\n", result.Bytes, seconds, float64(result.Bytes)/(1<<20)/seconds, result.Path)
+	}
 	return nil
 }
 
