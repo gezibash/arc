@@ -12,7 +12,7 @@ requests, `client/` gets a file, and `direct/` holds what the two ends share.
 | Part | Status |
 | --- | --- |
 | `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs. |
-| `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens. Not tested between two machines. |
+| `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
 | A relay server (TURN) for two machines that find no direct path | Not built. |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
@@ -337,6 +337,16 @@ machine:
 | --- | --- |
 | An image of 830 bytes | `send` printed the path and ended. The agent replied with the four colors of the image in the correct order. |
 | A spoken sentence, WAV, 83244 bytes | `send` printed the path and ended. `sha256sum` gave the same value on the two machines. The agent replied that it cannot hear the file, because the machine has no tool that makes text from speech. |
+
+A third test by hand on 2026-10-05 gave files with `put` to the transfer
+app of a Claude Code agent on a virtual machine in a data center. The agent
+served the app with `TRANSFER_PUT_MAX_MIB=50`, and the files adapter of
+gezibash/arc-harness got each file with `get`:
+
+| Sender | Result |
+| --- | --- |
+| A Mac on a home network, with `arc-transfer put` | 170874 bytes in 0.4 s, path `srflx to srflx`. A second `put` gave nothing: the app had the file. |
+| An iPhone 14 Pro Max on a home network, with the iOS app of gezibash/arc-swift | A photo of 74540 bytes in 0.2 s, path `srflx to srflx`. `get` moved the file out of `received/`, and the agent answered about the photo. |
 
 What no automated test covers:
 
