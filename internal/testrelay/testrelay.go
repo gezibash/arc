@@ -65,18 +65,22 @@ func StartKillable(t *testing.T) (string, func()) {
 // them all. A WebSocket connection leaves the HTTP server's own tracking.
 type tracking struct {
 	net.Listener
-	mu    sync.Mutex
-	conns []net.Conn
+	mu       sync.Mutex
+	conns    []*tracked
+	accepted int
 }
 
 func (l *tracking) Accept() (net.Conn, error) {
-	conn, err := l.Listener.Accept()
-	if err == nil {
-		l.mu.Lock()
-		l.conns = append(l.conns, conn)
-		l.mu.Unlock()
+	inner, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
 	}
-	return conn, err
+	conn := &tracked{Conn: inner, closed: make(chan struct{})}
+	l.mu.Lock()
+	l.conns = append(l.conns, conn)
+	l.accepted++
+	l.mu.Unlock()
+	return conn, nil
 }
 
 func (l *tracking) closeAll() {
@@ -86,6 +90,82 @@ func (l *tracking) closeAll() {
 		_ = conn.Close()
 	}
 	l.conns = nil
+}
+
+// tracked is a connection that a test can make silent.
+type tracked struct {
+	net.Conn
+	silent atomic.Bool
+	closed chan struct{}
+	once   sync.Once
+}
+
+// Read gives the relay nothing more after the connection became silent.
+func (c *tracked) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if c.silent.Load() {
+		<-c.closed
+		return 0, net.ErrClosed
+	}
+	return n, err
+}
+
+func (c *tracked) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// Connections is what a test can do with the connections of a relay.
+type Connections struct{ listener *tracking }
+
+// Accepted says how many connections the relay accepted.
+func (c Connections) Accepted() int {
+	c.listener.mu.Lock()
+	defer c.listener.mu.Unlock()
+	return c.listener.accepted
+}
+
+// Drop closes each open connection. The relay accepts new connections.
+func (c Connections) Drop() { c.listener.closeAll() }
+
+// Silence makes each open connection silent: the relay reads nothing more
+// from it, and does not close it. A machine that slept leaves such a
+// connection. The relay accepts new connections.
+func (c Connections) Silence() {
+	c.listener.mu.Lock()
+	defer c.listener.mu.Unlock()
+	for _, conn := range c.listener.conns {
+		conn.silent.Store(true)
+	}
+}
+
+// StartTracked runs a relay that takes a gift wrap only after NIP-42
+// authentication, as the public deploy does, and returns its URL and its
+// connections.
+func StartTracked(t *testing.T) (string, Connections) {
+	t.Helper()
+	db := &slicestore.SliceStore{}
+	if err := db.Init(); err != nil {
+		t.Fatal(err)
+	}
+	relay := khatru.NewRelay()
+	relay.Log = log.New(io.Discard, "", 0)
+	relay.UseEventstore(db, 500)
+	sealed.Protect(relay)
+	limits.Apply(relay, nil, limits.Policy{WrapAuth: true})
+
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := &tracking{Listener: inner}
+	server := &http.Server{Handler: relay}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		listener.closeAll()
+	})
+	return "ws://" + inner.Addr().String(), Connections{listener}
 }
 
 // StartGuarded runs a relay that takes a gift wrap only after NIP-42
