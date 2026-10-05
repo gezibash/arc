@@ -137,6 +137,7 @@ func serve(command *cobra.Command, args []string) error {
 		return sess.OpenSessionAddress(ctx, installs, out.Address, out.Body, mode)
 	})
 	sess.Mail.OnRequest = server.Handle
+	sess.Mail.Serves = server.Serves
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

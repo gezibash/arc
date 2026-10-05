@@ -121,6 +121,10 @@ type Mail struct {
 	// OnRequest answers a store-and-forward call to this citizen. A citizen
 	// that serves no capability leaves it nil; requests remain pending until a handler is attached.
 	OnRequest func(ctx context.Context, rumor nostr.Event) (call.Reply, error)
+	// Serves says whether OnRequest serves a request. A request that it
+	// does not serve remains pending, for another program of this citizen
+	// that serves its capability. Nil serves each request.
+	Serves func(rumor nostr.Event) bool
 }
 
 // New initializes durable mail using an injected transactional key-value store.
@@ -603,6 +607,9 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 	request, err := private.OpenSeal(ctx, m.key, seals[0])
 	if err != nil {
 		return err
+	}
+	if m.Serves != nil && !m.Serves(request) {
+		return nil
 	}
 	var run, uncertain bool
 	err = m.update(func(tx kv.Tx) error {

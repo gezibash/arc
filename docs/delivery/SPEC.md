@@ -616,6 +616,12 @@ Receipt and processing are separate:
 
 - A deferred request remains pending when no provider is attached, including
   across restarts.
+- One citizen can serve several capabilities, each with its own provider,
+  and each provider gets all the requests to the citizen. A provider does
+  not answer a request or a session for a capability that it does not
+  serve. A live request gets no reply from it, and a deferred request
+  remains pending for the provider of its capability. A request for a
+  capability that no provider of the citizen serves gets no reply.
 - The mail journal records pending, processing and completed requests, and
   commits the encrypted reply's forwarding state before transmission.
 - A restarted or interrupted execution with no recorded reply returns

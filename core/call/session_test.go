@@ -22,12 +22,17 @@ import (
 
 func liveSessionProvider(t *testing.T, ctx context.Context, k keys.Key, r relay.Relay, modes ...session.Mode) *call.Server {
 	t.Helper()
+	return liveSessionProviderFor(t, ctx, k, r, "primary", modes...)
+}
+
+func liveSessionProviderFor(t *testing.T, ctx context.Context, k keys.Key, r relay.Relay, capability string, modes ...session.Mode) *call.Server {
+	t.Helper()
 	process, err := host.Start(echoBinary, nil, "", nil, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { process.Stop() })
-	server := call.NewServer(k, "primary", process, 64*1024, nil, quiet, modes...)
+	server := call.NewServer(k, capability, process, 64*1024, nil, quiet, modes...)
 	ready := make(chan struct{})
 	go server.ServeLive(ctx, r, func() { close(ready) })
 	select {
@@ -136,6 +141,29 @@ func TestSessionModesAndProviderRefusals(t *testing.T) {
 	body, err = io.ReadAll(unary)
 	if err != nil || string(body) != "ECHO / "+text {
 		t.Fatalf("fragmented reply length = %d, %v", len(body), err)
+	}
+}
+
+// One citizen serves two apps. A session to each app gets the stream of
+// that app, not a refusal of the other server.
+func TestTwoAppsOfOneCitizenEachAnswerTheirOwnSessions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	owner := keys.Generate()
+	for _, capability := range []string{"primary", "other"} {
+		liveSessionProviderFor(t, ctx, owner, r, capability, session.RequestReply, session.ServerStream)
+	}
+	for _, capability := range []string{"primary", "other"} {
+		s, err := call.OpenSession(ctx, keys.Generate(), owner.Public, call.Request{Capability: capability, Method: "ECHO", Path: "/"}, session.ServerStream, r)
+		if err != nil {
+			t.Fatalf("a session to %s: %v", capability, err)
+		}
+		body, err := io.ReadAll(s)
+		_ = s.Close()
+		if err != nil || string(body) != "first\nsecond\n" {
+			t.Errorf("a session to %s: stream = %q, %v", capability, body, err)
+		}
 	}
 }
 

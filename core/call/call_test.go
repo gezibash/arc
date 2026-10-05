@@ -57,12 +57,18 @@ func provider(t *testing.T, k keys.Key) *call.Server {
 // providerWith starts the echo provider with a caller for its calls.
 func providerWith(t *testing.T, k keys.Key, caller call.Caller) *call.Server {
 	t.Helper()
+	return providerFor(t, k, "primary", caller)
+}
+
+// providerFor starts the echo provider for a capability.
+func providerFor(t *testing.T, k keys.Key, capability string, caller call.Caller) *call.Server {
+	t.Helper()
 	process, err := host.Start(echoBinary, nil, "", []string{"ARC_PUBLIC_KEY=" + k.Public.Hex()}, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { process.Stop() })
-	return call.NewServer(k, "primary", process, 64*1024, caller, quiet)
+	return call.NewServer(k, capability, process, 64*1024, caller, quiet)
 }
 
 // handle sends one request with a body to a server, and returns the reply.
@@ -245,12 +251,59 @@ func TestAStaleLiveRequestIsRefused(t *testing.T) {
 	}
 }
 
-func TestACallToAnotherCapabilityIsRefused(t *testing.T) {
+// One citizen serves two apps, each with its own server, and each server
+// watches all the live calls to the citizen. Each call gets the answer of the
+// server of its capability, not a refusal of the other server.
+func TestTwoAppsOfOneCitizenEachAnswerTheirOwnLiveCalls(t *testing.T) {
+	ctx := t.Context()
+	r := relay.Relay{URL: testrelay.Start(t)}
 	serving := keys.Generate()
-	rumor := call.RequestRumor(keys.Generate(), serving.Public, call.Request{Capability: "other", Body: "x"}, time.Now())
-	reply, err := provider(t, serving).Handle(context.Background(), rumor)
-	if err != nil || !strings.HasPrefix(reply.Err, "unknown_capability") {
-		t.Errorf("reply = %+v, %v", reply, err)
+	for _, capability := range []string{"primary", "other"} {
+		ready := make(chan struct{})
+		go providerFor(t, serving, capability, nil).ServeLive(ctx, r, func() { close(ready) })
+		<-ready
+	}
+
+	for _, capability := range []string{"primary", "other", "primary", "other"} {
+		reply, _, err := call.Live(ctx, keys.Generate(), serving.Public, call.Request{
+			Capability: capability, Method: "ECHO", Path: "/", Body: "hello",
+		}, r)
+		if err != nil || reply.Body != "ECHO / hello" {
+			t.Errorf("a call to %s: reply = %+v, %v", capability, reply, err)
+		}
+	}
+}
+
+// A request that a program of the citizen does not serve stays in the
+// mailbox, for the program that serves its capability.
+func TestAStoreAndForwardCallWaitsForTheServerOfItsCapability(t *testing.T) {
+	alice, service := newCitizen(t), newCitizen(t)
+	dir := file.Dir{Path: t.TempDir()}
+	other := providerFor(t, service.key, "other", nil)
+	service.mail.OnRequest, service.mail.Serves = other.Handle, other.Serves
+
+	if _, err := alice.mail.Request(context.Background(), service.key.Public, call.Request{
+		Capability: "primary", Method: "ECHO", Path: "/", Body: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	alice.sync(t, dir)
+	if got := service.sync(t, dir); got.Answered != 0 {
+		t.Fatalf("the server of another capability answered %d calls", got.Answered)
+	}
+
+	primary := provider(t, service.key)
+	service.mail.OnRequest, service.mail.Serves = primary.Handle, primary.Serves
+	if got := service.sync(t, dir); got.Answered != 1 {
+		t.Fatalf("the server of the capability answered %d calls", got.Answered)
+	}
+	service.sync(t, dir)
+	if got := alice.sync(t, dir); got.Replies != 1 {
+		t.Fatalf("alice got %d replies", got.Replies)
+	}
+	out := testutil.Must(alice.mail.Outbox(context.Background()))
+	if len(out) != 1 || out[0].Reply.Body != "ECHO / queued" {
+		t.Errorf("alice's outbox: %+v", out)
 	}
 }
 
