@@ -10,6 +10,7 @@ service program. Apps compose through core ARC calls, sessions and events.
 | [Exec](exec/README.md) | Manifest-generated client commands; a service program runs granted processes and terminals. |
 | [HTTP](http/README.md) | Hosts an HTTP program and exposes its own manifest through ARC calls and sessions. |
 | [Releases](releases/README.md) | Reads signed update channels and serves archive chunks or streams. |
+| [Transfer](transfer/README.md) | Gives files on a direct connection; one call carries the WebRTC offer and answer, and its program gets a file. |
 | [Direct messages](dm/manifest.json) | Local commands that send and read private events. |
 | [Files](files/manifest.json) | Local commands that store and read sealed files. |
 | [Agora](agora/manifest.json) | Commands that publish and read events on a configured group relay. |
@@ -20,7 +21,7 @@ service program. Apps compose through core ARC calls, sessions and events.
 | --- | --- |
 | App | A named package of commands, interface definitions and optional programs. |
 | Command | An operation invoked through `arc <installed-name> <command>`. |
-| Program | Executable code; the release includes `arc-exec`, `arc-sqlite`, `arc-http` and `arc-releases`. |
+| Program | Executable code; the release includes `arc-exec`, `arc-sqlite`, `arc-http`, `arc-releases` and `arc-transfer`. |
 | Instance | A running program with an operating identity and configuration. |
 | Service | An interface that an instance makes available to callers. |
 | Session | One request/reply, server stream or duplex interaction. |

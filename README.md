@@ -277,7 +277,8 @@ mise run interface   # the capability interface, end to end
 ```
 
 `mise run build` writes `bin/arc`, `bin/arc-exec`, `bin/arc-sqlite`,
-`bin/arc-http` and `bin/arc-releases`. App code and manifests live in `apps/`.
+`bin/arc-http`, `bin/arc-releases` and `bin/arc-transfer`. App code and
+manifests live in `apps/`.
 Read [AGENTS.md](AGENTS.md) before a change: it holds the package rules and
 the spec rules.
 
