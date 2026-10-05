@@ -1,17 +1,18 @@
 # Transfer app
 
-The transfer app gives a file to a citizen on a direct connection. ARC
-carries the request and the answer. The bytes do not go through a relay, so
-a file has no size limit.
+The transfer app gives a file to a citizen on a direct connection. It can
+also take a file that a citizen gives to it. ARC carries the request and the
+answer. The bytes do not go through a relay, so a file has no size limit.
 
 The [manifest](manifest.json) declares the service. `server/` answers the
 requests, `client/` gets a file, and `direct/` holds what the two ends share.
 `cmd/arc-transfer` is the program: the service, and the commands `send`,
-`offer` and `get`.
+`offer`, `get` and `put`.
 
 | Part | Status |
 | --- | --- |
 | `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs. |
+| `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
 | A relay server (TURN) for two machines that find no direct path | Not built. |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
@@ -125,6 +126,40 @@ means that the path goes through a NAT.
 If a transfer stops, run the same command again. `get` reads the part file,
 and gets only the rest.
 
+### Give a file to the app of a citizen
+
+A sender that runs no service can give a file with `put`. A phone does
+this: the phone is open while the person sends, and it cannot answer a call
+later. The receiver must serve the app, and must take puts.
+
+The receiver sets the largest file that it takes, and serves the app:
+
+```sh
+TRANSFER_PUT_MAX_MIB=100 arc serve apps/transfer
+```
+
+The sender installs the app of the receiver one time, and gives the file.
+`put` prints the link of the file:
+
+```sh
+arc install <key of the receiver> transfer
+arc-transfer put <key of the receiver> photo.jpg
+```
+
+```text
+transfer+arc://<key of the sender>/<sha256>?name=photo.jpg&size=1048576
+```
+
+The sender then sends the link in a message. When the receiver runs
+`arc-transfer get` with the link, `get` finds the file in the state
+directory, and makes no connection. A program that gets files with `get`,
+such as the files adapter of gezibash/arc-harness, therefore needs no
+change.
+
+If a put stops, run the same command again. The app keeps a part file, and
+`put` gives only the rest. If the app has all of the file, `put` gives
+nothing.
+
 ## Settings
 
 The service reads its settings from the environment. `arc serve` gives its
@@ -135,21 +170,22 @@ environment to the program.
 | `TRANSFER_STATE` | The directory of the offers. The default is `~/.local/state/arc-transfer`. `offer` and the service must use the same directory. |
 | `TRANSFER_STUN` | The STUN server, or `none`. `get` reads it too. |
 | `TRANSFER_MIN_WINDOW_KIB` | The send window stays at or above this size after a loss. This makes a transfer faster on a path with losses. It is not fair to other traffic. |
-| `TRANSFER_LOOPBACK` | If set, an end also uses the loopback address. The tests set it, because their two ends are on one machine. `get` reads it too. |
+| `TRANSFER_LOOPBACK` | If set, an end also uses the loopback address. The tests set it, because their two ends are on one machine. `get` and `put` read it too. |
+| `TRANSFER_PUT_MAX_MIB` | The largest file that a caller can give with `put`, in MiB. If it is not set or 0, the app refuses each put. |
 
 The commands take these flags:
 
 | Command | Flag | Value |
 | --- | --- | --- |
-| `send`, `offer`, `get` | `-arc <program>` | The arc program. The default is `arc` on `PATH`. |
-| `send`, `offer`, `get` | `-home <directory>` | The arc home. The default is the home that arc picks. |
-| `send`, `offer` | `-state <directory>` | The directory of the offers. The default is `TRANSFER_STATE`. |
+| `send`, `offer`, `get`, `put` | `-arc <program>` | The arc program. The default is `arc` on `PATH`. |
+| `send`, `offer`, `get`, `put` | `-home <directory>` | The arc home. The default is the home that arc picks. |
+| `send`, `offer`, `get` | `-state <directory>` | The state directory. The default is `TRANSFER_STATE`. `get` looks there for a file that came with `put`. |
 | `send` | `-m <text>` | The text of the message, before the links. |
 | `send` | `-wait <duration>` | How long `send` serves the files and waits for the receiver. The default is `10m`. |
 | `offer` | `-to <key>` | A public key that can get the file. |
 | `get` | `-o <file>` | The file to write. The default is the name in the link, in the current directory. |
-| `get` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. |
-| `get` | `-hold` | Ask the sender to wait in the first attempt. See "The order of the first packets". |
+| `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. |
+| `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the first packets". |
 
 ## Request protocol
 
@@ -174,6 +210,23 @@ The receiver opens one data channel. The sender writes the bytes from
 `offset` in messages of 16 KiB, and then the text `end`. The receiver
 answers with the text `ok`.
 
+A put has the operation `put` and the size of the file. It has no offset:
+
+```json
+{"v":1,"op":"put","sha256":"<64 hex>","offset":0,"size":1048576,"hold_ms":0,"sdp":{"type":"offer","sdp":"..."}}
+```
+
+```json
+{"v":1,"offset":524288,"sdp":{"type":"answer","sdp":"..."}}
+```
+
+- In the answer, `offset` is the number of bytes that the app has. If it is
+  the size of the file, the answer has no `sdp`, and no bytes go.
+- The caller opens one data channel. It writes the bytes from `offset` in
+  messages of 16 KiB, and then the text `end`.
+- The app checks the size and the SHA-256 of all the bytes. Then it answers
+  with the text `ok`, or with the reason for a refusal.
+
 A refused request has one of these errors:
 
 | Error | Cause |
@@ -183,6 +236,8 @@ A refused request has one of these errors:
 | `file_changed` | The size or the modification time of the file changed after the offer. |
 | `busy` | The sender runs 4 transfers. |
 | `transfer_failed` | The sender could not open its end of the connection. |
+| `put_refused` | The app takes no puts: `TRANSFER_PUT_MAX_MIB` is not set. |
+| `too_large` | The file of a put is larger than `TRANSFER_PUT_MAX_MIB`. |
 
 ## Rules of the sender
 
@@ -207,6 +262,21 @@ A refused request has one of these errors:
   file, and writes no file.
 - If the sender writes more bytes than the size in the link, `get` does not
   write them, removes the part file, and writes no file.
+
+## Rules of a put
+
+- The app takes a put only if `TRANSFER_PUT_MAX_MIB` is set. Each caller
+  that reaches the app can then give files up to that size. To limit the
+  callers, set `allow` in the `Arcfile`.
+- The app writes the file to `received/<key of the caller>/<sha256>` in the
+  state directory, and the part file next to it.
+- If the caller writes more bytes than the size of the put, the app removes
+  the part file.
+- If the bytes do not have the SHA-256 of the put, the app removes the part
+  file, and answers with the reason.
+- `get` takes a file from `received/` only if the key and the SHA-256 of the
+  link name it, and the size is the size of the link. `get` moves the file
+  out of the state directory.
 
 ## The order of the first packets
 
@@ -268,8 +338,19 @@ machine:
 | An image of 830 bytes | `send` printed the path and ended. The agent replied with the four colors of the image in the correct order. |
 | A spoken sentence, WAV, 83244 bytes | `send` printed the path and ended. `sha256sum` gave the same value on the two machines. The agent replied that it cannot hear the file, because the machine has no tool that makes text from speech. |
 
+A third test by hand on 2026-10-05 gave files with `put` to the transfer
+app of a Claude Code agent on a virtual machine in a data center. The agent
+served the app with `TRANSFER_PUT_MAX_MIB=50`, and the files adapter of
+gezibash/arc-harness got each file with `get`:
+
+| Sender | Result |
+| --- | --- |
+| A Mac on a home network, with `arc-transfer put` | 170874 bytes in 0.4 s, path `srflx to srflx`. A second `put` gave nothing: the app had the file. |
+| An iPhone 14 Pro Max on a home network, with the iOS app of gezibash/arc-swift | A photo of 74540 bytes in 0.2 s, path `srflx to srflx`. `get` moved the file out of `received/`, and the agent answered about the photo. |
+
 What no automated test covers:
 
+- `put` between two machines, and `put` from a phone.
 - Two machines on different networks.
 - The second attempt after a first attempt with no path. The test of `-hold`
   covers the wait of the sender, not the change of the order.
