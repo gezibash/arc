@@ -217,13 +217,12 @@ machine in a data center, each behind a NAT, with no TURN server:
 
 | Transfer | Result |
 | --- | --- |
-| 64 MiB, virtual machine to Mac | 52.7 s in all. The first attempt found no path, and the second attempt connected. The sender measured 34.0 s for the bytes. |
-| 64 MiB, Mac to virtual machine | 43.0 s. The first attempt connected. |
-| 48 MiB, Mac to virtual machine, stopped after 15 s | The part file held 33390592 bytes. The second run got 16941056 bytes in 8.3 s. |
+| 64 MiB, virtual machine to Mac | 50.0 s in all. The first attempt found no path, and the second attempt connected. |
+| 64 MiB, Mac to virtual machine | 41.6 s. The first attempt connected. |
+| 48 MiB, Mac to virtual machine, stopped with SIGTERM after 15 s | `get` said that the part file held 26525696 bytes. The second run got 23805952 bytes in 11.6 s. |
 
-`sha256sum` on the two machines gave the same value for each file. That
-test used the code before it moved into this directory. The move changed
-the packages, the settings and the service runtime, not the protocol.
+`sha256sum` on the two machines gave the same value for each file. Each
+path was `srflx to srflx`.
 
 What no automated test covers:
 
