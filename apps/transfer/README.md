@@ -6,12 +6,12 @@ a file has no size limit.
 
 The [manifest](manifest.json) declares the service. `server/` answers the
 requests, `client/` gets a file, and `direct/` holds what the two ends share.
-`cmd/arc-transfer` is the program: the service, and the two commands `offer`
-and `get`.
+`cmd/arc-transfer` is the program: the service, and the commands `send`,
+`offer` and `get`.
 
 | Part | Status |
 | --- | --- |
-| `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs. |
+| `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs. |
 | A relay server (TURN) for two machines that find no direct path | Not built. |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
@@ -44,6 +44,33 @@ The app needs these things:
 
 Build with `mise run build`, and use `bin/arc` and `bin/arc-transfer`.
 
+### Send in one command
+
+`send` does the work of the sender in one command, with no service that
+runs before:
+
+```sh
+arc-transfer send -m "look at this" <key of the receiver> photo.png
+```
+
+1. `send` records an offer for each file, for this receiver only.
+2. It runs `arc serve` with the transfer app, for this receiver only.
+3. It sends one message: the text of `-m`, and one link on each next line.
+4. It waits until the receiver has each file, and prints the path of each
+   file that arrived. Then it stops its service.
+
+If the receiver does not get each file in the time of `-wait`, 10 minutes
+by default, `send` stops with an error. The message stays, but the links
+work only while a service of the sender runs: run `send` again, or serve
+the app.
+
+Do not run `send` while a service of the same citizen runs for the app.
+Two services then answer one request.
+
+The receiver installs the app of the sender one time, see "The receiver".
+The receiver can do this only after the sender served the app one time,
+because the service announces the app.
+
 ### The sender
 
 Serve the app. Keep it running. `arc serve` prints the key of the sender.
@@ -71,7 +98,8 @@ arc-transfer offer -to <key of the receiver> photo.png
 
 ### The receiver
 
-Install the app of the sender one time:
+Install the app of the sender one time. For a second sender, give the app
+another name with `--as`.
 
 ```sh
 arc install <key of the sender> transfer
@@ -113,9 +141,11 @@ The commands take these flags:
 
 | Command | Flag | Value |
 | --- | --- | --- |
-| `offer`, `get` | `-arc <program>` | The arc program. The default is `arc` on `PATH`. |
-| `offer`, `get` | `-home <directory>` | The arc home. The default is the home that arc picks. |
-| `offer` | `-state <directory>` | The directory of the offers. The default is `TRANSFER_STATE`. |
+| `send`, `offer`, `get` | `-arc <program>` | The arc program. The default is `arc` on `PATH`. |
+| `send`, `offer`, `get` | `-home <directory>` | The arc home. The default is the home that arc picks. |
+| `send`, `offer` | `-state <directory>` | The directory of the offers. The default is `TRANSFER_STATE`. |
+| `send` | `-m <text>` | The text of the message, before the links. |
+| `send` | `-wait <duration>` | How long `send` serves the files and waits for the receiver. The default is `10m`. |
 | `offer` | `-to <key>` | A public key that can get the file. |
 | `get` | `-o <file>` | The file to write. The default is the name in the link, in the current directory. |
 | `get` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. |
@@ -164,6 +194,9 @@ A refused request has one of these errors:
 - To limit the callers of the app, set `allow` in the `Arcfile`.
 - An offer stays until you delete its file `offers/<sha256>.json` in the
   state directory.
+- When a receiver confirms the last byte of a file, the service writes the
+  file `delivered/<sha256>-<key of the receiver>` in the state directory.
+  `send` reads it.
 
 ## Rules of the receiver
 
@@ -234,4 +267,5 @@ What no automated test covers:
 - A transfer that stops in the middle. The test of the part file starts from
   a part file that the test writes.
 - The limit of 4 transfers at a time, and the error `busy`.
+- `send` between two machines, and `send` to an agent.
 - A TURN server, a phone network, and a symmetric NAT.

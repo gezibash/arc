@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -355,5 +356,123 @@ func TestTheSenderCanWaitBeforeItsFirstPacket(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(output); !bytes.Equal(got, data) {
 		t.Fatal("the receiver has other bytes")
+	}
+}
+
+// inboxText returns the text of the first message of a sender in the inbox
+// of a citizen, after a sync, or "" if there is none.
+func inboxText(home, from string) string {
+	_ = exec.Command(env.arc, "--home", home, "sync").Run()
+	out, _ := exec.Command(env.arc, "--home", home, "message", "inbox", "--json").Output()
+	for line := range strings.SplitSeq(string(out), "\n") {
+		var message struct{ From, Text string }
+		if json.Unmarshal([]byte(line), &message) == nil && message.From == from {
+			return message.Text
+		}
+	}
+	return ""
+}
+
+// send gives a file with one command: no service runs before it, and none
+// runs after it.
+func TestSendGivesAFileInOneCommand(t *testing.T) {
+	data := random(t, 1<<20+5)
+	path := filepath.Join(t.TempDir(), "voice note.wav")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The stranger is the sender here: no service runs for its key.
+	state := filepath.Join(t.TempDir(), "state")
+	send := func(wait string) (command *exec.Cmd, stdout, stderr *output) {
+		command = exec.Command(env.program, "send", "-arc", env.arc, "-home", env.other, "-state", state, "-wait", wait, "-m", "listen to this", env.receiverKey, path)
+		command.Env = append(os.Environ(), "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1")
+		stdout, stderr = &output{}, &output{}
+		command.Stdout, command.Stderr = stdout, stderr
+		return command, stdout, stderr
+	}
+
+	// The receiver does not get the file in time: send says so, and fails.
+	first, _, problems := send("2s")
+	if err := first.Run(); err == nil || !strings.Contains(problems.String(), "did not get 1 of 1 files") {
+		t.Fatalf("send with no receiver: %v\n%s", err, problems.String())
+	}
+	// The first send announced the app of the sender, so the receiver can
+	// install it now.
+	if out, err := exec.Command(env.arc, "--home", env.receiver, "install", env.strangerKey, "transfer", "--as", "transfer-of-stranger", "--yes").CombinedOutput(); err != nil {
+		t.Fatalf("arc install: %v\n%s", err, out)
+	}
+	text := inboxText(env.receiver, env.strangerKey)
+	if !strings.HasPrefix(text, "listen to this\ntransfer+arc://"+env.strangerKey+"/") {
+		t.Fatalf("the message of the first send is %q", text)
+	}
+	link := strings.TrimPrefix(text, "listen to this\n")
+	output := filepath.Join(t.TempDir(), "got.wav")
+	// The service of the first send stopped with it: no process of it is
+	// left, and the receiver gets no answer.
+	if left, _ := exec.Command("pgrep", "-f", "arc-transfer-send").Output(); len(left) > 0 {
+		t.Fatalf("a process of the service runs after send ended: %s", left)
+	}
+	if log, err := fetch(env.receiver, link, output); err == nil {
+		t.Fatalf("a service answers after send ended:\n%s", log)
+	}
+
+	second, printed, problems := send("60s")
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- second.Wait() }()
+	// The receiver gets the file while send waits. The service of send
+	// answers only when it runs, so the receiver tries until then.
+	var log string
+	var err error
+	if !waitUntil(30*time.Second, func() bool {
+		log, err = fetch(env.receiver, link, output)
+		return err == nil
+	}) {
+		t.Fatalf("get: %v\n%s", err, log)
+	}
+	if got, _ := os.ReadFile(output); !bytes.Equal(got, data) {
+		t.Fatal("the receiver has other bytes")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("send: %v\n%s", err, problems.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatalf("send did not end after the receiver got the file:\n%s", problems.String())
+	}
+	if strings.TrimSpace(printed.String()) != path {
+		t.Fatalf("send printed %q, want the path of the file", printed.String())
+	}
+
+	// Only the named receiver gets the file, also while a send runs.
+	third, _, notes := send("20s")
+	if err := third.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- third.Wait() }()
+	// An interrupt lets send stop its service.
+	defer func() { _ = third.Process.Signal(os.Interrupt); <-ended }()
+	if !waitUntil(15*time.Second, func() bool { return strings.Contains(notes.String(), "the message is sent") }) {
+		t.Fatalf("the third send did not start its service:\n%s", notes.String())
+	}
+	if out, err := exec.Command(env.arc, "--home", env.sender, "install", env.strangerKey, "transfer", "--as", "transfer-of-stranger", "--yes").CombinedOutput(); err != nil {
+		t.Fatalf("arc install: %v\n%s", err, out)
+	}
+	stolen := filepath.Join(t.TempDir(), "stolen.wav")
+	if log, err := fetch(env.sender, link, stolen); err == nil {
+		t.Fatalf("another citizen got the file of a send:\n%s", log)
+	}
+	absent(t, stolen)
+	// The receiver got this file before. The third send must wait for a new
+	// delivery, and not end on the record of the old one.
+	select {
+	case err := <-ended:
+		ended <- err
+		t.Fatalf("a send of the same file ended with no new delivery: %v\n%s", err, notes.String())
+	default:
 	}
 }

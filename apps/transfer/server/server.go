@@ -148,6 +148,9 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 				select {
 				case <-received:
 					fmt.Fprintf(s.log, "%s: %d bytes in %.1f s on %s\n", label, offer.Size-fetch.Offset, time.Since(started).Seconds(), direct.SelectedPath(pc))
+					if err := recordDelivery(s.state, offer.SHA256, request.From); err != nil {
+						fmt.Fprintf(s.log, "%s: the delivery is not recorded: %v\n", label, err)
+					}
 				case <-time.After(30 * time.Second):
 					fmt.Fprintf(s.log, "%s: the receiver did not confirm\n", label)
 				}
