@@ -32,6 +32,10 @@ const holdWait = time.Second
 // uses the other order of the first packets.
 var errNoPath = errors.New("no direct path")
 
+// errTooManyBytes says that the sender wrote more bytes than the size in the
+// link. The receiver does not write these bytes.
+var errTooManyBytes = errors.New("the sender wrote more bytes than the link says")
+
 // Arc names the arc program and the arc home of this citizen.
 type Arc struct {
 	// Program is the arc program. The default is "arc" on PATH.
@@ -148,6 +152,12 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 			fmt.Fprintln(g.Notes, "no direct path in the first order of the packets; trying the other order")
 		}
 	}
+	if errors.Is(err, errTooManyBytes) {
+		// The part file is not a start of the file of the link.
+		_ = run.file.Close()
+		_ = os.Remove(part)
+		return result, fmt.Errorf("%w; the part file is removed", err)
+	}
 	if err != nil {
 		if run.have.Load() > resumed {
 			return result, fmt.Errorf("%w; %s holds %d of %d bytes, run the command again to get the rest", err, part, run.have.Load(), offer.Size)
@@ -222,6 +232,12 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 			}
 			_ = dc.SendText("ok")
 			finish(nil)
+			return
+		}
+		// The size in the link is the limit. A sender that writes more must
+		// not fill the disk.
+		if g.have.Load()+int64(len(m.Data)) > g.offer.Size {
+			finish(errTooManyBytes)
 			return
 		}
 		if _, err := g.file.Write(m.Data); err != nil {

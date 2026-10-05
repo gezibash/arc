@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer/client"
+	"github.com/gezibash/arc/apps/transfer/direct"
 )
 
 // The tests build the arc program and this program, and run them as a
@@ -253,6 +254,54 @@ func TestGetRefusesBytesWithAWrongSHA256(t *testing.T) {
 	log, err := fetch(env.receiver, link, output)
 	if err == nil {
 		t.Fatalf("get took bytes with a wrong SHA-256:\n%s", log)
+	}
+	absent(t, output, output+".part")
+}
+
+// A sender can write more bytes than the size in its link. The receiver must
+// not put these bytes on its disk.
+func TestGetStopsASenderThatWritesMoreBytesThanTheLinkSays(t *testing.T) {
+	data := random(t, 8<<20)
+	// The limit is not at the end of a chunk.
+	declared := int64(1<<20 + 100)
+	_, link := offered(t, data)
+	// The sender takes the size from its offer, and the receiver from the
+	// link. This link says a smaller size, so the sender writes too much.
+	short := strings.Replace(link, fmt.Sprintf("size=%d", len(data)), fmt.Sprintf("size=%d", declared), 1)
+	if short == link {
+		t.Fatalf("the link has no size to change: %s", link)
+	}
+	output := filepath.Join(t.TempDir(), "got.bin")
+
+	// Watch the size of the part file while get runs.
+	stop := make(chan struct{})
+	watched := make(chan int64)
+	go func() {
+		var largest int64
+		for {
+			if info, err := os.Stat(output + ".part"); err == nil {
+				largest = max(largest, info.Size())
+			}
+			select {
+			case <-stop:
+				watched <- largest
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+	log, err := fetch(env.receiver, short, output)
+	close(stop)
+	largest := <-watched
+
+	if err == nil {
+		t.Fatalf("get took more bytes than the link says:\n%s", log)
+	}
+	if !strings.Contains(log, "more bytes than the link says") {
+		t.Errorf("the receiver does not say why:\n%s", log)
+	}
+	if limit := declared + direct.ChunkSize; largest > limit {
+		t.Errorf("the part file grew to %d bytes, the limit is %d", largest, limit)
 	}
 	absent(t, output, output+".part")
 }
