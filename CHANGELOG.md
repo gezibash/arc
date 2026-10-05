@@ -16,6 +16,10 @@ All notable changes to ARC are recorded here. The format follows
   A release now includes the program `arc-transfer`. The app adds the module
   `github.com/pion/webrtc/v4` and 17 indirect modules; `arc` itself does
   not import them. See apps/transfer/README.md.
+- `arc-transfer send <key> <file>...` gives files to a citizen in one
+  command. It records the offers, serves the app for that citizen only,
+  sends one message with the links, and waits until the citizen has each
+  file. No service of the sender must run before.
 
 ### Fixed
 

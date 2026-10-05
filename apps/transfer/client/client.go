@@ -44,7 +44,8 @@ type Arc struct {
 	Home string
 }
 
-func (a Arc) command(ctx context.Context, args ...string) *exec.Cmd {
+// Command makes a command of the arc program, in the arc home.
+func (a Arc) Command(ctx context.Context, args ...string) *exec.Cmd {
 	program := a.Program
 	if program == "" {
 		program = "arc"
@@ -57,7 +58,7 @@ func (a Arc) command(ctx context.Context, args ...string) *exec.Cmd {
 
 // PublicKey asks arc for the public key of this citizen.
 func (a Arc) PublicKey(ctx context.Context) (string, error) {
-	out, err := a.command(ctx, "whoami").Output()
+	out, err := a.Command(ctx, "whoami").Output()
 	if err != nil {
 		return "", fmt.Errorf("arc whoami: %w", err)
 	}
@@ -303,7 +304,7 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 
 // call makes the ARC call to the app of the sender.
 func (g *getter) call(ctx context.Context, body string) ([]byte, error) {
-	command := g.Arc.command(ctx, "call", "transfer+arc://"+g.sender+"/", body, "--raw", "--timeout", "30s")
+	command := g.Arc.Command(ctx, "call", "transfer+arc://"+g.sender+"/", body, "--raw", "--timeout", "30s")
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	reply, err := command.Output()

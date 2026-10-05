@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gezibash/arc/apps/transfer/direct"
 )
@@ -93,4 +94,34 @@ func hashFile(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+func deliveryFile(state, sum, to string) string {
+	return filepath.Join(state, "delivered", sum+"-"+to)
+}
+
+// recordDelivery writes that a citizen has all the bytes of an offer. The
+// file delivered/<sha256>-<key> holds the time.
+func recordDelivery(state, sum, to string) error {
+	if err := os.MkdirAll(filepath.Join(state, "delivered"), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(deliveryFile(state, sum, to), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+}
+
+// Delivered says whether a citizen got all the bytes of an offer. The
+// service records a delivery when the receiver confirms the last byte.
+func Delivered(state, sum, to string) bool {
+	_, err := os.Stat(deliveryFile(state, sum, to))
+	return err == nil
+}
+
+// ForgetDelivery removes the record of a delivery. A sender that gives the
+// same file to the same citizen again then waits for the new delivery.
+func ForgetDelivery(state, sum, to string) error {
+	err := os.Remove(deliveryFile(state, sum, to))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }

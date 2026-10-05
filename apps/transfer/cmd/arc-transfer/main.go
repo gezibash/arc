@@ -2,7 +2,8 @@
 // commands of the app that a person runs:
 //
 //	arc-transfer                 the service, under arc serve
-//	arc-transfer offer <file>    record a file to give, and print its link
+//	arc-transfer send <key> <file>   give a file to a citizen in one command
+//	arc-transfer offer <file>        record a file to give, and print its link
 //	arc-transfer get <link>      get the file of a link
 package main
 
@@ -24,6 +25,7 @@ import (
 
 const usage = `usage:
   arc-transfer                        the service, under arc serve
+  arc-transfer send [flags] <key> <file>...   give files to a citizen in one command
   arc-transfer offer [flags] <file>   record a file to give, and print its link
   arc-transfer get [flags] <link>     get the file of a link
 
@@ -34,7 +36,7 @@ func main() {
 		stdio.Main("arc-transfer", server.Run)
 		return
 	}
-	commands := map[string]func(context.Context, []string) error{"offer": offer, "get": get}
+	commands := map[string]func(context.Context, []string) error{"send": send, "offer": offer, "get": get}
 	run, ok := commands[os.Args[1]]
 	if !ok {
 		fmt.Fprintln(os.Stderr, usage)
