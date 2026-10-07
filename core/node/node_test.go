@@ -16,6 +16,7 @@ import (
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
+	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/internal/testrelay"
 	"github.com/gezibash/arc/internal/testutil"
@@ -309,5 +310,65 @@ func TestObtainSaysWhenNoRelayAnswered(t *testing.T) {
 				t.Fatalf("Obtain returned %v, want no error", err)
 			}
 		})
+	}
+}
+
+// counting is a store that counts how the node saves events.
+type counting struct {
+	*store.Store
+	saves, batches int
+}
+
+func (c *counting) Save(event nostr.Event) (store.Result, error) {
+	c.saves++
+	return c.Store.Save(event)
+}
+
+func (c *counting) SaveAll(events []nostr.Event) ([]store.Result, error) {
+	c.batches++
+	return c.Store.SaveAll(events)
+}
+
+// A sync keeps a fetch in batches. One save of each event costs one sync to
+// disk, which took 17.5 s for 2,001 events on macOS.
+func TestASyncKeepsAFetchInBatches(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		url  string
+	}{
+		{"a relay with Negentropy", testrelay.Start(t)},
+		{"a relay without it", testrelay.StartPlain(t)},
+	} {
+		k := keys.Generate()
+		filter := nostr.Filter{Authors: []nostr.PubKey{k.Public}}
+		r := relay.Relay{URL: c.url}
+
+		up := newNode(t)
+		for i := range 250 {
+			if _, err := up.Store.Save(note(t, k, fmt.Sprintf("note %d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := up.Sync(context.Background(), filter, r); err != nil {
+			t.Fatal(err)
+		}
+
+		s, err := boltstore.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(s.Close)
+		counted := &counting{Store: s}
+		down := &node.Node{Store: counted}
+		report, err := down.Sync(context.Background(), filter, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.Received != 250 {
+			t.Errorf("%s: received %d, want 250", c.name, report.Received)
+		}
+		if counted.saves != 0 || counted.batches == 0 || counted.batches > 3 {
+			t.Errorf("%s: %d single saves and %d batches, want 0 and at most 3", c.name, counted.saves, counted.batches)
+		}
 	}
 }

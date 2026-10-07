@@ -32,6 +32,35 @@ type receiptStore struct {
 // between the two writes, a receipt with no seal stays. It matches no
 // message.
 func (r receiptStore) Save(event nostr.Event) (store.Result, error) {
+	if err := r.receipt(event); err != nil {
+		return store.Result{}, err
+	}
+	return r.EventStore.Save(event)
+}
+
+// SaveAll records the receipts, and then saves the events together when the
+// store can batch.
+func (r receiptStore) SaveAll(events []nostr.Event) ([]store.Result, error) {
+	for _, event := range events {
+		if err := r.receipt(event); err != nil {
+			return nil, err
+		}
+	}
+	if batcher, ok := r.EventStore.(node.Batcher); ok {
+		return batcher.SaveAll(events)
+	}
+	results := make([]store.Result, 0, len(events))
+	for _, event := range events {
+		result, err := r.EventStore.Save(event)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func (r receiptStore) receipt(event nostr.Event) error {
 	if event.Kind == private.SealKind && event.PubKey != r.me {
 		err := r.db.Update(func(tx kv.Tx) error {
 			b, err := tx.CreateBucketIfNotExists(receiptBucket)
@@ -51,10 +80,10 @@ func (r receiptStore) Save(event nostr.Event) (store.Result, error) {
 			return b.Put(event.ID[:], binary.BigEndian.AppendUint64(nil, next))
 		})
 		if err != nil {
-			return store.Result{}, err
+			return err
 		}
 	}
-	return r.EventStore.Save(event)
+	return nil
 }
 
 // ReceiptOrder gives the position in which this machine first stored each
