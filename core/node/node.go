@@ -80,7 +80,7 @@ func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transp
 		}
 		if ok {
 			report.Reconciled = true
-			return report, n.exchange(ctx, t, need, give, &report)
+			return report, n.exchange(ctx, t, filter, need, give, &report)
 		}
 	}
 
@@ -116,12 +116,14 @@ func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transp
 }
 
 // exchange fetches the events that the store needs, and sends the events that
-// the transport needs, a batch at a time.
-func (n *Node) exchange(ctx context.Context, t transport.Transport, need, give []nostr.ID, report *Report) error {
+// the transport needs, a batch at a time. A fetch keeps the kinds and the
+// authors of the sync's filter: a relay serves sealed data only to a query
+// that names its kind.
+func (n *Node) exchange(ctx context.Context, t transport.Transport, filter nostr.Filter, need, give []nostr.ID, report *Report) error {
 	const size = 100
 
 	for i := 0; i < len(need); i += size {
-		batch, err := t.Fetch(ctx, nostr.Filter{IDs: need[i:min(i+size, len(need))]})
+		batch, err := t.Fetch(ctx, nostr.Filter{IDs: need[i:min(i+size, len(need))], Kinds: filter.Kinds, Authors: filter.Authors})
 		if err != nil {
 			return err
 		}

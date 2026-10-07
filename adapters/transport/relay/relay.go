@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,8 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip11"
 	"fiatjaf.com/nostr/nip77"
+	"fiatjaf.com/nostr/nip77/negentropy"
+	"fiatjaf.com/nostr/nip77/negentropy/storage/vector"
 	"github.com/gezibash/arc/core/transport"
 )
 
@@ -365,11 +369,6 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
-	// The Negentropy session opens its own connection, which cannot answer
-	// a challenge. Sealed data therefore syncs by a full fetch.
-	if sealedKinds(filter) {
-		return nil, nil, false, nil
-	}
 	info, err := nip11.Fetch(ctx, r.URL)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
@@ -378,24 +377,124 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 		return nil, nil, false, nil
 	}
 
-	var mu sync.Mutex
-	var need, give []nostr.ID
-	err = nip77.NegentropySync(ctx, r.URL, filter, local, discard{},
-		func(_ context.Context, dir nip77.Direction) {
-			for id := range dir.Items {
-				mu.Lock()
-				if dir.From == local {
-					give = append(give, id)
-				} else {
-					need = append(need, id)
-				}
-				mu.Unlock()
-			}
-		})
+	need, give, err := r.negentropy(ctx, filter, local)
 	if err != nil {
 		return nil, nil, true, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 	return need, give, true, nil
+}
+
+// negentropy runs one NIP-77 session. The session of the nostr library opens
+// its own connection, which cannot answer a challenge, so a relay would
+// refuse it sealed data. This session answers the challenge, and opens again.
+func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.Querier) ([]nostr.ID, []nostr.ID, error) {
+	const id = "arc-negentropy"
+	const frame = 60_000
+
+	replies := make(chan nostr.Envelope)
+	conn, err := nostr.RelayConnect(ctx, r.URL, nostr.RelayOptions{
+		NoticeHandler: func(*nostr.Relay, string) {},
+		CustomHandler: func(data string) {
+			if env := negMessage(data); env != nil {
+				select {
+				case replies <- env:
+				case <-ctx.Done():
+				}
+			}
+		},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	vec := vector.New()
+	for event := range local.QueryEvents(filter) {
+		vec.Insert(event.CreatedAt, event.ID)
+	}
+	vec.Seal()
+
+	open := func() (*negentropy.Negentropy, error) {
+		neg := negentropy.New(vec, frame, true, true)
+		msg, _ := nip77.OpenEnvelope{SubscriptionID: id, Filter: filter, Message: neg.Start()}.MarshalJSON()
+		return neg, conn.WriteWithError(msg)
+	}
+	neg, err := open()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		msg, _ := nip77.CloseEnvelope{SubscriptionID: id}.MarshalJSON()
+		conn.Write(msg)
+	}()
+
+	// Reconcile writes the IDs on two channels, and blocks when they are
+	// full, so they are read while the session runs.
+	var need, give []nostr.ID
+	var wg sync.WaitGroup
+	reading, authed := false, false
+	for {
+		var env nostr.Envelope
+		select {
+		case env = <-replies:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+		switch env := env.(type) {
+		case *nip77.ErrorEnvelope:
+			if authed || r.Signer == nil || !strings.HasPrefix(env.Reason, "auth-required:") {
+				return nil, nil, errors.New(env.Reason)
+			}
+			if err := r.authenticate(ctx, conn); err != nil {
+				return nil, nil, err
+			}
+			authed = true
+			if neg, err = open(); err != nil {
+				return nil, nil, err
+			}
+		case *nip77.MessageEnvelope:
+			if !reading {
+				reading = true
+				wg.Go(func() { need = slices.AppendSeq(need, chanSeq(neg.HaveNots)) })
+				wg.Go(func() { give = slices.AppendSeq(give, chanSeq(neg.Haves)) })
+			}
+			next, err := neg.Reconcile(env.Message)
+			if err != nil {
+				return nil, nil, err
+			}
+			if next == "" {
+				wg.Wait()
+				return need, give, nil
+			}
+			msg, _ := nip77.MessageEnvelope{SubscriptionID: id, Message: next}.MarshalJSON()
+			if err := conn.WriteWithError(msg); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+}
+
+// negMessage parses a NIP-77 message. NIP-77 names the error NEG-ERR, but a
+// khatru relay writes NEG-ERROR, which the parser of the library drops.
+func negMessage(data string) nostr.Envelope {
+	if env := nip77.ParseNegMessage(data); env != nil {
+		return env
+	}
+	var fields []string
+	if json.Unmarshal([]byte(data), &fields) == nil && len(fields) == 3 && fields[0] == "NEG-ERROR" {
+		return &nip77.ErrorEnvelope{SubscriptionID: fields[1], Reason: fields[2]}
+	}
+	return nil
+}
+
+func chanSeq(c <-chan nostr.ID) iter.Seq[nostr.ID] {
+	return func(yield func(nostr.ID) bool) {
+		for id := range c {
+			if !yield(id) {
+				return
+			}
+		}
+	}
 }
 
 func supports(nips []any, nip int) bool {
@@ -417,12 +516,6 @@ func supports(nips []any, nip int) bool {
 	}
 	return false
 }
-
-// discard is a target that turns on the download direction of a sync. The
-// caller fetches and verifies each event itself.
-type discard struct{}
-
-func (discard) Publish(context.Context, nostr.Event) error { return nil }
 
 // Watch sends the stored events that match the filter, then each new one as
 // it arrives. It closes the channel when the context ends, or when the relay
