@@ -407,25 +407,6 @@ func (r *run) notebookSections(entries []*entry, section string) ([]*entry, erro
 	return entries, nil
 }
 
-func (r *run) refreshNotebookIndex(kind, book string) error {
-	pages, err := r.notebookPages(kind)
-	if err != nil {
-		return err
-	}
-	selected := pages[:0]
-	for _, p := range pages {
-		if p.book == book {
-			p.text, err = r.joined(p.entry)
-			if err != nil {
-				return err
-			}
-			selected = append(selected, p)
-		}
-	}
-	sortNotebookPages(selected, "page", false)
-	return r.saveNotebookIndex(kind, book, r.notebookIndex(book, selected, true))
-}
-
 func (r *run) saveNotebookIndex(kind, book, text string) error {
 	indexKind := r.kindOf(kind).NotebookIndex
 	d, err := r.keyed(indexKind, book)

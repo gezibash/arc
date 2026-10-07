@@ -45,8 +45,8 @@ arc journal toc arc/design
 ```
 
 After another page exists, `next` and `prev` move by ordinal within its notebook,
-skipping missing or deleted pages. Page edits maintain the notebook index.
-`index` rebuilds it. Index and ToC references include the identity and can name
+skipping missing or deleted pages. `index` and `toc` read the pages of the
+notebook each time. Index and ToC references include the identity and can name
 a Markdown heading; `read --section Decision` selects that section.
 
 ```sh
@@ -162,14 +162,14 @@ The index can be rebuilt from source events; it does not replace ARC persistence
 notebook. They skip gaps and deleted pages, and report a boundary when no page
 exists. Chronological views and ordinal navigation are distinct operations.
 
-Each write, append and delete refreshes an encrypted notebook index through the
-normal draft/checkpoint core. The index contains page numbers, titles, creation
-and update timestamps, page references, and a table of Markdown headings.
-Indexes are rebuildable snapshots. Views derive from verified source pages,
-so an old cached index does not hide pages received from another machine.
-`index` rebuilds and persists the snapshot; `toc` renders its page/heading tree.
-An interrupted index update reports that the page was saved and names the
-rebuild operation. Sync before using an index on another machine.
+`index` and `toc` build the notebook index from the verified source pages each
+time. The index contains page numbers, titles, creation and update timestamps,
+page references, and a table of Markdown headings. Pages from another machine
+appear after a sync. `index` also keeps the result as an encrypted snapshot
+through the normal draft/checkpoint core; `toc` keeps nothing. A write, an
+append and a delete do not change the snapshot. If they did, each write would
+store the whole index again, and the stored bytes would grow with the square of
+the page count.
 
 ToC links use `journal+arc://<own-public-key>/<project>/<notebook>/<page>#<anchor>`.
 Pass a link to `arc journal read` to read the page or section. An address with

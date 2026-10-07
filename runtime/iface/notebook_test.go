@@ -233,6 +233,42 @@ func TestNotebookIndexRepairsStaleSnapshots(t *testing.T) {
 	}
 }
 
+// A write must cost the same in a full notebook as in an empty one. Before,
+// each write stored the whole notebook index again, so 1,000 pages of 2 KB
+// filled 237 MB.
+func TestNotebookWriteCostDoesNotGrowWithTheNotebook(t *testing.T) {
+	c := newCitizen(t)
+	stored := func() int {
+		events, err := c.env.store.Query(nostr.Filter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := 0
+		for _, e := range events {
+			total += len(e.String())
+		}
+		return total
+	}
+	body := strings.Repeat("# Heading\nsome notes about the run\n", 8)
+	write := func(n int) int {
+		before := stored()
+		writeNotebookPage(c, "arc/research", n, fmt.Sprintf("Page %d", n), body)
+		return stored() - before
+	}
+
+	first := write(1)
+	for n := 2; n < 60; n++ {
+		write(n)
+	}
+	last := write(60)
+	if last > first*3/2 {
+		t.Errorf("the 60th write stored %d bytes, and the first stored %d", last, first)
+	}
+	if got := c.must("journal", "", "toc", "arc/research"); !strings.Contains(got, "60. Page 60") {
+		t.Errorf("the table of contents lacks page 60:\n%s", got)
+	}
+}
+
 func TestNotebookTailTreatsTimestampChangesAsAppend(t *testing.T) {
 	m := specManifests(t)["journal"]
 	r := &run{in: Installed{Manifest: m}}
