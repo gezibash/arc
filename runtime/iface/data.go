@@ -294,13 +294,6 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if index := kind.NotebookIndex; index != "" {
-		fields, _, _ := frontmatter(head)
-		book, _ := fields["notebook"].(string)
-		if err := r.refreshNotebookIndex(p.Kind, book); err != nil {
-			return nil, fmt.Errorf("page saved; notebook index update failed (rebuild with index): %w", err)
-		}
-	}
 	return []*entry{entryOf(opened, p.Kind)}, nil
 }
 
@@ -415,20 +408,6 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	}
 	if err := r.env.Publish(r.ctx, []nostr.Event{blank, request}, nil); err != nil {
 		return nil, err
-	}
-	if r.kindOf(dl.Kind).NotebookIndex != "" {
-		opened, err := draft.Open(r.ctx, k, wraps[0])
-		if err != nil {
-			return nil, err
-		}
-		address := opened.Event.Tags.GetD()
-		book, _, _ := strings.Cut(address, "/")
-		if before, _, ok := strings.CutLast(address, "/"); ok {
-			book = before
-		}
-		if err := r.refreshNotebookIndex(dl.Kind, book); err != nil {
-			return nil, fmt.Errorf("page deleted; notebook index update failed: %w", err)
-		}
 	}
 	return nil, nil
 }
