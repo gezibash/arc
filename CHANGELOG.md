@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-07
+
+The transfer app gives files on a direct connection, and a sync of sealed
+data fetches only what changed. A journal of 1,000 pages now writes in 87 s,
+not 510 s, holds 16 MB on a relay, not 237 MB, and syncs to a new machine in
+1.4 s, not 79 s.
+
 ### Added
 
 - The transfer app gives a file to a citizen on a direct connection. One
@@ -27,8 +34,25 @@ All notable changes to ARC are recorded here. The format follows
   takes it from there with the link, with no connection. The app takes puts
   only if `TRANSFER_PUT_MAX_MIB` is set. See apps/transfer/README.md.
 
+### Changed
+
+- A journal write, append or delete does not store the notebook index
+  again. `index` and `toc` build the index from the pages each time, as
+  before. `index` still keeps its snapshot. Before, each write stored the
+  whole index, so the stored bytes grew with the square of the page count.
+
 ### Fixed
 
+- A sync of sealed data fetches only the events that changed. Before, the
+  client did not answer the challenge of the relay on a NIP-77 session, so
+  each sync fetched every sealed event again. A khatru relay writes the
+  NIP-77 error as `NEG-ERROR`, and the client now reads it.
+- A sync keeps each fetched batch of up to 100 events with one sync to
+  disk. Before, each event had its own sync, which takes about 9 ms on
+  macOS. A power loss during a batch can damage `events.db`; delete it and
+  sync again. A local write keeps one sync for each event.
+- A fetch by event ID asks the relay for one page. Before, the nostr library
+  wrote each event again to stderr as "filter does not match".
 - One identity can serve several apps, with one `arc serve` for each app.
   Before, each `arc serve` refused the calls and the sessions to the other
   apps with `unknown_capability`, and a caller took the first answer. A
