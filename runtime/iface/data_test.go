@@ -104,7 +104,7 @@ func TestThePageIsANIP37DraftOfAnArticle(t *testing.T) {
 	c := newCitizen(t)
 	c.must("journal", "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n", "write", page, "--title", "T")
 	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
-	if len(wraps) != 2 {
+	if len(wraps) != 1 {
 		t.Fatalf("the store holds %d drafts", len(wraps))
 	}
 	if strings.Contains(wraps[0].Tags.GetD(), "hrs") || strings.Contains(wraps[0].Content, "short page") {
