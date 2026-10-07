@@ -455,8 +455,8 @@ func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.
 		case *nip77.MessageEnvelope:
 			if !reading {
 				reading = true
-				wg.Go(func() { need = slices.AppendSeq(need, chanSeq(neg.HaveNots)) })
-				wg.Go(func() { give = slices.AppendSeq(give, chanSeq(neg.Haves)) })
+				wg.Go(func() { need = slices.AppendSeq(need, chanSeq(ctx, neg.HaveNots)) })
+				wg.Go(func() { give = slices.AppendSeq(give, chanSeq(ctx, neg.Haves)) })
 			}
 			next, err := neg.Reconcile(env.Message)
 			if err != nil {
@@ -487,10 +487,17 @@ func negMessage(data string) nostr.Envelope {
 	return nil
 }
 
-func chanSeq(c <-chan nostr.ID) iter.Seq[nostr.ID] {
+// chanSeq reads c until it closes or ctx ends. A session that fails never
+// closes c, and Reconcile then cancels ctx.
+func chanSeq(ctx context.Context, c <-chan nostr.ID) iter.Seq[nostr.ID] {
 	return func(yield func(nostr.ID) bool) {
-		for id := range c {
-			if !yield(id) {
+		for {
+			select {
+			case id, ok := <-c:
+				if !ok || !yield(id) {
+					return
+				}
+			case <-ctx.Done():
 				return
 			}
 		}
