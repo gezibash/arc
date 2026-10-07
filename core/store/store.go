@@ -68,6 +68,14 @@ type Access interface {
 	Close()
 }
 
+// BatchAccess is an Access that can run several writes with one sync to disk.
+// A power loss during the batch can lose or damage what it wrote, so only
+// events that a transport still holds use it.
+type BatchAccess interface {
+	Access
+	DoBatch(func(Backend) error) error
+}
+
 // New wraps persistence with ARC verification and event retention rules.
 func New(backend Access) *Store { return &Store{backend: backend, now: time.Now} }
 
@@ -110,6 +118,27 @@ func (s *Store) Save(event nostr.Event) (Result, error) {
 		return err
 	})
 	return result, err
+}
+
+// SaveAll saves events that came from a transport. Each event gets the checks
+// of Save. If the backend can batch, the events share one sync to disk.
+func (s *Store) SaveAll(events []nostr.Event) ([]Result, error) {
+	do := s.backend.Do
+	if batch, ok := s.backend.(BatchAccess); ok {
+		do = batch.DoBatch
+	}
+	results := make([]Result, 0, len(events))
+	err := do(func(b Backend) error {
+		for _, event := range events {
+			result, err := s.save(b, event)
+			if err != nil {
+				return err
+			}
+			results = append(results, result)
+		}
+		return nil
+	})
+	return results, err
 }
 
 func (s *Store) save(b Backend, event nostr.Event) (Result, error) {

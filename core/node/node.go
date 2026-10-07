@@ -22,6 +22,12 @@ type EventStore interface {
 	Has(nostr.ID) (bool, error)
 }
 
+// Batcher is an EventStore that saves the events of one fetch together, with
+// one sync to disk. It is only for events that a transport still holds.
+type Batcher interface {
+	SaveAll([]nostr.Event) ([]store.Result, error)
+}
+
 // Node is the store of one citizen on one machine.
 type Node struct {
 	Store EventStore
@@ -93,9 +99,9 @@ func (n *Node) Sync(ctx context.Context, filter nostr.Filter, t transport.Transp
 	remote := make(map[nostr.ID]bool, len(batch.Events))
 	for _, event := range batch.Events {
 		remote[event.ID] = true
-		if err := n.keep(event, &report); err != nil {
-			return report, err
-		}
+	}
+	if err := n.keepAll(batch.Events, &report); err != nil {
+		return report, err
 	}
 
 	events, err := n.Store.Query(filter)
@@ -128,10 +134,8 @@ func (n *Node) exchange(ctx context.Context, t transport.Transport, filter nostr
 			return err
 		}
 		report.Unreadable += batch.Unreadable
-		for _, event := range batch.Events {
-			if err := n.keep(event, report); err != nil {
-				return err
-			}
+		if err := n.keepAll(batch.Events, report); err != nil {
+			return err
 		}
 	}
 
@@ -156,7 +160,38 @@ func (n *Node) keep(event nostr.Event, report *Report) error {
 	if err != nil {
 		return err
 	}
+	count(event, result, report)
+	return nil
+}
 
+// keepAll keeps the events of one fetch. A store that can batch saves each
+// hundred events with one sync to disk.
+func (n *Node) keepAll(events []nostr.Event, report *Report) error {
+	const size = 100
+
+	batcher, ok := n.Store.(Batcher)
+	if !ok {
+		for _, event := range events {
+			if err := n.keep(event, report); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for i := 0; i < len(events); i += size {
+		chunk := events[i:min(i+size, len(events))]
+		results, err := batcher.SaveAll(chunk)
+		if err != nil {
+			return err
+		}
+		for j, result := range results {
+			count(chunk[j], result, report)
+		}
+	}
+	return nil
+}
+
+func count(event nostr.Event, result store.Result, report *Report) {
 	switch result.Outcome {
 	case store.Stored:
 		report.Received++
@@ -167,7 +202,6 @@ func (n *Node) keep(event nostr.Event, report *Report) error {
 	case store.Refused:
 		report.Refused = append(report.Refused, event.ID.Hex()+": "+result.Reason)
 	}
-	return nil
 }
 
 // Pull keeps each event that the transports hold for a filter, and sends
@@ -185,10 +219,8 @@ func (n *Node) Pull(ctx context.Context, filter nostr.Filter, transports []trans
 			continue
 		}
 		report.Unreadable = batch.Unreadable
-		for _, event := range batch.Events {
-			if err := n.keep(event, &report); err != nil {
-				return nil, append(errs, err)
-			}
+		if err := n.keepAll(batch.Events, &report); err != nil {
+			return nil, append(errs, err)
 		}
 		reports = append(reports, report)
 	}
