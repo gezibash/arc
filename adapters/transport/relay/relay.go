@@ -248,7 +248,9 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 			}
 		}
 
-		if fresh == 0 || oldest == 0 || (filter.Since != 0 && oldest <= filter.Since) {
+		// A filter with IDs names its whole result, and a relay can ignore
+		// until for it, so a second page would only bring the same events.
+		if len(filter.IDs) > 0 || fresh == 0 || oldest == 0 || (filter.Since != 0 && oldest <= filter.Since) {
 			return batch, nil
 		}
 		page.Until = oldest
