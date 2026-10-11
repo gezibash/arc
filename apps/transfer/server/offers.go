@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer/direct"
@@ -85,19 +86,25 @@ func deliveryFile(state, sum, to string) string {
 }
 
 // recordDelivery writes that a citizen has all the bytes of an offer. The
-// file delivered/<sha256>-<key> holds the time.
-func recordDelivery(state, sum, to string) error {
+// file delivered/<sha256>-<key> holds the time and the path of the
+// connection.
+func recordDelivery(state, sum, to, path string) error {
 	if err := os.MkdirAll(filepath.Join(state, "delivered"), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(deliveryFile(state, sum, to), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+	return os.WriteFile(deliveryFile(state, sum, to), []byte(time.Now().UTC().Format(time.RFC3339)+" "+path+"\n"), 0o600)
 }
 
-// Delivered says whether a citizen got all the bytes of an offer. The
-// service records a delivery when the receiver confirms the last byte.
-func Delivered(state, sum, to string) bool {
-	_, err := os.Stat(deliveryFile(state, sum, to))
-	return err == nil
+// Delivered says whether a citizen got all the bytes of an offer, and on
+// which path. The service records a delivery when the receiver confirms
+// the last byte.
+func Delivered(state, sum, to string) (path string, ok bool) {
+	data, err := os.ReadFile(deliveryFile(state, sum, to))
+	if err != nil {
+		return "", false
+	}
+	_, path, _ = strings.Cut(strings.TrimSpace(string(data)), " ")
+	return path, true
 }
 
 // ForgetDelivery removes the record of a delivery. A sender that gives the

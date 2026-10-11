@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc relay serve` serves TURN as the last resort for a direct transfer.
+  `--turn-ports <low>-<high>` turns it on, with relay sockets on that UDP
+  port range. TURN uses the STUN port and answers STUN there too.
+  `--turn-ip` sets the public address of the relay sockets. `--turn-quota`
+  sets the MiB that one citizen can relay each day; the default is 1024. The
+  secret comes from the environment variable `TURN_SECRET`.
+- The relay gives a TURN credential in reply to `GET /turn` with a NIP-98
+  authorization (kind 27235). The username holds the key of the citizen, so
+  the relay counts relayed bytes against the quota of that key. See
+  docs/delivery/SPEC.md, section 4.12.
+- `arc relay turn [url]` signs the NIP-98 request and prints the credential.
+- The transfer app tries the TURN server of the first relay after its two
+  direct attempts fail. `get`, `put` and `send` print `path relay` when the
+  bytes went through the relay. A file larger than the quota that is left
+  fails before the attempt, with the two numbers. `-no-relay` turns the
+  attempt off.
+
 ## [0.22.0] - 2026-10-11
 
 The size of mail is now a protocol limit. A message of 32 KiB never worked,

@@ -3,6 +3,8 @@
 The transfer app gives a file to a citizen on a direct connection. It can
 also take a file that a citizen gives to it. ARC carries the request and the
 answer. The bytes do not go through a relay, so a file has no size limit.
+If no direct path opens, the bytes go through the TURN server of the relay,
+as the last resort, and the command says so.
 
 The [manifest](manifest.json) declares the service. `server/` answers the
 requests, `client/` gets a file, and `direct/` holds what the two ends share.
@@ -14,7 +16,7 @@ requests, `client/` gets a file, and `direct/` holds what the two ends share.
 | `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs, with the STUN server of Google. |
 | `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
 | STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc relay serve`. Not tested between two machines behind NATs. |
-| A relay server (TURN) for two machines that find no direct path | Not built. |
+| TURN on the relay, for two machines that find no direct path | Built. Tested on an emulated network, with two ends behind symmetric NATs and the TURN server of `arc relay serve`. Not tested between two real NATs, or on Fly.io. |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
 ## How it works
@@ -43,6 +45,9 @@ The app needs these things:
   each machine. The two machines see the public address of each other. If the
   citizen has no relay, an end uses the addresses of its machine only.
 - The two machines online at the same time.
+- For the last resort, a relay that serves TURN (`arc relay serve
+  --turn-ports`). `get` and `put` get a credential with `arc relay turn`,
+  and the relay counts the bytes against a quota for each day.
 
 ## Use it
 
@@ -124,7 +129,8 @@ photo.png
 ```
 
 `host` in the path means that the two machines are on one network. `srflx`
-means that the path goes through a NAT.
+means that the path goes through a NAT. `relay` means that the bytes went
+through the TURN server of the relay.
 
 If a transfer stops, run the same command again. `get` reads the part file,
 and gets only the rest.
@@ -189,6 +195,7 @@ The commands take these flags:
 | `get` | `-o <file>` | The file to write. The default is the name in the link, in the current directory. |
 | `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. If it is not set, the command asks the first relay of `arc relay ls` on port 3478. |
 | `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the first packets". |
+| `get`, `put` | `-no-relay` | Do not try the TURN server of the relay. If no direct path opens, the command fails. |
 
 ## Speed
 
@@ -314,7 +321,7 @@ A refused request has one of these errors:
   state directory.
 - When a receiver confirms the last byte of a file, the service writes the
   file `delivered/<sha256>-<key of the receiver>` in the state directory.
-  `send` reads it.
+  It holds the time and the path. `send` reads it.
 
 ## Rules of the receiver
 
@@ -352,8 +359,26 @@ first. If the data channel does not open in 12 seconds, `get` asks the
 sender to wait 1 second, so that the receiver sends first. With `-hold`,
 `get` uses the other sequence.
 
-If each machine is behind such a router, no order connects. `get` then
-stops with `no direct path`.
+If each machine is behind such a router, no order connects. `get` and `put`
+then try a third attempt through the TURN server of the first relay:
+
+1. The command runs `arc relay turn`. arc signs a NIP-98 request with the
+   key of the citizen, and the relay gives a TURN credential and the quota
+   that is left.
+2. If the quota is smaller than the bytes that remain, and a tenth more, the
+   command stops with an error that names the two numbers.
+3. The end of the command uses only an address on the TURN server. The
+   other end does not change. The path is `relay`, and `send` prints it for
+   each file too.
+
+If the relay serves no TURN, or the attempt finds no path, the command stops
+with `no direct path, and no path through the relay`. If the citizen uses
+its quota during the transfer, the relay stops relaying. Run the command
+again on the next day: it gets only the rest.
+
+The TURN server is the relay of the citizen who runs `get` or `put`. Its
+operator pays for the bandwidth, and sets the quota. See the delivery spec,
+section 4.12.
 
 ## Why the settings are as they are
 
@@ -380,6 +405,12 @@ go test ./apps/transfer/...
 The tests build `arc` and `arc-transfer`, and run them as a person does: a
 relay on this machine, three citizens, and `arc serve`. Each test fails when
 the behavior that it tests is broken.
+
+`TestRelayPath` in `direct/` puts two ends behind symmetric NATs on an
+emulated network, with the TURN server of the relay on the network. The
+attempt with STUN finds no path. The attempt with TURN sends 1 MiB, and the
+path is `relay`. `TestRelayQuota` in `client/` checks the refusal before an
+attempt when the quota is too small.
 
 A test by hand on 2026-10-05 used a Mac on a home network and a virtual
 machine in a data center, each behind a NAT, with no TURN server:
