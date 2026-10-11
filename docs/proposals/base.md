@@ -282,6 +282,14 @@ and later. ARC data becomes readable only by ARC. This is a real cost.
 If the signer is lost too, the paper key gives the citizen key, which opens
 the wraps directly (section 6).
 
+A new device must also find the lockers of the citizen (issue #172). The
+signer holds the link of each locker, and gives the links to a new device with
+the data roots. The signer also publishes the links to the relays of the
+citizen, in one replaceable event sealed to the citizen key. The paper holds
+only the citizen key, because a locker link can change and paper cannot. With
+the paper key, a new device fetches that event and opens it. This event is
+coordination data, so it stays on the relay.
+
 ## 6. Backup and recovery of the citizen key
 
 The citizen key is the last resort for each step above. Today its loss is
@@ -366,7 +374,8 @@ list for the locker (issue #172).
    signer (phone, laptop, home) is the later answer.
 4. **What does the paper hold?** Recommended: the citizen key as an
    `ncryptsec`. A separate recovery key needs the signer to be alive, and
-   the paper must work when the signer is lost too.
+   the paper must work when the signer is lost too. The paper holds no
+   locker links. They are in a sealed event on the relays (section 5.4).
 5. **Do random data roots replace keys from the citizen key?** Recommended:
    yes. Accept that a plain Nostr client with the nsec no longer reads new ARC
    drafts.
