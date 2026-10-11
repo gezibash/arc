@@ -13,7 +13,6 @@ service program. Apps compose through core ARC calls, sessions and events.
 | [Transfer](transfer/README.md) | Gives files on a direct connection; one call carries the WebRTC offer and answer, and its program gets a file. |
 | [Direct messages](dm/manifest.json) | Local commands that send and read private events. |
 | [Files](files/manifest.json) | Local commands that store and read sealed files. |
-| [Agora](agora/manifest.json) | Commands that publish and read events on a configured group relay. |
 
 ## Terms
 

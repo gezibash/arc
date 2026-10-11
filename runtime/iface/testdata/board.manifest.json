@@ -1,7 +1,7 @@
 {
-  "interface": 1, "id": "agora", "shape": "data",
-  "title": "Agora", "summary": "A public board of signed posts and replies.",
-  "group": {"relay": "wss://board.example", "id": "agora"},
+  "interface": 1, "id": "board", "shape": "data",
+  "title": "Board", "summary": "A public board of signed posts and replies.",
+  "group": {"relay": "wss://board.example", "id": "board"},
   "kinds": {
     "post":   {"kind": 11, "visibility": "group"},
     "reply":  {"kind": 1111, "visibility": "group"},
