@@ -225,8 +225,30 @@ retransmit window or receive buffer did not make a transfer faster.
 84 Mbit/s with a 512 KiB queue.
 
 On 2026-10-05, a real link from a Mac to a cloud VM, both behind NAT, gave
-10 to 19 Mbit/s with the defaults of pion. The step of the app has no
-measurement on a real link yet.
+10 to 19 Mbit/s with the defaults of pion.
+
+On 2026-10-11, a real link measured the step of the app. A boat.dev VM
+(Ubuntu 24.04, x86_64) sent a file of 256 MiB to a Mac at home. Both were
+behind NAT, and each path was `srflx to srflx`. The offer and the answer
+went through `wss://arc-nostr-gezim.fly.dev`, with the STUN server of
+Google. Only the sender changed between runs: `arc-transfer` at 74b1bb8
+(step of pion), or at 422d0ed (step of the app). There were six runs of
+each, and the last six alternated.
+
+| Sender | Median | Mean | Range |
+| --- | --- | --- | --- |
+| Step of pion | 65.9 Mbit/s | 69.6 Mbit/s | 49.6 to 94.5 Mbit/s |
+| Step of the app | 97.0 Mbit/s | 95.4 Mbit/s | 72.0 to 110.7 Mbit/s |
+
+The median is 1.47 times higher. The ranges overlap, so one run does not
+show the difference. The download rate of the Mac was not measured, so the
+share of the link is not known.
+
+The sender ran `arc serve` with `TRANSFER_STUN` set, and the receiver ran:
+
+```sh
+arc-transfer get -stun stun:stun.l.google.com:19302 -o out.bin '<link>'
+```
 
 ## Request protocol
 
