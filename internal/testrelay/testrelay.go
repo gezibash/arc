@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
@@ -33,10 +32,7 @@ func Start(t *testing.T) string {
 func StartKillable(t *testing.T) (string, func()) {
 	t.Helper()
 
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -141,10 +137,7 @@ func (c Connections) Silence() {
 // connections.
 func StartTracked(t *testing.T) (string, Connections) {
 	t.Helper()
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -169,10 +162,7 @@ func StartTracked(t *testing.T) (string, Connections) {
 // authentication, as the public deploy does.
 func StartGuarded(t *testing.T) string {
 	t.Helper()
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -197,10 +187,7 @@ func StartPlain(t *testing.T) string {
 func StartDown(t *testing.T) (string, func()) {
 	t.Helper()
 
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -237,10 +224,7 @@ func (l *gated) Accept() (net.Conn, error) {
 func start(t *testing.T, negentropy bool) string {
 	t.Helper()
 
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
@@ -261,10 +245,7 @@ func start(t *testing.T, negentropy bool) string {
 // ephemeral event to that key. Subscriptions for other keys are not slow.
 func StartSlow(t *testing.T, delay time.Duration, to nostr.PubKey) string {
 	t.Helper()
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
