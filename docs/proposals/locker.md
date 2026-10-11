@@ -127,11 +127,17 @@ locker, from its draft of 2026-10-11. If #173 changes, sections 2.3, 2.4 and
 - To revoke a device, the citizen makes a new generation and wraps it only
   for the devices that remain. Old data stays under old generations.
 - Generation 0 is the drafts of today, sealed to the citizen key.
+- The citizen key signs each draft, checkpoint and part, through the signer.
+  A device key never signs a draft, because a draft is named by its author
+  and its `d` tag. Device keys read, and identify a device. A write needs a
+  path to the signer.
 - The keyed values of interface spec 3.7.1 do not change, so no `d` tag
   changes.
 
 The locker never needs a data root. It stores sealed blobs and wraps, and it
-checks device keys against grants.
+checks device keys against grants. The locker cannot see the signature of
+the event inside a blob, so it does not check it. Each device checks it when
+it opens the blob, and refuses an event that the citizen key did not sign.
 
 This proposal also assumes one thing that #173 has not stated: a device can
 open each older generation that it needs, and the first random generation
@@ -362,6 +368,7 @@ Section 0 states the limit of this table. A locker sees sizes and times.
 | Withhold a blob | A device does not see a new version. It sees an older one, or none. | Two lockers. A device that holds a newer version puts it again. Not built: a signed head for each account, as in the Merkle trees of Keybase. |
 | Delete everything | The data is gone from this locker. | Each device keeps a full copy. A second locker keeps one too. |
 | Serve a revoked device | The revoked device gets new blobs, but it cannot open them: they use a new generation. | The revocation, and the new generation of #173. |
+| Put a blob from a granted device that is hostile | Other devices refuse the event inside: it does not open, or the citizen key did not sign it. The blob costs quota. | Revoke the device. |
 | Join the account to a person | It can use the IP address and the times. | TURN hides the IP address from the locker, at the cost of the TURN quota. Section 0 says the rest. |
 
 ### 2.10 Prior art
@@ -428,6 +435,11 @@ The relay operator and the client move the data in three releases.
    checkpoints, parts and kind 10013. The relay refuses new self data, and
    keeps old data for reads for 90 days.
 3. **After 90 days.** The relay operator removes every event of these kinds.
+
+The old drafts on relays are a risk until they go. A revoked device keeps
+the old data roots, so it can still open each old draft that a relay gives it.
+A standard Nostr relay can give drafts to anyone. A locker refuses a revoked
+device. This is one more reason to take the drafts off the relays.
 
 If a citizen has no locker at release N+1, the client keeps the data local
 only, and says so on each sync. It still deletes nothing from the relays
