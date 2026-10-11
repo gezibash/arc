@@ -534,8 +534,8 @@ lands.
 3. **Where does a new device learn its lockers?** Recommended: from the
    signer when it adds the device. With only the paper key, from one sealed
    event of kind 10273 on the relays (section 2.2). This is the one record of
-   self data that stays on the relay. Check that no NIP uses 10273 before
-   the kind is registered.
+   self data that stays on the relay. On 2026-10-11 the kind table of the
+   NIPs README did not list 10273. No other kind registry was checked.
 4. **Does the relay keep any self data, such as the keyed root draft?**
    Recommended: no. The keyed root goes to the lockers. A machine that signs
    through NIP-46 gets it from a locker.
