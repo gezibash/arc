@@ -21,6 +21,16 @@ import (
 // MaxQuery caps the events that one query returns.
 const MaxQuery = 1_000_000
 
+// MaxEvent is the most bytes that the JSON of one event holds, in the relay
+// form, as docs/delivery/SPEC.md section 3.4 defines. It applies to each
+// regular, replaceable and addressable kind; no store keeps an ephemeral
+// event. A gift wrap of kind 1059 has the smaller limit private.MaxWrap. The
+// Bolt event store holds at most 65,535 bytes of content in one event, and
+// common relays cap an event at 64 KiB. The JSON of an event holds its
+// content and at least 300 bytes of other fields, so an event of MaxEvent
+// bytes has content that the store holds.
+const MaxEvent = 64 << 10
+
 // Outcome says what the store did with one event.
 type Outcome int
 

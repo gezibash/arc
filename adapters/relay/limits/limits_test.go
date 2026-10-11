@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
+	"github.com/gezibash/arc/core/store"
 )
 
 var ctx = context.Background()
@@ -60,9 +61,9 @@ func note(content string) nostr.Event {
 	return e
 }
 
-// The deploy caps an event at 256 KiB. Journal content travels in parts of
-// 32 KiB, docs/delivery/SPEC.md section 3.7, so a full part and a full draft
-// must pass.
+// The deploy sets a cap of 256 KiB, and the protocol limit of 64 KiB
+// applies. Journal content travels in parts of 32 KiB, docs/interface/SPEC.md
+// section 3.9.2, so a full part and a full draft must pass.
 func TestTheSizeCapTakesAFullPartAndAFullDraft(t *testing.T) {
 	url := start(t, limits.Policy{MaxEventBytes: 256 * 1024})
 	k := keyer.NewPlainKeySigner(nostr.Generate())
@@ -137,7 +138,7 @@ func TestTheRelayRefusesAWrapLargerThanMail(t *testing.T) {
 		if err := publish(t, url, nil, resized(largest, 1)); err == nil || !strings.Contains(err.Error(), "invalid") {
 			t.Errorf("cap %d: a wrap of %d bytes: %v", p.MaxEventBytes, private.MaxWrap+1, err)
 		}
-		// The cap of other kinds stays the flag.
+		// Other kinds have the larger limit of an event.
 		if err := publish(t, url, nil, note(strings.Repeat("x", private.MaxWrap))); err != nil {
 			t.Errorf("cap %d: a note larger than a wrap: %v", p.MaxEventBytes, err)
 		}
@@ -297,5 +298,69 @@ func TestTheRelayDropsAWrapWhenItExpires(t *testing.T) {
 	}
 	for range db.QueryEvents(nostr.Filter{IDs: []nostr.ID{w.ID}}, 1) {
 		t.Error("the store still holds the wrap after it expires")
+	}
+}
+
+// sized is an event of the kind whose JSON holds exactly size bytes. Its
+// content is plain text, so JSON adds no escapes.
+func sized(t *testing.T, kind nostr.Kind, tags nostr.Tags, size int) nostr.Event {
+	t.Helper()
+	e := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), Tags: tags}
+	e.Sign(nostr.Generate())
+	e.Content = strings.Repeat("x", size-len(e.String()))
+	e.Sign(nostr.Generate())
+	if n := len(e.String()); n != size {
+		t.Fatalf("the event holds %d bytes, not %d", n, size)
+	}
+	return e
+}
+
+// The limit of an event is a protocol limit, docs/delivery/SPEC.md section
+// 3.4. It holds for a regular, a replaceable and an addressable event, with
+// no flag set, and a flag can only make it smaller. The real Bolt store of
+// the relay keeps the largest event.
+func TestTheRelayRefusesAnEventAboveTheLimit(t *testing.T) {
+	kinds := []struct {
+		kind nostr.Kind
+		tags nostr.Tags
+	}{
+		{1, nil},
+		{10002, nostr.Tags{{"r", "wss://relay.example"}}},
+		{30272, nostr.Tags{{"d", "echo"}, {"t", "echo"}}},
+	}
+	for _, p := range []limits.Policy{{}, {MaxEventBytes: 256 * 1024}} {
+		url := start(t, p)
+		for _, k := range kinds {
+			largest := sized(t, k.kind, k.tags, store.MaxEvent)
+			if err := publish(t, url, nil, largest); err != nil {
+				t.Errorf("cap %d: kind %d of %d bytes: %v", p.MaxEventBytes, k.kind, store.MaxEvent, err)
+			}
+			batch, err := relay.Relay{URL: url}.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{largest.ID}})
+			if err != nil || len(batch.Events) != 1 || batch.Events[0].String() != largest.String() {
+				t.Errorf("cap %d: the relay does not serve kind %d of %d bytes whole: %v", p.MaxEventBytes, k.kind, store.MaxEvent, err)
+			}
+			over := sized(t, k.kind, k.tags, store.MaxEvent+1)
+			if err := publish(t, url, nil, over); err == nil || !strings.Contains(err.Error(), "at most 65536") {
+				t.Errorf("cap %d: kind %d of %d bytes: %v", p.MaxEventBytes, k.kind, store.MaxEvent+1, err)
+			}
+		}
+	}
+
+	url := start(t, limits.Policy{MaxEventBytes: 50_000})
+	if err := publish(t, url, nil, sized(t, 30272, kinds[2].tags, 50_001)); err == nil || !strings.Contains(err.Error(), "at most 50000") {
+		t.Errorf("cap 50,000: an announcement of 50,001 bytes: %v", err)
+	}
+}
+
+// No store keeps an ephemeral event, so only the flag caps it. A live reply
+// travels in one ephemeral gift wrap, and can be larger than 64 KiB.
+func TestAnEphemeralEventHasOnlyTheFlag(t *testing.T) {
+	big := sized(t, 20001, nil, 4*store.MaxEvent)
+	// The relay answers "mute" when it took the event and no one listens.
+	if err := publish(t, start(t, limits.Policy{}), nil, big); err != nil && !strings.Contains(err.Error(), "mute:") {
+		t.Errorf("no cap: an ephemeral event of %d bytes: %v", 4*store.MaxEvent, err)
+	}
+	if err := publish(t, start(t, limits.Policy{MaxEventBytes: 3 * store.MaxEvent}), nil, big); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("cap %d: an ephemeral event of %d bytes: %v", 3*store.MaxEvent, 4*store.MaxEvent, err)
 	}
 }

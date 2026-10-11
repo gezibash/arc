@@ -84,11 +84,7 @@ func Announce(ctx context.Context, k keys.Signer, pkg map[string]any, at nostr.T
 		tags = append(tags, nostr.Tag{"t", word})
 	}
 
-	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
-	if err := k.SignEvent(ctx, &event); err != nil {
-		return nostr.Event{}, err
-	}
-	return event, nil
+	return sign(ctx, k, nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)})
 }
 
 // AnnounceManifest makes the announcement of one manifest of interface
@@ -103,7 +99,21 @@ func AnnounceManifest(ctx context.Context, k keys.Signer, data []byte, at nostr.
 		return nostr.Event{}, err
 	}
 	tags := nostr.Tags{{"d", m.ID}, {"t", m.ID}, {"t", m.Shape}}
-	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)}
+	return sign(ctx, k, nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: string(body)})
+}
+
+// ErrTooLarge says that an announcement is larger than one event.
+var ErrTooLarge = errors.New("catalog: the announcement is too large")
+
+// sign refuses an announcement larger than store.MaxEvent, and signs the
+// rest. The JSON of an unsigned event leaves out the ID, the key and the
+// signature. They have a fixed width, so placeholders give the final size.
+func sign(ctx context.Context, k keys.Signer, event nostr.Event) (nostr.Event, error) {
+	measured := event
+	measured.ID, measured.PubKey, measured.Sig = nostr.ID{1}, nostr.PubKey{1}, [64]byte{1}
+	if n := len(measured.String()); n > store.MaxEvent {
+		return nostr.Event{}, fmt.Errorf("%w: its event holds %d bytes, and an event holds at most %d; the manifest holds %d bytes, so make it at least %d bytes smaller", ErrTooLarge, n, store.MaxEvent, len(event.Content), n-store.MaxEvent)
+	}
 	if err := k.SignEvent(ctx, &event); err != nil {
 		return nostr.Event{}, err
 	}
@@ -416,11 +426,7 @@ func AnnounceProvider(ctx context.Context, k keys.Signer, p *capability.Provider
 	for _, word := range p.Terms {
 		tags = append(tags, nostr.Tag{"t", word})
 	}
-	event := nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: p.Content}
-	if err := k.SignEvent(ctx, &event); err != nil {
-		return nostr.Event{}, err
-	}
-	return event, nil
+	return sign(ctx, k, nostr.Event{Kind: Kind, CreatedAt: at, Tags: tags, Content: p.Content})
 }
 
 // SupportsInteraction applies core mode rules to an authenticated announcement.
