@@ -6,6 +6,20 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-11
+
+### Fixed
+
+- The TURN fallback of the transfer app failed on real networks with "no
+  direct path, and no path through the relay". The TURN server lets in only
+  packets from the peer addresses that the caller gives it. If the STUN
+  server of the sender did not answer, the sender gave only addresses behind
+  its NAT, and the relay dropped its checks. A caller that uses TURN now
+  sends the STUN server of the TURN server, as an IPv4 address, in the field
+  `stun` of the request. The sender adds it as a second STUN server. An
+  older app ignores the field. Two runs through a firewall that blocks each
+  direct path completed through the relay at 0.77 and 0.80 MiB/s.
+
 ## [0.23.0] - 2026-10-11
 
 The relay is now the last resort for a direct transfer. If two machines find
