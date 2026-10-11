@@ -195,8 +195,17 @@ func (c Client) call(ctx context.Context, session string) ([]byte, error) {
 	return nil, fmt.Errorf("the ARC call failed: %s\nif the storage app is not installed, run: arc install <key of the storage citizen> storage", text)
 }
 
-// Close closes the pipe.
-func (s *Session) Close() { _ = s.pc.Close() }
+// Close closes the data channel, so that the storage citizen frees the
+// slot of the session at once, and then closes the connection.
+func (s *Session) Close() {
+	if s.dc.Close() == nil {
+		select {
+		case <-s.closed:
+		case <-time.After(time.Second):
+		}
+	}
+	_ = s.pc.Close()
+}
 
 // Refused is a refusal of the storage citizen.
 type Refused struct{ Code, Message string }

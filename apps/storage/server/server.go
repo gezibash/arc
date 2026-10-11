@@ -192,11 +192,15 @@ func (s *server) connect(account string, req wire.Session, label string) (string
 	// An end that never connects must not keep its slot.
 	unopened := time.AfterFunc(direct.OpenWait+hold, end)
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+		switch state {
+		case webrtc.PeerConnectionStateDisconnected, webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
 			end()
 		}
 	})
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		// The client closes the data channel at the end of its session. The
+		// slot is then free at once, not after the ICE timeouts.
+		dc.OnClose(end)
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
 			select {
 			case messages <- m:
