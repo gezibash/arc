@@ -136,6 +136,10 @@ The kind of the gift wrap sets how long it lives:
 | 1059 | Store and forward. Nodes keep it until it expires. |
 | 21059 | Live. Nodes never keep it. It is useful only while the recipient is present. |
 
+Each gift wrap carries a NIP-40 `expiration` tag. An ARC relay refuses an
+event whose expiration has passed. When the expiration of a stored event
+passes, the relay stops serving the event and deletes it.
+
 The author randomizes `created_at` on the seal and the gift wrap, up to two
 days in the past, as NIP-17 describes. The real time stays inside the rumor.
 
