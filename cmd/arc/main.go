@@ -320,13 +320,24 @@ func serveCommand() *cobra.Command {
 			}
 			fmt.Printf("relay listens on ws://%s\n", listener.Addr())
 			if stunAddress := stunListen(command, listen); stunAddress != "" {
+				// A second relay on one machine cannot take the default
+				// port. It runs with no STUN server. A port that the
+				// operator sets must open.
 				conn, err := net.ListenPacket("udp", stunAddress)
-				if err != nil {
+				switch {
+				case err != nil && command.Flags().Changed("stun"):
 					return fmt.Errorf("STUN: %w", err)
+				case err != nil:
+					fmt.Fprintf(os.Stderr, "relay answers no STUN: %v (set --stun)\n", err)
+				default:
+					defer func() { _ = conn.Close() }()
+					go func() {
+						if err := stun.Serve(conn); err != nil {
+							fmt.Fprintln(os.Stderr, "the STUN server stopped:", err)
+						}
+					}()
+					fmt.Printf("relay answers STUN on udp://%s\n", conn.LocalAddr())
 				}
-				defer func() { _ = conn.Close() }()
-				go func() { _ = stun.Serve(conn) }()
-				fmt.Printf("relay answers STUN on udp://%s\n", conn.LocalAddr())
 			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

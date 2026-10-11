@@ -11,8 +11,9 @@ requests, `client/` gets a file, and `direct/` holds what the two ends share.
 
 | Part | Status |
 | --- | --- |
-| `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs. |
+| `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs, with the STUN server of Google. |
 | `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
+| STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc relay serve`. Not tested between two machines behind NATs. |
 | A relay server (TURN) for two machines that find no direct path | Not built. |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
