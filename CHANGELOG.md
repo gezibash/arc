@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-11
+
+The size of mail is now a protocol limit. A message of 32 KiB never worked,
+because the event store holds at most 65,535 bytes of content in one event.
+
+### Changed
+
+- **Breaking.** Mail content is at most 24,576 bytes (24 KiB), and the JSON
+  of its rumor at most 28,672 bytes. The limit applies to each gift wrap of
+  kind 1059: mail, deferred calls, replies and acknowledgements. See
+  docs/delivery/SPEC.md, section 3.4.
+- A sender refuses mail above the limit before it seals it. The error names
+  the transfer app as the path for larger content.
+- If the reply to a deferred call is above the limit, the provider sends an
+  error reply in its place.
+- A relay refuses a gift wrap of kind 1059 above 55,149 bytes. The flag
+  `--max-event-bytes` can make that limit smaller, never larger. An older
+  client that sends larger mail gets a refusal.
+
 ## [0.21.0] - 2026-10-11
 
 The relay coordinates and does less work. It answers STUN, so a direct
