@@ -820,7 +820,3 @@ On a local relay, a live call to `exec` takes about 10 ms for the round trip.
 | The TLS direct carrier as a live transport | Relays can carry live calls: about 10 ms for a round trip on a local relay. | After a round trip is measured through a public relay. |
 | A full macOS mesh node | It needs a peripheral backend in Go. | After phase 5, see section 3.8. |
 | A bridge to bitchat direct messages | bitchat's Nostr envelopes are not NIP-17. Only the citizen's own node can translate them, because translation needs the private key. | When ARC direct messages must reach bitchat users. |
-
-## Gates
-
-This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).

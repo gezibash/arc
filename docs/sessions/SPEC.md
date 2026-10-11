@@ -210,7 +210,3 @@ Not verified:
 - The one-chunk credit window favors bounded memory. It does not promise
   maximum throughput on high-latency links. Local tests do not establish
   throughput over a wide-area network.
-
-## Gates
-
-This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).
