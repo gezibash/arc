@@ -603,7 +603,10 @@ and NIP-42 authentication for relays. `--decrypt` says what it opens: `none`;
 `self`, the default, which opens only what the owner sealed to their own key,
 such as drafts and the keyed root; or `all`, which mail needs, because a gift
 wrap comes from a one-time key that no list can name. The bunker keeps its URI
-when it restarts. `arc keys add <uri>` makes an identity that
+when it restarts. When the citizen has a device list, the bunker admits only
+the device keys on it, and its URI holds no secret. `arc keys device`,
+`arc keys devices`, `add` and `revoke` manage the list, as
+[the devices spec](../devices/SPEC.md) defines. `arc keys add <uri>` makes an identity that
 signs through it. That identity seals and opens mail, makes calls, and reads the
 keyed root, all through the signer. The bunker publishes the keyed root to its
 relay when it starts. If it refuses to open locally recorded outgoing mail,

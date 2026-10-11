@@ -35,6 +35,7 @@ section 3.7.
 | 10013 | replaceable | NIP-37 | The relay list for drafts. | code | [delivery, section 3.8](delivery/SPEC.md) |
 | 10050 | replaceable | NIP-17 | The relay list for direct messages. | code | [delivery, section 3.8](delivery/SPEC.md) |
 | 10272 | replaceable | ARC | Reserved, and not used. | reserved | [delivery, section 3.7](delivery/SPEC.md) |
+| 10274 | replaceable | ARC | The device list of a citizen, sealed to the citizen key. A relay serves it only to its author. | code, reserved | [devices, section 3.2](devices/SPEC.md) |
 | 13194 | replaceable | NIP-47 | Wallet connect. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 21059 | ephemeral | ARC | A live gift wrap. A relay never keeps it. | code | [delivery, section 3.4](delivery/SPEC.md) |
 | 22242 | ephemeral | NIP-42 | Relay authentication. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
