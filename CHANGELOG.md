@@ -6,6 +6,44 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-11
+
+The relay coordinates and does less work. It answers STUN, so a direct
+transfer no longer asks Google. It refuses and deletes mail after its
+expiration. Agora is gone, because the relay must not own data.
+
+### Added
+
+- `arc relay serve` answers STUN binding requests on UDP. The flag `--stun
+  <address>` sets the address. The default is the host of `--listen`, port
+  3478. `--stun none` turns it off. If the default port is in use, the relay
+  prints a warning and runs with no STUN server.
+- `arc serve` gives each program the variable `ARC_RELAYS`: the relay URLs of
+  the identity, separated by spaces.
+
+### Changed
+
+- The transfer app asks the STUN server of the first relay of the citizen,
+  on UDP port 3478. It no longer asks `stun.l.google.com`. `TRANSFER_STUN`
+  and `-stun` still set another server. If the relay does not answer STUN,
+  a transfer between two machines behind NATs can fail: set `TRANSFER_STUN`.
+- After a loss, the transfer app grows the SCTP send window by 8 KiB for
+  each round trip, not by one packet. A loss still halves the window. On an
+  emulated 92.5 Mbit/s link with a 44 ms round trip and a 128 KiB queue,
+  a transfer went from 31 to 42 Mbit/s to 52 to 63 Mbit/s. No real link
+  was measured.
+- The relay refuses a gift wrap whose NIP-40 expiration has passed. It
+  leaves expired events out of each query result and deletes them.
+- Go 1.27.2 and `golang.org/x/net` 0.60.0. They fix GO-2026-6617,
+  GO-2026-6613 and GO-2026-6612 in `net/http` and HTTP/2.
+- Specs have no gate interview. The `spec` skill, the `## Gates` sections
+  and the pull request check "Spec policy" are removed.
+
+### Fixed
+
+- The test relay locks its in-memory event store. A query and a save on two
+  connections no longer race.
+
 ### Removed
 
 - The Agora app, and its commands `arc agora post`, `reply`, `feed`,
