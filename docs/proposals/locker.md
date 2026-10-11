@@ -168,14 +168,21 @@ devices learn the lockers in one of two ways:
 
 - From the signer, when it adds the new device. The signer holds the link
   of each locker, beside the device list.
-- From the paper key, when the signer is lost. The paper copy also holds the
-  link of each locker.
+- From the paper key, then the sealed link event on the relays, when the
+  signer is lost. The paper holds only the citizen key, because a link can
+  change and paper cannot.
 
 A new device gets its data roots the same way: from the signer, wrapped to
 its device key, or from the paper key, which opens the wraps to the citizen
 key. It never gets them from an old device.
 
-The relay keeps no list of lockers. Kind 10013 has no replacement.
+The link event is one replaceable event of kind 10273, an ARC kind. The
+signer publishes it to the relays of the citizen. Its content is the list of
+locker links, sealed to the citizen key with NIP-44. It carries the NIP-70
+tag. This is coordination data, as the relay list of NIP-65 is, so it stays
+on the relay. The relay sees that the citizen has a link event, its size and
+its time. It does not see the lockers. Kind 10013 goes, and kind 10273 is not
+a replacement for it: 10273 names lockers, not relays for drafts.
 
 ### 2.3 The account, consent and the quota
 
@@ -366,7 +373,7 @@ old blob costs quota but shows no deleted data.
 | Party | Sees | Does not see |
 | --- | --- | --- |
 | Relay, today | The author key, the kind of the draft and the `k` tag inside it, the keyed `d` tag, each version and checkpoint, the count, the exact sizes, the times | The content |
-| Relay, with a locker | That a key sent one call to the locker key, its time and size. With STUN: the public addresses of both machines. With TURN: the ciphertext of the data channel and its volume. | The account, the blobs, the count |
+| Relay, with a locker | One sealed link event of the citizen, its size and time. That a key sent one call to the locker key, its time and size. With STUN: the public addresses of both machines. With TURN: the ciphertext of the data channel and its volume. | The lockers, the account, the blobs, the count |
 | Locker operator | The account key, each device key and its grant, the count of wraps (so the count of devices and generations), the generation of each blob, the IP address of each device (unless TURN carries the bytes), the time of each session, the count of blobs, the padded sizes, which blobs a session puts and deletes | The citizen key, the device list, the kinds, the `d` tags, the content, which blob is a journal page and which is a file |
 | A second device of the citizen | Everything | — |
 
@@ -420,7 +427,7 @@ These documents change with it:
 | Interface spec 3.2 | The `sealed` row goes to "the lockers of the citizen", not "the relays of the NIP-37 list". |
 | Interface spec 3.7.1 | The keyed root draft goes to the lockers. A machine that signs through NIP-46 gets it from a locker. |
 | Interface spec 3.9.1 | `append` reads from the store, then from the lockers. |
-| `docs/KINDS.md` | Kind 10013 is removed from use. Kinds 31234, 1234 and 3275 stay, because the locker blobs carry them. |
+| `docs/KINDS.md` | Kind 10273 is added: the sealed list of locker links. Kind 10013 is removed from use. Kinds 31234, 1234 and 3275 stay, because the locker blobs carry them. |
 | `core/draft` | `RelayList` and `ReadRelayList` go. |
 | `adapters/relay/sealed` | It refuses the sealed kinds, instead of hiding them. |
 
@@ -525,8 +532,10 @@ lands.
    answer, a copy of the device list for each locker, shows the citizen key
    to each locker.
 3. **Where does a new device learn its lockers?** Recommended: from the
-   signer when it adds the device, or from the paper key. No list on the relay,
-   and kind 10013 has no replacement.
+   signer when it adds the device. With only the paper key, from one sealed
+   event of kind 10273 on the relays (section 2.2). This is the one record of
+   self data that stays on the relay. Check that no NIP uses 10273 before
+   the kind is registered.
 4. **Does the relay keep any self data, such as the keyed root draft?**
    Recommended: no. The keyed root goes to the lockers. A machine that signs
    through NIP-46 gets it from a locker.
