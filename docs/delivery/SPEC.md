@@ -268,6 +268,7 @@ registry uses these numbers:
 | 3275 | regular | one continuation part of sealed content longer than 32 KiB |
 | 3276 | private rumor | core session frames, inside live wraps of kind 21059; see [sessions](../sessions/SPEC.md) |
 | 10272 | replaceable | reserved, and not used, see section 7.1 |
+| 10274 | replaceable | the sealed device list; see [devices](../devices/SPEC.md) |
 | 30272 | addressable | a capability announcement |
 
 Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed

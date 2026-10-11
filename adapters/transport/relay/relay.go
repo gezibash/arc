@@ -29,12 +29,12 @@ const Timeout = 15 * time.Second
 var errAuthRequired = errors.New("the relay asks for authentication")
 
 // sealedKinds says whether a filter names a kind that a relay may serve only
-// to its author: a NIP-37 draft, a checkpoint, a part, or a private relay
-// list.
+// to its author: a NIP-37 draft, a checkpoint, a part, a private relay
+// list, or a device list.
 func sealedKinds(filter nostr.Filter) bool {
 	for _, k := range filter.Kinds {
 		switch k {
-		case 31234, 1234, 3275, 10013:
+		case 31234, 1234, 3275, 10013, 10274:
 			return true
 		}
 	}

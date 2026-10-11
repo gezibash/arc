@@ -24,6 +24,7 @@ import (
 	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/spf13/cobra"
@@ -245,12 +246,26 @@ func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys
 	if err := keyfile.Write(keyPath(staging), text); err != nil {
 		return keys.Key{}, err
 	}
+	// An identity that signs through a bunker uses the device key of this
+	// machine, so the key that the signer lists stays when an add fails.
+	var device keys.Key
+	if strings.HasPrefix(text, "bunker://") {
+		if device, err = deviceKey(root); err != nil {
+			return keys.Key{}, err
+		}
+		if err := keyfile.Save(filepath.Join(staging, "bunker-client"), device); err != nil {
+			return keys.Key{}, err
+		}
+	}
 	var k keys.Key
 	if known != nil {
 		k = *known
 	} else {
 		id, err := loadIdentity(ctx, staging)
 		if err != nil {
+			if strings.Contains(err.Error(), "not on the device list") {
+				return keys.Key{}, fmt.Errorf("%w\non the signer, run: arc keys devices add %s --name <name>", err, device.Public.Hex())
+			}
 			return keys.Key{}, err
 		}
 		k = id.key
@@ -494,7 +509,7 @@ func keysCommand() *cobra.Command {
 		},
 	}
 
-	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand())
+	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand())
 	return command
 }
 
@@ -618,7 +633,9 @@ func bunkerCommand() *cobra.Command {
 			"signs with this citizen's key and never holds it. With --allow-kind,\n" +
 			"the bunker signs only those kinds, and authentication for relays. By\n" +
 			"default it decrypts only what the owner sealed to themselves, which\n" +
-			"the journal and the files need; mail needs --decrypt all.",
+			"the journal and the files need; mail needs --decrypt all. When a\n" +
+			"device list exists, the bunker admits only its devices: see\n" +
+			"arc keys devices.",
 		Args: cobra.NoArgs,
 		RunE: serveBunker,
 	}
@@ -670,6 +687,11 @@ func serveBunker(command *cobra.Command, _ []string) error {
 		return err
 	}
 	rootRelay := relay.Relay{URL: url, Signer: sess.Signer}
+	g := &guard{secret: secret, authorized: map[nostr.PubKey]bool{}}
+	if err := startDevices(command.Context(), sess, rootRelay, g); err != nil {
+		sess.Close()
+		return err
+	}
 	if err := sess.PublishKeyedRoot(command.Context()); err != nil {
 		sess.Close()
 		return err
@@ -687,12 +709,8 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	sess.Close()
 
 	signer := nip46.NewStaticKeySigner(id.key.Secret)
-	authorized := map[nostr.PubKey]bool{}
 	signer.AuthorizeRequest = func(_ bool, from nostr.PubKey, given string) bool {
-		if given == secret {
-			authorized[from] = true
-		}
-		return authorized[from]
+		return g.authorize(from, given)
 	}
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
@@ -701,12 +719,18 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	r := relay.Relay{URL: url}
 	pk := id.key.Public
 
-	fmt.Printf("bunker://%s?relay=%s&secret=%s\n", pk.Hex(), url, secret)
+	// With a device list, the secret admits nobody, so the URI leaves it out.
+	if g.listed() {
+		fmt.Printf("bunker://%s?relay=%s\n", pk.Hex(), url)
+	} else {
+		fmt.Printf("bunker://%s?relay=%s&secret=%s\n", pk.Hex(), url, secret)
+	}
+	go watchDevices(ctx, relay.Relay{URL: url, Signer: id.key}, id.key, g, log)
 	for {
 		requests, err := r.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindNostrConnect}, Tags: nostr.TagMap{"p": {pk.Hex()}}, Since: nostr.Now()})
 		if err == nil {
 			for request := range requests {
-				response, ok := answer(ctx, &signer, id.key.Secret, request, policy{kinds: allowed, decrypt: decrypt}, log)
+				response, ok := answer(ctx, &signer, id.key.Secret, request, policy{kinds: allowed, decrypt: decrypt, admit: g.refusal}, log)
 				if ok {
 					if err := r.Send(ctx, response); err != nil {
 						log.Warn("the answer did not reach the relay", "error", err)
@@ -734,6 +758,9 @@ type policy struct {
 	// decrypt is none, self or all. Self opens only what the owner sealed
 	// to their own key: drafts, the keyed root, the private relay list.
 	decrypt string
+	// admit says why the bunker refuses a device, or nothing. Nil admits
+	// each device.
+	admit func(nostr.PubKey) error
 }
 
 // refusal says why the policy refuses a request, or nothing when it allows
@@ -741,11 +768,18 @@ type policy struct {
 func (p policy) refusal(req nip46.Request, owner nostr.PubKey) error {
 	switch req.Method {
 	case "sign_event":
-		if len(p.kinds) == 0 || len(req.Params) != 1 {
+		if len(req.Params) != 1 {
 			return nil
 		}
 		var event nostr.Event
 		if err := event.UnmarshalJSON([]byte(req.Params[0])); err != nil {
+			return nil
+		}
+		// A device must not change the list of devices that the signer admits.
+		if event.Kind == devices.Kind {
+			return errors.New("the bunker never signs a device list; run arc keys devices on the signer")
+		}
+		if len(p.kinds) == 0 {
 			return nil
 		}
 		if event.Kind != nostr.KindClientAuthentication && !slices.Contains(p.kinds, event.Kind) {
@@ -771,7 +805,13 @@ func answer(ctx context.Context, signer *nip46.StaticKeySigner, secret nostr.Sec
 	}
 	session := nip46.Session{PublicKey: secret.Public(), ConversationKey: conversation}
 	if parsed, err := session.ParseRequest(request); err == nil {
-		if reason := p.refusal(parsed, secret.Public()); reason != nil {
+		reason := p.refusal(parsed, secret.Public())
+		if p.admit != nil {
+			if refused := p.admit(request.PubKey); refused != nil {
+				reason = refused
+			}
+		}
+		if reason != nil {
 			log.Info("refused a request", "method", parsed.Method, "reason", reason, "from", request.PubKey.Hex()[:8])
 			_, refusal, err := session.MakeResponse(parsed.ID, request.PubKey, "", reason)
 			if err != nil || refusal.Sign(secret) != nil {
