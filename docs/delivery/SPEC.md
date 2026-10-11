@@ -800,9 +800,9 @@ merge. `mise run delivery` runs the proofs of phases 1 to 3.
 Phases 1 and 2 are built: the packages under `core/` and `adapters/`, and
 the command `arc`. Phase 2 added `core/private` for gift wraps and route
 tags, and `core/mail` for the outbox, acknowledgements and couriers.
-`adapters/relay/groups` makes a khatru relay host NIP-29 groups, `core/draft`
-seals data to its author as NIP-37 drafts, and `adapters/relay/sealed` makes a
-relay serve those drafts only to their author, after NIP-42 authentication.
+`core/draft` seals data to its author as NIP-37 drafts, and
+`adapters/relay/sealed` makes a relay serve those drafts only to their
+author, after NIP-42 authentication.
 The capability interface uses both. Phase 3 added `runtime/catalog` for
 announcements, discovery and installs, and `core/call` for both classes of
 call. `arc call` calls a capability with a raw body.

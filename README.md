@@ -231,7 +231,7 @@ arc relay serve --listen 127.0.0.1:7447
 The relay is a khatru relay. It serves NIP-42 authentication, NIP-77 sync,
 and sealed data only to its author. Flags turn on write limits: an event
 size cap, authentication or proof of work for gift wraps, a rate for each IP
-address, and a store cap. `--group <id>` hosts a NIP-29 group.
+address, and a store cap.
 `arc relay serve --help` lists the flags.
 
 ## Update
