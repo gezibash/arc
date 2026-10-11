@@ -271,7 +271,7 @@ from `mise.toml`.
 mise install
 mise run build       # every command into bin/
 mise run check       # lint and test
-mise run specs       # the specs, their gates, owners and kinds
+mise run specs       # the specs, their owners and kinds
 mise run delivery    # the delivery layer, end to end
 mise run interface   # the capability interface, end to end
 ```
@@ -301,8 +301,8 @@ Specs:
 - [HTTP over ARC](docs/http/SPEC.md).
 - [Wake](docs/wake/SPEC.md): presence, wake hooks and machines that pause.
 - [Updates](docs/updates/SPEC.md): signed release channels.
-- [How to write a spec](docs/SPEC-TEMPLATE.md): the gates that each spec
-  answers, the [event kinds](docs/KINDS.md), and the
+- [How to write a spec](docs/SPEC-TEMPLATE.md): the header and sections of
+  each spec, the [event kinds](docs/KINDS.md), and the
   [proposals](docs/proposals/).
 
 Other:

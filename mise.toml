@@ -47,7 +47,7 @@ run = "go test -count=1 -v -run '^TestInterface' ./internal/proof/"
 raw = true
 
 [tasks.specs]
-description = "Check the specs, the gates, the proofs, the owners and the kind registry"
+description = "Check the specs, the proofs, the owners and the kind registry"
 run = "go test ./internal/specs -count=1"
 
 [tasks.boundaries]

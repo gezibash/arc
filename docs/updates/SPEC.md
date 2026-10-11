@@ -277,7 +277,3 @@ start after the swap.
 `mise run delivery` proves the whole path. A publisher signs a channel with
 `arc release sign`, a releases provider serves it through a relay, and an
 older `arc` replaces itself with `arc update apply`.
-
-## Gates
-
-This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).

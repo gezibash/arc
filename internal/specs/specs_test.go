@@ -1,9 +1,8 @@
 package specs
 
 // These tests check the documents under docs/ against the rules of
-// docs/SPEC-TEMPLATE.md: the header of each spec, the recorded answers to its
-// gates, the proof that it names, the packages that it owns, and the registry
-// of event kinds.
+// docs/SPEC-TEMPLATE.md: the header of each spec, the proof that it names,
+// the packages that it owns, and the registry of event kinds.
 
 import (
 	"encoding/json"
@@ -15,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,25 +21,15 @@ import (
 
 const root = "../.."
 
-// The gates that a spec must answer, by the layers that it touches. The IDs
-// never change, see docs/SPEC-TEMPLATE.md, section 3.
 var (
-	baseGates = []string{"A1", "A2", "A3", "B1", "B3", "B4", "D1", "D2", "D3", "D4"}
-	sdkGates  = []string{"C1", "C2", "C3", "C4", "C5"}
-	coreGates = []string{"B2", "D5"}
-	allGates  = []string{"A1", "A2", "A3", "B1", "B2", "B3", "B4", "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4", "D5"}
-	layers    = []string{"core", "sdk", "adapters", "runtime", "app"}
+	layers = []string{"core", "sdk", "adapters", "runtime", "app"}
 	// sections are the headings of the body of a spec, in their order. See
-	// docs/SPEC-TEMPLATE.md, section 9.
-	sections = []string{"1. Purpose", "2. Terms", "3. Rules", "4. Behavior", "5. Failures", "6. Security", "7. Compatibility", "8. Proof", "Gates"}
+	// docs/SPEC-TEMPLATE.md, section 5.
+	sections = []string{"1. Purpose", "2. Terms", "3. Rules", "4. Behavior", "5. Failures", "6. Security", "7. Compatibility", "8. Proof"}
 )
 
 var (
-	answeredBy  = regexp.MustCompile(`^Answered by .+ on \d{4}-\d{2}-\d{2} at [0-9a-f]{7,40}\.$`)
 	placeholder = regexp.MustCompile(`(?i)^(n/?a|tbd|todo|none|yes|no|same as above|see above)[.!]?$`)
-	testName    = regexp.MustCompile(`\bTest[A-Z]\w*`)
-	commitHash  = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
-	link        = regexp.MustCompile(`https?://\S+`)
 	remainsRef  = regexp.MustCompile(`(?i)section \d|https?://\S+|#\d+`)
 	testFunc    = regexp.MustCompile(`(?m)^func (Test\w+)\(`)
 )
@@ -52,23 +40,8 @@ type tree struct {
 	tests map[string][]string
 	// packages holds each directory under core/ and sdk/ that has Go code.
 	packages map[string]bool
-	// exempt holds the specs that predate the gates.
-	exempt map[string]bool
 	// code holds each doc.go under core/ and sdk/ that holds a declaration.
 	code []string
-}
-
-// required returns the gates that a spec with these layers must answer.
-func required(touched []string) []string {
-	gates := slices.Clone(baseGates)
-	if slices.Contains(touched, "sdk") || slices.Contains(touched, "core") {
-		gates = append(gates, sdkGates...)
-	}
-	if slices.Contains(touched, "core") {
-		gates = append(gates, coreGates...)
-	}
-	sort.Strings(gates)
-	return gates
 }
 
 // proves reports why a proof command names no test, or "".
@@ -105,62 +78,6 @@ func (t tree) proves(command string) string {
 		return fmt.Sprintf("the proof matches no test: -run %q finds nothing in the packages that it names", pattern)
 	}
 	return ""
-}
-
-// exists reports whether a test with this name is in the repository.
-func (t tree) exists(name string) bool {
-	for _, tests := range t.tests {
-		if slices.Contains(tests, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// checkAnswer returns what is wrong with the record of one gate.
-func (t tree) checkAnswer(id string, lines []string) []string {
-	var problems, quote []string
-	attributed, evidence := false, ""
-	for _, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "> "):
-			quote = append(quote, strings.TrimPrefix(line, "> "))
-		case answeredBy.MatchString(line):
-			attributed = true
-		case strings.HasPrefix(line, "Evidence: "):
-			evidence = strings.TrimSpace(strings.TrimPrefix(line, "Evidence: "))
-		}
-	}
-	answer := strings.TrimSpace(strings.Join(quote, " "))
-	switch {
-	case answer == "":
-		problems = append(problems, id+": no answer. Quote the answer of the person with \"> \"")
-	case placeholder.MatchString(answer) || len(strings.Fields(answer)) < 8:
-		problems = append(problems, fmt.Sprintf("%s: %q is not an answer. Give at least eight words", id, answer))
-	case strings.Contains(answer, "in the words of the person who gave it"):
-		problems = append(problems, id+": the answer is the text of the template")
-	}
-	if !attributed {
-		problems = append(problems, id+`: no line "Answered by <name> on <YYYY-MM-DD> at <commit>."`)
-	}
-	named := testName.FindAllString(evidence, -1)
-	anchored := commitHash.MatchString(evidence)
-	switch {
-	case evidence == "" || placeholder.MatchString(evidence):
-		problems = append(problems, id+`: no line "Evidence: ..."`)
-	case len(named) == 0 && !anchored && !link.MatchString(evidence):
-		problems = append(problems, id+": the evidence must name a test, a link or a commit")
-	}
-	for _, name := range named {
-		// A test that was removed is checkable only at a commit.
-		if !t.exists(name) && !anchored {
-			problems = append(problems, fmt.Sprintf("%s: the evidence names %s, which does not exist. Name the commit where it did", id, name))
-		}
-	}
-	if id == "D1" && !slices.ContainsFunc(named, t.exists) {
-		problems = append(problems, "D1: the evidence must name a test that exists")
-	}
-	return problems
 }
 
 // checkSpec returns what is wrong with one SPEC.md. path is the path of the
@@ -232,45 +149,16 @@ func (t tree) checkSpec(path, text string) []string {
 		}
 	}
 	if !slices.Equal(headings, sections) {
-		problems = append(problems, fmt.Sprintf("the sections are %q; they must be %q, see docs/SPEC-TEMPLATE.md, section 9", headings, sections))
+		problems = append(problems, fmt.Sprintf("the sections are %q; they must be %q, see docs/SPEC-TEMPLATE.md, section 5", headings, sections))
 	}
 
-	answers, found := gates(lines)
-	for id := range answers {
-		if !slices.Contains(allGates, id) {
-			problems = append(problems, fmt.Sprintf("the Gates section has the unknown gate %s", id))
-		}
-	}
-	if t.exempt[path] {
-		if found && len(t.unanswered(touched, answers)) == 0 {
-			problems = append(problems, "each gate has its answer: remove the spec from docs/GRANDFATHERED.md")
-		}
-		return problems
-	}
-	if !found {
-		return append(problems, "the spec has no section \"## Gates\", see docs/SPEC-TEMPLATE.md")
-	}
-	return append(problems, t.unanswered(touched, answers)...)
-}
-
-// unanswered returns what is wrong with the required gates of a spec.
-func (t tree) unanswered(touched []string, answers map[string][]string) []string {
-	var problems []string
-	for _, id := range required(touched) {
-		lines, ok := answers[id]
-		if !ok {
-			problems = append(problems, id+": the gate has no answer")
-			continue
-		}
-		problems = append(problems, t.checkAnswer(id, lines)...)
-	}
 	return problems
 }
 
 // load reads what the checks need from the repository.
 func load(t *testing.T) tree {
 	t.Helper()
-	found := tree{tests: map[string][]string{}, packages: map[string]bool{}, exempt: map[string]bool{}}
+	found := tree{tests: map[string][]string{}, packages: map[string]bool{}}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -313,25 +201,20 @@ func load(t *testing.T) tree {
 	if err != nil {
 		t.Fatal(err)
 	}
-	specs, _ := grandfathered(t)
-	for _, spec := range specs {
-		found.exempt[spec] = true
-	}
 	return found
 }
 
-// grandfathered reads docs/GRANDFATHERED.md: the specs that predate the
-// gates, and the packages that no spec owns.
-func grandfathered(t *testing.T) (specs, packages []string) {
+// grandfathered reads docs/GRANDFATHERED.md: the packages that no spec owns.
+func grandfathered(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, "docs", "GRANDFATHERED.md"))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Grandfathered(string(data))
+	return Unowned(string(data))
 }
 
 // documents returns the path and the text of each Markdown file that match
@@ -359,8 +242,7 @@ func documents(t *testing.T, match func(path string) bool) map[string]string {
 	return found
 }
 
-// Each spec has its header, a proof that names a test, and the record of its
-// gates. A spec that predates the gates is in docs/GRANDFATHERED.md.
+// Each spec has its header, its sections, and a proof that names a test.
 func TestEachSpecFollowsTheTemplate(t *testing.T) {
 	found := load(t)
 	specs := documents(t, isSpec)
@@ -404,7 +286,7 @@ func TestEachCoreAndSDKPackageHasASpec(t *testing.T) {
 	for _, file := range found.code {
 		t.Errorf("%s: a doc.go holds only the package comment. Move its code to another file", file)
 	}
-	_, unowned := grandfathered(t)
+	unowned := grandfathered(t)
 	for pkg := range found.packages {
 		switch listed := slices.Contains(unowned, pkg); {
 		case len(owners[pkg]) == 0 && !listed:
@@ -416,12 +298,6 @@ func TestEachCoreAndSDKPackageHasASpec(t *testing.T) {
 	for _, pkg := range unowned {
 		if !found.packages[pkg] {
 			t.Errorf("docs/GRANDFATHERED.md lists %s, which is not a package under core/ or sdk/", pkg)
-		}
-	}
-	specs, _ := grandfathered(t)
-	for _, spec := range specs {
-		if _, err := os.Stat(filepath.Join(root, spec)); err != nil {
-			t.Errorf("docs/GRANDFATHERED.md lists %s, which does not exist", spec)
 		}
 	}
 }

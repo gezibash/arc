@@ -399,7 +399,3 @@ Phase 3 belongs to the exec app: its jobs and its notify command. See
   helps a laptop that sleeps. The start script then keeps the old process.
 - The dormant record needs a lifetime that survives disconnection and relay
   restart.
-
-## Gates
-
-This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).

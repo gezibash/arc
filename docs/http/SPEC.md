@@ -254,7 +254,3 @@ process streams and signals. Other entry points can use `sdk/stdio.Run`. See
   through a local relay and the normal CLI.
 - `TestAGoHandlerAnswersACallThroughARelay` in `cmd/arc` runs a Go handler
   from `httpadapter.New` the same way.
-
-## Gates
-
-This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).

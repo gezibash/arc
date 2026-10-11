@@ -907,7 +907,3 @@ interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.m
 | B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
-
-## Gates
-
-This spec predates the gates. See [the grandfathered list](../GRANDFATHERED.md).
