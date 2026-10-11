@@ -18,7 +18,8 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer/client"
-	"github.com/gezibash/arc/apps/transfer/direct"
+	"github.com/gezibash/arc/apps/transfer/files"
+	"github.com/gezibash/arc/sdk/direct"
 )
 
 // The tests build the arc program and this program, and run them as a
@@ -557,7 +558,7 @@ func TestPutGivesOnlyTheRestAfterAPartFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(data)
-	received := direct.ReceivedFile(env.state, env.receiverKey, hex.EncodeToString(sum[:]))
+	received := files.ReceivedFile(env.state, env.receiverKey, hex.EncodeToString(sum[:]))
 	if err := os.MkdirAll(filepath.Dir(received), 0o700); err != nil {
 		t.Fatal(err)
 	}

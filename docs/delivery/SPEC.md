@@ -966,7 +966,7 @@ another key, and a bad checksum and words as arguments are refused.
 The relay paths of section 4.12 have these tests:
 `go test -run '^(TestCredential|TestQuota)$' ./adapters/relay/turn/` checks
 the NIP-98 refusals and the byte quota on a real TURN allocation.
-`go test -run '^TestRelayPath$' ./apps/transfer/direct/` puts two ends behind
+`go test -run '^TestRelayPath$' ./sdk/direct/` puts two ends behind
 symmetric NATs on an emulated network: the direct attempt finds no path, and
 the attempt through TURN sends the file.
 

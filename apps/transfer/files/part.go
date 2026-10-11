@@ -1,4 +1,4 @@
-package direct
+package files
 
 import (
 	"crypto/sha256"
@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -115,8 +116,7 @@ func (p *Part) Discard() {
 }
 
 // Send writes the bytes of the file from offset to size on the data
-// channel, in messages of ChunkSize, and then the text "end". It waits when
-// the buffer of the data channel is full.
+// channel, in messages of direct.ChunkSize, and then the text "end".
 func Send(dc *webrtc.DataChannel, path string, offset, size int64) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -126,34 +126,8 @@ func Send(dc *webrtc.DataChannel, path string, offset, size int64) error {
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return err
 	}
-	low := make(chan struct{}, 1)
-	dc.SetBufferedAmountLowThreshold(BufferLow)
-	dc.OnBufferedAmountLow(func() {
-		select {
-		case low <- struct{}{}:
-		default:
-		}
-	})
-	closed := make(chan struct{})
-	dc.OnClose(func() { close(closed) })
-
-	block := make([]byte, ChunkSize)
-	for sent := offset; sent < size; {
-		n, err := io.ReadFull(f, block[:min(int64(ChunkSize), size-sent)])
-		if err != nil {
-			return err
-		}
-		if err := dc.Send(block[:n]); err != nil {
-			return err
-		}
-		sent += int64(n)
-		if dc.BufferedAmount() > BufferHigh {
-			select {
-			case <-low:
-			case <-closed:
-				return errors.New("the receiver closed the channel")
-			}
-		}
+	if err := direct.Send(dc, f, size-offset); err != nil {
+		return err
 	}
 	return dc.SendText("end")
 }

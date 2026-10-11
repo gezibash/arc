@@ -19,8 +19,9 @@ import (
 	"syscall"
 
 	"github.com/gezibash/arc/apps/transfer/client"
-	"github.com/gezibash/arc/apps/transfer/direct"
+	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/apps/transfer/server"
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/stdio"
 )
 
@@ -74,7 +75,7 @@ func offer(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(direct.Link(sender, recorded))
+	fmt.Println(files.Link(sender, recorded))
 	return nil
 }
 
@@ -176,7 +177,7 @@ type keyList []string
 func (k *keyList) String() string { return strings.Join(*k, ",") }
 
 func (k *keyList) Set(value string) error {
-	if !direct.IsHex64(value) {
+	if !files.IsHex64(value) {
 		return errors.New("a public key is 64 hex digits")
 	}
 	*k = append(*k, value)

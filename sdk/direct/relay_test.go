@@ -1,9 +1,8 @@
 package direct
 
 import (
+	"bytes"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,10 +79,6 @@ func natPair(t *testing.T) (a, b *vnet.Net, relay *turn.Server) {
 // returns the path, or an error if the data channel did not open.
 func transfer(t *testing.T, a, b Options, size int64) (string, bool) {
 	t.Helper()
-	file := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(file, make([]byte, size), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	sender, err := NewConnection(a)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +132,10 @@ func transfer(t *testing.T, a, b Options, size int64) (string, bool) {
 		return "", false
 	}
 	path := SelectedPath(sender)
-	if err := Send(dc, file, 0, size); err != nil {
+	if err := Send(dc, bytes.NewReader(make([]byte, size)), size); err != nil {
+		t.Fatal(err)
+	}
+	if err := dc.SendText("end"); err != nil {
 		t.Fatal(err)
 	}
 	select {

@@ -42,6 +42,7 @@ flowchart LR
 | `sdk/httpadapter`, `sdk/execadapter`, `sdk/ndjson` | HTTP and process I/O mapped to ARC calls and sessions, and their record reader. |
 | `sdk/providerconfig`, `sdk/strictjson`, `sdk/atomicfile`, `sdk/limitio` | Configuration files, strict JSON, atomic file writes and bounded buffers. |
 | `sdk/providertest` | A real session for the tests of an app. |
+| `sdk/direct` | A pipe between two citizens for bulk bytes: a WebRTC data channel, with the TURN server of the relay as the last resort. |
 | `adapters/transport/relay`, `adapters/transport/file` | Nostr relay and carried-directory event delivery. |
 | `adapters/provider/host` | Subprocess hosting of a provider program. |
 | `adapters/keyfile`, `adapters/nip05` | Identity files and network name resolution. |
