@@ -160,8 +160,14 @@ After revocation, the thief can:
 - Read the data that the phone already holds, with the data roots that it
   already holds. No key design removes this. Only the disk encryption of the
   phone and the lock of the app protect it.
-- Not sign, not open new mail, not authenticate to a relay or a locker, and
-  not read data under the new data root.
+- Not sign, not open new mail, not authenticate again to a relay or a
+  locker, and not read data under the new data root. A relay connection that
+  authenticated before the revocation stays open until it ends.
+- Read old data on a relay that serves drafts to anyone. Only a relay that
+  enforces NIP-42 reads keeps drafts from others
+  (`docs/interface/SPEC.md:852-854`). The thief holds the old data roots, so
+  the thief can open each old draft that such a relay serves. Only a re-seal
+  under the new generation, or a locker that holds the drafts, stops this.
 
 Sent mail text is not stored on disk. The outbox keeps only the ID of the
 sender's own seal (`core/mail/mail.go:72-74`), and the seal is sealed to the
@@ -211,10 +217,19 @@ The results:
   NIP-44 uses a new random nonce for each message, so one conversation key
   serves many events.
 - Each sealed event carries a tag that names the generation of its data root.
-- A **wrap** of a data root is a NIP-37 draft whose content is the data root,
-  sealed to one device key. One more wrap seals it to the citizen key. One
-  wrap is 565 bytes of signed JSON, and its content is 176 characters
-  (measured, NIP-44 of the root as hex, one `d`, `k` and `-` tag).
+- A **wrap** of a data root is a sealed event with the shape of a NIP-37
+  draft. The citizen key signs it. Its content is the data root, sealed to one
+  device key. One more wrap seals it to the citizen key. `core/draft` cannot
+  open a wrap to a device key unchanged, because `draft.Open` accepts only a
+  draft whose author opens it (`core/draft/draft.go:153`). One wrap is 565
+  bytes of signed JSON, and its content is 176 characters (measured, NIP-44 of
+  the root as hex, one `d`, `k` and `-` tag).
+- The citizen key still signs each draft, checkpoint and part, through the
+  signer. A draft is named by its author and its `d` tag
+  (`core/draft/draft.go:70-72`), and a relay replaces a draft only for the
+  same author. If device keys signed drafts, each device would have its own
+  copy of each page. Thus a device reads with no network, and writes only
+  through the signer.
 - On revocation, the signer makes a new generation and wraps it to each
   remaining device key and to the citizen key. New writes use the new
   generation. Old data stays under the old generation.
@@ -237,6 +252,11 @@ new coordinate. Only `KeyedValue` uses the root (`runtime/citizen/environment.go
 | Private relay list | 10013 | Issue #172 removes it. No change. |
 | Keyed root draft | 31234, `d` = `arc-keyed-root` | It stays sealed to the citizen key. It is also wrapped to each device key, like a data root. |
 | Mail seals | 13 in 1059 | No change. NIP-17 requires mail sealed to the citizen key. |
+
+A re-seal only when a draft changes has a cost: a revoked device holds the
+old data roots, and can open each old draft that a relay without NIP-42 reads
+serves (section 4.3). A full re-seal after each revocation, or a locker,
+removes this cost.
 
 The cost of a full re-seal is one decrypt through the signer and one
 signature for each sealed event. The number of sealed events of a real
@@ -274,8 +294,12 @@ fatal (`docs/delivery/SPEC.md:847`).
 **Recommendation: the paper key first.** It is built. In the story, the
 citizen types the `ncryptsec` and the passphrase on the new phone. The phone
 opens the citizen key in memory, signs the admission of its own device key and
-the removal of the old one, gives them to the signer, and erases the citizen
-key. The citizen key is on the new phone for some seconds (estimated). That is
+the removal of the old one, and erases the citizen key. The signer refuses
+NIP-46 requests from a device key that is not on its list, so the phone
+cannot send the change as a request. It publishes the device list, signed by
+the citizen key, to the relays of the citizen. The signer watches for that
+event and reloads its list, as a machine watches for the keyed root draft
+today (`runtime/citizen/identity.go:16-17`). The citizen key is on the new phone for some seconds (estimated). That is
 the cost of recovery without a second device.
 
 A threshold split is a later step. Apple's Advanced Data Protection shows the
@@ -343,16 +367,20 @@ list for the locker (issue #172).
 5. **Do random data roots replace keys from the citizen key?** Recommended:
    yes. Accept that a plain Nostr client with the nsec no longer reads new ARC
    drafts.
-6. **Re-seal old drafts at once, or when they change?** Recommended: when
-   they change, with one command that re-seals all on request.
+6. **Re-seal old drafts at once, or when they change?** Recommended: after a
+   revocation, the signer re-seals in the background each draft under a
+   generation that the revoked device held. Other drafts, and generation 0,
+   re-seal when they change. A revoked device never held generation 0,
+   because it opened that data only through the signer.
 7. **Is the device list public or sealed?** Recommended: sealed to the
    citizen key. The signer gives a copy to the locker. A public list tells
    everyone how many devices a citizen has.
 8. **Name a successor key now, for a stolen signer or paper?** Recommended:
    not now. Keep kind 10272 reserved. Do it after the device list works.
-9. **May a device key sign drafts for a locker directly?** Recommended: yes.
-   The locker checks the device list. Then a write needs no round trip to the
-   signer.
+9. **May a device key sign drafts for a locker directly?** Recommended: no.
+   A draft is named by its author, so drafts of two device keys never replace
+   each other. The citizen key signs each draft through the signer. The cost:
+   a write needs a path to the signer. A read does not.
 
 ## 9. Sources
 
