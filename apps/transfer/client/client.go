@@ -18,17 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gezibash/arc/apps/transfer/direct"
+	"github.com/gezibash/arc/apps/transfer/files"
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/pion/webrtc/v4"
 )
-
-// holdWait is the time that the receiver asks the sender to wait in the
-// attempt in which the receiver sends first.
-const holdWait = time.Second
-
-// errNoPath says that one attempt found no direct path. The next attempt
-// uses the other order of the first packets.
-var errNoPath = errors.New("no direct path")
 
 // Arc names the arc program and the arc home of this citizen.
 type Arc struct {
@@ -57,7 +50,7 @@ func (a Arc) PublicKey(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("arc whoami: %w", err)
 	}
 	for line := range strings.SplitSeq(string(out), "\n") {
-		if key := strings.TrimSpace(line); direct.IsHex64(key) {
+		if key := strings.TrimSpace(line); files.IsHex64(key) {
 			return key, nil
 		}
 	}
@@ -81,72 +74,10 @@ func (a Arc) Relays(ctx context.Context) ([]string, error) {
 	return relays, nil
 }
 
-// Credential is a TURN credential that a relay gave to this citizen.
-type Credential struct {
-	URLs     []string `json:"urls"`
-	Username string   `json:"username"`
-	Password string   `json:"password"`
-	// QuotaLeft is the number of bytes that this citizen can still relay.
-	QuotaLeft int64 `json:"quota_left"`
-}
-
 // TURN asks the first relay of this citizen for a TURN credential. arc
 // signs the request with the key of this citizen.
-func (a Arc) TURN(ctx context.Context) (Credential, error) {
-	command := a.Command(ctx, "relay", "turn")
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	out, err := command.Output()
-	if err != nil {
-		return Credential{}, fmt.Errorf("arc relay turn: %s", strings.TrimPrefix(strings.TrimSpace(stderr.String()), "arc: "))
-	}
-	var credential Credential
-	if err := json.Unmarshal(out, &credential); err != nil || len(credential.URLs) == 0 {
-		return Credential{}, fmt.Errorf("arc relay turn printed no credential: %.200q", out)
-	}
-	return credential, nil
-}
-
-// relayOptions are the options of an attempt through the TURN server of
-// the first relay. need is the number of bytes that are still to go. It
-// refuses before the attempt if the quota of this citizen is too small.
-func relayOptions(ctx context.Context, arc Arc, options direct.Options, need int64) (direct.Options, error) {
-	credential, err := arc.TURN(ctx)
-	if err != nil {
-		return options, err
-	}
-	// SCTP, DTLS and the acknowledgements add bytes to the file.
-	need += need / 10
-	if credential.QuotaLeft < need {
-		return options, fmt.Errorf("the relay lets this citizen relay %.1f MiB more today, and this file needs about %.1f MiB", float64(credential.QuotaLeft)/(1<<20), float64(need)/(1<<20))
-	}
-	options.TURN = &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
-	return options, nil
-}
-
-// relaySTUN is the STUN URL that an attempt through the TURN server of the
-// relay gives to the other end, or empty for a direct attempt. The TURN
-// server lets in only packets from the addresses in the answer. The other
-// end asks the TURN server for its public address, so that address is in
-// the answer, also if its own STUN server does not answer. local is the
-// description of this end.
-func relaySTUN(ctx context.Context, options direct.Options, local webrtc.SessionDescription) (string, error) {
-	if options.TURN == nil {
-		return "", nil
-	}
-	if !strings.Contains(local.SDP, "typ relay") {
-		return "", noPath(errors.New("the TURN server of the relay gave no address"))
-	}
-	stun, err := direct.TURNSTUN(ctx, options.TURN)
-	if err != nil {
-		return "", noPath(err)
-	}
-	return stun, nil
-}
-
-// noPath is the error after the direct attempts and the relay attempt.
-func noPath(err error) error {
-	return fmt.Errorf("no direct path, and no path through the relay: %w", err)
+func (a Arc) TURN(ctx context.Context) (direct.Credential, error) {
+	return direct.RelayTURN(a.Command(ctx, "relay", "turn"))
 }
 
 // Get is one request for the file of a link.
@@ -188,8 +119,8 @@ type Result struct {
 type getter struct {
 	Get
 	sender string
-	offer  direct.Offer
-	part   *direct.Part
+	offer  files.Offer
+	part   *files.Part
 }
 
 // Run gets the file. It writes <output>.part, and renames it when the
@@ -199,7 +130,7 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 	if g.Notes == nil {
 		g.Notes = io.Discard
 	}
-	sender, offer, err := direct.ParseLink(g.Link)
+	sender, offer, err := files.ParseLink(g.Link)
 	if err != nil {
 		return result, err
 	}
@@ -210,12 +141,12 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		return result, fmt.Errorf("%s is there already", g.Output)
 	}
 	if g.State != "" {
-		if taken, err := takePushed(direct.ReceivedFile(g.State, sender, offer.SHA256), offer.Size, g.Output); taken || err != nil {
+		if taken, err := takePushed(files.ReceivedFile(g.State, sender, offer.SHA256), offer.Size, g.Output); taken || err != nil {
 			result.Output, result.Path = g.Output, "put"
 			return result, err
 		}
 	}
-	part, err := direct.OpenPart(g.Output, offer.SHA256, offer.Size)
+	part, err := files.OpenPart(g.Output, offer.SHA256, offer.Size)
 	if err != nil {
 		return result, err
 	}
@@ -226,31 +157,15 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		fmt.Fprintf(g.Notes, "the part file holds %d bytes; getting the rest\n", resumed)
 	}
 
-	// The order of the first packets decides on some routers. One attempt
-	// lets the sender send first. The other makes it wait.
-	holds := []time.Duration{0, holdWait}
-	if g.HoldFirst {
-		holds = []time.Duration{holdWait, 0}
-	}
 	started := time.Now()
-	for i, hold := range holds {
-		result.Path, err = run.attempt(ctx, hold)
-		if !errors.Is(err, errNoPath) {
-			break
-		}
-		if i == 0 {
-			fmt.Fprintln(g.Notes, "no direct path in the first order of the packets; trying the other order")
-		}
-	}
-	if errors.Is(err, errNoPath) && !g.NoRelay {
-		fmt.Fprintln(g.Notes, "no direct path; trying the TURN server of the relay, so the bytes go through the relay")
-		if run.Options, err = relayOptions(ctx, g.Arc, g.Options, offer.Size-part.Have()); err != nil {
-			err = noPath(err)
-		} else if result.Path, err = run.attempt(ctx, 0); errors.Is(err, errNoPath) {
-			err = noPath(err)
-		}
-	}
-	if errors.Is(err, direct.ErrTooManyBytes) {
+	err = direct.Attempts{
+		Options: g.Options, HoldFirst: g.HoldFirst, NoRelay: g.NoRelay, TURN: g.Arc.TURN, Notes: g.Notes,
+		Need: func() int64 { return offer.Size - part.Have() },
+	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
+		result.Path, err = run.attempt(ctx, options, hold)
+		return err
+	})
+	if errors.Is(err, files.ErrTooManyBytes) {
 		// The part file is not a start of the file of the link.
 		part.Discard()
 		return result, fmt.Errorf("%w; the part file is removed", err)
@@ -304,9 +219,9 @@ func takePushed(file string, size int64, output string) (bool, error) {
 }
 
 // attempt opens one connection and takes bytes from it. It returns
-// errNoPath if the data channel did not open.
-func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, err error) {
-	pc, err := direct.NewConnection(g.Options)
+// direct.ErrNoPath if the data channel did not open.
+func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.Duration) (path string, err error) {
+	pc, err := direct.NewConnection(options)
 	if err != nil {
 		return "", err
 	}
@@ -350,11 +265,11 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 	if err != nil {
 		return "", err
 	}
-	stun, err := relaySTUN(ctx, g.Options, local)
+	stun, err := direct.OfferSTUN(ctx, options, local)
 	if err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(direct.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
+	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
 	if err != nil {
 		return "", err
 	}
@@ -362,7 +277,7 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 	if err != nil {
 		return "", err
 	}
-	var remote direct.Answer
+	var remote files.Answer
 	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 {
 		return "", fmt.Errorf("the sender gave no answer: %.200q", reply)
 	}
@@ -373,7 +288,7 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 	select {
 	case <-opened:
 	case <-time.After(direct.OpenWait + hold):
-		return "", errNoPath
+		return "", direct.ErrNoPath
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -459,7 +374,7 @@ func (p Put) Run(ctx context.Context) (PutResult, error) {
 	if p.Notes == nil {
 		p.Notes = io.Discard
 	}
-	if !direct.IsHex64(p.To) {
+	if !files.IsHex64(p.To) {
 		return result, errors.New("the key of the receiver is not 64 hex digits")
 	}
 	me, err := p.Arc.PublicKey(ctx)
@@ -473,43 +388,29 @@ func (p Put) Run(ctx context.Context) (PutResult, error) {
 	if !info.Mode().IsRegular() {
 		return result, fmt.Errorf("%s is not a regular file", p.File)
 	}
-	sum, err := direct.HashFile(p.File)
+	sum, err := files.HashFile(p.File)
 	if err != nil {
 		return result, err
 	}
-	offer := direct.Offer{SHA256: sum, Name: filepath.Base(p.File), Size: info.Size()}
-	result.Link = direct.Link(me, offer)
+	offer := files.Offer{SHA256: sum, Name: filepath.Base(p.File), Size: info.Size()}
+	result.Link = files.Link(me, offer)
 
-	holds := []time.Duration{0, holdWait}
-	if p.HoldFirst {
-		holds = []time.Duration{holdWait, 0}
-	}
 	started := time.Now()
-	for i, hold := range holds {
-		result.Path, result.Bytes, err = p.attempt(ctx, offer, hold)
-		if !errors.Is(err, errNoPath) {
-			break
-		}
-		if i == 0 {
-			fmt.Fprintln(p.Notes, "no direct path in the first order of the packets; trying the other order")
-		}
-	}
-	if errors.Is(err, errNoPath) && !p.NoRelay {
-		fmt.Fprintln(p.Notes, "no direct path; trying the TURN server of the relay, so the bytes go through the relay")
-		if p.Options, err = relayOptions(ctx, p.Arc, p.Options, offer.Size); err != nil {
-			err = noPath(err)
-		} else if result.Path, result.Bytes, err = p.attempt(ctx, offer, 0); errors.Is(err, errNoPath) {
-			err = noPath(err)
-		}
-	}
+	err = direct.Attempts{
+		Options: p.Options, HoldFirst: p.HoldFirst, NoRelay: p.NoRelay, TURN: p.Arc.TURN, Notes: p.Notes,
+		Need: func() int64 { return offer.Size },
+	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
+		result.Path, result.Bytes, err = p.attempt(ctx, options, offer, hold)
+		return err
+	})
 	result.Elapsed = time.Since(started)
 	return result, err
 }
 
 // attempt opens one connection and gives the bytes that the receiver does
-// not have. It returns errNoPath if the data channel did not open.
-func (p Put) attempt(ctx context.Context, offer direct.Offer, hold time.Duration) (path string, sent int64, err error) {
-	pc, err := direct.NewConnection(p.Options)
+// not have. It returns direct.ErrNoPath if the data channel did not open.
+func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Offer, hold time.Duration) (path string, sent int64, err error) {
+	pc, err := direct.NewConnection(options)
 	if err != nil {
 		return "", 0, err
 	}
@@ -537,11 +438,11 @@ func (p Put) attempt(ctx context.Context, offer direct.Offer, hold time.Duration
 	if err != nil {
 		return "", 0, err
 	}
-	stun, err := relaySTUN(ctx, p.Options, local)
+	stun, err := direct.OfferSTUN(ctx, options, local)
 	if err != nil {
 		return "", 0, err
 	}
-	body, err := json.Marshal(direct.Fetch{Version: 1, Op: direct.OpPut, SHA256: offer.SHA256, Size: offer.Size, HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
+	body, err := json.Marshal(files.Fetch{Version: 1, Op: files.OpPut, SHA256: offer.SHA256, Size: offer.Size, HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
 	if err != nil {
 		return "", 0, err
 	}
@@ -549,7 +450,7 @@ func (p Put) attempt(ctx context.Context, offer direct.Offer, hold time.Duration
 	if err != nil {
 		return "", 0, err
 	}
-	var remote direct.Answer
+	var remote files.Answer
 	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 || remote.Offset < 0 || remote.Offset > offer.Size {
 		return "", 0, fmt.Errorf("the receiver gave no answer: %.200q", reply)
 	}
@@ -566,12 +467,12 @@ func (p Put) attempt(ctx context.Context, offer direct.Offer, hold time.Duration
 	select {
 	case <-opened:
 	case <-time.After(direct.OpenWait + hold):
-		return "", 0, errNoPath
+		return "", 0, direct.ErrNoPath
 	case <-ctx.Done():
 		return "", 0, ctx.Err()
 	}
 	path = direct.SelectedPath(pc)
-	if err := direct.Send(dc, p.File, remote.Offset, offer.Size); err != nil {
+	if err := files.Send(dc, p.File, remote.Offset, offer.Size); err != nil {
 		return path, 0, err
 	}
 	// The receiver checks the SHA-256 of all the bytes, and then says "ok".

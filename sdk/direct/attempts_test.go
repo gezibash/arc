@@ -1,13 +1,12 @@
-package client
+package direct
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
-
-	"github.com/gezibash/arc/apps/transfer/direct"
 )
 
 // TestMain lets the test binary play the arc program: with
@@ -24,11 +23,13 @@ func TestMain(m *testing.M) {
 // the citizen holds the bytes that are still to go, with a tenth more for
 // SCTP and DTLS.
 func TestRelayQuota(t *testing.T) {
-	arc := Arc{Program: os.Args[0]}
+	turn := func(ctx context.Context) (Credential, error) {
+		return RelayTURN(exec.CommandContext(ctx, os.Args[0], "relay", "turn"))
+	}
 
 	// 10 MiB left; a file of 20 MiB needs about 22 MiB.
 	t.Setenv("FAKE_ARC_QUOTA", fmt.Sprint(10<<20))
-	_, err := relayOptions(context.Background(), arc, direct.Options{}, 20<<20)
+	_, err := RelayOptions(context.Background(), turn, Options{}, 20<<20)
 	if err == nil {
 		t.Fatal("a file of 20 MiB went to a relay that allows 10 MiB")
 	}
@@ -38,7 +39,7 @@ func TestRelayQuota(t *testing.T) {
 
 	// 30 MiB left holds the same file.
 	t.Setenv("FAKE_ARC_QUOTA", fmt.Sprint(30<<20))
-	options, err := relayOptions(context.Background(), arc, direct.Options{STUN: "stun:relay.example.org:3478"}, 20<<20)
+	options, err := RelayOptions(context.Background(), turn, Options{STUN: "stun:relay.example.org:3478"}, 20<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

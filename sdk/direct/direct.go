@@ -1,6 +1,7 @@
-// Package direct holds what the two ends of a transfer share: the settings
-// of the WebRTC connection, the messages of the ARC call, and the link of an
-// offer.
+// Package direct opens a pipe between two citizens: a WebRTC data channel
+// that carries bulk bytes outside the relay. One ARC call carries the offer
+// and the answer. If no direct path opens, the pipe goes through the TURN
+// server of a relay. docs/direct/SPEC.md defines the rules.
 package direct
 
 import (
@@ -35,42 +36,6 @@ const (
 	MaxHold = 3 * time.Second
 )
 
-// OpPut is the operation of a request that gives a file to the app.
-const OpPut = "put"
-
-// Fetch is the body of the ARC call to the app. With no operation, a
-// receiver asks for an offered file. With the operation "put", a citizen
-// gives a file to the app.
-type Fetch struct {
-	Version int `json:"v"`
-	// Op is empty for a fetch, or OpPut.
-	Op     string `json:"op,omitempty"`
-	SHA256 string `json:"sha256"`
-	// Offset is the number of bytes that a receiver has. A put leaves it 0.
-	Offset int64 `json:"offset"`
-	// Size is the size of the file of a put.
-	Size int64 `json:"size,omitempty"`
-	// HoldMS is the time that the app waits before it sends its first
-	// packet, in milliseconds. The caller then sends first.
-	HoldMS int `json:"hold_ms,omitempty"`
-	// STUN is a STUN URL with an IPv4 address, such as
-	// "stun:192.0.2.1:3478". A caller that uses the TURN server of a relay
-	// names that server here. The app then asks it for its public address
-	// too, because the TURN server lets in only packets from the addresses
-	// in the answer.
-	STUN string                    `json:"stun,omitempty"`
-	SDP  webrtc.SessionDescription `json:"sdp"`
-}
-
-// Answer is the reply of the app.
-type Answer struct {
-	Version int `json:"v"`
-	// Offset is the number of bytes of a put that the app has. If it is
-	// the size of the file, the answer has no description, and no bytes go.
-	Offset int64                     `json:"offset,omitempty"`
-	SDP    webrtc.SessionDescription `json:"sdp,omitzero"`
-}
-
 // Options are the settings of one end of a connection.
 type Options struct {
 	// STUN is the URL of the STUN server. If it is empty, the end uses the
@@ -97,7 +62,8 @@ type Options struct {
 // sctpCAStep is the growth of the SCTP send window for each round trip
 // after a loss. The default of pion is one packet, about 1.2 KiB, so the
 // window needs seconds to grow back. A loss still halves the window.
-// Larger steps lost speed on a link with a short queue; see the README.
+// Larger steps lost speed on a link with a short queue; see
+// docs/direct/SPEC.md, section 3.3.
 var sctpCAStep uint32 = 8 << 10
 
 // STUNURL is the URL of a STUN setting. The value "none" gives no server.

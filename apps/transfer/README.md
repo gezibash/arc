@@ -7,7 +7,11 @@ If no direct path opens, the bytes go through the TURN server of the relay,
 as the last resort, and the command says so.
 
 The [manifest](manifest.json) declares the service. `server/` answers the
-requests, `client/` gets a file, and `direct/` holds what the two ends share.
+requests, `client/` gets a file, and `files/` holds what the two ends share.
+The pipe between the two programs is the package `sdk/direct`.
+[The direct pipe spec](../../docs/direct/SPEC.md) defines its rules: the
+settings of each end, the order of the attempts, the relay attempt and the
+flow control.
 `cmd/arc-transfer` is the program: the service, and the commands `send`,
 `offer`, `get` and `put`.
 
@@ -194,40 +198,15 @@ The commands take these flags:
 | `offer` | `-to <key>` | A public key that can get the file. |
 | `get` | `-o <file>` | The file to write. The default is the name in the link, in the current directory. |
 | `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. If it is not set, the command asks the first relay of `arc relay ls` on port 3478. |
-| `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the first packets". |
+| `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the attempts". |
 | `get`, `put` | `-no-relay` | Do not try the TURN server of the relay. If no direct path opens, the command fails. |
 
 ## Speed
 
-After a loss, SCTP halves its send window and then grows it on each round
-trip. pion grows it by one packet, about 1.2 KiB, for each round trip. On a
-92.5 Mbit/s link with a 44 ms round trip, the window is about 500 KiB. After
-a loss, the window then needs about 9 s to grow back. The app grows the
-window by 8 KiB for each round trip. A loss still halves the window, so the
-congestion control stays on.
-
-`TestEmulatedLinkSpeed` in `direct/` measures a transfer between two ends in
-one process, on a link that pion emulates. The link has a rate limit and a
-drop-tail queue in the direction of the data, and a delay in each direction.
-The test prints the speed and does not check it.
-
-```sh
-TRANSFER_LINK_MIB=64 TRANSFER_LINK_QUEUE_KIB=128 go test ./apps/transfer/direct -run TestEmulatedLinkSpeed -count=1 -v
-```
-
-Add `TRANSFER_LINK_CA_STEP_KIB=0` to measure with the step of pion. Results
-on an Apple Silicon Mac, 2026-10-11, emulated link of 92.5 Mbit/s and 44 ms,
-64 MiB, three runs for each cell:
-
-| Queue | Step of pion (1.2 KiB) | Step of the app (8 KiB) |
-| --- | --- | --- |
-| 64 KiB | 29.5 to 35.3 Mbit/s | 52.1 to 56.0 Mbit/s |
-| 128 KiB | 31.1 to 42.2 Mbit/s | 52.2 to 63.1 Mbit/s |
-| 512 KiB | 60.8 to 61.2 Mbit/s | 71.4 to 75.3 Mbit/s |
-
-Larger steps were not safe. With a 64 KiB queue, a 16 KiB step gave 25.7 to
-38.1 Mbit/s, and a 32 KiB step gave 10.6 to 12.7 Mbit/s. A larger fast
-retransmit window or receive buffer did not make a transfer faster.
+The pipe grows the SCTP send window by 8 KiB for each round trip after a
+loss, not by one packet, as pion does. The
+[direct pipe spec](../../docs/direct/SPEC.md), sections 3.3 and 8.2, gives
+the reason and the measurements on an emulated link.
 `TRANSFER_MIN_WINDOW_KIB=512` gave 1.1 Mbit/s with a 64 KiB queue, and
 84 Mbit/s with a 512 KiB queue.
 
@@ -367,60 +346,25 @@ A refused request has one of these errors:
   link name it, and the size is the size of the link. `get` moves the file
   out of the state directory.
 
-## The order of the first packets
+## The order of the attempts
 
-On some routers, a direct path opens only if the machine behind that router
-sends the first packet. If a packet of the other machine arrives first, no
-packet crosses in each direction.
+`get` and `put` make the attempts of the
+[direct pipe spec](../../docs/direct/SPEC.md), sections 3.5 and 3.6: two
+direct attempts in each order of the first packets, then an attempt
+through the TURN server of the first relay. The receiver of a `get` and the
+caller of a `put` make the offer. With `-hold`, the command asks the other
+end to wait in the first attempt, not in the second. With `-no-relay`, it
+makes no relay attempt.
 
-`get` therefore makes 2 attempts. In the first attempt, the sender sends
-first. If the data channel does not open in 12 seconds, `get` asks the
-sender to wait 1 second, so that the receiver sends first. With `-hold`,
-`get` uses the other sequence.
-
-If each machine is behind such a router, no order connects. `get` and `put`
-then try a third attempt through the TURN server of the first relay:
-
-1. The command runs `arc relay turn`. arc signs a NIP-98 request with the
-   key of the citizen, and the relay gives a TURN credential and the quota
-   that is left.
-2. If the quota is smaller than the bytes that remain, and a tenth more, the
-   command stops with an error that names the two numbers.
-3. The end of the command uses only an address on the TURN server. The
-   path is `relay`, and `send` prints it for each file too.
-4. The request names the TURN server as a STUN server, with its IPv4
-   address, such as `stun:192.0.2.1:3478`. The other end asks that server
-   for its public address too. The TURN server lets in only packets from
-   the addresses in the answer. Without this step, an end whose own STUN
-   server did not answer gave only addresses behind its NAT, and the
-   attempt found no path. A firewall, a blocked DNS name or an application
-   firewall such as Little Snitch can stop the STUN server of an end.
-
-If the relay serves no TURN, or the attempt finds no path, the command stops
-with `no direct path, and no path through the relay`. If the TURN server
-gave no address, the error says so. If the citizen uses
-its quota during the transfer, the relay stops relaying. Run the command
-again on the next day: it gets only the rest.
+In a relay attempt, the path is `relay`, and `send` prints it for each file
+too. If the relay serves no TURN, or the attempt finds no path, the command
+stops with `no direct path, and no path through the relay`. If the citizen
+uses its quota during the transfer, the relay stops relaying. Run the
+command again on the next day: it gets only the rest.
 
 The TURN server is the relay of the citizen who runs `get` or `put`. Its
 operator pays for the bandwidth, and sets the quota. See the delivery spec,
 section 4.12.
-
-## Why the settings are as they are
-
-- **Network interfaces.** An end does not use the interfaces of virtual
-  machines and tunnels (`bridge`, `vmenet`, `utun`, `docker` and others, see
-  `direct/direct.go`). A UDP write on such a bridge blocked with no end, and
-  pion then stopped all ICE work.
-- **UDP on IPv4 only.** STUN on IPv6 with no route added 5 seconds to each
-  setup.
-- **ICE timing.** pion stops after 8 pings for each pair of addresses, about
-  1.6 seconds, and reports a failure after 30 seconds. An end pings for
-  6 seconds, and reports a failure after 8 seconds.
-- **Congestion control.** The SCTP of pion slows down much after a loss on
-  a path of 50 ms. The app grows the send window by 8 KiB for each round
-  trip after a loss, not by one packet. See "Speed".
-  `TRANSFER_MIN_WINDOW_KIB` is a workaround that turns off the backoff.
 
 ## Tests
 
@@ -432,13 +376,8 @@ The tests build `arc` and `arc-transfer`, and run them as a person does: a
 relay on this machine, three citizens, and `arc serve`. Each test fails when
 the behavior that it tests is broken.
 
-`TestRelayPath` in `direct/` puts two ends behind symmetric NATs on an
-emulated network, with the TURN server of the relay on the network. The
-attempt with STUN finds no path. The attempt with TURN sends 1 MiB, and the
-path is `relay`. `TestRelayPathWithoutSTUN` gives the other end no STUN
-server: the attempt finds no path, until that end uses the STUN server of
-the TURN server. `TestRelayQuota` in `client/` checks the refusal before an
-attempt when the quota is too small.
+The tests of the pipe, such as `TestRelayPath`, are in `sdk/direct`. The
+[direct pipe spec](../../docs/direct/SPEC.md), section 8, lists them.
 
 A test by hand on 2026-10-05 used a Mac on a home network and a virtual
 machine in a data center, each behind a NAT, with no TURN server:
