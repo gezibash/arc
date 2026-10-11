@@ -5,7 +5,7 @@
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
 - Proof: go test -count=1 -run '^(TestDelivery|TestSeed)$' ./internal/proof/
 - Remaining: phases 5 and 6 of section 8.1
-- Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has no test between two real NATs, or on the relay ports of Fly.io. Section 8.3 lists the deferred work.
+- Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has no test between two real NATs, or on the relay ports of Fly.io. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
 Phases 1 to 4 are built, see section 8.1. Phases 5 and 6 are not built.
 Phase 4 made this layer the only ARC stack in v0.11.0. The older stack used
@@ -108,8 +108,8 @@ A new citizen key comes from a seed:
   shell history and `ps` show arguments.
 - The key file holds the derived secret key, as before. The key file does not
   record that a seed derived the key.
-- A device key does not come from the seed. A key from before the seed has
-  no seed. Its paper backup is an `ncryptsec` of NIP-49.
+- No other key comes from the seed. A key from before the seed has no seed.
+  Its paper backup is an `ncryptsec` of NIP-49.
 
 ### 3.3 Events
 
