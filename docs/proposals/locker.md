@@ -111,7 +111,8 @@ locker, not a product.
 ### 2.1 Sealing: what this document takes from #173
 
 Sealing is the work of #173. This section states what that design gives the
-locker, from its draft of 2026-10-11. If #173 changes, sections 2.3, 2.4 and
+locker, from its proposal (PR #192, `docs/proposals/base.md`, sections 4
+to 6). If #173 changes, sections 2.3, 2.4 and
 2.8 change.
 
 - The citizen key is the identity. It lives on a home signer and on paper,
@@ -163,9 +164,14 @@ usable. Each side consents first.
 The device keeps the link and the account in its local configuration. Other
 devices learn the lockers in one of two ways:
 
-- From an old device, when the citizen pairs a new device (#173).
-- From the recovery material, when no old device exists. The recovery
-  material holds the link of each locker.
+- From the signer, when it adds the new device. The signer holds the link
+  of each locker, beside the device list.
+- From the paper key, when the signer is lost. The paper copy also holds the
+  link of each locker.
+
+A new device gets its data roots the same way: from the signer, wrapped to
+its device key, or from the paper key, which opens the wraps to the citizen
+key. It never gets them from an old device.
 
 The relay keeps no list of lockers. Kind 10013 has no replacement.
 
@@ -224,6 +230,11 @@ id key   = HKDF(data root of the first random generation, info = "arc-locker-id-
   checkpoint, a part, or a NIP-09 deletion. The device opens the blob, and
   gives the event to its store. The store verifies the signature and applies
   the existing rules.
+- The citizen key signs the event inside, and the outer seal hides that
+  signature from the locker. Keep the signature. The outer seal uses the
+  data root of one generation, and a revoked device holds the old ones. That
+  device can make an outer seal of an old generation, but it cannot sign as
+  the citizen. Without the signature, it could forge old blobs.
 - The outer seal hides what the inner event shows: its signer, its kind, its
   `k` tag, its keyed `d` tag and its generation tag.
 - The ID is a keyed hash of the event ID. Two devices that put the same event
@@ -510,8 +521,8 @@ lands.
    stops two lockers from joining their accounts by key. #173 leans to the
    other answer: the locker checks the device list, which the citizen key
    signs. That shows the citizen key to each locker.
-3. **Where does a new device learn its lockers?** Recommended: from an old
-   device at pairing, or from the recovery material. No list on the relay,
+3. **Where does a new device learn its lockers?** Recommended: from the
+   signer when it adds the device, or from the paper key. No list on the relay,
    and kind 10013 has no replacement.
 4. **Does the relay keep any self data, such as the keyed root draft?**
    Recommended: no. The keyed root goes to the lockers. A machine that signs
