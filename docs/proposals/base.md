@@ -98,7 +98,7 @@ each device, and one random encryption key sealed to each client key.
 Option B fails for ARC because mail is NIP-17 (`docs/delivery/SPEC.md:202-218`
 uses the `p` tag form so that mail reaches any NIP-17 client). Option C repeats
 the failure of NIP-26. Option D2 is a good later step, see section 8,
-question 3.
+decision 3.
 
 The costs of option D:
 
@@ -241,8 +241,9 @@ The keys:
   keep the wraps. Neither can open a wrap to a device key.
 - The device key signs each change inside the encrypted bytes. A device that
   opens a change checks that its device key is on the device list. Thus a
-  phone writes the journal with no path to the signer. Section 8, question 9
-  compares this with a signature of the citizen key.
+  phone writes the journal with no path to the signer, and the signer does
+  no work for the journal. The storage citizen refuses writes from a revoked
+  device (section 8, decision 9).
 - On revocation, the signer makes a new generation and wraps it to each
   remaining device key and to the citizen key. New writes use the new
   generation. Old bytes stay under their old generation.
@@ -330,7 +331,8 @@ recovery without a second device.
 
 A seed with no passphrase gives the citizen key to anyone who reads the
 paper. A BIP-39 passphrase prevents this, but the citizen must remember it on
-the trip. Section 8, question 6 asks which default to use.
+the trip. Thus the passphrase is an option, and off by default (section 8,
+decision 6).
 
 ### 6.2 Device keys do not come from the seed
 
@@ -426,46 +428,49 @@ The second step is the seed: `arc keys gen` makes 24 words, and a recovery
 command derives the key from them. The third step is the data root and the
 local journal with a storage citizen (issue #172).
 
-## 8. Open questions for Zim
+## 8. Decisions
 
-Zim answered questions 1 and 5 on 2026-10-11.
+Zim decided each item on 2026-10-11. Items 1 and 5 came first. The other
+items take the recommended answer of this proposal.
 
-1. **Do phones give up the citizen key?** Answered: yes. Phones are devices.
-2. **Who runs the signer for a user with no machine that is always on?**
-   Recommended: a machine of the citizen. A storage citizen must not run it,
-   because it is another party. Until a user has such a machine, the phone
-   holds the key, and a loss means a new identity. The seed does not change
-   that.
-3. **Must a phone sign Nostr events with no internet?** Recommended: no, for
-   now. Mail waits in the outbox until the phone reaches the signer. The
-   journal works offline. A FROSTR 2-of-3 signer (phone, laptop, home) is the
-   later answer.
-4. **What does the paper hold?** Recommended: the 24-word seed for each new
-   citizen. A citizen with a key from before the seed keeps an `ncryptsec`,
-   or moves to a new identity once (section 6.3). The paper holds no links;
-   they are in a sealed event on the relays (section 5.4).
-5. **Do random data roots replace keys from the citizen key?** Answered: yes.
-6. **Does the seed get a BIP-39 passphrase by default?** Recommended: no.
-   Offer it as an option. A forgotten passphrase on a trip blocks recovery,
-   and the paper must be kept like a passport.
-7. **Do device keys come from the seed?** Recommended: no. Each device makes
-   a random key (section 6.2). If yes: hardened derivation, and the signer
-   never gives an index again.
-8. **Is the device list public or sealed?** Recommended: sealed to the
-   citizen key. A public list tells everyone how many devices a citizen has.
-   The storage citizen gets no copy. The signer signs a grant or a revocation
-   for each device key with an account key for that one storage citizen, as
-   issue #172 describes. Thus a storage citizen never sees the citizen key.
-9. **Which key signs a journal change inside the encrypted bytes?**
-   Recommended: the device key. Then a phone writes offline, and the signer
-   does no work for the journal. The storage citizen proposal (issue #172)
-   assumes the citizen key, through the signer. That choice needs the signer
-   for each write, but a reader then needs no device list. Both stop a
-   revoked device, because the storage citizen refuses its writes.
-10. **Import today's drafts and delete them from the relays?** Recommended:
-    yes, once, as section 5.3 describes.
-11. **Name a successor key now, for a stolen signer or seed?** Recommended:
-    not now. Keep kind 10272 reserved. Do it after the device list works.
+1. **Phones give up the citizen key. Phones are devices.** Zim, 2026-10-11.
+   Reason: only then can a lost phone be revoked without a new identity.
+2. **A machine of the citizen runs the signer. A storage citizen never runs
+   it.** Zim, 2026-10-11. Reason: a storage citizen is another party. Until a
+   user has such a machine, the phone holds the key, and a loss means a new
+   identity.
+3. **A phone does not sign Nostr events with no internet, for now.** Zim,
+   2026-10-11. Reason: mail can wait in the outbox, and the journal works
+   offline. A FROSTR 2-of-3 signer is the later answer.
+4. **The paper holds the 24-word seed for each new citizen.** A citizen with
+   a key from before the seed keeps an `ncryptsec`, or moves to a new
+   identity once (section 6.3). The paper holds no links (section 5.4). Zim,
+   2026-10-11. Reason: a seed derives the key again, and no seed derives a
+   key of today.
+5. **Random data roots replace keys from the citizen key.** Zim, 2026-10-11.
+   Reason: only a random key wrapped to each device allows revocation of read
+   access.
+6. **The seed has no BIP-39 passphrase by default. It is an option.** Zim,
+   2026-10-11. Reason: a forgotten passphrase on a trip blocks recovery. The
+   paper must be kept like a passport.
+7. **Device keys do not come from the seed. Each device makes a random
+   key.** Zim, 2026-10-11. Reason: a random key never leaves its device, and
+   ARC never restores a device key (section 6.2).
+8. **The device list is sealed to the citizen key.** The storage citizen gets
+   no copy. The signer signs a grant or a revocation for each device key with
+   an account key for that one storage citizen (issue #172). Zim, 2026-10-11.
+   Reason: a public list tells everyone how many devices a citizen has, and a
+   copy shows the citizen key to each storage citizen.
+9. **The device key signs each journal change inside the encrypted bytes.**
+   The signer does no work for the journal. The storage citizen refuses
+   writes from a revoked device. Zim, 2026-10-11. Reason: a phone then writes
+   the journal offline, with no path to the signer.
+10. **Today's drafts are imported once, and deleted from the relays.** Zim,
+    2026-10-11. Reason: the journal is a local app, and the relays are for
+    coordination only (section 5.3).
+11. **No successor key now. Kind 10272 stays reserved.** Zim, 2026-10-11.
+    Reason: a successor key is for a stolen signer or seed. It follows the
+    device list.
 
 ## 9. Sources
 
