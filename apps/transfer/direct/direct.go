@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pion/transport/v5"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -71,7 +72,17 @@ type Options struct {
 	// MinWindow keeps the SCTP send window at or above this number of bytes
 	// after a loss. Zero keeps the default of pion.
 	MinWindow uint32
+
+	// net replaces the network of the machine. Tests use it for an
+	// emulated link.
+	net transport.Net
 }
+
+// sctpCAStep is the growth of the SCTP send window for each round trip
+// after a loss. The default of pion is one packet, about 1.2 KiB, so the
+// window needs seconds to grow back. A loss still halves the window.
+// Larger steps lost speed on a link with a short queue; see the README.
+var sctpCAStep uint32 = 8 << 10
 
 // STUNURL is the URL of a STUN setting. The value "none" gives no server.
 // An empty value gives the STUN server of the first relay, or no server if
@@ -124,6 +135,10 @@ func NewConnection(o Options) (*webrtc.PeerConnection, error) {
 	engine.SetICEMaxBindingRequests(30)
 	engine.SetICETimeouts(4*time.Second, 4*time.Second, time.Second)
 	engine.SetIncludeLoopbackCandidate(o.Loopback)
+	if o.net != nil {
+		engine.SetNet(o.net)
+	}
+	engine.SetSCTPCwndCAStep(sctpCAStep)
 	if o.MinWindow > 0 {
 		engine.SetSCTPMinCwnd(o.MinWindow)
 		engine.SetSCTPFastRtxWnd(o.MinWindow)

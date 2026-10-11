@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -396,38 +395,23 @@ func TestInterface(t *testing.T) {
 
 	t.Log("phase B holds: drafts, checkpoints, parts, delete, the journal and the files")
 
-	// Phase C: private kinds through the mail layer, and a NIP-29 group on a
-	// relay that enforces it. Direct messages and Agora are manifests.
+	// Phase C: private kinds through the mail layer. Direct messages are a
+	// manifest.
 	laptop.run("relay", "add", url)
 	bob := home("bob")
-	moderator := home("moderator")
+	carol := home("carol")
 	bob.run("keys", "gen")
 	bob.run("relay", "add", url)
 	bobKey := bob.key()
-	moderator.run("keys", "gen")
-	moderator.run("relay", "add", url)
-	moderatorKey := moderator.key()
+	carol.run("keys", "gen")
+	carol.run("relay", "add", url)
+	carolKey := carol.key()
 
-	boardRelay := home("board").start("relay", "serve", "--listen", "127.0.0.1:0", "--group", "agora", "--admin", moderatorKey)
-	board := ifaceLine(boardRelay, "relay listens on ", limit)
-	if board == "" {
-		t.Fatalf("the board relay did not start:\n%s", boardRelay.output())
-	}
-	if !boardRelay.waitFor("hosts groups agora", limit) {
-		t.Fatalf("the board hosts no group:\n%s", boardRelay.output())
-	}
-	t.Log("ok: a relay hosts the NIP-29 group agora, with one admin")
-
-	// The author of Agora names the board relay in the manifest.
-	agora := filepath.Join(work, "agora.json")
-	write(t, agora, strings.ReplaceAll(read(t, filepath.Join(repo, "apps/agora/manifest.json")), "wss://board.example", board), 0o644)
 	laptop.run("announce", filepath.Join(repo, "apps/dm/manifest.json"))
-	laptop.run("announce", agora)
-	for _, one := range []machine{laptop, bob, moderator} {
+	for _, one := range []machine{laptop, bob, carol} {
 		one.run("install", callerKey, "dm", "--yes")
-		one.run("install", callerKey, "agora", "--yes")
 	}
-	t.Log("ok: three citizens install dm and agora")
+	t.Log("ok: three citizens install dm")
 
 	laptop.run("dm", "send", bobKey, "meet", "at", "noon")
 	contains(bob.run("dm", "inbox"), "meet at noon", "bob's inbox")
@@ -441,39 +425,18 @@ func TestInterface(t *testing.T) {
 	// A list stands for its members where a command takes a key.
 	laptop.refuse("lists", "add", "dm", "pals", "not-a-key")
 	laptop.refuse("lists", "add", "nothing", "pals", bobKey)
-	laptop.run("lists", "add", "dm", "pals", bobKey, moderatorKey)
+	laptop.run("lists", "add", "dm", "pals", bobKey, carolKey)
 	if list := laptop.run("lists", "ls", "dm", "pals"); strings.Count(list, "\n") != 2 {
 		t.Fatalf("the list holds %d lines, want 2:\n%s", strings.Count(list, "\n"), list)
 	}
 	laptop.run("dm", "send", "pals", "hello", "to", "the", "list")
 	contains(bob.run("dm", "inbox"), "hello to the list", "bob did not receive the message to the list")
-	contains(moderator.run("dm", "inbox"), "hello to the list", "the moderator did not receive the message to the list")
+	contains(carol.run("dm", "inbox"), "hello to the list", "carol did not receive the message to the list")
 	laptop.run("lists", "rm", "dm", "pals")
 	contains(laptop.run("lists", "ls", "dm"), "no lists", "the removed list still shows")
 	t.Log("ok: a list of two citizens sends one message to each")
 
-	// The post prints its address as the last line of standard error.
-	got = laptop.try("", "agora", "post", "--title", "Hello", "first", "post")
-	if got.Err != nil {
-		t.Fatalf("agora post: %v\n%s", got.Err, got.Stderr)
-	}
-	errLines := strings.Split(ifaceTrim(got.Stderr), "\n")
-	post := errLines[len(errLines)-1]
-	if !strings.HasPrefix(post, "nevent1") {
-		t.Fatalf("the post printed %q, want an address that starts with nevent1", post)
-	}
-	contains(bob.run("agora", "feed"), "Hello", "bob's feed")
-	bob.run("agora", "reply", post, "welcome")
-	contains(laptop.run("agora", "thread", post), "welcome", "the thread")
-	t.Log("ok: a post and a reply cross the board relay")
-
-	contains(bob.refuse("agora", "remove", post), "only an admin", "the refusal of a citizen who is not an admin")
-	moderator.run("agora", "remove", post)
-	contains(bob.run("agora", "feed"), "no posts", "the removed post still shows")
-	// The script also runs the NIP29 tests of ./adapters/relay/groups/; go test ./... runs them.
-	t.Log("ok: only the admin removes the post, and the post opens in a NIP-29 client")
-
-	t.Log("phase C holds: private kinds, NIP-29 groups, direct messages and Agora")
+	t.Log("phase C holds: private kinds, direct messages and lists")
 
 	// Phase D: what a capability can do stays what the citizen agreed to, and
 	// a key can be sealed, or held by a remote signer.
@@ -522,10 +485,10 @@ func TestInterface(t *testing.T) {
 	agent := home("agent")
 	owner.run("keys", "gen")
 	ownerKey := owner.key()
-	// The owner allows posts, drafts and their parts, seals, and relay lists;
-	// not replies.
+	// The owner allows drafts and their parts, seals, and relay lists; not
+	// public notes.
 	bunker := owner.start("keys", "bunker", "--relay", url,
-		"--allow-kind", "11", "--allow-kind", "31234", "--allow-kind", "1234", "--allow-kind", "3275",
+		"--allow-kind", "31234", "--allow-kind", "1234", "--allow-kind", "3275",
 		"--allow-kind", "13", "--allow-kind", "10050", "--allow-kind", "10013")
 	uri := ifaceLine(bunker, "bunker://", limit)
 	if uri == "" {
@@ -550,19 +513,21 @@ func TestInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent.run("relay", "add", url)
-	for _, capability := range []string{"agora", "journal", "dm"} {
+	notes := filepath.Join(work, "notes.json")
+	write(t, notes, `{"interface": 1, "id": "notes", "shape": "data", "title": "Notes",
+ "summary": "Public notes.", "kinds": {"note": {"kind": 1, "visibility": "public"}}, "formats": {},
+ "commands": [{"path": ["post"], "summary": "Post one note",
+   "args": [{"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}],
+   "action": {"publish": {"kind": "note", "content": "{{text}}"}}}]}`, 0o644)
+	laptop.run("announce", notes)
+	for _, capability := range []string{"notes", "journal", "dm"} {
 		agent.run("install", callerKey, capability, "--yes")
 	}
 	t.Log("ok: an agent signs as its owner through a bunker, and holds no secret key")
 
-	agent.run("agora", "post", "--title", "From the agent", "signed", "remotely")
-	feed := bob.run("agora", "feed")
-	contains(feed, "From the agent", "the agent's post is not on the board")
-	contains(feed, owner.name(), "the post does not name the owner")
-	agentPost := regexp.MustCompile(`nevent1[a-z0-9]*`).FindString(feed)
-	contains(agent.refuse("agora", "reply", agentPost, "not", "allowed"), "does not sign kind 1111",
+	contains(agent.refuse("notes", "post", "not", "allowed"), "does not sign kind 1",
 		"the refusal of a kind that the bunker does not allow")
-	t.Log("ok: the bunker signs the kinds its owner allows, and refuses the rest")
+	t.Log("ok: the bunker refuses a kind that its owner does not allow")
 
 	const agentPage = "---\ntitle: Agent notes\npage: 1\nnotebook: ops/agent\n---\nwritten by the agent"
 	agent.input(agentPage+"\n", "journal", "write", "ops/agent/1")

@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -17,10 +16,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/eventstore/boltdb"
-	"fiatjaf.com/nostr/eventstore/slicestore"
 	"fiatjaf.com/nostr/khatru"
-	"github.com/gezibash/arc/adapters/relay/groups"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 )
@@ -36,10 +32,7 @@ func Start(t *testing.T) string {
 func StartKillable(t *testing.T) (string, func()) {
 	t.Helper()
 
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -144,10 +137,7 @@ func (c Connections) Silence() {
 // connections.
 func StartTracked(t *testing.T) (string, Connections) {
 	t.Helper()
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -172,10 +162,7 @@ func StartTracked(t *testing.T) (string, Connections) {
 // authentication, as the public deploy does.
 func StartGuarded(t *testing.T) string {
 	t.Helper()
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -200,10 +187,7 @@ func StartPlain(t *testing.T) string {
 func StartDown(t *testing.T) (string, func()) {
 	t.Helper()
 
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -240,10 +224,7 @@ func (l *gated) Accept() (net.Conn, error) {
 func start(t *testing.T, negentropy bool) string {
 	t.Helper()
 
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
@@ -259,43 +240,12 @@ func start(t *testing.T, negentropy bool) string {
 	return "ws" + strings.TrimPrefix(server.URL, "http")
 }
 
-// StartGroups runs a relay that hosts NIP-29 groups, with one open group and
-// its admins. It returns the URL and the key of the relay.
-func StartGroups(t *testing.T, id string, admins ...nostr.PubKey) (string, nostr.PubKey) {
-	t.Helper()
-	// Bolt, as arc uses: it cannot delete while a query of it is open.
-	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(db.Close)
-	relay := khatru.NewRelay()
-	relay.Log = log.New(io.Discard, "", 0)
-	relay.UseEventstore(db, 500)
-	sealed.Protect(relay)
-
-	key := nostr.Generate()
-	g, err := groups.Attach(relay, db, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := g.Create(id, id, false, admins); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(relay)
-	t.Cleanup(server.Close)
-	return "ws" + strings.TrimPrefix(server.URL, "http"), key.Public()
-}
-
 // StartSlow runs a relay that waits for delay before it takes a subscription
 // for events tagged to one key. Until then, the relay does not deliver an
 // ephemeral event to that key. Subscriptions for other keys are not slow.
 func StartSlow(t *testing.T, delay time.Duration, to nostr.PubKey) string {
 	t.Helper()
-	db := &slicestore.SliceStore{}
-	if err := db.Init(); err != nil {
-		t.Fatal(err)
-	}
+	db := newStore(t)
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)

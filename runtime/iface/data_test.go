@@ -366,28 +366,30 @@ func TestDirectMessages(t *testing.T) {
 	}
 }
 
-func TestAgoraPostsRepliesAndThreads(t *testing.T) {
+// TestAGroupBoardPostsRepliesAndThreads proves the group visibility on a
+// test manifest: posts go to the group relay with the h and NIP-70 tags.
+func TestAGroupBoardPostsRepliesAndThreads(t *testing.T) {
 	alice, bob := pair(t)
-	alice.must("agora", "", "post", "--title", "Hello", "first", "post")
+	alice.must("board", "", "post", "--title", "Hello", "first", "post")
 	board := alice.env.net.relays["wss://board.example"]
 	posts := testutil.Must(board.Query(nostr.Filter{Kinds: []nostr.Kind{11}}))
 	if len(posts) != 1 {
 		t.Fatalf("the board holds %d posts", len(posts))
 	}
 	post := posts[0]
-	if h := post.Tags.Find("h"); h == nil || h[1] != "agora" || !nip70.IsProtected(post) {
+	if h := post.Tags.Find("h"); h == nil || h[1] != "board" || !nip70.IsProtected(post) {
 		t.Errorf("the post lacks its group tags: %v", post.Tags)
 	}
 
-	feed := bob.must("agora", "", "feed")
+	feed := bob.must("board", "", "feed")
 	if !strings.Contains(feed, "Hello") || !strings.Contains(feed, "first post") {
 		t.Errorf("the feed is %q", feed)
 	}
 
 	root := nip19.EncodeNevent(post.ID, nil, nostr.ZeroPK)
-	bob.must("agora", "", "reply", root, "welcome")
+	bob.must("board", "", "reply", root, "welcome")
 	time.Sleep(1100 * time.Millisecond)
-	alice.must("agora", "", "reply", root, "thanks")
+	alice.must("board", "", "reply", root, "thanks")
 	replies := testutil.Must(board.Query(nostr.Filter{Kinds: []nostr.Kind{1111}}))
 	if len(replies) != 2 {
 		t.Fatalf("the board holds %d replies", len(replies))
@@ -408,14 +410,14 @@ func TestAgoraPostsRepliesAndThreads(t *testing.T) {
 		}
 	}
 
-	thread := bob.must("agora", "", "thread", root)
+	thread := bob.must("board", "", "thread", root)
 	if w, th := strings.Index(thread, "welcome"), strings.Index(thread, "thanks"); w < 0 || th < w {
 		t.Errorf("the thread is %q", thread)
 	}
 
-	alice.must("agora", "", "remove", root)
+	alice.must("board", "", "remove", root)
 	removals := testutil.Must(board.Query(nostr.Filter{Kinds: []nostr.Kind{9005}}))
-	if len(removals) != 1 || removals[0].Tags.Find("e")[1] != post.ID.Hex() || removals[0].Tags.Find("h")[1] != "agora" {
+	if len(removals) != 1 || removals[0].Tags.Find("e")[1] != post.ID.Hex() || removals[0].Tags.Find("h")[1] != "board" {
 		t.Errorf("the removal is %+v", removals)
 	}
 }
@@ -444,7 +446,7 @@ func TestADryRunSignsNothing(t *testing.T) {
 		t.Errorf("a dry run stored %d events", n)
 	}
 	alice.must("dm", "", "send", "--dry-run", bob.env.me.Public().Hex(), "hi")
-	alice.must("agora", "", "post", "--dry-run", "hello")
+	alice.must("board", "", "post", "--dry-run", "hello")
 	if len(alice.env.net.inbox) != 0 || len(alice.env.net.relays) != 0 {
 		t.Errorf("a dry run sent something: %d inboxes, relays %v", len(alice.env.net.inbox), alice.env.net.relays)
 	}

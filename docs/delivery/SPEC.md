@@ -136,6 +136,10 @@ The kind of the gift wrap sets how long it lives:
 | 1059 | Store and forward. Nodes keep it until it expires. |
 | 21059 | Live. Nodes never keep it. It is useful only while the recipient is present. |
 
+Each gift wrap carries a NIP-40 `expiration` tag. An ARC relay refuses an
+event whose expiration has passed. When the expiration of a stored event
+passes, the relay stops serving the event and deletes it.
+
 The author randomizes `created_at` on the seal and the gift wrap, up to two
 days in the past, as NIP-17 describes. The real time stays inside the rumor.
 
@@ -796,9 +800,9 @@ merge. `mise run delivery` runs the proofs of phases 1 to 3.
 Phases 1 and 2 are built: the packages under `core/` and `adapters/`, and
 the command `arc`. Phase 2 added `core/private` for gift wraps and route
 tags, and `core/mail` for the outbox, acknowledgements and couriers.
-`adapters/relay/groups` makes a khatru relay host NIP-29 groups, `core/draft`
-seals data to its author as NIP-37 drafts, and `adapters/relay/sealed` makes a
-relay serve those drafts only to their author, after NIP-42 authentication.
+`core/draft` seals data to its author as NIP-37 drafts, and
+`adapters/relay/sealed` makes a relay serve those drafts only to their
+author, after NIP-42 authentication.
 The capability interface uses both. Phase 3 added `runtime/catalog` for
 announcements, discovery and installs, and `core/call` for both classes of
 call. `arc call` calls a capability with a raw body.

@@ -31,8 +31,8 @@ Three rules follow:
   protocols. A service cannot run arbitrary manifest code on the
   caller's machine.
 - **Where Nostr has a standard, ARC uses it.** A journal page is a NIP-37
-  draft of a NIP-23 article, a direct message is NIP-17, and a board is a
-  NIP-29 group. A Nostr client that knows these NIPs opens ARC data. ARC
+  draft of a NIP-23 article, a direct message is NIP-17, and a group kind
+  goes to a NIP-29 group. A Nostr client that knows these NIPs opens ARC data. ARC
   defines its own kinds only where no NIP fits.
 
 This interface runs on the delivery layer of docs/delivery/SPEC.md. Every
@@ -139,19 +139,16 @@ tag names 30023, as NIP-37 requires.
 ### 3.3 Group
 
 ```json
-"group": {"relay": "wss://board.example", "id": "agora"}
+"group": {"relay": "wss://board.example", "id": "board"}
 ```
 
 The group is a NIP-29 group. Its relay enforces who may post, and applies the
-moderation of the group's admins. The citizen who runs that relay can
-announce a different relay or id in a new version of the manifest.
+moderation of the group's admins. The author of the manifest can announce a
+different relay or id in a new version of the manifest.
 
-The operator of the relay makes the group and names its admins:
-`arc relay serve --group agora --admin <key>`. The relay signs the state of
-the group with its own key, and names that key in its NIP-11 document as
-`self`. It refuses an event for a group that does not exist, a post to a
-restricted group from a citizen who is not a member, and a moderation event
-from a citizen who is not an admin. `adapters/relay/groups` holds these rules.
+`arc relay serve` does not host groups. The relay of a group is a NIP-29
+relay outside ARC. The ARC relay only coordinates: it does not keep the data
+of an app.
 
 ### 3.4 Service
 
@@ -872,7 +869,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 | --- | --- |
 | The `journal` package | The journal manifest: NIP-37 drafts of NIP-23 articles. |
 | The direct-message renderers and cache in `toolbox` | The dm manifest: NIP-17. |
-| The `agora` input source | The agora manifest: a NIP-29 group, with NIP-7D threads and NIP-22 comments. |
+| The `agora` input source | No manifest. The Agora app was removed, because its relay kept its data. |
 | The `private_file` and `sealed_file` inputs | The files manifest: NIP-37 drafts of NIP-94 file metadata. |
 | The `seal`, `pubkey` and `shell` filters | `key` arguments, private kinds, and `json`. |
 
@@ -881,8 +878,8 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 Each app of version 1 documents itself, and its `manifest.json` is its
 interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.md),
 [sqlite](../../apps/sqlite/README.md), [releases](../../apps/releases/README.md),
-[journal](../../apps/journal/README.md), [dm](../../apps/dm/README.md),
-[agora](../../apps/agora/README.md) and [files](../../apps/files/README.md).
+[journal](../../apps/journal/README.md), [dm](../../apps/dm/README.md)
+and [files](../../apps/files/README.md).
 
 ### 7.4 Limits of the Nostr standards
 
@@ -892,10 +889,6 @@ interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.m
   text as of this document.
 - **A private event goes to one recipient.** NIP-17 allows a message to
   several, and this arc refuses it.
-- **The group relay is a subset of NIP-29.** It hosts open and restricted
-  groups, admins, removal, and join and leave requests. It does not hide the
-  posts of a private group from readers, and has no invite codes or roles
-  other than admin.
 
 ## 8. Proof
 
@@ -905,5 +898,5 @@ interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.m
 | --- | --- | --- |
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
 | B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
-| C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds, and a relay that enforces NIP-29 on khatru. dm and Agora in version 1. | A direct message opens in a NIP-17 client. An Agora post opens in a NIP-29 client, and an admin removes it. |
+| C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. dm in version 1. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |

@@ -190,6 +190,44 @@ The commands take these flags:
 | `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. If it is not set, the command asks the first relay of `arc relay ls` on port 3478. |
 | `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the first packets". |
 
+## Speed
+
+After a loss, SCTP halves its send window and then grows it on each round
+trip. pion grows it by one packet, about 1.2 KiB, for each round trip. On a
+92.5 Mbit/s link with a 44 ms round trip, the window is about 500 KiB. After
+a loss, the window then needs about 9 s to grow back. The app grows the
+window by 8 KiB for each round trip. A loss still halves the window, so the
+congestion control stays on.
+
+`TestEmulatedLinkSpeed` in `direct/` measures a transfer between two ends in
+one process, on a link that pion emulates. The link has a rate limit and a
+drop-tail queue in the direction of the data, and a delay in each direction.
+The test prints the speed and does not check it.
+
+```sh
+TRANSFER_LINK_MIB=64 TRANSFER_LINK_QUEUE_KIB=128 go test ./apps/transfer/direct -run TestEmulatedLinkSpeed -count=1 -v
+```
+
+Add `TRANSFER_LINK_CA_STEP_KIB=0` to measure with the step of pion. Results
+on an Apple Silicon Mac, 2026-10-11, emulated link of 92.5 Mbit/s and 44 ms,
+64 MiB, three runs for each cell:
+
+| Queue | Step of pion (1.2 KiB) | Step of the app (8 KiB) |
+| --- | --- | --- |
+| 64 KiB | 29.5 to 35.3 Mbit/s | 52.1 to 56.0 Mbit/s |
+| 128 KiB | 31.1 to 42.2 Mbit/s | 52.2 to 63.1 Mbit/s |
+| 512 KiB | 60.8 to 61.2 Mbit/s | 71.4 to 75.3 Mbit/s |
+
+Larger steps were not safe. With a 64 KiB queue, a 16 KiB step gave 25.7 to
+38.1 Mbit/s, and a 32 KiB step gave 10.6 to 12.7 Mbit/s. A larger fast
+retransmit window or receive buffer did not make a transfer faster.
+`TRANSFER_MIN_WINDOW_KIB=512` gave 1.1 Mbit/s with a 64 KiB queue, and
+84 Mbit/s with a 512 KiB queue.
+
+On 2026-10-05, a real link from a Mac to a cloud VM, both behind NAT, gave
+10 to 19 Mbit/s with the defaults of pion. The step of the app has no
+measurement on a real link yet.
+
 ## Request protocol
 
 A request is a live call to the capability `transfer`, with the method `RAW`
@@ -307,8 +345,9 @@ stops with `no direct path`.
   1.6 seconds, and reports a failure after 30 seconds. An end pings for
   6 seconds, and reports a failure after 8 seconds.
 - **Congestion control.** The SCTP of pion slows down much after a loss on
-  a path of 50 ms. `TRANSFER_MIN_WINDOW_KIB` is a workaround, not a
-  solution.
+  a path of 50 ms. The app grows the send window by 8 KiB for each round
+  trip after a loss, not by one packet. See "Speed".
+  `TRANSFER_MIN_WINDOW_KIB` is a workaround that turns off the backoff.
 
 ## Tests
 

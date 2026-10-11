@@ -18,20 +18,17 @@ section 3.7.
 | 0 | replaceable | NIP-01 | Profile. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 3 | replaceable | NIP-02 | Follows. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 5 | regular | NIP-09 | Deletion. Core makes it for `delete`, through `nostr.KindDeletion`. | reserved | [interface, section 6](interface/SPEC.md) |
-| 11 | regular | NIP-7D | A thread: an Agora post. | manifest | [agora app](../apps/agora/README.md) |
 | 13 | regular | NIP-59 | A seal inside a gift wrap. | code | [delivery, section 3.4](delivery/SPEC.md) |
 | 14 | regular | NIP-17 | A direct message, as a rumor. | code, manifest | [delivery, section 4.2](delivery/SPEC.md) |
 | 62 | regular | NIP-62 | Request to vanish. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 1059 | regular | NIP-59 | A gift wrap that a relay keeps. | code | [delivery, section 3.4](delivery/SPEC.md) |
 | 1063 | regular | NIP-94 | File metadata: a sealed file. | manifest | [files app](../apps/files/README.md) |
-| 1111 | regular | NIP-22 | A comment: an Agora reply. | manifest | [agora app](../apps/agora/README.md) |
 | 1234 | regular | NIP-37 | A checkpoint of a draft: one revision of a sealed event. | code | [interface, section 3.9.1](interface/SPEC.md) |
 | 3272 | regular | ARC | A call request, inside a gift wrap. | code | [delivery, section 4.10](delivery/SPEC.md) |
 | 3273 | regular | ARC | A call reply, inside a gift wrap. | code | [delivery, section 4.10](delivery/SPEC.md) |
 | 3274 | regular | ARC | An acknowledgement of mail, inside a gift wrap. | code | [delivery, section 4.2](delivery/SPEC.md) |
 | 3275 | regular | ARC | One continuation part of sealed content longer than 32 KiB. | code | [interface, section 3.9.2](interface/SPEC.md) |
 | 3276 | regular | ARC | Core session frames, inside live wraps. | code | [sessions](sessions/SPEC.md) |
-| 9005 | regular | NIP-29 | Delete an event in a group: an Agora remove. | manifest | [agora app](../apps/agora/README.md) |
 | 9734 | regular | NIP-57 | Zap request. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 9735 | regular | NIP-57 | Zap receipt. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 10002 | replaceable | NIP-65 | The relay list of a citizen. | code | [delivery, section 3.8](delivery/SPEC.md) |

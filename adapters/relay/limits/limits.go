@@ -6,11 +6,16 @@
 // NIP-13 proof of work, before it takes a gift wrap. It also caps the size of
 // one event, the rate of events from one IP address, and the size of its
 // store. Each limit is off when its value is zero.
+//
+// The relay also keeps NIP-40 expiration, which is always on. It refuses an
+// event whose expiration has passed. When the expiration of a stored event
+// passes, the relay stops serving the event and deletes it.
 package limits
 
 import (
 	"context"
 	"fmt"
+	"iter"
 	"net"
 	"slices"
 	"sync"
@@ -19,6 +24,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip13"
+	"github.com/gezibash/arc/core/store"
 	"go.etcd.io/bbolt"
 )
 
@@ -45,6 +51,9 @@ type Policy struct {
 	IPHeader string
 	// MaxStoreBytes caps the bytes that the store uses.
 	MaxStoreBytes int64
+	// Now is the clock that decides expiration. If it is nil, the relay
+	// uses time.Now.
+	Now func() time.Time
 }
 
 // Apply makes the relay keep the policy. The store is the database of the
@@ -57,9 +66,17 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 	if p.Rate > 0 {
 		bucket = newBuckets(p.Rate, p.Burst)
 	}
+	now := p.Now
+	if now == nil {
+		now = time.Now
+	}
+	expire(rl, now)
 
 	onEvent := rl.OnEvent
 	rl.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
+		if store.Expired(event, now()) {
+			return true, "invalid: the expiration of this event has passed"
+		}
 		if p.MaxEventBytes > 0 {
 			if size := len(event.String()); size > p.MaxEventBytes {
 				return true, fmt.Sprintf("invalid: the event holds %d bytes, and this relay takes at most %d", size, p.MaxEventBytes)
@@ -82,6 +99,36 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 			return onEvent(ctx, event)
 		}
 		return false, ""
+	}
+}
+
+// expire makes the relay serve no event whose expiration has passed, and
+// delete such an event when a query finds it. The expiration manager of
+// khatru also deletes expired events, but only once each hour. Its own
+// queries are internal calls, so they pass through unchanged.
+func expire(rl *khatru.Relay, now func() time.Time) {
+	query := rl.QueryStored
+	rl.QueryStored = func(ctx context.Context, filter nostr.Filter) iter.Seq[nostr.Event] {
+		if khatru.IsInternalCall(ctx) {
+			return query(ctx, filter)
+		}
+		return func(yield func(nostr.Event) bool) {
+			var expired []nostr.ID
+			for event := range query(ctx, filter) {
+				if store.Expired(event, now()) {
+					expired = append(expired, event.ID)
+					continue
+				}
+				if !yield(event) {
+					break
+				}
+			}
+			// The query holds a read transaction until its loop ends, so
+			// the deletions wait until after it.
+			for _, id := range expired {
+				_ = rl.DeleteEvent(ctx, id)
+			}
+		}
 	}
 }
 

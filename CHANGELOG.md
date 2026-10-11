@@ -6,6 +6,17 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- The Agora app, and its commands `arc agora post`, `reply`, `feed`,
+  `thread` and `remove`. The relay kept the board of Agora, and the ARC
+  relay must only coordinate. A citizen who installed Agora keeps the
+  manifest, but no ARC relay hosts its group.
+- The flags `--group` and `--admin` of `arc relay serve`, and the package
+  `adapters/relay/groups`. The ARC relay does not host NIP-29 groups.
+- The rows for kinds 11, 1111 and 9005 in docs/KINDS.md. No app uses them.
+  A manifest can still name group kinds for a NIP-29 relay outside ARC.
+
 ## [0.20.0] - 2026-10-07
 
 The transfer app gives files on a direct connection, and a sync of sealed
