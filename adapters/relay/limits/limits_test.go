@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
@@ -17,6 +19,8 @@ import (
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/private"
 )
 
 var ctx = context.Background()
@@ -173,5 +177,65 @@ func TestAFullStoreRefusesNewEventsButNotDeletions(t *testing.T) {
 	deletion.Sign(author)
 	if err := publish(t, url, nil, deletion); err != nil {
 		t.Errorf("a deletion into a full store: %v", err)
+	}
+}
+
+// Mail lives for 7 days, set in the expiration tag of its wraps,
+// docs/delivery/SPEC.md section 4.2. The relay keeps a wrap until then.
+func TestTheRelayDropsAWrapWhenItExpires(t *testing.T) {
+	var clock atomic.Int64
+	clock.Store(time.Now().Unix())
+	now := func() time.Time { return time.Unix(clock.Load(), 0) }
+	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}
+	if err := db.Init(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	rl := khatru.NewRelay()
+	rl.UseEventstore(db, 500)
+	sealed.Protect(rl)
+	limits.Apply(rl, db.DB, limits.Policy{Now: now})
+	server := httptest.NewServer(rl)
+	t.Cleanup(server.Close)
+	url := "ws" + strings.TrimPrefix(server.URL, "http")
+	mine := relay.Relay{URL: url}
+
+	alice, bob := keys.Generate(), keys.Generate()
+	mail := func(expires time.Time) nostr.Event {
+		rumor := private.Rumor(alice, 14, "hello bob", nostr.Tags{{"p", bob.Public.Hex()}}, now())
+		w, err := private.Wrap(ctx, alice, bob.Public, rumor, private.RelayForm, private.WrapKind, expires)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	served := func(w nostr.Event) bool {
+		t.Helper()
+		batch, err := mine.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{w.ID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(batch.Events) == 1
+	}
+
+	if err := publish(t, url, nil, mail(now().Add(-time.Second))); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("a wrap that has already expired: %v", err)
+	}
+
+	w := mail(now().Add(private.MaxAge))
+	if err := publish(t, url, nil, w); err != nil {
+		t.Fatalf("a wrap that expires in 7 days: %v", err)
+	}
+	clock.Add(int64((private.MaxAge - time.Minute) / time.Second))
+	if !served(w) {
+		t.Fatal("the relay does not serve the wrap one minute before it expires")
+	}
+
+	clock.Add(60)
+	if served(w) {
+		t.Error("the relay serves the wrap after it expires")
+	}
+	for range db.QueryEvents(nostr.Filter{IDs: []nostr.ID{w.ID}}, 1) {
+		t.Error("the store still holds the wrap after it expires")
 	}
 }
