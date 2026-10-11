@@ -4,9 +4,12 @@
 package direct
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,8 +52,14 @@ type Fetch struct {
 	Size int64 `json:"size,omitempty"`
 	// HoldMS is the time that the app waits before it sends its first
 	// packet, in milliseconds. The caller then sends first.
-	HoldMS int                       `json:"hold_ms,omitempty"`
-	SDP    webrtc.SessionDescription `json:"sdp"`
+	HoldMS int `json:"hold_ms,omitempty"`
+	// STUN is a STUN URL with an IPv4 address, such as
+	// "stun:192.0.2.1:3478". A caller that uses the TURN server of a relay
+	// names that server here. The app then asks it for its public address
+	// too, because the TURN server lets in only packets from the addresses
+	// in the answer.
+	STUN string                    `json:"stun,omitempty"`
+	SDP  webrtc.SessionDescription `json:"sdp"`
 }
 
 // Answer is the reply of the app.
@@ -71,6 +80,9 @@ type Options struct {
 	// an address on that server, and the bytes go through the relay. An
 	// end sets it only after the direct attempts failed.
 	TURN *webrtc.ICEServer
+	// PeerSTUN is a second STUN server, which the other end named in its
+	// request.
+	PeerSTUN string
 	// Loopback adds the loopback address, for two ends on one machine.
 	Loopback bool
 	// MinWindow keeps the SCTP send window at or above this number of bytes
@@ -114,6 +126,44 @@ func RelaySTUN(relay string) string {
 	return "stun:" + net.JoinHostPort(u.Hostname(), RelaySTUNPort)
 }
 
+// TURNSTUN is the STUN URL of a TURN server, with its IPv4 address. A TURN
+// server of a relay answers STUN on its own port. The other end gets the
+// address, not the host name, so it does not depend on its own DNS.
+func TURNSTUN(ctx context.Context, server *webrtc.ICEServer) (string, error) {
+	if server == nil || len(server.URLs) == 0 {
+		return "", errors.New("no TURN server")
+	}
+	rest, ok := strings.CutPrefix(server.URLs[0], "turn:")
+	if !ok {
+		return "", fmt.Errorf("%q is not a turn: URL", server.URLs[0])
+	}
+	rest, _, _ = strings.Cut(rest, "?")
+	host, port, err := net.SplitHostPort(rest)
+	if err != nil {
+		return "", err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil {
+		return "", err
+	}
+	return "stun:" + net.JoinHostPort(ips[0].String(), port), nil
+}
+
+// IsIPSTUN says if stun is a STUN URL with an IPv4 address and a port.
+func IsIPSTUN(stun string) bool {
+	rest, ok := strings.CutPrefix(stun, "stun:")
+	if !ok {
+		return false
+	}
+	host, port, err := net.SplitHostPort(rest)
+	if err != nil {
+		return false
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	ip := net.ParseIP(host)
+	return err == nil && n > 0 && ip != nil && ip.To4() != nil
+}
+
 // virtualInterfaces are the name prefixes of interfaces that an end does
 // not use. A UDP write on a bridge of a virtual machine can block with no
 // end, and pion then stops all ICE work.
@@ -148,12 +198,15 @@ func NewConnection(o Options) (*webrtc.PeerConnection, error) {
 		engine.SetSCTPFastRtxWnd(o.MinWindow)
 	}
 	config := webrtc.Configuration{}
-	switch {
-	case o.TURN != nil:
+	if o.TURN != nil {
 		config.ICEServers = []webrtc.ICEServer{*o.TURN}
 		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
-	case o.STUN != "":
-		config.ICEServers = []webrtc.ICEServer{{URLs: []string{o.STUN}}}
+	} else {
+		for _, stun := range []string{o.STUN, o.PeerSTUN} {
+			if stun != "" {
+				config.ICEServers = append(config.ICEServers, webrtc.ICEServer{URLs: []string{stun}})
+			}
+		}
 	}
 	return webrtc.NewAPI(webrtc.WithSettingEngine(engine)).NewPeerConnection(config)
 }

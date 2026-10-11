@@ -124,6 +124,26 @@ func relayOptions(ctx context.Context, arc Arc, options direct.Options, need int
 	return options, nil
 }
 
+// relaySTUN is the STUN URL that an attempt through the TURN server of the
+// relay gives to the other end, or empty for a direct attempt. The TURN
+// server lets in only packets from the addresses in the answer. The other
+// end asks the TURN server for its public address, so that address is in
+// the answer, also if its own STUN server does not answer. local is the
+// description of this end.
+func relaySTUN(ctx context.Context, options direct.Options, local webrtc.SessionDescription) (string, error) {
+	if options.TURN == nil {
+		return "", nil
+	}
+	if !strings.Contains(local.SDP, "typ relay") {
+		return "", noPath(errors.New("the TURN server of the relay gave no address"))
+	}
+	stun, err := direct.TURNSTUN(ctx, options.TURN)
+	if err != nil {
+		return "", noPath(err)
+	}
+	return stun, nil
+}
+
 // noPath is the error after the direct attempts and the relay attempt.
 func noPath(err error) error {
 	return fmt.Errorf("no direct path, and no path through the relay: %w", err)
@@ -330,7 +350,11 @@ func (g *getter) attempt(ctx context.Context, hold time.Duration) (path string, 
 	if err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(direct.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), SDP: local})
+	stun, err := relaySTUN(ctx, g.Options, local)
+	if err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(direct.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
 	if err != nil {
 		return "", err
 	}
@@ -513,7 +537,11 @@ func (p Put) attempt(ctx context.Context, offer direct.Offer, hold time.Duration
 	if err != nil {
 		return "", 0, err
 	}
-	body, err := json.Marshal(direct.Fetch{Version: 1, Op: direct.OpPut, SHA256: offer.SHA256, Size: offer.Size, HoldMS: int(hold / time.Millisecond), SDP: local})
+	stun, err := relaySTUN(ctx, p.Options, local)
+	if err != nil {
+		return "", 0, err
+	}
+	body, err := json.Marshal(direct.Fetch{Version: 1, Op: direct.OpPut, SHA256: offer.SHA256, Size: offer.Size, HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
 	if err != nil {
 		return "", 0, err
 	}
