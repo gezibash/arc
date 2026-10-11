@@ -140,9 +140,11 @@ checks device keys against grants. The locker cannot see the signature of
 the event inside a blob, so it does not check it. Each device checks it when
 it opens the blob, and refuses an event that the citizen key did not sign.
 
-This proposal also assumes one thing that #173 has not stated: a device can
-open each older generation that it needs, and the first random generation
-never changes. Section 2.4 derives the blob IDs from it.
+A current device opens every generation. Each new generation carries the
+previous data root, sealed under the new one, so the newest root opens the
+chain. A revoked device never gets a newer generation. The signer also wraps
+the keyed root of interface spec 3.7.1 to each device. That key never
+changes, and section 2.4 derives the blob IDs from it.
 
 ### 2.2 Find and pair
 
@@ -223,7 +225,7 @@ id       = HMAC-SHA256(id key, event ID)               (32 bytes)
 ts       = 0                                           (8 bytes)
 gen      = generation of the data root                 (4 bytes)
 blob key = HKDF(data root of gen, info = "arc-locker-blob-v1")
-id key   = HKDF(data root of the first random generation, info = "arc-locker-id-v1")
+id key   = HKDF(keyed root, info = "arc-locker-id-v1")
 ```
 
 - The plaintext is the signed NIP-37 event that the device holds: a draft, a
@@ -239,8 +241,9 @@ id key   = HKDF(data root of the first random generation, info = "arc-locker-id-
   `k` tag, its keyed `d` tag and its generation tag.
 - The ID is a keyed hash of the event ID. Two devices that put the same event
   make the same blob. A put is therefore idempotent, as in Tarsnap. The locker
-  cannot match an ID with an event on any relay. The id key never changes, so
-  a new generation does not change the ID of an old blob.
+  cannot match an ID with an event on any relay. The keyed root never changes, so
+  a new generation does not change the ID of an old blob. A citizen who has
+  only generation 0 has a keyed root too, so the IDs work for that citizen.
 - Negentropy sorts items by a timestamp, then by ID. Both sides must use
   the same timestamp. The device sets `ts` to 0 for each blob, as Syncthing
   sets one fixed time on an untrusted device. Reconciliation then splits the
@@ -518,9 +521,9 @@ lands.
 2. **Does the locker know the citizen by a pseudonym for each locker, or by
    the citizen key?** Recommended: a pseudonym for each locker, which the
    signer derives (section 2.3). It costs one HKDF on the signer, and it
-   stops two lockers from joining their accounts by key. #173 leans to the
-   other answer: the locker checks the device list, which the citizen key
-   signs. That shows the citizen key to each locker.
+   stops two lockers from joining their accounts by key. #173 agrees. The other
+   answer, a copy of the device list for each locker, shows the citizen key
+   to each locker.
 3. **Where does a new device learn its lockers?** Recommended: from the
    signer when it adds the device, or from the paper key. No list on the relay,
    and kind 10013 has no replacement.
