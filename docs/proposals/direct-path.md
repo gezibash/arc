@@ -44,7 +44,7 @@ Each number has a tag:
 | `http` | A response body in a `server_stream` session ([HTTP spec](../http/SPEC.md#36-sessions), section 3.6). The session has no total limit. | 100 MB in the acceptance test of #167. Any size in real use. | Yes. First. |
 | `releases` | One archive in a `server_stream` session (`apps/releases/server/session.go:12`). The consumer is `arc update` (`cmd/arc/update.go:341`). | 22,507,192 to 24,988,924 bytes for v0.23.1 (measured: GitHub release assets). | Yes. Second. |
 | `transfer` | A file over a WebRTC data channel today (`apps/transfer/direct/part.go:120`). | 64 MiB and 256 MiB in the README runs (measured, `apps/transfer/README.md:237`). | Has its own pipe. It moves to the shared pipe. |
-| locker sync (#172) | Journal pages and files between two devices of one citizen, through a locker citizen. | Not known. Files (kind 1063) can be many MB (estimated). | Yes, after #173. Duplex: the bytes go in both directions. |
+| storage citizen sync (#172) | Journal pages and files between two devices of one citizen, through a storage citizen. | Not known. Files (kind 1063) can be many MB (estimated). | Yes, after #173. Duplex: the bytes go in both directions. |
 | `exec` | Command output. | 1 MiB by default, 4 MiB at most (`apps/exec/server/config.go:41`, `:47`). | No. 4 MiB takes 37 to 197 s at 0.9 to 0.17 Mbit/s (arithmetic). The limits keep the output small. |
 | `sqlite` | Query rows. | 1 MiB at most (`apps/sqlite/server/config.go:28`, `:32`). | No. Same reason. |
 
@@ -373,7 +373,7 @@ body byte.
    `Status: proposed`.
 5. Then, http downloads (`server_stream`) over the pipe, in
    `sdk/httpadapter` and `cmd/arc/session_http.go`. Then releases. Then the
-   locker, after #173. Uploads (`stream_body`) come last.
+   storage citizen, after #173. Uploads (`stream_body`) come last.
 
 The proof of step 5 is the acceptance of #167. Run it on two machines
 behind NAT. The provider serves a file of 100 MB through `arc serve` with an
@@ -398,33 +398,37 @@ runs the same download on the emulated link of
 `apps/transfer/direct/link_speed_test.go`. It does not replace the run on
 real machines.
 
-## 7. Open questions for Zim
+## 7. Decisions
 
-1. Does the 2026-10-05 answer "the direct connection is an app" change to
-   "the pipe is in `sdk/direct`; transfer stays an app"?
-   **Recommended: yes.** `cmd/arc` cannot use a pipe that lives in an app.
-2. In `auto`, after a pipe fails, does the command fall back to session
-   frames over the relay?
-   **Recommended: no.** TURN is faster than frames in each run that we have.
-   Fall back to frames only when the provider is older and has no pipe.
-3. Where is the relay-only setting?
-   **Recommended:** a flag `--path` on each command, and one citizen setting
-   that sets the default. A provider program reads `ARC_PATH`. The default
-   is `auto`.
-4. Does a provider open a pipe for each caller that its access rules let
-   in, so it shows its IP address to each of them?
-   **Recommended: yes, by default.** An operator who does not want this sets
-   `ARC_PATH=turn` or `session`.
-5. How many pipes can one provider process hold at a time?
-   **Recommended: 4 (estimated)**, the same kind of slot as
-   `apps/transfer/server/server.go:234`. More pipes return `busy`.
-6. Does the `end` record carry a SHA-256 of the body, or only the count?
-   **Recommended: only the count.** DTLS gives integrity. A SHA-256 is
-   useful only for a later resume with a `Range` request.
-7. Does `sdk/direct` get its own spec, or a section in the session spec?
-   **Recommended: its own spec**, `docs/direct/SPEC.md`. The session spec
-   stays unchanged.
-8. Does the locker (#172) use one pipe for one sync session, in both
-   directions?
-   **Recommended: yes.** The pipe is a byte stream in both directions
-   already. Sync gets no new path type.
+Zim accepted each recommendation of this proposal on 2026-10-11. Nothing is
+built yet.
+
+1. The pipe is in `sdk/direct`. `transfer` stays an app for file offers,
+   links and part files. This replaces the 2026-10-05 answer that the direct
+   connection is an app. (Zim, 2026-10-11.) Reason: `cmd/arc` cannot use a
+   pipe that lives in an app.
+2. In `auto`, a command does not fall back to session frames after a pipe
+   fails. It falls back to frames only when the provider is older and has
+   no pipe. (Zim, 2026-10-11.) Reason: TURN is faster than frames in each
+   run that we have.
+3. The relay-only setting is a flag `--path` on each command, and one
+   citizen setting that sets the default. A provider program reads
+   `ARC_PATH`. The default is `auto`. (Zim, 2026-10-11.) Reason: the app
+   picks the path when the session starts, and the user can see and set it.
+4. A provider opens a pipe for each caller that its access rules let in, so
+   it shows its IP address to each of them. An operator who does not want
+   this sets `ARC_PATH=turn` or `session`. (Zim, 2026-10-11.) Reason: the
+   access rules already decide who can reach the provider.
+5. One provider process holds at most 4 pipes at a time (estimated), the
+   same kind of slot as `apps/transfer/server/server.go:234`. More pipes
+   return `busy`. (Zim, 2026-10-11.) Reason: a pipe holds sockets and
+   buffers, so the count must be bounded.
+6. The `end` record carries only the byte count, not a SHA-256 of the body.
+   (Zim, 2026-10-11.) Reason: DTLS gives integrity; a SHA-256 is useful only
+   for a later resume with a `Range` request.
+7. `sdk/direct` gets its own spec, `docs/direct/SPEC.md`. The session spec
+   stays unchanged. (Zim, 2026-10-11.) Reason: the pipe is a separate
+   contract, and the session spec does not change.
+8. The storage citizen (#172) uses one pipe for one sync session, in both
+   directions. (Zim, 2026-10-11.) Reason: the pipe is a byte stream in both
+   directions already, so sync gets no new path type.
