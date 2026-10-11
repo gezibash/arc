@@ -1,9 +1,9 @@
 package direct
 
 import (
+	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -15,25 +15,25 @@ import (
 
 // TestEmulatedLinkSpeed sends a file between two ends on an emulated link
 // and prints the speed. It is a measurement, not a check: it fails only if
-// the transfer fails. It runs only if TRANSFER_LINK_MIB is set.
+// the transfer fails. It runs only if DIRECT_LINK_MIB is set.
 //
 // The link has a rate limit and a drop-tail queue in the direction of the
 // data, and a fixed delay in each direction. The variables of the link are
-// TRANSFER_LINK_MIB (the file size), TRANSFER_LINK_MBIT (default 92.5),
-// TRANSFER_LINK_RTT_MS (default 44) and TRANSFER_LINK_QUEUE_KIB
-// (default 128). TRANSFER_LINK_CA_STEP_KIB replaces sctpCAStep; 0 gives the
+// DIRECT_LINK_MIB (the file size), DIRECT_LINK_MBIT (default 92.5),
+// DIRECT_LINK_RTT_MS (default 44) and DIRECT_LINK_QUEUE_KIB
+// (default 128). DIRECT_LINK_CA_STEP_KIB replaces sctpCAStep; 0 gives the
 // default of pion.
 func TestEmulatedLinkSpeed(t *testing.T) {
-	mib := envFloat(t, "TRANSFER_LINK_MIB", 0)
+	mib := envFloat(t, "DIRECT_LINK_MIB", 0)
 	if mib == 0 {
-		t.Skip("set TRANSFER_LINK_MIB to measure an emulated link")
+		t.Skip("set DIRECT_LINK_MIB to measure an emulated link")
 	}
-	mbit := envFloat(t, "TRANSFER_LINK_MBIT", 92.5)
-	rtt := time.Duration(envFloat(t, "TRANSFER_LINK_RTT_MS", 44) * float64(time.Millisecond))
-	queue := int64(envFloat(t, "TRANSFER_LINK_QUEUE_KIB", 128) * 1024)
-	if os.Getenv("TRANSFER_LINK_CA_STEP_KIB") != "" {
+	mbit := envFloat(t, "DIRECT_LINK_MBIT", 92.5)
+	rtt := time.Duration(envFloat(t, "DIRECT_LINK_RTT_MS", 44) * float64(time.Millisecond))
+	queue := int64(envFloat(t, "DIRECT_LINK_QUEUE_KIB", 128) * 1024)
+	if os.Getenv("DIRECT_LINK_CA_STEP_KIB") != "" {
 		step := sctpCAStep
-		sctpCAStep = uint32(envFloat(t, "TRANSFER_LINK_CA_STEP_KIB", 0) * 1024)
+		sctpCAStep = uint32(envFloat(t, "DIRECT_LINK_CA_STEP_KIB", 0) * 1024)
 		t.Cleanup(func() { sctpCAStep = step })
 	}
 	router, err := vnet.NewRouter(&vnet.RouterConfig{CIDR: "10.0.0.0/24", MinDelay: rtt / 2, LoggerFactory: logging.NewDefaultLoggerFactory()})
@@ -65,10 +65,6 @@ func TestEmulatedLinkSpeed(t *testing.T) {
 	t.Cleanup(func() { _ = router.Stop() })
 
 	size := int64(mib * (1 << 20))
-	path := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	sender, err := NewConnection(Options{net: senderNet})
 	if err != nil {
@@ -100,7 +96,13 @@ func TestEmulatedLinkSpeed(t *testing.T) {
 	sent := make(chan error, 1)
 	dc.OnOpen(func() {
 		start = time.Now()
-		go func() { sent <- Send(dc, path, 0, size) }()
+		go func() {
+			err := Send(dc, bytes.NewReader(make([]byte, size)), size)
+			if err == nil {
+				err = dc.SendText("end")
+			}
+			sent <- err
+		}()
 	})
 
 	offer, err := sender.CreateOffer(nil)

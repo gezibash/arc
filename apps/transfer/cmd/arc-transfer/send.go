@@ -15,7 +15,7 @@ import (
 
 	"github.com/gezibash/arc/apps/transfer"
 	"github.com/gezibash/arc/apps/transfer/client"
-	"github.com/gezibash/arc/apps/transfer/direct"
+	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/apps/transfer/server"
 )
 
@@ -35,7 +35,7 @@ func send(ctx context.Context, args []string) error {
 		return errors.New("usage: arc-transfer send [flags] <key of the receiver> <files>")
 	}
 	to := flags.Arg(0)
-	if !direct.IsHex64(to) {
+	if !files.IsHex64(to) {
 		return errors.New("the receiver is a public key of 64 hex digits")
 	}
 	sender, err := arc.PublicKey(ctx)
@@ -43,7 +43,7 @@ func send(ctx context.Context, args []string) error {
 		return err
 	}
 	dir := server.StateDir(*state)
-	var offers []direct.Offer
+	var offers []files.Offer
 	lines := []string{}
 	if *text != "" {
 		lines = append(lines, *text)
@@ -57,7 +57,7 @@ func send(ctx context.Context, args []string) error {
 			return err
 		}
 		offers = append(offers, offer)
-		lines = append(lines, direct.Link(sender, offer))
+		lines = append(lines, files.Link(sender, offer))
 	}
 
 	// The service must answer before the receiver reads the message.
@@ -73,7 +73,7 @@ func send(ctx context.Context, args []string) error {
 
 	limit := time.After(*wait)
 	for pending := offers; len(pending) > 0; {
-		var still []direct.Offer
+		var still []files.Offer
 		for _, offer := range pending {
 			if path, ok := server.Delivered(dir, offer.SHA256, to); ok {
 				fmt.Printf("%s\n", offer.Path)

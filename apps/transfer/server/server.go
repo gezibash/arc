@@ -1,9 +1,9 @@
 // Package server gives the offered files of a citizen to its callers on
 // direct connections, and takes the files that callers give to it.
 //
-// A request is one JSON object, direct.Fetch: the SHA-256 of a file, and a
+// A request is one JSON object, files.Fetch: the SHA-256 of a file, and a
 // WebRTC offer. A fetch asks for an offered file. A put gives a file. The
-// reply is direct.Answer, with the WebRTC answer. The bytes of the file then
+// reply is files.Answer, with the WebRTC answer. The bytes of the file then
 // go on a data channel between the two programs, not through ARC.
 package server
 
@@ -22,7 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gezibash/arc/apps/transfer/direct"
+	"github.com/gezibash/arc/apps/transfer/files"
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/pion/webrtc/v4"
 )
@@ -96,9 +97,9 @@ func Run(ctx context.Context, opts provider.Options) error {
 // the connection, and returns the answer. The file goes when the data
 // channel opens.
 func (s *server) HandleRequest(_ context.Context, request provider.Request) (string, error) {
-	var req direct.Fetch
+	var req files.Fetch
 	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 ||
-		!direct.IsHex64(req.SHA256) || req.Offset < 0 || req.HoldMS < 0 ||
+		!files.IsHex64(req.SHA256) || req.Offset < 0 || req.HoldMS < 0 ||
 		time.Duration(req.HoldMS)*time.Millisecond > direct.MaxHold ||
 		req.SDP.Type != webrtc.SDPTypeOffer || (req.STUN != "" && !direct.IsIPSTUN(req.STUN)) {
 		return "", errInvalidRequest
@@ -106,14 +107,14 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	switch req.Op {
 	case "":
 		return s.fetch(request.From, req)
-	case direct.OpPut:
+	case files.OpPut:
 		return s.put(request.From, req)
 	}
 	return "", errInvalidRequest
 }
 
 // fetch gives an offered file to the caller.
-func (s *server) fetch(from string, req direct.Fetch) (string, error) {
+func (s *server) fetch(from string, req files.Fetch) (string, error) {
 	offer, err := load(s.state, req.SHA256)
 	if err != nil || (len(offer.To) > 0 && !slices.Contains(offer.To, from)) {
 		return "", errUnknownOffer
@@ -142,7 +143,7 @@ func (s *server) fetch(from string, req direct.Fetch) (string, error) {
 				defer end()
 				started := time.Now()
 				label := fmt.Sprintf("%.12s to %.8s", offer.SHA256, from)
-				if err := direct.Send(dc, offer.Path, req.Offset, offer.Size); err != nil {
+				if err := files.Send(dc, offer.Path, req.Offset, offer.Size); err != nil {
 					fmt.Fprintf(s.log, "%s stopped: %v\n", label, err)
 					return
 				}
@@ -164,16 +165,16 @@ func (s *server) fetch(from string, req direct.Fetch) (string, error) {
 // put takes a file that the caller gives. The file goes to
 // received/<key of the caller>/<sha256> in the state directory. A part file
 // stays after a stop, and the next put of the caller gets only the rest.
-func (s *server) put(from string, req direct.Fetch) (string, error) {
+func (s *server) put(from string, req files.Fetch) (string, error) {
 	if s.putMax == 0 {
 		return "", errPutRefused
 	}
 	if req.Size < 0 || req.Size > s.putMax {
 		return "", errTooLarge
 	}
-	file := direct.ReceivedFile(s.state, from, req.SHA256)
+	file := files.ReceivedFile(s.state, from, req.SHA256)
 	if _, err := os.Stat(file); err == nil {
-		raw, err := json.Marshal(direct.Answer{Version: 1, Offset: req.Size})
+		raw, err := json.Marshal(files.Answer{Version: 1, Offset: req.Size})
 		return string(raw), err
 	}
 	if _, running := s.putting.LoadOrStore(file, true); running {
@@ -183,10 +184,10 @@ func (s *server) put(from string, req direct.Fetch) (string, error) {
 		s.putting.Delete(file)
 		return "", errBusy
 	}
-	var part *direct.Part
+	var part *files.Part
 	err := os.MkdirAll(filepath.Dir(file), 0o700)
 	if err == nil {
-		part, err = direct.OpenPart(file, req.SHA256, req.Size)
+		part, err = files.OpenPart(file, req.SHA256, req.Size)
 	}
 	if err != nil {
 		<-s.slots
@@ -205,7 +206,7 @@ func (s *server) put(from string, req direct.Fetch) (string, error) {
 			if !m.IsString {
 				if err := part.Write(m.Data); err != nil {
 					fmt.Fprintf(s.log, "%s stopped: %v\n", label, err)
-					if errors.Is(err, direct.ErrTooManyBytes) {
+					if errors.Is(err, files.ErrTooManyBytes) {
 						part.Discard()
 					}
 					_ = dc.SendText(err.Error())
@@ -244,7 +245,7 @@ func (s *server) takeSlot() bool {
 // returns the reply with the answer. offset goes in the reply. release runs
 // one time, when the connection ends. setup gets the data channel of the
 // caller, and returns what to do when it opens, or nil.
-func (s *server) connect(req direct.Fetch, offset int64, release func(),
+func (s *server) connect(req files.Fetch, offset int64, release func(),
 	setup func(*webrtc.PeerConnection, *webrtc.DataChannel, func()) func()) (string, error) {
 	rtc := s.rtc
 	rtc.PeerSTUN = req.STUN
@@ -304,7 +305,7 @@ func (s *server) connect(req direct.Fetch, offset int64, release func(),
 		end()
 		return "", errFailed
 	}
-	raw, err := json.Marshal(direct.Answer{Version: 1, Offset: offset, SDP: local})
+	raw, err := json.Marshal(files.Answer{Version: 1, Offset: offset, SDP: local})
 	if err != nil {
 		end()
 		return "", errFailed

@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The pipe of the transfer app is now the package `sdk/direct`, so other
+  apps and `cmd/arc` can use it. `docs/direct/SPEC.md` defines it. The wire
+  format and the behavior of the transfer app did not change. The variables
+  of the emulated link test are now `DIRECT_LINK_*`.
+
 ## [0.23.1] - 2026-10-11
 
 ### Fixed

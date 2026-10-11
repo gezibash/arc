@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gezibash/arc/apps/transfer/direct"
+	"github.com/gezibash/arc/apps/transfer/files"
 )
 
 // StateDir is the directory that holds the offers of a sender. The command
@@ -35,8 +35,8 @@ func offerFile(state, sum string) string {
 
 // Record makes the offer of a file, and writes it to the state directory.
 // The file of an offer is offers/<sha256>.json.
-func Record(state, file string, to []string) (direct.Offer, error) {
-	var o direct.Offer
+func Record(state, file string, to []string) (files.Offer, error) {
+	var o files.Offer
 	path, err := filepath.Abs(file)
 	if err != nil {
 		return o, err
@@ -48,11 +48,11 @@ func Record(state, file string, to []string) (direct.Offer, error) {
 	if !info.Mode().IsRegular() {
 		return o, fmt.Errorf("%s is not a regular file", path)
 	}
-	sum, err := direct.HashFile(path)
+	sum, err := files.HashFile(path)
 	if err != nil {
 		return o, err
 	}
-	o = direct.Offer{SHA256: sum, Path: path, Name: filepath.Base(path), Size: info.Size(), Modified: info.ModTime(), To: to}
+	o = files.Offer{SHA256: sum, Path: path, Name: filepath.Base(path), Size: info.Size(), Modified: info.ModTime(), To: to}
 
 	if err := os.MkdirAll(filepath.Join(state, "offers"), 0o700); err != nil {
 		return o, err
@@ -72,8 +72,8 @@ func Record(state, file string, to []string) (direct.Offer, error) {
 
 // load returns the offer with this SHA-256. The caller checks first that
 // sum is 64 hex digits, so sum cannot name a file out of the directory.
-func load(state, sum string) (direct.Offer, error) {
-	var o direct.Offer
+func load(state, sum string) (files.Offer, error) {
+	var o files.Offer
 	raw, err := os.ReadFile(offerFile(state, sum))
 	if err != nil {
 		return o, err
