@@ -32,6 +32,14 @@ func providerBinary(t *testing.T, pkg string) string {
 	}
 	return binary
 }
+
+// pipesOnLoopback lets two ends of a pipe on this machine find each other
+// on the loopback address, with no STUN server. The test relay serves no
+// STUN.
+func pipesOnLoopback(t *testing.T) {
+	t.Setenv("ARC_LOOPBACK", "1")
+	t.Setenv("ARC_STUN", "none")
+}
 func providerHome(t *testing.T, relay string) (string, string) {
 	t.Helper()
 	home := t.TempDir()
@@ -102,6 +110,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
+	pipesOnLoopback(t)
 	consumer, key := providerHome(t, relay)
 	sqlHome, sqlKey := providerHome(t, relay)
 	httpHome, httpKey := providerHome(t, relay)

@@ -65,6 +65,25 @@ These rules hold:
   server has not ended after 3 seconds, it sends SIGKILL.
 - If `arc-http` itself gets SIGKILL, the server stays behind.
 
+## Large response bodies
+
+A consumer can ask for the response body of a session on a direct pipe.
+The session stays on the relay, and the pipe carries only the body.
+[The HTTP spec](../../docs/http/SPEC.md), section 3.7, defines it. These
+variables of `arc-http` set the pipe:
+
+| Variable | Meaning |
+| --- | --- |
+| `ARC_PATH` | `auto` (the default), `direct`, `turn` or `session`. `turn` answers with only an address on the TURN server of the first relay, so a caller does not see the address of this machine. `session` refuses each pipe, and the body goes in session frames. Another value stops `arc-http` at its start. |
+| `ARC_STUN` | The STUN server, or `none`. Unset asks the first relay on port 3478. |
+| `ARC_LOOPBACK` | If set, the pipe uses the loopback address too. Two citizens on one machine need it. |
+
+- `arc-http` holds at most 4 pipes. A fifth caller gets `busy`.
+- With the default `auto`, the provider shows its IP addresses to each
+  caller that its access rules let in.
+- A nested session of the server (`POST /session`) gets its body in session
+  frames.
+
 ## Calls of the server
 
 `ARC_CALL_URL` and `ARC_CALL_TOKEN` let the server call services installed by

@@ -129,6 +129,7 @@ func TestArcfileProtocolHTTPThroughCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
+	pipesOnLoopback(t)
 
 	bin := t.TempDir()
 	translator := providerBinary(t, "../../apps/http/cmd/arc-http")

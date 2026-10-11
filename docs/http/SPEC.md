@@ -3,8 +3,8 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/httpadapter
-- Proof: go test -count=1 -run '^TestAGoHandlerAnswersACallThroughARelay$' ./cmd/arc/
-- Unverified: No test serves an HTTP program written in a language other than Go.
+- Proof: go test -count=1 -run '^(TestAGoHandlerAnswersACallThroughARelay|TestLargeBodyOverPipeThroughRelay|TestOlderProviderFallsBackToFrames|TestPipeFailureIsAnError|TestBrokenPipeIsAnError)$' ./cmd/arc/
+- Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. A provider with `ARC_PATH=turn` under `arc serve` ran by hand on one machine only.
 
 One ARC call carries one HTTP exchange. The package `sdk/httpadapter` maps
 the exchange onto a call, and onto a session.
@@ -33,6 +33,8 @@ Both adapters use the same mapping.
 | Message | The body of the ARC call: the JSON object of section 3.2. |
 | Record | One NDJSON line of an HTTP session, see section 3.6. |
 | `Arc-Caller` | The header field that holds the public key of the caller, see section 3.4. |
+| Pipe | A byte stream between the consumer and the provider outside the relay. [The direct spec](../direct/SPEC.md) defines it. |
+| Path | How the body goes: on a pipe, or in session frames over the relay. |
 
 ## 3. Rules
 
@@ -156,6 +158,65 @@ WebSockets:
 - Output `ws_close` preserves the peer's close code/reason.
 - Peer ping/pong frames are handled by the WebSocket library.
 
+### 3.7 Response bodies on a pipe
+
+A consumer can ask for the response body of a session on a pipe. The
+session stays on the relay. It carries the request, the status, the header
+fields, the trailers, the end record and the final outcome. The pipe carries
+only the body bytes of that one session.
+
+The request:
+
+- The initial request MAY hold the field `direct`: the offer of a pipe,
+  as [the direct spec](../direct/SPEC.md), section 3.7, defines it.
+- A request with `direct` MUST NOT set `websocket` or `stream_body`. The
+  provider refuses it with `invalid_request`.
+- A buffered call (section 3.2) MUST NOT hold `direct`. The provider
+  refuses it with `invalid_request`.
+
+The provider:
+
+1. If its policy is `session`, it MUST close the session with `no_pipe`.
+2. If it holds 4 pipes, it MUST close the session with `busy`.
+3. It answers the offer. Its first record MUST be
+   `{"type":"direct","sdp":"<answer>"}`.
+4. It waits for the pipe, as the direct spec defines. If the pipe does not
+   open, it MUST close the session with `no_path`. It MUST NOT run the HTTP
+   request before the pipe opens, so a failed attempt has no effect.
+5. It sends the `response` record, then writes the body on the pipe, then
+   closes the write side of the pipe. It MUST NOT send `body` records.
+6. After the consumer has the last byte, it sends the `trailers` record, if
+   any, and `{"type":"end","body_bytes":<n>}`. `n` is the number of body
+   bytes on the pipe.
+
+Each body of a session with a pipe goes on the pipe, also an SSE stream.
+The pipe sends each write when the handler flushes. The setup of the pipe
+adds the gathering of the addresses and the DTLS handshake before the first
+byte.
+7. If the pipe breaks during the body, it MUST close the session with
+   `pipe_failed`.
+
+The consumer:
+
+- It picks the path when the session starts: `auto`, `direct`, `turn` or
+  `session`. It MUST NOT move a session to another path.
+- Each attempt of the direct spec is one new session. An attempt that
+  fails did no work, so the next attempt is not a replay.
+- It MUST compare the number of bytes on the pipe with `body_bytes`. A
+  different number is an error, not a short success.
+- If the pipe closes before its end, the consumer MUST stop with an error
+  that says the outcome is not known. It MUST NOT ask again.
+- In `auto`, if the provider refuses the offer with `invalid_request` or
+  `no_pipe`, the consumer asks again with no offer, and writes
+  `the provider has no pipe; using session frames over the relay`. In
+  `direct` and `turn`, it stops with an error.
+- The offer adds about 1 to 3 KiB to the request, and a session request
+  holds at most 16 KiB. If the host of the provider refuses the request
+  with `request_too_large`, the consumer does the same as for `no_pipe`.
+- In `auto`, a pipe that does not open is an error. The consumer MUST NOT
+  then use session frames: the TURN server of the relay is faster than the
+  frames in each measured run.
+
 ## 4. Behavior
 
 ### 4.1 A manifest
@@ -202,6 +263,25 @@ arc session --websocket 'http+arc://<provider>/socket' '{"subprotocols":["echo"]
 - `--http` writes decoded response bytes, and exits 22 for HTTP error
   statuses. It also rejects an `Arc-Session-Error` trailer from a nested
   provider session.
+- `--http` offers a pipe for the body (section 3.7), unless the request
+  sets `websocket` or `stream_body`. `--path auto|direct|turn|session` picks
+  the path. `arc path <policy>` sets the default of the citizen. The
+  default is `auto`.
+- At the end, `--http` writes the path on standard error:
+
+```text
+path direct (host to host): 104857600 bytes in 2.4 s, 348.9 Mbit/s
+path session (relay frames): 104857600 bytes in 54.3 s, 15.5 Mbit/s
+```
+
+  These two lines are the medians of three runs each on one Mac, through a
+  local relay on the loopback address (measured, 2026-10-11). A real link
+  is slower. [The direct spec](../direct/SPEC.md), section 8.2, gives the
+  commands.
+
+- A provider program reads its policy from `ARC_PATH`. `arc serve` gives
+  it `ARC_RELAYS`, `ARC_HOME` and `ARC_PROGRAM`, so a provider with
+  `ARC_PATH=turn` can run `arc relay turn`.
 - `--websocket` sends each input line as a text message, and displays
   received messages.
 - Without these flags, `arc session` exposes the record protocol directly,
@@ -222,6 +302,21 @@ process streams and signals. Other entry points can use `sdk/stdio.Run`. See
 | `invalid_request` | The message is not a request. See section 3.2. |
 | `response_too_large` | The content of the response is over 1 MiB. The adapter never cuts a response short. |
 | `internal_error` | The handler panicked. |
+| `no_pipe` | The request offers a pipe, and the policy of the provider is `session`. |
+| `busy` | The request offers a pipe, and the provider holds 4 pipes. |
+| `no_path` | The pipe did not open. The handler did not run. |
+| `pipe_failed` | The pipe broke during the body. |
+
+What the consumer writes for each failure of a pipe:
+
+| Failure | What the consumer does | What the user sees |
+| --- | --- | --- |
+| The provider is older, or its policy is `session` | In `auto`, a new session with no offer. Else it stops. | `the provider has no pipe; using session frames over the relay`, or `the provider has no pipe; run again with --path session` |
+| No path in an attempt | The next attempt of the direct spec | The notes of the direct spec, section 3.5 |
+| No path in each attempt | Stops | `no direct path, and no path through the relay: ...` |
+| `busy` | Stops | `the provider has too many pipes open now; try again later` |
+| The pipe breaks during the body | Stops | `the pipe closed after N bytes; the outcome is not known` |
+| `body_bytes` and the count differ | Stops | `the body has N bytes, the provider sent M` |
 
 - The HTTP adapter rejects canceled requests before dispatch. It reports
   cancellation if the handler returns after the caller stops. An empty
@@ -239,6 +334,14 @@ process streams and signals. Other entry points can use `sdk/stdio.Run`. See
   oversized response fails with `response_too_large`.
 - Core deadlines and flow control bound the lifetime and the buffering of a
   session.
+- A pipe shows the IP addresses of each end to the other end. A provider
+  shows them to each caller that its access rules let in. A consumer that
+  does not want this uses `--path turn` or `--path session`. A provider
+  sets `ARC_PATH=turn` or `ARC_PATH=session`.
+- The answer and the offer travel in the sealed session, so the DTLS link
+  of the pipe ends at the citizen that signed them. The direct spec,
+  section 6, gives the details.
+- A provider holds at most 4 pipes. A pipe holds sockets and buffers.
 
 ## 7. Compatibility
 
@@ -246,6 +349,14 @@ process streams and signals. Other entry points can use `sdk/stdio.Run`. See
   request. A service that declares no session mode keeps the buffered
   exchange of sections 3.2 and 3.3.
 - Both in-process `httpadapter.New(handler)` and `arc-http` use this mapping.
+- An older consumer never sends `direct`. It gets the body in session
+  frames, as before.
+- An older provider decodes the request strictly, so it refuses `direct`
+  with `invalid_request` before it runs the HTTP request. A consumer in
+  `auto` asks again with no offer, and gets the body in frames.
+- A consumer of this version opens a pipe by default. It thus shows its IP
+  address to the provider, and it needs UDP. `--path session` or
+  `arc path session` gives the old behavior.
 
 ## 8. Proof
 
@@ -254,3 +365,27 @@ process streams and signals. Other entry points can use `sdk/stdio.Run`. See
   through a local relay and the normal CLI.
 - `TestAGoHandlerAnswersACallThroughARelay` in `cmd/arc` runs a Go handler
   from `httpadapter.New` the same way.
+- `TestLargeBodyOverPipeThroughRelay` in `cmd/arc` gets 16 MiB from
+  `arc-http` through a local relay. The body goes on a pipe on the loopback
+  address, and arc names the path. `--path session` and `arc path session`
+  send the body in frames.
+- `TestOlderProviderFallsBackToFrames` calls a provider that refuses
+  `direct` as `invalid_request`. In `auto`, arc asks again with no offer.
+  With `--path direct`, arc stops.
+- `TestPipeFailureIsAnError` calls a provider that answers each offer, but
+  no pipe opens. arc makes each attempt and stops with an error. It never
+  asks for the body in frames.
+- `TestBrokenPipeIsAnError` breaks the pipe during the body.
+- `TestFifthPipeIsBusy` in `sdk/httpadapter` holds 4 pipes on one provider.
+  The fifth offer gets `busy` before the handler runs.
+- `TestBodyOverPipe`, `TestNoPipeAndAuto` and `TestOfferOverLimit` in
+  `sdk/httpadapter` check `body_bytes`, the trailers, and the fall back of
+  `auto`.
+
+Unverified:
+
+- No automated test sends a body on a pipe between two machines, or through
+  the TURN server of a relay. The tests use the loopback address.
+- `--path turn`, and a provider with `ARC_PATH=turn` under `arc serve`, ran
+  by hand on one Mac, through a local relay with TURN. No test runs them.
+- No run on two machines behind NATs.

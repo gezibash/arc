@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc session --http` gets the response body on a direct pipe of
+  `sdk/direct`. The session stays on the relay for the request, the status,
+  the headers and the end. `--path auto|direct|turn|session` picks the
+  path, and `arc path <policy>` sets the default of the citizen. At the
+  end, arc writes the path and the speed on standard error. A 100 MB body
+  on one Mac took 2.4 s on the pipe and 54.3 s in session frames, through a
+  local relay on the loopback address.
+- `arc-http` and `httpadapter.New` answer the offer of a pipe. `ARC_PATH`
+  sets the policy of the provider. A provider holds at most 4 pipes.
+
+### Changed
+
+- `arc session --http` offers a pipe by default. It then shows the IP
+  address of this machine to the provider, and needs UDP. An older provider
+  refuses the offer, and arc gets the body in session frames, as before.
+  `--path session` keeps the old behavior.
+
 ## [0.24.0] - 2026-10-11
 
 A new identity now comes from a 24-word seed, so a person can write it down

@@ -40,6 +40,8 @@ type Attempts struct {
 	HoldFirst bool
 	// NoRelay stops after the direct attempts.
 	NoRelay bool
+	// OnlyRelay skips the direct attempts.
+	OnlyRelay bool
 	// TURN gets a TURN credential from the relay, for the last attempt.
 	TURN func(context.Context) (Credential, error)
 	// Need gives the number of bytes that are still to go, before the last
@@ -64,6 +66,9 @@ func (a Attempts) Run(ctx context.Context, attempt func(ctx context.Context, opt
 	if a.HoldFirst {
 		holds = []time.Duration{HoldWait, 0}
 	}
+	if a.OnlyRelay {
+		holds = nil
+	}
 	var err error
 	for i, hold := range holds {
 		err = attempt(ctx, a.Options, hold)
@@ -77,7 +82,9 @@ func (a Attempts) Run(ctx context.Context, attempt func(ctx context.Context, opt
 	if a.NoRelay {
 		return err
 	}
-	fmt.Fprintln(notes, "no direct path; trying the TURN server of the relay, so the bytes go through the relay")
+	if !a.OnlyRelay {
+		fmt.Fprintln(notes, "no direct path; trying the TURN server of the relay, so the bytes go through the relay")
+	}
 	options, err := RelayOptions(ctx, a.TURN, a.Options, a.Need())
 	if err != nil {
 		return NoPath(err)
@@ -117,6 +124,9 @@ func RelayTURN(command *exec.Cmd) (Credential, error) {
 // the relay. need is the number of bytes that are still to go. It refuses
 // before the attempt if the quota of the citizen is too small.
 func RelayOptions(ctx context.Context, turn func(context.Context) (Credential, error), options Options, need int64) (Options, error) {
+	if turn == nil {
+		return options, errors.New("no TURN credential")
+	}
 	credential, err := turn(ctx)
 	if err != nil {
 		return options, err

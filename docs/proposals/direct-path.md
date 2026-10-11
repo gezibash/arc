@@ -2,8 +2,10 @@ Status: proposed
 
 # A direct path for bulk bytes
 
-No code implements this document. It answers
-[issue #167](https://github.com/gezibash/arc/issues/167).
+It answers [issue #167](https://github.com/gezibash/arc/issues/167). Steps
+1 and 2 of section 6 are built: [the direct spec](../direct/SPEC.md) and
+[the HTTP spec](../http/SPEC.md), section 3.7, define them. The other steps
+are not built.
 
 Each number has a tag:
 
@@ -400,8 +402,7 @@ real machines.
 
 ## 7. Decisions
 
-Zim accepted each recommendation of this proposal on 2026-10-11. Nothing is
-built yet.
+Zim accepted each recommendation of this proposal on 2026-10-11.
 
 1. The pipe is in `sdk/direct`. `transfer` stays an app for file offers,
    links and part files. This replaces the 2026-10-05 answer that the direct
