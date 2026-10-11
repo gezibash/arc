@@ -219,8 +219,10 @@ The results:
 
 ### 5.2 Proposed: a local journal and random data roots
 
-The journal is a local app. Its pages live in a store on each device. They are
-not Nostr events, and the relays do not hold them. Sync works like this:
+The journal is a local app. Its pages live in a store on each device. The
+relays do not hold them. In the first version, each page is a signed Nostr
+event that only the devices of the citizen see, and the device key signs it.
+Sync works like this:
 
 1. A device writes a change to its local store.
 2. The device seals the change into encrypted bytes, and sends the bytes to a
