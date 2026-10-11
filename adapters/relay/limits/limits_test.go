@@ -89,6 +89,66 @@ func TestTheSizeCapTakesAFullPartAndAFullDraft(t *testing.T) {
 	}
 }
 
+// largestWrap seals and wraps the largest rumor that mail takes: 24 KiB of
+// content, with quotes that make its JSON MaxRumor bytes. The real Bolt store
+// of the relay must keep it.
+func largestWrap(t *testing.T) nostr.Event {
+	t.Helper()
+	alice, bob := keys.Generate(), keys.Generate()
+	tags := nostr.Tags{{"p", bob.Public.Hex()}}
+	now := time.Now()
+	plain := private.Rumor(alice, 14, strings.Repeat("x", private.MaxMailContent), tags, now)
+	quotes := private.MaxRumor - len(plain.String())
+	rumor := private.Rumor(alice, 14, strings.Repeat(`"`, quotes)+strings.Repeat("x", private.MaxMailContent-quotes), tags, now)
+	if err := private.CheckMail(rumor); err != nil {
+		t.Fatal(err)
+	}
+	w, err := private.Wrap(ctx, alice, bob.Public, rumor, private.RelayForm, private.WrapKind, now.Add(private.MaxAge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(w.String()); n != private.MaxWrap {
+		t.Fatalf("the largest wrap holds %d bytes, not %d", n, private.MaxWrap)
+	}
+	return w
+}
+
+// resized is a wrap whose content has extra bytes more, signed again by a
+// new one-time key. Real sealing cannot make it: NIP-44 pads in steps.
+func resized(w nostr.Event, extra int) nostr.Event {
+	w.Content += strings.Repeat("A", extra)
+	w.Sign(nostr.Generate())
+	return w
+}
+
+// The wrap limit is a protocol limit, docs/delivery/SPEC.md section 3.4.
+// The relay keeps it with no flag set, and a flag can only make it smaller.
+func TestTheRelayRefusesAWrapLargerThanMail(t *testing.T) {
+	largest := largestWrap(t)
+	for _, p := range []limits.Policy{{}, {MaxEventBytes: 256 * 1024}} {
+		url := start(t, p)
+		if err := publish(t, url, nil, largest); err != nil {
+			t.Errorf("cap %d: the largest wrap: %v", p.MaxEventBytes, err)
+		}
+		batch, err := relay.Relay{URL: url}.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{largest.ID}})
+		if err != nil || len(batch.Events) != 1 || batch.Events[0].String() != largest.String() {
+			t.Errorf("cap %d: the relay does not serve the largest wrap whole: %v", p.MaxEventBytes, err)
+		}
+		if err := publish(t, url, nil, resized(largest, 1)); err == nil || !strings.Contains(err.Error(), "invalid") {
+			t.Errorf("cap %d: a wrap of %d bytes: %v", p.MaxEventBytes, private.MaxWrap+1, err)
+		}
+		// The cap of other kinds stays the flag.
+		if err := publish(t, url, nil, note(strings.Repeat("x", private.MaxWrap))); err != nil {
+			t.Errorf("cap %d: a note larger than a wrap: %v", p.MaxEventBytes, err)
+		}
+	}
+
+	url := start(t, limits.Policy{MaxEventBytes: 50_000})
+	if err := publish(t, url, nil, largest); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("cap 50,000: the largest wrap: %v", err)
+	}
+}
+
 func TestAGiftWrapNeedsAuthenticationOrWork(t *testing.T) {
 	url := start(t, limits.Policy{WrapAuth: true, WrapPoW: 8})
 	recipient := nostr.Generate().Public()

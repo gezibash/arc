@@ -38,6 +38,54 @@ const (
 // looks for its route tags. Mail on a USB stick can take days.
 const MaxAge = 7 * 24 * time.Hour
 
+// The size limits of a store-and-forward wrap, as docs/delivery/SPEC.md
+// section 3.4 defines. Mail is one wrap and is never split into parts.
+// Bigger content goes over a direct path.
+const (
+	// MaxMailContent is the most content that one rumor in a wrap of
+	// WrapKind carries, in bytes.
+	MaxMailContent = 24 << 10
+	// MaxRumor is the most bytes that the JSON of such a rumor holds. The
+	// JSON of a rumor with MaxMailContent bytes of plain text and its tags
+	// fits. JSON escapes and long tags can make a rumor larger than its
+	// content, so MaxWrap follows from this limit, not from MaxMailContent.
+	// MaxRumor is a NIP-44 padding boundary: 7 chunks of 4,096 bytes. It is
+	// the largest rumor whose wrap holds at most 65,535 bytes of content,
+	// which the Bolt event store and common relays take.
+	MaxRumor = 28 << 10
+	// MaxSeal is the most bytes that the JSON of a seal holds. NIP-44 adds
+	// 67 bytes to the padded rumor: a version byte, a 32-byte nonce, a
+	// 2-byte length and a 32-byte MAC. Base64 gives 4 bytes for each 3.
+	MaxSeal = len(sealEnvelope) + 4*((67+MaxRumor+2)/3)
+	// MaxWrap is the most bytes that the JSON of a wrap of WrapKind holds,
+	// in the relay form. NIP-44 pads a seal of MaxSeal bytes to 40,960
+	// bytes: 5 chunks of 8,192 bytes. A relay refuses a larger wrap.
+	MaxWrap = len(wrapEnvelope) + 4*((67+sealPadded+2)/3)
+
+	sealPadded = 5 << 13
+	// The JSON of a seal and of a relay-form wrap without their content.
+	// A created_at and an expiration have 10 digits until the year 2286.
+	sealEnvelope = `{"kind":13,"id":"` + hex64 + `","pubkey":"` + hex64 + `","created_at":1234567890,"tags":[],"content":"","sig":"` + hex64 + hex64 + `"}`
+	wrapEnvelope = `{"kind":1059,"id":"` + hex64 + `","pubkey":"` + hex64 + `","created_at":1234567890,"tags":[["p","` + hex64 + `"],["expiration","1234567890"]],"content":"","sig":"` + hex64 + hex64 + `"}`
+	hex64        = "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+// ErrTooLarge says that a rumor is too large for mail.
+var ErrTooLarge = errors.New("private: the content is too large for mail")
+
+// CheckMail refuses a rumor that is too large for a wrap of WrapKind. The
+// error names the direct path, which carries bigger content.
+func CheckMail(rumor nostr.Event) error {
+	if n := len(rumor.Content); n > MaxMailContent {
+		return fmt.Errorf("%w: it holds %d bytes, and mail holds at most %d; send it over a direct path, such as the transfer app", ErrTooLarge, n, MaxMailContent)
+	}
+	rumor.Sig = [64]byte{}
+	if n := len(rumor.String()); n > MaxRumor {
+		return fmt.Errorf("%w: its event holds %d bytes as JSON, and mail holds at most %d; send it over a direct path, such as the transfer app", ErrTooLarge, n, MaxRumor)
+	}
+	return nil
+}
+
 // Form says how a wrap names its recipient.
 type Form int
 
