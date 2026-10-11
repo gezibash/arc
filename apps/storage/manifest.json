@@ -1,0 +1,43 @@
+{
+  "interface": 1,
+  "id": "storage",
+  "shape": "service",
+  "title": "Storage",
+  "summary": "Holds encrypted blobs for its owners on a direct connection. The program arc-storage puts, lists, gets and deletes blobs.",
+  "service": {
+    "method": "RAW",
+    "path": "/",
+    "max_bytes": 65536
+  },
+  "kinds": {},
+  "formats": {
+    "answer": {
+      "record": "{{content}}"
+    }
+  },
+  "commands": [
+    {
+      "path": [
+        "open"
+      ],
+      "summary": "Open a session with a WebRTC offer, and show the answer; arc-storage does this",
+      "args": [
+        {
+          "name": "session",
+          "kind": "positional",
+          "type": "text",
+          "required": true
+        }
+      ],
+      "action": {
+        "call": {
+          "class": "live",
+          "body": "{\"v\":1,\"account\":\"{{author|keyed:account}}\",\"session\":{{session}}}"
+        }
+      },
+      "output": {
+        "format": "answer"
+      }
+    }
+  ]
+}
