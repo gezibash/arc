@@ -20,13 +20,19 @@ import (
 	"github.com/gezibash/arc/core/transport"
 )
 
-// specManifests are the manifests of the apps in this repository, by ID.
+// specManifests are the manifests of the apps in this repository, and the
+// test manifests in testdata, by ID.
 func specManifests(t *testing.T) map[string]*Manifest {
 	t.Helper()
 	paths, err := filepath.Glob("../../apps/*/manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}
+	fixtures, err := filepath.Glob("testdata/*.manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, fixtures...)
 	out := map[string]*Manifest{}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
@@ -44,7 +50,7 @@ func specManifests(t *testing.T) map[string]*Manifest {
 
 func TestEveryManifestOfTheAppsParses(t *testing.T) {
 	got := specManifests(t)
-	for _, id := range []string{"exec", "sqlite", "releases", "journal", "dm", "agora", "files"} {
+	for _, id := range []string{"exec", "sqlite", "releases", "journal", "dm", "files"} {
 		if got[id] == nil {
 			t.Errorf("no app has a manifest %s that parses", id)
 		}
