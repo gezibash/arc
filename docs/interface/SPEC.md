@@ -582,8 +582,10 @@ A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
 | `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
 
 Each identity of a machine has its own directory, `<home>/citizens/<name>`,
-with its key, store, relays and installs. `arc keys gen` makes an identity,
-and `arc keys add` adds one that exists already. The first identity is the
+with its key, store, relays and installs. `arc keys gen` makes an identity
+from a new 24-word seed, as docs/delivery/SPEC.md section 3.2 defines.
+`arc keys recover` makes it again from the words, and `arc keys add` adds a
+key that exists already. The first identity is the
 default. `arc keys use <name>` changes the default, and `--key <name>` or
 `ARC_KEY` picks another identity for one command.
 

@@ -133,12 +133,17 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 
 // askPassphrase reads ARC_PASSPHRASE, or asks on the terminal without echo.
 func askPassphrase(prompt string) (string, error) {
-	if value := os.Getenv("ARC_PASSPHRASE"); value != "" {
+	return askSecret("ARC_PASSPHRASE", prompt)
+}
+
+// askSecret reads the variable env, or asks on the terminal without echo.
+func askSecret(env, prompt string) (string, error) {
+	if value := os.Getenv(env); value != "" {
 		return value, nil
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return "", errors.New("the key needs its passphrase: set ARC_PASSPHRASE, or run arc on a terminal")
+		return "", fmt.Errorf("arc needs a passphrase: set %s, or run arc on a terminal", env)
 	}
 	defer func() { _ = tty.Close() }()
 	fmt.Fprint(tty, prompt)
@@ -272,27 +277,79 @@ func keysCommand() *cobra.Command {
 	command := &cobra.Command{Use: "keys", Short: "Make, add, list and pick identities"}
 
 	gen := &cobra.Command{
-		Use: "gen", Short: "Make an identity, and make it the default when there is none", Args: cobra.NoArgs,
+		Use:   "gen",
+		Short: "Make an identity from a new 24-word seed, and make it the default when there is none",
+		Long: "arc makes a seed of 24 words, as BIP-39 and NIP-06 define, and derives\n" +
+			"the key from it. arc shows the words once, on standard error, and never\n" +
+			"stores them. Write them on paper: arc keys recover makes the same key\n" +
+			"from them. Anyone who reads the words has the key.\n\n" +
+			"--seed-passphrase adds a BIP-39 passphrase. The words and the passphrase\n" +
+			"together give the key; without the passphrase, the words give another\n" +
+			"key. arc reads it from ARC_SEED_PASSPHRASE, or asks on the terminal.",
+		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			root, err := rootDir(command)
 			if err != nil {
 				return err
 			}
-			k := keys.Generate()
-			text := k.Secret.Hex()
-			if encrypt, _ := command.Flags().GetBool("encrypt"); encrypt {
-				if text, err = newPassphrase(k); err != nil {
-					return err
-				}
+			words, err := keys.NewSeed()
+			if err != nil {
+				return err
 			}
-			if _, err := addCitizen(command.Context(), root, text, &k); err != nil {
+			passphrase, err := seedPassphrase(command, true)
+			if err != nil {
+				return err
+			}
+			k, err := keys.FromSeed(words, passphrase)
+			if err != nil {
+				return err
+			}
+			if _, err := keepSeedKey(command, root, k); err != nil {
+				return err
+			}
+			showSeed(command.ErrOrStderr(), words, passphrase != "")
+			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
+			return nil
+		},
+	}
+	gen.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
+	gen.Flags().Bool("seed-passphrase", false, "add a BIP-39 passphrase to the seed")
+
+	recoverSeed := &cobra.Command{
+		Use:   "recover",
+		Short: "Make an identity again from the words of its seed",
+		Long: "arc reads 12 or 24 words of a BIP-39 seed from standard input, or asks\n" +
+			"on the terminal, and derives the key as NIP-06 defines. arc never takes\n" +
+			"the words as arguments, because the shell history and ps show arguments.\n" +
+			"--seed-passphrase reads the BIP-39 passphrase of the seed from\n" +
+			"ARC_SEED_PASSPHRASE, or asks on the terminal.",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			root, err := rootDir(command)
+			if err != nil {
+				return err
+			}
+			words, err := readSeed(command)
+			if err != nil {
+				return err
+			}
+			passphrase, err := seedPassphrase(command, false)
+			if err != nil {
+				return err
+			}
+			k, err := keys.FromSeed(words, passphrase)
+			if err != nil {
+				return err
+			}
+			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
 			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
 			return nil
 		},
 	}
-	gen.Flags().Bool("encrypt", false, "seal the key with a passphrase, as NIP-49 defines")
+	recoverSeed.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
+	recoverSeed.Flags().Bool("seed-passphrase", false, "the seed has a BIP-39 passphrase")
 
 	add := &cobra.Command{
 		Use:   "add [bunker://...]",
@@ -437,7 +494,7 @@ func keysCommand() *cobra.Command {
 		},
 	}
 
-	command.AddCommand(gen, add, list, use, remove, encrypt, bunkerCommand())
+	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand())
 	return command
 }
 
@@ -457,6 +514,82 @@ func whoamiCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// keepSeedKey keeps a key that a seed derives, sealed with NIP-49 when
+// --encrypt asks for it. The key file format does not change.
+func keepSeedKey(command *cobra.Command, root string, k keys.Key) (keys.Key, error) {
+	text := k.Secret.Hex()
+	if encrypt, _ := command.Flags().GetBool("encrypt"); encrypt {
+		var err error
+		if text, err = newPassphrase(k); err != nil {
+			return keys.Key{}, err
+		}
+	}
+	return addCitizen(command.Context(), root, text, &k)
+}
+
+// seedPassphrase returns the BIP-39 passphrase when --seed-passphrase asks
+// for one, and an empty passphrase when it does not. A new seed asks twice,
+// because a forgotten passphrase loses the key.
+func seedPassphrase(command *cobra.Command, confirm bool) (string, error) {
+	if want, _ := command.Flags().GetBool("seed-passphrase"); !want {
+		return "", nil
+	}
+	first, err := askSecret("ARC_SEED_PASSPHRASE", "passphrase of the seed: ")
+	if err != nil {
+		return "", err
+	}
+	if first == "" {
+		return "", errors.New("the passphrase of the seed is empty")
+	}
+	if confirm && os.Getenv("ARC_SEED_PASSPHRASE") == "" {
+		again, err := askSecret("ARC_SEED_PASSPHRASE", "the passphrase of the seed again: ")
+		if err != nil {
+			return "", err
+		}
+		if again != first {
+			return "", errors.New("the two passphrases of the seed differ")
+		}
+	}
+	return first, nil
+}
+
+// readSeed reads the words of a seed from standard input. On a terminal it
+// asks for them first.
+func readSeed(command *cobra.Command) (string, error) {
+	in := command.InOrStdin()
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		fmt.Fprint(command.ErrOrStderr(), "the words of the seed, then Enter: ")
+		line, err := bufio.NewReader(file).ReadString('\n')
+		if err != nil && line == "" {
+			return "", err
+		}
+		return line, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(in, 4096))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(body)) == "" {
+		return "", errors.New("give the words of the seed on standard input")
+	}
+	return string(body), nil
+}
+
+// showSeed writes the words once, numbered, with a warning.
+func showSeed(w io.Writer, words string, withPassphrase bool) {
+	fmt.Fprintln(w, "Write these 24 words on paper, in order. They are the only backup of")
+	fmt.Fprintln(w, "this identity. arc does not store them and does not show them again.")
+	fmt.Fprintln(w, "Anyone who reads them has the key. Never type them into a chat or a website.")
+	if withPassphrase {
+		fmt.Fprintln(w, "The words need the passphrase too. Without it, they give another key.")
+	}
+	fmt.Fprintln(w)
+	for i, word := range strings.Fields(words) {
+		fmt.Fprintf(w, "%2d. %s\n", i+1, word)
+	}
+	fmt.Fprintln(w)
 }
 
 // newPassphrase asks for a passphrase twice, and seals the key with it.

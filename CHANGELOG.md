@@ -6,6 +6,20 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `arc keys gen` makes a new identity from a 24-word seed, as NIP-06 defines.
+  It shows the words once, on standard error, and never stores them. The
+  words are the paper backup of the identity. Standard output still holds
+  only the name and the public key.
+- `arc keys recover` makes the same identity again from the 12 or 24 words.
+  It reads the words from standard input or the terminal, never from
+  arguments, and refuses a bad checksum.
+- `--seed-passphrase` adds an optional BIP-39 passphrase to the seed. arc
+  reads it from `ARC_SEED_PASSPHRASE`, or asks on the terminal.
+- The key file format does not change. A key from before the seed keeps
+  working, and its backup stays an `ncryptsec`.
+
 ### Changed
 
 - The pipe of the transfer app is now the package `sdk/direct`, so other
