@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-11
+
+The relay is now the last resort for a direct transfer. If two machines find
+no direct path, the bytes go through the TURN server of the relay, within a
+daily quota for each citizen.
+
 ### Added
 
 - `arc relay serve` serves TURN as the last resort for a direct transfer.
