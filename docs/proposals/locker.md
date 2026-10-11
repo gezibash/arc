@@ -114,12 +114,13 @@ assumes the four statements below. If #173 decides otherwise, sections 2.3,
 1. A citizen has one identity key. Each device has a device key, which the
    identity key certifies. The citizen revokes a lost device with a signed
    record.
-2. Each device can derive a data key from the identity of the citizen, with
+2. Each device can derive a data root from the identity of the citizen. The
+   data root is a secret of 32 bytes. Each device derives keys from it with
    HKDF and a label for each purpose. Any device of the citizen opens the
-   data. A locker never gets a data key.
+   data. A locker never gets the data root or a key derived from it.
 3. The locker knows its client by an account key, not by the identity key.
    Section 2.3 defines the account key.
-4. A new device gets the identity or the data key from an old device or from
+4. A new device gets the identity or the data root from an old device or from
    recovery material. It never gets a key from the locker.
 
 ### 2.2 Find and pair
@@ -182,8 +183,9 @@ Consent works in both directions:
 The locker stores sealed blobs that it cannot read.
 
 ```text
-blob    = id || AEAD(blob key, nonce, pad(signed event JSON))
-id      = HMAC-SHA256(blob key, event ID)            (32 bytes)
+blob     = id || ts || AEAD(blob key, nonce, pad(signed event JSON))
+id       = HMAC-SHA256(blob key, event ID)            (32 bytes)
+ts       = 0                                          (8 bytes)
 blob key = HKDF(data root, info = "arc-locker-blob-v1")
 ```
 
@@ -194,6 +196,10 @@ blob key = HKDF(data root, info = "arc-locker-blob-v1")
 - The ID is a keyed hash of the event ID. Two devices that put the same event
   make the same blob. A put is therefore idempotent, as in Tarsnap. The locker
   cannot match an ID with an event on any relay.
+- Negentropy sorts items by a timestamp, then by ID. Both sides must use
+  the same timestamp. The device sets `ts` to 0 for each blob, as Syncthing
+  sets one fixed time on an untrusted device. Reconciliation then splits the
+  set by ID only, and the blob shows no time of writing.
 - `pad` pads the plaintext up to the next power of two, with a minimum of
   4 KiB. A journal page of 2 KB and a page of 3 KB look the same.
 - The locker stores the blob, the ID, the padded size and the time of the
@@ -233,8 +239,13 @@ for each write.
 ### 2.6 Sync
 
 Sync uses the reconciliation that ARC already has. The locker client is a
-`core/transport.Reconciler`, as the relay transport and the directory
-transport are. `arc sync` and the store work with it as they are.
+`core/transport.Reconciler`, as the relay transport is. `arc sync` and the
+store work with it as they are.
+
+The blob IDs are not event IDs, but both have 32 bytes. The adapter returns
+`need` as blob IDs, and resolves them with `get` in its own `Fetch`. It
+returns `give` as event IDs, because it computed the blob ID of each local
+event in step 1. `core/transport` and `core/node` do not change.
 
 | Message | From | Meaning |
 | --- | --- | --- |
@@ -246,8 +257,8 @@ transport are. `arc sync` and the store work with it as they are.
 | `usage` | device | The bytes in use and the quota. |
 
 The cursor is the set itself. Negentropy finds the IDs that each side lacks,
-in a few round trips, with no list of every blob. The locker needs no clock
-from the device and no sequence number. A device that was away for a month
+in a few round trips, with no list of every blob. The locker keeps no
+sequence number, and needs no clock of the device. A device that was away for a month
 sends the same messages as a device that was away for a minute.
 
 The device follows these steps:
@@ -260,7 +271,9 @@ The device follows these steps:
 4. It puts each blob that the locker lacks, but only if its store still holds
    the event after step 3.
 
-Steps 3 and 4 must run in this order. Section 2.7 explains why.
+Steps 3 and 4 must run in this order. Section 2.7 explains why. `core/node`
+already does this: `exchange` fetches the events that the store needs, then
+reads each event to give from the store.
 
 A device syncs with each locker when the user runs `arc sync`, when
 `arc serve` starts, and on a tick while `arc serve` runs. A device does not
@@ -386,7 +399,7 @@ until a locker holds the data.
 
 The server can be an app. The client cannot. An app reaches the identity of
 the citizen only through `arc` commands, and cannot read the store or the
-key. The client must read the store, derive the data key, and give events to
+key. The client must read the store, derive keys from the data root, and give events to
 the store. That is the work of the runtime and an adapter.
 
 | Layer | Change | Why |
