@@ -67,6 +67,10 @@ type Options struct {
 	// STUN is the URL of the STUN server. If it is empty, the end uses the
 	// addresses of the machine only.
 	STUN string
+	// TURN is the TURN server of a relay. If it is set, the end uses only
+	// an address on that server, and the bytes go through the relay. An
+	// end sets it only after the direct attempts failed.
+	TURN *webrtc.ICEServer
 	// Loopback adds the loopback address, for two ends on one machine.
 	Loopback bool
 	// MinWindow keeps the SCTP send window at or above this number of bytes
@@ -144,7 +148,11 @@ func NewConnection(o Options) (*webrtc.PeerConnection, error) {
 		engine.SetSCTPFastRtxWnd(o.MinWindow)
 	}
 	config := webrtc.Configuration{}
-	if o.STUN != "" {
+	switch {
+	case o.TURN != nil:
+		config.ICEServers = []webrtc.ICEServer{*o.TURN}
+		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	case o.STUN != "":
 		config.ICEServers = []webrtc.ICEServer{{URLs: []string{o.STUN}}}
 	}
 	return webrtc.NewAPI(webrtc.WithSettingEngine(engine)).NewPeerConnection(config)
@@ -163,10 +171,14 @@ func Describe(pc *webrtc.PeerConnection, local webrtc.SessionDescription) (webrt
 
 // SelectedPath names the kinds of the two addresses that ICE selected:
 // "host" is an address of the machine, "srflx" is an address behind a NAT.
+// It is "relay" if the bytes go through the TURN server of a relay.
 func SelectedPath(pc *webrtc.PeerConnection) string {
 	pair, err := pc.SCTP().Transport().ICETransport().GetSelectedCandidatePair()
 	if err != nil || pair == nil {
 		return "unknown"
+	}
+	if pair.Local.Typ == webrtc.ICECandidateTypeRelay || pair.Remote.Typ == webrtc.ICECandidateTypeRelay {
+		return "relay"
 	}
 	return fmt.Sprintf("%s to %s", pair.Local.Typ, pair.Remote.Typ)
 }

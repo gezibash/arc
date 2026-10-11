@@ -3,7 +3,7 @@
 //
 //	arc keys gen | add | list | use | remove | encrypt | bunker
 //	arc whoami
-//	arc relay add <url> | rm <url> | ls | serve
+//	arc relay add <url> | rm <url> | ls | turn | serve
 //	arc message send | inbox | outbox | watch
 //	arc serve | announce | discover | install | call | session
 //	arc sync [--dir <path>]
@@ -24,6 +24,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -39,6 +40,7 @@ import (
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
+	"github.com/gezibash/arc/adapters/relay/turn"
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
@@ -258,9 +260,95 @@ func relayCommand() *cobra.Command {
 				return nil
 			},
 		},
+		turnCommand(),
 		serveCommand(),
 	)
 	return command
+}
+
+// turnCommand asks a relay for a TURN credential with a NIP-98 request,
+// and prints the JSON reply. The transfer app runs it when it finds no
+// direct path.
+func turnCommand() *cobra.Command {
+	return &cobra.Command{
+		Use: "turn [url]", Short: "Get a TURN credential from a relay (default: the first relay)", Args: cobra.MaximumNArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			dir, err := home(command)
+			if err != nil {
+				return err
+			}
+			relay := ""
+			if len(args) == 1 {
+				relay = args[0]
+			} else {
+				relays, err := readRelays(dir)
+				if err != nil {
+					return err
+				}
+				if len(relays) == 0 {
+					return errors.New("no relays: add one with arc relay add <url>")
+				}
+				relay = relays[0]
+			}
+			endpoint, err := turnURL(relay)
+			if err != nil {
+				return err
+			}
+			id, err := loadIdentity(command.Context(), dir)
+			if err != nil {
+				return err
+			}
+			authorization, err := turn.AuthHeader(command.Context(), id.signer, http.MethodGet, endpoint)
+			if err != nil {
+				return err
+			}
+			request, err := http.NewRequestWithContext(command.Context(), http.MethodGet, endpoint, nil)
+			if err != nil {
+				return err
+			}
+			request.Header.Set("Authorization", authorization)
+			client := &http.Client{Timeout: 15 * time.Second}
+			response, err := client.Do(request)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = response.Body.Close() }()
+			body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+			if err != nil {
+				return err
+			}
+			switch {
+			case response.StatusCode == http.StatusNotFound:
+				return fmt.Errorf("%s serves no TURN", relay)
+			case response.StatusCode != http.StatusOK:
+				return fmt.Errorf("%s refused: %s %s", relay, response.Status, strings.TrimSpace(string(body)))
+			}
+			var credential turn.Credential
+			if json.Unmarshal(body, &credential) != nil || credential.Username == "" || len(credential.URLs) == 0 {
+				return fmt.Errorf("%s serves no TURN: its reply is not a credential", relay)
+			}
+			_, err = os.Stdout.Write(body)
+			return err
+		},
+	}
+}
+
+// turnURL is the HTTP URL of the TURN credential of a relay URL.
+func turnURL(relay string) (string, error) {
+	u, err := url.Parse(relay)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("%q is not a relay URL", relay)
+	}
+	switch u.Scheme {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	default:
+		return "", errors.New("a relay is a ws:// or wss:// URL")
+	}
+	u.Path, u.RawQuery, u.Fragment = turn.Path, "", ""
+	return u.String(), nil
 }
 
 // announceRelays publishes the relay list of this citizen, when it has a key
@@ -321,16 +409,31 @@ func serveCommand() *cobra.Command {
 				return err
 			}
 			fmt.Printf("relay listens on ws://%s\n", listener.Addr())
+			turnConfig, err := turnSetting(command)
+			if err != nil {
+				return err
+			}
+			var turnServer *turn.Server
 			if stunAddress := stunListen(command, listen); stunAddress != "" {
 				// A second relay on one machine cannot take the default
 				// port. It runs with no STUN server. A port that the
 				// operator sets must open.
 				conn, err := net.ListenPacket("udp", stunAddress)
 				switch {
-				case err != nil && command.Flags().Changed("stun"):
+				case err != nil && (command.Flags().Changed("stun") || turnConfig != nil):
 					return fmt.Errorf("STUN: %w", err)
 				case err != nil:
 					fmt.Fprintf(os.Stderr, "relay answers no STUN: %v (set --stun)\n", err)
+				case turnConfig != nil:
+					// The TURN server answers STUN binding requests too.
+					host, _, _ := net.SplitHostPort(stunAddress)
+					turnConfig.RelayHost = host
+					if turnServer, err = turn.Serve(conn, *turnConfig); err != nil {
+						_ = conn.Close()
+						return fmt.Errorf("TURN: %w", err)
+					}
+					defer func() { _ = turnServer.Close() }()
+					fmt.Printf("relay answers STUN and TURN on udp://%s, relay ports %d-%d on %s\n", conn.LocalAddr(), turnConfig.MinPort, turnConfig.MaxPort, turnConfig.PublicIP)
 				default:
 					defer func() { _ = conn.Close() }()
 					go func() {
@@ -340,12 +443,21 @@ func serveCommand() *cobra.Command {
 					}()
 					fmt.Printf("relay answers STUN on udp://%s\n", conn.LocalAddr())
 				}
+			} else if turnConfig != nil {
+				return errors.New("TURN needs the STUN port; do not set --stun none with --turn-ports")
 			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			server := &http.Server{Handler: rl}
+			var handler http.Handler = rl
+			if turnServer != nil {
+				mux := http.NewServeMux()
+				mux.Handle("/", rl)
+				mux.Handle(turn.Path, turnServer)
+				handler = mux
+			}
+			server := &http.Server{Handler: handler}
 			go func() { <-ctx.Done(); _ = server.Close() }()
 			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
 				return err
@@ -363,7 +475,42 @@ func serveCommand() *cobra.Command {
 	command.Flags().String("ip-header", "", "the HTTP header that holds the client IP address, when a proxy sets it")
 	command.Flags().Int64("max-store-mb", 0, "refuse new stored events when the store uses this many MiB (0: no cap)")
 	command.Flags().String("stun", "", "the UDP address that answers STUN, or none (default: the host of --listen, port 3478)")
+	command.Flags().String("turn-ports", "", "serve TURN on the STUN port, with relay sockets on this UDP port range, such as 49152-49251 (needs TURN_SECRET)")
+	command.Flags().String("turn-ip", "", "the public IP address of the TURN relay sockets (default: the host of --listen)")
+	command.Flags().Int64("turn-quota", 1024, "the MiB that one citizen can relay through TURN in 24 hours (0: refuse every allocation)")
 	return command
+}
+
+// turnSetting reads the TURN flags of a relay. It returns nil if the relay
+// serves no TURN. The secret comes from the environment variable
+// TURN_SECRET, so it is not in the process list.
+func turnSetting(command *cobra.Command) (*turn.Config, error) {
+	flags := command.Flags()
+	ports, _ := flags.GetString("turn-ports")
+	if ports == "" {
+		return nil, nil
+	}
+	low, high, ok := strings.Cut(ports, "-")
+	minPort, err1 := strconv.ParseUint(low, 10, 16)
+	maxPort, err2 := strconv.ParseUint(high, 10, 16)
+	if !ok || err1 != nil || err2 != nil || minPort == 0 || maxPort < minPort {
+		return nil, fmt.Errorf("--turn-ports %q is not a range such as 49152-49251", ports)
+	}
+	secret := os.Getenv("TURN_SECRET")
+	if secret == "" {
+		return nil, errors.New("--turn-ports needs the environment variable TURN_SECRET")
+	}
+	address, _ := flags.GetString("turn-ip")
+	if address == "" {
+		listen, _ := flags.GetString("listen")
+		address, _, _ = net.SplitHostPort(listen)
+	}
+	ip := net.ParseIP(address)
+	if ip == nil || ip.IsUnspecified() {
+		return nil, fmt.Errorf("TURN needs the public IP address of this machine: set --turn-ip (not %q)", address)
+	}
+	quota, _ := flags.GetInt64("turn-quota")
+	return &turn.Config{Secret: secret, PublicIP: ip, MinPort: uint16(minPort), MaxPort: uint16(maxPort), Quota: quota << 20}, nil
 }
 
 // stunListen is the UDP address of the STUN server of a relay, or empty for

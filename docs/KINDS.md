@@ -41,7 +41,7 @@ section 3.7.
 | 23194 | ephemeral | NIP-47 | Wallet connect request. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 23195 | ephemeral | NIP-47 | Wallet connect response. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 24133 | ephemeral | NIP-46 | Remote signing. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
-| 27235 | ephemeral | NIP-98 | HTTP authentication. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
+| 27235 | ephemeral | NIP-98 | HTTP authentication. `arc relay turn` signs it to get a TURN credential from a relay. No manifest can name it. | code, reserved | [interface, section 6](interface/SPEC.md), [delivery, section 4.12](delivery/SPEC.md) |
 | 30023 | addressable | NIP-23 | A long-form article: a journal page or index, inside a draft. | manifest | [journal app](../apps/journal/README.md) |
 | 30078 | addressable | NIP-78 | Application data: the keyed root, and a journal KPI. | code, manifest | [interface, section 3.7.1](interface/SPEC.md), and the [journal app](../apps/journal/README.md) |
 | 30272 | addressable | ARC | A capability announcement. | code | [delivery, section 4.7](delivery/SPEC.md) |

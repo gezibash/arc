@@ -81,6 +81,54 @@ func (a Arc) Relays(ctx context.Context) ([]string, error) {
 	return relays, nil
 }
 
+// Credential is a TURN credential that a relay gave to this citizen.
+type Credential struct {
+	URLs     []string `json:"urls"`
+	Username string   `json:"username"`
+	Password string   `json:"password"`
+	// QuotaLeft is the number of bytes that this citizen can still relay.
+	QuotaLeft int64 `json:"quota_left"`
+}
+
+// TURN asks the first relay of this citizen for a TURN credential. arc
+// signs the request with the key of this citizen.
+func (a Arc) TURN(ctx context.Context) (Credential, error) {
+	command := a.Command(ctx, "relay", "turn")
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	out, err := command.Output()
+	if err != nil {
+		return Credential{}, fmt.Errorf("arc relay turn: %s", strings.TrimPrefix(strings.TrimSpace(stderr.String()), "arc: "))
+	}
+	var credential Credential
+	if err := json.Unmarshal(out, &credential); err != nil || len(credential.URLs) == 0 {
+		return Credential{}, fmt.Errorf("arc relay turn printed no credential: %.200q", out)
+	}
+	return credential, nil
+}
+
+// relayOptions are the options of an attempt through the TURN server of
+// the first relay. need is the number of bytes that are still to go. It
+// refuses before the attempt if the quota of this citizen is too small.
+func relayOptions(ctx context.Context, arc Arc, options direct.Options, need int64) (direct.Options, error) {
+	credential, err := arc.TURN(ctx)
+	if err != nil {
+		return options, err
+	}
+	// SCTP, DTLS and the acknowledgements add bytes to the file.
+	need += need / 10
+	if credential.QuotaLeft < need {
+		return options, fmt.Errorf("the relay lets this citizen relay %.1f MiB more today, and this file needs about %.1f MiB", float64(credential.QuotaLeft)/(1<<20), float64(need)/(1<<20))
+	}
+	options.TURN = &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
+	return options, nil
+}
+
+// noPath is the error after the direct attempts and the relay attempt.
+func noPath(err error) error {
+	return fmt.Errorf("no direct path, and no path through the relay: %w", err)
+}
+
 // Get is one request for the file of a link.
 type Get struct {
 	Arc Arc
@@ -94,6 +142,9 @@ type Get struct {
 	// HoldFirst asks the sender to wait in the first attempt, not in the
 	// second.
 	HoldFirst bool
+	// NoRelay stops the attempt through the TURN server of the relay after
+	// the direct attempts fail.
+	NoRelay bool
 	// Notes gets one line for each event that a person wants to know.
 	Notes io.Writer
 	// State is the state directory of the transfer app of this citizen. If
@@ -169,6 +220,14 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		}
 		if i == 0 {
 			fmt.Fprintln(g.Notes, "no direct path in the first order of the packets; trying the other order")
+		}
+	}
+	if errors.Is(err, errNoPath) && !g.NoRelay {
+		fmt.Fprintln(g.Notes, "no direct path; trying the TURN server of the relay, so the bytes go through the relay")
+		if run.Options, err = relayOptions(ctx, g.Arc, g.Options, offer.Size-part.Have()); err != nil {
+			err = noPath(err)
+		} else if result.Path, err = run.attempt(ctx, 0); errors.Is(err, errNoPath) {
+			err = noPath(err)
 		}
 	}
 	if errors.Is(err, direct.ErrTooManyBytes) {
@@ -351,6 +410,9 @@ type Put struct {
 	// HoldFirst asks the receiver to wait in the first attempt, not in the
 	// second.
 	HoldFirst bool
+	// NoRelay stops the attempt through the TURN server of the relay after
+	// the direct attempts fail.
+	NoRelay bool
 	// Notes gets one line for each event that a person wants to know.
 	Notes io.Writer
 }
@@ -406,6 +468,14 @@ func (p Put) Run(ctx context.Context) (PutResult, error) {
 		}
 		if i == 0 {
 			fmt.Fprintln(p.Notes, "no direct path in the first order of the packets; trying the other order")
+		}
+	}
+	if errors.Is(err, errNoPath) && !p.NoRelay {
+		fmt.Fprintln(p.Notes, "no direct path; trying the TURN server of the relay, so the bytes go through the relay")
+		if p.Options, err = relayOptions(ctx, p.Arc, p.Options, offer.Size); err != nil {
+			err = noPath(err)
+		} else if result.Path, result.Bytes, err = p.attempt(ctx, offer, 0); errors.Is(err, errNoPath) {
+			err = noPath(err)
 		}
 	}
 	result.Elapsed = time.Since(started)

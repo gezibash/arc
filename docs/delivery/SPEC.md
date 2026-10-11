@@ -5,7 +5,7 @@
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
 - Proof: go test -count=1 -run '^TestDelivery$' ./internal/proof/
 - Remaining: phases 5 and 6 of section 8.1
-- Unverified: Phases 5 and 6 of section 8.1 have no proof. Section 8.3 lists the deferred work.
+- Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has no test between two real NATs, or on the relay ports of Fly.io. Section 8.3 lists the deferred work.
 
 Phases 1 to 4 are built, see section 8.1. Phases 5 and 6 are not built.
 Phase 4 made this layer the only ARC stack in v0.11.0. The older stack used
@@ -729,6 +729,51 @@ with the citizen's key. The store applies a NIP-09 deletion of an author to
 the events of that author, and refuses them after that, so a stick or a relay
 cannot bring a deleted event back.
 
+### 4.12 Relay paths for direct connections
+
+Two apps can open a direct connection for bulk bytes, as the transfer app
+does. ARC carries only the offer and the answer. The relay helps the two
+machines find a path, and carries the bytes only as the last resort.
+
+**STUN.** `arc relay serve` answers STUN binding requests (RFC 8489) on UDP
+port 3478 of its host. A machine asks it for its public address.
+
+**TURN.** If the operator sets `--turn-ports`, the relay also serves TURN
+(RFC 8656) on the same UDP port. These rules apply:
+
+- The relay MUST give an allocation only to a citizen with a valid
+  credential.
+- A credential has the form of the TURN REST API. The username is
+  `<expiry>:<key>`, where `<expiry>` is a Unix time and `<key>` is the
+  public key of the citizen as hex. The password is the base64 HMAC-SHA1 of
+  the username, with a secret that only the relay knows. A credential lives
+  one hour.
+- The relay gives a credential only in reply to `GET /turn` on its HTTP
+  listener, with a NIP-98 `Authorization` header: `Nostr ` and a base64
+  event of kind 27235. The relay MUST refuse the request if the signature is
+  not valid, if the `created_at` of the event is more than 60 seconds from
+  its clock, if the `method` tag is not `GET`, or if the host and path of
+  the `u` tag are not those of the request. The relay does not compare the
+  scheme, because a proxy can end TLS.
+- The reply is JSON: `urls`, `username`, `password`, `ttl` in seconds, and
+  `quota_left` in bytes.
+- The relay MUST count the bytes of each allocation, in both directions,
+  against the key in its username. Each key has a quota for each day, which
+  the operator sets with `--turn-quota`. When a key used its quota, the
+  relay MUST refuse a new allocation for it, and stop relaying for the
+  allocations that it has.
+- A relay sets its relay ports with `--turn-ports`, and the public address
+  of those ports with `--turn-ip`.
+
+`arc relay turn [url]` signs the NIP-98 request with the key of the citizen
+and prints the reply. An app gets a credential with this command, because
+an app cannot read the key.
+
+An app MUST use TURN only after its direct attempts fail. It MUST tell the
+user that the bytes go through the relay. Before it starts an attempt
+through the relay, it compares `quota_left` with the bytes that remain, and
+refuses with an error if the quota is too small.
+
 ## 5. Failures
 
 | Failure | What happens |
@@ -742,6 +787,10 @@ cannot bring a deleted event back.
 | A send is ambiguous, or a reply is lost | The caller reports an unknown outcome, and does not repeat the operation on another relay. |
 | A stored seal cannot be read | Reading recorded mail returns the storage, signer or cancellation failure. An unreadable stored seal must not appear as an empty mailbox or a successful partial history. |
 | A live request is more than 5 minutes old | The provider refuses it. |
+| A request to `GET /turn` has a bad, old or foreign NIP-98 event | The relay replies 401 with the reason, and gives no credential. |
+| A relay serves no TURN | `GET /turn` gets 404. `arc relay turn` says that the relay serves no TURN. The app fails with "no direct path, and no path through the relay". |
+| The TURN quota of a citizen is too small for a file | The app refuses before the attempt, and names the quota that is left and the bytes that the file needs. |
+| A citizen uses its TURN quota during a transfer | The relay stops relaying. The connection ends, and the app reports how many bytes the part file holds. |
 
 ## 6. Security
 
@@ -770,6 +819,10 @@ A public event, such as a capability announcement, is readable by everyone.
 
 - A relay refuses a gift wrap of kind 1059 above the size of mail, see
   section 3.4. This limit is always on.
+
+- A TURN relay gives allocations only to citizens that prove their key
+  with NIP-98, and counts their bytes against a quota for each day, see
+  section 4.12. The relay pays for the bandwidth of each relayed transfer.
 
 `arc relay serve` applies the other limits when its flags turn them on, see
 `arc relay serve --help`. A relay also caps the size of one event and the rate of
@@ -871,6 +924,13 @@ interface. The capability interface, docs/interface/SPEC.md, declares the
 commands of a capability. The journal adds one thing that phase 3 names: a
 page travels as parts of at most 32 KiB, so it fits the event limit of common
 relays, and `arc journal tail` streams text as it is appended.
+
+The relay paths of section 4.12 have these tests:
+`go test -run '^(TestCredential|TestQuota)$' ./adapters/relay/turn/` checks
+the NIP-98 refusals and the byte quota on a real TURN allocation.
+`go test -run '^TestRelayPath$' ./apps/transfer/direct/` puts two ends behind
+symmetric NATs on an emulated network: the direct attempt finds no path, and
+the attempt through TURN sends the file.
 
 ### 8.2 Measurements
 

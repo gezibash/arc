@@ -75,8 +75,9 @@ func send(ctx context.Context, args []string) error {
 	for pending := offers; len(pending) > 0; {
 		var still []direct.Offer
 		for _, offer := range pending {
-			if server.Delivered(dir, offer.SHA256, to) {
+			if path, ok := server.Delivered(dir, offer.SHA256, to); ok {
 				fmt.Printf("%s\n", offer.Path)
+				fmt.Fprintf(os.Stderr, "%s: path %s\n", filepath.Base(offer.Path), path)
 			} else {
 				still = append(still, offer)
 			}
