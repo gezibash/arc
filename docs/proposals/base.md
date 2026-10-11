@@ -233,6 +233,9 @@ The results:
 - On revocation, the signer makes a new generation and wraps it to each
   remaining device key and to the citizen key. New writes use the new
   generation. Old data stays under the old generation.
+- Each new generation carries the previous data root, sealed under the new
+  one. Thus the newest data root opens each older generation. ARC never
+  deletes or changes a generation.
 - The wrap of each generation to the citizen key means that the citizen key
   always recovers each generation. The paper therefore recovers all data.
 
@@ -373,8 +376,10 @@ list for the locker (issue #172).
    re-seal when they change. A revoked device never held generation 0,
    because it opened that data only through the signer.
 7. **Is the device list public or sealed?** Recommended: sealed to the
-   citizen key. The signer gives a copy to the locker. A public list tells
-   everyone how many devices a citizen has.
+   citizen key. A public list tells everyone how many devices a citizen has.
+   The locker gets no copy. The signer signs a grant or a revocation for each
+   device key with an account key for that one locker, as the locker
+   proposal (issue #172) describes. Thus a locker never sees the citizen key.
 8. **Name a successor key now, for a stolen signer or paper?** Recommended:
    not now. Keep kind 10272 reserved. Do it after the device list works.
 9. **May a device key sign drafts for a locker directly?** Recommended: no.
