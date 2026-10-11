@@ -205,3 +205,37 @@ func TestRelayPath(t *testing.T) {
 		t.Errorf("the relay counted %d bytes, less than the file of %d", used, size)
 	}
 }
+
+// TestRelayPathWithoutSTUN checks the attempt through the relay when the
+// end with no TURN server gets no answer from its own STUN server. The TURN
+// server lets in only packets from the addresses in the answer, and the
+// answer then holds only an address behind the NAT. The end finds its
+// public address with the STUN server of the TURN server, which the other
+// end names.
+func TestRelayPathWithoutSTUN(t *testing.T) {
+	a, b, relay := natPair(t)
+	credential, err := relay.Credential("0000000000000000000000000000000000000000000000000000000000000002", "1.2.3.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
+
+	if path, ok := transfer(t, Options{TURN: server, net: a}, Options{net: b}, 64<<10); ok {
+		t.Fatalf("the path %q opened, but the TURN server does not know the public address of the other end", path)
+	}
+
+	stun, err := TURNSTUN(t.Context(), server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stun != "stun:1.2.3.4:3478" {
+		t.Fatalf("STUN URL %q of the TURN server, want stun:1.2.3.4:3478", stun)
+	}
+	path, ok := transfer(t, Options{TURN: server, net: a}, Options{PeerSTUN: stun, net: b}, 1<<20)
+	if !ok {
+		t.Fatal("the attempt with the STUN server of the TURN server found no path")
+	}
+	if path != "relay" {
+		t.Errorf("path %q, want relay", path)
+	}
+}

@@ -100,7 +100,7 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 ||
 		!direct.IsHex64(req.SHA256) || req.Offset < 0 || req.HoldMS < 0 ||
 		time.Duration(req.HoldMS)*time.Millisecond > direct.MaxHold ||
-		req.SDP.Type != webrtc.SDPTypeOffer {
+		req.SDP.Type != webrtc.SDPTypeOffer || (req.STUN != "" && !direct.IsIPSTUN(req.STUN)) {
 		return "", errInvalidRequest
 	}
 	switch req.Op {
@@ -246,7 +246,9 @@ func (s *server) takeSlot() bool {
 // caller, and returns what to do when it opens, or nil.
 func (s *server) connect(req direct.Fetch, offset int64, release func(),
 	setup func(*webrtc.PeerConnection, *webrtc.DataChannel, func()) func()) (string, error) {
-	pc, err := direct.NewConnection(s.rtc)
+	rtc := s.rtc
+	rtc.PeerSTUN = req.STUN
+	pc, err := direct.NewConnection(rtc)
 	if err != nil {
 		release()
 		return "", errFailed

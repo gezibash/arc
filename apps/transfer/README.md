@@ -16,7 +16,7 @@ requests, `client/` gets a file, and `direct/` holds what the two ends share.
 | `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs, with the STUN server of Google. |
 | `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
 | STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc relay serve`. Not tested between two machines behind NATs. |
-| TURN on the relay, for two machines that find no direct path | Built. Tested on an emulated network, with two ends behind symmetric NATs and the TURN server of `arc relay serve`. Not tested between two real NATs, or on Fly.io. |
+| TURN on the relay, for two machines that find no direct path | Built. Tested on an emulated network, with two ends behind symmetric NATs and the TURN server of `arc relay serve`. Tested by hand on 2026-10-11 between two virtual machines behind NATs, through the relay on Fly.io; see "Speed". |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
 ## How it works
@@ -257,6 +257,21 @@ The sender ran `arc serve` with `TRANSFER_STUN` set, and the receiver ran:
 arc-transfer get -stun stun:stun.l.google.com:19302 -o out.bin '<link>'
 ```
 
+A test by hand on 2026-10-11 sent 64 MiB through the TURN server of the
+relay `arc-nostr-gezim` on Fly.io (one shared CPU, 256 MB). The receiver was
+a virtual machine with a firewall that let out UDP only to the relay, so no
+direct path opened. The time in all includes the two direct attempts, about
+28 s. The time on the relay is from the ICE state `Connected` to the end, in
+the debug log of pion, to the second.
+
+| Sender | In all | On the relay | Speed on the relay |
+| --- | --- | --- | --- |
+| Virtual machine behind a NAT | 34.2 s | 6 s | about 89 Mbit/s |
+| Same, with no STUN server (`TRANSFER_STUN=none`) | 35.1 s | 6 s | about 89 Mbit/s |
+| Mac on a home network | 79.7 s | 51 s | about 10.5 Mbit/s |
+
+The upload rate of the home network was not measured.
+
 ## Request protocol
 
 A request is a live call to the capability `transfer`, with the method `RAW`
@@ -273,6 +288,10 @@ and the path `/`. The body and the reply are JSON.
 - `offset` is the number of bytes that the receiver has.
 - `hold_ms` is the time that the sender waits before its first packet, at
   most 3000.
+- `stun` is in a request through the TURN server of a relay only. It is a
+  STUN URL with an IPv4 address and a port. The app adds it to its own STUN
+  server. An app refuses a request with another form of `stun` as
+  `invalid_request`. An app of an older version ignores the field.
 - Each description holds all the addresses of its end. The app does not
   send addresses later.
 
@@ -368,11 +387,18 @@ then try a third attempt through the TURN server of the first relay:
 2. If the quota is smaller than the bytes that remain, and a tenth more, the
    command stops with an error that names the two numbers.
 3. The end of the command uses only an address on the TURN server. The
-   other end does not change. The path is `relay`, and `send` prints it for
-   each file too.
+   path is `relay`, and `send` prints it for each file too.
+4. The request names the TURN server as a STUN server, with its IPv4
+   address, such as `stun:192.0.2.1:3478`. The other end asks that server
+   for its public address too. The TURN server lets in only packets from
+   the addresses in the answer. Without this step, an end whose own STUN
+   server did not answer gave only addresses behind its NAT, and the
+   attempt found no path. A firewall, a blocked DNS name or an application
+   firewall such as Little Snitch can stop the STUN server of an end.
 
 If the relay serves no TURN, or the attempt finds no path, the command stops
-with `no direct path, and no path through the relay`. If the citizen uses
+with `no direct path, and no path through the relay`. If the TURN server
+gave no address, the error says so. If the citizen uses
 its quota during the transfer, the relay stops relaying. Run the command
 again on the next day: it gets only the rest.
 
@@ -409,7 +435,9 @@ the behavior that it tests is broken.
 `TestRelayPath` in `direct/` puts two ends behind symmetric NATs on an
 emulated network, with the TURN server of the relay on the network. The
 attempt with STUN finds no path. The attempt with TURN sends 1 MiB, and the
-path is `relay`. `TestRelayQuota` in `client/` checks the refusal before an
+path is `relay`. `TestRelayPathWithoutSTUN` gives the other end no STUN
+server: the attempt finds no path, until that end uses the STUN server of
+the TURN server. `TestRelayQuota` in `client/` checks the refusal before an
 attempt when the quota is too small.
 
 A test by hand on 2026-10-05 used a Mac on a home network and a virtual
