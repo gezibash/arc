@@ -110,3 +110,30 @@ func TestNoPipeAndAuto(t *testing.T) {
 		t.Fatalf("policy direct with a provider that has no pipe: %v", err)
 	}
 }
+
+// TestOfferOverLimit falls back to session frames in auto when the host of
+// the provider refuses the request with the offer as request_too_large. A
+// session request holds at most 16 KiB, and the offer adds 1 to 3 KiB.
+func TestOfferOverLimit(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "frames") })
+	adapter := NewWithPipes(handler, direct.AcceptConfig{Policy: direct.Auto, Options: loopback})
+	var notes bytes.Buffer
+	piped, err := OpenSession(t.Context(), direct.DialConfig{Policy: direct.Auto, Options: loopback, Notes: &notes}, "", func(_ context.Context, request string) (*session.Stream, error) {
+		return providertest.Start(t, session.ServerStream, func(ctx context.Context, s *session.Stream) error {
+			if strings.Contains(request, `"direct"`) {
+				return provider.ErrRequestTooLarge
+			}
+			return adapter.HandleSession(ctx, provider.Request{From: "alice", Message: request, Meta: map[string]any{"method": "GET", "path": "/"}}, s)
+		}), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if _, err := piped.Copy(&got); err != nil || got.String() != "frames" || piped.Path != direct.SessionPath {
+		t.Fatalf("%q on %q: %v", got.String(), piped.Path, err)
+	}
+	if !strings.Contains(notes.String(), "over the limit of the provider; using session frames over the relay") {
+		t.Fatalf("notes: %q", notes.String())
+	}
+}

@@ -5,7 +5,7 @@
 - Owns: sdk/direct
 - Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestParsePolicy)$' ./sdk/direct/
 - Remaining: the releases, storage citizen and upload steps of [the proposal](../proposals/direct-path.md), section 6; a test that a wrong certificate fingerprint fails, section 6.
-- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. No test proves that pion refuses a wrong certificate fingerprint. No test runs a provider with the policy `turn` under `arc serve`.
+- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. No test proves that pion refuses a wrong certificate fingerprint. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
 WebRTC data channel. It carries bulk bytes outside the relay. One ARC call
@@ -207,12 +207,13 @@ answers. Each pipe holds sockets and buffers.
 A command writes one line on standard error after the bytes:
 
 ```text
-path direct (host to host): 16777216 bytes in 0.3 s, 427.1 Mbit/s
-path turn (relay): 16777216 bytes in 13.4 s, 10.0 Mbit/s
-path session (relay frames): 1048576 bytes in 0.5 s, 16.4 Mbit/s
+path direct (host to host): 104857600 bytes in 2.4 s, 348.9 Mbit/s
+path turn (relay): 104857600 bytes in 2.5 s, 329.6 Mbit/s
+path session (relay frames): 104857600 bytes in 54.3 s, 15.5 Mbit/s
 ```
 
-The numbers above are examples. Section 8.2 gives measurements.
+These lines are runs on the loopback address of one Mac. Section 8.2 gives
+the commands.
 
 ## 4. Behavior
 
@@ -346,6 +347,38 @@ Larger steps were not safe. With a 64 KiB queue, a 16 KiB step gave 25.7 to
 retransmit window or receive buffer did not make a transfer faster. A
 smallest window of 512 KiB gave 1.1 Mbit/s with a 64 KiB queue, and
 84 Mbit/s with a 512 KiB queue.
+
+`arc session --http` measured a body of 104,857,600 bytes from `arc-http`
+on one Apple Silicon Mac, 2026-10-11. Two new citizens and a local relay
+ran on the machine. The pipe used the loopback address
+(`ARC_LOOPBACK=1 ARC_STUN=none`), because UDP from this Mac to its own LAN
+address got no answer, also from python3. The relay had no rate limit.
+Three runs of each, with the SHA-256 of each body checked (measured):
+
+| Path | Time of the body | Speed |
+| --- | --- | --- |
+| `--path direct` | 2.4 s in each run | 345.1 to 349.4 Mbit/s |
+| `--path auto` | 2.4 s in each run, on `direct (host to host)` | 345.7 to 350.4 Mbit/s |
+| `--path session` | 54.2 to 54.3 s | 15.4 to 15.5 Mbit/s |
+| `--path turn`, one run, relay with TURN on `127.0.0.1` | 2.5 s | 329.6 Mbit/s |
+
+The commands, with `arc` built from this tree:
+
+```sh
+arc --home "$W/relay" relay serve --listen 127.0.0.1:7499 --stun none
+arc --home "$W/provider" keys gen
+arc --home "$W/provider" relay add ws://127.0.0.1:7499
+ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/provider" serve "exec://$PWD/arc-http?manifest=$PWD/cmd/arc/testdata/streaming-http/interface.json&args=$PWD/origin"
+arc --home "$W/consumer" keys gen
+arc --home "$W/consumer" relay add ws://127.0.0.1:7499
+arc --home "$W/consumer" install <provider key> --yes
+ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/consumer" session --http --mode server_stream --path direct 'http+arc://<provider key>/big' '{"query":"bytes=104857600"}' > big.bin
+```
+
+`origin` is `cmd/arc/testdata/streaming-http`. The loopback and a relay with
+no rate limit flatter both paths. Through a public relay, the session
+frames gave 0.17 to 0.9 Mbit/s ([the proposal](../proposals/direct-path.md),
+section 0).
 
 The transfer app measured the pipe on real links. Its README gives the
 runs: a median of 97.0 Mbit/s on a direct path, and about 89 Mbit/s and

@@ -4,7 +4,7 @@
 - Layers: sdk
 - Owns: sdk/httpadapter
 - Proof: go test -count=1 -run '^(TestAGoHandlerAnswersACallThroughARelay|TestLargeBodyOverPipeThroughRelay|TestOlderProviderFallsBackToFrames|TestPipeFailureIsAnError|TestBrokenPipeIsAnError)$' ./cmd/arc/
-- Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. No test runs a provider with `ARC_PATH=turn` under `arc serve`.
+- Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. A provider with `ARC_PATH=turn` under `arc serve` ran by hand on one machine only.
 
 One ARC call carries one HTTP exchange. The package `sdk/httpadapter` maps
 the exchange onto a call, and onto a session.
@@ -188,6 +188,11 @@ The provider:
 6. After the consumer has the last byte, it sends the `trailers` record, if
    any, and `{"type":"end","body_bytes":<n>}`. `n` is the number of body
    bytes on the pipe.
+
+Each body of a session with a pipe goes on the pipe, also an SSE stream.
+The pipe sends each write when the handler flushes. The setup of the pipe
+adds the gathering of the addresses and the DTLS handshake before the first
+byte.
 7. If the pipe breaks during the body, it MUST close the session with
    `pipe_failed`.
 
@@ -205,6 +210,9 @@ The consumer:
   `no_pipe`, the consumer asks again with no offer, and writes
   `the provider has no pipe; using session frames over the relay`. In
   `direct` and `turn`, it stops with an error.
+- The offer adds about 1 to 3 KiB to the request, and a session request
+  holds at most 16 KiB. If the host of the provider refuses the request
+  with `request_too_large`, the consumer does the same as for `no_pipe`.
 - In `auto`, a pipe that does not open is an error. The consumer MUST NOT
   then use session frames: the TURN server of the relay is faster than the
   frames in each measured run.
@@ -262,9 +270,14 @@ arc session --websocket 'http+arc://<provider>/socket' '{"subprotocols":["echo"]
 - At the end, `--http` writes the path on standard error:
 
 ```text
-path direct (host to host): 104857600 bytes in 2.4 s, 345.9 Mbit/s
-path session (relay frames): 104857600 bytes in 51.1 s, 16.4 Mbit/s
+path direct (host to host): 104857600 bytes in 2.4 s, 348.9 Mbit/s
+path session (relay frames): 104857600 bytes in 54.3 s, 15.5 Mbit/s
 ```
+
+  These two lines are the medians of three runs each on one Mac, through a
+  local relay on the loopback address (measured, 2026-10-11). A real link
+  is slower. [The direct spec](../direct/SPEC.md), section 8.2, gives the
+  commands.
 
 - A provider program reads its policy from `ARC_PATH`. `arc serve` gives
   it `ARC_RELAYS`, `ARC_HOME` and `ARC_PROGRAM`, so a provider with
@@ -365,11 +378,14 @@ What the consumer writes for each failure of a pipe:
 - `TestBrokenPipeIsAnError` breaks the pipe during the body.
 - `TestFifthPipeIsBusy` in `sdk/httpadapter` holds 4 pipes on one provider.
   The fifth offer gets `busy` before the handler runs.
-- `TestBodyOverPipe` and `TestNoPipeAndAuto` in `sdk/httpadapter` check
-  `body_bytes`, the trailers, and the fall back of `auto`.
+- `TestBodyOverPipe`, `TestNoPipeAndAuto` and `TestOfferOverLimit` in
+  `sdk/httpadapter` check `body_bytes`, the trailers, and the fall back of
+  `auto`.
 
 Unverified:
 
 - No automated test sends a body on a pipe between two machines, or through
   the TURN server of a relay. The tests use the loopback address.
-- No test runs a provider with `ARC_PATH=turn` under `arc serve`.
+- `--path turn`, and a provider with `ARC_PATH=turn` under `arc serve`, ran
+  by hand on one Mac, through a local relay with TURN. No test runs them.
+- No run on two machines behind NATs.

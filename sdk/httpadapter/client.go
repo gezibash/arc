@@ -95,7 +95,7 @@ func OpenSession(ctx context.Context, c direct.DialConfig, request string, open 
 			_ = current.Stream.Close()
 		}
 		if errors.Is(err, ErrProviderHasNoPipe) && c.Policy == direct.Auto {
-			fmt.Fprintln(notes, "the provider has no pipe; using session frames over the relay")
+			fmt.Fprintf(notes, "%v; using session frames over the relay\n", err)
 			return openFrames(ctx, request, open)
 		}
 		if errors.Is(err, ErrProviderHasNoPipe) {
@@ -128,6 +128,9 @@ func pipeRefusal(err error) error {
 	case "invalid_request", session.RemoteError(ErrNoPipe):
 		// An older provider refuses the field "direct" as invalid_request.
 		return ErrProviderHasNoPipe
+	case "request_too_large":
+		// The offer adds about 1 to 3 KiB to the request.
+		return fmt.Errorf("%w for this request: with the offer, the request is over the limit of the provider", ErrProviderHasNoPipe)
 	case session.RemoteError(ErrNoPath):
 		return direct.ErrNoPath
 	case session.RemoteError(ErrPipesBusy):
