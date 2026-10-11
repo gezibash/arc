@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,7 +59,8 @@ type server struct {
 // environment gives the settings:
 //
 //	TRANSFER_STATE           the state directory
-//	TRANSFER_STUN            the STUN server, or "none"
+//	TRANSFER_STUN            the STUN server, or "none"; unset asks the first
+//	                         relay of ARC_RELAYS on port 3478
 //	TRANSFER_MIN_WINDOW_KIB  the smallest send window after a loss
 //	TRANSFER_LOOPBACK        if set, use the loopback address too
 //	TRANSFER_PUT_MAX_MIB     the largest file that a caller can give; unset
@@ -79,7 +81,7 @@ func Run(ctx context.Context, opts provider.Options) error {
 	s := &server{
 		state: StateDir(""),
 		rtc: direct.Options{
-			STUN:      direct.STUNURL(os.Getenv("TRANSFER_STUN")),
+			STUN:      direct.STUNURL(os.Getenv("TRANSFER_STUN"), strings.Fields(os.Getenv("ARC_RELAYS"))),
 			Loopback:  os.Getenv("TRANSFER_LOOPBACK") != "",
 			MinWindow: uint32(window) << 10,
 		},

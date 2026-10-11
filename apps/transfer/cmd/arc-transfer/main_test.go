@@ -26,6 +26,7 @@ import (
 var env struct {
 	arc, program, state     string
 	sender, receiver, other string // arc homes
+	relay                   string // the URL of the relay
 	senderKey, receiverKey  string
 	strangerKey             string
 }
@@ -91,7 +92,7 @@ func setup(m *testing.M) int {
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	relay := exec.Command(env.arc, "--home", filepath.Join(root, "relay"), "relay", "serve", "--listen", address)
+	relay := exec.Command(env.arc, "--home", filepath.Join(root, "relay"), "relay", "serve", "--listen", address, "--stun", "none")
 	if err := relay.Start(); err != nil {
 		return fail("arc relay serve: %v", err)
 	}
@@ -118,6 +119,7 @@ func setup(m *testing.M) int {
 			return fail("%v", err)
 		}
 	}
+	env.relay = "ws://" + address
 	env.sender, env.receiver, env.other = filepath.Join(root, "sender"), filepath.Join(root, "receiver"), filepath.Join(root, "stranger")
 	env.senderKey, env.receiverKey, env.strangerKey = keys["sender"], keys["receiver"], keys["stranger"]
 
@@ -199,6 +201,28 @@ func absent(t *testing.T, paths ...string) {
 		if _, err := os.Stat(path); err == nil {
 			t.Errorf("%s is there", filepath.Base(path))
 		}
+	}
+}
+
+// With no STUN setting, an end asks the host of its relay. An indexer is
+// not a relay of the citizen.
+func TestTheDefaultSTUNServerIsTheRelay(t *testing.T) {
+	arc := client.Arc{Program: env.arc, Home: t.TempDir()}
+	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", "--index", "ws://127.0.0.1:1"}, {"relay", "add", env.relay}} {
+		if out, err := arc.Command(context.Background(), args...).CombinedOutput(); err != nil {
+			t.Fatalf("arc %v: %v\n%s", args, err, out)
+		}
+	}
+	relays, err := arc.Relays(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, _, _ := net.SplitHostPort(strings.TrimPrefix(env.relay, "ws://"))
+	if len(relays) != 1 || relays[0] != env.relay {
+		t.Fatalf("the relays are %q, want only %s", relays, env.relay)
+	}
+	if got, want := direct.STUNURL("", relays), "stun:"+host+":3478"; got != want {
+		t.Fatalf("the STUN server is %q, want %q (relays %q)", got, want, relays)
 	}
 }
 

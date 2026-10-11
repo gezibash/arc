@@ -234,9 +234,10 @@ field.
 - `arc serve` runs the `command` and `args` of the `Arcfile`, in the
   directory that `cwd` names. [The Arcfile](#the-arcfile) says how
   `command` resolves.
-- The program gets the environment of `arc serve`, and two more variables:
-  `ARC_IDENTITY` is the name of the operating identity, and
-  `ARC_PUBLIC_KEY` is its public key in hex.
+- The program gets the environment of `arc serve`, and three more variables:
+  `ARC_IDENTITY` is the name of the operating identity,
+  `ARC_PUBLIC_KEY` is its public key in hex, and `ARC_RELAYS` holds the
+  relay URLs of the identity, separated by spaces.
 - To stop the program, `arc serve` closes standard input. The program must
   then finish its work and exit. If the program runs 5 seconds after
   that, `arc serve` kills it.
