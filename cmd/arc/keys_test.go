@@ -32,6 +32,8 @@ func TestTheBunkerPolicy(t *testing.T) {
 		{"a kind not allowed", policy{kinds: []nostr.Kind{11}, decrypt: "self"}, sign(1111), "does not sign kind 1111"},
 		{"authentication", policy{kinds: []nostr.Kind{11}, decrypt: "self"}, sign(22242), ""},
 		{"any kind", policy{decrypt: "self"}, sign(0), ""},
+		{"never a device list", policy{decrypt: "self"}, sign(10274), "never signs a device list"},
+		{"a device list even when allowed", policy{kinds: []nostr.Kind{10274}, decrypt: "self"}, sign(10274), "never signs a device list"},
 		{"self opens own", policy{decrypt: "self"}, decrypt(owner), ""},
 		{"self refuses others", policy{decrypt: "self"}, decrypt(other), "decrypts only"},
 		{"none refuses own", policy{decrypt: "none"}, decrypt(owner), "does not decrypt"},

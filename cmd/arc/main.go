@@ -467,7 +467,7 @@ func serveCommand() *cobra.Command {
 	}
 	command.Flags().String("listen", "127.0.0.1:7447", "the address to listen on")
 	command.Flags().String("db", "", "the file that holds the events (default <home>/relay.db)")
-	command.Flags().Int("max-event-bytes", 0, "refuse an event larger than this, as JSON (0: no cap, except the mail limit on gift wraps)")
+	command.Flags().Int("max-event-bytes", 0, "refuse an event larger than this, as JSON (0: no cap on ephemeral events; a kept event has at most the protocol limit of 65,536 bytes, and a gift wrap the mail limit)")
 	command.Flags().Bool("wrap-auth", false, "take a gift wrap only after NIP-42 authentication, or with proof of work")
 	command.Flags().Int("wrap-pow", 0, "the NIP-13 difficulty that lets a gift wrap in without authentication (0: none)")
 	command.Flags().Int("rate", 0, "the events that one IP address can write each minute (0: no limit)")

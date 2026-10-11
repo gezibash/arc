@@ -1,8 +1,8 @@
 // Package sealed makes a khatru relay serve sealed data only to its author,
 // as NIP-37 recommends for private storage.
 //
-// Sealed data is a NIP-37 draft, a draft checkpoint, a part of a draft, or a
-// private relay list. The content is already encrypted to its author. The
+// Sealed data is a NIP-37 draft, a draft checkpoint, a part of a draft, a
+// private relay list, or a device list. The content is already encrypted to its author. The
 // relay also keeps the events themselves from everyone else, so nobody else
 // learns how many drafts a citizen has, or when they wrote them.
 //
@@ -18,11 +18,12 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
+	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/draft"
 )
 
 // Kinds are the kinds that a relay serves only to their author.
-var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, draft.RelayListKind}
+var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, draft.RelayListKind, devices.Kind}
 
 // Protect makes a relay serve sealed events only to their author. Call it
 // after the relay has its event store.

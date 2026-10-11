@@ -204,7 +204,7 @@ a rumor of 32,768 bytes, gives 65,628 bytes of content.
 A relay MUST refuse a gift wrap of kind 1059 whose JSON holds more than
 55,149 bytes. A relay setting can make this limit smaller, and never
 larger. `core/private` holds these limits as `MaxMailContent`, `MaxRumor`
-and `MaxWrap`. Issue #183 tracks a limit for public events.
+and `MaxWrap`.
 
 An older ARC client takes a message of up to 32,768 bytes. Its store
 cannot keep a gift wrap with more than 65,535 bytes of content, so it
@@ -219,6 +219,46 @@ These tests prove the limits: `TestTheLargestMailFitsTheWrapLimit` and
 `TestADeferredReplyOverTheLimitArrivesAsAnError` in `core/mail`,
 `TestTheRelayRefusesAWrapLargerThanMail` in `adapters/relay/limits`, and
 `TestAFullMessageCrossesTheRelay` in `cmd/arc`.
+
+#### The size of an event
+
+One limit applies to each event that nodes keep: regular, replaceable and
+addressable. It is a protocol limit, not a relay setting.
+
+- The JSON of such an event, in the relay form, MUST be at most 65,536
+  bytes (64 KiB). A gift wrap of kind 1059 has the smaller limit of mail.
+- A relay MUST refuse a larger event. A relay setting can make this limit
+  smaller, and never larger.
+- A sender MUST refuse a larger event before it signs the event. Section
+  4.7 gives the rule for an announcement.
+
+An ephemeral event has no protocol limit, because no node keeps it. A
+relay setting can cap it. A live reply travels in one gift wrap of kind
+21059, and can be larger than 64 KiB.
+
+There is no separate limit on content. The JSON of an event holds its
+content, with escapes, and at least 300 bytes of other fields. An event of
+65,536 bytes thus holds less than 65,535 bytes of content, which the Bolt
+event store holds. Common relays also cap an event at 64 KiB.
+
+The largest announcement of an app in this repository holds 10,083 bytes:
+the journal app, with a manifest of 8,147 bytes. A draft of 32 KiB, with up
+to 100 parts, holds 55,082 bytes. `core/store` holds this limit as
+`MaxEvent`.
+
+An older ARC relay has no limit by default, so it takes each event that a
+newer client sends. An older ARC client does not check the size of an
+announcement before it signs it. A newer relay refuses such an event above
+65,536 bytes with an `invalid:` message, and the older client reports that
+the event was not sent. Its own store cannot keep an event with more than
+65,535 bytes of content, so only an event with escapes or large tags is
+refused by a newer relay and kept by an older client. A reader of any
+version reads each event that a relay serves.
+
+These tests prove the limit: `TestTheRelayRefusesAnEventAboveTheLimit` in
+`adapters/relay/limits`, `TestAnEphemeralEventHasOnlyTheFlag` in
+`adapters/relay/limits`, and `TestAnAnnouncementAboveTheLimitIsRefused` in
+`runtime/catalog`.
 
 ### 3.5 Routing a private event
 
@@ -268,6 +308,7 @@ registry uses these numbers:
 | 3275 | regular | one continuation part of sealed content longer than 32 KiB |
 | 3276 | private rumor | core session frames, inside live wraps of kind 21059; see [sessions](../sessions/SPEC.md) |
 | 10272 | replaceable | reserved, and not used, see section 7.1 |
+| 10274 | replaceable | the sealed device list; see [devices](../devices/SPEC.md) |
 | 30272 | addressable | a capability announcement |
 
 Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
@@ -665,6 +706,12 @@ A provider announces a capability with an addressable event of kind 30272:
 Announcements are public. Nodes keep them and sync them. A new version of the
 manifest replaces the old one, because the event is addressable.
 
+An announcement is one event, so its JSON holds at most 65,536 bytes, see
+section 3.4. If the announcement of a manifest is larger, the provider MUST
+refuse to sign it. The error gives the size of the event and the size of
+the manifest. The author must make the manifest smaller. No other path
+carries a manifest.
+
 ### 4.8 Discovery
 
 `arc discover` reads announcements from the local store and from relays.
@@ -840,16 +887,17 @@ A public event, such as a capability announcement, is readable by everyone.
   author. An ARC relay therefore asks for NIP-42 authentication, or for
   NIP-13 proof of work, before it accepts a gift wrap.
 
-- A relay refuses a gift wrap of kind 1059 above the size of mail, see
-  section 3.4. This limit is always on.
+- A relay refuses a gift wrap of kind 1059 above the size of mail, and
+  each other event that it keeps above 65,536 bytes, see section 3.4. These limits are
+  always on.
 
 - A TURN relay gives allocations only to citizens that prove their key
   with NIP-98, and counts their bytes against a quota for each day, see
   section 4.12. The relay pays for the bandwidth of each relayed transfer.
 
 `arc relay serve` applies the other limits when its flags turn them on, see
-`arc relay serve --help`. A relay also caps the size of one event and the rate of
-events from one IP address.
+`arc relay serve --help`. A relay can also lower the size limit of one event,
+and cap the rate of events from one IP address.
 
 The relay transport answers the NIP-42 challenge of a relay and sends the
 gift wrap again. On the relays of the citizen, the citizen's key answers. On

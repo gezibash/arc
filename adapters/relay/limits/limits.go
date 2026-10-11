@@ -7,9 +7,11 @@
 // one event, the rate of events from one IP address, and the size of its
 // store. Each limit is off when its value is zero.
 //
-// The relay always refuses a store-and-forward gift wrap larger than
-// private.MaxWrap, which is a protocol limit. MaxEventBytes can make the
-// limit smaller, but never larger.
+// The relay always refuses a regular, replaceable or addressable event
+// larger than store.MaxEvent, and a store-and-forward gift wrap larger than
+// private.MaxWrap. These are protocol limits. MaxEventBytes can make them
+// smaller, but never larger. An ephemeral event has only the limit of
+// MaxEventBytes, because no store keeps it.
 //
 // The relay also keeps NIP-40 expiration, which is always on. It refuses an
 // event whose expiration has passed. When the expiration of a stored event
@@ -38,8 +40,10 @@ var WrapKinds = []nostr.Kind{1059, 21059}
 
 // Policy holds the limits of a relay.
 type Policy struct {
-	// MaxEventBytes caps the size of one event, as JSON. A gift wrap of
-	// kind 1059 has the smaller of this cap and private.MaxWrap.
+	// MaxEventBytes caps the size of one event, as JSON. The cap of a
+	// regular, replaceable or addressable event is at most store.MaxEvent,
+	// and a gift wrap of kind 1059 has at most private.MaxWrap. If it is
+	// zero, an ephemeral event has no cap.
 	MaxEventBytes int
 	// WrapAuth makes a gift wrap need NIP-42 authentication, or proof of
 	// work of WrapPoW bits.
@@ -68,6 +72,10 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 	if p.MaxEventBytes > 0 && int64(p.MaxEventBytes) > rl.MaxMessageSize {
 		rl.MaxMessageSize = int64(p.MaxEventBytes) + 1024
 	}
+	kept := store.MaxEvent
+	if p.MaxEventBytes > 0 && p.MaxEventBytes < kept {
+		kept = p.MaxEventBytes
+	}
 	var bucket *buckets
 	if p.Rate > 0 {
 		bucket = newBuckets(p.Rate, p.Burst)
@@ -83,14 +91,16 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 		if store.Expired(event, now()) {
 			return true, "invalid: the expiration of this event has passed"
 		}
-		if event.Kind == private.WrapKind || p.MaxEventBytes > 0 {
-			size := len(event.String())
-			if event.Kind == private.WrapKind && size > private.MaxWrap {
-				return true, fmt.Sprintf("invalid: the gift wrap holds %d bytes, and mail holds at most %d", size, private.MaxWrap)
-			}
-			if p.MaxEventBytes > 0 && size > p.MaxEventBytes {
-				return true, fmt.Sprintf("invalid: the event holds %d bytes, and this relay takes at most %d", size, p.MaxEventBytes)
-			}
+		size := len(event.String())
+		if event.Kind == private.WrapKind && size > private.MaxWrap {
+			return true, fmt.Sprintf("invalid: the gift wrap holds %d bytes, and mail holds at most %d", size, private.MaxWrap)
+		}
+		limit := kept
+		if event.Kind.IsEphemeral() {
+			limit = p.MaxEventBytes
+		}
+		if limit > 0 && size > limit {
+			return true, fmt.Sprintf("invalid: the event holds %d bytes, and this relay takes at most %d", size, limit)
 		}
 		if p.WrapAuth && isWrap(event.Kind) && len(khatru.GetAllAuthed(ctx)) == 0 &&
 			(p.WrapPoW == 0 || nip13.Check(event.ID, p.WrapPoW) != nil) {
