@@ -47,7 +47,7 @@ func TestDevices(t *testing.T) {
 
 	signer.run("keys", "devices", "add", laptopKey, "--name", "laptop")
 	signer.run("keys", "devices", "add", phoneKey, "--name", "phone")
-	if !bunker.waitFor("devices=2", limit) {
+	if !loads(bunker, 2, limit) || !strings.Contains(bunker.output(), "devices=2") {
 		t.Fatalf("the bunker did not load the list of two devices:\n%s", bunker.output())
 	}
 	listed := signer.run("keys", "devices")
@@ -74,7 +74,8 @@ func TestDevices(t *testing.T) {
 	t.Log("ok: both devices sign as the citizen through the signer")
 
 	signer.run("keys", "devices", "revoke", "phone")
-	if !bunker.waitFor("devices=1", limit) {
+	// The first add logged devices=1 already, so wait for the third load.
+	if !loads(bunker, 3, limit) {
 		t.Fatalf("the bunker did not load the list after the revocation:\n%s", bunker.output())
 	}
 	if listed := signer.run("keys", "devices"); strings.Contains(listed, phoneKey) {
@@ -121,4 +122,16 @@ func has(t *testing.T, text, want, what string) {
 	if !strings.Contains(text, want) {
 		t.Fatalf("%s does not hold %q:\n%s", what, want, text)
 	}
+}
+
+// loads waits until the bunker has loaded n device lists.
+func loads(p *process, n int, limit time.Duration) bool {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if strings.Count(p.output(), "loaded the device list") >= n {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
 }

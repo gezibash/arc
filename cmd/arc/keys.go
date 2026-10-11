@@ -687,6 +687,9 @@ func serveBunker(command *cobra.Command, _ []string) error {
 		return err
 	}
 	rootRelay := relay.Relay{URL: url, Signer: sess.Signer}
+	if !slices.Contains(sess.URLs, url) {
+		fmt.Fprintf(os.Stderr, "%s is not a relay of this citizen: a new device list reaches the bunker only after a restart; add it with arc relay add\n", url)
+	}
 	g := &guard{secret: secret, authorized: map[nostr.PubKey]bool{}}
 	if err := startDevices(command.Context(), sess, rootRelay, g); err != nil {
 		sess.Close()

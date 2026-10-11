@@ -96,6 +96,10 @@ The JSON inside is:
 - If a device list exists, the signer MUST answer only a request of a device
   key on the list. The bunker secret MUST NOT admit a device.
 - The signer MUST check the list for each request, not only for `connect`.
+- The relay of the bunker MUST be one of the relays of the citizen. The
+  bunker watches only its own relay, and `add` and `revoke` send the list to
+  the relays of the citizen. The bunker warns at start when its relay is not
+  one of them.
 - The signer MUST refuse to sign kind 10274 for any device, whatever its
   `--allow-kind` flags say. A device must not add itself back.
 - A manifest MUST NOT name kind 10274. `runtime/iface` reserves it.
@@ -142,7 +146,7 @@ restart keeps the list.
 | A device that is not on the list asks the signer | The signer answers each request with a refusal. The command of the device fails, and says that the key is not on the device list. |
 | A device asks the signer to sign kind 10274 | The signer refuses, and says that it never signs a device list. |
 | `arc keys devices add` or `revoke` runs on a device | The device has no citizen key. The command fails, and says that only the signer changes the device list. |
-| No relay takes a new list | The command fails. The list stays in the store of the signer, and a later sync sends it. The bunker keeps the list that it has. |
+| No relay takes a new list | The command fails. The list stays in the store of the signer, so the bunker loads it at its next start. The next `add` or `revoke` sends a newer list to the relays. The running bunker keeps the list that it has. |
 | No relay answers when `add` or `revoke` starts, and the store holds no list | The command fails. It does not make a list that could replace a list on a relay. |
 | A list does not open | The bunker logs a warning and keeps the list that it has. |
 | The bunker starts with no relay, and its store holds no list | The bunker admits by the bunker secret until it loads a list. On the signer, `add` and `revoke` keep each list in the store, so this happens only when another machine made the list. |
@@ -160,6 +164,10 @@ restart keeps the list.
   withholds a revocation delays it until the bunker reads the list from
   another relay or from its store. The relay cannot read the list, and serves
   it only to the citizen.
+- **A device can read the list.** With `--decrypt self`, the default, the
+  signer opens each content that the citizen sealed to itself. The device
+  list is such content. Thus a device on the list can learn the other device
+  keys and names.
 - **A device cannot change the list.** The signer never signs kind 10274 for a
   device. A device key cannot sign a list that a reader accepts.
 - **The list size** is at most 64 devices. A list is one small event, so the
