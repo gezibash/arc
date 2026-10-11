@@ -6,6 +6,12 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-11
+
+A new identity now comes from a 24-word seed, so a person can write it down
+and make the same identity again on another machine. The pipe of the
+transfer app moved to `sdk/direct`, so other apps can use it next.
+
 ### Added
 
 - `arc keys gen` makes a new identity from a 24-word seed, as NIP-06 defines.
