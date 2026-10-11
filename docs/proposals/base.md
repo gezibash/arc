@@ -285,7 +285,10 @@ the wraps directly (section 6).
 A new device must also find the lockers of the citizen (issue #172). The
 signer holds the link of each locker, and gives the links to a new device with
 the data roots. The signer also publishes the links to the relays of the
-citizen, in one replaceable event sealed to the citizen key. The paper holds
+citizen, in one replaceable event of kind 10273, sealed to the citizen key
+with NIP-44, with the NIP-70 tag. The locker proposal defines this kind. The
+kind table of the NIPs README does not list 10273 (checked 2026-10-11).
+Another kind registry is not checked. The paper holds
 only the citizen key, because a locker link can change and paper cannot. With
 the paper key, a new device fetches that event and opens it. This event is
 coordination data, so it stays on the relay.
