@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +158,29 @@ func transfer(t *testing.T, a, b Options, size int64) (string, bool) {
 func TestRelayPath(t *testing.T) {
 	a, b, relay := natPair(t)
 	const stun = "stun:1.2.3.4:3478"
+
+	// The STUN server of the relay gives each end an address behind its
+	// NAT, so the direct attempt fails because of the NATs.
+	for _, n := range []*vnet.Net{a, b} {
+		pc, err := NewConnection(Options{STUN: stun, net: n})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pc.CreateDataChannel("probe", nil); err != nil {
+			t.Fatal(err)
+		}
+		offer, err := pc.CreateOffer(nil)
+		if err == nil {
+			offer, err = Describe(pc, offer)
+		}
+		_ = pc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(offer.SDP, "typ srflx") {
+			t.Fatalf("an end got no address from the STUN server of the relay:\n%s", offer.SDP)
+		}
+	}
 
 	if path, ok := transfer(t, Options{STUN: stun, net: a}, Options{STUN: stun, net: b}, 64<<10); ok {
 		t.Fatalf("the direct attempt found the path %q through two symmetric NATs", path)

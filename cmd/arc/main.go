@@ -477,7 +477,7 @@ func serveCommand() *cobra.Command {
 	command.Flags().String("stun", "", "the UDP address that answers STUN, or none (default: the host of --listen, port 3478)")
 	command.Flags().String("turn-ports", "", "serve TURN on the STUN port, with relay sockets on this UDP port range, such as 49152-49251 (needs TURN_SECRET)")
 	command.Flags().String("turn-ip", "", "the public IP address of the TURN relay sockets (default: the host of --listen)")
-	command.Flags().Int64("turn-quota", 1024, "the MiB that one citizen can relay through TURN each day")
+	command.Flags().Int64("turn-quota", 1024, "the MiB that one citizen can relay through TURN in 24 hours (0: refuse every allocation)")
 	return command
 }
 

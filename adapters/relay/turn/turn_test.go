@@ -13,6 +13,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/pion/stun/v4"
 	pturn "github.com/pion/turn/v5"
 )
 
@@ -201,5 +202,47 @@ func TestQuota(t *testing.T) {
 	}
 	if _, _, err := allocate(); err == nil {
 		t.Error("the relay gave a second allocation after the quota was used")
+	}
+}
+
+// TestBinding checks that the TURN server answers a STUN binding request
+// with no credential, as the STUN server of a relay does. The expected
+// address is the address of the client socket, from the kernel.
+func TestBinding(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Serve(conn, Config{Secret: "secret", PublicIP: net.IPv4(127, 0, 0, 1), RelayHost: "127.0.0.1", MinPort: 50000, MaxPort: 50999})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	client, err := net.DialUDP("udp4", nil, conn.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	request := stun.MustBuild(stun.TransactionID, stun.BindingRequest, stun.Fingerprint)
+	if _, err := client.Write(request.Raw); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1500)
+	n, err := client.Read(buf)
+	if err != nil {
+		t.Fatalf("no reply: %v", err)
+	}
+	reply := &stun.Message{Raw: buf[:n]}
+	if err := reply.Decode(); err != nil {
+		t.Fatal(err)
+	}
+	var mapped stun.XORMappedAddress
+	if err := mapped.GetFrom(reply); err != nil {
+		t.Fatal(err)
+	}
+	want := client.LocalAddr().(*net.UDPAddr)
+	if !mapped.IP.Equal(want.IP) || mapped.Port != want.Port {
+		t.Errorf("mapped address %s, want %s", mapped, want)
 	}
 }
