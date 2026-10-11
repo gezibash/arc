@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/keyer"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip13"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
-	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
@@ -28,7 +28,7 @@ var ctx = context.Background()
 // start runs a relay as arc relay serve runs it, with the policy.
 func start(t *testing.T, p limits.Policy) string {
 	t.Helper()
-	db := boltstore.NewBackend(filepath.Join(t.TempDir(), "relay.db"))
+	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}
 	if err := db.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +89,9 @@ func TestTheSizeCapTakesAFullPartAndAFullDraft(t *testing.T) {
 	}
 }
 
-// largestWrap seals and wraps the largest rumor that mail takes: 32 KiB of
-// content, with quotes that make its JSON MaxRumor bytes.
+// largestWrap seals and wraps the largest rumor that mail takes: 24 KiB of
+// content, with quotes that make its JSON MaxRumor bytes. The real Bolt store
+// of the relay must keep it.
 func largestWrap(t *testing.T) nostr.Event {
 	t.Helper()
 	alice, bob := keys.Generate(), keys.Generate()
@@ -142,9 +143,9 @@ func TestTheRelayRefusesAWrapLargerThanMail(t *testing.T) {
 		}
 	}
 
-	url := start(t, limits.Policy{MaxEventBytes: 60_000})
+	url := start(t, limits.Policy{MaxEventBytes: 50_000})
 	if err := publish(t, url, nil, largest); err == nil || !strings.Contains(err.Error(), "invalid") {
-		t.Errorf("cap 60,000: the largest wrap: %v", err)
+		t.Errorf("cap 50,000: the largest wrap: %v", err)
 	}
 }
 
@@ -245,7 +246,7 @@ func TestTheRelayDropsAWrapWhenItExpires(t *testing.T) {
 	var clock atomic.Int64
 	clock.Store(time.Now().Unix())
 	now := func() time.Time { return time.Unix(clock.Load(), 0) }
-	db := boltstore.NewBackend(filepath.Join(t.TempDir(), "relay.db"))
+	db := &boltdb.BoltBackend{Path: filepath.Join(t.TempDir(), "relay.db")}
 	if err := db.Init(); err != nil {
 		t.Fatal(err)
 	}

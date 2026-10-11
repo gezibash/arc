@@ -44,23 +44,25 @@ const MaxAge = 7 * 24 * time.Hour
 const (
 	// MaxMailContent is the most content that one rumor in a wrap of
 	// WrapKind carries, in bytes.
-	MaxMailContent = 32 << 10
+	MaxMailContent = 24 << 10
 	// MaxRumor is the most bytes that the JSON of such a rumor holds. The
 	// JSON of a rumor with MaxMailContent bytes of plain text and its tags
 	// fits. JSON escapes and long tags can make a rumor larger than its
 	// content, so MaxWrap follows from this limit, not from MaxMailContent.
-	// MaxRumor is a NIP-44 padding boundary: 5 chunks of 8,192 bytes.
-	MaxRumor = 40 << 10
+	// MaxRumor is a NIP-44 padding boundary: 7 chunks of 4,096 bytes. It is
+	// the largest rumor whose wrap holds at most 65,535 bytes of content,
+	// which the Bolt event store and common relays take.
+	MaxRumor = 28 << 10
 	// MaxSeal is the most bytes that the JSON of a seal holds. NIP-44 adds
 	// 67 bytes to the padded rumor: a version byte, a 32-byte nonce, a
 	// 2-byte length and a 32-byte MAC. Base64 gives 4 bytes for each 3.
 	MaxSeal = len(sealEnvelope) + 4*((67+MaxRumor+2)/3)
 	// MaxWrap is the most bytes that the JSON of a wrap of WrapKind holds,
-	// in the relay form. NIP-44 pads a seal of MaxSeal bytes to 57,344
-	// bytes: 7 chunks of 8,192 bytes. A relay refuses a larger wrap.
+	// in the relay form. NIP-44 pads a seal of MaxSeal bytes to 40,960
+	// bytes: 5 chunks of 8,192 bytes. A relay refuses a larger wrap.
 	MaxWrap = len(wrapEnvelope) + 4*((67+sealPadded+2)/3)
 
-	sealPadded = 7 << 13
+	sealPadded = 5 << 13
 	// The JSON of a seal and of a relay-form wrap without their content.
 	// A created_at and an expiration have 10 digits until the year 2286.
 	sealEnvelope = `{"kind":13,"id":"` + hex64 + `","pubkey":"` + hex64 + `","created_at":1234567890,"tags":[],"content":"","sig":"` + hex64 + hex64 + `"}`

@@ -32,17 +32,19 @@ func fullRumor(t *testing.T, from keys.Key, to nostr.PubKey, extra int) nostr.Ev
 	return rumor
 }
 
-// The 2026-10-11 measurement: a 32 KiB arc message gave a seal of 55,047
-// bytes and a relay-form wrap of 76,993 bytes. The limits must agree with it.
+// The 2026-10-11 measurement: 28,394 bytes of plain text was the largest
+// message whose relay-form wrap fit 65,536 bytes, and that wrap held 55,149
+// bytes. The limits must agree with it.
 func TestTheWrapLimitsAgreeWithTheMeasurement(t *testing.T) {
-	if private.MaxSeal != 55_047 || private.MaxWrap != 76_993 {
-		t.Errorf("MaxSeal %d, MaxWrap %d; measured 55,047 and 76,993", private.MaxSeal, private.MaxWrap)
+	if private.MaxWrap != 55_149 {
+		t.Errorf("MaxWrap %d; measured 55,149", private.MaxWrap)
 	}
 }
 
 // The largest rumor that mail takes, sealed and wrapped with the real code,
 // gives a wrap of exactly MaxWrap bytes. The seal stays under the NIP-44
-// plaintext limit of 65,535 bytes.
+// plaintext limit of 65,535 bytes, and the content of the wrap under the
+// 65,535 bytes that the Bolt event store holds.
 func TestTheLargestMailFitsTheWrapLimit(t *testing.T) {
 	alice, bob := keys.Generate(), keys.Generate()
 	ctx := context.Background()
@@ -66,6 +68,9 @@ func TestTheLargestMailFitsTheWrapLimit(t *testing.T) {
 				t.Fatal(err)
 			}
 			n := len(w.String())
+			if len(w.Content) > 65_535 {
+				t.Errorf("form %d: the wrap holds %d bytes of content, more than the store takes", form, len(w.Content))
+			}
 			if n > private.MaxWrap {
 				t.Errorf("form %d: the wrap holds %d bytes, more than %d", form, n, private.MaxWrap)
 			}
@@ -80,8 +85,8 @@ func TestMailRefusesOneByteMore(t *testing.T) {
 	alice, bob := keys.Generate(), keys.Generate()
 	tags := nostr.Tags{{"p", bob.Public.Hex()}}
 	for name, rumor := range map[string]nostr.Event{
-		"content of 32 KiB + 1": private.Rumor(alice, 14, strings.Repeat("x", private.MaxMailContent+1), tags, time.Now()),
-		"JSON of 40 KiB + 1":    fullRumor(t, alice, bob.Public, 1),
+		"content of 24 KiB + 1": private.Rumor(alice, 14, strings.Repeat("x", private.MaxMailContent+1), tags, time.Now()),
+		"JSON of 28 KiB + 1":    fullRumor(t, alice, bob.Public, 1),
 	} {
 		err := private.CheckMail(rumor)
 		if !errors.Is(err, private.ErrTooLarge) || !strings.Contains(err.Error(), "transfer") {

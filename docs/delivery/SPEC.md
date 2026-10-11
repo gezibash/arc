@@ -150,46 +150,54 @@ The limits apply to the rumor in each gift wrap of kind 1059: a message
 (kind 14), a deferred call (3272), a reply (3273) and an acknowledgement
 (3274). They are protocol limits, not relay settings.
 
-- The content of the rumor MUST be at most 32,768 bytes (32 KiB).
-- The JSON of the rumor, without a signature, MUST be at most 40,960 bytes
-  (40 KiB). JSON escapes and tags make the JSON larger than the content, so
+- The content of the rumor MUST be at most 24,576 bytes (24 KiB).
+- The JSON of the rumor, without a signature, MUST be at most 28,672 bytes
+  (28 KiB). JSON escapes and tags make the JSON larger than the content, so
   this limit bounds the gift wrap.
 - A sender MUST refuse a rumor above a limit before it seals the rumor.
   Larger content goes over a direct path, such as the transfer app.
 - If the reply to a deferred call is above a limit, the provider MUST send
   an error reply in its place. It MUST NOT drop the reply.
 
-These limits give the largest gift wrap. NIP-44 pads a plaintext of more
-than 32,768 bytes to a multiple of 8,192 bytes, and adds 67 bytes: a
-version byte, a 32-byte nonce, a 2-byte length and a 32-byte MAC. Base64
-gives 4 bytes for each 3. A `created_at` and an `expiration` have 10
-digits until the year 2286.
+These limits give the largest gift wrap. NIP-44 pads a plaintext to a
+multiple of a chunk: 4,096 bytes from 16,385 to 32,768 bytes, and 8,192
+bytes from 32,769 to 65,536 bytes. It adds 67 bytes: a version byte, a
+32-byte nonce, a 2-byte length and a 32-byte MAC. Base64 gives 4 bytes for
+each 3. A `created_at` and an `expiration` have 10 digits until the year
+2286.
 
 | Step | Bytes |
 | --- | --- |
-| Rumor JSON, padded | 40,960 |
-| Seal content, base64 of 67 + 40,960 | 54,704 |
-| Seal JSON, with 343 bytes of fields | 55,047 |
-| Seal JSON, padded | 57,344 |
-| Gift wrap content, base64 of 67 + 57,344 | 76,548 |
-| Gift wrap JSON, relay form, with 445 bytes of fields | 76,993 |
+| Rumor JSON, padded | 28,672 |
+| Seal content, base64 of 67 + 28,672 | 38,320 |
+| Seal JSON, with 343 bytes of fields | 38,663 |
+| Seal JSON, padded | 40,960 |
+| Gift wrap content, base64 of 67 + 40,960 | 54,704 |
+| Gift wrap JSON, relay form, with 445 bytes of fields | 55,149 |
 
-The courier form is 32 bytes smaller. The seal stays below the NIP-44
-plaintext limit of 65,535 bytes.
+The courier form is 32 bytes smaller. The content of the gift wrap stays
+below 65,535 bytes. The Bolt event store holds at most that much content,
+and so do common relays that cap an event at 64 KiB. The next padding step,
+a rumor of 32,768 bytes, gives 65,628 bytes of content.
 
 A relay MUST refuse a gift wrap of kind 1059 whose JSON holds more than
-76,993 bytes. A relay setting can make this limit smaller, and never
+55,149 bytes. A relay setting can make this limit smaller, and never
 larger. `core/private` holds these limits as `MaxMailContent`, `MaxRumor`
 and `MaxWrap`. Issue #183 tracks a limit for public events.
 
-An older ARC client has no limit of its own. Its store holds at most 65,535
-bytes of event content, so it cannot send a gift wrap larger than the
-limit. A relay refuses a larger gift wrap from other Nostr software.
+An older ARC client takes a message of up to 32,768 bytes. Its store
+cannot keep a gift wrap with more than 65,535 bytes of content, so it
+fails to send a rumor of more than 28,672 bytes. Each gift wrap that it
+sends fits the relay limit. It can send a message of 24,577 to about
+28,400 bytes, which a newer client refuses to send. A recipient opens such
+a message, because the limits bind senders and relays. A relay refuses a
+larger gift wrap from other Nostr software.
 
 These tests prove the limits: `TestTheLargestMailFitsTheWrapLimit` and
 `TestMailRefusesOneByteMore` in `core/private`,
-`TestADeferredReplyOverTheLimitArrivesAsAnError` in `core/mail`, and
-`TestTheRelayRefusesAWrapLargerThanMail` in `adapters/relay/limits`.
+`TestADeferredReplyOverTheLimitArrivesAsAnError` in `core/mail`,
+`TestTheRelayRefusesAWrapLargerThanMail` in `adapters/relay/limits`, and
+`TestAFullMessageCrossesTheRelay` in `cmd/arc`.
 
 ### 3.5 Routing a private event
 

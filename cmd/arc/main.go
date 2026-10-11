@@ -34,11 +34,11 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
-	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
@@ -276,6 +276,23 @@ func announceRelays(command *cobra.Command) {
 	}
 }
 
+// newRelay makes the relay of arc relay serve, with its store in the file at
+// path. Call the returned function to close the store.
+func newRelay(path string, p limits.Policy) (*khatru.Relay, func(), error) {
+	db := &boltdb.BoltBackend{Path: path}
+	if err := db.Init(); err != nil {
+		return nil, nil, err
+	}
+	rl := khatru.NewRelay()
+	rl.Log = log.New(io.Discard, "", 0)
+	rl.UseEventstore(db, 500)
+	rl.Negentropy = true
+	rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
+	sealed.Protect(rl)
+	limits.Apply(rl, db.DB, p)
+	return rl, db.Close, nil
+}
+
 func serveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use: "serve", Short: "Run a relay on this machine", Args: cobra.NoArgs,
@@ -293,19 +310,11 @@ func serveCommand() *cobra.Command {
 				path = filepath.Join(dir, "relay.db")
 			}
 
-			db := boltstore.NewBackend(path)
-			if err := db.Init(); err != nil {
+			rl, closeDB, err := newRelay(path, writePolicy(command))
+			if err != nil {
 				return err
 			}
-			defer db.Close()
-
-			rl := khatru.NewRelay()
-			rl.Log = log.New(io.Discard, "", 0)
-			rl.UseEventstore(db, 500)
-			rl.Negentropy = true
-			rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
-			sealed.Protect(rl)
-			limits.Apply(rl, db.DB, writePolicy(command))
+			defer closeDB()
 
 			listener, err := net.Listen("tcp", listen)
 			if err != nil {

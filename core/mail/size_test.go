@@ -21,10 +21,10 @@ func TestMailOverTheLimitIsRefusedBeforeItIsQueued(t *testing.T) {
 	big := strings.Repeat("x", private.MaxMailContent+1)
 
 	if _, err := alice.mail.Send(ctx, bob.key.Public, big); !errors.Is(err, private.ErrTooLarge) {
-		t.Errorf("a message of 32 KiB + 1: %v", err)
+		t.Errorf("a message of 24 KiB + 1: %v", err)
 	}
 	if _, err := alice.mail.Request(ctx, bob.key.Public, call.Request{Capability: "echo", Body: big}); !errors.Is(err, private.ErrTooLarge) {
-		t.Errorf("a deferred call of 32 KiB + 1: %v", err)
+		t.Errorf("a deferred call of 24 KiB + 1: %v", err)
 	}
 	if out := testutil.Must(alice.mail.Outbox(ctx)); len(out) != 0 {
 		t.Errorf("the outbox holds %d items", len(out))
@@ -36,7 +36,7 @@ func TestMailOverTheLimitIsRefusedBeforeItIsQueued(t *testing.T) {
 	alice.sync(t, courier)
 	bob.sync(t, courier)
 	if got := inboxText(bob); len(got) != 1 || got[0] != full {
-		t.Errorf("bob did not get the message of 32 KiB")
+		t.Errorf("bob did not get the message of 24 KiB")
 	}
 }
 
