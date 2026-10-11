@@ -35,10 +35,12 @@ the certificate fingerprints of the two ends, so each end knows the other.
 The app needs these things:
 
 - A relay in the arc home of each citizen.
-- A STUN server that each machine can reach. The default is
-  `stun:stun.l.google.com:19302`. The server sees the public address of each
-  machine. The two machines see the public address of each other. A relay
-  does not show these addresses.
+- A STUN server that each machine can reach. The default is the first relay
+  of the citizen, on UDP port 3478: `arc relay serve` answers STUN there. For
+  the relay `wss://relay.example.org`, the default is
+  `stun:relay.example.org:3478`. The STUN server sees the public address of
+  each machine. The two machines see the public address of each other. If the
+  citizen has no relay, an end uses the addresses of its machine only.
 - The two machines online at the same time.
 
 ## Use it
@@ -168,7 +170,7 @@ environment to the program.
 | Variable | Value |
 | --- | --- |
 | `TRANSFER_STATE` | The directory of the offers. The default is `~/.local/state/arc-transfer`. `offer` and the service must use the same directory. |
-| `TRANSFER_STUN` | The STUN server, or `none`. `get` reads it too. |
+| `TRANSFER_STUN` | The STUN server, or `none`. If it is not set, the service asks the first relay of `ARC_RELAYS` on port 3478. `get` and `put` read it too. |
 | `TRANSFER_MIN_WINDOW_KIB` | The send window stays at or above this size after a loss. This makes a transfer faster on a path with losses. It is not fair to other traffic. |
 | `TRANSFER_LOOPBACK` | If set, an end also uses the loopback address. The tests set it, because their two ends are on one machine. `get` and `put` read it too. |
 | `TRANSFER_PUT_MAX_MIB` | The largest file that a caller can give with `put`, in MiB. If it is not set or 0, the app refuses each put. |
@@ -184,7 +186,7 @@ The commands take these flags:
 | `send` | `-wait <duration>` | How long `send` serves the files and waits for the receiver. The default is `10m`. |
 | `offer` | `-to <key>` | A public key that can get the file. |
 | `get` | `-o <file>` | The file to write. The default is the name in the link, in the current directory. |
-| `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. |
+| `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. If it is not set, the command asks the first relay of `arc relay ls` on port 3478. |
 | `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the first packets". |
 
 ## Request protocol

@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,6 +40,7 @@ import (
 	"github.com/gezibash/arc/adapters/relay/groups"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
+	"github.com/gezibash/arc/adapters/relay/stun"
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
@@ -317,6 +319,15 @@ func serveCommand() *cobra.Command {
 				return err
 			}
 			fmt.Printf("relay listens on ws://%s\n", listener.Addr())
+			if stunAddress := stunListen(command, listen); stunAddress != "" {
+				conn, err := net.ListenPacket("udp", stunAddress)
+				if err != nil {
+					return fmt.Errorf("STUN: %w", err)
+				}
+				defer func() { _ = conn.Close() }()
+				go func() { _ = stun.Serve(conn) }()
+				fmt.Printf("relay answers STUN on udp://%s\n", conn.LocalAddr())
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -340,7 +351,23 @@ func serveCommand() *cobra.Command {
 	command.Flags().Int("burst", 0, "the events that one IP address can write at once (default the rate)")
 	command.Flags().String("ip-header", "", "the HTTP header that holds the client IP address, when a proxy sets it")
 	command.Flags().Int64("max-store-mb", 0, "refuse new stored events when the store uses this many MiB (0: no cap)")
+	command.Flags().String("stun", "", "the UDP address that answers STUN, or none (default: the host of --listen, port 3478)")
 	return command
+}
+
+// stunListen is the UDP address of the STUN server of a relay, or empty for
+// none. A citizen asks the host of its relay on port 3478, so the default
+// keeps the host of the relay.
+func stunListen(command *cobra.Command, listen string) string {
+	value, _ := command.Flags().GetString("stun")
+	switch value {
+	case "none":
+		return ""
+	case "":
+		host, _, _ := net.SplitHostPort(listen)
+		return net.JoinHostPort(host, strconv.Itoa(stun.Port))
+	}
+	return value
 }
 
 // writePolicy reads the write limits of a relay from its flags.

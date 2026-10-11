@@ -87,9 +87,18 @@ func serve(command *cobra.Command, args []string) error {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	dir, err := home(command)
+	if err != nil {
+		return err
+	}
+	relays, err := readRelays(dir)
+	if err != nil {
+		return err
+	}
 	environment := []string{
 		"ARC_IDENTITY=" + sess.Key.Name(),
 		"ARC_PUBLIC_KEY=" + sess.Key.Public.Hex(),
+		"ARC_RELAYS=" + strings.Join(relays, " "),
 	}
 	// The Arcfile can limit who reaches the program, and what it calls. Both
 	// resolve once, at the start: a change needs a restart.

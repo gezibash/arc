@@ -84,7 +84,7 @@ func get(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("arc-transfer get", flag.ContinueOnError)
 	arc := arcFlags(flags)
 	output := flags.String("o", "", "the file to write (default: the name in the link, in this directory)")
-	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or "+direct.DefaultSTUN+")")
+	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or the first relay on port "+direct.RelaySTUNPort+")")
 	hold := flags.Bool("hold", false, "ask the sender to wait in the first attempt, not in the second")
 	state := flags.String("state", "", "the state directory, for a file that the sender gave with put (default TRANSFER_STATE, or ~/.local/state/arc-transfer)")
 	if err := flags.Parse(args); err != nil {
@@ -93,10 +93,14 @@ func get(ctx context.Context, args []string) error {
 	if flags.NArg() != 1 {
 		return errors.New("usage: arc-transfer get [flags] <link>")
 	}
+	stunURL, err := stunSetting(ctx, *arc, *stun)
+	if err != nil {
+		return err
+	}
 	result, err := client.Get{
 		Arc: *arc, Link: flags.Arg(0), Output: *output, HoldFirst: *hold, Notes: os.Stderr,
 		State:   server.StateDir(*state),
-		Options: direct.Options{STUN: direct.STUNURL(*stun), Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
+		Options: direct.Options{STUN: stunURL, Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
 	}.Run(ctx)
 	if err != nil {
 		return err
@@ -116,7 +120,7 @@ func get(ctx context.Context, args []string) error {
 func put(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("arc-transfer put", flag.ContinueOnError)
 	arc := arcFlags(flags)
-	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or "+direct.DefaultSTUN+")")
+	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or the first relay on port "+direct.RelaySTUNPort+")")
 	hold := flags.Bool("hold", false, "ask the receiver to wait in the first attempt, not in the second")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -124,9 +128,13 @@ func put(ctx context.Context, args []string) error {
 	if flags.NArg() != 2 {
 		return errors.New("usage: arc-transfer put [flags] <key> <file>")
 	}
+	stunURL, err := stunSetting(ctx, *arc, *stun)
+	if err != nil {
+		return err
+	}
 	result, err := client.Put{
 		Arc: *arc, To: flags.Arg(0), File: flags.Arg(1), HoldFirst: *hold, Notes: os.Stderr,
-		Options: direct.Options{STUN: direct.STUNURL(*stun), Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
+		Options: direct.Options{STUN: stunURL, Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
 	}.Run(ctx)
 	if err != nil {
 		return err
@@ -137,6 +145,19 @@ func put(ctx context.Context, args []string) error {
 		fmt.Fprintf(os.Stderr, "%d bytes in %.1f s, %.2f MiB/s, path %s\n", result.Bytes, seconds, float64(result.Bytes)/(1<<20)/seconds, result.Path)
 	}
 	return nil
+}
+
+// stunSetting is the STUN URL of a setting. With no setting, it asks arc for
+// the relays of this citizen.
+func stunSetting(ctx context.Context, arc client.Arc, value string) (string, error) {
+	if value != "" {
+		return direct.STUNURL(value, nil), nil
+	}
+	relays, err := arc.Relays(ctx)
+	if err != nil {
+		return "", err
+	}
+	return direct.STUNURL("", relays), nil
 }
 
 // arcFlags adds the flags that name the arc program and the arc home.

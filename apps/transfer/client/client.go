@@ -64,6 +64,23 @@ func (a Arc) PublicKey(ctx context.Context) (string, error) {
 	return "", errors.New("arc whoami printed no public key")
 }
 
+// Relays asks arc for the relay URLs of this citizen. It leaves out the
+// indexers.
+func (a Arc) Relays(ctx context.Context) ([]string, error) {
+	out, err := a.Command(ctx, "relay", "ls").Output()
+	if err != nil {
+		return nil, fmt.Errorf("arc relay ls: %w", err)
+	}
+	var relays []string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 1 && (strings.HasPrefix(fields[0], "ws://") || strings.HasPrefix(fields[0], "wss://")) {
+			relays = append(relays, fields[0])
+		}
+	}
+	return relays, nil
+}
+
 // Get is one request for the file of a link.
 type Get struct {
 	Arc Arc

@@ -5,6 +5,8 @@ package direct
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,8 +21,9 @@ const (
 	BufferHigh = 8 << 20
 	BufferLow  = 2 << 20
 
-	// DefaultSTUN is the STUN server of an end that names none.
-	DefaultSTUN = "stun:stun.l.google.com:19302"
+	// RelaySTUNPort is the port on which a relay answers STUN. An end that
+	// names no STUN server asks the host of its first relay on this port.
+	RelaySTUNPort = "3478"
 
 	// OpenWait bounds the wait for the data channel of one attempt.
 	OpenWait = 12 * time.Second
@@ -70,16 +73,30 @@ type Options struct {
 	MinWindow uint32
 }
 
-// STUNURL is the URL of a STUN setting. The value "none" gives no server,
-// and an empty value gives the default server.
-func STUNURL(value string) string {
+// STUNURL is the URL of a STUN setting. The value "none" gives no server.
+// An empty value gives the STUN server of the first relay, or no server if
+// there is no relay.
+func STUNURL(value string, relays []string) string {
 	switch value {
 	case "":
-		return DefaultSTUN
+		if len(relays) == 0 {
+			return ""
+		}
+		return RelaySTUN(relays[0])
 	case "none":
 		return ""
 	}
 	return value
+}
+
+// RelaySTUN is the STUN URL of the host of a relay URL, or empty if the
+// URL is not a ws:// or wss:// URL with a host.
+func RelaySTUN(relay string) string {
+	u, err := url.Parse(relay)
+	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Hostname() == "" {
+		return ""
+	}
+	return "stun:" + net.JoinHostPort(u.Hostname(), RelaySTUNPort)
 }
 
 // virtualInterfaces are the name prefixes of interfaces that an end does
