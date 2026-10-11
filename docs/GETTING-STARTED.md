@@ -70,11 +70,28 @@ arc keys gen --encrypt
 arc whoami
 ```
 
-Enter the passphrase in the terminal when prompted. Keep it private. The public
-key printed by `whoami` is safe to share as your address. Never share the private
-key or paste it into an assistant conversation.
+`keys gen` shows 24 words once. Write them on paper, in order, and keep the
+paper safe, as you keep a passport. The words are the backup of the identity:
+anyone who reads them has the key. ARC does not store the words and cannot
+show them again. Never type them into an assistant conversation or a website.
 
-By default, each identity lives under `~/.config/arc/citizens/`. Back up the
+Enter the passphrase in the terminal when prompted. Keep it private. The
+passphrase seals the key file on this machine. It is not part of the words.
+The public key printed by `whoami` is safe to share as your address. Never
+share the private key or paste it into an assistant conversation.
+
+To make the identity again on a new machine, type the words:
+
+```sh
+arc keys recover
+```
+
+If you added a seed passphrase with `arc keys gen --seed-passphrase`, run
+`arc keys recover --seed-passphrase`. The words without that passphrase give
+another identity.
+
+By default, each identity lives under `~/.config/arc/citizens/`. An identity
+from before the seed has no words. For such an identity, back up the
 identity's key file to a private, secure location, and keep the passphrase
 available separately. A copy of the identity directory also preserves local
 state; stop ARC processes before copying it. If you use `--home` or `ARC_HOME`,

@@ -1,7 +1,7 @@
 // Command arc is the command line tool of ARC, on Nostr events. See
 // docs/delivery/SPEC.md.
 //
-//	arc keys gen | add | list | use | remove | encrypt | bunker
+//	arc keys gen | recover | add | list | use | remove | encrypt | bunker
 //	arc whoami
 //	arc relay add <url> | rm <url> | ls | turn | serve
 //	arc message send | inbox | outbox | watch

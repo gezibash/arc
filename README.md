@@ -73,6 +73,12 @@ there. For example:
 arc relay add wss://purplepag.es --index
 ```
 
+`keys gen` makes a seed of 24 words, as NIP-06 defines, and derives the key
+from it. It shows the words once, on standard error, and never stores them.
+Write them on paper. `arc keys recover` reads the words from standard input
+and makes the same key again. `--seed-passphrase` adds an optional BIP-39
+passphrase, read from `ARC_SEED_PASSPHRASE` or the terminal.
+
 `keys gen` prints the name of the identity, then its public key. The first
 identity is the default. `arc keys use <name>` changes the default, and
 `--key <name>` or `ARC_KEY` picks another identity for one command.

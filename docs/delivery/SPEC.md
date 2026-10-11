@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^TestDelivery$' ./internal/proof/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed)$' ./internal/proof/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has no test between two real NATs, or on the relay ports of Fly.io. Section 8.3 lists the deferred work.
 
@@ -64,6 +64,7 @@ These are out of scope, and have their own documents:
 | courier | A node that carries a private event for another citizen. |
 | route tag | A short tag that names the recipient of a private event for one day. |
 | provider | A citizen that answers calls to a capability. |
+| seed | The 12 or 24 words of BIP-39 that derive a citizen key, as NIP-06 defines. The paper backup of the citizen key. |
 
 ## 3. Rules
 
@@ -89,6 +90,26 @@ a transport. The delivery layer never reads a private payload.
   runs over the new 32-byte key.
 - A citizen uses one key on every transport. ARC does not keep a second key
   for the mesh.
+
+A new citizen key comes from a seed:
+
+- `arc keys gen` MUST make a seed of 24 words from 256 bits of entropy, as
+  BIP-39 defines.
+- The citizen key is the NIP-06 key of the seed: the BIP-32 key at the path
+  `m/44'/1237'/0'/0/0` of the BIP-39 seed.
+- The BIP-39 passphrase is empty by default. A citizen can add a passphrase.
+  The same words with another passphrase give another key.
+- A node MUST show the words once, when it makes them. It MUST NOT store the
+  words, and MUST NOT write them to standard output, which scripts read.
+- To derive a key from words, a node MUST accept 12 or 24 words from the
+  English list of BIP-39, and MUST refuse a bad checksum. Case and the spaces
+  between the words do not change the key.
+- A node MUST NOT read the words from its command arguments, because the
+  shell history and `ps` show arguments.
+- The key file holds the derived secret key, as before. The key file does not
+  record that a seed derived the key.
+- A device key does not come from the seed. A key from before the seed has
+  no seed. Its paper backup is an `ncryptsec` of NIP-49.
 
 ### 3.3 Events
 
@@ -791,6 +812,8 @@ refuses with an error if the quota is too small.
 | A relay serves no TURN | `GET /turn` gets 404. `arc relay turn` says that the relay serves no TURN. The app fails with "no direct path, and no path through the relay". |
 | The TURN quota of a citizen is too small for a file | The app refuses before the attempt, and names the quota that is left and the bytes that the file needs. |
 | A citizen uses its TURN quota during a transfer | The relay stops relaying. The connection ends, and the app reports how many bytes the part file holds. |
+| The words of a seed have a bad checksum, a word that is not in the list, or a count other than 12 or 24 | `arc keys recover` refuses the words, says why, and keeps nothing. |
+| A seed passphrase is wrong or missing | The words give another key. Nothing can detect this: the node shows a name and a public key that the citizen does not know. |
 
 ## 6. Security
 
@@ -844,7 +867,7 @@ recipient does not learn who wrote to them.
 | Recipient hidden from couriers | partly | See section 3.6. |
 | Forward secrecy | live mesh links only | Noise gives it. NIP-44 does not. |
 | Replay | harmless | A node keeps one copy of each event, by ID. A provider answers each request once. |
-| Key loss | fatal | Nothing recovers a lost key. |
+| Key loss | fatal without a backup | The seed derives a key that came from a seed again. A key from before the seed comes back only from its `ncryptsec`. Nothing else recovers a lost key. |
 
 ## 7. Compatibility
 
@@ -893,6 +916,13 @@ Commands of the older `arc` that the switchover removed:
 
 This spec states no plan for its own removal.
 
+### 7.3 Keys from before the seed
+
+The seed changes no wire format and no key file. An older client reads the
+key file of a key that a seed derived, because the file holds the secret key
+as before. A key from before the seed stays valid. ARC does not move it to a
+seed.
+
 ## 8. Proof
 
 ### 8.1 Phases
@@ -924,6 +954,14 @@ interface. The capability interface, docs/interface/SPEC.md, declares the
 commands of a capability. The journal adds one thing that phase 3 names: a
 page travels as parts of at most 32 KiB, so it fits the event limit of common
 relays, and `arc journal tail` streams text as it is appended.
+
+The seed of section 3.2 has these tests:
+`go test -run 'Seed' ./core/keys/` derives the two test vectors of NIP-06,
+copied from the NIP text, and refuses a bad checksum, an unknown word and 18
+words. `go test -run '^TestSeed$' ./internal/proof/` runs the real `arc`
+program: `keys gen` shows 24 words on standard error and stores none,
+`keys recover` on another home makes the same key, a seed passphrase gives
+another key, and a bad checksum and words as arguments are refused.
 
 The relay paths of section 4.12 have these tests:
 `go test -run '^(TestCredential|TestQuota)$' ./adapters/relay/turn/` checks
