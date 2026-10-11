@@ -65,17 +65,20 @@ device. Section 2.6 applies to it without the outer seal.
 This is the story of #173. A citizen loses the phone on a trip. By evening, a
 new phone reads the journal and gets mail. The old phone is dead to everyone.
 
-The new phone needs three things:
+The new phone needs these things, in this order:
 
-1. The keys of the citizen. These come from the recovery material that #173
-   defines, never from the locker.
-2. The addresses of the lockers of the citizen. Section 2.2 says where these
-   come from.
-3. A sync with one locker. It returns every blob of the account.
+1. A device key. The phone makes it.
+2. A place in the device list. The citizen key signs the new device key into
+   the list, on the home signer or from paper (#173). The same step revokes
+   the old phone, and makes a new generation of the data root.
+3. The addresses of the lockers. Section 2.2 says where these come from.
+4. A grant for each locker. The signer gives each locker a grant for the new
+   device key, and a revocation of the old one (section 2.3).
+5. A sync with one locker. The phone first gets the wraps of the data root
+   for its device key, and opens them. Then it gets every blob of the account.
 
-The locker does not take part in the revocation of the old phone. If #173
-gives each device its own key, the locker refuses the old device key after
-the citizen revokes it (section 2.3).
+The locker holds the wraps, but it cannot open them. The old phone keeps what
+it cached. The locker refuses it from the moment it gets the revocation.
 
 ### 1.4 Backup
 
@@ -105,23 +108,34 @@ locker, not a product.
 
 ## 2. The protocol shape
 
-### 2.1 Sealing: what this document assumes
+### 2.1 Sealing: what this document takes from #173
 
-Sealing depends on #173, which a parallel design covers. This proposal
-assumes the four statements below. If #173 decides otherwise, sections 2.3,
-2.4 and 2.8 change.
+Sealing is the work of #173. This section states what that design gives the
+locker, from its draft of 2026-10-11. If #173 changes, sections 2.3, 2.4 and
+2.8 change.
 
-1. A citizen has one identity key. Each device has a device key, which the
-   identity key certifies. The citizen revokes a lost device with a signed
-   record.
-2. Each device can derive a data root from the identity of the citizen. The
-   data root is a secret of 32 bytes. Each device derives keys from it with
-   HKDF and a label for each purpose. Any device of the citizen opens the
-   data. A locker never gets the data root or a key derived from it.
-3. The locker knows its client by an account key, not by the identity key.
-   Section 2.3 defines the account key.
-4. A new device gets the identity or the data root from an old device or from
-   recovery material. It never gets a key from the locker.
+- The citizen key is the identity. It lives on a home signer and on paper,
+  not on phones.
+- Each device has its own device key. The device list names the device keys.
+  The citizen key signs the list. The list is sealed to the citizen.
+- The data root is a random key of 32 bytes with a generation number. Drafts,
+  checkpoints and parts are encrypted with a key that HKDF derives from it.
+  Each sealed event names its generation in a tag.
+- A wrap is the data root of one generation, sealed to one device key or to
+  the citizen key. One wrap is a signed event of 565 bytes. The wrap to the
+  citizen key lets the citizen key recover every generation.
+- To revoke a device, the citizen makes a new generation and wraps it only
+  for the devices that remain. Old data stays under old generations.
+- Generation 0 is the drafts of today, sealed to the citizen key.
+- The keyed values of interface spec 3.7.1 do not change, so no `d` tag
+  changes.
+
+The locker never needs a data root. It stores sealed blobs and wraps, and it
+checks device keys against grants.
+
+This proposal also assumes one thing that #173 has not stated: a device can
+open each older generation that it needs, and the first random generation
+never changes. Section 2.4 derives the blob IDs from it.
 
 ### 2.2 Find and pair
 
@@ -135,7 +149,8 @@ usable. Each side consents first.
 2. The operator gives the link to the citizen, as text, a QR code or a
    message.
 3. The citizen runs `arc locker add <link>`. The device sends one ARC call to
-   the locker. The call holds the token and the account key.
+   the locker. The call holds the token, the account key, and a grant for
+   the device key. The signer of the citizen signs the grant.
 4. The locker checks the token, opens the account with the quota, and
    replies. The token is now spent.
 
@@ -150,15 +165,23 @@ The relay keeps no list of lockers. Kind 10013 has no replacement.
 
 ### 2.3 The account, consent and the quota
 
-The account key is a key pair that each device derives:
-`HKDF(data root, info = "arc-locker-account-v1" || locker key)`. Each device
-of the citizen derives the same account key for one locker. Two lockers see
-two keys that they cannot join.
+The locker knows an account by an account key. The citizen does not show its
+citizen key to the locker. The signer derives one account key for each
+locker: `HKDF(citizen secret key, info = "arc-locker-account-v1" || locker
+key)`. Two lockers see two account keys that they cannot join. Only the
+signer holds the secret half, so a device cannot make an account key.
 
-If #173 gives each device its own key, the account key signs a short grant for
-each device key. The locker then accepts a device key only with a valid
-grant, and refuses it after the citizen sends a revocation. Until then, the
-account key is the only key that the locker knows.
+The account key signs these records, and the signer gives them to the
+locker:
+
+| Record | Meaning |
+| --- | --- |
+| Grant | A device key can read and write in this account. |
+| Revocation | A device key can no longer do anything in this account. |
+
+A device opens each session with its device key and its grant. The locker
+refuses a device key with no grant, or with a revocation. The locker never
+sees the device list itself, nor the citizen key.
 
 The locker keeps these values for each account:
 
@@ -183,29 +206,42 @@ Consent works in both directions:
 The locker stores sealed blobs that it cannot read.
 
 ```text
-blob     = id || ts || AEAD(blob key, nonce, pad(signed event JSON))
-id       = HMAC-SHA256(blob key, event ID)            (32 bytes)
-ts       = 0                                          (8 bytes)
-blob key = HKDF(data root, info = "arc-locker-blob-v1")
+blob     = id || ts || gen || AEAD(blob key, nonce, pad(signed event JSON))
+id       = HMAC-SHA256(id key, event ID)               (32 bytes)
+ts       = 0                                           (8 bytes)
+gen      = generation of the data root                 (4 bytes)
+blob key = HKDF(data root of gen, info = "arc-locker-blob-v1")
+id key   = HKDF(data root of the first random generation, info = "arc-locker-id-v1")
 ```
 
-- The plaintext is the signed NIP-37 event that the device holds today: a
-  draft, a checkpoint, a part, or a NIP-09 deletion. The device opens the
-  blob, and gives the event to its store. The store verifies the signature
-  and applies the existing rules. `core/draft` does not change.
+- The plaintext is the signed NIP-37 event that the device holds: a draft, a
+  checkpoint, a part, or a NIP-09 deletion. The device opens the blob, and
+  gives the event to its store. The store verifies the signature and applies
+  the existing rules.
+- The outer seal hides what the inner event shows: its signer, its kind, its
+  `k` tag, its keyed `d` tag and its generation tag.
 - The ID is a keyed hash of the event ID. Two devices that put the same event
   make the same blob. A put is therefore idempotent, as in Tarsnap. The locker
-  cannot match an ID with an event on any relay.
+  cannot match an ID with an event on any relay. The id key never changes, so
+  a new generation does not change the ID of an old blob.
 - Negentropy sorts items by a timestamp, then by ID. Both sides must use
   the same timestamp. The device sets `ts` to 0 for each blob, as Syncthing
   sets one fixed time on an untrusted device. Reconciliation then splits the
   set by ID only, and the blob shows no time of writing.
+- `gen` is in the clear, so a device knows which data root opens the blob. The
+  locker learns when the citizen made a new generation, which is when the
+  citizen revoked a device.
 - `pad` pads the plaintext up to the next power of two, with a minimum of
   4 KiB. A journal page of 2 KB and a page of 3 KB look the same.
 - The locker stores the blob, the ID, the padded size and the time of the
   put. It stores nothing else.
 
-The blob key is the same for all lockers of one citizen. Two lockers that
+The locker also keeps the wraps of the data root, apart from the blobs. A
+device gets the wraps for its device key after `hello`, before it can open
+any blob. The locker sees how many wraps the account has, so it sees the
+count of devices and generations. It cannot open a wrap.
+
+The id key is the same for all lockers of one citizen. Two lockers that
 compare their IDs can see that they hold the same citizen. The account keys
 of section 2.3 do not stop this. Open question 6 asks if this matters.
 
@@ -249,7 +285,8 @@ event in step 1. `core/transport` and `core/node` do not change.
 
 | Message | From | Meaning |
 | --- | --- | --- |
-| `hello` | device | The account key, a signature over the session, and the grant of the device key if one exists. |
+| `hello` | device | The device key, a signature over the session, and the grant of the device key. |
+| `wraps` | device | The wraps of the data root for this device key. |
 | `reconcile` | both | Negentropy messages (NIP-77) over the blob IDs of the account. |
 | `get` | device | The blobs for a list of IDs. |
 | `put` | device | One blob. The reply is `ok`, `held`, `tombstoned`, or `over quota`. |
@@ -310,7 +347,7 @@ old blob costs quota but shows no deleted data.
 | --- | --- | --- |
 | Relay, today | The author key, the kind of the draft and the `k` tag inside it, the keyed `d` tag, each version and checkpoint, the count, the exact sizes, the times | The content |
 | Relay, with a locker | That a key sent one call to the locker key, its time and size. With STUN: the public addresses of both machines. With TURN: the ciphertext of the data channel and its volume. | The account, the blobs, the count |
-| Locker operator | The account key, the IP address of each device (unless TURN carries the bytes), the time of each session, the count of blobs, the padded sizes, which blobs a session puts and deletes | The identity key of the citizen, the kinds, the `d` tags, the content, which blob is a journal page and which is a file |
+| Locker operator | The account key, each device key and its grant, the count of wraps (so the count of devices and generations), the generation of each blob, the IP address of each device (unless TURN carries the bytes), the time of each session, the count of blobs, the padded sizes, which blobs a session puts and deletes | The citizen key, the device list, the kinds, the `d` tags, the content, which blob is a journal page and which is a file |
 | A second device of the citizen | Everything | — |
 
 Section 0 states the limit of this table. A locker sees sizes and times.
@@ -324,6 +361,7 @@ Section 0 states the limit of this table. A locker sees sizes and times.
 | Make a blob | The device refuses it. | Same as above. |
 | Withhold a blob | A device does not see a new version. It sees an older one, or none. | Two lockers. A device that holds a newer version puts it again. Not built: a signed head for each account, as in the Merkle trees of Keybase. |
 | Delete everything | The data is gone from this locker. | Each device keeps a full copy. A second locker keeps one too. |
+| Serve a revoked device | The revoked device gets new blobs, but it cannot open them: they use a new generation. | The revocation, and the new generation of #173. |
 | Join the account to a person | It can use the IP address and the times. | TURN hides the IP address from the locker, at the cost of the TURN quota. Section 0 says the rest. |
 
 ### 2.10 Prior art
@@ -397,7 +435,7 @@ until a locker holds the data.
 
 ## 4. App on sdk/, or changes below it
 
-The server can be an app. The client cannot. An app reaches the identity of
+The server can be an app. The client cannot. An app reaches the citizen key of
 the citizen only through `arc` commands, and cannot read the store or the
 key. The client must read the store, derive keys from the data root, and give events to
 the store. That is the work of the runtime and an adapter.
@@ -442,10 +480,11 @@ The smallest first step that a user can try, after PR 2:
 5. Measure the first sync of 1,000 pages. Compare it with 1.42 s from a local
    relay (#161).
 
-Until #173 decides sealing, PR 2 can use a blob key that the runtime derives
-from the citizen's key today. This is one key on every device, so it gives no
+PR 2 does not need to wait for all of #173. Until device keys exist, the
+first version uses the citizen key as the only device key, with a grant that
+it signs for itself, and one random data root of generation 1. This gives no
 device revocation. The blob format of section 2.4 does not change when #173
-lands. Only the source of the data root changes.
+lands.
 
 ## 6. Open questions for Zim
 
@@ -454,9 +493,11 @@ lands. Only the source of the data root changes.
    runs on a host apart from the relay. A friend is the second locker.
    Alfred's box is the test locker only.
 2. **Does the locker know the citizen by a pseudonym for each locker, or by
-   the identity key?** Recommended: a pseudonym for each locker (section
-   2.3). It costs one HKDF, and it stops two lockers from joining their
-   accounts by key.
+   the citizen key?** Recommended: a pseudonym for each locker, which the
+   signer derives (section 2.3). It costs one HKDF on the signer, and it
+   stops two lockers from joining their accounts by key. #173 leans to the
+   other answer: the locker checks the device list, which the citizen key
+   signs. That shows the citizen key to each locker.
 3. **Where does a new device learn its lockers?** Recommended: from an old
    device at pairing, or from the recovery material. No list on the relay,
    and kind 10013 has no replacement.
@@ -465,7 +506,7 @@ lands. Only the source of the data root changes.
    through NIP-46 gets it from a locker.
 5. **How long does a relay keep old drafts for reads after the breaking
    release?** Recommended: 90 days, then the operator removes them.
-6. **Do all lockers of one citizen share one blob key?** Recommended: yes in
+6. **Do all lockers of one citizen share one id key?** Recommended: yes in
    the first version. It lets a device copy a blob from one locker to another
    without opening it. Two lockers that compare IDs can then see one
    citizen. Use a key for each locker later, if this matters.
