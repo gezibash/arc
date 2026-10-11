@@ -34,14 +34,15 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
+	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/iface"
@@ -292,7 +293,7 @@ func serveCommand() *cobra.Command {
 				path = filepath.Join(dir, "relay.db")
 			}
 
-			db := &boltdb.BoltBackend{Path: path}
+			db := boltstore.NewBackend(path)
 			if err := db.Init(); err != nil {
 				return err
 			}
@@ -345,7 +346,7 @@ func serveCommand() *cobra.Command {
 	}
 	command.Flags().String("listen", "127.0.0.1:7447", "the address to listen on")
 	command.Flags().String("db", "", "the file that holds the events (default <home>/relay.db)")
-	command.Flags().Int("max-event-bytes", 0, "refuse an event larger than this, as JSON (0: no cap)")
+	command.Flags().Int("max-event-bytes", 0, "refuse an event larger than this, as JSON (0: no cap, except the mail limit on gift wraps)")
 	command.Flags().Bool("wrap-auth", false, "take a gift wrap only after NIP-42 authentication, or with proof of work")
 	command.Flags().Int("wrap-pow", 0, "the NIP-13 difficulty that lets a gift wrap in without authentication (0: none)")
 	command.Flags().Int("rate", 0, "the events that one IP address can write each minute (0: no limit)")
@@ -435,14 +436,17 @@ func messageCommand() *cobra.Command {
 
 			text := strings.Join(args[1:], " ")
 			if text == "" {
-				body, err := io.ReadAll(io.LimitReader(os.Stdin, 32*1024+1))
+				body, err := io.ReadAll(io.LimitReader(os.Stdin, private.MaxMailContent+1))
 				if err != nil {
 					return err
 				}
 				text = strings.TrimRight(string(body), "\n")
 			}
-			if text == "" || len(text) > 32*1024 {
-				return errors.New("a message holds 1 to 32768 bytes")
+			if text == "" {
+				return errors.New("a message holds at least 1 byte")
+			}
+			if len(text) > private.MaxMailContent {
+				return fmt.Errorf("the message is too large for mail, which holds at most %d bytes: send it over a direct path, such as the transfer app", private.MaxMailContent)
 			}
 
 			sess, err := open(command)

@@ -180,6 +180,9 @@ func (m *Mail) Request(ctx context.Context, provider nostr.PubKey, r call.Reques
 }
 
 func (m *Mail) queue(ctx context.Context, to nostr.PubKey, rumor nostr.Event, kind string) (Outgoing, error) {
+	if err := private.CheckMail(rumor); err != nil {
+		return Outgoing{}, err
+	}
 	expires := m.now().Add(private.MaxAge)
 	seal, entries, err := m.prepare(ctx, to, rumor, expires)
 	if err != nil {
@@ -653,6 +656,10 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		}
 	}
 	rumor := call.ReplyRumor(m.key, request, reply, m.now())
+	if err := private.CheckMail(rumor); err != nil {
+		// The caller gets an error in place of a reply that mail cannot carry.
+		rumor = call.ReplyRumor(m.key, request, call.Reply{Err: TooLargeReply}, m.now())
+	}
 	seal, entries, err := m.prepare(ctx, request.PubKey, rumor, m.now().Add(private.MaxAge))
 	if err != nil {
 		return err
@@ -1043,6 +1050,10 @@ func (m *Mail) replyOf(ctx context.Context, o Outgoing) (call.Reply, error) {
 	_, reply := call.ReadReply(rumor)
 	return reply, nil
 }
+
+// TooLargeReply is the error that a caller gets in place of a deferred reply
+// that is larger than the mail limit.
+const TooLargeReply = "the reply is larger than the mail limit; ask for it over a direct path, such as the transfer app"
 
 // RelayListKind is the kind of the list of relays where a citizen reads its
 // direct messages, as NIP-17 defines.

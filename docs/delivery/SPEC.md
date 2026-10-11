@@ -143,6 +143,54 @@ passes, the relay stops serving the event and deletes it.
 The author randomizes `created_at` on the seal and the gift wrap, up to two
 days in the past, as NIP-17 describes. The real time stays inside the rumor.
 
+#### The size of mail
+
+Mail is one gift wrap of kind 1059. The author MUST NOT split it into parts.
+The limits apply to the rumor in each gift wrap of kind 1059: a message
+(kind 14), a deferred call (3272), a reply (3273) and an acknowledgement
+(3274). They are protocol limits, not relay settings.
+
+- The content of the rumor MUST be at most 32,768 bytes (32 KiB).
+- The JSON of the rumor, without a signature, MUST be at most 40,960 bytes
+  (40 KiB). JSON escapes and tags make the JSON larger than the content, so
+  this limit bounds the gift wrap.
+- A sender MUST refuse a rumor above a limit before it seals the rumor.
+  Larger content goes over a direct path, such as the transfer app.
+- If the reply to a deferred call is above a limit, the provider MUST send
+  an error reply in its place. It MUST NOT drop the reply.
+
+These limits give the largest gift wrap. NIP-44 pads a plaintext of more
+than 32,768 bytes to a multiple of 8,192 bytes, and adds 67 bytes: a
+version byte, a 32-byte nonce, a 2-byte length and a 32-byte MAC. Base64
+gives 4 bytes for each 3. A `created_at` and an `expiration` have 10
+digits until the year 2286.
+
+| Step | Bytes |
+| --- | --- |
+| Rumor JSON, padded | 40,960 |
+| Seal content, base64 of 67 + 40,960 | 54,704 |
+| Seal JSON, with 343 bytes of fields | 55,047 |
+| Seal JSON, padded | 57,344 |
+| Gift wrap content, base64 of 67 + 57,344 | 76,548 |
+| Gift wrap JSON, relay form, with 445 bytes of fields | 76,993 |
+
+The courier form is 32 bytes smaller. The seal stays below the NIP-44
+plaintext limit of 65,535 bytes.
+
+A relay MUST refuse a gift wrap of kind 1059 whose JSON holds more than
+76,993 bytes. A relay setting can make this limit smaller, and never
+larger. `core/private` holds these limits as `MaxMailContent`, `MaxRumor`
+and `MaxWrap`. Issue #183 tracks a limit for public events.
+
+An older ARC client has no limit of its own. Its store holds at most 65,535
+bytes of event content, so it cannot send a gift wrap larger than the
+limit. A relay refuses a larger gift wrap from other Nostr software.
+
+These tests prove the limits: `TestTheLargestMailFitsTheWrapLimit` and
+`TestMailRefusesOneByteMore` in `core/private`,
+`TestADeferredReplyOverTheLimitArrivesAsAnError` in `core/mail`, and
+`TestTheRelayRefusesAWrapLargerThanMail` in `adapters/relay/limits`.
+
 ### 3.5 Routing a private event
 
 A gift wrap names its recipient with one routing tag. It has one of two
@@ -712,7 +760,10 @@ A public event, such as a capability announcement, is readable by everyone.
   author. An ARC relay therefore asks for NIP-42 authentication, or for
   NIP-13 proof of work, before it accepts a gift wrap.
 
-`arc relay serve` applies these limits when its flags turn them on, see
+- A relay refuses a gift wrap of kind 1059 above the size of mail, see
+  section 3.4. This limit is always on.
+
+`arc relay serve` applies the other limits when its flags turn them on, see
 `arc relay serve --help`. A relay also caps the size of one event and the rate of
 events from one IP address.
 

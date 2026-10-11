@@ -7,6 +7,10 @@
 // one event, the rate of events from one IP address, and the size of its
 // store. Each limit is off when its value is zero.
 //
+// The relay always refuses a store-and-forward gift wrap larger than
+// private.MaxWrap, which is a protocol limit. MaxEventBytes can make the
+// limit smaller, but never larger.
+//
 // The relay also keeps NIP-40 expiration, which is always on. It refuses an
 // event whose expiration has passed. When the expiration of a stored event
 // passes, the relay stops serving the event and deletes it.
@@ -24,6 +28,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip13"
+	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/store"
 	"go.etcd.io/bbolt"
 )
@@ -33,7 +38,8 @@ var WrapKinds = []nostr.Kind{1059, 21059}
 
 // Policy holds the limits of a relay.
 type Policy struct {
-	// MaxEventBytes caps the size of one event, as JSON.
+	// MaxEventBytes caps the size of one event, as JSON. A gift wrap of
+	// kind 1059 has the smaller of this cap and private.MaxWrap.
 	MaxEventBytes int
 	// WrapAuth makes a gift wrap need NIP-42 authentication, or proof of
 	// work of WrapPoW bits.
@@ -77,8 +83,12 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 		if store.Expired(event, now()) {
 			return true, "invalid: the expiration of this event has passed"
 		}
-		if p.MaxEventBytes > 0 {
-			if size := len(event.String()); size > p.MaxEventBytes {
+		if event.Kind == private.WrapKind || p.MaxEventBytes > 0 {
+			size := len(event.String())
+			if event.Kind == private.WrapKind && size > private.MaxWrap {
+				return true, fmt.Sprintf("invalid: the gift wrap holds %d bytes, and mail holds at most %d", size, private.MaxWrap)
+			}
+			if p.MaxEventBytes > 0 && size > p.MaxEventBytes {
 				return true, fmt.Sprintf("invalid: the event holds %d bytes, and this relay takes at most %d", size, p.MaxEventBytes)
 			}
 		}
