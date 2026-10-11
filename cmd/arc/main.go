@@ -80,7 +80,7 @@ func root() *cobra.Command {
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
-		appsCommand(), infoCommand(), resolveCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand())
+		appsCommand(), infoCommand(), resolveCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand(), pathCommand())
 	command.SetHelpCommand(helpCommand(command))
 	command.Version = version
 	return command
@@ -290,47 +290,57 @@ func turnCommand() *cobra.Command {
 				}
 				relay = relays[0]
 			}
-			endpoint, err := turnURL(relay)
+			body, err := fetchTURN(command.Context(), dir, relay)
 			if err != nil {
 				return err
-			}
-			id, err := loadIdentity(command.Context(), dir)
-			if err != nil {
-				return err
-			}
-			authorization, err := turn.AuthHeader(command.Context(), id.signer, http.MethodGet, endpoint)
-			if err != nil {
-				return err
-			}
-			request, err := http.NewRequestWithContext(command.Context(), http.MethodGet, endpoint, nil)
-			if err != nil {
-				return err
-			}
-			request.Header.Set("Authorization", authorization)
-			client := &http.Client{Timeout: 15 * time.Second}
-			response, err := client.Do(request)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = response.Body.Close() }()
-			body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-			if err != nil {
-				return err
-			}
-			switch {
-			case response.StatusCode == http.StatusNotFound:
-				return fmt.Errorf("%s serves no TURN", relay)
-			case response.StatusCode != http.StatusOK:
-				return fmt.Errorf("%s refused: %s %s", relay, response.Status, strings.TrimSpace(string(body)))
-			}
-			var credential turn.Credential
-			if json.Unmarshal(body, &credential) != nil || credential.Username == "" || len(credential.URLs) == 0 {
-				return fmt.Errorf("%s serves no TURN: its reply is not a credential", relay)
 			}
 			_, err = os.Stdout.Write(body)
 			return err
 		},
 	}
+}
+
+// fetchTURN asks a relay for a TURN credential, signed with the key of the
+// citizen in dir, and returns the JSON reply.
+func fetchTURN(ctx context.Context, dir, relay string) ([]byte, error) {
+	endpoint, err := turnURL(relay)
+	if err != nil {
+		return nil, err
+	}
+	id, err := loadIdentity(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	authorization, err := turn.AuthHeader(ctx, id.signer, http.MethodGet, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", authorization)
+	client := &http.Client{Timeout: 15 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case response.StatusCode == http.StatusNotFound:
+		return nil, fmt.Errorf("%s serves no TURN", relay)
+	case response.StatusCode != http.StatusOK:
+		return nil, fmt.Errorf("%s refused: %s %s", relay, response.Status, strings.TrimSpace(string(body)))
+	}
+	var credential turn.Credential
+	if json.Unmarshal(body, &credential) != nil || credential.Username == "" || len(credential.URLs) == 0 {
+		return nil, fmt.Errorf("%s serves no TURN: its reply is not a credential", relay)
+	}
+	return body, nil
 }
 
 // turnURL is the HTTP URL of the TURN credential of a relay URL.

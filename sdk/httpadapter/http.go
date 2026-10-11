@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/strictjson"
 )
@@ -38,6 +39,9 @@ type httpRequest struct {
 	WebSocket    bool                `json:"websocket,omitempty"`
 	StreamBody   bool                `json:"stream_body,omitempty"`
 	Subprotocols []string            `json:"subprotocols,omitempty"`
+	// Direct asks for the response body on a pipe of sdk/direct. See
+	// docs/http/SPEC.md, section 3.7.
+	Direct *direct.Offer `json:"direct,omitempty"`
 }
 
 // httpResponse is the reply of an HTTP capability.
@@ -52,16 +56,37 @@ type httpResponse struct {
 // request to the handler, and the response becomes the reply, as
 // docs/http/SPEC.md defines. The handler runs in this process: no port
 // opens.
-type Adapter struct{ handler http.Handler }
+//
+// New reads the path of the response bodies of sessions from the
+// environment, as direct.ProviderConfig does. An ARC_PATH that is not valid
+// turns the pipe off.
+type Adapter struct {
+	handler http.Handler
+	pipes   direct.AcceptConfig
+	// slots holds one entry for each open pipe.
+	slots chan struct{}
+}
 
-func New(handler http.Handler) *Adapter { return &Adapter{handler: handler} }
+func New(handler http.Handler) *Adapter {
+	pipes, err := direct.ProviderConfig()
+	if err != nil {
+		pipes.Policy = direct.Off
+	}
+	return NewWithPipes(handler, pipes)
+}
+
+// NewWithPipes serves handler, and opens pipes with the config c. The
+// policy direct.Off opens no pipe.
+func NewWithPipes(handler http.Handler, c direct.AcceptConfig) *Adapter {
+	return &Adapter{handler: handler, pipes: c, slots: make(chan struct{}, direct.MaxPipes)}
+}
 
 func (a *Adapter) HandleRequest(ctx context.Context, r provider.Request) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	in, err := decodeHTTPRequest(r.Message)
-	if err != nil {
+	if err != nil || in.Direct != nil {
 		return "", provider.ErrInvalidRequest
 	}
 	request, err := httpRequestOf(ctx, r, in)

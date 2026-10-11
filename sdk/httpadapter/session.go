@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 )
 
@@ -27,7 +28,25 @@ type SessionRecord struct {
 	Code     int         `json:"code,omitempty"`
 	Reason   string      `json:"reason,omitempty"`
 	Protocol string      `json:"protocol,omitempty"`
+	// SDP is the answer of a pipe, in a "direct" record.
+	SDP string `json:"sdp,omitempty"`
+	// BodyBytes is the number of body bytes that went on the pipe, in the
+	// "end" record of a session with a pipe.
+	BodyBytes *int64 `json:"body_bytes,omitempty"`
 }
+
+// The errors of a session with a pipe. See docs/http/SPEC.md, section 3.7.
+const (
+	// ErrNoPipe says that the provider opens no pipe. The consumer can ask
+	// again with no offer.
+	ErrNoPipe = provider.Error("no_pipe")
+	// ErrPipesBusy says that the provider holds direct.MaxPipes pipes.
+	ErrPipesBusy = provider.Error("busy")
+	// ErrNoPath says that the data channel of the pipe did not open.
+	ErrNoPath = provider.Error("no_path")
+	// ErrPipeFailed says that the pipe closed before the end of the body.
+	ErrPipeFailed = provider.Error("pipe_failed")
+)
 
 func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, stream *session.Stream) error {
 	in, err := decodeHTTPRequest(req.Message)
@@ -44,6 +63,22 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 	if in.WebSocket && (stream.Mode() != session.Duplex || request.Method != http.MethodGet || in.Body != "" || in.BodyBase64 != "") {
 		return provider.ErrInvalidRequest
 	}
+	if in.Direct != nil && (in.WebSocket || in.StreamBody) {
+		return provider.ErrInvalidRequest
+	}
+	encoder := json.NewEncoder(stream)
+	var pipe *direct.Pipe
+	if in.Direct != nil {
+		release, err := a.takePipe()
+		if err != nil {
+			return err
+		}
+		defer release()
+		if pipe, err = a.openPipe(ctx, *in.Direct, encoder); err != nil {
+			return err
+		}
+		defer func() { _ = pipe.Close() }()
+	}
 	client, closeClient := handlerClient(ctx, a.handler)
 	defer closeClient()
 	if in.WebSocket {
@@ -58,9 +93,11 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 		return provider.Error("http_exchange_failed")
 	}
 	defer func() { _ = response.Body.Close() }()
-	encoder := json.NewEncoder(stream)
 	if err = encoder.Encode(SessionRecord{Type: "response", Status: response.StatusCode, Headers: response.Header}); err != nil {
 		return err
+	}
+	if pipe != nil {
+		return pipeBody(ctx, pipe, response, encoder)
 	}
 	buf := make([]byte, session.MaxChunk)
 	for {
@@ -83,6 +120,68 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 		}
 	}
 	return encoder.Encode(SessionRecord{Type: "end"})
+}
+
+// takePipe takes a slot for one pipe. It refuses an offer when the policy
+// opens no pipe, and when the slots are full.
+func (a *Adapter) takePipe() (func(), error) {
+	if a.pipes.Policy == direct.Off || a.slots == nil {
+		return nil, ErrNoPipe
+	}
+	select {
+	case a.slots <- struct{}{}:
+		return func() { <-a.slots }, nil
+	default:
+		return nil, ErrPipesBusy
+	}
+}
+
+// openPipe answers the offer with a "direct" record, and waits for the
+// data channel. The handler has not run yet, so a failed attempt has no
+// effect.
+func (a *Adapter) openPipe(ctx context.Context, offer direct.Offer, encoder *json.Encoder) (*direct.Pipe, error) {
+	if offer.Check() != nil {
+		return nil, provider.ErrInvalidRequest
+	}
+	pipe, answer, err := direct.Accept(ctx, a.pipes, offer)
+	if err != nil {
+		return nil, ErrNoPath
+	}
+	if err = encoder.Encode(SessionRecord{Type: "direct", SDP: answer}); err != nil {
+		_ = pipe.Close()
+		return nil, err
+	}
+	if err = pipe.Wait(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, ErrNoPath
+	}
+	return pipe, nil
+}
+
+// pipeBody copies the body to the pipe, then sends the trailers and an
+// "end" record with the number of body bytes.
+func pipeBody(ctx context.Context, pipe *direct.Pipe, response *http.Response, encoder *json.Encoder) error {
+	n, err := io.Copy(pipe, response.Body)
+	if errors.Is(err, direct.ErrPipeClosed) {
+		return ErrPipeFailed
+	}
+	if err != nil {
+		return provider.Error("http_body_failed")
+	}
+	if err = pipe.CloseWrite(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return ErrPipeFailed
+	}
+	if len(response.Trailer) > 0 {
+		if err = encoder.Encode(SessionRecord{Type: "trailers", Headers: response.Trailer}); err != nil {
+			return err
+		}
+	}
+	return encoder.Encode(SessionRecord{Type: "end", BodyBytes: &n})
 }
 
 // A private in-memory HTTP connection lets net/http supply real flushing,

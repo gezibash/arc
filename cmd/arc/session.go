@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/core/session"
+	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +25,7 @@ func sessionCmd() *cobra.Command {
 		RunE: runSession,
 	}
 	command.Flags().Bool("http", false, "decode streaming HTTP response bodies")
+	command.Flags().String("path", "", "path of an HTTP response body: auto, direct, turn or session (default: arc path)")
 	command.Flags().Bool("websocket", false, "send input lines as WebSocket text messages")
 	command.Flags().Bool("exec", false, "decode Exec output records and encode stdin")
 	command.Flags().Bool("tty", false, "use an Exec PTY and a raw local terminal; Enter ~ . detaches")
@@ -104,9 +106,26 @@ func runSession(command *cobra.Command, args []string) error {
 			}
 		}
 	}
-	stream, err := state.OpenSessionAddress(ctx, installs, args[0], body, mode)
-	if err != nil {
-		return err
+	var piped *httpadapter.ClientSession
+	var stream *session.Stream
+	if httpMode && !wsMode {
+		pipes, err := dialConfig(command)
+		if err != nil {
+			return err
+		}
+		piped, err = httpadapter.OpenSession(ctx, pipes, body, func(ctx context.Context, request string) (*session.Stream, error) {
+			return state.OpenSessionAddress(ctx, installs, args[0], request, mode)
+		})
+		if err != nil {
+			return err
+		}
+		stream = piped.Stream
+		defer func() { _ = piped.Close() }()
+	} else {
+		stream, err = state.OpenSessionAddress(ctx, installs, args[0], body, mode)
+		if err != nil {
+			return err
+		}
 	}
 	defer func() { _ = stream.Close() }()
 	if execMode || tty {
@@ -129,7 +148,7 @@ func runSession(command *cobra.Command, args []string) error {
 		}()
 	}
 	if httpMode {
-		return httpSessionCLI(command, stream)
+		return httpSessionCLI(command, piped)
 	}
 	_, err = io.Copy(command.OutOrStdout(), stream)
 	if err == nil {

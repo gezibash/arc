@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -91,6 +92,26 @@ func main() {
 			}
 		}
 		w.Header().Set("Arc-Session-Error", response.Trailer.Get("Arc-Session-Error"))
+	})
+	// /big?bytes=N sends N bytes: byte i is i mod 251.
+	mux.HandleFunc("/big", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
+		if err != nil || n < 0 {
+			http.Error(w, "bytes=N", 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		block := make([]byte, 251*64)
+		for i := range block {
+			block[i] = byte(i % 251)
+		}
+		for n > 0 {
+			m := min(n, int64(len(block)))
+			if _, err := w.Write(block[:m]); err != nil {
+				return
+			}
+			n -= m
+		}
 	})
 	if err := http.ListenAndServe("127.0.0.1:"+os.Getenv("PORT"), mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
