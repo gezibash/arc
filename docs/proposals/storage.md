@@ -131,7 +131,8 @@ sections 2.3, 2.4 and 2.8 change.
 - Each device has its own device key. The device list names the device keys.
   The citizen key signs the list. The list is sealed to the citizen.
 - The data root is a random key of 32 bytes with a generation number. The
-  data of the citizen is encrypted with a key that HKDF derives from it.
+  content key of one app is
+  `HKDF-SHA256(data root, info = "arc-data-v1" || 0x00 || app id)`.
 - A wrap is the data root of one generation, sealed to one device key or to
   the citizen key. One wrap is a signed event of 565 bytes. The wrap to the
   citizen key lets the citizen key recover every generation.
@@ -140,11 +141,17 @@ sections 2.3, 2.4 and 2.8 change.
   root, sealed under the new one, so the newest root opens the chain. A
   revoked device never gets a newer generation.
 - Generation 0 is the drafts of today, sealed to the citizen key.
+- The device key signs each change of the journal and of the other data apps.
+  A phone therefore writes offline, and the signer does no work for these
+  apps. Each device holds the device list, which the citizen key signs, and
+  checks the signer of each change against it.
 - The signer also wraps the keyed root of interface spec 3.7.1 to each
   device. That key never changes. Section 2.4 derives the blob IDs from it.
 
 The storage citizen never needs a data root. It stores sealed blobs and
-wraps, and it checks device keys against grants.
+wraps, and it checks device keys against grants. The storage citizen has its
+own key. It never holds the citizen key of a user, because it is another
+party (base.md, decision 2).
 
 ### 2.2 Find and pair
 
@@ -248,13 +255,24 @@ id key   = HKDF(keyed root, info = "arc-storage-id-v1")
 - A record is one item of the local store: a journal page, an index, a KPI,
   a file, a keyed value, or a deletion. The device encrypts it before it
   leaves the device. The next device decrypts it, and gives it to its store.
-- In the first version, a record is the signed event that the store holds
-  today, and its record ID is the event ID. `core/draft` and the store rules
-  for deletion work as they are. The citizen key signs each record, so a
-  revoked device, which holds old data roots, cannot forge a record. Open
-  question 4 asks whether a local record still needs this form.
+- In the first version, a record is a signed Nostr event, as the store
+  holds today: a draft, a checkpoint, a part or a NIP-09 deletion. Its record
+  ID is the event ID. The content of the draft is encrypted with the content
+  key of its app.
+- The device key signs the record. The record names the citizen in a tag.
+  The store names a record by the citizen, its kind and its `d` tag, not by
+  its signer. Thus two devices write one page, not two copies. Section 4
+  lists this change to core.
+- A device accepts a record if the citizen key signed it, or a device key
+  that is on the device list. A revoked device still holds old data roots and
+  its own device key, so it can make a record. The storage citizen therefore
+  refuses each write of a revoked device (section 2.3). A device accepts a
+  record of a revoked device key only from a storage citizen, never from a
+  direct sync with another device.
 - The outer seal hides everything about the record: its signer, its kind,
-  its keyed `d` tag and its generation.
+  its keyed `d` tag and its generation. The blob key of the outer seal is
+  apart from the content keys of the apps, so the storage citizen does not
+  learn which app a blob belongs to.
 - The ID is a keyed hash of the record ID. Two devices that put the same
   record make the same blob. A put is therefore idempotent, as in Tarsnap.
   The keyed root never changes, so a new generation does not change the ID of
@@ -278,8 +296,8 @@ so it sees the count of devices and generations. It cannot open a wrap.
 
 The id key is the same for all storage citizens of one citizen. Two storage
 citizens that compare their IDs can see that they hold the same citizen. The
-account keys of section 2.3 do not stop this. Open question 5 asks if this
-matters.
+account keys of section 2.3 do not stop this. Decision 8 accepts this for
+the first version.
 
 ### 2.5 The introduction and the direct pipe
 
@@ -355,8 +373,10 @@ sync after each write.
 ### 2.7 Deletion
 
 A citizen deletes a journal page or a file as today: core writes a blank
-draft and a NIP-09 deletion to the local store (interface spec 3.10). The
-deletion is a record, so it goes to the storage citizen as a blob. Each other
+draft and a NIP-09 deletion to the local store (interface spec 3.10). Any
+device of the citizen can delete a record that another device wrote, because
+the store names records by the citizen. The deletion is a record, so it goes
+to the storage citizen as a blob. Each other
 device gets it on its next sync, and its store applies it.
 
 The device that deletes also sends `delete` for the blobs of the old
@@ -394,12 +414,13 @@ times.
 | Attack | Result | Defense |
 | --- | --- | --- |
 | Read a blob | It cannot. | AEAD with a key that the storage citizen never gets. |
-| Change a blob | The device refuses it. | AEAD, then the signature of the record. |
+| Change a blob | The device refuses it. | AEAD, then the signature of the record against the device list. |
 | Make a blob | The device refuses it. | Same as above. |
 | Withhold a blob | A device does not see a new version. It sees an older one, or none. | Two storage citizens. A device that holds a newer version puts it again. Not built: a signed head for each account, as in the Merkle trees of Keybase. |
 | Delete everything | The data is gone from this storage citizen. | Each device keeps a full copy. A second storage citizen keeps one too. |
 | Serve a revoked device | The revoked device gets new blobs, but it cannot open them: they use a new generation. | The revocation, and the new generation of #173. |
-| Accept a blob from a granted device that is hostile | Other devices refuse the record: it does not open, or the citizen key did not sign it. The blob costs quota. | Revoke the device. |
+| Accept a blob from a granted device that is hostile | Other devices accept its records, because its key is on the device list. | Revoke the device. After that, the storage citizen refuses its writes. |
+| Accept a forged record from a revoked device | A hostile storage citizen that works with the thief can add a record that the old device key signed. Other devices accept it. | Not closed. Two storage citizens show the difference. A later version can record the generation of each revocation, and refuse records of a revoked key under a newer generation. |
 | Join the account to a person | It can use the IP address and the times. | TURN hides the IP address from the storage citizen, at the cost of the TURN quota. Section 0 says the rest. |
 
 ### 2.10 Prior art
@@ -438,9 +459,10 @@ These documents change with it:
 | --- | --- |
 | Interface spec 3.2 | The `sealed` visibility means "local, and synced to the storage citizens of the citizen". It no longer goes to "the relays of the NIP-37 list". |
 | Interface spec 3.7.1 | The keyed root draft goes to the storage citizens. A machine that signs through NIP-46 gets the keyed root from the signer. |
-| Interface spec 3.9.1 | `append` reads from the local store only. |
+| Interface spec 3.9 and 3.10 | The device key signs each draft, checkpoint, part and deletion. A tag names the citizen. `append` reads from the local store only. |
 | `docs/KINDS.md` | Kind 10273 is added: the sealed storage list. Kind 10013 is removed from use. Kinds 31234, 1234 and 3275 stay in the local store and inside blobs. They no longer go to relays. |
-| `core/draft` | `RelayList` and `ReadRelayList` go. |
+| `core/draft` | `RelayList` and `ReadRelayList` go. `Open` accepts a draft that a device key on the device list signed, and names it by the citizen. |
+| `core/store` | For self data, the store replaces and deletes by the citizen, not by the signer. |
 | `adapters/relay/sealed` | It refuses the sealed kinds, instead of hiding them. |
 
 ### 3.2 How an older client behaves
@@ -462,10 +484,12 @@ The relay operator and the client move the data in three releases.
 1. **Release N.** Storage citizens exist, and a citizen can add one.
    `arc sync` gets the drafts from the relays, puts them in the storage
    citizen, and keeps writing to the relays. Nothing breaks.
-2. **Release N+1, breaking.** Data apps stop writing to relays. On its first
-   sync the client gets every draft from each relay, puts each one in a
-   storage citizen, and then sends a NIP-09 deletion to each relay for its
-   drafts, checkpoints, parts and kind 10013. The relay refuses new self
+2. **Release N+1, breaking.** Data apps stop writing to relays. The client
+   imports today's drafts once, as base.md section 5.3 and its decision 10
+   say. It gets every draft from each relay, writes it to the local store,
+   puts it in a storage citizen under the newest generation, and then sends
+   a NIP-09 deletion to each relay for its drafts, checkpoints, parts and
+   kind 10013. The relay refuses new self
    data, and keeps old data for reads for 90 days.
 3. **After 90 days.** The relay operator removes every event of these kinds.
 
@@ -493,11 +517,13 @@ to the store. That is the work of the runtime and an adapter.
 | `adapters/transport/storage` | New. The client: a `core/transport.Reconciler` over `sdk/direct`. | It is concrete I/O for core, as `file.Dir` and the relay transport are. |
 | `runtime` | The list of storage citizens in the local configuration, the account and blob keys, `arc storage add|ls|rm`, the sync tick. Data apps write only to the local store. | Runtime chooses the transports, as `runtime/citizen.Open` does. |
 | `cmd/arc` | `arc sync` syncs self data with the storage citizens, and mail with the relays. | — |
-| `core` | No new code. `core/draft` loses the relay list. | The client uses the existing `Reconciler` and store. The key derivation comes from #173. |
+| `core` | `core/draft` loses the relay list. `core/draft` and `core/store` name self data by the citizen, and accept a signer on the device list (section 3.1). | A device key signs each change. The sync client itself uses the existing `Reconciler` with no change. |
 | `adapters/relay/sealed` | It refuses the sealed kinds. | Section 3.1. |
 
-No change to core rules comes from this design. The changes in core come
-from #173.
+The sync needs no change to core. The device key signature does: core must
+name self data by the citizen, and check the signer against the device list.
+That change belongs to the spec that owns `core/draft` and `core/store`, and
+it lands with the device keys of #173. PR 2 of section 5 does not need it.
 
 ## 5. Recommendation
 
@@ -520,7 +546,8 @@ The smallest first step that a user can try, after PR 2. It uses the user's
 own machine as the storage citizen, with no billing:
 
 1. On a machine that is always on, such as a Mac mini at home or a virtual
-   machine of the user, serve the storage app and make an invite:
+   machine of the user, make a citizen with its own key. It must not be the
+   signer. Serve the storage app and make an invite:
    `arc-storage invite --quota 1GiB`.
 2. On the laptop, run `arc storage add <link>`, and then `arc sync`.
 3. On a second device of the same citizen, run `arc storage add <link>`, and
@@ -532,51 +559,52 @@ own machine as the storage citizen, with no billing:
 
 PR 2 does not need to wait for all of #173. Until device keys exist, the
 first version uses the citizen key as the only device key, with a grant that
-it signs for itself, and one random data root of generation 1. This gives no
+it signs for itself, and one random data root of generation 1. The citizen
+key signs each record, as today, so core does not change. This gives no
 device revocation. The blob format of section 2.4 does not change when #173
 lands.
 
-## 6. Open questions for Zim
+## 6. Decisions
 
-Zim answered three questions on 2026-10-11:
+Zim decided each item on 2026-10-11. Items 1 to 3 and item 7 came from Zim.
+The other items take the recommended answer of this proposal.
 
-- The storage role: storage citizens are the lockers of issue #172. Storage
-  is a role that a citizen serves.
-- The journal: a local app with sync, through a storage citizen that holds
-  encrypted bytes.
-- The first storage citizen: the user's own machine, with no billing. A paid
-  operator comes later.
-
-These questions are open:
-
-1. **Does the storage citizen know the citizen by a pseudonym for each
-   storage citizen, or by the citizen key?** Recommended: a pseudonym, which
-   the signer derives (section 2.3). It costs one HKDF on the signer, and it
-   stops two storage citizens from joining their accounts by key. #173
-   agrees.
-2. **Does the sealed storage list (kind 10273) stay on the relay?**
-   Recommended: yes. It is coordination data, as the relay lists of NIP-65
-   and NIP-17 are. It is the only way back for a user who has only the seed.
-   On 2026-10-11 the kind table of the NIPs README did not list 10273. No
-   other kind registry was checked.
-3. **How long does a relay keep old drafts for reads after the breaking
-   release?** Recommended: 90 days, then the operator removes them.
-4. **Must a local record stay a signed Nostr event?** Recommended: yes in the
-   first version. The store and its deletion rules then work as they are, and
-   a revoked device cannot forge a record. The cost: each write needs the
-   citizen key, so a device that is not the signer needs a path to it. NIP-37
-   named a draft by its author only because relays held it. Once nothing goes
-   to relays, a later version can let the device key sign a record. Decide
-   this with #173.
-5. **Do all storage citizens of one citizen share one id key?** Recommended:
-   yes in the first version. A device can then copy a blob from one storage
-   citizen to another without opening it. Two storage citizens that compare
-   IDs can see one citizen. Use a key for each storage citizen later, if this
-   matters.
-6. **How does a device pad a blob?** Recommended: to the next power of two,
-   with a minimum of 4 KiB. The cost is at most twice the bytes.
-7. **When does a device sync?** Recommended: on `arc sync`, when `arc serve`
-   starts, and every 15 minutes while it runs. Never after each write.
-8. **Do files keep the parts of 32 KiB?** Recommended: yes in the first
-   version, so the record format does not change. Later, a file can be one
-   large blob, and the limit of about 6 MiB goes away.
+1. **Storage is a role that a citizen serves. Storage citizens are the
+   lockers of issue #172.** Zim, 2026-10-11. Reason: ARC has only citizens
+   and the relay, so storage is no new party.
+2. **The journal and the other data apps are local apps with sync.** A storage
+   citizen holds their encrypted bytes. Zim, 2026-10-11. Reason: the relay is
+   for coordination only.
+3. **The first storage citizen is the user's own machine, with no billing.** A
+   paid storage citizen on a host apart from the relay comes later. Zim,
+   2026-10-11. Reason: it works now, and it needs no trust in another party.
+4. **A storage citizen knows a citizen by an account key for that one storage
+   citizen.** The signer derives it, and signs a grant or a revocation for
+   each device key (section 2.3). Zim, 2026-10-11. Reason: a storage citizen
+   then never sees the citizen key, and two storage citizens cannot join
+   their accounts by key.
+5. **The sealed storage list, kind 10273, stays on the relay.** Zim,
+   2026-10-11. Reason: it is coordination data, as the relay lists of NIP-65
+   and NIP-17 are, and it is the only way back for a user who has only the
+   seed. The kind table of the NIPs README did not list 10273 on 2026-10-11.
+   No other kind registry was checked.
+6. **A relay keeps old drafts for reads for 90 days after the breaking
+   release, then the operator removes them.** Zim, 2026-10-11. Reason: an
+   older device then has time to import its data.
+7. **A local record stays a signed Nostr event in the first version, and the
+   device key signs it.** The storage citizen refuses writes of a revoked
+   device, from the grant and the revocation of the signer. Zim, 2026-10-11.
+   Reason: a phone then writes offline, and the signer does no work for the
+   journal. This is decision 9 of base.md.
+8. **All storage citizens of one citizen share one id key in the first
+   version.** Zim, 2026-10-11. Reason: a device can then copy a blob from one
+   storage citizen to another without opening it.
+9. **A device pads a blob to the next power of two, with a minimum of
+   4 KiB.** Zim, 2026-10-11. Reason: this hides exact sizes, at a cost of at
+   most twice the bytes.
+10. **A device syncs on `arc sync`, when `arc serve` starts, and every 15
+    minutes while it runs. It never syncs after each write.** Zim,
+    2026-10-11. Reason: a direct path takes seconds to open.
+11. **Files keep the parts of 32 KiB in the first version.** Zim, 2026-10-11.
+    Reason: the record format then does not change. A file can become one
+    large blob later.
