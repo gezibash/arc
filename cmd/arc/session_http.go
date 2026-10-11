@@ -9,6 +9,7 @@ import (
 
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/direct"
 	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/spf13/cobra"
 )
@@ -24,55 +25,23 @@ func websocketRequest(body string) (string, error) {
 	data, err := json.Marshal(request)
 	return string(data), err
 }
-func httpSessionCLI(cmd *cobra.Command, stream *session.Stream) error {
-	reader := httpadapter.NewSessionReader(stream)
-	status := 0
-	ended := false
-	for {
-		record, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if ended {
-			return fmt.Errorf("HTTP data after end")
-		}
-		switch record.Type {
-		case "response":
-			if status != 0 || record.Status < 200 || record.Status > 599 {
-				return fmt.Errorf("invalid HTTP response status")
-			}
-			status = record.Status
-		case "body":
-			if status == 0 {
-				return fmt.Errorf("HTTP body before headers")
-			}
-			if _, err = cmd.OutOrStdout().Write(record.Data); err != nil {
-				return err
-			}
-		case "trailers":
-			if failure := record.Headers.Get("Arc-Session-Error"); failure != "" {
-				var message string
-				if json.Unmarshal([]byte(failure), &message) != nil {
-					message = failure
-				}
-				return fmt.Errorf("nested session failed: %s", message)
-			}
-		case "end":
-			ended = true
-		default:
-			return fmt.Errorf("unknown HTTP record %q", record.Type)
-		}
-	}
-	if err := stream.Wait(); err != nil {
+
+// httpSessionCLI writes the response body to standard output, and the path
+// of the body on standard error.
+func httpSessionCLI(cmd *cobra.Command, piped *httpadapter.ClientSession) error {
+	response, err := piped.Copy(cmd.OutOrStdout())
+	if err != nil {
 		return err
 	}
-	if status == 0 || !ended {
-		return fmt.Errorf("incomplete HTTP response")
+	if failure := response.Trailers.Get("Arc-Session-Error"); failure != "" {
+		var message string
+		if json.Unmarshal([]byte(failure), &message) != nil {
+			message = failure
+		}
+		return fmt.Errorf("nested session failed: %s", message)
 	}
-	if status >= 400 {
+	fmt.Fprintln(cmd.ErrOrStderr(), direct.Report(piped.Path, response.Bytes, response.Elapsed))
+	if response.Status >= 400 {
 		return iface.ExitError{Code: 22}
 	}
 	return nil

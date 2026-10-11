@@ -95,10 +95,19 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	root, err := rootDir(command)
+	if err != nil {
+		return err
+	}
 	environment := []string{
 		"ARC_IDENTITY=" + sess.Key.Name(),
 		"ARC_PUBLIC_KEY=" + sess.Key.Public.Hex(),
 		"ARC_RELAYS=" + strings.Join(relays, " "),
+		// A provider with ARC_PATH=turn runs arc relay turn as this citizen.
+		"ARC_HOME=" + root,
+	}
+	if program, err := os.Executable(); err == nil {
+		environment = append(environment, "ARC_PROGRAM="+program)
 	}
 	// The Arcfile can limit who reaches the program, and what it calls. Both
 	// resolve once, at the start: a change needs a restart.

@@ -9,6 +9,9 @@
 //	PORT            the port on 127.0.0.1 where the server listens
 //	ARC_CALL_URL    where the server posts a call to another capability
 //	ARC_CALL_TOKEN  the bearer token of each such call
+//
+// ARC_PATH sets the path of large response bodies: auto, direct, turn or
+// session. docs/direct/SPEC.md, section 3.7, defines it.
 package server
 
 import (
@@ -31,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gezibash/arc/sdk/direct"
 	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/strictjson"
@@ -69,7 +73,11 @@ func Run(ctx context.Context, command []string, opts provider.Options) error {
 		return err
 	}
 	origin := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", port)}
-	a := &adapter{token: token, web: httpadapter.New(forward(origin, opts.Log))}
+	pipes, err := direct.ProviderConfig()
+	if err != nil {
+		return err
+	}
+	a := &adapter{token: token, web: httpadapter.NewWithPipes(forward(origin, opts.Log), pipes)}
 	calls, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err

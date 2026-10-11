@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL)$' ./sdk/direct/
-- Remaining: the citizen policy, the shared offer and answer, and the pipe type of section 3.7; the http, releases, storage citizen and upload steps of [the proposal](../proposals/direct-path.md), section 6; a test that a wrong certificate fingerprint fails, section 6.
-- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. No test proves that pion refuses a wrong certificate fingerprint.
+- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestParsePolicy)$' ./sdk/direct/
+- Remaining: the releases, storage citizen and upload steps of [the proposal](../proposals/direct-path.md), section 6; a test that a wrong certificate fingerprint fails, section 6.
+- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. No test proves that pion refuses a wrong certificate fingerprint. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
 WebRTC data channel. It carries bulk bytes outside the relay. One ARC call
@@ -152,13 +152,68 @@ transferred no bytes, so the next attempt is not a replay.
 If the relay attempt fails, the error MUST start with
 `no direct path, and no path through the relay`.
 
-### 3.7 The citizen policy, the shared offer and the pipe type
+### 3.7 The policy, the offer and the pipe
 
-Not built. [The proposal](../proposals/direct-path.md), section 3.1, gives
-the planned API: the policy `auto`, `turn` or `session`, a shared `Offer`
-and `Answer` for the open request of a session, and a `Pipe` type that names
-no pion type. Today an app defines its own request, and uses the pion types
-of the data channel.
+An app that carries the offer in the open request of a session uses these
+rules. [The HTTP spec](../http/SPEC.md), section 3.7, is the first user.
+
+The policy is the choice of an end for one session:
+
+| Policy | Offerer | Answerer |
+| --- | --- | --- |
+| `auto` | The order of section 3.5 | Answers with all its addresses |
+| `direct` | The two direct attempts only | Answers with all its addresses |
+| `turn` | The relay attempt only | Answers with only an address on the TURN server of its first relay |
+| `session` | Makes no offer | Refuses each offer |
+
+- The default policy MUST be `auto`.
+- A command of `cmd/arc` takes the flag `--path`. If the flag is not set,
+  it reads the file `path` in the home of the citizen. `arc path <policy>`
+  writes that file.
+- A provider program reads `ARC_PATH`. `arc-http` stops at its start if
+  the value is not a policy. `httpadapter.New` then opens no pipe.
+- `ARC_STUN` sets the STUN server of an end, as section 3.1 defines.
+  `ARC_LOOPBACK`, if set, adds the loopback address.
+- An answerer with the policy `turn` runs `arc relay turn` for a credential.
+  It uses the program `ARC_PROGRAM`, the home `ARC_HOME` and the key
+  `ARC_IDENTITY`, which `arc serve` gives.
+
+The offer is one JSON object:
+
+```json
+{"v": 1, "sdp": "<offer>", "hold_ms": 1000, "stun": "stun:192.0.2.1:3478"}
+```
+
+- `v` MUST be 1. `sdp` holds all the addresses of the offerer.
+- `hold_ms` is the hold of section 3.5, at most 3000.
+- `stun` is the STUN server of section 3.6, step 4, in a relay attempt.
+- An answerer MUST refuse an offer that breaks one of these rules.
+
+The pipe is one data channel with the label `pipe`, reliable and ordered.
+
+- A binary message carries bytes. The writer follows section 3.4.
+- The text `end` says that the writer sent its last byte. The reader then
+  MUST send the text `ok`.
+- The writer MUST wait for `ok` before it closes the connection. If it
+  closes first, the last bytes can stay in its buffer.
+- Another text stops the reader with an error that holds the text.
+- If the connection closes before `end`, the reader MUST stop with an error.
+  It MUST NOT take the bytes so far as all of them.
+- The pipe carries bytes in each direction.
+
+An answerer holds at most 4 pipes at a time. It MUST refuse more before it
+answers. Each pipe holds sockets and buffers.
+
+A command writes one line on standard error after the bytes:
+
+```text
+path direct (host to host): 104857600 bytes in 2.4 s, 348.9 Mbit/s
+path turn (relay): 104857600 bytes in 2.5 s, 329.6 Mbit/s
+path session (relay frames): 104857600 bytes in 54.3 s, 15.5 Mbit/s
+```
+
+These lines are runs on the loopback address of one Mac. Section 8.2 gives
+the commands.
 
 ## 4. Behavior
 
@@ -224,7 +279,9 @@ An answerer that does not see the data channel open closes its end after
   finish inside the quota. If the quota runs out during a transfer, the
   relay stops relaying.
 - An answerer bounds the number of connections that it holds. The transfer
-  app holds at most 4.
+  app and the HTTP adapter hold at most 4.
+- An answerer with the policy `turn` shows only the address of its relay.
+  The relay operator pays for those bytes too.
 
 ## 7. Compatibility
 
@@ -236,6 +293,8 @@ An answerer that does not see the data channel open closes its end after
   does not answer.
 - An app that opens a pipe defines its own request. A change to the request
   is a change of that app.
+- The policy, the offer and the pipe of section 3.7 are new. The transfer
+  app keeps its own request, and does not use them.
 
 ## 8. Proof
 
@@ -251,6 +310,13 @@ An answerer that does not see the data channel open closes its end after
 - `TestRelayQuota` checks the refusal before a relay attempt when the quota
   is too small, and the TURN server of the attempt when it is large enough.
 - `TestSTUNURL` checks the default STUN server of section 3.1.
+- `TestPipe` sends 8 MiB on a pipe on the loopback address. The reader gets
+  each byte and then the end, and the writer gets `ok`.
+- `TestPipeClosedEarly` closes the writer during the bytes. The reader gets
+  an error, not the end.
+- `TestPipeAnswererRelayOnly` gives the answerer the policy `turn`, behind a
+  symmetric NAT. The path is `turn (relay)`.
+- `TestParsePolicy` checks the names of section 3.7.
 - The tests of `apps/transfer` run the order of the attempts with the built
   `arc`, a local relay and three citizens.
 
@@ -281,6 +347,38 @@ Larger steps were not safe. With a 64 KiB queue, a 16 KiB step gave 25.7 to
 retransmit window or receive buffer did not make a transfer faster. A
 smallest window of 512 KiB gave 1.1 Mbit/s with a 64 KiB queue, and
 84 Mbit/s with a 512 KiB queue.
+
+`arc session --http` measured a body of 104,857,600 bytes from `arc-http`
+on one Apple Silicon Mac, 2026-10-11. Two new citizens and a local relay
+ran on the machine. The pipe used the loopback address
+(`ARC_LOOPBACK=1 ARC_STUN=none`), because UDP from this Mac to its own LAN
+address got no answer, also from python3. The relay had no rate limit.
+Three runs of each, with the SHA-256 of each body checked (measured):
+
+| Path | Time of the body | Speed |
+| --- | --- | --- |
+| `--path direct` | 2.4 s in each run | 345.1 to 349.4 Mbit/s |
+| `--path auto` | 2.4 s in each run, on `direct (host to host)` | 345.7 to 350.4 Mbit/s |
+| `--path session` | 54.2 to 54.3 s | 15.4 to 15.5 Mbit/s |
+| `--path turn`, one run, relay with TURN on `127.0.0.1` | 2.5 s | 329.6 Mbit/s |
+
+The commands, with `arc` built from this tree:
+
+```sh
+arc --home "$W/relay" relay serve --listen 127.0.0.1:7499 --stun none
+arc --home "$W/provider" keys gen
+arc --home "$W/provider" relay add ws://127.0.0.1:7499
+ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/provider" serve "exec://$PWD/arc-http?manifest=$PWD/cmd/arc/testdata/streaming-http/interface.json&args=$PWD/origin"
+arc --home "$W/consumer" keys gen
+arc --home "$W/consumer" relay add ws://127.0.0.1:7499
+arc --home "$W/consumer" install <provider key> --yes
+ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/consumer" session --http --mode server_stream --path direct 'http+arc://<provider key>/big' '{"query":"bytes=104857600"}' > big.bin
+```
+
+`origin` is `cmd/arc/testdata/streaming-http`. The loopback and a relay with
+no rate limit flatter both paths. Through a public relay, the session
+frames gave 0.17 to 0.9 Mbit/s ([the proposal](../proposals/direct-path.md),
+section 0).
 
 The transfer app measured the pipe on real links. Its README gives the
 runs: a median of 97.0 Mbit/s on a direct path, and about 89 Mbit/s and

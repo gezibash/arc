@@ -11,9 +11,20 @@ import (
 
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/direct"
 	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/gezibash/arc/sdk/providertest"
 )
+
+// framed is an HTTP session with no pipe on stream.
+func framed(t *testing.T, stream *session.Stream) *httpadapter.ClientSession {
+	t.Helper()
+	piped, err := httpadapter.OpenSession(t.Context(), direct.DialConfig{Policy: direct.Off}, "", func(context.Context, string) (*session.Stream, error) { return stream, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return piped
+}
 
 func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {
 	stream := providertest.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
@@ -28,7 +39,7 @@ func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {
 	cmd := sessionCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	err := httpSessionCLI(cmd, stream)
+	err := httpSessionCLI(cmd, framed(t, stream))
 	var exit iface.ExitError
 	if !errors.As(err, &exit) || exit.Code != 22 || out.String() != "missing" {
 		t.Fatalf("%q %v", out.String(), err)
@@ -74,7 +85,7 @@ func TestHTTPCLIPreservesNestedSessionFailure(t *testing.T) {
 	cmd := sessionCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	if err := httpSessionCLI(cmd, stream); err == nil || !strings.Contains(err.Error(), "refused") {
+	if err := httpSessionCLI(cmd, framed(t, stream)); err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("nested failure: %v", err)
 	}
 }
