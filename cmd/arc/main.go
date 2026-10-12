@@ -720,9 +720,13 @@ func messageCommand() *cobra.Command {
 func syncCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "sync",
-		Short: "Reconcile this machine with its relays, or with a directory",
-		Long: "Without --dir, arc syncs with every relay. With --dir, it syncs with\n" +
-			"that directory: a USB stick, a shared folder, or a disk you carry.",
+		Short: "Reconcile this machine with its relays and storage citizens, or with a directory",
+		Long: "Without --dir, arc syncs mail and announcements with every relay, and\n" +
+			"self data, such as the journal, with each storage citizen. Self data\n" +
+			"never goes to a relay. The first sync imports the drafts that the\n" +
+			"relays still hold; --import runs that again. With --dir, arc syncs\n" +
+			"everything with that directory: a USB stick, a shared folder, or a\n" +
+			"disk you carry.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			sess, err := open(command)
@@ -733,7 +737,8 @@ func syncCommand() *cobra.Command {
 			sealed := sealedFilter(sess.Key.Public)
 
 			targets := sess.Relays
-			if dir, _ := command.Flags().GetString("dir"); dir != "" {
+			dir, _ := command.Flags().GetString("dir")
+			if dir != "" {
 				targets = []transport.Transport{file.Dir{Path: dir}}
 			}
 			if len(targets) == 0 {
@@ -742,22 +747,26 @@ func syncCommand() *cobra.Command {
 
 			failed := false
 			for _, t := range targets {
-				report, err := sess.Node.Sync(command.Context(), sealed, t)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
-					failed = true
-					continue
-				}
-				fmt.Printf("%s: sealed data received %d, sent %d, already held %d\n",
-					report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
-				for _, reason := range report.Refused {
-					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
-				}
-				if report.Unreadable > 0 {
-					fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
-				}
-				for _, err := range report.SendFailed {
-					fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
+				// Self data goes to a directory that the citizen carries,
+				// but never to a relay.
+				if dir != "" {
+					report, err := sess.Node.Sync(command.Context(), sealed, t)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
+						failed = true
+						continue
+					}
+					fmt.Printf("%s: sealed data received %d, sent %d, already held %d\n",
+						report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
+					for _, reason := range report.Refused {
+						fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
+					}
+					if report.Unreadable > 0 {
+						fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
+					}
+					for _, err := range report.SendFailed {
+						fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
+					}
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
@@ -776,6 +785,16 @@ func syncCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
 				}
 			}
+			if dir == "" {
+				cfg, err := selfSyncConfig(command, sess)
+				if err != nil {
+					return err
+				}
+				again, _ := command.Flags().GetBool("import")
+				if syncSelf(command.Context(), sess, cfg, again) != nil {
+					failed = true
+				}
+			}
 			if failed {
 				return errors.New("some transports failed")
 			}
@@ -783,6 +802,7 @@ func syncCommand() *cobra.Command {
 		},
 	}
 	command.Flags().String("dir", "", "sync with this directory instead of the relays")
+	command.Flags().Bool("import", false, "import the drafts that the relays hold again")
 	return command
 }
 

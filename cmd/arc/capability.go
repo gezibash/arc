@@ -224,6 +224,30 @@ func serve(command *cobra.Command, args []string) error {
 
 	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.Key.Name(), id, sess.Key.Public.Hex())
 
+	// Self data syncs with the storage citizens now, and each
+	// selfSyncEvery while the service runs.
+	self, err := selfSyncConfig(command, sess)
+	if err != nil {
+		return err
+	}
+	self.Out, self.Errs = os.Stderr, os.Stderr
+	go func() {
+		tick := time.NewTicker(selfSyncEvery)
+		defer tick.Stop()
+		for {
+			if hasStorage(installs) {
+				if err := syncSelf(ctx, sess, self, false); err != nil && ctx.Err() == nil {
+					log.Warn("self data did not sync", "error", err)
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	refresh := time.NewTicker(catalog.Refresh)

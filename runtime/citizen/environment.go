@@ -18,6 +18,7 @@ import (
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/lists"
+	"github.com/gezibash/arc/runtime/selfsync"
 )
 
 // Environment is what a capability needs from this machine.
@@ -81,11 +82,18 @@ func (e *Environment) relaysOf(urls []string) []transport.Transport {
 // citizen's relays did not take stays in the store, and the next sync sends
 // it. An event for named relays, such as a group's, fails when none of them
 // takes it: no other path reaches a group.
+//
+// Self data, such as a draft of the journal, stays in the store. It goes to
+// no relay; arc sync gives it to the storage citizens of the citizen.
 func (e *Environment) Publish(ctx context.Context, events []nostr.Event, urls []string) error {
 	targets := e.relaysOf(urls)
 	unsent := map[string]error{}
 	for _, event := range events {
-		result, sent, err := e.Session.Node.Publish(ctx, event, targets)
+		to := targets
+		if urls == nil && selfsync.Local(event) {
+			to = nil
+		}
+		result, sent, err := e.Session.Node.Publish(ctx, event, to)
 		if err != nil {
 			return err
 		}
@@ -188,7 +196,11 @@ func (e *Environment) Fetch(ctx context.Context, filter nostr.Filter, urls []str
 }
 
 // Watch passes on new events from every relay, until all of them end.
+// Self data never reaches a relay, so a watch of self data reads the store.
 func (e *Environment) Watch(ctx context.Context, filter nostr.Filter, urls []string) (<-chan transport.Received, error) {
+	if urls == nil && len(filter.Kinds) > 0 && !slices.ContainsFunc(filter.Kinds, func(k nostr.Kind) bool { return !slices.Contains(selfsync.Kinds, k) }) {
+		return e.watchStore(ctx, filter), nil
+	}
 	targets := e.relaysOf(urls)
 	if len(targets) == 0 {
 		return nil, errors.New("no relay to watch: add one with arc relay add")
@@ -310,4 +322,48 @@ func (e *Environment) List(name string) ([]nostr.PubKey, error) {
 		}
 	}
 	return out, nil
+}
+
+// storePoll is the time between two reads of the store by a watch of self
+// data. Another command of this citizen, or a sync, writes the store.
+const storePoll = 250 * time.Millisecond
+
+// watchStore passes on each event that matches and that the store gains,
+// until ctx ends.
+func (e *Environment) watchStore(ctx context.Context, filter nostr.Filter) <-chan transport.Received {
+	out := make(chan transport.Received)
+	go func() {
+		defer close(out)
+		seen := map[nostr.ID]bool{}
+		tick := time.NewTicker(storePoll)
+		defer tick.Stop()
+		for {
+			events, err := e.Session.Node.Store.Query(filter)
+			if err != nil {
+				select {
+				case out <- transport.Received{Err: err}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			slices.SortFunc(events, func(a, b nostr.Event) int { return int(a.CreatedAt) - int(b.CreatedAt) })
+			for _, event := range events {
+				if seen[event.ID] {
+					continue
+				}
+				seen[event.ID] = true
+				select {
+				case out <- transport.Received{Event: event}:
+				case <-ctx.Done():
+					return
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	return out
 }

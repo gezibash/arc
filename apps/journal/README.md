@@ -2,8 +2,11 @@
 
 Journal adds local commands over encrypted Markdown pages. Its manifest runs
 through ARC's shared application runtime; it needs no dedicated server program.
-The manifest author does not receive the pages or their encryption key. ARC can
-sync the encrypted events through a relay or a carried directory.
+The manifest author does not receive the pages or their encryption key.
+
+The journal is a local app. Its pages live in the local store of each device,
+and never go to a relay. `arc sync` syncs them with your storage citizens, as
+encrypted blobs; see "Sync between devices".
 
 ## Install its commands
 
@@ -58,6 +61,44 @@ arc journal ls --notebook arc/design --json | jq -r '.tags.d'
 
 Check `arc help journal` for all filters and output options. Structured output
 can be consumed with ordinary shell tools.
+
+## Sync between devices
+
+A storage citizen holds encrypted copies of the pages for each device of a
+citizen. It cannot read them. The first storage citizen is a machine of your
+own, such as a Mac mini at home. [The storage app](../storage/README.md) shows
+how to serve it.
+
+On each device, install the storage citizen once, and then sync:
+
+```sh
+arc install <key of the storage citizen> storage
+arc sync
+```
+
+A sync runs on `arc sync`, when `arc serve` starts, and every 15 minutes while
+`arc serve` runs. A write does not start a sync. A page from another device
+therefore appears after a sync on both devices. `arc journal tail` shows each
+change on this device at once, and each change from another device after a
+sync. With no storage citizen, the pages stay on this device, and `arc sync`
+says so. `arc sync --dir <path>` still carries the pages on a USB stick.
+
+Each change is one blob. The device pads it to a power of two, at least 4 KiB,
+encrypts it, and signs the change inside the encrypted bytes. A machine that
+holds the citizen key signs with it. A device that signs through a bunker signs
+with its device key; its bunker must run with `--decrypt all`, so that the
+device opens the reply of the storage citizen. If the citizen has a device
+list, another device takes only the changes of the citizen key and of a device
+on the list. [The storage spec](../../docs/storage/SPEC.md) defines
+the blob and the sync.
+
+### Pages on the relays
+
+An older arc wrote each page to the relays. The first `arc sync` of this arc
+imports those pages into the local store once, and puts them on the storage
+citizen. `arc sync --import` runs the import again; it takes nothing twice.
+The pages stay on the relays for older clients. An older arc does not see the
+pages that this arc writes, so update each device.
 
 ## Storage and search
 

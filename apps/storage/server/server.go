@@ -23,9 +23,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gezibash/arc/apps/storage/wire"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
+	wire "github.com/gezibash/arc/sdk/storage"
 	"github.com/pion/webrtc/v4"
 )
 

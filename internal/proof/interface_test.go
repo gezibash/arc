@@ -290,23 +290,33 @@ func TestInterface(t *testing.T) {
 	t.Log("phase A holds: manifests, arguments, templates, call, format")
 
 	// Phase B: sealed data. The journal and the files are manifests, with no
-	// code for them in arc. Two machines hold one key.
-	laptop := caller
-	desktop := home("desktop")
+	// code for them in arc. Two machines hold one key. Sealed data stays on
+	// each machine, and crosses a storage citizen on each sync. The pipes
+	// open on this machine, with the loopback address and no STUN server.
+	laptop := caller.with(loopback...)
+	desktop := home("desktop").with(loopback...)
 	desktop.input(read(t, keyfile(t, caller.home)), "keys", "add")
 	desktop.run("relay", "add", url)
+	storeKey := storageCitizen(t, work, url, callerKey)
+	sync := func() {
+		t.Helper()
+		laptop.run("sync")
+		desktop.run("sync")
+	}
 
 	laptop.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
 	laptop.run("announce", filepath.Join(repo, "apps/files/manifest.json"))
 	for _, one := range []machine{laptop, desktop} {
 		one.run("install", callerKey, "journal", "--yes")
 		one.run("install", callerKey, "files", "--yes")
+		one.run("install", storeKey, "storage", "--yes")
 	}
-	t.Log("ok: two machines install the journal and the files from their author")
+	t.Log("ok: two machines install the journal, the files and a storage citizen")
 
 	laptop.input("---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\n",
 		"journal", "write", "hrs/ablations/1", "--title", "LR sweep")
 	laptop.run("journal", "append", "hrs/ablations/1", "next:", "try", "warmup")
+	sync()
 	equal(journalDoc(t, begin, desktop.run("journal", "read", "hrs/ablations/1")),
 		"---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup", "the desktop read")
 	contains(desktop.run("journal", "ls"), "hrs/ablations/1\tLR sweep", "journal ls")
@@ -325,6 +335,7 @@ func TestInterface(t *testing.T) {
 	}
 	tail.stop()
 	t.Log("ok: two commands of one identity run at once")
+	sync()
 
 	revisions := 0
 	history := desktop.run("journal", "history", "hrs/ablations/1")
@@ -343,6 +354,7 @@ func TestInterface(t *testing.T) {
 
 	laptop.run("journal", "kpi", "set", "hrs", "auc", "0.85")
 	laptop.run("journal", "kpi", "set", "hrs", "auc", "0.87", "--note", "warmup")
+	sync()
 	contains(desktop.run("journal", "kpi", "latest", "hrs"), "auc\t0.87\twarmup", "kpi latest")
 	if log := desktop.run("journal", "kpi", "log", "hrs", "auc"); strings.Count(log, "\n") != 2 {
 		t.Fatalf("kpi log shows %d lines, want 2:\n%s", strings.Count(log, "\n"), log)
@@ -357,6 +369,7 @@ func TestInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := ifaceTrim(laptop.run("files", "put", filepath.Join(work, "weights.bin")))
+	sync()
 	contains(desktop.run("files", "list"), "weights.bin\t200000 bytes", "files list")
 	desktop.run("files", "get", id, "--output", filepath.Join(work, "weights-back.bin"))
 	back, err := os.ReadFile(filepath.Join(work, "weights-back.bin"))
@@ -366,12 +379,13 @@ func TestInterface(t *testing.T) {
 	if !bytes.Equal(weights, back) {
 		t.Fatalf("the file came back changed: %d bytes, want the same 200000 bytes", len(back))
 	}
-	t.Log("ok: a binary file of 200000 bytes crosses the relay in parts, and its hash checks")
+	t.Log("ok: a binary file of 200000 bytes crosses the storage citizen in parts, and its hash checks")
 
 	// A stick made before the delete must not bring the page back.
 	oldStick := filepath.Join(work, "old-stick")
 	laptop.run("sync", "--dir", oldStick)
 	laptop.run("journal", "delete", "hrs/ablations/1")
+	sync()
 	if page := desktop.try("", "journal", "read", "hrs/ablations/1").Stdout; page != "" {
 		t.Fatalf("the desktop still reads the deleted page:\n%s", page)
 	}
@@ -534,6 +548,10 @@ func TestInterface(t *testing.T) {
 	equal(journalDoc(t, begin, agent.run("journal", "read", "ops/agent/1")), agentPage, "the agent read")
 	owner.run("relay", "add", url)
 	owner.run("install", callerKey, "journal", "--yes")
+	// The page stays on the machine of the agent. A stick carries it.
+	agentStick := filepath.Join(work, "agent-stick")
+	agent.run("sync", "--dir", agentStick)
+	owner.run("sync", "--dir", agentStick)
 	equal(journalDoc(t, begin, owner.run("journal", "read", "ops/agent/1")), agentPage, "the owner, with the key, read")
 	t.Log("ok: an agent keeps a journal through the bunker, and its owner reads the same page with the key")
 

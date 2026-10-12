@@ -23,9 +23,9 @@ import (
 
 	"github.com/gezibash/arc/apps/storage/client"
 	"github.com/gezibash/arc/apps/storage/server"
-	"github.com/gezibash/arc/apps/storage/wire"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/stdio"
+	wire "github.com/gezibash/arc/sdk/storage"
 )
 
 const usage = `usage:
@@ -250,7 +250,7 @@ func clientFlags(flags *flag.FlagSet) *settings {
 
 // open opens a pipe to the storage citizen, and says the path on standard
 // error.
-func open(ctx context.Context, s *settings, need int64) (*client.Session, error) {
+func open(ctx context.Context, s *settings, need int64) (*wire.Conn, error) {
 	stun := direct.STUNURL(s.stun, nil)
 	if s.stun == "" {
 		relays, err := s.client.Arc.Relays(ctx)

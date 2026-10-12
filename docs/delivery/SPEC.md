@@ -787,12 +787,13 @@ A provider publishes its relay list with NIP-65:
 ### 4.11 Data that a citizen keeps for itself
 
 Some data belongs to one citizen only, such as a private journal. The citizen
-seals it to its own key, and syncs it between its own nodes and its chosen
-relays. No provider takes part. The data is a NIP-37 draft, and `core/draft`
-makes it. See docs/interface/SPEC.md, section 3.9.
+seals it to its own key, and keeps it in the local store. It syncs it between
+its own nodes through its storage citizens, or a directory that it carries. It
+does not send it to a relay. The data is a NIP-37 draft, and `core/draft`
+makes it. See docs/interface/SPEC.md, section 3.9, and docs/storage/SPEC.md.
 
-A relay takes a draft only from its author, because the draft carries the
-NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay
+An older client sends drafts to its relays. A relay takes a draft only from
+its author, because the draft carries the NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay
 with the citizen's key. The store applies a NIP-09 deletion of an author to
 the events of that author, and refuses them after that, so a stick or a relay
 cannot bring a deleted event back.

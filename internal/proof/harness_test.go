@@ -20,8 +20,8 @@ import (
 var (
 	// repo is the root of the checkout.
 	repo string
-	// programs holds the built programs: arc, arc-exec, arc-sqlite and
-	// arc-releases.
+	// programs holds the built programs: arc, arc-exec, arc-sqlite,
+	// arc-releases and arc-storage.
 	programs string
 )
 
@@ -45,6 +45,7 @@ func run(m *testing.M) int {
 		"arc-exec":     "./apps/exec/cmd/arc-exec",
 		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
 		"arc-releases": "./apps/releases/cmd/arc-releases",
+		"arc-storage":  "./apps/storage/cmd/arc-storage",
 	} {
 		if err := build(filepath.Join(programs, name), pkg, ""); err != nil {
 			fmt.Fprintln(os.Stderr, err)

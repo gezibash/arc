@@ -103,7 +103,7 @@ names relays.
 | Visibility | Carried as | Goes to |
 | --- | --- | --- |
 | `public` | The event itself, as its NIP defines. | The citizen's NIP-65 write relays. |
-| `sealed` | A NIP-37 draft. The event is sealed to the citizen's own key with NIP-44, and the draft carries `["-"]`, the NIP-70 tag, so only the citizen can publish it to a relay. | The relays of the citizen's NIP-37 list, kind 10013. |
+| `sealed` | A NIP-37 draft. The event is sealed to the citizen's own key with NIP-44, and the draft carries `["-"]`, the NIP-70 tag. | The local store only. `arc sync` gives it to the storage citizens of the citizen, as encrypted blobs, see [the storage spec](../storage/SPEC.md). It never goes to a relay. |
 | `private` | A rumor inside a NIP-59 gift wrap, through the mail layer. | Each recipient's NIP-17 list, kind 10050, and couriers. |
 | `group` | The event, with an `h` tag that names the group, and `["-"]`. | The relay of the group, see section 3.3. |
 
@@ -333,8 +333,8 @@ history of the draft, as NIP-37 defines.
 
 - `replace` makes the new content the whole of the event.
 - `append` reads the current draft, adds the new content at its end, and
-  publishes the result. It reads from the store first, then from the relays of
-  the citizen's NIP-37 list.
+  publishes the result. It reads from the store first, then from the relays,
+  which hold only the drafts of an older client (section 7.5).
 
 #### 3.9.2 Content larger than one event
 
@@ -343,12 +343,12 @@ the event itself, so a Nostr client reads it whole. Longer content travels in
 parts:
 
 1. The event holds the first 32 KiB, cut at a line end.
-2. Core publishes the rest in parts of at most 32 KiB, as events of kind 3275.
+2. Core keeps the rest in parts of at most 32 KiB, as events of kind 3275.
    Each part is sealed to the citizen, carries `["-"]`, and names the event's
    coordinate or ID in its `a` or `e` tag.
 3. The event gains a tag `parts` that lists the IDs of the parts in order,
    and a tag `lines` that gives the number of line ends in the content and in
-   each part. Core publishes the parts first, and the event last.
+   each part. Core keeps the parts first, and the event last.
 
 A Nostr client that does not know kind 3275 reads the first 32 KiB. A page of
 at most 32 KiB is therefore a plain NIP-37 draft. A body holds at most 256
@@ -366,8 +366,10 @@ The command's usual output pipeline renders the resulting records.
 
 ### 3.10 The action delete
 
-`delete` asks relays to remove events, as NIP-09 defines. It can name only the
-citizen's own events of kinds that the manifest names.
+`delete` removes events, as NIP-09 defines. It can name only the citizen's
+own events of kinds that the manifest names. For a sealed kind, the request
+stays in the store, and `arc sync` gives it to the storage citizens. For
+another kind, it goes to the relays.
 
 ```json
 "delete": {"kind": "page", "d": "{{address|keyed:page}}"}
@@ -378,9 +380,9 @@ reads as deleted. It then publishes a kind 5 request with an `a` tag for the
 draft, an `e` tag for the current version of the draft and for each checkpoint
 and part, and a `k` tag for each kind. The request is one second older than
 the blank draft, so it removes every older version, and the blank draft stays.
-A relay and the store therefore drop every version, as NIP-09 defines. The
-store also refuses each of these events after the request, so a stick made
-before the delete does not bring the page back.
+The store and each other device therefore drop every version, as NIP-09
+defines. The store also refuses each of these events after the request, so a
+stick or a storage citizen does not bring the page back.
 
 A new version of a draft is always newer than the version before it, by at
 least one second, so it replaces that version.
@@ -413,7 +415,9 @@ Each value can be a template. A query asks every relay that the visibility
 names, and keeps the newest version of each replaceable event, as NIP-01
 defines. The store never goes back to an older version that it has seen.
 
-A query of a sealed kind reads the drafts, and filters them by their `k` tag.
+A query of a sealed kind reads the drafts in the store, and filters them by
+their `k` tag. It also asks the relays, which hold only the drafts of an older
+client (section 7.5).
 A query of a private kind first syncs the mail with each relay, then reads the
 messages that this citizen received and sent, from their seals. A query of a
 group kind reads the group's relay, and not the store: a post that an admin
@@ -426,6 +430,9 @@ answer.
 kinds. It does not run for private kinds yet. It runs the pipeline on each event that
 matches, first on the stored events, then on each new one as it arrives. It
 ends when the citizen stops it, or when every relay ends the subscription.
+A watch of a sealed kind reads the store each 250 ms, and no relay: it shows
+each change of a command on this machine, and each change that a sync
+brings.
 
 ### 3.13 Records
 
@@ -886,7 +893,28 @@ interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.m
 [journal](../../apps/journal/README.md), [dm](../../apps/dm/README.md)
 and [files](../../apps/files/README.md).
 
-### 7.4 Limits of the Nostr standards
+### 7.4 Sealed data moved off the relays
+
+Before this change, a sealed event went to the relays of the citizen's NIP-37
+list, kind 10013, and `arc sync` reconciled it with each relay. Now it stays
+in the local store, and syncs with the storage citizens of the citizen. The
+[storage spec](../storage/SPEC.md) defines the sync. Section 7.5 says how an
+older client behaves.
+
+### 7.5 An older client
+
+- An older client keeps writing sealed events to its relays. A newer client
+  still reads them from the relays when it queries a sealed kind, and keeps
+  them. `arc sync` imports all of them once. Thus the newer client sees the
+  pages of the older client.
+- An older client does not see the pages of a newer client, because they do
+  not go to a relay. The user updates each device.
+- A newer client does not delete the drafts on the relays. They stay for 90
+  days, for the older clients. A later step deletes them (storage spec,
+  section 7).
+- A relay does not change. It still takes sealed events from their author.
+
+### 7.6 Limits of the Nostr standards
 
 - **Parts are ARC's own.** No NIP carries private content larger than one
   event. A Nostr client reads the first 32 KiB of a longer page, and no more.
@@ -902,6 +930,6 @@ and [files](../../apps/files/README.md).
 | Phase | Scope | Proof |
 | --- | --- | --- |
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
-| B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, the NIP-37 relay list, parts, `delete`. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page crosses a relay and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
+| B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, parts, `delete`, kept in the local store. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page and a file cross a storage citizen and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. dm in version 1. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
