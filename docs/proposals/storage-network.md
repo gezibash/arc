@@ -719,6 +719,9 @@ harness of `DIRECT_LINK_RTT_MS` measures the result with a real round trip
   format 1. Section 3.4 of the storage spec then skips it after the first
   refusal (`docs/storage/SPEC.md:135-137`). The older device does not see
   data that a newer device wrote as pieces. The user updates it.
+  Build step 6 found that this is wrong: the client of an older device
+  refuses a get whose size is not a power of two, so its whole sync with
+  that storage citizen fails. Section 7 of the storage spec states it.
 - An older device puts its own records as blobs of format 1. A newer device
   reads them, codes them, and deletes the blob. The tombstone of 90 days
   then answers each new put of that blob with `tombstoned`
