@@ -40,12 +40,15 @@ type Store interface {
 // Blobs is one open session with a storage citizen. *storage.Conn is one.
 // GetMany and PutMany keep several requests in flight on a storage app
 // that supports it, and send one request at a time to an older one.
-// Pieces says if the app keeps the tags of pieces.
+// Pieces says if the app keeps the tags of pieces. Audit returns
+// storage.ErrOlderApp if the app has no audits.
 type Blobs interface {
 	Pieces(ctx context.Context) (bool, error)
 	List(ctx context.Context, after uint64) ([]storage.Entry, uint64, error)
 	GetMany(ctx context.Context, ids []string, f func(id string, blob []byte, err error) error) error
 	PutMany(ctx context.Context, blobs []storage.Blob) ([]storage.PutResult, error)
+	DeleteMany(ctx context.Context, ids []string) ([]storage.Item, error)
+	Audit(ctx context.Context, ids []string, nonce []byte) ([]storage.Item, error)
 }
 
 // putChunk is the count of records that a device seals before it puts
@@ -70,6 +73,22 @@ type Syncer struct {
 	Devices func(ctx context.Context) (devices.List, bool, error)
 	// State is the directory of the cursor of each storage citizen.
 	State string
+	// Repair lets the sync audit, rebuild, move and delete pieces
+	// (docs/storage/SPEC.md, section 4.6). arc serve repairs on each tick;
+	// arc sync only with --repair.
+	Repair bool
+	// TURN lets repair use a pipe through TURN. By default repair waits
+	// for a direct path.
+	TURN bool
+	// Now gives the time of the audits. Nil is time.Now.
+	Now func() time.Time
+}
+
+func (s *Syncer) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 // Report says what one sync did.
@@ -90,9 +109,8 @@ type Report struct {
 	// Unreadable holds one reason for each blob that the device lacks and
 	// cannot rebuild now: fewer than k of its pieces answered.
 	Unreadable []string
-	// Mixed is the number of blobs whose pieces belong to seals with
-	// fewer than k pieces each. A later step repairs them.
-	Mixed int
+	// Repair says what repair did, or what it would do.
+	Repair RepairReport
 	// Refused holds one reason for each blob or piece that the device did
 	// not take.
 	Refused []string
@@ -112,6 +130,16 @@ type SideReport struct {
 	// Old says that its storage app keeps no tags. The device puts only
 	// blobs of format 1 on it.
 	Old bool
+	// Audited is the number of pieces that the audit checked, and
+	// AuditFailed the number that were absent or changed.
+	Audited, AuditFailed int
+	// Suspect says that 3 or more pieces failed the audits of today.
+	Suspect bool
+	// FailedToday is the number of pieces that failed the audits of today.
+	FailedToday int
+	// Empty says that a draining storage citizen holds no piece and no
+	// blob now. The user can mark it gone.
+	Empty bool
 	// Done is the end of the last request to it.
 	Done time.Time
 	// Err says why the sync with it failed.
@@ -147,6 +175,20 @@ type state struct {
 	// SilentSince is the Unix time of the first failed open after the
 	// last pipe that opened. It is 0 while the storage citizen answers.
 	SilentSince int64 `json:"silent_since,omitempty"`
+	// Lost holds each listed piece that failed an audit or did not open.
+	// It counts for no seal, and repair replaces it.
+	Lost map[string]bool `json:"lost,omitempty"`
+	// Proofs holds, for some pieces, a secret nonce and the audit proof
+	// of the bytes that the device put or got, in base64. An audit spends
+	// it.
+	Proofs map[string]string `json:"proofs,omitempty"`
+	// Audited is the Unix time of the last audit.
+	Audited int64 `json:"audited,omitempty"`
+	// AuditDay is the day of FailedToday, in days since 1970 in UTC.
+	AuditDay int64 `json:"audit_day,omitempty"`
+	// FailedToday is the number of pieces that failed the audits of
+	// AuditDay.
+	FailedToday int `json:"failed_today,omitempty"`
 }
 
 // SilentWarning is the time with no answer after which each sync warns
@@ -185,7 +227,8 @@ func (s *Syncer) statePath(name string) string {
 }
 
 func (s *Syncer) load(name string) (state, error) {
-	st := state{V: stateVersion, Remote: map[string]bool{}, Tags: map[string]string{}, Seen: map[string]bool{}}
+	st := state{V: stateVersion, Remote: map[string]bool{}, Tags: map[string]string{}, Seen: map[string]bool{},
+		Lost: map[string]bool{}, Proofs: map[string]string{}}
 	raw, err := os.ReadFile(s.statePath(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return st, nil
@@ -207,6 +250,12 @@ func (s *Syncer) load(name string) (state, error) {
 	}
 	if st.Seen == nil {
 		st.Seen = map[string]bool{}
+	}
+	if st.Lost == nil {
+		st.Lost = map[string]bool{}
+	}
+	if st.Proofs == nil {
+		st.Proofs = map[string]string{}
 	}
 	return st, nil
 }

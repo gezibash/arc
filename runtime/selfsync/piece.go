@@ -71,13 +71,16 @@ func (k Keys) PieceIDKey(storage nostr.PubKey) ([]byte, error) {
 	return hkdf.Key(sha256.New, k.keyed, nil, "arc-storage-piece-id-v1"+string(storage[:]), 32)
 }
 
-// PieceID names the piece index of a blob on one storage citizen:
-// HMAC-SHA256 of its piece ID key, the 32 bytes of the blob ID and the
-// index as one byte, in hex.
-func PieceID(idKey []byte, blob string, index int) string {
+// PieceID names the piece index of one seal of a blob on one storage
+// citizen: HMAC-SHA256 of its piece ID key, the 32 bytes of the blob ID,
+// the 8 bytes of the seal and the index as one byte, in hex. A new seal
+// thus gets new IDs, so its puts never meet a piece or a tombstone of an
+// older seal.
+func PieceID(idKey []byte, blob string, seal SealID, index int) string {
 	raw, _ := hex.DecodeString(blob)
 	mac := hmac.New(sha256.New, idKey)
 	mac.Write(raw)
+	mac.Write(seal[:])
 	mac.Write([]byte{byte(index)})
 	return hex.EncodeToString(mac.Sum(nil))
 }

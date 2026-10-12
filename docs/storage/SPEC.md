@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
-- Remaining: the steps that section 8.2 names: the device side of audits and drain (build step 7b), the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, the removal of the old drafts from the relays, a new seal for a blob with fewer than k pieces of each seal, repair, and the move of blobs of format 1 to pieces.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a piece of Reed-Solomon; the audit hashes the stored bytes of each ID, and does not read a tag. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. No test runs a pipe through TURN for the rule that a missing piece waits for a direct path; a unit test marks a side as relayed. The proof of the pieces runs one older storage app, built from commit d53e91b. A one-off run of `arc` of commit d53e91b against three storage citizens with pieces failed each sync with `the storage citizen announced a blob of 2093 bytes`; no test keeps it. `TestStoragePieces` needs commit d53e91b in the checkout, so a shallow clone fails it. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time.
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
+- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, the removal of the old drafts from the relays, the end of a drain on the signer, a `drain` request from the device, and the move of blobs of format 1 to pieces.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test drains a storage citizen that holds blobs of format 1. The proof of the pieces runs one older storage app, built from commit d53e91b. A one-off run of `arc` of commit d53e91b against three storage citizens with pieces failed each sync with `the storage citizen announced a blob of 2093 bytes`; no test keeps it. `TestStoragePieces` needs commit d53e91b in the checkout, so a shallow clone fails it. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -463,9 +463,9 @@ get the blob.
 - The device computes the expected proof from the bytes of the blob.
   Thus it holds the bytes, or it computed the proof for a nonce at a time
   when it held them. `arc-storage audit` pads the local file again. A
-  device of `arc` gets each blob once in its sync (section 4.1); a later
-  step keeps proofs for nonces then. A device with no expected proof gets
-  the blob and opens it, as section 6.9 of
+  device of `arc` keeps one proof for a secret nonce of a piece after it
+  put the piece or got it (section 4.6). A device with no kept proof gets
+  the piece and opens it, as section 6.9 of
   [the storage network proposal](../proposals/storage-network.md) says.
 - The audit names a blob by its ID. A piece of Reed-Solomon has its own ID
   on the storage citizen, so the same request audits a piece. The proof
@@ -492,7 +492,7 @@ shards   = RS(k, 2k).Split+Encode(B)                             2k shards of ce
 header   = blob id (32) || seal (8) || k (1) || index (1) || log2 |B| (1)
 tag      = gen (4) || nonce1 (24) || XChaCha20-Poly1305(piece key, nonce1, header, aad = gen)
 piece    = 0x02 || gen (4) || nonce2 (24) || XChaCha20-Poly1305(piece key, nonce2, shards[index], aad = tag)
-piece id = HMAC-SHA256(piece id key of the storage citizen, blob id (32) || index (1))
+piece id = HMAC-SHA256(piece id key of the storage citizen, blob id (32) || seal (8) || index (1))
 rank     = HMAC-SHA256(placement key, blob id (32) || key of the storage citizen (32))
 ```
 
@@ -517,10 +517,14 @@ rank     = HMAC-SHA256(placement key, blob id (32) || key of the storage citizen
   - `placement key = HKDF-SHA256(keyed root, info = "arc-storage-place-v1")`.
 - The device MUST seal each new piece with the newest data root that it
   holds, as it seals a blob.
-- The blob ID and the index go into the piece ID as 33 bytes. Each storage
-  citizen has its own piece id key, so two storage citizens show no common
-  piece ID. This replaces decision 8 of the storage proposal for pieces:
-  a device never copies a piece between storage citizens.
+- The blob ID, the seal and the index go into the piece ID as 41 bytes.
+  Each storage citizen has its own piece id key, so two storage citizens
+  show no common piece ID. This replaces decision 8 of the storage
+  proposal for pieces: a device never copies a piece between storage
+  citizens under one ID.
+- A new seal of a blob thus has new piece IDs. Its puts never meet a piece
+  or a tombstone of an older seal of the blob on the same storage citizen
+  (section 4.6).
 - **Placement.** The device orders the storage citizens of a blob by
   `rank`, highest first. Index i of a new blob goes to the i-th storage
   citizen in that order that is active, has `pieces`, and has an open pipe.
@@ -557,6 +561,7 @@ fails does not stop the others.
    of that storage citizen.
 3. Send `hello` on each pipe, and keep if the app has `pieces`. List from
    the cursor of each storage citizen, and keep each ID and its tag.
+   In a sync that repairs, audit each storage citizen (section 4.6).
 4. Build the piece map (section 3.10). For each blob that the store does not
    hold:
    - If a storage citizen with an open pipe lists a blob of format 1, get
@@ -564,7 +569,9 @@ fails does not stop the others.
    - Else take the seal with the most pieces on open pipes, and at least k.
      Get k of its pieces, from the storage citizens that rank highest, all
      at the same time. Check each piece (section 3.5). If a piece fails,
-     get another piece of the seal. Rebuild the blob from k shards.
+     get another piece of the seal. Rebuild the blob from k shards. A
+     piece that does not open, or that the app answers `not_found`, is
+     lost (section 4.6).
    - Open the blob, check it (section 3.5), and give the record to the
      store. The store applies a deletion, and refuses a record that a
      deletion names.
@@ -580,17 +587,14 @@ fails does not stop the others.
      active storage citizens with `pieces` have an open pipe, put nothing:
      the record waits, and the sync fails. With k or more but fewer than t,
      put what can go. A later sync adds the rest.
-   - If one seal has k pieces or more, keep it. If it has fewer than
-     min(S, 2k) pieces, and an active storage citizen with a direct pipe
-     holds no piece of the blob, get k pieces, rebuild the blob, code it
-     again with the same seal, and put each missing index. Each other piece
-     stays. A pipe through TURN carries no such piece (proposal, decision
-     7).
-   - If the listings show pieces, but fewer than k of each seal, do
-     nothing, and print a note. A later step seals the record again.
+   - If a storage citizen lists a piece of the blob, also a lost piece,
+     leave the blob to repair (section 4.6).
    Puts go to the storage citizens at the same time. A `draining` storage
-   citizen gets no put.
-6. Keep the cursor, the IDs, the tags and the feature `pieces` in
+   citizen gets no new blob.
+6. In a sync that repairs, repair each blob (section 4.6). Else count the
+   blobs that need repair.
+7. Keep the cursor, the IDs, the tags, the feature `pieces`, the lost
+   pieces, the kept proofs and the record of the audits in
    `<home>/selfsync/<key of the storage citizen>.json`, and the blob IDs
    that the device got in `<home>/selfsync/seen.json`.
 
@@ -620,11 +624,12 @@ It prints this at each sync. Only the user marks a storage citizen `gone`.
 The count starts at the first failed open, not at the last answer. Thus a
 device that was off itself for 7 days does not warn at its first sync.
 
-Steps 4 and 5 keep requests in flight on a storage app with `batch`
-(section 3.3): step 4 rebuilds 256 blobs at a time, and step 5 seals 64
-records at a time and keeps 32 puts in flight on each pipe. Steps 4 and 5 run in this
-order. A device that was offline thus gets a
-deletion before it could put the old records back.
+Steps 4, 5 and 6 keep requests in flight on a storage app with `batch`
+(section 3.3): step 4 rebuilds 256 blobs at a time, step 5 seals 64
+records at a time and keeps 32 puts in flight on each pipe, and step 6
+repairs 256 blobs at a time. Steps 4, 5 and 6 run in this order. A device
+that was offline thus gets a deletion before it could put the old records
+back.
 
 ### 4.2 The import
 
@@ -727,6 +732,139 @@ run while the app runs. Each change counts at the next call.
 | `arc-storage refuse <account>` | Refuses the request. The next join gets `refused`. |
 | `arc-storage account set <account> [-quota] [-plan] [-expires]` | Changes the record of an admitted account. |
 | `arc-storage account close <account>` | Makes the account `closing`. |
+
+### 4.6 Audits and repair
+
+Only a sync that repairs audits, rebuilds, moves or deletes a piece. Each
+sync of `arc serve` repairs: at its start and on each tick. `arc sync`
+repairs only with `--repair`. Without it, `arc sync` counts the blobs that
+need repair, and prints
+`self data: <n> blobs need repair; arc serve repairs them on its tick, or run arc sync --repair`.
+
+Reason: decision 4 of
+[the storage network proposal](../proposals/storage-network.md). A phone
+repairs only on request. Two devices that repair at the same time cost at
+most one extra piece, which the next repair deletes.
+
+**TURN.** Repair and audits use only direct pipes. A pipe through TURN
+gives no piece to repair, gets no repair put and no audit. If the repair of
+a blob needs a pipe through TURN, the device prints
+`self data: the repair of <n> blobs waits for a direct path: the pipe to <names> goes through TURN; arc sync --repair --turn allows TURN`.
+`--turn` lets repair and audits use TURN. `--turn` with no `--repair` is an
+error. Reason: decision 7 of the proposal. A rebuild of 1 GiB needs more
+than the TURN quota of one day.
+
+The sync opens each pipe with the path of the citizen (`arc path`): `turn`
+uses only the TURN server of the relay, and `direct` uses no TURN. `auto`
+and `session` try a direct path first.
+
+**Decisions.** Zim accepted these on 2026-10-12, with the build of this
+section:
+
+1. `arc path` applies to the sync of self data: `turn` opens each pipe to a
+   storage citizen through TURN only, and `direct` uses no TURN.
+2. A plain `arc sync` does not add a piece for a late or new storage
+   citizen. Only a sync that repairs adds it: `arc serve`, or
+   `arc sync --repair`. Reason: the piece costs k pieces down, as a
+   rebuild does (decision 4 of the proposal).
+3. Audits wait for a direct path, as repair does. `--turn` allows both.
+
+**Audits.** In a sync that repairs, the device audits each storage citizen
+with a pipe that repair can use, once in 24 hours:
+
+1. Pick 32 random pieces that the storage citizen lists with a tag, and
+   that are not lost.
+2. For a piece with a kept proof, send `audit` with the nonce of that proof,
+   one piece in each request (section 3.9). The piece passes if the app
+   gives the kept proof. Then forget the kept proof.
+3. Get each other piece, and open it with its tag. If it opens, it passes,
+   and the device keeps a new proof for it.
+4. A piece that the app answers `not_found`, or whose proof differs, or
+   that does not open, is lost.
+
+A kept proof is a new random nonce of 32 bytes, and the proof of the bytes
+of the piece for that nonce. The device makes it while it holds the bytes:
+after a put that the app stored, and after a get in which the piece opened.
+The nonce stays secret on the device until the audit sends it. Before the
+device sends the nonce, it forgets the kept proof, and saves its state
+file. Thus no nonce goes out two times, also after a crash. The first audit
+of a piece moves 32 bytes each way, and the next audit gets the piece. A
+kept proof adds 88 bytes of base64 for each piece to the state file, beside
+the 116 bytes of the tag. The device also marks a piece as lost if a get of step 4 of
+section 4.1 gives `not_found` or a piece that does not open.
+
+After an audit, the device prints `<name>: audit checked <n> pieces, <m>
+failed`. It counts the lost pieces of each storage citizen for each day of
+UTC. With 3 or more on one day, each sync of that day prints
+`<name> is suspect: <n> pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm <name> --gone on the signer`.
+The device does not drop the storage citizen. Only the user marks it gone
+(decision 10 of the proposal).
+
+**The plan of one blob.** Repair looks at each blob that a storage citizen
+lists a piece of, also a lost piece. It skips a blob of format 1, and a
+blob that the same sync coded. S is as in section 3.10. A writable storage
+citizen is active, has `pieces`, and has a pipe that repair can use. A lost
+piece counts for no seal. The device keeps the seal of step 4 of section
+4.1. Then:
+
+1. If no seal has k pieces (rule 2 of section 6.7 of the proposal), or if
+   S is less than the k of the seal, seal again (below).
+2. Else let want be min(S, 2k). An index is held if an active storage
+   citizen lists a piece of it. A free storage citizen is writable and
+   lists no piece of the blob. The device takes free storage citizens in
+   the rank of the blob, highest first.
+3. **Drain.** For each index that only a draining storage citizen holds:
+   get the piece, check that it opens, and put the same bytes and the same
+   tag on the next free storage citizen, under its own piece ID. Stop when
+   want indices are held.
+4. **Rebuild.** For each other index from 0 that no active storage citizen
+   holds: make the piece, and put it on the next free storage citizen.
+   Stop when want indices are held. The device gets k pieces of the seal,
+   and rebuilds the blob as step 4 of section 4.1 says. With k = 1 and the
+   record in the store, it seals the record again, and gets nothing.
+5. A free storage citizen does not get an index whose piece ID it listed
+   before: its tombstone refuses the put.
+6. If fewer than want indices are held, no storage citizen is free, and a
+   lost piece is on a writable storage citizen that holds no other piece
+   of the seal, seal again. Reason: the same index of the same seal on the
+   same storage citizen has the same piece ID. A put of it gets `held`, and
+   a put after a delete gets `tombstoned`.
+7. Delete each lost piece. When want indices are held, also delete each
+   piece on a draining storage citizen, the second piece of an index on
+   the storage citizen of the lower rank, and each piece of another seal.
+
+**Seal again.** The device needs the record in its store, or k pieces of
+the seal. It needs k writable storage citizens for the k of S. It codes the
+blob with a new seal and the code of S, and puts t pieces as for a new
+record. The new seal has new piece IDs (section 3.10), so no put gets
+`held` or `tombstoned`.
+
+**Order and deletes.** The blobs with the fewest spare pieces go first: the
+pieces that the blob can still lose before it cannot be read. A blob that
+needs a new seal goes first. The device deletes the pieces of a blob only
+after each put of its plan answered `stored` or `held`. If a put fails, the
+old pieces still serve, and the next repair tries again.
+
+**Draining and gone.** A draining storage citizen gets no new blob, and
+repair moves its pieces. When it lists no piece and no blob, each sync
+prints `<name> holds no piece now; run arc keys storage rm <name> --gone on the signer`.
+A storage citizen that the storage list names `gone` is not in the sync.
+Its indices are then not held, and step 4 rebuilds them on a free storage
+citizen.
+
+After a sync that repairs, the device prints one line:
+
+```text
+self data: repair rebuilt 9 pieces, moved 0, sealed 0 records again, deleted 0; 37674 bytes down, 18837 bytes up
+```
+
+The bytes are those of the pieces that repair got and put. A move costs
+one piece down and one piece up. A rebuild costs k pieces down and one
+piece up. These are the costs of section 6.10 of the proposal. Measured in
+`TestStorageRepair`, with 9 blobs of 4 KiB, k = 2 and pieces of 2,093
+bytes: the drain moved 18,837 bytes down and 18,837 bytes up; the rebuild of
+the pieces of a gone storage citizen moved 37,674 bytes down and 18,837
+bytes up.
 
 ## 5. Failures
 
@@ -897,6 +1035,35 @@ run while the app runs. Each change counts at the next call.
     version of the library can change the bytes of the parity shards.
     `TestParityPrefix` keeps the property of v1.14.2, and section 3.10 names
     the version.
+- Audits and repair (section 4.6) put the seal in the piece ID (section
+  3.10). This is a breaking change of the pieces:
+  - The step of the pieces before it (commit 171daa4) named a piece with
+    no seal. No release holds that step: v0.25.0 is older. A device of this
+    version refuses each such piece with `the tag names another piece`, and
+    codes its record again with a new seal. The older pieces stay on the
+    storage citizen, and no device reads or deletes them. A device of
+    commit 171daa4 refuses each piece of this version in the same way. The
+    user updates each device.
+  - An older device does not audit, repair, move or delete a piece. It still
+    reads each blob whose seal has k pieces. It still puts nothing on a
+    `draining` storage citizen. A newer device repairs what the older one
+    leaves.
+  - No message on the pipe changes. A storage app of commit 604b1af or
+    later answers `audit`. With an older storage app, the device gets and
+    opens each piece that it audits.
+  - The state file of each storage citizen gains `lost`, `proofs`,
+    `audited`, `audit_day` and `failed_today`. An older device drops them
+    when it writes the file. A newer device then audits at its next repair,
+    gets each piece that it audits, and finds a lost piece again in its
+    audit or its read.
+  - `arc sync` gains `--repair` and `--turn`. An older `arc` refuses both
+    flags. `arc sync` of an older device ignores `arc path` for self data.
+  - The Go API changes: `PieceID` takes the seal. The interface `Blobs`
+    gains `DeleteMany` and `Audit`. `Syncer` gains `Repair`, `TURN` and
+    `Now`. `Report.Mixed` goes, and `Report.Repair` comes. `SideReport`
+    gains the fields of the audits and `Empty`. `storage.Client` gains
+    `OnlyRelay`. `citizen.SelfSync` gains `Path`, `Repair` and
+    `RepairTURN`.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
 - Requests in flight add `hello`, `n` and `ids`. They change no earlier
@@ -1068,9 +1235,11 @@ list. It proves:
 - With one byte changed in each piece of dana, and charlie stopped, a
   machine from the seed reads no page. Its sync fails, and names the
   pieces that do not open and the blobs that cannot be read.
-- With charlie back, the same machine reads each page. It asks for the
-  piece of dana first for some blobs, refuses it, and rebuilds from the
-  pieces of charlie and erin.
+- With charlie back, the same machine reads each page from the pieces of
+  charlie and erin. It does not ask dana again: its first sync marked each
+  piece of dana as lost. It says that the blobs need repair. A new machine
+  asks for the piece of dana first for some blobs, refuses it, and rebuilds
+  from the pieces of charlie and erin.
 - With the directory of dana deleted, a new machine from the seed reads
   each page from charlie and erin.
 - With erin stopped too, a new machine reads no page. The sync fails with
@@ -1078,6 +1247,67 @@ list. It proves:
   answered`.
 - With the older storage citizen back, the same machine reads each page
   from its blobs of format 1.
+
+`go test -count=1 -run '^(TestStorageRepair|TestStorageRepairTURN)$' ./internal/proof/`
+builds `arc` and `arc-storage`, and runs them with a local relay and five
+storage citizens through the normal CLI. It proves:
+
+- A plain `arc sync` does not audit. `arc sync --repair` audits each
+  storage citizen. With one byte changed in 2 of the 3 pieces of one blob
+  and in 1 piece of another, the audit names 1 failure on charlie and 2 on
+  dana. Repair seals both records again: no seal of the first has k pieces
+  (rule 2), and no storage citizen is free for the second. With erin
+  stopped, a new machine from the seed reads each page from charlie and
+  dana.
+- After `arc keys storage rm erin`, a plain `arc sync` moves nothing, and
+  says that blobs need repair. `arc sync --repair` moves each piece of erin
+  to frank with the same bytes, deletes it on erin, and prints
+  `erin holds no piece now; run arc keys storage rm erin --gone on the signer`.
+  erin then lists no piece. With erin stopped, a new machine from the seed
+  reads each page.
+- With charlie stopped, its directory deleted, gina added and charlie marked
+  gone, `arc serve` of the signer rebuilds each piece of charlie on gina at
+  its start. With dana stopped too, a new machine reads each page from
+  frank and gina.
+- With a relay that serves TURN on the loopback address, and `arc path
+  turn` on the signer, each pipe goes through TURN. `arc sync --repair`
+  then rebuilds nothing, and says that the repair waits for a direct path.
+  `arc sync --repair --turn` rebuilds each missing piece through TURN.
+  `arc sync --turn` with no `--repair` fails.
+
+`go test -count=1 -run '^(TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror)$' ./runtime/selfsync/`
+runs the sync against storage apps in memory, with a given clock. It
+proves:
+
+- A storage citizen that is gone: a sync without repair puts nothing and
+  counts the blobs; a repair rebuilds one piece of each blob on the free
+  storage citizen, with 2 pieces down and 1 up for each; a second repair
+  does nothing.
+- A repair through TURN does nothing, and counts the blobs that wait. With
+  TURN allowed, it rebuilds them.
+- The first audit checks each piece with its kept proof and gets no piece.
+  No audit runs again within 24 hours. A changed piece fails the next
+  audit, and repair seals its record again and deletes the 3 old pieces.
+  Three failures in one day make the storage citizen suspect. The next day
+  starts the count again.
+- Rule 2: with 2 of 3 pieces of a blob changed, repair seals the record
+  again with no download, and each storage citizen gets a new piece and
+  deletes the old one. No put gets `held`.
+- A drain moves each piece of the draining storage citizen to the free one
+  with the same bytes, and deletes it on the draining one, which is then
+  empty.
+- One index on two storage citizens: repair deletes the piece on the
+  storage citizen of the lower rank.
+- A mirror (k = 1) repairs from the record in the store, with no bytes
+  down.
+
+Each check failed with a temporary break of its behavior: an audit that
+takes any proof, no rule 2, no move in a drain, no rebuild of a missing
+index, repair through TURN, `arc serve` that does not repair, a suspect
+count of 30, no delete of an extra piece, a delete on the higher rank, an
+audit each hour, no reseal of a lost piece with no free storage citizen, a
+mirror that downloads, and a piece ID with no seal. The last failed
+`TestPieceKeys` and `TestRepairRule2`: the new seal got `held`.
 
 `go test -count=1 -run '^(TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece)$' ./runtime/selfsync/`
 proves:
@@ -1094,7 +1324,7 @@ proves:
 - The shards of a (k, n) code are the first n shards of a (k, m) code of
   v1.14.2.
 - A storage citizen that did not answer gets its piece of each blob at a
-  later sync, and a fourth storage citizen gets a fourth piece. No other
+  later sync that repairs, and a fourth storage citizen gets a fourth piece. No other
   piece changes. A pipe through TURN gets no such piece. A second device
   rebuilds each record from the two pieces that came late.
 
@@ -1240,13 +1470,13 @@ that an older set is refused.
   draft and each checkpoint stays on the storage citizen.
 - Not built. The NIP-09 deletion of the imported drafts on the relays, and a
   relay that refuses self data.
-- Not built. A new seal for a blob with pieces but fewer than k of each
-  seal (rule 2 of section 6.7 of the storage network proposal). The device
-  prints a note. A piece ID has no seal, so the piece of a new seal at the
-  same index on the same storage citizen gets `held`; and a delete before
-  the put makes a tombstone, which refuses the put for 90 days. The step
-  that builds rule 2 must solve this first, for example with the seal in
-  the piece ID.
-- Not built. Repair of a lost piece, drain, and audits. Only a missing
-  index of a seal with k pieces is added, on a direct pipe.
+- Not built. The end of a drain on the signer (section 5.2 of the storage
+  network proposal): the signer does not set `gone` by itself, and sends no
+  close call. The device says when the storage citizen is empty, and the
+  user runs `arc keys storage rm <name> --gone`. The signer does not remove
+  a `gone` entry after 30 days.
+- Not built. A `drain` request from the device to a draining storage
+  citizen. Thus an older device can still put a blob there.
+- Not built. The move of the blobs of format 1 off a draining storage
+  citizen. A later step moves blobs of format 1 to pieces.
 - Not built. The move of blobs of format 1 to pieces.

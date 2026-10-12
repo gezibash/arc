@@ -172,14 +172,27 @@ func TestStoragePieces(t *testing.T) {
 	for page, want := range pages {
 		has(t, journalDoc(t, begin, reader.run("journal", "read", page)), want, "the reading of "+page+" with the pieces of dana changed")
 	}
-	// The device asks the 2 storage citizens that rank highest for each
-	// blob. Dana ranks in the first 2 for a blob with a chance of 2 in 3,
-	// so with 8 blobs it is asked first, and refused, almost always.
-	has(t, mended.Stderr, "the piece does not open; the device asks another storage citizen", "the sync with charlie back")
+	// The first sync asked dana for each piece, and marked each one as
+	// lost. The device does not ask for a lost piece again, and says that
+	// the blobs need repair.
+	if strings.Contains(mended.Stderr, "the piece does not open") {
+		t.Fatalf("the sync with charlie back asked dana again for a piece that did not open:\n%s", mended.Stderr)
+	}
+	has(t, mended.Stderr, "blobs need repair; arc serve repairs them on its tick, or run arc sync --repair", "the sync with charlie back")
 	if strings.Contains(mended.Stderr, "cannot be read now") {
 		t.Fatalf("the sync with charlie back still names blobs that cannot be read:\n%s", mended.Stderr)
 	}
-	t.Log("ok: the device reads each page from the pieces of charlie and erin")
+	// A new machine knows no lost piece. It asks the 2 storage citizens
+	// that rank highest for each blob. Dana ranks in the first 2 for a blob
+	// with a chance of 2 in 3, so with 9 blobs it is asked first, and
+	// refused, almost always. The machine then asks erin or charlie.
+	fresh := fromSeed(t, work, "fresh", url, citizen, words)
+	again := fresh.try("", "sync")
+	has(t, again.Stderr, "the piece does not open; the device asks another storage citizen", "the sync of a new machine with charlie back")
+	for page, want := range pages {
+		has(t, journalDoc(t, begin, fresh.run("journal", "read", page)), want, "the reading of "+page+" on a new machine with the pieces of dana changed")
+	}
+	t.Log("ok: the device reads each page from the pieces of charlie and erin, and does not ask for a lost piece again")
 
 	// The directory of dana goes. A new machine reads every page from 2 of
 	// 3 storage citizens.
