@@ -20,6 +20,7 @@ jobs:
     outputs:
       code: ${{ steps.paths.outputs.code }}
       release: ${{ steps.paths.outputs.release }}
+      race: ${{ steps.race.outputs.parts }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,6 +73,12 @@ jobs:
               print(f"code={str(code).lower()}", file=output)
               print(f"release={str(release).lower()}", file=output)
           PYTHON
+      # The race jobs run the packages, and each shard of the proofs.
+      - id: race
+        name: List the parts of the race jobs
+        run: |
+          parts=$( (echo packages; .github/scripts/proof-shards.sh names) | jq -Rsc 'split("\n") | map(select(length > 0))')
+          echo "parts=$parts" >> "$GITHUB_OUTPUT"
 
   go:
     needs: changes
@@ -94,6 +101,9 @@ jobs:
       - name: Check for known vulnerabilities that the code calls
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       - run: go build ./...
+      # Each proof test must be in exactly one shard of the race jobs.
+      - name: Check the shards of the proofs
+        run: .github/scripts/proof-shards.sh check
       # The proofs build the programs and run them end to end. They have
       # their own jobs below.
       - run: go test $(go list ./... | grep -v '/internal/proof$')
@@ -127,6 +137,7 @@ jobs:
       - run: go test -count=1 -run '^TestInterface' ./internal/proof/
 
   # The race detector runs in its own jobs, so the jobs above stay fast.
+  # The proofs are split into shards by .github/scripts/proof-shards.sh.
   # GOFLAGS reaches each `go build` that a test runs, so the programs that
   # the tests start also have the race detector. Each process writes its
   # race reports to a file. A program that a test stops cannot report a
@@ -140,31 +151,48 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - part: packages
-            run: go test -count=1 $(go list ./... | grep -v '/internal/proof$')
-          - part: delivery proofs
-            run: go test -count=1 -timeout 40m -run '^TestDelivery' ./internal/proof/
-          - part: interface proofs
-            run: go test -count=1 -timeout 40m -run '^TestInterface' ./internal/proof/
-          - part: other proofs
-            run: go test -count=1 -timeout 40m -skip '^Test(Delivery|Interface)' ./internal/proof/
+        part: ${{ fromJSON(needs.changes.outputs.race) }}
     steps:
       # A storage proof builds an older storage app from git history.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # The cache of setup-go holds no builds with the race detector. These
+      # jobs keep their own build cache: one for the packages, one for the
+      # proofs. Only a push to main saves it, so the caches stay small. A
+      # pull request restores the latest cache of main.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.2"
-          cache: true
+          cache: false
+      - id: cache
+        name: Name the race build cache
+        run: |
+          if [ "${{ matrix.part }}" = packages ]; then
+            echo "kind=packages" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=proofs" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-1.27.2-${{ steps.cache.outputs.kind }}-${{ github.sha }}
+          restore-keys: |
+            go-race-${{ runner.os }}-1.27.2-${{ steps.cache.outputs.kind }}-
       - name: Test with the race detector
         env:
           GOFLAGS: -race
           GORACE: log_path=${{ runner.temp }}/race/report
+          PART: ${{ matrix.part }}
         run: |
           mkdir -p "$RUNNER_TEMP/race"
-          ${{ matrix.run }}
+          if [ "$PART" = packages ]; then
+            go test -count=1 $(go list ./... | grep -v '/internal/proof$')
+          else
+            .github/scripts/proof-shards.sh run "$PART"
+          fi
       - name: Fail on a race report from any process
         if: ${{ !cancelled() }}
         run: |
@@ -179,6 +207,15 @@ jobs:
             echo "::error::${#reports[@]} processes reported a data race"
             exit 1
           fi
+      # The storage-pieces shard builds the most for the proofs: the
+      # programs of this commit, and the older programs.
+      - if: ${{ github.event_name == 'push' && (matrix.part == 'packages' || matrix.part == 'storage-pieces') }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-1.27.2-${{ steps.cache.outputs.kind }}-${{ github.sha }}
 
   # Check the actual release recipe only when its inputs change.
   # Skipped jobs still satisfy the existing required status checks.
