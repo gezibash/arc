@@ -249,8 +249,18 @@ func (s *Conn) Delete(ctx context.Context, id string) (string, error) {
 	return r.Status, err
 }
 
-// Usage returns the bytes in use, the quota and the number of blobs.
-func (s *Conn) Usage(ctx context.Context) (used, quota int64, blobs int, err error) {
+// Usage is the result of a usage request.
+type Usage struct {
+	Used, Quota int64
+	Blobs       int
+	// State, Plan and Expires are empty from an older storage app.
+	State, Plan string
+	Expires     int64
+}
+
+// Usage returns the bytes in use, the quota of the account, the number of
+// blobs, and the record of the account.
+func (s *Conn) Usage(ctx context.Context) (Usage, error) {
 	r, err := s.do(ctx, Request{Op: OpUsage})
-	return r.Used, r.Quota, r.Blobs, err
+	return Usage{Used: r.Used, Quota: r.Quota, Blobs: r.Blobs, State: r.State, Plan: r.Plan, Expires: r.Expires}, err
 }

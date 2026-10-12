@@ -16,7 +16,7 @@ import (
 func TestGrantSets(t *testing.T) {
 	account, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	phone, stranger := strings.Repeat("c", 64), strings.Repeat("d", 64)
-	s := &server{store: &store{dir: t.TempDir(), quota: DefaultQuota, now: time.Now}, owners: []string{account, other}}
+	s := &server{store: &store{dir: t.TempDir(), owners: []string{account, other}, quota: DefaultQuota, now: time.Now}}
 
 	if got, err := s.accountOf(account); err != nil || got != account {
 		t.Fatalf("the account key got %q, %v; want its own account", got, err)

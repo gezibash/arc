@@ -27,13 +27,19 @@ const TombstoneAge = 90 * 24 * time.Hour
 // Each write is atomic. The lock of the account covers each change of
 // state.json, so two sessions of one account do not lose a change.
 type store struct {
-	dir   string
-	quota int64
-	now   func() time.Time
+	dir string
+	// owners are the account keys of STORAGE_OWNERS. Each is admitted at
+	// quota until the operator gives it a record.
+	owners []string
+	quota  int64
+	now    func() time.Time
 }
 
 // account is the content of state.json.
 type account struct {
+	// Record is the admission of the account: its status, quota, plan and
+	// end. See admission.go.
+	Record *record `json:"record,omitempty"`
 	// Devices are the device keys of the newest grant set. Each can use
 	// the account. A device key that the set does not hold has no grant.
 	Devices []string `json:"devices,omitempty"`
@@ -155,7 +161,7 @@ func (s *store) admit(name, id string, size int64) (string, error) {
 	if status := heldOrTombstoned(a, id, s.now()); status != "" {
 		return status, nil
 	}
-	return wire.StatusSend, overQuota(a, size, s.quota)
+	return wire.StatusSend, s.room(name, a, size)
 }
 
 func heldOrTombstoned(a *account, id string, now time.Time) string {
@@ -168,11 +174,17 @@ func heldOrTombstoned(a *account, id string, now time.Time) string {
 	return ""
 }
 
-func overQuota(a *account, size, quota int64) error {
-	if a.Used+size <= quota {
+// room refuses a put on a closing account, and a put that passes the
+// quota of the account.
+func (s *store) room(name string, a *account, size int64) error {
+	v := s.standing(name, a)
+	if v.state != wire.StateOpen {
+		return refusal{wire.ErrRefused, fmt.Sprintf("the account is %s: it takes no put, and its reads end at %s", v.state, time.Unix(v.readsEnd, 0).UTC().Format(time.DateOnly))}
+	}
+	if a.Used+size <= v.quota {
 		return nil
 	}
-	return refusal{wire.ErrOverQuota, fmt.Sprintf("over quota: the account uses %d of %d bytes, and this blob needs %d more", a.Used, quota, size)}
+	return refusal{wire.ErrOverQuota, fmt.Sprintf("over quota: the account uses %d of %d bytes, and this blob needs %d more", a.Used, v.quota, size)}
 }
 
 // put writes the bytes of a blob, and then records it. It checks the
@@ -184,7 +196,7 @@ func (s *store) put(name, id string, data []byte) (status string, seq uint64, er
 		if status = heldOrTombstoned(a, id, now); status != "" {
 			return false, nil
 		}
-		if err := overQuota(a, int64(len(data)), s.quota); err != nil {
+		if err := s.room(name, a, int64(len(data))); err != nil {
 			return false, err
 		}
 		// The bytes go first. If the program stops before the state, the
@@ -268,11 +280,13 @@ func (s *store) list(name string, after uint64, limit int) ([]wire.Entry, uint64
 	return entries, next, nil
 }
 
-// usage returns the bytes in use and the number of blobs.
-func (s *store) usage(name string) (int64, int, error) {
+// usage returns the bytes in use, the number of blobs, and the record of
+// the account.
+func (s *store) usage(name string) (wire.Reply, error) {
 	a, err := s.load(name)
 	if err != nil {
-		return 0, 0, err
+		return wire.Reply{}, err
 	}
-	return a.Used, len(a.Blobs), nil
+	v := s.standing(name, a)
+	return wire.Reply{Used: a.Used, Quota: v.quota, Blobs: len(a.Blobs), State: v.state, Plan: v.plan, Expires: v.expires}, nil
 }
