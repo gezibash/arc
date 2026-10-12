@@ -22,7 +22,7 @@ import (
 )
 
 // A piece is one shard of a Reed-Solomon code of one blob, sealed alone
-// (docs/storage/SPEC.md, section 3.5). Any k pieces of one seal rebuild the
+// (docs/storage/SPEC.md, section 3.9). Any k pieces of one seal rebuild the
 // blob. The code is RS(k, 2k) of github.com/klauspost/reedsolomon: a blob
 // has at most 2k pieces, and pieces 0 to k-1 hold the blob itself.
 

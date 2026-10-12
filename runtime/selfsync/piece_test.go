@@ -33,7 +33,7 @@ func testKeys(t *testing.T, gen uint32) Keys {
 	return k
 }
 
-// TestPieceKeys checks the keys of section 3.5 of the storage spec. The
+// TestPieceKeys checks the keys of section 3.9 of the storage spec. The
 // expected values come from Python's hmac and hashlib, as in TestNewKeys:
 //
 //	hkdf(data, b"arc-storage-piece-v1")
