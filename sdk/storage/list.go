@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 )
@@ -96,6 +97,25 @@ func (l List) Put(e ListEntry) (List, error) {
 	}
 	out.Entries = append(out.Entries, e)
 	return out, nil
+}
+
+// GoneAge is how long the list keeps a gone entry. Then the signer
+// removes it.
+const GoneAge = 30 * 24 * time.Hour
+
+// Prune returns the list without each entry that is gone for GoneAge or
+// more at now, and the entries that it removed.
+func (l List) Prune(now time.Time) (List, []ListEntry) {
+	out := List{At: l.At}
+	var removed []ListEntry
+	for _, e := range l.Entries {
+		if e.State == StateGone && !now.Before(e.Since.Time().Add(GoneAge)) {
+			removed = append(removed, e)
+			continue
+		}
+		out.Entries = append(out.Entries, e)
+	}
+	return out, removed
 }
 
 func checkEntry(e ListEntry) error {

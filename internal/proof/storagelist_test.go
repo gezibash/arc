@@ -2,6 +2,8 @@ package proof
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -134,6 +136,19 @@ func TestStorageList(t *testing.T) {
 	syncOf(t, "dana", draining)
 	t.Log("ok: rm sets draining, and the phone still syncs with dana")
 
+	// The sync of the phone sent dana a drain request. The machine from the
+	// seed did not sync since the rm. Its put, as an older device sends
+	// it, is refused.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	blob := make([]byte, storage.MinBlob)
+	blob[0] = 1
+	id := sha256.Sum256(blob)
+	if _, err := pipe(t, paper, "dana").Put(ctx, hex.EncodeToString(id[:]), blob); err == nil || !strings.Contains(err.Error(), "the account is draining") {
+		t.Fatalf("a put on dana from the machine from the seed after the drain request of the phone: %v; want the account is draining", err)
+	}
+	t.Log("ok: after the drain request of the phone, dana refuses a put from the machine from the seed")
+
 	has(t, signer.run("keys", "storage", "rm", "dana", "--gone"), "storage list: dana is gone", "the removal of dana")
 	has(t, signer.run("keys", "storage", "ls"), "dana\tgone\t"+dana, "the storage list after gone")
 	gone := phone.run("sync")
@@ -148,6 +163,21 @@ func TestStorageList(t *testing.T) {
 	}
 	t.Log("ok: rm --gone removes the install of dana on the phone at its next sync")
 
+	// The signer removes a gone entry 30 days after its since. The list
+	// moves the since of dana back, as the signer would see it 30 days
+	// later.
+	backdate(t, url, signer.home, citizen, "dana", 30*24*time.Hour-time.Minute)
+	if kept := signer.run("sync"); strings.Contains(kept, "storage list: removed dana") {
+		t.Fatalf("the signer removed dana before 30 days:\n%s", kept)
+	}
+	has(t, signer.run("keys", "storage", "ls"), "dana\tgone\t"+dana, "the storage list before 30 days")
+	backdate(t, url, signer.home, citizen, "dana", 30*24*time.Hour)
+	has(t, signer.run("sync"), "storage list: removed dana, gone since", "the sync of the signer 30 days after gone")
+	if listed := signer.run("keys", "storage", "ls"); strings.Contains(listed, "dana") {
+		t.Fatalf("the storage list keeps dana 30 days after gone:\n%s", listed)
+	}
+	t.Log("ok: the sync of the signer removes the gone entry of dana at 30 days, and not before")
+
 	// The relay serves the storage list only to its author.
 	own := fetchList(t, url, signer.home, citizen)
 	if own.err != nil || own.n != 1 {
@@ -160,6 +190,48 @@ func TestStorageList(t *testing.T) {
 		t.Fatalf("another citizen asked for the storage list: %d events, %v; want a refusal", stolen.n, stolen.err)
 	}
 	t.Logf("ok: another citizen gets no storage list from the relay: %v", stolen.err)
+}
+
+// backdate publishes the newest storage list of citizen with the since of
+// one entry moved back by age, signed with the key of home.
+func backdate(t *testing.T, url, home, citizen, name string, age time.Duration) {
+	t.Helper()
+	key, err := keyfiles.Load(keyfile(t, home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	author, err := nostr.PubKeyFromHex(citizen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := keyer.NewPlainKeySigner(key.Secret)
+	r := relay.New(url, signer)
+	defer r.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	batch, err := r.Fetch(ctx, storage.ListFilter(author))
+	if err != nil || len(batch.Events) != 1 {
+		t.Fatalf("the relay gave %d storage lists: %v; want 1", len(batch.Events), err)
+	}
+	list, err := storage.OpenList(ctx, signer, author, batch.Events[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := list.Find(name)
+	if !ok {
+		t.Fatalf("the storage list names no %s", name)
+	}
+	entry.Since = nostr.Timestamp(time.Now().Add(-age).Unix())
+	if list, err = list.Put(entry); err != nil {
+		t.Fatal(err)
+	}
+	event, err := storage.SealList(ctx, signer, list, batch.Events[0].CreatedAt+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Send(ctx, event); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type listFetch struct {

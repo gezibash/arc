@@ -18,7 +18,8 @@ import (
 //     changed piece, and a new machine reads each page from 2 storage
 //     citizens.
 //   - A draining storage citizen gives each piece, with the same bytes, to
-//     a new one, holds nothing after, and the sync says so.
+//     a new one, and holds nothing after. The sync of the signer then
+//     marks it gone in the storage list, with no rm --gone.
 //   - A storage citizen that is stopped for good and marked gone: arc serve
 //     rebuilds its pieces on a new storage citizen, and a new machine reads
 //     each page without it.
@@ -122,7 +123,9 @@ func TestStorageRepair(t *testing.T) {
 	drained := signer.try("", "sync", "--repair")
 	t.Logf("arc sync --repair with erin draining:\n%s\n%s", strings.TrimSpace(drained.Stdout), strings.TrimSpace(drained.Stderr))
 	has(t, drained.Stdout, fmt.Sprintf("repair rebuilt 0 pieces, moved %d,", n), "the drain")
-	has(t, drained.Stdout, "erin holds no piece now; run arc keys storage rm erin --gone on the signer", "the drain")
+	has(t, drained.Stdout, "erin holds no piece now and takes no put, so the storage list marks it gone", "the drain")
+	has(t, drained.Stdout, "storage list: erin is gone", "the end of the drain")
+	has(t, signer.run("keys", "storage", "ls"), "erin\tgone\t"+keys["erin"], "the storage list after the drain")
 	if left := listAll(t, signer, "erin"); len(left) != 0 {
 		t.Fatalf("erin still lists %d pieces after the drain", len(left))
 	}
@@ -138,8 +141,7 @@ func TestStorageRepair(t *testing.T) {
 	}
 	running["erin"].stop()
 	readsAll("after-drain", "from charlie, dana and frank after the drain, with erin stopped")
-	has(t, signer.run("keys", "storage", "rm", "erin", "--gone"), "gone", "the rm of erin --gone")
-	t.Log("ok: the drain moved each piece of erin to frank with the same bytes, erin holds nothing, and a new machine reads each page without erin")
+	t.Log("ok: the drain moved each piece of erin to frank with the same bytes, erin holds nothing, the sync of the signer marked it gone, and a new machine reads each page without erin")
 
 	// Charlie stops for good, and its directory goes. A fifth storage
 	// citizen joins, and the signer marks charlie gone. arc serve rebuilds
