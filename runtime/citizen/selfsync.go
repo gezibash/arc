@@ -289,32 +289,89 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Devices: onceList(sess.DeviceList),
 		State:   cfg.Dir,
 	}
-	results := make([]result, len(targets))
+	// Each pipe opens at the same time. Then one sync lists each storage
+	// citizen, reads the pieces that this machine lacks, and puts the
+	// pieces that the storage citizens lack.
+	start := time.Now()
+	opened := make([]opening, len(targets))
 	var wg sync.WaitGroup
 	for i, t := range targets {
-		wg.Go(func() { results[i] = sess.syncOne(ctx, cfg, syncer, t) })
+		wg.Go(func() { opened[i] = sess.openOne(ctx, cfg, syncer, t) })
 	}
 	wg.Wait()
+	defer func() {
+		for _, o := range opened {
+			if o.conn != nil {
+				o.conn.Close()
+			}
+		}
+	}()
+	sides := make([]selfsync.Side, len(targets))
+	for i, t := range targets {
+		key, err := nostr.PubKeyFromHex(t.install.Provider)
+		if err != nil {
+			return fmt.Errorf("%s: %w", t.install.As, err)
+		}
+		sides[i] = selfsync.Side{Key: key, Label: t.install.As, Active: t.state == storage.StateActive}
+		if opened[i].conn != nil {
+			sides[i].Conn = opened[i].conn
+		}
+	}
+	report, err := syncer.SyncAll(ctx, sides)
 
 	var failed []error
-	for i, r := range results {
+	if err != nil {
+		failed = append(failed, err)
+		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+	}
+	for i, o := range opened {
 		as := targets[i].install.As
-		_, _ = cfg.Errs.Write(r.notes.Bytes())
-		if r.err != nil {
-			failed = append(failed, fmt.Errorf("%s: %w", as, r.err))
-			fmt.Fprintf(cfg.Errs, "%s: self data: %v\n", as, r.err)
-			if r.silent >= selfsync.SilentWarning {
-				fmt.Fprintf(cfg.Errs, "%s: no answer for %d days; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, int(r.silent/(24*time.Hour)), as)
+		_, _ = cfg.Errs.Write(o.notes.Bytes())
+		side := report.Sides[i]
+		if o.err == nil && side.Err != nil {
+			o.err = side.Err
+		}
+		if o.err != nil {
+			failed = append(failed, fmt.Errorf("%s: %w", as, o.err))
+			fmt.Fprintf(cfg.Errs, "%s: self data: %v\n", as, o.err)
+			if o.silent >= selfsync.SilentWarning {
+				fmt.Fprintf(cfg.Errs, "%s: no answer for %d days; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, int(o.silent/(24*time.Hour)), as)
 			}
 			continue
 		}
-		fmt.Fprintf(cfg.Out, "%s: self data received %d, sent %d, already held %d in %s", as, r.report.Received, r.report.Sent, r.report.Held, r.took.Round(10*time.Millisecond))
+		took := o.opened.Sub(start)
+		if side.Done.After(o.opened) {
+			took = side.Done.Sub(start)
+		}
+		fmt.Fprintf(cfg.Out, "%s: self data received %d, sent %d, already held %d in %s", as, side.Got, side.Stored, side.Held, took.Round(10*time.Millisecond))
 		if targets[i].state == storage.StateDraining {
 			fmt.Fprint(cfg.Out, "; draining, so nothing new goes to it")
 		}
 		fmt.Fprintln(cfg.Out)
-		for _, reason := range r.report.Refused {
-			fmt.Fprintf(cfg.Errs, "  refused %s\n", reason)
+		if side.Old {
+			fmt.Fprintf(cfg.Errs, "%s runs an older storage app: it holds full copies; update it for erasure coding\n", as)
+		}
+	}
+	fmt.Fprintf(cfg.Out, "self data: took %d records, already held %d", report.Received, report.Held)
+	if report.T > 0 {
+		fmt.Fprintf(cfg.Out, ", coded %d new records into pieces, %d of %d rebuild each", report.Sent, report.K, report.T)
+	}
+	fmt.Fprintln(cfg.Out)
+	for _, reason := range report.Refused {
+		fmt.Fprintf(cfg.Errs, "  refused %s\n", reason)
+	}
+	if report.Waiting > 0 {
+		failed = append(failed, fmt.Errorf("%d records wait", report.Waiting))
+		fmt.Fprintf(cfg.Errs, "self data: %d records wait: a new blob needs %d storage citizens that answer; the next sync puts them\n", report.Waiting, report.K)
+	}
+	if report.Mixed > 0 {
+		fmt.Fprintf(cfg.Errs, "self data: %d blobs have fewer than k pieces of one seal on the storage citizens; a later step repairs them\n", report.Mixed)
+	}
+	if n := len(report.Unreadable); n > 0 {
+		failed = append(failed, fmt.Errorf("%d blobs cannot be read now", n))
+		fmt.Fprintf(cfg.Errs, "self data: %d blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again\n", n)
+		for _, reason := range report.Unreadable {
+			fmt.Fprintf(cfg.Errs, "  unreadable %s\n", reason)
 		}
 	}
 	return errors.Join(failed...)
@@ -327,43 +384,44 @@ type target struct {
 	state   string
 }
 
-// result is what the sync of one storage citizen did. notes holds what the
-// pipe printed, so that the notes of two storage citizens do not mix.
-type result struct {
-	report selfsync.Report
-	took   time.Duration
+// opening is the pipe to one storage citizen. notes holds what the pipe
+// printed, so that the notes of two storage citizens do not mix.
+type opening struct {
+	conn   *storage.Conn
+	opened time.Time
 	err    error
 	silent time.Duration
 	notes  bytes.Buffer
 }
 
-func (sess *Session) syncOne(ctx context.Context, cfg SelfSync, syncer *selfsync.Syncer, t target) (r result) {
-	start := time.Now()
-	defer func() { r.took = time.Since(start) }()
+// openOne opens the pipe to one storage citizen, and keeps the record of
+// its silence.
+func (sess *Session) openOne(ctx context.Context, cfg SelfSync, syncer *selfsync.Syncer, t target) (o opening) {
 	install := t.install
 	client := storage.Client{
 		Call: func(ctx context.Context, session string) ([]byte, error) {
 			return sess.openStorage(ctx, cfg.Installs, install.As, session)
 		},
-		TURN: cfg.TURN, Options: cfg.Options, Notes: &r.notes,
+		TURN: cfg.TURN, Options: cfg.Options, Notes: &o.notes,
 	}
 	conn, err := client.Open(ctx, 0)
+	o.opened = time.Now()
 	if err != nil {
-		r.err = err
+		o.err = err
 		if silent, serr := syncer.Unanswered(install.Provider, time.Now()); serr != nil {
-			r.err = errors.Join(err, serr)
+			o.err = errors.Join(err, serr)
 		} else {
-			r.silent = silent
+			o.silent = silent
 		}
-		return r
+		return o
 	}
-	defer conn.Close()
 	if err := syncer.Answered(install.Provider, time.Now()); err != nil {
-		r.err = err
-		return r
+		conn.Close()
+		o.err = err
+		return o
 	}
-	r.report, r.err = syncer.Sync(ctx, install.Provider, conn, t.state == storage.StateActive)
-	return r
+	o.conn = conn
+	return o
 }
 
 // once gives the keys of each generation from get, and asks get once for

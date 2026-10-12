@@ -152,7 +152,7 @@ func TestImportOldState(t *testing.T) {
 			t.Fatalf("get %.8s gave %d bytes, %v", id, len(got), err)
 		}
 	}
-	if status, err := s.admit(other, strings.Repeat("3", 64), 4096, 0); err != nil || status != wire.StatusTombstoned {
+	if status, err := s.admit(other, strings.Repeat("3", 64), 4096, 0, false); err != nil || status != wire.StatusTombstoned {
 		t.Fatalf("a put of the tombstone gave %q, %v; want tombstoned", status, err)
 	}
 	u, err := s.usage(other)
@@ -218,7 +218,7 @@ func TestIndexBytesGrowLinearly(t *testing.T) {
 	for i := 1; i <= puts; i++ {
 		id := fmt.Sprintf("%064x", i)
 		err := db.Update(func(tx *bolt.Tx) error {
-			_, err := index{tx}.add(id, wire.MinBlob, time.Now())
+			_, err := index{tx}.add(id, wire.MinBlob, nil, time.Now())
 			return err
 		})
 		if err != nil {

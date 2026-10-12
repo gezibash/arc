@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"encoding/base64"
 	"io"
 	"slices"
 	"time"
@@ -45,6 +46,8 @@ type Conn struct {
 	// window is the count of requests that the app takes in flight, from
 	// hello: 0 before hello, 1 for an older app.
 	window int
+	// pieces says that the app keeps tags, from hello.
+	pieces bool
 	// n is the N of the last numbered request.
 	n uint64
 }
@@ -209,7 +212,20 @@ func (s *Conn) reply(ctx context.Context) (Reply, error) {
 // MinBlob: see Pad. The status is StatusStored,
 // StatusHeld or StatusTombstoned.
 func (s *Conn) Put(ctx context.Context, id string, blob []byte) (string, error) {
-	r, err := s.do(ctx, Request{Op: OpPut, ID: id, Size: int64(len(blob))})
+	return s.put(ctx, Blob{ID: id, Data: blob})
+}
+
+// tagOf is the tag of a put request: base64 of the tag, or nothing.
+func tagOf(b Blob) string {
+	if b.Tag == nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b.Tag)
+}
+
+func (s *Conn) put(ctx context.Context, b Blob) (string, error) {
+	blob := b.Data
+	r, err := s.do(ctx, Request{Op: OpPut, ID: b.ID, Size: int64(len(blob)), Tag: tagOf(b)})
 	if err != nil || r.Status != StatusSend {
 		return r.Status, err
 	}
@@ -246,9 +262,9 @@ func (s *Conn) Get(ctx context.Context, id string) ([]byte, error) {
 	return s.blob(ctx, r.Size)
 }
 
-// blob reads the bytes of one blob of a get.
+// blob reads the bytes of one blob or piece of a get.
 func (s *Conn) blob(ctx context.Context, size int64) ([]byte, error) {
-	if !GoodSize(size) {
+	if !GoodSize(size) && !GoodPieceSize(size) {
 		return nil, fmt.Errorf("the storage citizen announced a blob of %d bytes", size)
 	}
 	data := make([]byte, 0, size)
@@ -306,7 +322,15 @@ func (s *Conn) Window(ctx context.Context) (int, error) {
 	default:
 		s.window = 1
 	}
+	s.pieces = err == nil && slices.Contains(r.Features, FeaturePieces)
 	return s.window, nil
+}
+
+// Pieces says if the app keeps the tags of pieces. It asks hello once. An
+// older app ignores a tag, so a device puts only blobs of format 1 on it.
+func (s *Conn) Pieces(ctx context.Context) (bool, error) {
+	_, err := s.Window(ctx)
+	return s.pieces, err
 }
 
 // PutResult is the result of one put of PutMany: a status of Put, or a
@@ -331,7 +355,7 @@ func (s *Conn) PutMany(ctx context.Context, blobs []Blob) ([]PutResult, error) {
 	}
 	if window <= 1 {
 		for i, b := range blobs {
-			status, err := s.Put(ctx, b.ID, b.Data)
+			status, err := s.put(ctx, b)
 			if err != nil && !IsRefused(err, "") {
 				return results, err
 			}
@@ -361,7 +385,7 @@ func (s *Conn) PutMany(ctx context.Context, blobs []Blob) ([]PutResult, error) {
 	for next < len(blobs) || len(inFlight) > 0 {
 		for next < len(blobs) && len(inFlight) < window {
 			s.n++
-			if err := s.send(Request{Op: OpPut, N: s.n, ID: blobs[next].ID, Size: int64(len(blobs[next].Data))}); err != nil {
+			if err := s.send(Request{Op: OpPut, N: s.n, ID: blobs[next].ID, Size: int64(len(blobs[next].Data)), Tag: tagOf(blobs[next])}); err != nil {
 				return results, err
 			}
 			inFlight[s.n] = next

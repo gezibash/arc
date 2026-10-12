@@ -95,6 +95,10 @@ const (
 	// FeatureBatch says that the app takes requests in flight, numbered
 	// with n, and a list of IDs in get and delete.
 	FeatureBatch = "batch"
+	// FeaturePieces says that the app takes a put with a tag, keeps the
+	// tag, gives it back in each listing, and takes the sizes of pieces.
+	// An older app ignores the tag, so a device asks hello first.
+	FeaturePieces = "pieces"
 	// Window is the largest number of requests that a client keeps in
 	// flight on one pipe: sent, with no final reply yet.
 	Window = 32
@@ -118,6 +122,10 @@ type Request struct {
 	ID string `json:"id,omitempty"`
 	// Size is the size of the blob of a put.
 	Size int64 `json:"size,omitempty"`
+	// Tag is the sealed tag of a piece, in standard base64, TagSize
+	// bytes. Only a put of a piece has it. The app keeps it, and cannot
+	// open it.
+	Tag string `json:"tag,omitempty"`
 	// After is the cursor of a list: the app lists the entries with a
 	// greater sequence number.
 	After uint64 `json:"after,omitempty"`
@@ -207,6 +215,9 @@ type Entry struct {
 	ID      string `json:"id"`
 	Size    int64  `json:"size,omitempty"`
 	Deleted bool   `json:"deleted,omitempty"`
+	// Tag is the tag of the put of a piece, in standard base64. A blob of
+	// format 1 has none.
+	Tag string `json:"tag,omitempty"`
 }
 
 var idPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -224,6 +235,37 @@ func IsHex64(key string) bool {
 // to MaxBlob.
 func GoodSize(size int64) bool {
 	return size >= MinBlob && size <= MaxBlob && size&(size-1) == 0
+}
+
+const (
+	// TagSize is the size of the tag of a piece: the generation (4), a
+	// nonce (24), and the sealed header of 43 bytes with its AEAD tag (16).
+	TagSize = 4 + 24 + 43 + 16
+	// PieceOverhead is the bytes of a piece around its shard: the version
+	// (1), the generation (4), a nonce (24) and the AEAD tag (16).
+	PieceOverhead = 1 + 4 + 24 + 16
+	// MaxK is the largest count of pieces that rebuild a blob. A storage
+	// list holds at most 16 storage citizens, and k is half of them.
+	MaxK = 8
+)
+
+// PieceSize is the size of a piece of a blob of size blob, for a code
+// that k pieces rebuild: ceil(blob / k) + PieceOverhead.
+func PieceSize(blob int64, k int) int64 {
+	return (blob+int64(k)-1)/int64(k) + PieceOverhead
+}
+
+// GoodPieceSize says if size is the size of a piece: PieceSize of a blob
+// size and a k from 1 to MaxK.
+func GoodPieceSize(size int64) bool {
+	for blob := int64(MinBlob); blob <= MaxBlob; blob <<= 1 {
+		for k := 1; k <= MaxK; k++ {
+			if PieceSize(blob, k) == size {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // PaddedSize is the size of the blob that Pad makes from n bytes.
@@ -262,8 +304,10 @@ func Unpad(blob []byte) ([]byte, error) {
 	return blob[8 : 8+n], nil
 }
 
-// Blob is one blob of a batch put.
+// Blob is one blob or piece of a batch put. A piece has a tag; a blob of
+// format 1 has none.
 type Blob struct {
 	ID   string
 	Data []byte
+	Tag  []byte
 }

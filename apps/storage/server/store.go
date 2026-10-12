@@ -70,6 +70,8 @@ type blob struct {
 	Seq  uint64    `json:"seq"`
 	Size int64     `json:"size"`
 	Put  time.Time `json:"put"`
+	// Tag is the tag of a piece. Only index.db holds it.
+	Tag []byte `json:"-"`
 }
 
 type tombstone struct {
@@ -178,10 +180,14 @@ type refusal struct{ code, message string }
 func (r refusal) Error() string { return r.message }
 
 // admit checks a put before its bytes go. reserved is the bytes of the
-// puts of the session that are not in the index yet. It returns
-// StatusSend, or a status for which no bytes go.
-func (s *store) admit(name, id string, size, reserved int64) (string, error) {
-	if !wire.GoodSize(size) {
+// puts of the session that are not in the index yet. A piece has a tag,
+// and the size of a piece. It returns StatusSend, or a status for which
+// no bytes go.
+func (s *store) admit(name, id string, size, reserved int64, piece bool) (string, error) {
+	if piece && !wire.GoodPieceSize(size) {
+		return "", refusal{wire.ErrBadSize, fmt.Sprintf("a piece has the size of a part of a blob, ceil(blob / k) + %d bytes, not %d", wire.PieceOverhead, size)}
+	}
+	if !piece && !wire.GoodSize(size) {
 		return "", refusal{wire.ErrBadSize, fmt.Sprintf("a blob has a size that is a power of two from %d to %d bytes, not %d", wire.MinBlob, wire.MaxBlob, size)}
 	}
 	a, err := s.load(name)
@@ -243,6 +249,8 @@ type written struct {
 	n    uint64
 	id   string
 	size int64
+	// tag is the tag of a piece, or nil for a blob of format 1.
+	tag []byte
 }
 
 // stored is the result of one put of a commit.
@@ -300,7 +308,7 @@ func (s *store) commit(name string, puts []written) ([]stored, error) {
 				results[i] = stored{err: err}
 				continue
 			}
-			seq, err := x.add(p.id, p.size, now)
+			seq, err := x.add(p.id, p.size, p.tag, now)
 			if err != nil {
 				return err
 			}
@@ -321,7 +329,7 @@ func (s *store) commit(name string, puts []written) ([]stored, error) {
 
 // put writes the bytes of one blob, and then records it.
 func (s *store) put(name, id string, data []byte) (status string, seq uint64, err error) {
-	if status, err := s.admit(name, id, int64(len(data)), 0); err != nil || status != wire.StatusSend {
+	if status, err := s.admit(name, id, int64(len(data)), 0, false); err != nil || status != wire.StatusSend {
 		return status, 0, err
 	}
 	if err := s.writeBlob(name, id, data); err != nil {

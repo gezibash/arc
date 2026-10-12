@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/sdk/storage"
 )
 
 // The two ends of each pipe are on one machine, so they use the loopback
@@ -47,26 +48,38 @@ func namedStorageCitizen(t *testing.T, work, url string, signer machine, name st
 // slowcall holds each call to the storage app for that time.
 func servedStorageCitizen(t *testing.T, work, url string, signer machine, name string, delay time.Duration) (string, *process) {
 	t.Helper()
+	key, serve := storageServer(t, work, url, signer, name, program("arc-storage"), delay)
+	return key, serve()
+}
+
+// storageServer makes a storage citizen that serves the storage program
+// app, and returns its key and a function that starts its arc serve. A
+// test can thus stop a storage citizen, and start it again.
+func storageServer(t *testing.T, work, url string, signer machine, name, app string, delay time.Duration) (string, func() *process) {
+	t.Helper()
 	store := arc(t, filepath.Join(work, name))
 	store.run("keys", "gen")
 	key := store.key()
 	account := ifaceTrim(signer.run("keys", "account", key))
 	store = store.with("STORAGE_DIR="+filepath.Join(work, name+"-blobs"),
 		"STORAGE_OWNERS="+account, "STORAGE_STUN=none", "STORAGE_LOOPBACK=1")
-	command := program("arc-storage")
+	command := app
 	if delay > 0 {
 		command = program("slowcall")
-		store = store.with("SLOWCALL_PROGRAM="+program("arc-storage"), fmt.Sprintf("SLOWCALL_MS=%d", delay.Milliseconds()))
+		store = store.with("SLOWCALL_PROGRAM="+app, fmt.Sprintf("SLOWCALL_MS=%d", delay.Milliseconds()))
 	}
 	store.run("relay", "add", url)
-	app := filepath.Join(work, name+"-app")
-	write(t, filepath.Join(app, "Arcfile"), fmt.Sprintf("version = 2\n\n[serve]\ncommand = %q\nmanifest = %q\n",
+	dir := filepath.Join(work, name+"-app")
+	write(t, filepath.Join(dir, "Arcfile"), fmt.Sprintf("version = 2\n\n[serve]\ncommand = %q\nmanifest = %q\n",
 		command, filepath.Join(repo, "apps/storage/manifest.json")), 0o600)
-	p := store.serve(app)
-	if !p.waitFor("serves storage", 10*time.Second) {
-		t.Fatalf("the storage citizen did not serve:\n%s", p.output())
+	return key, func() *process {
+		t.Helper()
+		p := store.serve(dir)
+		if !p.waitFor("serves storage", 10*time.Second) {
+			t.Fatalf("the storage citizen did not serve:\n%s", p.output())
+		}
+		return p
 	}
-	return key, p
 }
 
 // relaySelfData returns the self data of the citizen of home that the relay
@@ -188,8 +201,8 @@ func TestStorageJournalSync(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if size := info.Size(); size < 4096 || size&(size-1) != 0 {
-			return fmt.Errorf("%s has %d bytes, which is not a power of two from 4 KiB", path, size)
+		if size := info.Size(); !storage.GoodPieceSize(size) {
+			return fmt.Errorf("%s has %d bytes, which is not the size of a piece of a blob of a power of two from 4 KiB", path, size)
 		}
 		if strings.Contains(read(t, path), "warmup") {
 			return fmt.Errorf("%s holds the text of the page", path)
@@ -199,7 +212,7 @@ func TestStorageJournalSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("ok: each blob is padded to a power of two, and holds no text of the page")
+	t.Log("ok: each piece is a piece of a blob padded to a power of two, and holds no text of the page")
 
 	// A phone signs through the bunker of the laptop. The bunker keeps its
 	// default decrypt policy. The phone signs its storage calls with its
