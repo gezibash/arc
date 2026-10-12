@@ -277,6 +277,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	// a phone each one is a question to the signer.
 	newest, err := sess.newestSelfKeys(ctx)
 	if err != nil {
+		fmt.Fprintf(cfg.Errs, "self data: the keys of the blobs did not come, so no storage citizen synced: %v\n", err)
 		return err
 	}
 	syncer := &selfsync.Syncer{
