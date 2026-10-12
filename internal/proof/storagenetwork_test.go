@@ -31,9 +31,11 @@ func TestStorageNetworkSync(t *testing.T) {
 	words := seedWords(made.Stderr)
 	signer.run("relay", "add", url)
 	citizen := signer.key()
-	charlie, charlieServe := servedStorageCitizen(t, work, url, signer, "charlie")
-	dana := namedStorageCitizen(t, work, url, signer, "dana")
-	erin, erinServe := servedStorageCitizen(t, work, url, signer, "erin")
+	// Each call to a storage citizen waits on a slow link of its own.
+	delays := map[string]time.Duration{"charlie": 400 * time.Millisecond, "dana": 800 * time.Millisecond, "erin": 1200 * time.Millisecond}
+	charlie, charlieServe := servedStorageCitizen(t, work, url, signer, "charlie", delays["charlie"])
+	dana, _ := servedStorageCitizen(t, work, url, signer, "dana", delays["dana"])
+	erin, erinServe := servedStorageCitizen(t, work, url, signer, "erin", delays["erin"])
 	signer.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
 	signer.run("install", citizen, "journal", "--yes")
 	for name, key := range map[string]string{"charlie": charlie, "dana": dana, "erin": erin} {
@@ -50,7 +52,8 @@ func TestStorageNetworkSync(t *testing.T) {
 		writePage(n, fmt.Sprintf("page %d of the network", n))
 	}
 
-	// One sync writes to each storage citizen at the same time.
+	// One sync writes to each storage citizen at the same time. Thus the
+	// sync takes about the time of the slowest one, not the sum.
 	start := time.Now()
 	first := signer.run("sync")
 	whole := time.Since(start)
@@ -60,13 +63,14 @@ func TestStorageNetworkSync(t *testing.T) {
 		if got.sent == 0 {
 			t.Fatalf("the sync put nothing on %s: %+v\n%s", name, got, first)
 		}
+		if took < delays[name] {
+			t.Fatalf("%s took %s, less than the delay of its link, %s", name, took, delays[name])
+		}
+		t.Logf("measured: %s took %s with a delay of %s", name, took, delays[name])
 		sum += took
 		slowest = max(slowest, took)
 	}
 	t.Logf("measured: arc sync took %s; the storage citizens took %s together, the slowest %s", whole.Round(time.Millisecond), sum, slowest)
-	if sum < time.Second {
-		t.Fatalf("the storage citizens took %s together, too short to show a parallel sync", sum)
-	}
 	if whole >= sum*8/10 {
 		t.Fatalf("arc sync took %s, and the storage citizens took %s together: they did not sync at the same time", whole, sum)
 	}
