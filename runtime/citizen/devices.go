@@ -62,6 +62,12 @@ func (sess *Session) PublishDeviceList(ctx context.Context, list devices.List) e
 	if err != nil {
 		return err
 	}
+	return sess.publishOwn(ctx, event, "the device list")
+}
+
+// publishOwn keeps an event of the citizen and sends it to the relays of the
+// citizen. It fails when no relay takes it.
+func (sess *Session) publishOwn(ctx context.Context, event nostr.Event, what string) error {
 	_, sent, err := sess.Node.Publish(ctx, event, sess.Relays)
 	if err != nil {
 		return err
@@ -76,7 +82,7 @@ func (sess *Session) PublishDeviceList(ctx context.Context, list devices.List) e
 		return errors.New("this citizen has no relays: add one with arc relay add")
 	}
 	if len(failed) == len(sent) {
-		return fmt.Errorf("no relay took the device list: %w", errors.Join(failed...))
+		return fmt.Errorf("no relay took %s: %w", what, errors.Join(failed...))
 	}
 	return nil
 }
