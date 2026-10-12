@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -63,8 +62,8 @@ func selfSyncConfig(command *cobra.Command, sess *citizen.Session) (citizen.Self
 		},
 		Options: direct.EnvOptions(sess.URLs),
 		Path:    path,
-		Out:     os.Stdout,
-		Errs:    os.Stderr,
+		Out:     command.OutOrStdout(),
+		Errs:    command.ErrOrStderr(),
 	}, nil
 }
 

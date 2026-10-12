@@ -758,6 +758,17 @@ The sync opens each pipe with the path of the citizen (`arc path`): `turn`
 uses only the TURN server of the relay, and `direct` uses no TURN. `auto`
 and `session` try a direct path first.
 
+**Decisions.** Zim accepted these on 2026-10-12, with the build of this
+section:
+
+1. `arc path` applies to the sync of self data: `turn` opens each pipe to a
+   storage citizen through TURN only, and `direct` uses no TURN.
+2. A plain `arc sync` does not add a piece for a late or new storage
+   citizen. Only a sync that repairs adds it: `arc serve`, or
+   `arc sync --repair`. Reason: the piece costs k pieces down, as a
+   rebuild does (decision 4 of the proposal).
+3. Audits wait for a direct path, as repair does. `--turn` allows both.
+
 **Audits.** In a sync that repairs, the device audits each storage citizen
 with a pipe that repair can use, once in 24 hours:
 

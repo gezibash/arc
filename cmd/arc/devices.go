@@ -60,7 +60,7 @@ func deviceCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(k.Public.Hex())
+			fmt.Fprintln(command.OutOrStdout(), k.Public.Hex())
 			return nil
 		},
 	}
@@ -90,7 +90,7 @@ func accountCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(account.Public.Hex())
+			fmt.Fprintln(command.OutOrStdout(), account.Public.Hex())
 			return nil
 		},
 	}
@@ -161,14 +161,14 @@ func listDevices(command *cobra.Command, _ []string) error {
 		return err
 	}
 	if !ok {
-		fmt.Println("no device list: the bunker admits each device that gives its secret")
+		fmt.Fprintln(command.OutOrStdout(), "no device list: the bunker admits each device that gives its secret")
 		return nil
 	}
 	if len(l.Devices) == 0 {
-		fmt.Println("the device list is empty: the bunker admits no device")
+		fmt.Fprintln(command.OutOrStdout(), "the device list is empty: the bunker admits no device")
 	}
 	for _, d := range l.Devices {
-		fmt.Printf("%s  %s  added %s\n", d.Name, d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly))
+		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", d.Name, d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly))
 	}
 	return nil
 }
@@ -195,19 +195,19 @@ func changeDevices(command *cobra.Command, change func(devices.List) (devices.Li
 	if err != nil {
 		return err
 	}
-	fmt.Println(said)
+	fmt.Fprintln(command.OutOrStdout(), said)
 	root, err := sess.PublishDataRoots(command.Context(), l)
 	if err != nil {
 		return fmt.Errorf("the device list changed, but the data roots did not: %w; run arc keys roots on the signer to try again", err)
 	}
-	fmt.Printf("data roots: generation %d\n", root.Gen)
+	fmt.Fprintf(command.OutOrStdout(), "data roots: generation %d\n", root.Gen)
 	installs, err := installsOf(command)
 	if err != nil {
 		return err
 	}
 	targets, err := sess.PushGrants(command.Context(), installs, l)
 	for _, install := range targets {
-		fmt.Printf("grants: sent to the storage citizen %s\n", install.As)
+		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", install.As)
 	}
 	if err != nil {
 		return fmt.Errorf("the device list changed, but %w; run arc sync on the signer to try again", err)
@@ -267,12 +267,12 @@ func rootsCommand() *cobra.Command {
 			slices.Reverse(gens)
 			for i, gen := range gens {
 				if i == 0 {
-					fmt.Printf("generation %d (newest)\n", gen)
+					fmt.Fprintf(command.OutOrStdout(), "generation %d (newest)\n", gen)
 					for _, h := range holders {
-						fmt.Println(h)
+						fmt.Fprintln(command.OutOrStdout(), h)
 					}
 				} else {
-					fmt.Printf("generation %d\n", gen)
+					fmt.Fprintf(command.OutOrStdout(), "generation %d\n", gen)
 				}
 			}
 			return nil
@@ -306,7 +306,7 @@ func sealCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(sealed)
+			fmt.Fprintln(command.OutOrStdout(), sealed)
 			return nil
 		},
 	}
@@ -340,7 +340,7 @@ func unsealCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Print(plain)
+			fmt.Fprint(command.OutOrStdout(), plain)
 			return nil
 		},
 	}

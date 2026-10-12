@@ -230,7 +230,8 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	self.Out, self.Errs = os.Stderr, os.Stderr
+	// A service reports its self sync on standard error.
+	self.Out = self.Errs
 	// Each device that runs arc serve repairs on its tick, and waits for
 	// a direct path (decisions 4 and 7 of the storage network proposal).
 	self.Repair = true
@@ -491,10 +492,10 @@ func discoverCmd() *cobra.Command {
 				return err
 			}
 			if len(offers) == 0 {
-				fmt.Println("no apps found: add a relay, or sync with a directory")
+				fmt.Fprintln(command.OutOrStdout(), "no apps found: add a relay, or sync with a directory")
 			}
 			for _, o := range offers {
-				fmt.Printf("%s/%s  %s\n  %s\n  %s\n", o.Name(), o.ID, o.Title, o.Summary, o.Provider.Hex())
+				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), o.ID, o.Title, o.Summary, o.Provider.Hex())
 			}
 			return nil
 		},
@@ -532,12 +533,12 @@ func installCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("%s offers %s (%s)\n  %s\n  %s\n", offer.Name(), offer.Title, offer.ID, offer.Summary, offer.Provider.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s offers %s (%s)\n  %s\n  %s\n", offer.Name(), offer.Title, offer.ID, offer.Summary, offer.Provider.Hex())
 			if m := offer.Manifest; m != nil {
-				fmt.Print(iface.Describe(m))
+				fmt.Fprint(command.OutOrStdout(), iface.Describe(m))
 			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
-				fmt.Print("Trust this app and its signing identity? [y/N] ")
+				fmt.Fprint(command.OutOrStdout(), "Trust this app and its signing identity? [y/N] ")
 				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					return errors.New("not installed")
@@ -547,7 +548,7 @@ func installCmd() *cobra.Command {
 				if err := installs.Add(offer, ""); err != nil {
 					return err
 				}
-				fmt.Printf("installed %s: call it with arc call %s\n", offer.ID, offer.Name())
+				fmt.Fprintf(command.OutOrStdout(), "installed %s: call it with arc call %s\n", offer.ID, offer.Name())
 				return nil
 			}
 			as, _ := command.Flags().GetString("as")
@@ -560,7 +561,7 @@ func installCmd() *cobra.Command {
 			if err := installs.Add(offer, as); err != nil {
 				return err
 			}
-			fmt.Printf("installed %s: see arc help %s\n", as, as)
+			fmt.Fprintf(command.OutOrStdout(), "installed %s: see arc help %s\n", as, as)
 			return nil
 		},
 	}
@@ -613,16 +614,16 @@ func callCmd() *cobra.Command {
 				}
 				found = true
 				to, _ := nostr.PubKeyFromHex(o.To)
-				fmt.Printf("%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Text)
+				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Text)
 				switch {
 				case o.Reply.Err != "":
-					fmt.Printf("  error: %s\n", o.Reply.Err)
+					fmt.Fprintf(command.OutOrStdout(), "  error: %s\n", o.Reply.Err)
 				case o.ReplySeal != "":
-					fmt.Printf("  reply: %s\n", o.Reply.Body)
+					fmt.Fprintf(command.OutOrStdout(), "  reply: %s\n", o.Reply.Body)
 				}
 			}
 			if !found {
-				fmt.Println("no store-and-forward calls")
+				fmt.Fprintln(command.OutOrStdout(), "no store-and-forward calls")
 			}
 			return nil
 		},
@@ -685,7 +686,7 @@ func callCapability(command *cobra.Command, args []string) error {
 		if _, err := sess.Mail.Request(command.Context(), provider, request); err != nil {
 			return err
 		}
-		fmt.Printf("queued for %s: the reply arrives with a sync; see arc call results\n", offer.Name())
+		fmt.Fprintf(command.OutOrStdout(), "queued for %s: the reply arrives with a sync; see arc call results\n", offer.Name())
 		return nil
 	}
 
@@ -703,11 +704,11 @@ func callCapability(command *cobra.Command, args []string) error {
 	if m := offer.Manifest; !raw && m != nil && m.Service != nil && m.Service.Output != nil {
 		env := &citizen.Environment{Session: sess, Installs: installs}
 		in := iface.Installed{Manifest: m, Author: provider, Name: offer.ID}
-		return iface.ShowReply(command.Context(), env, in, reply.Body, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
+		return iface.ShowReply(command.Context(), env, in, reply.Body, iface.Stdio{In: os.Stdin, Out: command.OutOrStdout(), Err: os.Stderr})
 	}
-	fmt.Print(reply.Body)
+	fmt.Fprint(command.OutOrStdout(), reply.Body)
 	if !strings.HasSuffix(reply.Body, "\n") {
-		fmt.Println()
+		fmt.Fprintln(command.OutOrStdout())
 	}
 	return nil
 }
@@ -790,7 +791,7 @@ func announceCmd() *cobra.Command {
 					}
 				}
 			}
-			fmt.Printf("announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.Key.Name(), sess.Key.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.Key.Name(), sess.Key.Public.Hex())
 			return nil
 		},
 	}

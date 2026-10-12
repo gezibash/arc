@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -37,11 +38,11 @@ func appsCommand() *cobra.Command {
 					return err
 				}
 				if len(list) == 0 {
-					fmt.Println("no apps: install commands with arc install <author-or-service> [app]")
+					fmt.Fprintln(command.OutOrStdout(), "no apps: install commands with arc install <author-or-service> [app]")
 					return nil
 				}
 				for _, e := range list {
-					fmt.Printf("%s -> %s/%s\n  %s\n", runName(e), e.Name, e.ID, e.Provider)
+					fmt.Fprintf(command.OutOrStdout(), "%s -> %s/%s\n  %s\n", runName(e), e.Name, e.ID, e.Provider)
 				}
 				return nil
 			},
@@ -71,11 +72,11 @@ func appsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s -> %s/%s\n", runName(install), install.Name, install.ID)
-				showOffer(offer)
+				fmt.Fprintf(command.OutOrStdout(), "%s -> %s/%s\n", runName(install), install.Name, install.ID)
+				showOffer(command.OutOrStdout(), offer)
 				if install.Consent != nil && offer.Manifest != nil {
 					if changes := install.Consent.Changes(offer.Manifest); len(changes) > 0 {
-						fmt.Printf("the author changed what it can do; install it again to agree:\n  %s\n", strings.Join(changes, "\n  "))
+						fmt.Fprintf(command.OutOrStdout(), "the author changed what it can do; install it again to agree:\n  %s\n", strings.Join(changes, "\n  "))
 					}
 				}
 				return nil
@@ -92,7 +93,7 @@ func appsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("removed %s/%s\n", gone.Name, gone.ID)
+				fmt.Fprintf(command.OutOrStdout(), "removed %s/%s\n", gone.Name, gone.ID)
 				return nil
 			},
 		},
@@ -123,10 +124,10 @@ func installed(installs catalog.Installs, name string) (catalog.Install, error) 
 	return catalog.Install{}, fmt.Errorf("nothing installed as %q: see arc apps list", name)
 }
 
-func showOffer(o catalog.Offer) {
-	fmt.Printf("%s offers %s (%s)\n  %s\n  %s\n", o.Name(), o.Title, o.ID, o.Summary, o.Provider.Hex())
+func showOffer(out io.Writer, o catalog.Offer) {
+	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), o.Title, o.ID, o.Summary, o.Provider.Hex())
 	if o.Manifest != nil {
-		fmt.Print(iface.Describe(o.Manifest))
+		fmt.Fprint(out, iface.Describe(o.Manifest))
 	}
 }
 
@@ -156,7 +157,7 @@ func infoCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				showOffer(offer)
+				showOffer(command.OutOrStdout(), offer)
 				return nil
 			}
 
@@ -180,9 +181,9 @@ func infoCommand() *cobra.Command {
 			}
 			for i, offer := range offers {
 				if i > 0 {
-					fmt.Println()
+					fmt.Fprintln(command.OutOrStdout())
 				}
-				showOffer(offer)
+				showOffer(command.OutOrStdout(), offer)
 			}
 			return nil
 		},
@@ -263,7 +264,7 @@ func resolveCommand() *cobra.Command {
 				return fmt.Errorf("no citizen answers to %s", args[0])
 			}
 			for _, h := range hits {
-				fmt.Printf("%s\n  %s\n  %s\n", h.name, h.key, h.where)
+				fmt.Fprintf(command.OutOrStdout(), "%s\n  %s\n  %s\n", h.name, h.key, h.where)
 			}
 			return nil
 		},
@@ -300,10 +301,10 @@ func versionCommand() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version and the build commit",
 		Args:  cobra.NoArgs,
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("arc %s\n", version)
-			fmt.Printf("commit %s\n", commit())
-			fmt.Printf("built with %s for %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		Run: func(command *cobra.Command, _ []string) {
+			fmt.Fprintf(command.OutOrStdout(), "arc %s\n", version)
+			fmt.Fprintf(command.OutOrStdout(), "commit %s\n", commit())
+			fmt.Fprintf(command.OutOrStdout(), "built with %s for %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		},
 	}
 }
