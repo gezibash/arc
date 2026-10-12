@@ -5,8 +5,8 @@
 // of the event inside. A new wrap with the same d tag replaces the old one,
 // and a wrap with blank content says that the draft is deleted. A
 // checkpoint, kind 1234, keeps one version of a draft, so the checkpoints
-// are its history. A private relay list, kind 10013, names the relays that
-// hold the drafts.
+// are its history. ARC keeps drafts on the device and on storage citizens,
+// not on relays, so it has no private relay list of kind 10013.
 //
 // A relay caps the size of one event. Content past the first 32 KiB of a
 // draft travels in parts, kind 3275, which ARC defines. Each part is sealed
@@ -33,7 +33,6 @@ import (
 const (
 	Kind           nostr.Kind = 31234
 	CheckpointKind nostr.Kind = 1234
-	RelayListKind  nostr.Kind = 10013
 	PartKind       nostr.Kind = 3275
 
 	// PartSize is the most content that one event carries.
@@ -41,6 +40,30 @@ const (
 	// MaxParts bounds the parts of one draft.
 	MaxParts = 256
 )
+
+// Moved marks a NIP-09 deletion that a device sends to a relay for the
+// drafts, checkpoints and parts that a storage citizen holds. The deletion
+// is for the relay only. A store must never keep it: there it would delete
+// the drafts that it names, on each device of the citizen.
+var Moved = nostr.Tag{"arc", "moved"}
+
+// RetiredTag is the NIP-11 tag of a relay that refuses new drafts and
+// serves no deletion with the Moved tag. A device sends such a deletion
+// only to a relay with this tag.
+const RetiredTag = "arc-drafts-retired"
+
+// IsMoved says whether an event is a deletion with the Moved tag.
+func IsMoved(event nostr.Event) bool {
+	if event.Kind != nostr.KindDeletion {
+		return false
+	}
+	for _, tag := range event.Tags {
+		if len(tag) >= 2 && tag[0] == Moved[0] && tag[1] == Moved[1] {
+			return true
+		}
+	}
+	return false
+}
 
 // protected is the NIP-70 tag.
 var protected = nostr.Tag{"-"}
@@ -240,51 +263,4 @@ func Split(text string) []string {
 		out = append(out, text)
 	}
 	return out
-}
-
-// RelayList makes the private relay list of the signer.
-func RelayList(ctx context.Context, k nostr.Keyer, urls []string, at nostr.Timestamp) (nostr.Event, error) {
-	me, err := k.GetPublicKey(ctx)
-	if err != nil {
-		return nostr.Event{}, err
-	}
-	tags := make(nostr.Tags, 0, len(urls))
-	for _, url := range urls {
-		tags = append(tags, nostr.Tag{"relay", url})
-	}
-	body, err := json.Marshal(tags)
-	if err != nil {
-		return nostr.Event{}, err
-	}
-	content, err := k.Encrypt(ctx, string(body), me)
-	if err != nil {
-		return nostr.Event{}, err
-	}
-	return sign(ctx, k, nostr.Event{Kind: RelayListKind, CreatedAt: at, Content: content, Tags: nostr.Tags{}})
-}
-
-// ReadRelayList reads the private relay list of the signer.
-func ReadRelayList(ctx context.Context, k nostr.Keyer, list nostr.Event) ([]string, error) {
-	me, err := k.GetPublicKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if list.Kind != RelayListKind || list.PubKey != me {
-		return nil, errors.New("draft: that is not the relay list of this citizen")
-	}
-	plain, err := k.Decrypt(ctx, list.Content, me)
-	if err != nil {
-		return nil, err
-	}
-	var tags nostr.Tags
-	if err := json.Unmarshal([]byte(plain), &tags); err != nil {
-		return nil, err
-	}
-	var urls []string
-	for _, tag := range tags {
-		if len(tag) >= 2 && tag[0] == "relay" {
-			urls = append(urls, tag[1])
-		}
-	}
-	return urls, nil
 }

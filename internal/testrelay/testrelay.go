@@ -174,6 +174,18 @@ func StartGuarded(t *testing.T) string {
 	return "ws" + strings.TrimPrefix(server.URL, "http")
 }
 
+// StartStandard runs a relay that is not an ARC relay: it keeps no event
+// sealed, and refuses no kind.
+func StartStandard(t *testing.T) string {
+	t.Helper()
+	relay := khatru.NewRelay()
+	relay.Log = log.New(io.Discard, "", 0)
+	relay.UseEventstore(newStore(t), 500)
+	server := httptest.NewServer(relay)
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http")
+}
+
 // StartPlain runs a relay that does not support Negentropy.
 func StartPlain(t *testing.T) string {
 	return start(t, false)
@@ -221,10 +233,22 @@ func (l *gated) Accept() (net.Conn, error) {
 	}
 }
 
-func start(t *testing.T, negentropy bool) string {
+// StartHolding runs a relay like Start whose store already holds events,
+// as the store of a relay holds what it took before an update. The relay
+// does not check them: a newer relay can refuse their kinds.
+func StartHolding(t *testing.T, events ...nostr.Event) string {
+	return start(t, true, events...)
+}
+
+func start(t *testing.T, negentropy bool, held ...nostr.Event) string {
 	t.Helper()
 
 	db := newStore(t)
+	for _, event := range held {
+		if err := db.SaveEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)

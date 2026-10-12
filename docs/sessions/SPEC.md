@@ -75,6 +75,10 @@ is bound to the authenticated caller and provider for the session's lifetime.
   confirm the mode.
 - A received chunk MUST reach the reader, also when its `ack` fails. The
   peer can close as soon as it has the `ack`.
+- The peer can answer a frame before the transport confirms that frame. If
+  the answer ends the session while the send waits, the answer is the
+  outcome, not the cancelled send. A successful `close` completes an `end`.
+  A `close` or `accept` gives the result of an `open`.
 - Duplicate data MUST NOT be delivered twice.
 - A sequence gap, excess credit or unsupported input MUST end the session
   with an explicit protocol error.

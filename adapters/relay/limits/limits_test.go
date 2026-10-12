@@ -18,7 +18,6 @@ import (
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/transport/relay"
-	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/store"
@@ -62,27 +61,12 @@ func note(content string) nostr.Event {
 }
 
 // The deploy sets a cap of 256 KiB, and the protocol limit of 64 KiB
-// applies. Journal content travels in parts of 32 KiB, docs/interface/SPEC.md
-// section 3.9.2, so a full part and a full draft must pass.
-func TestTheSizeCapTakesAFullPartAndAFullDraft(t *testing.T) {
+// applies. An event that fills most of the protocol limit must pass.
+func TestTheSizeCapTakesAFullEvent(t *testing.T) {
 	url := start(t, limits.Policy{MaxEventBytes: 256 * 1024})
-	k := keyer.NewPlainKeySigner(nostr.Generate())
-	mine := relay.Relay{URL: url, Signer: k}
-
-	line := "a line of a journal page, with \"quotes\" and a tab\t.\n"
-	text := strings.Repeat(line, draft.PartSize/len(line))
-	part, err := draft.Part(ctx, k, "page", text, nostr.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrap, err := draft.Wrap(ctx, k, "page", nostr.Event{Kind: 30023, CreatedAt: 1, Content: text}, nostr.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range []nostr.Event{part, wrap} {
-		if err := mine.Send(ctx, e); err != nil {
-			t.Errorf("a full event of kind %d holds %d bytes, and the relay refused it: %v", e.Kind, len(e.String()), err)
-		}
+	full := note(strings.Repeat("x", 60*1024))
+	if err := publish(t, url, nil, full); err != nil {
+		t.Errorf("a full event holds %d bytes, and the relay refused it: %v", len(full.String()), err)
 	}
 
 	if err := publish(t, url, nil, note(strings.Repeat("x", 300*1024))); err == nil || !strings.Contains(err.Error(), "invalid") {
