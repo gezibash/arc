@@ -219,3 +219,9 @@ func Unpad(blob []byte) ([]byte, error) {
 	}
 	return blob[8 : 8+n], nil
 }
+
+// Blob is one blob of a batch put.
+type Blob struct {
+	ID   string
+	Data []byte
+}

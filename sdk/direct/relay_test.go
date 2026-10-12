@@ -160,7 +160,7 @@ func TestRelayPath(t *testing.T) {
 	// The STUN server of the relay gives each end an address behind its
 	// NAT, so the direct attempt fails because of the NATs.
 	for _, n := range []*vnet.Net{a, b} {
-		pc, err := NewConnection(Options{STUN: stun, net: n})
+		pc, err := NewConnection(Options{STUN: stun, Net: n})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +180,7 @@ func TestRelayPath(t *testing.T) {
 		}
 	}
 
-	if path, ok := transfer(t, Options{STUN: stun, net: a}, Options{STUN: stun, net: b}, 64<<10); ok {
+	if path, ok := transfer(t, Options{STUN: stun, Net: a}, Options{STUN: stun, Net: b}, 64<<10); ok {
 		t.Fatalf("the direct attempt found the path %q through two symmetric NATs", path)
 	}
 
@@ -191,7 +191,7 @@ func TestRelayPath(t *testing.T) {
 	}
 	server := &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
 	const size = 1 << 20
-	path, ok := transfer(t, Options{TURN: server, net: a}, Options{STUN: stun, net: b}, size)
+	path, ok := transfer(t, Options{TURN: server, Net: a}, Options{STUN: stun, Net: b}, size)
 	if !ok {
 		t.Fatal("the attempt with TURN found no path")
 	}
@@ -218,7 +218,7 @@ func TestRelayPathWithoutSTUN(t *testing.T) {
 	}
 	server := &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
 
-	if path, ok := transfer(t, Options{TURN: server, net: a}, Options{net: b}, 64<<10); ok {
+	if path, ok := transfer(t, Options{TURN: server, Net: a}, Options{Net: b}, 64<<10); ok {
 		t.Fatalf("the path %q opened, but the TURN server does not know the public address of the other end", path)
 	}
 
@@ -229,7 +229,7 @@ func TestRelayPathWithoutSTUN(t *testing.T) {
 	if stun != "stun:1.2.3.4:3478" {
 		t.Fatalf("STUN URL %q of the TURN server, want stun:1.2.3.4:3478", stun)
 	}
-	path, ok := transfer(t, Options{TURN: server, net: a}, Options{PeerSTUN: stun, net: b}, 1<<20)
+	path, ok := transfer(t, Options{TURN: server, Net: a}, Options{PeerSTUN: stun, Net: b}, 1<<20)
 	if !ok {
 		t.Fatal("the attempt with the STUN server of the TURN server found no path")
 	}
