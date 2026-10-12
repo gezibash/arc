@@ -264,15 +264,22 @@ func pieceFiles(t *testing.T, dir string) []string {
 // of the repository, outside the checkout.
 func olderStorageApp(t *testing.T) string {
 	t.Helper()
+	return olderProgram(t, "./apps/storage/cmd/arc-storage")
+}
+
+// olderProgram builds a program of olderCommit from the history of the
+// repository, outside the checkout.
+func olderProgram(t *testing.T, pkg string) string {
+	t.Helper()
 	dir := t.TempDir()
 	tarball := filepath.Join(dir, "src.tar")
 	src := filepath.Join(dir, "src")
-	bin := filepath.Join(dir, "arc-storage")
+	bin := filepath.Join(dir, filepath.Base(pkg))
 	steps := []*exec.Cmd{
 		exec.Command("git", "-C", repo, "archive", "--format=tar", "-o", tarball, olderCommit),
 		exec.Command("mkdir", src),
 		exec.Command("tar", "-xf", tarball, "-C", src),
-		exec.Command("go", "build", "-o", bin, "./apps/storage/cmd/arc-storage"),
+		exec.Command("go", "build", "-o", bin, pkg),
 	}
 	steps[3].Dir = src
 	for _, step := range steps {
@@ -322,6 +329,8 @@ type listed struct {
 func listAll(t *testing.T, m machine, as string) []listed {
 	t.Helper()
 	conn := pipe(t, m, as)
+	// Each pipe holds a session of the account until it closes.
+	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	entries, _, err := conn.List(ctx, 0)
