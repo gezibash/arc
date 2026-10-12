@@ -59,7 +59,7 @@ func listsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
+				fmt.Fprintf(command.OutOrStdout(), "%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
 				return nil
 			},
 		},
@@ -89,10 +89,10 @@ func listsCommand() *cobra.Command {
 					return err
 				}
 				if len(keys) == 0 {
-					fmt.Printf("removed %s/%s\n", args[0], args[1])
+					fmt.Fprintf(command.OutOrStdout(), "removed %s/%s\n", args[0], args[1])
 					return nil
 				}
-				fmt.Printf("%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
+				fmt.Fprintf(command.OutOrStdout(), "%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
 				return nil
 			},
 		},
@@ -110,10 +110,10 @@ func listsCommand() *cobra.Command {
 						return err
 					}
 					if len(held) == 0 {
-						fmt.Printf("no list %s/%s\n", args[0], args[1])
+						fmt.Fprintf(command.OutOrStdout(), "no list %s/%s\n", args[0], args[1])
 						return nil
 					}
-					fmt.Println(strings.Join(held, "\n"))
+					fmt.Fprintln(command.OutOrStdout(), strings.Join(held, "\n"))
 					return nil
 				}
 				names, err := store.Names(args[0])
@@ -121,7 +121,7 @@ func listsCommand() *cobra.Command {
 					return err
 				}
 				if len(names) == 0 {
-					fmt.Printf("no lists for %s\n", args[0])
+					fmt.Fprintf(command.OutOrStdout(), "no lists for %s\n", args[0])
 					return nil
 				}
 				for _, name := range names {
@@ -129,7 +129,7 @@ func listsCommand() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Printf("%s: %s\n", name, strings.Join(members, " "))
+					fmt.Fprintf(command.OutOrStdout(), "%s: %s\n", name, strings.Join(members, " "))
 				}
 				return nil
 			},

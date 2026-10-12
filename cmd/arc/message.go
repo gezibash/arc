@@ -115,7 +115,7 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	saved := make(chan struct{}, 1)
 	sess.Node.Store = sealNotice{EventStore: sess.Node.Store, saved: saved}
 
-	printer := newMessagePrinter(os.Stdout, asJSON)
+	printer := newMessagePrinter(command.OutOrStdout(), asJSON)
 	show := func(m mail.Message) error {
 		if len(senders) > 0 && !senders[m.From] {
 			return nil

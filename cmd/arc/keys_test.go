@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,20 +57,13 @@ func TestTheBunkerPolicy(t *testing.T) {
 // run runs arc in a home, with its standard output captured.
 func run(t *testing.T, home string, stdin string, args ...string) (string, error) {
 	t.Helper()
-	read, write, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	saved := os.Stdout
-	os.Stdout = write
+	var out strings.Builder
 	command := root()
 	command.SetIn(strings.NewReader(stdin))
+	command.SetOut(&out)
 	command.SetArgs(append([]string{"--home", home}, args...))
-	runErr := command.Execute()
-	os.Stdout = saved
-	write.Close()
-	out, _ := io.ReadAll(read)
-	return string(out), runErr
+	err := command.Execute()
+	return out.String(), err
 }
 
 // ok runs arc, and fails the test when the command fails.

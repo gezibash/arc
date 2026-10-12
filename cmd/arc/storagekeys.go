@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -73,12 +74,12 @@ func listStorage(command *cobra.Command, _ []string) error {
 		return err
 	}
 	if !ok || len(list.Entries) == 0 {
-		fmt.Println("the storage list is empty; add a storage citizen with arc keys storage add on the signer")
+		fmt.Fprintln(command.OutOrStdout(), "the storage list is empty; add a storage citizen with arc keys storage add on the signer")
 		return nil
 	}
 	for _, entry := range list.Entries {
 		since := time.Unix(int64(entry.Since), 0).UTC().Format("2006-01-02 15:04")
-		fmt.Printf("%s\t%s\t%s\tsince %s\t%s\n", entry.Name, entry.State, entry.Key.Hex(), since, strings.Join(entry.Relays, " "))
+		fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\tsince %s\t%s\n", entry.Name, entry.State, entry.Key.Hex(), since, strings.Join(entry.Relays, " "))
 	}
 	return nil
 }
@@ -106,12 +107,12 @@ func removeStorage(command *cobra.Command, args []string) error {
 	if gone {
 		state = storage.StateGone
 	}
-	return putStorage(ctx, sess, list, entry.Key, entry.Name, entry.Relays, state)
+	return putStorage(ctx, command.OutOrStdout(), sess, list, entry.Key, entry.Name, entry.Relays, state)
 }
 
 // putStorage sets the state of one storage citizen in the storage list,
 // and publishes the list. Since changes only with the state.
-func putStorage(ctx context.Context, sess *citizen.Session, list storage.List, key nostr.PubKey, name string, relays []string, state string) error {
+func putStorage(ctx context.Context, out io.Writer, sess *citizen.Session, list storage.List, key nostr.PubKey, name string, relays []string, state string) error {
 	entry := storage.ListEntry{Key: key, Name: name, Relays: relays, State: state, Since: nostr.Now()}
 	if have, ok := list.Find(key.Hex()); ok && have.State == state {
 		entry.Since = have.Since
@@ -123,7 +124,7 @@ func putStorage(ctx context.Context, sess *citizen.Session, list storage.List, k
 	if _, err := sess.PublishStorageList(ctx, list); err != nil {
 		return fmt.Errorf("the storage list did not change: %w", err)
 	}
-	fmt.Printf("storage list: %s is %s\n", name, state)
+	fmt.Fprintf(out, "storage list: %s is %s\n", name, state)
 	return nil
 }
 
@@ -166,10 +167,10 @@ func addStorage(command *cobra.Command, args []string) error {
 	}
 	account := reply.Account
 	if account.Status == storage.StatusPending {
-		fmt.Printf("%s: pending: %s\nrun arc keys storage add again later; the operator lists the request with arc-storage requests\n", as, account.Message)
+		fmt.Fprintf(command.OutOrStdout(), "%s: pending: %s\nrun arc keys storage add again later; the operator lists the request with arc-storage requests\n", as, account.Message)
 		return nil
 	}
-	fmt.Printf("%s: admitted: %s of %s in use, plan %s, %s\n", as, storage.HumanSize(account.Used), storage.HumanSize(account.Quota), account.Plan, account.State)
+	fmt.Fprintf(command.OutOrStdout(), "%s: admitted: %s of %s in use, plan %s, %s\n", as, storage.HumanSize(account.Used), storage.HumanSize(account.Quota), account.Plan, account.State)
 
 	installs, err := installsOf(command)
 	if err != nil {
@@ -183,7 +184,7 @@ func addStorage(command *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("the storage list did not come, so it does not name %s: %w; run arc keys storage add again", name, err)
 	}
-	if err := putStorage(ctx, sess, storageList, provider, name, sess.RelayURLs(), storage.StateActive); err != nil {
+	if err := putStorage(ctx, command.OutOrStdout(), sess, storageList, provider, name, sess.RelayURLs(), storage.StateActive); err != nil {
 		return err
 	}
 	list, ok, err := sess.DeviceList(ctx)
@@ -195,7 +196,7 @@ func addStorage(command *cobra.Command, args []string) error {
 	}
 	targets, err := sess.PushGrants(ctx, installs, list)
 	for _, install := range targets {
-		fmt.Printf("grants: sent to the storage citizen %s\n", install.As)
+		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", install.As)
 	}
 	if err != nil {
 		return fmt.Errorf("%w; run arc sync to try again", err)
@@ -230,6 +231,6 @@ func installStorage(command *cobra.Command, sess *citizen.Session, installs cata
 	if err := installs.Add(offer, as); err != nil {
 		return "", err
 	}
-	fmt.Printf("installed %s\n", as)
+	fmt.Fprintf(command.OutOrStdout(), "installed %s\n", as)
 	return as, nil
 }

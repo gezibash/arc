@@ -250,13 +250,13 @@ func relayCommand() *cobra.Command {
 					return err
 				}
 				if len(urls) == 0 {
-					fmt.Println("no relays: add one with arc relay add <url>")
+					fmt.Fprintln(command.OutOrStdout(), "no relays: add one with arc relay add <url>")
 				}
 				for _, url := range urls {
-					fmt.Println(url)
+					fmt.Fprintln(command.OutOrStdout(), url)
 				}
 				for _, url := range indexers {
-					fmt.Println(url + "  (index)")
+					fmt.Fprintln(command.OutOrStdout(), url+"  (index)")
 				}
 				return nil
 			},
@@ -295,7 +295,7 @@ func turnCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = os.Stdout.Write(body)
+			_, err = command.OutOrStdout().Write(body)
 			return err
 		},
 	}
@@ -419,7 +419,7 @@ func serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("relay listens on ws://%s\n", listener.Addr())
+			fmt.Fprintf(command.OutOrStdout(), "relay listens on ws://%s\n", listener.Addr())
 			turnConfig, err := turnSetting(command)
 			if err != nil {
 				return err
@@ -444,7 +444,7 @@ func serveCommand() *cobra.Command {
 						return fmt.Errorf("TURN: %w", err)
 					}
 					defer func() { _ = turnServer.Close() }()
-					fmt.Printf("relay answers STUN and TURN on udp://%s, relay ports %d-%d on %s\n", conn.LocalAddr(), turnConfig.MinPort, turnConfig.MaxPort, turnConfig.PublicIP)
+					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN and TURN on udp://%s, relay ports %d-%d on %s\n", conn.LocalAddr(), turnConfig.MinPort, turnConfig.MaxPort, turnConfig.PublicIP)
 				default:
 					defer func() { _ = conn.Close() }()
 					go func() {
@@ -452,7 +452,7 @@ func serveCommand() *cobra.Command {
 							fmt.Fprintln(os.Stderr, "the STUN server stopped:", err)
 						}
 					}()
-					fmt.Printf("relay answers STUN on udp://%s\n", conn.LocalAddr())
+					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN on udp://%s\n", conn.LocalAddr())
 				}
 			} else if turnConfig != nil {
 				return errors.New("TURN needs the STUN port; do not set --stun none with --turn-ports")
@@ -636,15 +636,15 @@ func messageCommand() *cobra.Command {
 				if len(sess.Relays) == 0 {
 					fmt.Fprintln(os.Stderr, "no relays: run arc sync --dir <path> to hand it to a courier")
 				}
-				return json.NewEncoder(os.Stdout).Encode(struct {
+				return json.NewEncoder(command.OutOrStdout()).Encode(struct {
 					ID    string `json:"id"`
 					To    string `json:"to"`
 					State string `json:"state"`
 				}{out.Rumor, out.To, out.State(time.Now())})
 			}
-			fmt.Printf("queued for %s until %s\n", keys.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
+			fmt.Fprintf(command.OutOrStdout(), "queued for %s until %s\n", keys.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
 			if len(sess.Relays) == 0 {
-				fmt.Println("no relays: run arc sync --dir <path> to hand it to a courier")
+				fmt.Fprintln(command.OutOrStdout(), "no relays: run arc sync --dir <path> to hand it to a courier")
 			}
 			return nil
 		},
@@ -664,7 +664,7 @@ func messageCommand() *cobra.Command {
 				return err
 			}
 			asJSON, _ := command.Flags().GetBool("json")
-			printer := newMessagePrinter(os.Stdout, asJSON)
+			printer := newMessagePrinter(command.OutOrStdout(), asJSON)
 			if asJSON {
 				for _, m := range msgs {
 					if err := printer.print(m); err != nil {
@@ -674,7 +674,7 @@ func messageCommand() *cobra.Command {
 				return nil
 			}
 			if len(msgs) == 0 {
-				fmt.Println("no messages: run arc sync")
+				fmt.Fprintln(command.OutOrStdout(), "no messages: run arc sync")
 			}
 			for _, m := range msgs {
 				if err := printer.print(m); err != nil {
@@ -686,7 +686,7 @@ func messageCommand() *cobra.Command {
 				return err
 			}
 			if n > 0 {
-				fmt.Printf("\ncarrying %d sealed messages for other citizens\n", n)
+				fmt.Fprintf(command.OutOrStdout(), "\ncarrying %d sealed messages for other citizens\n", n)
 			}
 			return nil
 		},
@@ -706,12 +706,12 @@ func messageCommand() *cobra.Command {
 				return err
 			}
 			if len(out) == 0 {
-				fmt.Println("no messages sent")
+				fmt.Fprintln(command.OutOrStdout(), "no messages sent")
 			}
 			now := time.Now()
 			for _, o := range out {
 				to, _ := nostr.PubKeyFromHex(o.To)
-				fmt.Printf("%s  to %s  %s, sent %d times\n  %s\n",
+				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s, sent %d times\n  %s\n",
 					o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Attempts, o.Text)
 			}
 			return nil
@@ -763,7 +763,7 @@ func syncCommand() *cobra.Command {
 						failed = true
 						continue
 					}
-					fmt.Printf("%s: sealed data received %d, sent %d, already held %d\n",
+					fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
 						report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
 					for _, reason := range report.Refused {
 						fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
@@ -777,7 +777,7 @@ func syncCommand() *cobra.Command {
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
-					fmt.Printf("%s: announcements received %d\n", t.Name(), offers.Received)
+					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", t.Name(), offers.Received)
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
@@ -786,7 +786,7 @@ func syncCommand() *cobra.Command {
 					failed = true
 					continue
 				}
-				fmt.Printf("%s: mail received %d, delivered %d, carried %d, sent %d\n",
+				fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
 					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
 				for _, reason := range mails.Refused {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
