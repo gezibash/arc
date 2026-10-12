@@ -21,9 +21,12 @@ import (
 // itself. Thus a copy of the file alone opens no data.
 var rootsBucket = []byte("data-roots")
 
-// openedKey keeps the ID of the roots event that this machine opened last.
-// A key of other than 4 bytes is no generation.
-var openedKey = []byte("opened-event")
+// openedBucket keeps the ID of the roots event that this machine opened
+// last, under openedKey.
+var (
+	openedBucket = []byte("roots-event")
+	openedKey    = []byte("opened")
+)
 
 // DataRoot returns the newest data root that this machine holds. Seal new
 // data with it. Without a roots event, it is generation 0: the keyed root.
@@ -37,6 +40,21 @@ func (sess *Session) DataRoot(ctx context.Context) (devices.Root, error) {
 	}
 	gen := slices.Max(slices.Collect(maps.Keys(held)))
 	return devices.Root{Gen: gen, Key: held[gen]}, nil
+}
+
+// SealRoot returns the root to seal new self data with: the newest random
+// root that this machine keeps on its disk, with no request to the signer
+// or the relays. arc sync and arc serve bring the roots up to date. With no
+// random root on the disk, it is DataRoot.
+func (sess *Session) SealRoot(ctx context.Context) (devices.Root, error) {
+	held, err := sess.heldRoots(ctx)
+	if err != nil {
+		return devices.Root{}, err
+	}
+	if gen := slices.Max(append(slices.Collect(maps.Keys(held)), 0)); gen > 0 {
+		return devices.Root{Gen: gen, Key: held[gen]}, nil
+	}
+	return sess.DataRoot(ctx)
 }
 
 // DataRootAt returns the data root of one generation, to open data that it
@@ -122,7 +140,7 @@ func (sess *Session) rootsUnchanged(ctx context.Context, held map[uint32][32]byt
 	}
 	var opened []byte
 	_ = sess.roots.View(func(tx kv.Tx) error {
-		if b := tx.Bucket(rootsBucket); b != nil {
+		if b := tx.Bucket(openedBucket); b != nil {
 			opened = slices.Clone(b.Get(openedKey))
 		}
 		return nil
@@ -132,7 +150,7 @@ func (sess *Session) rootsUnchanged(ctx context.Context, held map[uint32][32]byt
 
 func (sess *Session) markOpened(id nostr.ID) error {
 	return sess.roots.Update(func(tx kv.Tx) error {
-		b, err := tx.CreateBucketIfNotExists(rootsBucket)
+		b, err := tx.CreateBucketIfNotExists(openedBucket)
 		if err != nil {
 			return err
 		}

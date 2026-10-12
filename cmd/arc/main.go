@@ -758,6 +758,9 @@ func syncCommand() *cobra.Command {
 				return errors.New("nothing to sync with: add a relay, or give --dir")
 			}
 
+			if dir != "" {
+				refreshDevices(command.Context(), sess, command.ErrOrStderr())
+			}
 			failed := false
 			for _, t := range targets {
 				// Self data goes to a directory that the citizen carries,

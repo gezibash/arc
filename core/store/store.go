@@ -32,6 +32,10 @@ const MaxQuery = 1_000_000
 // bytes has content that the store holds.
 const MaxEvent = 64 << 10
 
+// ReasonUnlisted is the reason of a refusal of self data that a key signed
+// which is not on the device list. The key can join the list later.
+const ReasonUnlisted = "the signer is not on the device list of the citizen"
+
 // Outcome says what the store did with one event.
 type Outcome int
 
@@ -343,9 +347,11 @@ func (s *Store) refusedSigner(event nostr.Event, from Source) string {
 	switch {
 	case st.Listed:
 		return ""
-	case st.NoList && from == StorageCitizen:
-		// With no device list, the AEAD of the blob is the check: only a
-		// holder of the data roots made it.
+	case st.NoList:
+		// With no device list, the signer admits each device that gives
+		// its secret, and no key is ever revoked. The AEAD of a blob, or
+		// the stick that the citizen carries, is the check. No relay
+		// serves self data that a device key signed.
 		return ""
 	case st.RevokedAt != 0 && from != StorageCitizen:
 		return "the device key was revoked, and only a storage citizen brings its older work"
@@ -357,7 +363,7 @@ func (s *Store) refusedSigner(event nostr.Event, from Source) string {
 		}
 		return ""
 	default:
-		return "the signer is not on the device list of the citizen"
+		return ReasonUnlisted
 	}
 }
 

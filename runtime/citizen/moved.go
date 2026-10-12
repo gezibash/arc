@@ -73,7 +73,7 @@ func (sess *Session) moveDrafts(ctx context.Context, cfg SelfSync, kept map[nost
 			if event.PubKey != sess.Key.Public || (event.Kind == 31234 && event.Tags.GetD() == iface.KeyedRootD) {
 				continue
 			}
-			ok, err := selfsync.Movable(sess.Node.Store, kept, event)
+			ok, err := selfsync.Movable(sess.store, kept, event)
 			if err != nil {
 				fmt.Fprintf(cfg.Errs, "%s: %v\n", t.Name(), err)
 				return

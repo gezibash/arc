@@ -100,7 +100,7 @@ func (j *job) work() int {
 // section 4.6). Without Syncer.Repair it only counts the blobs that need
 // it. Repair uses a pipe through TURN only with Syncer.TURN.
 func (r *run) repair(ctx context.Context) error {
-	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
 	}

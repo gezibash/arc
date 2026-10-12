@@ -14,6 +14,10 @@ type matchStore []nostr.Event
 
 func (s matchStore) Save(nostr.Event) (store.Result, error) { return store.Result{}, nil }
 
+func (s matchStore) SaveFrom(nostr.Event, store.Source) (store.Result, error) {
+	return store.Result{}, nil
+}
+
 func (s matchStore) Query(f nostr.Filter) ([]nostr.Event, error) {
 	var out []nostr.Event
 	for _, e := range s {

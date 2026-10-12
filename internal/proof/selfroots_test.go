@@ -82,6 +82,8 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	}
 	t.Logf("ok: with the device list, the phone seals with generation 1: %v", count(one))
 
+	// A page of the second of the revocation counts as after it.
+	time.Sleep(time.Second)
 	has(t, signer.run("keys", "devices", "revoke", "phone"), "data roots: generation 2", "the revocation")
 	if !loads(bunker, 3, limit) {
 		t.Fatalf("the bunker did not load the list after the revocation:\n%s", bunker.output())
@@ -146,11 +148,11 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	watch.run("relay", "add", url)
 	watch.run("install", citizen, "journal", "--yes")
 	watch.run("install", storeKey, "storage", "--yes")
-	onlyPhoneRefused(t, "the new watch", phoneKey, watch.try("", "sync"))
-	for _, page := range []string{"hrs/roots/1", "hrs/roots/3"} {
-		has(t, journalDoc(t, begin, watch.run("journal", "read", page)), pages[page], "the watch reading "+page)
+	noneRefused(t, "the new watch", watch.try("", "sync"))
+	for page, want := range pages {
+		has(t, journalDoc(t, begin, watch.run("journal", "read", page)), want, "the watch reading "+page)
 	}
-	t.Log("ok: a device added after the revocation opens each blob of each generation, and reads each page that a listed device wrote")
+	t.Log("ok: a device added after the revocation opens each blob of each generation, and reads each page, also the page that the phone wrote before its revocation")
 
 	paper := arc(t, filepath.Join(work, "paper")).with(loopback...)
 	recovered := ifaceTrim(paper.input(strings.Join(words, " ")+"\n", "keys", "recover"))
@@ -160,13 +162,14 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	paper.run("relay", "add", url)
 	paper.run("install", citizen, "journal", "--yes")
 	paper.run("install", storeKey, "storage", "--yes")
-	// The seed opens each blob. It takes no change that the revoked phone
-	// signed: the device list refuses those, not the keys.
-	onlyPhoneRefused(t, "the machine from the seed", phoneKey, paper.try("", "sync"))
-	for _, page := range []string{"hrs/roots/1", "hrs/roots/3"} {
-		has(t, journalDoc(t, begin, paper.run("journal", "read", page)), pages[page], "the seed reading "+page)
+	// The seed opens each blob. The page of the revoked phone is older than
+	// its revocation, and comes from the storage citizen, so the device
+	// list accepts it.
+	noneRefused(t, "the machine from the seed", paper.try("", "sync"))
+	for page, want := range pages {
+		has(t, journalDoc(t, begin, paper.run("journal", "read", page)), want, "the seed reading "+page)
 	}
-	t.Log("ok: the seed alone, on a new machine, opens each blob of each generation, and reads each page that a listed device wrote")
+	t.Log("ok: the seed alone, on a new machine, opens each blob of each generation, and reads each page")
 }
 
 // blobsByGen lists the pieces that the storage citizen "storage" holds
@@ -241,25 +244,15 @@ func opensWithAny(roots map[uint32][32]byte, gen uint32, it listed) string {
 	return ""
 }
 
-// onlyPhoneRefused checks one arc sync: it took records, and it refused no
-// blob for a reason other than the device list, which refuses each change
-// of the revoked phone. A blob that does not open fails the test.
-func onlyPhoneRefused(t *testing.T, who, phoneKey string, synced result) {
+// noneRefused checks one arc sync: it took records, and refused none. A
+// blob that does not open, or a record that the device list refuses, fails
+// the test.
+func noneRefused(t *testing.T, who string, synced result) {
 	t.Helper()
 	if got := selfSync(t, synced.Stdout); got.received == 0 {
 		t.Fatalf("%s took nothing: %+v\n%s", who, got, synced.Stderr)
 	}
-	phone := 0
-	for refusal := range strings.SplitSeq(strings.TrimSpace(synced.Stderr), "\n") {
-		if !strings.Contains(refusal, "refused") {
-			continue
-		}
-		if !strings.Contains(refusal, "not on the device list: "+phoneKey) {
-			t.Fatalf("%s refused a blob for a reason other than the revoked phone:\n%s", who, synced.Stderr)
-		}
-		phone++
-	}
-	if phone == 0 {
-		t.Fatalf("%s took the changes of the revoked phone:\n%s", who, synced.Stderr)
+	if strings.Contains(synced.Stderr, "refused") {
+		t.Fatalf("%s refused a blob:\n%s", who, synced.Stderr)
 	}
 }

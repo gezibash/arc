@@ -85,6 +85,9 @@ func (sess *Session) PublishDeviceList(ctx context.Context, list devices.List) (
 		return devices.List{}, err
 	}
 	list.At = event.CreatedAt
+	if err := sess.keepList(ctx, list, true); err != nil {
+		sess.warnf("arc: the device list is not kept on this disk: %v\n", err)
+	}
 	return list, sess.publishOwn(ctx, event, "the device list")
 }
 

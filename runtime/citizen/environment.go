@@ -68,11 +68,11 @@ func (e *Environment) ResolveKey(ctx context.Context, text string) (nostr.PubKey
 func (e *Environment) Keyer() nostr.Keyer { return e.Session.Signer }
 
 // Sealer writes self data of an app under the newest data root that this
-// machine holds. A device signs with its device key, and a machine that
-// holds the citizen key signs with it. Neither asks the signer when the root
-// cache holds a root.
+// machine keeps on its disk. A device signs with its device key, and a
+// machine that holds the citizen key signs with it. Neither asks the signer
+// when the root cache holds a random root.
 func (e *Environment) Sealer(ctx context.Context, app string) (draft.Sealer, error) {
-	root, err := e.Session.DataRoot(ctx)
+	root, err := e.Session.SealRoot(ctx)
 	if err != nil {
 		return draft.Sealer{}, err
 	}
@@ -181,6 +181,12 @@ func (e *Environment) Fetch(ctx context.Context, filter nostr.Filter, urls []str
 		}
 		slices.SortFunc(out, func(a, b nostr.Event) int { return int(b.CreatedAt) - int(a.CreatedAt) })
 		return out, nil
+	}
+	// Self data stays on the device, and goes only to storage citizens. The
+	// drafts that relays still hold come in at arc sync, once. A read of
+	// self data therefore asks no relay, and works with no signer.
+	if selfOnly(filter) {
+		return e.Session.Node.Store.Query(filter)
 	}
 	if filter.IDs != nil && filter.Kinds == nil {
 		found, err := e.Session.Node.Obtain(ctx, filter.IDs, e.Session.Relays)
@@ -421,4 +427,18 @@ func (e *Environment) watchStore(ctx context.Context, filter nostr.Filter) <-cha
 		}
 	}()
 	return out
+}
+
+// selfOnly says whether a filter matches only self data: drafts,
+// checkpoints, parts and deletions.
+func selfOnly(filter nostr.Filter) bool {
+	if len(filter.Kinds) == 0 {
+		return false
+	}
+	for _, kind := range filter.Kinds {
+		if !slices.Contains(selfsync.Kinds, kind) {
+			return false
+		}
+	}
+	return true
 }
