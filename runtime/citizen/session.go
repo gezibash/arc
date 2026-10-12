@@ -1,6 +1,7 @@
 package citizen
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -42,6 +43,7 @@ type Session struct {
 	store    *store.Store
 	receipts kv.Store
 	roots    kv.Store
+	signers  *signers
 	search   *blevesearch.Index
 	// kept holds the relay of each URL that NewRelay gave.
 	keptMu sync.Mutex
@@ -68,6 +70,7 @@ func Open(cfg Config) (*Session, error) {
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
 	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
 	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
+	sess.loadSigners(context.Background())
 	// Each relay keeps one connection for its sends. One URL gives one relay,
 	// so a long run does not open a connection for each call.
 	sess.NewRelay = func(url string) transport.Transport {

@@ -17,8 +17,14 @@ import (
 
 // Store is what the data actions need from the citizen's machine.
 type Store interface {
-	// Keyer signs, and seals to the citizen's own key.
+	// Keyer signs as the citizen. On a device it asks the signer.
 	Keyer() nostr.Keyer
+	// Sealer writes self data of an app: the device key signs it, under
+	// the newest data root that this machine holds. It needs no signer.
+	Sealer(ctx context.Context, app string) (draft.Sealer, error)
+	// Opener reads self data of an app. A draft of the format before the
+	// data roots opens through the signer.
+	Opener(app string) draft.Opener
 	// Publish keeps events and sends them, in order. With no relays, it sends
 	// them to the citizen's relays, and a relay that fails is reported. With
 	// relays, such as the relay of a group, it sends them there, and fails
@@ -124,20 +130,69 @@ func lineCounts(tags nostr.Tags, parts int) []int {
 // current reads the newest wrap with the d tag d. It returns nil when there
 // is none. The draft is deleted when the wrap is blank.
 func (r *run) current(d string) (*draft.Draft, error) {
-	me := r.env.Me()
-	wraps, err := r.env.Fetch(r.ctx, nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {d}}}, nil)
+	wraps, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.Kind}, nostr.TagMap{"d": {d}}))
 	if err != nil {
 		return nil, err
 	}
 	if len(wraps) == 0 {
 		return nil, nil
 	}
-	opened, err := draft.Open(r.ctx, r.env.Keyer(), wraps[0])
+	opened, err := r.opener().Open(r.ctx, wraps[0])
 	if err != nil {
 		return nil, err
 	}
 	return &opened, nil
 }
+
+// selfFilter matches self data of the citizen in the format of the data
+// roots: a p tag names the citizen, whichever device signed it.
+func (r *run) selfFilter(kinds []nostr.Kind, tags nostr.TagMap) nostr.Filter {
+	if tags == nil {
+		tags = nostr.TagMap{}
+	}
+	tags["p"] = []string{r.env.Me().Hex()}
+	return nostr.Filter{Kinds: kinds, Tags: tags}
+}
+
+// fetchSelf reads self data of the citizen in both formats: the filter of
+// selfFilter, and the drafts that the citizen key signed before the data
+// roots. It returns them newest first.
+func (r *run) fetchSelf(filter nostr.Filter) ([]nostr.Event, error) {
+	events, err := r.env.Fetch(r.ctx, filter, nil)
+	if err != nil {
+		return nil, err
+	}
+	old := filter
+	old.Tags = nostr.TagMap{}
+	for name, values := range filter.Tags {
+		if name != "p" {
+			old.Tags[name] = values
+		}
+	}
+	old.Authors = []nostr.PubKey{r.env.Me()}
+	older, err := r.env.Fetch(r.ctx, old, nil)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[nostr.ID]bool{}
+	for _, event := range events {
+		seen[event.ID] = true
+	}
+	for _, event := range older {
+		if !seen[event.ID] {
+			events = append(events, event)
+		}
+	}
+	slices.SortStableFunc(events, func(a, b nostr.Event) int {
+		if a.CreatedAt != b.CreatedAt {
+			return int(b.CreatedAt) - int(a.CreatedAt)
+		}
+		return strings.Compare(a.ID.Hex(), b.ID.Hex())
+	})
+	return events, nil
+}
+
+func (r *run) opener() draft.Opener { return r.env.Opener(r.in.Manifest.ID) }
 
 // MaxTag is the longest tag value that a relay indexes. Checkpoints and
 // parts name their draft by its coordinate, so the coordinate must fit.
@@ -242,7 +297,12 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		return nil, fmt.Errorf("the content needs more than %d parts of %d bytes", draft.MaxParts, draft.PartSize)
 	}
 
-	k := r.env.Keyer()
+	var k draft.Sealer
+	if !r.flags.DryRun {
+		if k, err = r.env.Sealer(r.ctx, r.in.Manifest.ID); err != nil {
+			return nil, err
+		}
+	}
 	var events []nostr.Event
 	ids := slices.Clone(keep)
 	if r.flags.DryRun {
@@ -250,7 +310,7 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		rest, ids = nil, nil
 	}
 	for _, text := range rest {
-		part, err := draft.Part(r.ctx, k, d, text, now)
+		part, err := k.Part(r.ctx, d, text, now)
 		if err != nil {
 			return nil, err
 		}
@@ -278,11 +338,11 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 			"draft": d, "sealed": true, "parts": len(rest), "event": unsignedOf(inner),
 		})
 	}
-	wrap, err := draft.Wrap(r.ctx, k, d, inner, now)
+	wrap, err := k.Wrap(r.ctx, d, inner, now)
 	if err != nil {
 		return nil, err
 	}
-	checkpoint, err := draft.Checkpoint(r.ctx, k, d, inner, now)
+	checkpoint, err := k.Checkpoint(r.ctx, d, inner, now)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +350,7 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		return nil, err
 	}
 
-	opened, err := draft.Open(r.ctx, k, wrap)
+	opened, err := r.opener().Open(r.ctx, wrap)
 	if err != nil {
 		return nil, err
 	}
@@ -365,17 +425,14 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	me := r.env.Me()
 	coordinate := draft.Coordinate(me, d)
 
-	wraps, err := r.env.Fetch(r.ctx, nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"d": {d}}}, nil)
+	wraps, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.Kind}, nostr.TagMap{"d": {d}}))
 	if err != nil {
 		return nil, err
 	}
 	if len(wraps) == 0 || wraps[0].Content == "" {
 		return nil, fmt.Errorf("there is nothing to delete")
 	}
-	history, err := r.env.Fetch(r.ctx, nostr.Filter{
-		Kinds: []nostr.Kind{draft.CheckpointKind, draft.PartKind}, Authors: []nostr.PubKey{me},
-		Tags: nostr.TagMap{"a": {coordinate}},
-	}, nil)
+	history, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.CheckpointKind, draft.PartKind}, nostr.TagMap{"a": {coordinate}}))
 	if err != nil {
 		return nil, err
 	}
@@ -387,8 +444,11 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	if now <= wraps[0].CreatedAt {
 		now = wraps[0].CreatedAt + 1
 	}
-	k := r.env.Keyer()
-	blank, err := draft.Blank(r.ctx, k, d, nostr.Kind(r.kindOf(dl.Kind).Kind), now)
+	k, err := r.env.Sealer(r.ctx, r.in.Manifest.ID)
+	if err != nil {
+		return nil, err
+	}
+	blank, err := k.Blank(r.ctx, d, nostr.Kind(r.kindOf(dl.Kind).Kind), now)
 	if err != nil {
 		return nil, err
 	}
@@ -402,8 +462,8 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	for _, kind := range []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind} {
 		tags = append(tags, nostr.Tag{"k", strconv.Itoa(int(kind))})
 	}
-	request := nostr.Event{Kind: nostr.KindDeletion, CreatedAt: now - 1, Tags: tags}
-	if err := k.SignEvent(r.ctx, &request); err != nil {
+	request, err := k.Deletion(r.ctx, tags, now-1)
+	if err != nil {
 		return nil, err
 	}
 	if err := r.env.Publish(r.ctx, []nostr.Event{blank, request}, nil); err != nil {
@@ -432,13 +492,12 @@ func (r *run) filter(q *Query) (nostr.Filter, error) {
 	if err != nil {
 		return nostr.Filter{}, err
 	}
-	filter := nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{me}, Tags: nostr.TagMap{"k": kinds}}
+	filter := r.selfFilter([]nostr.Kind{draft.Kind}, nostr.TagMap{"k": kinds})
 	if q.History {
 		if d == "" {
 			return nostr.Filter{}, errors.New("history needs the d tag of one draft")
 		}
-		return nostr.Filter{Kinds: []nostr.Kind{draft.CheckpointKind}, Authors: []nostr.PubKey{me},
-			Tags: nostr.TagMap{"a": {draft.Coordinate(me, d)}}}, nil
+		return r.selfFilter([]nostr.Kind{draft.CheckpointKind}, nostr.TagMap{"a": {draft.Coordinate(me, d)}}), nil
 	}
 	if d != "" {
 		filter.Tags["d"] = []string{d}
@@ -482,7 +541,7 @@ func (r *run) limitOf(q *Query) (int, error) {
 func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
 	out := []*entry{}
 	for _, event := range events {
-		opened, err := draft.Open(r.ctx, r.env.Keyer(), event)
+		opened, err := r.opener().Open(r.ctx, event)
 		if err != nil {
 			fmt.Fprintf(r.stdio.Err, "left out %s: %v\n", event.ID.Hex()[:8], err)
 			continue
@@ -515,12 +574,12 @@ func (r *run) querySealed(q *Query) ([]*entry, error) {
 	if q.History {
 		// A deletion removes checkpoints that this machine may hold. Learn
 		// of it first, so the store drops them.
-		deletions := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: filter.Authors, Tags: nostr.TagMap{"a": filter.Tags["a"]}}
-		if _, err := r.env.Fetch(r.ctx, deletions, nil); err != nil {
+		deletions := r.selfFilter([]nostr.Kind{nostr.KindDeletion}, nostr.TagMap{"a": filter.Tags["a"]})
+		if _, err := r.fetchSelf(deletions); err != nil {
 			return nil, err
 		}
 	}
-	events, err := r.env.Fetch(r.ctx, filter, nil)
+	events, err := r.fetchSelf(filter)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +604,7 @@ func (r *run) watch(q *Query) error {
 		if filter, err = r.filter(q); err != nil {
 			return err
 		}
-		events, err := r.env.Fetch(r.ctx, filter, nil)
+		events, err := r.fetchSelf(filter)
 		if err != nil {
 			return err
 		}
@@ -671,9 +730,10 @@ func (r *run) partTexts(ids []string) ([]string, error) {
 		}
 		want = append(want, parsed)
 	}
-	// Naming the kind and the author lets a relay that serves parts only to
-	// their author ask for authentication, instead of leaving them out.
-	events, err := r.env.Fetch(r.ctx, nostr.Filter{IDs: want, Kinds: []nostr.Kind{draft.PartKind}, Authors: []nostr.PubKey{r.env.Me()}}, nil)
+	// Naming the kind and the citizen keeps out a part of another citizen.
+	filter := r.selfFilter([]nostr.Kind{draft.PartKind}, nil)
+	filter.IDs = want
+	events, err := r.fetchSelf(filter)
 	if err != nil {
 		return nil, err
 	}
@@ -687,7 +747,7 @@ func (r *run) partTexts(ids []string) ([]string, error) {
 		if !ok {
 			return out, fmt.Errorf("part %d of %d is missing: sync with a relay or a directory that holds it", i+1, len(want))
 		}
-		text, err := draft.OpenPart(r.ctx, r.env.Keyer(), event)
+		text, err := r.opener().OpenPart(r.ctx, event)
 		if err != nil {
 			return out, fmt.Errorf("part %d of %d: %w", i+1, len(want), err)
 		}

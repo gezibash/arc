@@ -67,8 +67,9 @@ func selfSyncConfig(command *cobra.Command, sess *citizen.Session) (citizen.Self
 	}, nil
 }
 
-// syncSelf imports the drafts of the relays once, and then syncs the self
-// data with each storage citizen.
+// syncSelf imports the drafts of the relays once, seals old pages again
+// under the data roots, and then syncs the self data with each storage
+// citizen.
 func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, again bool) error {
 	n, err := sess.ImportDrafts(ctx, cfg.Dir, again)
 	if n > 0 {
@@ -76,6 +77,15 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 	}
 	if err != nil {
 		fmt.Fprintf(cfg.Errs, "%v\nthe next arc sync tries again\n", err)
+	}
+	// Pages of the format before the data roots open only through the
+	// signer. Each sync with the signer seals them again for the device.
+	pages, perr := sess.ImportPages(ctx, cfg.Installs)
+	if pages > 0 {
+		fmt.Fprintf(cfg.Out, "sealed %d pages again under the data roots\n", pages)
+	}
+	if perr != nil {
+		fmt.Fprintf(cfg.Errs, "pages of the old format: %v\nthe next arc sync with the signer tries again\n", perr)
 	}
 	return errors.Join(err, sess.SyncStorage(ctx, cfg))
 }

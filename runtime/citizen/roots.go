@@ -21,6 +21,10 @@ import (
 // itself. Thus a copy of the file alone opens no data.
 var rootsBucket = []byte("data-roots")
 
+// openedKey keeps the ID of the roots event that this machine opened last.
+// A key of other than 4 bytes is no generation.
+var openedKey = []byte("opened-event")
+
 // DataRoot returns the newest data root that this machine holds. Seal new
 // data with it. Without a roots event, it is generation 0: the keyed root.
 func (sess *Session) DataRoot(ctx context.Context) (devices.Root, error) {
@@ -73,7 +77,11 @@ func (sess *Session) DataRoots(ctx context.Context) (map[uint32][32]byte, error)
 			held[0] = [32]byte(root)
 		}
 	}
-	if r, ok, err := sess.NewestRoots(ctx); err != nil {
+	newest, unchanged := sess.rootsUnchanged(ctx, held)
+	if unchanged {
+		// This machine opened the newest roots event already, and holds
+		// its roots. It asks the signer nothing.
+	} else if r, ok, err := sess.NewestRoots(ctx); err != nil {
 		problems = append(problems, err)
 	} else if ok {
 		var opener nostr.Keyer = sess.Signer
@@ -83,6 +91,10 @@ func (sess *Session) DataRoots(ctx context.Context) (map[uint32][32]byte, error)
 		all, err := r.All(ctx, opener, sess.Key.Public)
 		if err != nil {
 			problems = append(problems, err)
+		} else if newest != nil {
+			if err := sess.markOpened(newest.ID); err != nil {
+				problems = append(problems, err)
+			}
 		}
 		maps.Copy(held, all)
 	}
@@ -90,6 +102,42 @@ func (sess *Session) DataRoots(ctx context.Context) (map[uint32][32]byte, error)
 		problems = append(problems, err)
 	}
 	return held, errors.Join(problems...)
+}
+
+// rootsUnchanged says whether the newest roots event of the store and the
+// relays is the one that this machine opened last, and it holds the root of
+// its generation. It also returns that newest event.
+func (sess *Session) rootsUnchanged(ctx context.Context, held map[uint32][32]byte) (*nostr.Event, bool) {
+	filter := devices.RootsFilter(sess.Key.Public)
+	sess.Node.Pull(ctx, filter, sess.Relays)
+	events, err := sess.Node.Store.Query(filter)
+	if err != nil || len(events) == 0 {
+		return nil, false
+	}
+	newest := events[0]
+	for _, event := range events[1:] {
+		if devices.Newer(event, newest) {
+			newest = event
+		}
+	}
+	var opened []byte
+	_ = sess.roots.View(func(tx kv.Tx) error {
+		if b := tx.Bucket(rootsBucket); b != nil {
+			opened = slices.Clone(b.Get(openedKey))
+		}
+		return nil
+	})
+	return &newest, len(held) > 1 && string(opened) == newest.ID.Hex()
+}
+
+func (sess *Session) markOpened(id nostr.ID) error {
+	return sess.roots.Update(func(tx kv.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(rootsBucket)
+		if err != nil {
+			return err
+		}
+		return b.Put(openedKey, []byte(id.Hex()))
+	})
 }
 
 // NewestRoots opens the newest roots event of the store and the relays,
@@ -246,4 +294,13 @@ func (sess *Session) keepRoots(ctx context.Context, held map[uint32][32]byte) er
 		}
 		return nil
 	})
+}
+
+// PageSigner is the key that signs self data on this machine: the device
+// key on a device, and the citizen key on a machine that holds it.
+func (sess *Session) PageSigner() nostr.Keyer {
+	if sess.Remote {
+		return sess.Device
+	}
+	return sess.Signer
 }

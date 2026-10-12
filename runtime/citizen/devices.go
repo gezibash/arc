@@ -16,7 +16,10 @@ import (
 var errSignerOnly = errors.New("only the signer, which holds the citizen key, changes the device list and the storage list")
 
 // DeviceList returns the newest device list of this citizen, from the store
-// and the relays. It returns false when no list exists.
+// and the relays. It returns false when no list exists. It keeps the list on
+// the disk, so that the store checks the signers of self data with no path
+// to the signer. When the newest event is the list that this machine opened
+// last, it asks the signer nothing.
 func (sess *Session) DeviceList(ctx context.Context) (devices.List, bool, error) {
 	filter := devices.Filter(sess.Key.Public)
 	reports, errs := sess.Node.Pull(ctx, filter, sess.Relays)
@@ -24,10 +27,27 @@ func (sess *Session) DeviceList(ctx context.Context) (devices.List, bool, error)
 	if err != nil {
 		return devices.List{}, false, err
 	}
-	if unreached := node.Unreached(reports, errs); len(events) == 0 && unreached != nil {
+	unreached := node.Unreached(reports, errs)
+	if at, ok := sess.signers.at(); ok {
+		newer := false
+		for _, event := range events {
+			newer = newer || event.CreatedAt > at
+		}
+		if !newer {
+			return sess.signers.list(), true, nil
+		}
+	}
+	if len(events) == 0 && unreached != nil {
 		return devices.List{}, false, fmt.Errorf("this machine holds no device list, and %w", unreached)
 	}
-	return NewestDeviceList(ctx, sess.Signer, sess.Key.Public, events)
+	list, ok, err := NewestDeviceList(ctx, sess.Signer, sess.Key.Public, events)
+	if err != nil {
+		return list, ok, err
+	}
+	if err := sess.keepList(ctx, list, ok); err != nil {
+		sess.warnf("arc: the device list is not kept on this disk: %v\n", err)
+	}
+	return list, ok, nil
 }
 
 // NewestDeviceList opens the newest list among events that the citizen

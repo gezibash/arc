@@ -120,7 +120,7 @@ func devicesCommand() *cobra.Command {
 				return fmt.Errorf("%q is not a device key of 64 hex characters: %w", args[0], err)
 			}
 			name, _ := command.Flags().GetString("name")
-			return changeDevices(command, func(l devices.List) (devices.List, string, error) {
+			return changeDevices(command, func(_ *citizen.Session, l devices.List) (devices.List, string, error) {
 				l, err := l.Add(devices.Device{Key: key, Name: name, Added: nostr.Now()})
 				return l, fmt.Sprintf("added %s  %s", name, key.Hex()), err
 			})
@@ -136,12 +136,22 @@ func devicesCommand() *cobra.Command {
 			"was revoked can be added again with a new device key.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			return changeDevices(command, func(l devices.List) (devices.List, string, error) {
+			return changeDevices(command, func(sess *citizen.Session, l devices.List) (devices.List, string, error) {
 				d, ok := l.Find(args[0])
 				if !ok {
 					return l, "", fmt.Errorf("no device %q on the list: see arc keys devices", args[0])
 				}
-				return l.Remove(d.Key), fmt.Sprintf("revoked %s  %s", d.Name, d.Key.Hex()), nil
+				// The revoked key never holds the generation after the
+				// newest one, which the signer makes next.
+				r, ok, err := sess.NewestRoots(command.Context())
+				if err != nil {
+					return l, "", err
+				}
+				gen := uint32(1)
+				if ok {
+					gen = r.Gen + 1
+				}
+				return l.Revoke(d.Key, nostr.Now(), gen), fmt.Sprintf("revoked %s  %s", d.Name, d.Key.Hex()), nil
 			})
 		},
 	}
@@ -174,7 +184,7 @@ func listDevices(command *cobra.Command, _ []string) error {
 }
 
 // changeDevices reads the newest list, changes it, and publishes it.
-func changeDevices(command *cobra.Command, change func(devices.List) (devices.List, string, error)) error {
+func changeDevices(command *cobra.Command, change func(*citizen.Session, devices.List) (devices.List, string, error)) error {
 	sess, err := open(command)
 	if err != nil {
 		return err
@@ -187,7 +197,7 @@ func changeDevices(command *cobra.Command, change func(devices.List) (devices.Li
 	if err != nil {
 		return err
 	}
-	l, said, err := change(l)
+	l, said, err := change(sess, l)
 	if err != nil {
 		return err
 	}

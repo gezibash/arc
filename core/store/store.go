@@ -62,7 +62,41 @@ type Result struct {
 type Store struct {
 	backend Access
 	now     func() time.Time
+	signers Signers
 }
+
+// Signers says which keys may write self data for a citizen. A device key
+// on the device list of the citizen may. The store asks it while it holds
+// the backend, so it must not use the store.
+type Signers interface {
+	Standing(citizen, signer nostr.PubKey) Standing
+}
+
+// Standing is what the device list says about one key of a citizen.
+type Standing struct {
+	// Listed means the key is on the device list, or is the key of this
+	// machine and not revoked.
+	Listed bool
+	// RevokedAt is the time of the revocation of the key, or 0.
+	RevokedAt nostr.Timestamp
+	// RevokedGen is the first generation that the revoked key never held.
+	RevokedGen uint32
+	// NoList means that the citizen has no device list at all.
+	NoList bool
+}
+
+// Source says where an event comes from. A storage citizen refuses each
+// write of a revoked device key after its revocation, so only an event from
+// a storage citizen can be the work of a revoked key before it.
+type Source int
+
+// The sources of an event.
+const (
+	// Elsewhere is a relay, a directory, or this machine.
+	Elsewhere Source = iota
+	// StorageCitizen is a storage citizen of the citizen.
+	StorageCitizen
+)
 
 // Backend is the persistence used while an Access scope is held.
 type Backend interface {
@@ -89,6 +123,10 @@ type BatchAccess interface {
 
 // New wraps persistence with ARC verification and event retention rules.
 func New(backend Access) *Store { return &Store{backend: backend, now: time.Now} }
+
+// SetSigners gives the store the device list. Without it, the store keeps
+// self data only from the citizen key. Call it before the first Save.
+func (s *Store) SetSigners(signers Signers) { s.signers = signers }
 
 // Close releases the injected backend.
 func (s *Store) Close() { s.backend.Close() }
@@ -120,12 +158,17 @@ func Expired(event nostr.Event, now time.Time) bool {
 // A replaceable or addressable event replaces an older version, and loses
 // to a newer one.
 func (s *Store) Save(event nostr.Event) (Result, error) {
+	return s.SaveFrom(event, Elsewhere)
+}
+
+// SaveFrom is Save for an event from a known source.
+func (s *Store) SaveFrom(event nostr.Event, from Source) (Result, error) {
 	var result Result
 	// One lease holds the checks and the write together, so no other
 	// process writes between them.
 	err := s.backend.Do(func(b Backend) error {
 		var err error
-		result, err = s.save(b, event)
+		result, err = s.save(b, event, from)
 		return err
 	})
 	return result, err
@@ -141,7 +184,7 @@ func (s *Store) SaveAll(events []nostr.Event) ([]Result, error) {
 	results := make([]Result, 0, len(events))
 	err := do(func(b Backend) error {
 		for _, event := range events {
-			result, err := s.save(b, event)
+			result, err := s.save(b, event, Elsewhere)
 			if err != nil {
 				return err
 			}
@@ -152,7 +195,7 @@ func (s *Store) SaveAll(events []nostr.Event) ([]Result, error) {
 	return results, err
 }
 
-func (s *Store) save(b Backend, event nostr.Event) (Result, error) {
+func (s *Store) save(b Backend, event nostr.Event, from Source) (Result, error) {
 	if err := Verify(event); err != nil {
 		return Result{Outcome: Refused, Reason: err.Error()}, nil
 	}
@@ -168,6 +211,9 @@ func (s *Store) save(b Backend, event nostr.Event) (Result, error) {
 	}
 	if has(b, event.ID) {
 		return Result{Outcome: Duplicate}, nil
+	}
+	if reason := s.refusedSigner(event, from); reason != "" {
+		return Result{Outcome: Refused, Reason: reason}, nil
 	}
 	if deleted(b, event) {
 		return Result{Outcome: Refused, Reason: "its author deleted it"}, nil
@@ -198,34 +244,47 @@ func (s *Store) save(b Backend, event nostr.Event) (Result, error) {
 	return Result{Outcome: Stored}, nil
 }
 
-// deleted says whether a stored deletion request of the event's author, kind
+// deleted says whether a stored deletion request of the event's owner, kind
 // 5 of NIP-09, names the event. A request names an event by its ID, or an
 // addressable event by its coordinate and every version up to its own time.
-// A deleted event therefore does not come back from a stick or a relay.
+// A deleted event therefore does not come back from a stick or a relay. The
+// owner of self data is the citizen that its p tag names, so a deletion that
+// one device signs removes a page that another device wrote.
 func deleted(b Backend, event nostr.Event) bool {
 	if event.Kind == nostr.KindDeletion {
 		return false
 	}
-	byID := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{event.PubKey},
-		Tags: nostr.TagMap{"e": {event.ID.Hex()}}}
-	for range b.QueryEvents(byID, 1) {
-		return true
+	owner := draft.Owner(event)
+	byID := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Tags: nostr.TagMap{"e": {event.ID.Hex()}}}
+	if !draft.Self(event) {
+		byID.Authors = []nostr.PubKey{event.PubKey}
+	}
+	for request := range b.QueryEvents(byID, MaxQuery) {
+		if draft.Owner(request) == owner {
+			return true
+		}
 	}
 	if !event.Kind.IsAddressable() {
 		return false
 	}
-	coordinate := fmt.Sprintf("%d:%s:%s", event.Kind, event.PubKey.Hex(), event.Tags.GetD())
-	byAddress := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{event.PubKey},
-		Tags: nostr.TagMap{"a": {coordinate}}, Since: event.CreatedAt}
-	for range b.QueryEvents(byAddress, 1) {
-		return true
+	coordinate := fmt.Sprintf("%d:%s:%s", event.Kind, owner.Hex(), event.Tags.GetD())
+	byAddress := nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Tags: nostr.TagMap{"a": {coordinate}}, Since: event.CreatedAt}
+	if !draft.Self(event) {
+		byAddress.Authors = []nostr.PubKey{event.PubKey}
+	}
+	for request := range b.QueryEvents(byAddress, MaxQuery) {
+		if draft.Owner(request) == owner {
+			return true
+		}
 	}
 	return false
 }
 
-// applyDeletion removes the events of its author that a deletion request
+// applyDeletion removes the events of its owner that a deletion request
 // names.
 func applyDeletion(b Backend, request nostr.Event) {
+	owner := draft.Owner(request)
+	self := draft.Self(request)
 	var doomed []nostr.ID
 	for _, tag := range request.Tags {
 		if len(tag) < 2 {
@@ -241,18 +300,23 @@ func applyDeletion(b Backend, request nostr.Event) {
 			filter = nostr.Filter{IDs: []nostr.ID{id}}
 		case "a":
 			parts := strings.SplitN(tag[1], ":", 3)
+			if len(parts) != 3 || parts[1] != owner.Hex() {
+				continue
+			}
 			kind, err := strconv.Atoi(parts[0])
-			if len(parts) != 3 || err != nil {
+			if err != nil {
 				continue
 			}
 			filter = nostr.Filter{Kinds: []nostr.Kind{nostr.Kind(kind)}, Tags: nostr.TagMap{"d": {parts[2]}}, Until: request.CreatedAt}
 		default:
 			continue
 		}
-		filter.Authors = []nostr.PubKey{request.PubKey}
+		if !self {
+			filter.Authors = []nostr.PubKey{request.PubKey}
+		}
 		for event := range b.QueryEvents(filter, MaxQuery) {
-			// A query by ID ignores the authors, so check the author here.
-			if event.PubKey == request.PubKey && event.Kind != nostr.KindDeletion {
+			// A query by ID ignores the authors, so check the owner here.
+			if event.Kind != nostr.KindDeletion && draft.Owner(event) == owner {
 				doomed = append(doomed, event.ID)
 			}
 		}
@@ -262,17 +326,61 @@ func applyDeletion(b Backend, request nostr.Event) {
 	}
 }
 
+// refusedSigner says why the store refuses self data that a key other than
+// its owner signed. It returns "" when the signer may write it.
+func (s *Store) refusedSigner(event nostr.Event, from Source) string {
+	if !draft.Self(event) {
+		return ""
+	}
+	owner := draft.Owner(event)
+	if owner == event.PubKey {
+		return ""
+	}
+	if s.signers == nil {
+		return "self data of another key, and this store has no device list"
+	}
+	st := s.signers.Standing(owner, event.PubKey)
+	switch {
+	case st.Listed:
+		return ""
+	case st.NoList && from == StorageCitizen:
+		// With no device list, the AEAD of the blob is the check: only a
+		// holder of the data roots made it.
+		return ""
+	case st.RevokedAt != 0 && from != StorageCitizen:
+		return "the device key was revoked, and only a storage citizen brings its older work"
+	case st.RevokedAt != 0 && event.CreatedAt >= st.RevokedAt:
+		return "the device key signed it after its revocation"
+	case st.RevokedAt != 0:
+		if gen, ok := draft.Gen(event); ok && gen >= st.RevokedGen && st.RevokedGen != 0 {
+			return "the device key never held this generation"
+		}
+		return ""
+	default:
+		return "the signer is not on the device list of the citizen"
+	}
+}
+
 // settle keeps one version of a replaceable or addressable event: the
 // newest, and of two at the same time, the one with the lower ID, as NIP-01
 // defines. The backend keeps both versions of a tie.
 func settle(b Backend, event nostr.Event) {
-	filter := nostr.Filter{Kinds: []nostr.Kind{event.Kind}, Authors: []nostr.PubKey{event.PubKey}}
+	filter := nostr.Filter{Kinds: []nostr.Kind{event.Kind}}
+	self := draft.Self(event)
+	if !self {
+		filter.Authors = []nostr.PubKey{event.PubKey}
+	}
 	if event.Kind.IsAddressable() {
 		filter.Tags = nostr.TagMap{"d": {event.Tags.GetD()}}
 	}
+	// Self data of one citizen is one version for each d tag, whichever
+	// device signed it.
+	owner := draft.Owner(event)
 	var versions []nostr.Event
 	for version := range b.QueryEvents(filter, MaxQuery) {
-		versions = append(versions, version)
+		if !self || draft.Owner(version) == owner {
+			versions = append(versions, version)
+		}
 	}
 	if len(versions) < 2 {
 		return

@@ -100,7 +100,7 @@ func TestAFailedWriteToStdoutIsAnError(t *testing.T) {
 	}
 }
 
-func TestThePageIsANIP37DraftOfAnArticle(t *testing.T) {
+func TestThePageIsADraftOfAnArticle(t *testing.T) {
 	c := newCitizen(t)
 	c.must("journal", "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n", "write", page, "--title", "T")
 	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
@@ -112,7 +112,7 @@ func TestThePageIsANIP37DraftOfAnArticle(t *testing.T) {
 	}
 	var opened draft.Draft
 	for _, wrap := range wraps {
-		value, err := draft.Open(context.Background(), c.env.Keyer(), wrap)
+		value, err := c.env.Opener("journal").Open(context.Background(), wrap)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func TestAMissingPartKeepsTheTextBeforeIt(t *testing.T) {
 	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Tags: nostr.TagMap{"k": {"30023"}}}))
 	var opened draft.Draft
 	for _, wrap := range wraps {
-		value, err := draft.Open(context.Background(), c.env.Keyer(), wrap)
+		value, err := c.env.Opener("journal").Open(context.Background(), wrap)
 		if err != nil {
 			t.Fatal(err)
 		}
