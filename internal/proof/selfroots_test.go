@@ -1,15 +1,12 @@
 package proof
 
 import (
-	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	boltkv "github.com/gezibash/arc/adapters/kv/bolt"
-	"github.com/gezibash/arc/core/kv"
 	"github.com/gezibash/arc/runtime/selfsync"
 )
 
@@ -107,11 +104,9 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	if got := phone.try("", "journal", "read", "hrs/roots/3"); strings.Contains(got.Stdout, "after the revocation") {
 		t.Fatalf("the revoked phone reads the page of the tablet:\n%s", got.Stdout)
 	}
-	found, err := filepath.Glob(filepath.Join(phone.home, "citizens", "*", "store", "data-roots.db"))
-	if err != nil || len(found) != 1 {
-		t.Fatalf("the phone holds %d root caches, want 1 (%v)", len(found), err)
-	}
-	roots := heldRoots(t, found[0])
+	// The thief also holds the device key on the disk, which opens the
+	// cache.
+	roots := cachedRoots(t, phone.home)
 	if _, ok := roots[2]; ok {
 		t.Fatal("the revoked phone holds the data root of generation 2")
 	}
@@ -203,30 +198,6 @@ func count(byGen map[uint32][]listed) map[uint32]int {
 		out[gen] = len(ids)
 	}
 	return out
-}
-
-// heldRoots reads the data roots that a machine keeps on its disk.
-func heldRoots(t *testing.T, path string) map[uint32][32]byte {
-	t.Helper()
-	db := boltkv.Open(path)
-	defer db.Close()
-	held := map[uint32][32]byte{}
-	err := db.View(func(tx kv.Tx) error {
-		b := tx.Bucket([]byte("data-roots"))
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(k, v []byte) error {
-			if len(k) == 4 && len(v) == 32 {
-				held[binary.BigEndian.Uint32(k)] = [32]byte(v)
-			}
-			return nil
-		})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return held
 }
 
 func gens(roots map[uint32][32]byte) []uint32 {

@@ -111,19 +111,10 @@ func TestSplitCutsAtLineEnds(t *testing.T) {
 	}
 }
 
-func TestPartsAndRelayList(t *testing.T) {
+func TestParts(t *testing.T) {
 	k := keyer.NewPlainKeySigner(nostr.Generate())
 	part, _ := draft.Part(ctx, k, "x", "tail text", 2000)
 	if text, err := draft.OpenPart(ctx, k, part); err != nil || text != "tail text" || !nip70.IsProtected(part) {
 		t.Errorf("the part opens as %q %v", text, err)
-	}
-
-	list, _ := draft.RelayList(ctx, k, []string{"wss://a.example", "wss://b.example"}, 2000)
-	if strings.Contains(list.Content, "a.example") {
-		t.Error("the relay list is not private")
-	}
-	urls, err := draft.ReadRelayList(ctx, k, list)
-	if err != nil || len(urls) != 2 || urls[1] != "wss://b.example" {
-		t.Errorf("the relay list reads %v %v", urls, err)
 	}
 }

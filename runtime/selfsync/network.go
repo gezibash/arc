@@ -149,7 +149,35 @@ func (s *Syncer) SyncAll(ctx context.Context, sides []Side) (Report, error) {
 	}
 	r.drained()
 	r.suspects()
+	if err := r.kept(ctx); err != nil {
+		return r.report, errors.Join(err, r.save())
+	}
 	return r.report, r.save()
+}
+
+// kept fills Report.Kept from the listings at the end of the sync, also of
+// the sides with no pipe now. A put that a side answered held gives no tag,
+// so its record counts at the next listing.
+func (r *run) kept(ctx context.Context) error {
+	// The map is built again after the puts and the repair. Its refusals
+	// are already in the report.
+	n := len(r.report.Refused)
+	err := r.mapPieces(ctx)
+	r.report.Refused = r.report.Refused[:n]
+	if err != nil {
+		return err
+	}
+	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	if err != nil {
+		return err
+	}
+	r.report.Kept = map[nostr.ID]bool{}
+	for _, event := range records {
+		if m := r.blobs[r.current.BlobID(event.ID)]; m != nil && (len(m.old) > 0 || r.best(m, false) != nil) {
+			r.report.Kept[event.ID] = true
+		}
+	}
+	return nil
 }
 
 func (r *run) save() error {

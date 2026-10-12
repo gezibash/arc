@@ -38,7 +38,9 @@ var errAuthRequired = errors.New("the relay asks for authentication")
 
 // sealedKinds says whether a filter names a kind that a relay may serve only
 // to its author: a NIP-37 draft, a checkpoint, a part, a private relay
-// list, a storage list, a device list, or the data roots.
+// list, a storage list, a device list, or the data roots. ARC no longer
+// makes a private relay list, but a device lists the old ones to delete
+// them.
 func sealedKinds(filter nostr.Filter) bool {
 	for _, k := range filter.Kinds {
 		switch k {
@@ -80,6 +82,17 @@ type kept struct {
 // connection, and opens it again after it ended. Close ends it.
 func New(url string, signer nostr.Signer) Relay {
 	return Relay{URL: url, Signer: signer, kept: &kept{turn: make(chan struct{}, 1)}}
+}
+
+// Tags returns the tags of the NIP-11 document of the relay.
+func (r Relay) Tags(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	info, err := nip11.Fetch(ctx, r.URL)
+	if err != nil {
+		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
+	}
+	return info.Tags, nil
 }
 
 // Close ends the kept connection. A later Send opens a new one.

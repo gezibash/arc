@@ -120,7 +120,10 @@ func OpenSession(ctx context.Context, me keys.Signer, to nostr.PubKey, request R
 		}
 	}()
 	frame := session.Frame{Version: 1, ID: id, Op: "open", Mode: mode}
-	if err = sendSession(ctx, me, to, t, frame, &request); err == nil {
+	// The provider can answer before the transport confirms the open. Its
+	// answer ends a refused stream, which cancels the send. Only the provider
+	// knows the session ID from the open, so its answer is the outcome.
+	if err = sendSession(ctx, me, to, t, frame, &request); err == nil || stream.Context().Err() != nil {
 		err = stream.WaitReady()
 	}
 	if err != nil {
