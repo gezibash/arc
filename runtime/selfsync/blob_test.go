@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestNewKeys checks the key derivation of the storage spec, section 3.3.
+// TestNewKeys checks the key derivation of the storage spec, section 3.4.
 // The expected values come from Python's hmac and hashlib (HKDF-SHA256,
 // RFC 5869, empty salt), not from this code:
 //

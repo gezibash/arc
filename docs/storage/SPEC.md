@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
-- Remaining: the steps that section 8.2 names: the device side of audits and drain (build step 7b), the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a piece of Reed-Solomon, because pieces are not built yet; the audit hashes the stored bytes of each ID, and does not read a tag. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer.
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
+- Remaining: the steps that section 8.2 names: the device side of audits and drain (build step 7b), the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, the removal of the old drafts from the relays, a new seal for a blob with fewer than k pieces of each seal, repair, and the move of blobs of format 1 to pieces.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a piece of Reed-Solomon; the audit hashes the stored bytes of each ID, and does not read a tag. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. No test runs a pipe through TURN for the rule that a missing piece waits for a direct path; a unit test marks a side as relayed. The proof of the pieces runs one older storage app, built from commit d53e91b. A one-off run of `arc` of commit d53e91b against three storage citizens with pieces failed each sync with `the storage citizen announced a blob of 2093 bytes`; no test keeps it. `TestStoragePieces` needs commit d53e91b in the checkout, so a shallow clone fails it. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -29,8 +29,8 @@ This spec defines:
   admission, and the record of each account: its quota, plan and end,
 - the ARC call that opens a pipe to the storage app, and the requests on the
   pipe (`sdk/storage`),
-- the blob that holds one record,
-- the sync of a device with a storage citizen,
+- the blob that holds one record, and the pieces of a blob,
+- the sync of a device with its storage citizens,
 - the one-time import of the drafts that the relays hold.
 
 The storage app documents its service, its settings and its storage on disk
@@ -52,7 +52,17 @@ on a relay.
 - **Storage list**: the sealed event of kind 10273 that names the storage
   citizens of a citizen (section 3.8). Only the signer changes it.
 - **Record**: one event of self data.
-- **Blob**: the encrypted bytes of one record.
+- **Blob**: the encrypted bytes of one record (section 3.4).
+- **Piece**: one shard of the Reed-Solomon code of a blob, sealed alone
+  (section 3.10). One storage citizen holds one piece of a blob.
+- **k** and **t**: k pieces of one seal rebuild a blob. A blob has t
+  pieces, on t storage citizens.
+- **Seal**: 8 random bytes that name one coding of one blob. Pieces of two
+  seals never mix.
+- **Tag**: the sealed header of a piece: its blob ID, seal, k, index and
+  blob size. The storage citizen keeps it, and cannot open it.
+- **Format 1**: a whole blob on a storage citizen, with no tag. A device
+  puts it only on a storage app without the feature `pieces`.
 - **Device key**: the random key of one machine. [The device spec](../devices/SPEC.md)
   defines it.
 - **Account key**: the key of a citizen for one storage citizen. The signer
@@ -171,9 +181,10 @@ answers with text messages of JSON, in the order of the requests.
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"v":2,"features":["batch","audit","drain"],"window":32}` |
+| `{"op":"hello"}` | `{"v":2,"features":["batch","pieces","audit","drain"],"window":32}` |
 | `{"op":"put","id":"<64 hex>","size":<n>}` | `{"status":"send"}`, then the device sends the bytes, and the app answers `{"status":"stored","seq":<n>}`. Or `{"status":"held"}` or `{"status":"tombstoned"}`, and no bytes go. |
-| `{"op":"list","after":<cursor>,"limit":<n>}` | `{"entries":[{"seq":<n>,"id":"…","size":<n>}, {"seq":<n>,"id":"…","deleted":true}],"next":<cursor>}` |
+| `{"op":"put","id":"<64 hex>","size":<n>,"tag":"<base64>"}` | The put of a piece, with the same replies. |
+| `{"op":"list","after":<cursor>,"limit":<n>}` | `{"entries":[{"seq":<n>,"id":"…","size":<n>}, {"seq":<n>,"id":"…","size":<n>,"tag":"<base64>"}, {"seq":<n>,"id":"…","deleted":true}],"next":<cursor>}` |
 | `{"op":"get","id":"<64 hex>"}` | `{"size":<n>}`, then the bytes of the blob. |
 | `{"op":"get","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","size":<n>},{"id":"…","error":"not_found"}]}`, then the bytes of each found blob, in the order of `ids`. |
 | `{"op":"delete","id":"<64 hex>"}` | `{"status":"deleted","seq":<n>}` or `{"status":"absent"}`. |
@@ -212,9 +223,26 @@ answers with text messages of JSON, in the order of the requests.
   app answers `invalid_request` to another list. A delete with `ids` is one
   change of the index.
 
+**Pieces.**
+
+- A storage app with the feature `pieces` MUST keep the tag of a put, and
+  MUST give it in each list entry of that ID, in standard base64. An entry
+  with no tag is a blob of format 1.
+- A tag MUST be 87 bytes. The app answers `invalid_request` to a tag of
+  another length.
+- A put with a tag MUST have the size of a piece: `ceil(B / k) + 45`, for a
+  B that is a power of two from 4,096 bytes to 64 MiB, and a k from 1 to 8.
+  A put with no tag MUST have the size of a blob. The app answers
+  `bad_size` to another size.
+- The app does not open a tag, and does not decode a piece.
+- A device MUST send `hello` before it puts a piece. If the reply does not
+  hold `pieces`, the device MUST NOT put a piece on that app: an older app
+  ignores `tag`, and would keep a piece with no tag.
+
 **The other rules.**
 
-- The bytes of a blob MUST go in binary messages of at most 16 KiB.
+- The bytes of a blob or a piece MUST go in binary messages of at most 16
+  KiB.
 - A refused request gets `{"error":"<code>","message":"<text>"}`. The codes
   are `invalid_request`, `bad_size`, `over_quota`, `refused`, `not_found`
   and `storage_failed`.
@@ -271,6 +299,16 @@ pad(e)   = length of e (8 bytes, big endian) || e || zeros
   If it holds no data root of that generation, it refuses the blob.
 
 ### 3.5 What a device takes
+
+A device MUST refuse a piece, and use another piece of the seal, if any of
+these is true:
+
+- its tag does not open with the piece key of the generation in the tag,
+- the HMAC of the blob ID and the index in the tag is not the ID that the
+  storage citizen listed,
+- the tag names a k or a blob size other than the other pieces of its seal,
+- the piece does not open with its tag as the associated data, or names
+  another generation than its tag.
 
 A device MUST refuse a blob, and give nothing to its store, if any of these
 is true:
@@ -442,6 +480,62 @@ and gets 32 bytes for each blob, in place of the whole blob of up to
 but it moves each blob whole. A hash over the nonce and the bytes is the
 simplest check that needs no new state on the storage citizen.
 
+### 3.10 The piece
+
+A device codes each blob into pieces, and puts one piece on each of t
+storage citizens. For a blob B of size |B|:
+
+```text
+k, t     = ceil(S / 2), min(S, 2k)
+seal     = random                                                8 bytes
+shards   = RS(k, 2k).Split+Encode(B)                             2k shards of ceil(|B| / k) bytes
+header   = blob id (32) || seal (8) || k (1) || index (1) || log2 |B| (1)
+tag      = gen (4) || nonce1 (24) || XChaCha20-Poly1305(piece key, nonce1, header, aad = gen)
+piece    = 0x02 || gen (4) || nonce2 (24) || XChaCha20-Poly1305(piece key, nonce2, shards[index], aad = tag)
+piece id = HMAC-SHA256(piece id key of the storage citizen, blob id (32) || index (1))
+rank     = HMAC-SHA256(placement key, blob id (32) || key of the storage citizen (32))
+```
+
+- S MUST be the count of storage citizens that the storage list names
+  `active`, less each one whose app the device knows has no `pieces`. A
+  storage citizen that did not answer still counts. With no storage list,
+  each install counts.
+- The code MUST be the Reed-Solomon code of `github.com/klauspost/reedsolomon`
+  v1.14.2, `reedsolomon.New(k, k)`, with its default matrix. Shards 0 to
+  k-1 hold B, with zeros at the end. The device puts shards 0 to t-1. A
+  blob thus has at most 2k pieces, and a new index needs no new coding of
+  the other pieces.
+- With k = 1, each piece holds the whole blob. Erasure coding starts at
+  three storage citizens.
+- A blob keeps its k and its seal for its life. Each piece of one blob
+  MUST have the same seal, k and blob size.
+- A tag is 87 bytes. A piece is `ceil(|B| / k) + 45` bytes.
+- For generation g, the keys MUST be, with no salt and 32 bytes each:
+  - `piece key = HKDF-SHA256(data root of g, info = "arc-storage-piece-v1")`,
+  - `piece id key = HKDF-SHA256(keyed root, info = "arc-storage-piece-id-v1" || key of the storage citizen)`,
+    with the key as its 32 bytes,
+  - `placement key = HKDF-SHA256(keyed root, info = "arc-storage-place-v1")`.
+- The device MUST seal each new piece with the newest data root that it
+  holds, as it seals a blob.
+- The blob ID and the index go into the piece ID as 33 bytes. Each storage
+  citizen has its own piece id key, so two storage citizens show no common
+  piece ID. This replaces decision 8 of the storage proposal for pieces:
+  a device never copies a piece between storage citizens.
+- **Placement.** The device orders the storage citizens of a blob by
+  `rank`, highest first. Index i of a new blob goes to the i-th storage
+  citizen in that order that is active, has `pieces`, and has an open pipe.
+  A missing index goes to the highest such storage citizen that holds no
+  piece of the blob.
+- **The piece map.** Each device builds the map of the pieces from the
+  listings of each storage citizen: it opens each tag. It keeps the
+  listings, with the tags, in its state file. No device writes a shared
+  map.
+
+Reason: a storage citizen holds coded ciphertext of half a blob, not a
+whole copy. Each piece opens alone, so a device names a bad piece with no
+trial decode. The tag and the piece of a new generation stay closed to a
+revoked device.
+
 ## 4. Behavior
 
 ### 4.1 One sync
@@ -454,28 +548,62 @@ seconds to open.
 1. On a signer with a device list, send the grant set to each installed
    storage citizen (section 3.2). A failure is a note, and the sync goes on.
 
-Then the device runs steps 2 to 6 for each installed storage citizen that
-is not `gone`, all at the same time, each on its own pipe. Each storage
-citizen holds a full copy of each blob. A storage citizen that fails does
-not stop the others.
+Then the device syncs with each installed storage citizen that is not
+`gone`, all at the same time, each on its own pipe. A storage citizen that
+fails does not stop the others.
 
-2. Open a pipe (section 3.2). If no pipe opens, keep the silence record
-   (below), and end the sync of this storage citizen.
-3. List from the cursor of this storage citizen, and keep the IDs.
-4. Get each listed blob that the store does not hold. Open it, check it
-   (section 3.5), and give the record to the store. The store applies a
-   deletion, and refuses a record that a deletion names.
-5. Read the store again. Seal each record whose blob ID the storage citizen
-   did not list, and put it. Skip this step for a `draining` storage
-   citizen.
-6. Keep the cursor and the IDs in `<home>/selfsync/<key of the storage citizen>.json`.
+2. Open a pipe to each storage citizen (section 3.2). If no pipe opens,
+   keep the silence record (below). The device still uses the last listing
+   of that storage citizen.
+3. Send `hello` on each pipe, and keep if the app has `pieces`. List from
+   the cursor of each storage citizen, and keep each ID and its tag.
+4. Build the piece map (section 3.10). For each blob that the store does not
+   hold:
+   - If a storage citizen with an open pipe lists a blob of format 1, get
+     it from one of them.
+   - Else take the seal with the most pieces on open pipes, and at least k.
+     Get k of its pieces, from the storage citizens that rank highest, all
+     at the same time. Check each piece (section 3.5). If a piece fails,
+     get another piece of the seal. Rebuild the blob from k shards.
+   - Open the blob, check it (section 3.5), and give the record to the
+     store. The store applies a deletion, and refuses a record that a
+     deletion names.
+   - With fewer than k pieces on open pipes, the blob waits for the next
+     sync, and the sync fails.
+5. Read the store again. For each record:
+   - Put a blob of format 1 on each active storage citizen without
+     `pieces` that does not list the blob ID.
+   - If a storage citizen lists a blob of format 1 with the ID, do nothing.
+     A later step codes it into pieces.
+   - If no storage citizen lists a piece of the blob, seal the blob, code
+     it with a new seal, and put t pieces (section 3.10). If fewer than k
+     active storage citizens with `pieces` have an open pipe, put nothing:
+     the record waits, and the sync fails. With k or more but fewer than t,
+     put what can go. A later sync adds the rest.
+   - If one seal has k pieces or more, keep it. If it has fewer than
+     min(S, 2k) pieces, and an active storage citizen with a direct pipe
+     holds no piece of the blob, get k pieces, rebuild the blob, code it
+     again with the same seal, and put each missing index. Each other piece
+     stays. A pipe through TURN carries no such piece (proposal, decision
+     7).
+   - If the listings show pieces, but fewer than k of each seal, do
+     nothing, and print a note. A later step seals the record again.
+   Puts go to the storage citizens at the same time. A `draining` storage
+   citizen gets no put.
+6. Keep the cursor, the IDs, the tags and the feature `pieces` in
+   `<home>/selfsync/<key of the storage citizen>.json`, and the blob IDs
+   that the device got in `<home>/selfsync/seen.json`.
 
-After each storage citizen ends, the device prints one line for each, in
-the order of the installs:
+After the sync, the device prints one line for each storage citizen, in
+the order of the installs, and one line for the whole sync. `received` is
+the count of pieces and blobs that the device got from that storage
+citizen, `sent` the count that it stored, and `already held` the count of
+puts that it answered `held`:
 
 ```text
 charlie: self data received 0, sent 3, already held 0 in 1.36s
 dana: self data received 2, sent 0, already held 1 in 950ms; draining, so nothing new goes to it
+self data: took 2 records, already held 0, coded 3 new records into pieces, 2 of 3 rebuild each
 ```
 
 A storage citizen that fails gets `<name>: self data: <reason>` on
@@ -493,8 +621,8 @@ The count starts at the first failed open, not at the last answer. Thus a
 device that was off itself for 7 days does not warn at its first sync.
 
 Steps 4 and 5 keep requests in flight on a storage app with `batch`
-(section 3.3): step 4 gets 256 blobs with each request, and step 5 seals 64
-records at a time and keeps 32 puts in flight. Steps 4 and 5 run in this
+(section 3.3): step 4 rebuilds 256 blobs at a time, and step 5 seals 64
+records at a time and keeps 32 puts in flight on each pipe. Steps 4 and 5 run in this
 order. A device that was offline thus gets a
 deletion before it could put the old records back.
 
@@ -624,14 +752,30 @@ run while the app runs. Each change counts at the next call.
 | No path opens | The sync of that storage citizen fails. The other storage citizens still sync at the same time. | The error of the direct pipe, and `some transports failed`. |
 | No pipe opens to a storage citizen for 7 days | Each sync of the device warns. The device does not mark it `gone`. | `<name>: no answer for <days> days; if it is gone, run arc keys storage rm <name> --gone on the signer` |
 | A blob does not pass section 3.5 | The device skips it. | `refused <id>: <reason>` |
+| A piece does not pass section 3.5 | The device gets another piece of the seal. | `refused <name>: piece <id> of blob <blob>: the piece does not open; the device asks another storage citizen` |
+| Fewer than k pieces of a blob answer | The blob waits for the next sync. The sync fails. | `self data: <n> blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again`, and `unreadable <blob>: 1 of the 2 pieces that rebuild it answered` for each |
+| Fewer than k storage citizens answer for a new record | The record waits. The sync fails. | `self data: <n> records wait: a new blob needs <k> storage citizens that answer; the next sync puts them` |
+| No seal of a blob has k pieces | The device does nothing. | `self data: <n> blobs have fewer than k pieces of one seal on the storage citizens; a later step repairs them` |
+| A storage citizen runs a storage app without `pieces` | It gets whole blobs of format 1, and does not count in S. | `<name> runs an older storage app: it holds full copies; update it for erasure coding` |
 | A put passes the quota | The sync stops. The cursor and the IDs so far are kept. | The `over_quota` message, with the bytes in use and the quota. |
 | A relay does not answer during the import | The import is not marked. | `the import of the drafts on the relays is not complete` |
 
 ## 6. Security
 
 - The storage citizen sees the account key, each device key of the grant
-  set, the count of the blobs, their padded sizes, the times of the puts and
-  the sessions, and the IP address of each machine. It does not see the
+  set, the count of the pieces, their sizes, the times of the puts and
+  the sessions, and the IP address of each machine. The size of a piece is
+  the padded size of its blob divided by k, plus 45 bytes, so it shows k
+  roughly. A storage citizen does not see the blob IDs, the tags, which
+  pieces form one blob, or the other storage citizens.
+- Each storage citizen has its own piece id key, so two storage citizens
+  that work together show no common piece ID. They can still join pieces
+  by the time of the puts, their sizes and the IP address.
+- k storage citizens that work together hold coded ciphertext of the
+  blob. They still need the data root to open it.
+- A storage citizen that changes a piece, moves a tag to another ID, or
+  gives a piece of another blob, gets refused by section 3.5. The device
+  rebuilds the blob from other pieces. It does not see the
   citizen key, the device list, the names of the devices, the kinds, the `d`
   tags, the content, or which blob is a page.
 - A revoked device that skips the remote signer, and calls the storage
@@ -659,8 +803,10 @@ run while the app runs. Each change counts at the next call.
 - A device cannot change the storage list: it holds no citizen key, and the
   signer refuses to sign kind 10273 for a device. A device that lost its
   place on the device list cannot add a storage citizen.
-- A hostile storage citizen can withhold or delete blobs. A device keeps its
-  full copy. It cannot change or make a blob that opens.
+- A hostile storage citizen can withhold or delete blobs and pieces. A
+  device keeps its full copy. It cannot change or make a blob or a piece
+  that opens. With t - k storage citizens that withhold, each blob still
+  rebuilds.
 - An audit proves that the storage citizen read each byte of the blob after
   the nonce came. A storage citizen that keeps the blob only on another
   machine, and fetches it for each audit, still passes. The proposal
@@ -719,6 +865,38 @@ run while the app runs. Each change counts at the next call.
   - An older device ignores `answered` and `silent_since` in its state
     file, and drops them when it writes the file. A newer device then
     starts the count again at its next failed open.
+- The pieces (section 3.10) change the bytes on each storage citizen. This
+  is a breaking change:
+  - An older device lists the piece IDs, and asks for each one. Its client
+    refuses a get whose size is not a power of two, so its sync with that
+    storage citizen fails each time with
+    `the storage citizen announced a blob of 2093 bytes`. It then puts
+    nothing there, and sees no record that a newer device wrote. The user
+    updates each device.
+  - An older device puts blobs of format 1 on a storage citizen that it
+    syncs with. A newer device reads them, and leaves them as they are. A
+    later step codes them into pieces.
+  - A newer device sends `hello` first. An older storage app answers with
+    no `pieces`, or with `invalid_request`. The device then puts only
+    blobs of format 1 on it, does not count it in S, and prints
+    `<name> runs an older storage app: it holds full copies; update it for erasure coding`.
+  - A newer storage app gives `tag` in list entries, and `pieces` in
+    `hello`. An older device ignores both.
+  - The state file of each storage citizen has `"v":2`, the tags and the
+    feature. A device lists each storage citizen again from 0 if the file
+    has no `v`: an older device kept no tags. An older device that writes
+    the file drops these fields, and the next sync of a newer device lists
+    from 0 again. The blob IDs that the device got move to `seen.json`.
+  - The Go API changes: `Syncer.SyncAll` replaces `Syncer.Sync`, and the
+    interface `Blobs` gains `Pieces`. `storage.Blob`, `storage.Entry` and
+    `storage.Request` gain `Tag`. `sdk/storage` adds `Conn.Pieces`,
+    `FeaturePieces`, `TagSize`, `PieceOverhead`, `MaxK`, `PieceSize` and
+    `GoodPieceSize`.
+  - The module requires `github.com/klauspost/reedsolomon` v1.14.2, which
+    raises `github.com/klauspost/cpuid/v2` from v2.0.9 to v2.3.0. A newer
+    version of the library can change the bytes of the parity shards.
+    `TestParityPrefix` keeps the property of v1.14.2, and section 3.10 names
+    the version.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
 - Requests in flight add `hello`, `n` and `ids`. They change no earlier
@@ -873,6 +1051,93 @@ put on a draining storage citizen, and a sync that keeps a gone storage
 citizen. `go test -count=1 -run '^TestSilence$' ./runtime/selfsync/` checks
 the count of 7 days with a given clock.
 
+`go test -count=1 -run '^TestStoragePieces$' ./internal/proof/` builds
+`arc` and `arc-storage`, and the storage app of commit d53e91b from the
+history of the repository. It runs them with a local relay, three storage
+citizens of this version and one of the older version, all in the storage
+list. It proves:
+
+- One `arc sync` codes each record as 2 of 3 pieces, and names the older
+  storage citizen: `frank runs an older storage app: it holds full copies;
+  update it for erasure coding`.
+- Each of the three storage citizens holds one piece of each of the 9
+  blobs. Each piece is 2,093 bytes: half of a blob of 4 KiB, plus 45 bytes.
+  No piece holds text of a page. The older one holds whole blobs.
+- No piece ID is on two storage citizens. Each listing gives a tag of 87
+  bytes for each piece, and no tag is on two storage citizens.
+- With one byte changed in each piece of dana, and charlie stopped, a
+  machine from the seed reads no page. Its sync fails, and names the
+  pieces that do not open and the blobs that cannot be read.
+- With charlie back, the same machine reads each page. It asks for the
+  piece of dana first for some blobs, refuses it, and rebuilds from the
+  pieces of charlie and erin.
+- With the directory of dana deleted, a new machine from the seed reads
+  each page from charlie and erin.
+- With erin stopped too, a new machine reads no page. The sync fails with
+  `blobs cannot be read now` and `1 of the 2 pieces that rebuild it
+  answered`.
+- With the older storage citizen back, the same machine reads each page
+  from its blobs of format 1.
+
+`go test -count=1 -run '^(TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece)$' ./runtime/selfsync/`
+proves:
+
+- The piece key, the piece id key, the placement key and a piece ID are
+  the values that Python's `hmac` and `hashlib` computed.
+- k and t follow the table of decision 6 of the storage network proposal.
+- For k from 1 to 4 and blobs of 4 KiB and 64 KiB, each set of k
+  consecutive pieces rebuilds the blob. A piece with a changed byte, a
+  piece with the tag of another piece, and a tag with a changed byte do
+  not open. A tag of generation 2 does not open with the piece key of
+  generation 0.
+- Three storage citizens show no common piece ID for one blob.
+- The shards of a (k, n) code are the first n shards of a (k, m) code of
+  v1.14.2.
+- A storage citizen that did not answer gets its piece of each blob at a
+  later sync, and a fourth storage citizen gets a fourth piece. No other
+  piece changes. A pipe through TURN gets no such piece. A second device
+  rebuilds each record from the two pieces that came late.
+
+`go test -count=1 -run '^TestPieceTags$' ./apps/storage/server/` proves
+that the app keeps the tag of a piece, also after a restart, takes the
+size of a piece only with a tag, and refuses a tag of 40 bytes.
+
+Each check failed with a temporary break of its behavior: a read that
+needs all t pieces, a sync that does not report unreadable blobs, k = 1, a
+read that skips the entries with no tag, a read with no second round, a
+piece AEAD that is not checked, one piece id key for each storage citizen,
+the Cauchy matrix of the library, k = floor(S / 2), no piece for a late
+storage citizen, a late piece of a new seal, a missing piece through TURN,
+an app that drops the tag, an app that takes the size of a piece with no
+tag, and a client that refuses the size of a piece. One piece id key for
+each storage citizen did not fail the proof through the CLI: the index
+alone makes the piece IDs of one blob differ. `TestPieceIDsDiffer` and
+`TestPieceKeys` failed.
+
+`go test -run '^$' -bench BenchmarkPieces -benchtime 300ms -cpu 1,16 ./runtime/selfsync/`
+measures the pieces of one blob on a device: encode is the code and the
+sealing of t pieces, decode is the opening of k pieces with the first data
+pieces lost, and the rebuild. Apple M3 Max, go1.27.1, v1.14.2, 2026-10-12,
+one core, in blob bytes:
+
+| Code | Work | 4 KiB | 64 KiB | 1 MiB | 64 MiB |
+| --- | --- | --- | --- | --- | --- |
+| 2 of 3 | encode | 342 MB/s | 492 MB/s | 609 MB/s | 696 MB/s |
+| 2 of 3 | decode | 602 MB/s | 683 MB/s | 958 MB/s | 987 MB/s |
+| 2 of 4 | encode | 288 MB/s | 377 MB/s | 475 MB/s | 520 MB/s |
+| 2 of 4 | decode | 540 MB/s | 585 MB/s | 857 MB/s | 1,000 MB/s |
+| 3 of 5 | encode | 277 MB/s | 456 MB/s | 589 MB/s | 621 MB/s |
+| 3 of 5 | decode | 513 MB/s | 554 MB/s | 826 MB/s | 1,026 MB/s |
+| 3 of 6 | encode | 239 MB/s | 409 MB/s | 479 MB/s | 520 MB/s |
+| 3 of 6 | decode | 463 MB/s | 507 MB/s | 736 MB/s | 977 MB/s |
+
+The AEAD sets these values: the code alone ran at 1.9 to 52 GB/s in the
+proposal. The slowest value, 230 MB/s with 16 cores, is about 19 times
+the 12 MB/s of a direct pipe of 97 Mbit/s (computed). 16 cores give the
+same values: one blob runs on one core. The first `arc sync` of
+`TestStoragePieces`, 9 records on three storage citizens and an older one,
+took 407 to 437 ms in three runs.
+
 The proofs of the delivery spec and of the app interface spec carry pages
 through a storage citizen and through a directory.
 
@@ -975,3 +1240,13 @@ that an older set is refused.
   draft and each checkpoint stays on the storage citizen.
 - Not built. The NIP-09 deletion of the imported drafts on the relays, and a
   relay that refuses self data.
+- Not built. A new seal for a blob with pieces but fewer than k of each
+  seal (rule 2 of section 6.7 of the storage network proposal). The device
+  prints a note. A piece ID has no seal, so the piece of a new seal at the
+  same index on the same storage citizen gets `held`; and a delete before
+  the put makes a tombstone, which refuses the put for 90 days. The step
+  that builds rule 2 must solve this first, for example with the seal in
+  the piece ID.
+- Not built. Repair of a lost piece, drain, and audits. Only a missing
+  index of a seal with k pieces is added, on a direct pipe.
+- Not built. The move of blobs of format 1 to pieces.

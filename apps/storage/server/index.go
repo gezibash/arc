@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -18,7 +19,8 @@ import (
 //	meta        seq, used and count: the last sequence number, the bytes
 //	            in use and the number of blobs; imported marks the import
 //	            of the entries of an older state.json
-//	blobs       ID → seq, size and time of the put
+//	blobs       ID → seq, size and time of the put, then the tag of a
+//	            piece; a blob of format 1 has no tag
 //	tombstones  ID → seq and time of the delete
 //	changes     seq → ID: the last change of each ID, for list
 //
@@ -61,10 +63,14 @@ func (x index) count() int64 { return int64(x.meta(keyCount)) }
 // blob returns the entry of a blob.
 func (x index) blob(id string) (blob, bool) {
 	v := x.tx.Bucket(bucketBlobs).Get([]byte(id))
-	if len(v) != 24 {
+	if len(v) != 24 && len(v) != 24+wire.TagSize {
 		return blob{}, false
 	}
-	return blob{Seq: u64(v), Size: int64(u64(v[8:])), Put: time.Unix(0, int64(u64(v[16:])))}, true
+	b := blob{Seq: u64(v), Size: int64(u64(v[8:])), Put: time.Unix(0, int64(u64(v[16:])))}
+	if len(v) > 24 {
+		b.Tag = append([]byte(nil), v[24:]...)
+	}
+	return b, true
 }
 
 func (x index) tombstone(id string) (tombstone, bool) {
@@ -91,6 +97,7 @@ func (x index) setBlob(id string, b blob) error {
 	v := binary.BigEndian.AppendUint64(nil, b.Seq)
 	v = binary.BigEndian.AppendUint64(v, uint64(b.Size))
 	v = binary.BigEndian.AppendUint64(v, uint64(b.Put.UnixNano()))
+	v = append(v, b.Tag...)
 	if err := x.tx.Bucket(bucketBlobs).Put([]byte(id), v); err != nil {
 		return err
 	}
@@ -106,9 +113,9 @@ func (x index) setTombstone(id string, t tombstone) error {
 	return x.tx.Bucket(bucketChanges).Put(put64(t.Seq), []byte(id))
 }
 
-// add records a blob, and removes its tombstone. It returns the sequence
-// number of the change.
-func (x index) add(id string, size int64, now time.Time) (uint64, error) {
+// add records a blob or a piece with its tag, and removes its tombstone.
+// It returns the sequence number of the change.
+func (x index) add(id string, size int64, tag []byte, now time.Time) (uint64, error) {
 	if t, ok := x.tombstone(id); ok {
 		if err := x.tx.Bucket(bucketChanges).Delete(put64(t.Seq)); err != nil {
 			return 0, err
@@ -118,7 +125,7 @@ func (x index) add(id string, size int64, now time.Time) (uint64, error) {
 		}
 	}
 	seq := x.seq() + 1
-	if err := x.setBlob(id, blob{Seq: seq, Size: size, Put: now}); err != nil {
+	if err := x.setBlob(id, blob{Seq: seq, Size: size, Put: now, Tag: tag}); err != nil {
 		return 0, err
 	}
 	return seq, errors.Join(x.setMeta(keySeq, seq), x.setMeta(keyUsed, uint64(x.used()+size)), x.setMeta(keyCount, uint64(x.count()+1)))
@@ -152,7 +159,11 @@ func (x index) list(after uint64, limit int) []wire.Entry {
 	for k, v := c.Seek(put64(after + 1)); k != nil && len(entries) < limit; k, v = c.Next() {
 		id := string(v)
 		if b, ok := x.blob(id); ok && b.Seq == u64(k) {
-			entries = append(entries, wire.Entry{Seq: b.Seq, ID: id, Size: b.Size})
+			entry := wire.Entry{Seq: b.Seq, ID: id, Size: b.Size}
+			if b.Tag != nil {
+				entry.Tag = base64.StdEncoding.EncodeToString(b.Tag)
+			}
+			entries = append(entries, entry)
 		} else {
 			entries = append(entries, wire.Entry{Seq: u64(k), ID: id, Deleted: true})
 		}

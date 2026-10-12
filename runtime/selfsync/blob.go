@@ -8,6 +8,7 @@
 package selfsync
 
 import (
+	"bytes"
 	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
@@ -35,6 +36,14 @@ type Keys struct {
 	// ID names the blobs. It never changes, so a blob keeps its ID in each
 	// generation.
 	ID []byte
+	// Piece seals the tags and the pieces of this generation.
+	Piece []byte
+	// Place orders the storage citizens for each blob. It comes from the
+	// keyed root, so it never changes.
+	Place []byte
+	// keyed is the keyed root, for the piece ID key of each storage
+	// citizen.
+	keyed []byte
 }
 
 // NewKeys derives the keys of the blobs of generation gen. The blob key
@@ -57,7 +66,15 @@ func NewKeys(gen uint32, dataRoot, keyedRoot []byte) (Keys, error) {
 	if err != nil {
 		return Keys{}, err
 	}
-	return Keys{Gen: gen, Blob: blob, ID: id}, nil
+	piece, err := pieceKey(dataRoot)
+	if err != nil {
+		return Keys{}, err
+	}
+	place, err := hkdf.Key(sha256.New, keyedRoot, nil, "arc-storage-place-v1", 32)
+	if err != nil {
+		return Keys{}, err
+	}
+	return Keys{Gen: gen, Blob: blob, ID: id, Piece: piece, Place: place, keyed: bytes.Clone(keyedRoot)}, nil
 }
 
 // BlobID names the blob of a record: HMAC-SHA256 of the ID key and the

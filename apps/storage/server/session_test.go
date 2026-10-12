@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -239,7 +240,7 @@ func TestHelloAndWindow(t *testing.T) {
 	dc, messages, closed := rawPipe(t, s)
 	sendJSON(t, dc, wire.Request{Op: wire.OpHello, N: 7})
 	hello := readReply(t, messages)
-	if hello.N != 7 || hello.Version != 2 || !slices.Equal(hello.Features, []string{wire.FeatureBatch, wire.FeatureAudit, wire.FeatureDrain}) || hello.Window != wire.Window {
+	if hello.N != 7 || hello.Version != 2 || !slices.Equal(hello.Features, []string{wire.FeatureBatch, wire.FeaturePieces, wire.FeatureAudit, wire.FeatureDrain}) || hello.Window != wire.Window {
 		t.Fatalf("hello gave %+v", hello)
 	}
 
@@ -262,6 +263,64 @@ func TestHelloAndWindow(t *testing.T) {
 			t.Fatalf("the app kept the pipe open with %d puts in flight", wire.Window+1)
 		}
 	}
+}
+
+// TestPieceTags checks the feature pieces: the app keeps the tag of a
+// put, gives it back in each listing, also after a restart, and takes the
+// size of a piece only with a tag. A blob of format 1 still has no tag.
+func TestPieceTags(t *testing.T) {
+	dir := t.TempDir()
+	s := testServer(t, dir)
+	conn := testConn(t, s)
+	ctx := context.Background()
+	if pieces, err := conn.Pieces(ctx); err != nil || !pieces {
+		t.Fatalf("the app gives pieces = %v, %v", pieces, err)
+	}
+	tag := bytes.Repeat([]byte{7}, wire.TagSize)
+	piece := wire.Blob{ID: strings.Repeat("1", 64), Data: make([]byte, wire.PieceSize(wire.MinBlob, 2)), Tag: tag}
+	whole := wire.Blob{ID: strings.Repeat("2", 64), Data: make([]byte, wire.MinBlob)}
+	untagged := wire.Blob{ID: strings.Repeat("3", 64), Data: make([]byte, wire.PieceSize(wire.MinBlob, 2))}
+	short := wire.Blob{ID: strings.Repeat("4", 64), Data: make([]byte, wire.PieceSize(wire.MinBlob, 2)), Tag: tag[:40]}
+	results, err := conn.PutMany(ctx, []wire.Blob{piece, whole, untagged, short})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Status != wire.StatusStored || results[1].Status != wire.StatusStored {
+		t.Fatalf("the piece and the blob gave %+v and %+v; want stored", results[0], results[1])
+	}
+	if !wire.IsRefused(results[2].Err, wire.ErrBadSize) {
+		t.Fatalf("a piece with no tag gave %+v; want bad_size", results[2])
+	}
+	if !wire.IsRefused(results[3].Err, wire.ErrInvalidRequest) {
+		t.Fatalf("a tag of 40 bytes gave %+v; want invalid_request", results[3])
+	}
+	check := func(conn *wire.Conn, when string) {
+		t.Helper()
+		entries, _, err := conn.List(ctx, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tags := map[string]string{}
+		for _, e := range entries {
+			tags[e.ID] = e.Tag
+		}
+		if len(entries) != 2 || tags[piece.ID] != base64.StdEncoding.EncodeToString(tag) || tags[whole.ID] != "" {
+			t.Fatalf("%s, the app lists %+v", when, entries)
+		}
+		var got []byte
+		if err := conn.GetMany(ctx, []string{piece.ID}, func(_ string, data []byte, err error) error { got = data; return err }); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(piece.Data) {
+			t.Fatalf("%s, a get of the piece gave %d bytes, want %d", when, len(got), len(piece.Data))
+		}
+	}
+	check(conn, "after the puts")
+	conn.Close()
+	if err := s.store.close(); err != nil {
+		t.Fatal(err)
+	}
+	check(testConn(t, testServer(t, dir)), "after a restart")
 }
 
 // TestAuditReplay audits one blob twice through the real app and client,

@@ -12,12 +12,13 @@ import (
 )
 
 // TestStorageNetworkSync proves storage network step 5 through the normal
-// CLI, a real relay and three storage citizens. One sync writes a full copy
+// CLI, a real relay and three storage citizens. One sync writes a piece
 // to each storage citizen at the same time, so it takes about the time of
 // the slowest one, not the sum. With one storage citizen stopped, the sync
 // still writes to the others, and a machine with only the seed reads every
-// page from them. After 7 days with no answer, each sync warns. A draining
-// storage citizen is read, and gets no put. A gone one gets no sync.
+// page from the pieces on them. After 7 days with no answer, each sync
+// warns. A draining storage citizen is read, and gets no put. A gone one
+// gets no sync.
 func TestStorageNetworkSync(t *testing.T) {
 	begin := time.Now()
 	work := t.TempDir()
@@ -35,7 +36,7 @@ func TestStorageNetworkSync(t *testing.T) {
 	delays := map[string]time.Duration{"charlie": 400 * time.Millisecond, "dana": 800 * time.Millisecond, "erin": 1200 * time.Millisecond}
 	charlie, charlieServe := servedStorageCitizen(t, work, url, signer, "charlie", delays["charlie"])
 	dana, _ := servedStorageCitizen(t, work, url, signer, "dana", delays["dana"])
-	erin, erinServe := servedStorageCitizen(t, work, url, signer, "erin", delays["erin"])
+	erin, _ := servedStorageCitizen(t, work, url, signer, "erin", delays["erin"])
 	signer.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
 	signer.run("install", citizen, "journal", "--yes")
 	for name, key := range map[string]string{"charlie": charlie, "dana": dana, "erin": erin} {
@@ -74,7 +75,7 @@ func TestStorageNetworkSync(t *testing.T) {
 	if whole >= sum*8/10 {
 		t.Fatalf("arc sync took %s, and the storage citizens took %s together: they did not sync at the same time", whole, sum)
 	}
-	t.Log("ok: one sync writes a full copy to three storage citizens at the same time")
+	t.Log("ok: one sync writes a piece to three storage citizens at the same time")
 
 	// With charlie stopped, the sync still writes to dana and erin.
 	charlieServe.stop()
@@ -146,8 +147,9 @@ func TestStorageNetworkSync(t *testing.T) {
 	if n := blobFiles(t, filepath.Join(work, "erin-blobs")); n <= erinBlobs {
 		t.Fatalf("erin holds %d blobs after the sync, and %d before: the new page did not go to erin", n, erinBlobs)
 	}
-	// With charlie and erin stopped, dana is the only copy of pages 1 to 4.
-	erinServe.stop()
+	// With charlie stopped, each blob of pages 1 to 4 needs its pieces on
+	// dana and on erin: k is 2. A new machine thus reads from dana,
+	// which drains.
 	fromDana := arc(t, filepath.Join(work, "paper2")).with(loopback...)
 	fromDana.input(strings.Join(words, " ")+"\n", "keys", "recover")
 	fromDana.run("relay", "add", url)
@@ -156,11 +158,10 @@ func TestStorageNetworkSync(t *testing.T) {
 	if got, _ := syncTook(t, "dana", onlyDana.Stdout); got.received == 0 {
 		t.Fatalf("the sync read nothing from dana, which drains:\n%s\n%s", onlyDana.Stdout, onlyDana.Stderr)
 	}
-	for n := 1; n <= 4; n++ {
-		page := fmt.Sprintf("hrs/net/%d", n)
-		has(t, journalDoc(t, begin, fromDana.run("journal", "read", page)), pages[page], "the reading of "+page+" from dana")
+	for page, want := range pages {
+		has(t, journalDoc(t, begin, fromDana.run("journal", "read", page)), want, "the reading of "+page+" with dana")
 	}
-	t.Log("ok: dana drains: a device reads every page from it, and puts nothing on it")
+	t.Log("ok: dana drains: a device reads its pieces, and puts nothing on it")
 
 	// A gone storage citizen gets no sync.
 	has(t, signer.run("keys", "storage", "rm", "dana", "--gone"), "storage list: dana is gone", "the removal of dana")
@@ -168,7 +169,7 @@ func TestStorageNetworkSync(t *testing.T) {
 	if regexp.MustCompile(`dana: self data`).MatchString(gone.Stdout + gone.Stderr) {
 		t.Fatalf("the sync still syncs with dana after gone:\n%s\n%s", gone.Stdout, gone.Stderr)
 	}
-	has(t, gone.Stderr, "erin: self data: ", "the sync after dana is gone")
+	has(t, gone.Stdout, "erin: self data received", "the sync after dana is gone")
 	t.Log("ok: a gone storage citizen gets no sync")
 }
 

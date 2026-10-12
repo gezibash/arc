@@ -15,6 +15,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -415,6 +416,7 @@ type sending struct {
 	n    uint64
 	id   string
 	size int64
+	tag  []byte
 	data []byte
 }
 
@@ -472,7 +474,7 @@ func (s *session) serve() error {
 func (s *session) handle(req wire.Request) error {
 	switch req.Op {
 	case wire.OpHello:
-		return s.reply(wire.Reply{N: req.N, Version: 2, Features: []string{wire.FeatureBatch, wire.FeatureAudit, wire.FeatureDrain}, Window: wire.Window})
+		return s.reply(wire.Reply{N: req.N, Version: 2, Features: []string{wire.FeatureBatch, wire.FeaturePieces, wire.FeatureAudit, wire.FeatureDrain}, Window: wire.Window})
 	case wire.OpDrain:
 		r, err := s.store.drain(s.account, req.Off)
 		if err != nil {
@@ -613,12 +615,19 @@ func (s *session) put(req wire.Request) error {
 		}
 		reserved += p.size
 	}
-	status, err := s.store.admit(s.account, req.ID, req.Size, reserved)
+	var tag []byte
+	if req.Tag != "" {
+		var err error
+		if tag, err = base64.StdEncoding.DecodeString(req.Tag); err != nil || len(tag) != wire.TagSize {
+			return s.reply(wire.Reply{N: req.N, Error: wire.ErrInvalidRequest, Message: fmt.Sprintf("the tag of a piece is %d bytes in standard base64", wire.TagSize)})
+		}
+	}
+	status, err := s.store.admit(s.account, req.ID, req.Size, reserved, tag != nil)
 	if err != nil {
 		return s.refuse(req.N, err)
 	}
 	if status == wire.StatusSend {
-		s.sends = append(s.sends, sending{n: req.N, id: req.ID, size: req.Size, data: make([]byte, 0, req.Size)})
+		s.sends = append(s.sends, sending{n: req.N, id: req.ID, size: req.Size, tag: tag, data: make([]byte, 0, req.Size)})
 	}
 	return s.reply(wire.Reply{N: req.N, Status: status})
 }
@@ -642,7 +651,7 @@ func (s *session) bytes(data []byte) error {
 	if err := s.store.writeBlob(s.account, head.id, head.data); err != nil {
 		return s.refuse(head.n, err)
 	}
-	s.group = append(s.group, written{n: head.n, id: head.id, size: head.size})
+	s.group = append(s.group, written{n: head.n, id: head.id, size: head.size, tag: head.tag})
 	if len(s.group) >= wire.Window {
 		return s.commit()
 	}

@@ -321,8 +321,8 @@ Each command takes these flags:
 ```text
 <STORAGE_DIR>/invites.json                        the SHA-256 of each invite token, its quota, plan and end
 <STORAGE_DIR>/accounts/<account key>/state.json   the record and the grant set
-<STORAGE_DIR>/accounts/<account key>/index.db     the index: the cursor, the bytes in use and the entries
-<STORAGE_DIR>/accounts/<account key>/blobs/<id>   the bytes of one blob
+<STORAGE_DIR>/accounts/<account key>/index.db     the index: the cursor, the bytes in use and the entries, with the tag of each piece
+<STORAGE_DIR>/accounts/<account key>/blobs/<id>   the bytes of one blob or one piece
 ```
 
 `state.json` and `invites.json` are written to a temporary file, flushed,
@@ -376,10 +376,12 @@ endian, then the bytes of the file, then zeros up to the next power of two,
 at least 4 KiB. The ID is the SHA-256 of the blob. `get` checks the SHA-256,
 and removes the padding.
 
-`arc sync` makes another blob, as section 3.3 of the storage spec says: its
+`arc sync` makes another blob, as section 3.4 of the storage spec says: its
 ID is a keyed hash of the record ID, and the padding is inside the
-encryption. The app does not read the blob, so the app does not change for
-it.
+encryption. Then it codes the blob into pieces with Reed-Solomon, and puts
+one piece on each storage citizen, as section 3.10 says. A piece comes with
+a sealed tag of 87 bytes. The app keeps the tag, and gives it back in each
+listing. The app does not open the tag, and does not decode a piece.
 
 ## What the storage citizen sees
 
@@ -461,9 +463,10 @@ in order.
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"v":2,"features":["batch","audit","drain"],"window":32}`. An older app answers `invalid_request`. |
+| `{"op":"hello"}` | `{"v":2,"features":["batch","pieces","audit","drain"],"window":32}`. An older app answers `invalid_request`. |
 | `{"op":"put","id":"<64 hex>","size":4096}` | `{"status":"send"}`, then the client sends the bytes, and the app answers `{"status":"stored","seq":7}`. Or `{"status":"held"}` or `{"status":"tombstoned"}`, and no bytes go. |
-| `{"op":"list","after":6,"limit":1000}` | `{"entries":[{"seq":7,"id":"…","size":4096},{"seq":8,"id":"…","deleted":true}],"next":8}` |
+| `{"op":"put","id":"<64 hex>","size":2093,"tag":"<base64>"}` | The put of a piece, with the same replies. |
+| `{"op":"list","after":6,"limit":1000}` | `{"entries":[{"seq":7,"id":"…","size":4096},{"seq":8,"id":"…","size":2093,"tag":"<base64>"},{"seq":9,"id":"…","deleted":true}],"next":9}` |
 | `{"op":"get","id":"<64 hex>"}` | `{"size":4096}`, then the bytes of the blob. |
 | `{"op":"get","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","size":4096},{"id":"…","error":"not_found"}]}`, then the bytes of each found blob, in order. |
 | `{"op":"delete","id":"<64 hex>"}` | `{"status":"deleted","seq":9}`, or `{"status":"absent"}`. |
@@ -486,6 +489,11 @@ in order.
   `audit` and `drain`. An older app has neither.
 - Without `batch`, the client sends one request at a time, with no `n`, as
   before.
+- A put with `tag` is a piece. The tag is 87 bytes in standard base64.
+  The size of a piece is `ceil(blob / k) + 45` bytes, for a blob size that
+  is a power of two from 4 KiB to 64 MiB and a k from 1 to 8. A put with
+  no tag has the size of a blob. The app answers `bad_size` to another
+  size, and `invalid_request` to a tag of another length.
 
 The bytes of a blob go in binary messages of 16 KiB, with the flow control
 of the direct pipe spec, section 3.4. A refused request gets

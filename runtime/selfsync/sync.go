@@ -40,7 +40,9 @@ type Store interface {
 // Blobs is one open session with a storage citizen. *storage.Conn is one.
 // GetMany and PutMany keep several requests in flight on a storage app
 // that supports it, and send one request at a time to an older one.
+// Pieces says if the app keeps the tags of pieces.
 type Blobs interface {
+	Pieces(ctx context.Context) (bool, error)
 	List(ctx context.Context, after uint64) ([]storage.Entry, uint64, error)
 	GetMany(ctx context.Context, ids []string, f func(id string, blob []byte, err error) error) error
 	PutMany(ctx context.Context, blobs []storage.Blob) ([]storage.PutResult, error)
@@ -77,22 +79,69 @@ type Report struct {
 	// Held is the number of records that the store already held, or held
 	// a newer version of.
 	Held int
-	// Sent is the number of blobs put.
+	// Sent is the number of records that the device coded into pieces of
+	// a new seal and put.
 	Sent int
-	// Refused holds one reason for each blob that the device did not take.
+	// K and T are the code of a new blob: k of t pieces rebuild it.
+	K, T int
+	// Waiting is the number of records that no storage citizen holds yet,
+	// because fewer than k storage citizens answered.
+	Waiting int
+	// Unreadable holds one reason for each blob that the device lacks and
+	// cannot rebuild now: fewer than k of its pieces answered.
+	Unreadable []string
+	// Mixed is the number of blobs whose pieces belong to seals with
+	// fewer than k pieces each. A later step repairs them.
+	Mixed int
+	// Refused holds one reason for each blob or piece that the device did
+	// not take.
 	Refused []string
+	// Sides holds what the sync did with each storage citizen, in the
+	// order of the sides.
+	Sides []SideReport
 }
+
+// SideReport says what one sync did with one storage citizen.
+type SideReport struct {
+	// Got is the number of pieces and blobs that the device got from it.
+	Got int
+	// Stored is the number of pieces and blobs that it stored.
+	Stored int
+	// Held is the number of puts that it answered held.
+	Held int
+	// Old says that its storage app keeps no tags. The device puts only
+	// blobs of format 1 on it.
+	Old bool
+	// Done is the end of the last request to it.
+	Done time.Time
+	// Err says why the sync with it failed.
+	Err error
+}
+
+// stateVersion is the version of the state file of a storage citizen.
+// Version 2 keeps the tags of the pieces. A device lists again from 0 if
+// the file has an older version: an older device does not keep tags.
+const stateVersion = 2
 
 // state is what a device remembers of one storage citizen.
 type state struct {
+	V int `json:"v,omitempty"`
 	// Cursor is the last sequence number that the device listed.
 	Cursor uint64 `json:"cursor"`
 	// Remote holds each ID that the storage citizen listed: true if it holds
-	// the blob, false if the blob was deleted. The device puts no ID that
-	// it holds.
+	// the blob or the piece, false if it was deleted.
 	Remote map[string]bool `json:"remote"`
-	// Seen holds the IDs that the device got, whatever the store did.
-	Seen map[string]bool `json:"seen"`
+	// Tags holds the tag of each piece that the storage citizen listed, in
+	// base64. An ID with no tag is a blob of format 1.
+	Tags map[string]string `json:"tags,omitempty"`
+	// Pieces says if the storage app keeps tags, from its last hello.
+	Pieces *bool `json:"pieces,omitempty"`
+	// Listed says that the device listed the storage citizen to the end
+	// once.
+	Listed bool `json:"listed,omitempty"`
+	// Seen holds the blob IDs that an older device got. A device of this
+	// version moves them to the shared file seen.json.
+	Seen map[string]bool `json:"seen,omitempty"`
 	// Answered is the Unix time of the last pipe that opened.
 	Answered int64 `json:"answered,omitempty"`
 	// SilentSince is the Unix time of the first failed open after the
@@ -136,7 +185,7 @@ func (s *Syncer) statePath(name string) string {
 }
 
 func (s *Syncer) load(name string) (state, error) {
-	st := state{Remote: map[string]bool{}, Seen: map[string]bool{}}
+	st := state{V: stateVersion, Remote: map[string]bool{}, Tags: map[string]string{}, Seen: map[string]bool{}}
 	raw, err := os.ReadFile(s.statePath(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return st, nil
@@ -147,8 +196,14 @@ func (s *Syncer) load(name string) (state, error) {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return st, fmt.Errorf("%s: %w", s.statePath(name), err)
 	}
+	if st.V < stateVersion {
+		st.V, st.Cursor, st.Remote, st.Tags = stateVersion, 0, nil, nil
+	}
 	if st.Remote == nil {
 		st.Remote = map[string]bool{}
+	}
+	if st.Tags == nil {
+		st.Tags = map[string]string{}
 	}
 	if st.Seen == nil {
 		st.Seen = map[string]bool{}
@@ -157,168 +212,37 @@ func (s *Syncer) load(name string) (state, error) {
 }
 
 func (s *Syncer) save(name string, st state) error {
+	return s.writeJSON(s.statePath(name), st)
+}
+
+func (s *Syncer) writeJSON(path string, v any) error {
 	if err := os.MkdirAll(s.State, 0o700); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(st)
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(s.statePath(name), raw, 0o600)
+	return atomicfile.Write(path, raw, 0o600)
 }
 
-// Sync syncs with one storage citizen. name names the storage citizen in
-// the state directory, such as its key in hex. The device first gets the
-// blobs that it lacks, and then, if put is true, puts the records that the
-// storage citizen lacks. A deletion that it gets first thus drops the old
-// records from the store before the device would put them back. A storage
-// citizen that the citizen drains gets no put.
-func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Report, error) {
-	var report Report
-	st, err := s.load(name)
-	if err != nil {
-		return report, err
-	}
-	current, err := s.Newest(ctx)
-	if err != nil {
-		return report, err
-	}
-	// Each generation once for each sync: the keys of a generation can
-	// need the relays and the signer.
-	held := map[uint32]Keys{current.Gen: current}
-	keysOf := func(ctx context.Context, gen uint32) (Keys, error) {
-		if k, ok := held[gen]; ok {
-			return k, nil
-		}
-		k, err := s.Keys(ctx, gen)
-		if err == nil {
-			held[gen] = k
-		}
-		return k, err
-	}
+// seenPath is the file of the blob IDs that the device got from any
+// storage citizen, whatever the store did.
+func (s *Syncer) seenPath() string { return filepath.Join(s.State, "seen.json") }
 
-	// The local records, by blob ID. The ID key is the same in each
-	// generation.
-	records, err := s.Store.Query(Filter(s.Citizen))
+func (s *Syncer) loadSeen() (map[string]bool, error) {
+	seen := map[string]bool{}
+	raw, err := os.ReadFile(s.seenPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return seen, nil
+	}
 	if err != nil {
-		return report, err
+		return nil, err
 	}
-	local := make(map[string]bool, len(records))
-	for _, event := range records {
-		local[current.BlobID(event.ID)] = true
+	if err := json.Unmarshal(raw, &seen); err != nil {
+		return nil, fmt.Errorf("%s: %w", s.seenPath(), err)
 	}
-
-	entries, next, err := b.List(ctx, st.Cursor)
-	for _, e := range entries {
-		st.Remote[e.ID] = !e.Deleted
-	}
-	st.Cursor = next
-	if err != nil {
-		return report, errors.Join(err, s.save(name, st))
-	}
-
-	// The device reads the device list only if it takes a blob. An absent
-	// device list is an empty slice.
-	var list []nostr.PubKey
-	// Each blob that the device lacks, also one of an earlier listing that
-	// a device that was not on the list made.
-	var lack []string
-	for id, present := range st.Remote {
-		if present && !local[id] && !st.Seen[id] {
-			lack = append(lack, id)
-		}
-	}
-	slices.Sort(lack)
-	if len(lack) > 0 {
-		l, ok, err := s.Devices(ctx)
-		if err != nil {
-			return report, errors.Join(fmt.Errorf("the device list: %w", err), s.save(name, st))
-		}
-		list = []nostr.PubKey{}
-		if ok {
-			// The citizen key may always write.
-			list = append(list, s.Citizen)
-			for _, d := range l.Devices {
-				list = append(list, d.Key)
-			}
-		}
-	}
-	err = b.GetMany(ctx, lack, func(id string, blob []byte, err error) error {
-		var result store.Result
-		if err == nil {
-			result, err = s.take(ctx, id, blob, list, keysOf)
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return err
-			}
-			report.Refused = append(report.Refused, fmt.Sprintf("%s: %v", id, err))
-			// A device can join the list later, so its blob gets a new
-			// chance on the next sync.
-			if !errors.Is(err, errNotListed) {
-				st.Seen[id] = true
-			}
-			return nil
-		}
-		st.Seen[id] = true
-		switch result.Outcome {
-		case store.Stored:
-			report.Received++
-		case store.Refused:
-			report.Refused = append(report.Refused, fmt.Sprintf("%s: the store refused it: %s", id, result.Reason))
-		default:
-			report.Held++
-		}
-		return nil
-	})
-	if err != nil {
-		return report, errors.Join(err, s.save(name, st))
-	}
-
-	if !put {
-		return report, s.save(name, st)
-	}
-
-	// Read the store again: a deletion that came in removed records.
-	records, err = s.Store.Query(Filter(s.Citizen))
-	if err != nil {
-		return report, errors.Join(err, s.save(name, st))
-	}
-	var unlisted []nostr.Event
-	for _, event := range records {
-		if _, listed := st.Remote[current.BlobID(event.ID)]; !listed {
-			unlisted = append(unlisted, event)
-		}
-	}
-	// The puts go in chunks, so that a device seals at most putChunk
-	// records before it gives them.
-	for chunk := range slices.Chunk(unlisted, putChunk) {
-		blobs := make([]storage.Blob, len(chunk))
-		for i, event := range chunk {
-			id, blob, err := Seal(current, s.Device, event)
-			if err != nil {
-				return report, errors.Join(err, s.save(name, st))
-			}
-			blobs[i] = storage.Blob{ID: id, Data: blob}
-		}
-		results, err := b.PutMany(ctx, blobs)
-		var failed []error
-		for i, r := range results {
-			switch {
-			case r.Err != nil:
-				failed = append(failed, fmt.Errorf("put %s: %w", blobs[i].ID, r.Err))
-			case r.Status != "":
-				st.Remote[blobs[i].ID] = r.Status != storage.StatusTombstoned
-				if r.Status == storage.StatusStored {
-					report.Sent++
-				}
-			}
-		}
-		if err != nil || len(failed) > 0 {
-			return report, errors.Join(err, errors.Join(failed...), s.save(name, st))
-		}
-	}
-	return report, s.save(name, st)
+	return seen, nil
 }
 
 // take opens one blob, checks who made it, and gives the record to the
