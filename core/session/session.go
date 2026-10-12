@@ -399,6 +399,12 @@ func (s *Stream) CloseWrite() error {
 	f := s.frame("end")
 	f.Seq = seq
 	if err := s.send(s.ctx, f); err != nil {
+		// The peer can finish as soon as it has the end. Its successful close
+		// can arrive before the transport confirms the end, and cancels the
+		// send. Input has then ended.
+		if s.ctx.Err() != nil && errors.Is(s.err(), io.EOF) {
+			return nil
+		}
 		s.Abort(err)
 		return err
 	}
