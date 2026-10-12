@@ -822,10 +822,10 @@ func syncCommand() *cobra.Command {
 }
 
 // sealedFilter matches what a citizen seals to their own key: drafts, their
-// checkpoints and parts, deletion requests, and the private relay list.
+// checkpoints and parts, and deletion requests.
 func sealedFilter(me nostr.PubKey) nostr.Filter {
 	return nostr.Filter{
-		Kinds:   []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, nostr.KindDeletion, draft.RelayListKind},
+		Kinds:   []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, nostr.KindDeletion},
 		Authors: []nostr.PubKey{me},
 	}
 }
