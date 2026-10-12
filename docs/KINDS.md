@@ -23,11 +23,11 @@ section 3.7.
 | 62 | regular | NIP-62 | Request to vanish. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 1059 | regular | NIP-59 | A gift wrap that a relay keeps. | code | [delivery, section 3.4](delivery/SPEC.md) |
 | 1063 | regular | NIP-94 | File metadata: a sealed file. | manifest | [files app](../apps/files/README.md) |
-| 1234 | regular | NIP-37 | A checkpoint of a draft: one revision of a sealed event. It stays on the device and on storage citizens. An ARC relay refuses it. | code | [interface, section 3.9.1](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
+| 1234 | regular | NIP-37 | A checkpoint of a draft: one revision of a sealed event. A device key signs it, and a `p` tag names the citizen. It stays on the device and on storage citizens. An ARC relay refuses it. | code | [interface, section 3.9.1](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
 | 3272 | regular | ARC | A call request, inside a gift wrap. | code | [delivery, section 4.10](delivery/SPEC.md) |
 | 3273 | regular | ARC | A call reply, inside a gift wrap. | code | [delivery, section 4.10](delivery/SPEC.md) |
 | 3274 | regular | ARC | An acknowledgement of mail, inside a gift wrap. | code | [delivery, section 4.2](delivery/SPEC.md) |
-| 3275 | regular | ARC | One continuation part of sealed content longer than 32 KiB. It stays on the device and on storage citizens. An ARC relay refuses it. | code | [interface, section 3.9.2](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
+| 3275 | regular | ARC | One continuation part of sealed content longer than 32 KiB. A device key signs it, and a `p` tag names the citizen. It stays on the device and on storage citizens. An ARC relay refuses it. | code | [interface, section 3.9.2](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
 | 3276 | regular | ARC | Core session frames, inside live wraps. | code | [sessions](sessions/SPEC.md) |
 | 9734 | regular | NIP-57 | Zap request. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 9735 | regular | NIP-57 | Zap receipt. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
@@ -48,7 +48,7 @@ section 3.7.
 | 30023 | addressable | NIP-23 | A long-form article: a journal page or index, inside a draft. | manifest | [journal app](../apps/journal/README.md) |
 | 30078 | addressable | NIP-78 | Application data: the keyed root, and a journal KPI. | code, manifest | [interface, section 3.7.1](interface/SPEC.md), and the [journal app](../apps/journal/README.md) |
 | 30272 | addressable | ARC | A capability announcement. | code | [delivery, section 4.7](delivery/SPEC.md) |
-| 31234 | addressable | NIP-37 | A draft: sealed data of the citizen. It stays on the device and on storage citizens. An ARC relay refuses it, except the draft of the keyed root. | code | [interface, section 3.9](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
+| 31234 | addressable | NIP-37 | A draft: sealed data of the citizen. A device key signs it, a `p` tag names the citizen, and a `gen` tag names the data root ([interface, section 3.9.4](interface/SPEC.md)). It stays on the device and on storage citizens. An ARC relay refuses it, except the draft of the keyed root. | code | [interface, section 3.9](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
 
 The `Source` column says where the test finds the kind: `code` is a literal
 constant in Go, `manifest` is a `"kind"` field under `apps/`, and `reserved`

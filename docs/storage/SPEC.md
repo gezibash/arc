@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
 - Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, a command that removes the old drafts from a relay, the end of a drain on the signer, and a `drain` request from the device.
 - Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10.
 
@@ -284,8 +284,11 @@ pad(e)   = length of e (8 bytes, big endian) || e || zeros
 - If a machine holds the citizen key, it MUST sign with the citizen key. It
   is the signer, and is on no device list. A machine that signs through a
   remote signer MUST sign with its device key.
-- The record MUST be signed by the citizen key, as the local store requires
-  today.
+- The record MUST be signed by the citizen key, or by a device key with a
+  `p` tag that names the citizen, as section 3.9.4 of
+  [the interface spec](../interface/SPEC.md) defines. The device key of the
+  envelope and the key of the record can differ: the first device that puts
+  a record makes its blob.
 - For generation g, the keys MUST be
   `blob key = HKDF-SHA256(data root of g, info = "arc-storage-blob-v1")` and
   `id key = HKDF-SHA256(keyed root, info = "arc-storage-id-v1")`, with no
@@ -317,14 +320,19 @@ is true:
 - the blob does not open, or its `id` is not the ID that the device asked
   for,
 - the HMAC of the record ID is not the `id`,
-- the record has a bad ID or a bad signature, or another citizen signed it,
+- the record has a bad ID or a bad signature, or names another citizen,
 - the record is not self data,
-- the device signature does not verify,
-- the citizen has a device list, and the key in `device` is neither the
-  citizen key nor on the list.
+- the device signature does not verify.
 
-A blob that a device refused because its device key is not on the list gets
-a new check on each sync. A device skips each other refused blob after the
+The device then gives the record to its store as a record from a storage
+citizen. The store checks the key that signed the record against the device
+list ([the delivery spec](../delivery/SPEC.md), section 3.11). A record of a
+revoked key is taken only if it is older than the revocation. The key in
+`device` needs no check of its own: a storage citizen takes a put only from
+a device key with a grant, and the store checks the record.
+
+A record that the store refused because its key is not on the list gets a
+new check on each sync. A device skips each other refused blob after the
 first refusal.
 
 ### 3.6 Where self data goes
@@ -549,7 +557,10 @@ revoked device.
 these steps. A write never starts a sync, because a direct path takes
 seconds to open.
 
-0. Follow the storage list (section 4.3).
+0. Bring the device list cache up to date ([the devices spec](../devices/SPEC.md),
+   section 3.5). Seal each page of the format before the data roots again,
+   if the signer answers ([the interface spec](../interface/SPEC.md),
+   section 3.9.4). Follow the storage list (section 4.3).
 1. On a signer with a device list, send the grant set to each installed
    storage citizen (section 3.2). A failure is a note, and the sync goes on.
 
@@ -598,7 +609,7 @@ fails does not stop the others.
 7. Keep the cursor, the IDs, the tags, the feature `pieces`, the lost
    pieces, the kept proofs and the record of the audits in
    `<home>/selfsync/<key of the storage citizen>.json`, and the blob IDs
-   that the device got in `<home>/selfsync/seen.json`.
+   that the device got in `<home>/selfsync/seen-2.json`.
 
 After the sync, the device prints one line for each storage citizen, in
 the order of the installs, and one line for the whole sync. `received` is
@@ -1070,9 +1081,21 @@ bytes up.
     its relays, so it does not see the pages of a newer client.
   - An older client publishes kind 10013 with `arc relay add`. The relay
     refuses it, and the older client prints `the relay list did not reach`.
-  - A newer client still reads drafts from the relays when it queries self
-    data, so it sees the old pages of an older client.
+  - A newer client imports the drafts of the relays at `arc sync`, so it
+    sees the old pages of an older client.
   - The user updates each device.
+- A device key signs the records of a newer client
+  ([the interface spec](../interface/SPEC.md), section 3.9.4). This is a
+  breaking change for an older device:
+  - An older device refuses such a blob with `the record is of another
+    citizen`, and marks it as seen in `seen.json`.
+  - A newer device keeps the seen blobs in `seen-2.json`. After its update,
+    the device therefore fetches each blob of each storage citizen once
+    more, and its store takes the records that it refused before. The cost
+    is one download of each blob.
+  - An older device puts the records that the citizen key signed. A newer
+    device reads them, and seals the pages again under the data roots at
+    its next `arc sync` with the signer.
 - A newer client deletes the drafts on its ARC relays after a storage
   citizen holds them (section 4.2.1). An older client of the same citizen
   that has not imported its drafts then does not find them on the relay.
@@ -1308,8 +1331,9 @@ storage citizens. It proves:
 - A device with a grant on one storage citizen is refused by a second storage
   citizen until the signer installs it and sends its grant set.
 - With a device list, the changes of a machine that holds the citizen key
-  still cross. A change of a revoked device is refused. After the device
-  joins the list again, the next sync takes it.
+  still cross. A change that a device made before its revocation still
+  crosses through the storage citizen. The revoked key cannot join the list
+  again.
 - Each storage citizen names its one account by the account key, and no file
   of a storage citizen holds the citizen key, in hex or as its bytes.
 - Before a device list, the signer seals blobs with generation 0. A device
@@ -1318,7 +1342,14 @@ storage citizens. It proves:
   revoked phone, no blob of generation 2 opens, and each blob of generations
   0 and 1 opens. The tablet reads each page. A device that the signer adds
   after the revocation, and a new machine from the seed, open each blob of
-  each generation.
+  each generation, and read the page that the phone wrote before its
+  revocation.
+- `TestDevicePages`: the pages of an older `arc` are sealed again once
+  under the data roots. With the signer stopped, a device writes and reads
+  its journal. When the signer is back, the device syncs, and a second
+  device reads the page, also after an older `arc` refused the blob and
+  marked it as seen. A page that a revoked device writes after its
+  revocation is refused from a stick.
 - An older relay, `arc relay serve` of commit d53e91b, takes the drafts and
   the private relay list of an older client. After the update the relay
   refuses a new draft, and says why. It still serves the old drafts and the

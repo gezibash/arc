@@ -3,10 +3,10 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^TestInterface$' ./internal/proof/
-- Unverified: No test runs a manifest command against a relay other than a local relay.
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages)$' ./internal/proof/
+- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages.
 
-Phases A to D are built, see section 8. `arc` runs them, and
+Phases A to E are built, see section 8. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
@@ -30,8 +30,8 @@ Three rules follow:
   primitives.** The application runtime implements these primitives over core
   protocols. A service cannot run arbitrary manifest code on the
   caller's machine.
-- **Where Nostr has a standard, ARC uses it.** A journal page is a NIP-37
-  draft of a NIP-23 article, a direct message is NIP-17, and a group kind
+- **Where Nostr has a standard, ARC uses it.** A journal page has the shape
+  of a NIP-37 draft of a NIP-23 article, a direct message is NIP-17, and a group kind
   goes to a NIP-29 group. A Nostr client that knows these NIPs opens ARC data. ARC
   defines its own kinds only where no NIP fits.
 
@@ -50,7 +50,7 @@ delivery layer does both for every event.
 | record | One item that the output pipeline works on. |
 | pipeline | The output primitives of a command, in their fixed order. |
 | kind name | A name that a manifest gives to one event kind, in its `kinds` section. |
-| draft | A NIP-37 draft wrap: an event of kind 31234 whose content is another event, sealed to its author. |
+| draft | A NIP-37 draft wrap: an event of kind 31234 whose content is another event, sealed with the content key of its capability (section 3.9.4). A draft of the format before the data roots is sealed to its author. |
 
 ### 2.1 Two shapes
 
@@ -103,7 +103,7 @@ names relays.
 | Visibility | Carried as | Goes to |
 | --- | --- | --- |
 | `public` | The event itself, as its NIP defines. | The citizen's NIP-65 write relays. |
-| `sealed` | A NIP-37 draft. The event is sealed to the citizen's own key with NIP-44, and the draft carries `["-"]`, the NIP-70 tag. | The local store only. `arc sync` gives it to the storage citizens of the citizen, as encrypted blobs, see [the storage spec](../storage/SPEC.md). It never goes to a relay. |
+| `sealed` | A draft in the shape of NIP-37. The event is sealed with NIP-44 and the content key of the capability, and the device key signs the draft, as section 3.9.4 defines. The draft carries `["-"]`, the NIP-70 tag. | The local store only. `arc sync` gives it to the storage citizens of the citizen, as encrypted blobs, see [the storage spec](../storage/SPEC.md). It never goes to a relay. |
 | `private` | A rumor inside a NIP-59 gift wrap, through the mail layer. | Each recipient's NIP-17 list, kind 10050, and couriers. |
 | `group` | The event, with an `h` tag that names the group, and `["-"]`. | The relay of the group, see section 3.3. |
 
@@ -328,13 +328,13 @@ as section 3.9.2 defines.
 
 A sealed event is a NIP-37 draft, so it can change. Each publish of a draft
 also publishes a checkpoint, kind 1234, whose `a` tag names the draft and whose
-content is that revision, sealed to the citizen. The checkpoints are the
+content is that revision, sealed as section 3.9.4 defines. The checkpoints are the
 history of the draft, as NIP-37 defines.
 
 - `replace` makes the new content the whole of the event.
 - `append` reads the current draft, adds the new content at its end, and
-  publishes the result. It reads from the store first, then from the relays,
-  which hold only the drafts of an older client (section 7.5).
+  publishes the result. It reads from the store only. `arc sync` brings the
+  drafts that the relays hold for an older client (section 7.5).
 
 #### 3.9.2 Content larger than one event
 
@@ -344,15 +344,13 @@ parts:
 
 1. The event holds the first 32 KiB, cut at a line end.
 2. Core keeps the rest in parts of at most 32 KiB, as events of kind 3275.
-   Each part is sealed to the citizen, carries `["-"]`, and names the event's
+   Each part is sealed as section 3.9.4 defines, carries `["-"]`, and names the event's
    coordinate or ID in its `a` or `e` tag.
 3. The event gains a tag `parts` that lists the IDs of the parts in order,
    and a tag `lines` that gives the number of line ends in the content and in
    each part. Core keeps the parts first, and the event last.
 
-A Nostr client that does not know kind 3275 reads the first 32 KiB. A page of
-at most 32 KiB is therefore a plain NIP-37 draft. A body holds at most 256
-parts.
+A body holds at most 256 parts.
 
 #### 3.9.3 Notebook views
 
@@ -363,6 +361,56 @@ supplies `address`; `index` and `toc` supply `notebook`. Optional templates are
 `prefix`, `query`, `title`, `page`, `from`, `to`, `order`, `reverse`, `limit`, and
 `section`. These are application selections over verified sealed page events.
 The command's usual output pipeline renders the resulting records.
+
+#### 3.9.4 The format of the data roots
+
+A device seals and signs each sealed event with no request to the signer. A
+draft, a checkpoint, a part and a deletion have this format:
+
+| Field | Value |
+| --- | --- |
+| `pubkey` | The device key. A machine that holds the citizen key uses the citizen key. |
+| `tags` | The tags of sections 3.9 and 3.10, then `["p", <citizen>]`, `["gen", <n>]` and `["-"]`. A deletion has the `p` tag, and no `gen` tag and no `["-"]`. |
+| `content` | The NIP-44 payload of the event inside, with the content key of the capability as the conversation key. A part holds its text. A blank draft and a deletion have no content. |
+
+- The content key is
+  `HKDF-SHA256(ikm = data root of generation n, salt = none, info = "arc-data-v1" || 0x00 || capability id)`,
+  as section 3.5 of [the devices spec](../devices/SPEC.md) defines. Thus one
+  capability cannot open the drafts of another.
+- The event inside MUST name the citizen as its author. A checkpoint and a
+  part MUST name the draft by the coordinate of the citizen:
+  `31234:<citizen>:<d>`.
+- A device MUST seal under the newest generation in its root cache, with no
+  request to the signer or the relays. `arc sync` and `arc serve` bring the
+  root cache up to date.
+- The store names such an event by the citizen of its `p` tag. It keeps one
+  version of a draft for each citizen and `d` tag, whichever key signed it,
+  and applies a deletion of the citizen to each event of the citizen
+  ([the delivery spec](../delivery/SPEC.md), section 3.11).
+- A reader MUST accept such an event only if the citizen key signed it, or a
+  device key on the device list of the citizen. For a revoked device key, a
+  reader MUST accept an event only if it came from a storage citizen, its
+  `created_at` is earlier than the time of the revocation, and its
+  generation is earlier than the generation of the revocation. Section 3.2
+  of the devices spec holds the revocations.
+- A query of sealed kinds reads the local store only. It asks no relay and
+  no signer.
+
+A reader still opens a draft of the format before the data roots, which the
+citizen key sealed to itself and signed. It opens it through the signer.
+Each `arc sync` that reaches the signer seals each such draft again in this
+format:
+
+1. The device opens the draft, and each of its parts, through the signer.
+2. It seals each part again, and the draft with the new part IDs, under its
+   newest generation. The new draft is one second newer than the old one.
+   The store therefore keeps only the new draft.
+3. The capability of the new draft is the first install that names the kind
+   inside as sealed.
+
+A second run finds no draft of the old format, and seals nothing. The old
+checkpoints stay, and open through the signer. The keyed root draft,
+`d` = `arc-keyed-root`, keeps the old format (section 3.7.1).
 
 ### 3.10 The action delete
 
@@ -378,7 +426,8 @@ another kind, it goes to the relays.
 For a sealed kind, core publishes the draft with blank content, which NIP-37
 reads as deleted. It then publishes a kind 5 request with an `a` tag for the
 draft, an `e` tag for the current version of the draft and for each checkpoint
-and part, and a `k` tag for each kind. The request is one second older than
+and part, a `k` tag for each kind, and the `p` tag of section 3.9.4. The
+device key signs it. The request is one second older than
 the blank draft, so it removes every older version, and the blank draft stays.
 The store and each other device therefore drop every version, as NIP-09
 defines. The store also refuses each of these events after the request, so a
@@ -788,8 +837,9 @@ design that a user meets as a failure or a delay:
   version, a machine that never saw the newer one cannot tell.
 - **One process per home.** The store is one file that one process opens at
   a time. A `tail` holds it, so a second command on the same home waits.
-- **Each read asks the relays.** A query fetches from every relay before it
-  reads the store, so a slow relay makes every read slow.
+- **Each read of public data asks the relays.** A query fetches from every
+  relay before it reads the store, so a slow relay makes every read slow. A
+  read of sealed data reads only the store.
 - **Sealed data syncs by a full fetch.** A Negentropy session opens its own
   connection, which cannot answer the relay's challenge, so `arc sync` fetches
   sealed data whole instead of comparing sets.
@@ -797,7 +847,8 @@ design that a user meets as a failure or a delay:
   run once, and reach a relay or a stick that the remote machine reads, before
   the remote machine can use a capability that uses `keyed`.
 - **Each seal and each opened message is one request to the signer.** Mail
-  over a remote signer is as slow as the round trips to it.
+  over a remote signer is as slow as the round trips to it. A journal page
+  needs no request (section 3.9.4).
 
 ## 6. Security
 
@@ -857,6 +908,12 @@ The limits of this design that bear on security:
 
 - **The `k` tag of a draft is public.** A relay learns that a draft holds an
   article, a KPI series, or a file, but not its content or its address.
+- **A revoked device can backdate a page.** It keeps its device key and the
+  data roots that it held, so it can sign a page with a `created_at` before
+  its revocation. Another device takes such a page only from a storage
+  citizen, which refuses the device key after the revocation. A hostile
+  storage citizen that works with the thief can still give it. Two storage
+  citizens show the difference.
 - **Mail over a bunker opens everything.** `--decrypt all` lets the machine
   that uses the bunker open any ciphertext sealed to the owner, not only mail.
 - **Encryption is not limited.** A bunker encrypts for its client without a
@@ -904,10 +961,18 @@ older client behaves.
 
 ### 7.5 An older client
 
-- An older client keeps writing sealed events to its relays. A newer client
-  still reads them from the relays when it queries a sealed kind, and keeps
-  them. `arc sync` imports all of them once. Thus the newer client sees the
+- An older client keeps writing sealed events to its relays. `arc sync` of
+  a newer client imports them, and seals each one again in the format of
+  section 3.9.4 when it reaches the signer. Thus the newer client sees the
   pages of the older client.
+- An older client cannot open a page of the format of section 3.9.4. Its
+  store keeps the event as data of the device key, and its query of the
+  citizen does not find it. An older client that runs `arc sync` refuses
+  such a blob. After its update, it fetches each blob once more
+  ([the storage spec](../storage/SPEC.md), section 7), and reads the page.
+- A newer client opens a page of the older format through the signer. With
+  the signer stopped, such a page does not open until an `arc sync` with
+  the signer seals it again.
 - An older client does not see the pages of a newer client, because they do
   not go to a relay. The user updates each device.
 - A newer client deletes the drafts on its ARC relays after a storage
@@ -923,16 +988,20 @@ older client behaves.
   event. A Nostr client reads the first 32 KiB of a longer page, and no more.
 - **NIP-37 is a draft.** Like NIP-17, it can still change. ARC follows its
   text as of this document.
+- **No Nostr client opens a page.** The content key comes from the data
+  roots, which only the devices of the citizen hold. ARC keeps the shape of
+  NIP-37, so the kinds, the `d` tag and the `k` tag still follow it.
 - **A private event goes to one recipient.** NIP-17 allows a message to
   several, and this arc refuses it.
 
 ## 8. Proof
 
-`mise run interface` proves phases A to D.
+`mise run interface` proves phases A to D. `TestDevicePages` proves phase E.
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
-| B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, parts, `delete`, kept in the local store. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page and a file cross a storage citizen and a USB stick. A page of at most 32 KiB opens in a NIP-37 client as a draft article. The `journal` package is gone. |
+| B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, parts, `delete`, kept in the local store. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page and a file cross a storage citizen and a USB stick. The `journal` package is gone. |
+| E (built) | Pages of the data roots: the device key signs, the content key seals, the store names a page by the citizen, the import of old pages. | `TestDevicePages`: with the signer stopped, a device writes and reads its journal; a second device reads the page after a sync; a page of a revoked device after its revocation is refused; old pages are sealed again once. |
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. dm in version 1. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |

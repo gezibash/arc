@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"fiatjaf.com/nostr"
@@ -31,12 +32,7 @@ func (l list) Standing(citizen, signer nostr.PubKey) store.Standing {
 	case signer == l.revoked:
 		return store.Standing{RevokedAt: l.at, RevokedGen: l.gen}
 	}
-	for _, k := range l.listed {
-		if k == signer {
-			return store.Standing{Listed: true}
-		}
-	}
-	return store.Standing{}
+	return store.Standing{Listed: slices.Contains(l.listed, signer)}
 }
 
 func page(t *testing.T, citizen nostr.PubKey, device keys.Key, gen uint32, d, text string, at nostr.Timestamp) nostr.Event {
