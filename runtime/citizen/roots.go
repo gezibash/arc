@@ -3,6 +3,7 @@ package citizen
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -10,11 +11,14 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/kv"
 	"github.com/gezibash/arc/core/node"
 )
 
 // rootsBucket keeps each data root that this machine holds, by generation.
+// Each value is the root as hex, sealed with NIP-44 from the cache key to
+// itself. Thus a copy of the file alone opens no data.
 var rootsBucket = []byte("data-roots")
 
 // DataRoot returns the newest data root that this machine holds. Seal new
@@ -32,9 +36,16 @@ func (sess *Session) DataRoot(ctx context.Context) (devices.Root, error) {
 }
 
 // DataRootAt returns the data root of one generation, to open data that it
-// sealed.
+// sealed. A root that this machine holds needs no signer and no relay.
 func (sess *Session) DataRootAt(ctx context.Context, gen uint32) ([32]byte, error) {
-	held, err := sess.DataRoots(ctx)
+	held, err := sess.heldRoots(ctx)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	if key, ok := held[gen]; ok {
+		return key, nil
+	}
+	held, err = sess.DataRoots(ctx)
 	if key, ok := held[gen]; ok {
 		return key, nil
 	}
@@ -50,7 +61,7 @@ func (sess *Session) DataRootAt(ctx context.Context, gen uint32) ([32]byte, erro
 // signer refuse, it returns the roots that this machine already holds, with
 // the reason.
 func (sess *Session) DataRoots(ctx context.Context) (map[uint32][32]byte, error) {
-	held, err := sess.heldRoots()
+	held, err := sess.heldRoots(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +86,7 @@ func (sess *Session) DataRoots(ctx context.Context) (map[uint32][32]byte, error)
 		}
 		maps.Copy(held, all)
 	}
-	if err := sess.keepRoots(held); err != nil {
+	if err := sess.keepRoots(ctx, held); err != nil {
 		problems = append(problems, err)
 	}
 	return held, errors.Join(problems...)
@@ -162,31 +173,74 @@ func (sess *Session) PublishDataRoots(ctx context.Context, list devices.List) (d
 	return newest, sess.publishOwn(ctx, event, "the data roots")
 }
 
-func (sess *Session) heldRoots() (map[uint32][32]byte, error) {
+// cacheKey seals the roots on the disk of this machine: the device key on a
+// device, and the citizen key on a machine that holds it.
+func (sess *Session) cacheKey() (keys.Key, error) {
+	k := sess.Key
+	if sess.Remote {
+		k = sess.Device
+	}
+	if k.Secret == (nostr.SecretKey{}) {
+		return keys.Key{}, errors.New("this machine has no device key to seal its data roots: run arc keys device")
+	}
+	return k, nil
+}
+
+// heldRoots reads the roots that this machine keeps on its disk. A root of an
+// older arc is 32 bytes in clear text. The next keepRoots seals it.
+func (sess *Session) heldRoots(ctx context.Context) (map[uint32][32]byte, error) {
+	k, err := sess.cacheKey()
+	if err != nil {
+		return nil, err
+	}
 	held := map[uint32][32]byte{}
-	err := sess.roots.View(func(tx kv.Tx) error {
+	err = sess.roots.View(func(tx kv.Tx) error {
 		b := tx.Bucket(rootsBucket)
 		if b == nil {
 			return nil
 		}
-		return b.ForEach(func(k, v []byte) error {
-			if len(k) == 4 && len(v) == 32 {
-				held[binary.BigEndian.Uint32(k)] = [32]byte(v)
+		return b.ForEach(func(key, v []byte) error {
+			if len(key) != 4 {
+				return nil
 			}
+			gen := binary.BigEndian.Uint32(key)
+			if len(v) == 32 {
+				held[gen] = [32]byte(v)
+				return nil
+			}
+			text, err := k.Decrypt(ctx, string(v), k.Public)
+			if err != nil {
+				return fmt.Errorf("the data root of generation %d on this disk does not open: %w", gen, err)
+			}
+			root, err := hex.DecodeString(text)
+			if err != nil || len(root) != 32 {
+				return fmt.Errorf("the data root of generation %d on this disk is not 32 bytes", gen)
+			}
+			held[gen] = [32]byte(root)
 			return nil
 		})
 	})
 	return held, err
 }
 
-func (sess *Session) keepRoots(held map[uint32][32]byte) error {
+func (sess *Session) keepRoots(ctx context.Context, held map[uint32][32]byte) error {
+	k, err := sess.cacheKey()
+	if err != nil {
+		return err
+	}
+	sealed := map[uint32]string{}
+	for gen, root := range held {
+		if sealed[gen], err = k.Encrypt(ctx, hex.EncodeToString(root[:]), k.Public); err != nil {
+			return err
+		}
+	}
 	return sess.roots.Update(func(tx kv.Tx) error {
 		b, err := tx.CreateBucketIfNotExists(rootsBucket)
 		if err != nil {
 			return err
 		}
-		for gen, key := range held {
-			if err := b.Put(binary.BigEndian.AppendUint32(nil, gen), key[:]); err != nil {
+		for gen, value := range sealed {
+			if err := b.Put(binary.BigEndian.AppendUint32(nil, gen), []byte(value)); err != nil {
 				return err
 			}
 		}

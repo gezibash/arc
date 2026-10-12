@@ -44,10 +44,18 @@ func (sess *Session) PublishKeyedRoot(ctx context.Context) error {
 
 // keyedRoot is the root of this citizen's keyed values. A machine with the
 // key derives it. A machine that signs through NIP-46 opens the draft that
-// holds it, through the signer.
+// holds it, through the signer, once. It then keeps it on its disk as the
+// data root of generation 0.
 func (sess *Session) KeyedRoot(ctx context.Context) ([]byte, error) {
 	if !sess.Remote {
 		return iface.KeyedRoot(sess.Key.Secret)
+	}
+	held, err := sess.heldRoots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if root, ok := held[0]; ok {
+		return root[:], nil
 	}
 	filter := RootFilter(sess.Key.Public)
 	reports, errs := sess.Node.Pull(ctx, filter, sess.Relays)
@@ -69,5 +77,5 @@ func (sess *Session) KeyedRoot(ctx context.Context) ([]byte, error) {
 	if err != nil || len(root) != 32 || opened.Event.Kind != iface.KeyedRootKind {
 		return nil, errors.New("the keyed root draft holds no root")
 	}
-	return root, nil
+	return root, sess.keepRoots(ctx, map[uint32][32]byte{0: [32]byte(root)})
 }
