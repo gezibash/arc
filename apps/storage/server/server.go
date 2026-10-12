@@ -2,8 +2,9 @@
 // citizen. It cannot read them.
 //
 // An owner is an account key: a key that the signer of a citizen derives
-// for this one storage citizen. The account key sends wire.Grants, the
-// device keys that can use the account. A request is one ARC call,
+// for this one storage citizen. The account key asks for an account with
+// wire.JoinCall, and the rule of admission decides. It then sends
+// wire.Grants, the device keys that can use the account. A request is one ARC call,
 // wire.Open, with a WebRTC offer, from the account key or from a device
 // key with a grant. The reply is wire.Answer, with the
 // WebRTC answer. The two programs then open one pipe of sdk/direct, and
@@ -20,7 +21,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -51,11 +51,14 @@ const (
 )
 
 type server struct {
-	store  *store
-	owners []string
-	rtc    direct.Options
-	slots  chan struct{}
-	log    io.Writer
+	store *store
+	rules rules
+	// self is the key of this storage citizen, in hex. A join that shows
+	// the citizen key signs it.
+	self  string
+	rtc   direct.Options
+	slots chan struct{}
+	log   io.Writer
 }
 
 // Run serves the storage app through core ARC. The environment gives the
@@ -66,12 +69,18 @@ type server struct {
 //	                  separated by spaces or commas. arc keys account
 //	                  prints the account key of a citizen for this
 //	                  storage citizen.
-//	STORAGE_QUOTA     the quota of each account, such as 512MiB or 1GiB
+//	STORAGE_QUOTA     the quota of each account of STORAGE_OWNERS, such
+//	                  as 512MiB or 1GiB
+//	STORAGE_ADMIT     the rule of admission of a join: invite (the
+//	                  default), ask or open
+//	STORAGE_OPEN_QUOTA  the quota of an account under the rule open; the
+//	                  default is STORAGE_QUOTA
+//	STORAGE_CAPACITY  the largest sum of the quotas under the rule open
 //	STORAGE_STUN      the STUN server, or "none"; unset asks the first
 //	                  relay of ARC_RELAYS on port 3478
 //	STORAGE_LOOPBACK  if set, use the loopback address too
 func Run(ctx context.Context, opts provider.Options) error {
-	quota, err := ParseSize(os.Getenv("STORAGE_QUOTA"))
+	quota, err := wire.ParseSize(os.Getenv("STORAGE_QUOTA"))
 	if err != nil {
 		return fmt.Errorf("STORAGE_QUOTA: %w", err)
 	}
@@ -85,20 +94,23 @@ func Run(ctx context.Context, opts provider.Options) error {
 			return fmt.Errorf("STORAGE_OWNERS: %q is not a public key of 64 hex digits", owner)
 		}
 	}
+	r, err := admissionRules(quota)
+	if err != nil {
+		return err
+	}
 	log := opts.Log
 	if log == nil {
 		log = io.Discard
 	}
-	if len(owners) == 0 {
-		fmt.Fprintln(log, "STORAGE_OWNERS is not set, so the app refuses each caller")
-	}
+	fmt.Fprintf(log, "the app admits accounts by the rule %s, and %d account keys of STORAGE_OWNERS\n", r.rule, len(owners))
 	dir, err := Dir(os.Getenv("STORAGE_DIR"))
 	if err != nil {
 		return err
 	}
 	s := &server{
-		store:  &store{dir: dir, quota: quota, now: time.Now},
-		owners: owners,
+		store: &store{dir: dir, owners: owners, quota: quota, now: time.Now},
+		rules: r,
+		self:  strings.ToLower(os.Getenv("ARC_PUBLIC_KEY")),
 		rtc: direct.Options{
 			STUN:     direct.STUNURL(os.Getenv("STORAGE_STUN"), strings.Fields(os.Getenv("ARC_RELAYS"))),
 			Loopback: os.Getenv("STORAGE_LOOPBACK") != "",
@@ -107,6 +119,34 @@ func Run(ctx context.Context, opts provider.Options) error {
 		log:   log,
 	}
 	return provider.Run(ctx, s, opts)
+}
+
+// admissionRules reads STORAGE_ADMIT, STORAGE_OPEN_QUOTA and
+// STORAGE_CAPACITY.
+func admissionRules(quota int64) (rules, error) {
+	r := rules{rule: os.Getenv("STORAGE_ADMIT")}
+	switch r.rule {
+	case "":
+		r.rule = RuleInvite
+	case RuleInvite, RuleAsk:
+	case RuleOpen:
+		var err error
+		if r.openQuota, err = wire.ParseSize(os.Getenv("STORAGE_OPEN_QUOTA")); err != nil {
+			return r, fmt.Errorf("STORAGE_OPEN_QUOTA: %w", err)
+		}
+		if r.openQuota == 0 {
+			r.openQuota = quota
+		}
+		if r.capacity, err = wire.ParseSize(os.Getenv("STORAGE_CAPACITY")); err != nil {
+			return r, fmt.Errorf("STORAGE_CAPACITY: %w", err)
+		}
+		if r.capacity == 0 {
+			return r, errors.New("STORAGE_ADMIT=open needs STORAGE_CAPACITY, the largest sum of the quotas, such as 100GiB")
+		}
+	default:
+		return r, fmt.Errorf("STORAGE_ADMIT: %q is not invite, ask or open", r.rule)
+	}
+	return r, nil
 }
 
 // Dir is the directory of the blobs: dir, or ~/.local/state/arc-storage.
@@ -121,25 +161,6 @@ func Dir(dir string) (string, error) {
 	return filepath.Join(home, ".local", "state", "arc-storage"), nil
 }
 
-// ParseSize reads a number of bytes, such as 4096, 64KiB, 512MiB or 1GiB.
-// An empty value is 0.
-func ParseSize(value string) (int64, error) {
-	if value == "" {
-		return 0, nil
-	}
-	number, shift := value, 0
-	for suffix, s := range map[string]int{"KiB": 10, "MiB": 20, "GiB": 30, "TiB": 40} {
-		if rest, ok := strings.CutSuffix(value, suffix); ok {
-			number, shift = rest, s
-		}
-	}
-	n, err := strconv.ParseInt(number, 10, 64)
-	if err != nil || n < 0 || n > (1<<62)>>shift {
-		return 0, fmt.Errorf("%q is not a size such as 4096, 64KiB, 512MiB or 1GiB", value)
-	}
-	return n << shift, nil
-}
-
 // HandleRequest answers one call. A call with a grant set sets the grants
 // of the account of its author. Another call opens a session: it checks
 // the caller and the request, opens its end of the pipe, and returns the
@@ -151,6 +172,9 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	}
 	if _, ok := fields["grants"]; ok {
 		return s.grant(request)
+	}
+	if _, ok := fields["join"]; ok {
+		return s.join(request)
 	}
 	var req wire.Open
 	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 || req.Session.HoldMS < 0 ||
@@ -174,27 +198,70 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	return s.connect(account, req.Session, fmt.Sprintf("%.8s from %.8s", account, request.From))
 }
 
-// accountOf finds the account of the author of a call. An account key in
-// STORAGE_OWNERS uses its own account. A device key uses the account whose
-// newest grant set holds it.
+// accountOf finds the account of the author of a call. An admitted
+// account key uses its own account. A device key uses the admitted account
+// whose newest grant set holds it. A closed account takes no session. The
+// app reads the records from the disk on each call, so a change of the
+// operator counts at once.
 func (s *server) accountOf(author string) (string, error) {
-	if slices.Contains(s.owners, author) {
-		return author, nil
+	active, err := s.store.active(author)
+	if err != nil || active {
+		return author, err
 	}
-	for _, owner := range s.owners {
-		granted, err := s.store.granted(owner, author)
+	names, err := s.store.names()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range names {
+		granted, err := s.store.granted(name, author)
 		if err != nil {
 			return "", err
 		}
-		if granted {
-			return owner, nil
+		if !granted {
+			continue
+		}
+		if active, err := s.store.active(name); err != nil || active {
+			return name, err
 		}
 	}
 	return "", errNoGrant
 }
 
-// grant sets the grant set of the account of the author. Only an account
-// key in STORAGE_OWNERS sets grants.
+// join answers a request for an account. The author is the account key.
+// The reply is an account, admitted or pending, or the error refused, in
+// the body of the reply.
+func (s *server) join(request provider.Request) (string, error) {
+	var req wire.JoinCall
+	j := &req.Join
+	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 || j.Want < 0 || len(j.Note) > wire.MaxNote ||
+		(j.Invite != "" && !wire.IsToken(j.Invite)) || (j.Citizen == "") != (j.Sig == "") {
+		return "", errInvalidRequest
+	}
+	if j.Citizen != "" {
+		if err := wire.VerifyJoin(j.Citizen, j.Sig, request.From, s.self); err != nil {
+			fmt.Fprintf(s.log, "join of %.8s: %v\n", request.From, err)
+			return "", errInvalidRequest
+		}
+	}
+	reply, err := s.store.join(request.From, req.Join, s.rules)
+	if err != nil {
+		fmt.Fprintf(s.log, "join of %.8s: %v\n", request.From, err)
+		return "", errFailed
+	}
+	status := reply.Error
+	if reply.Account != nil {
+		status = reply.Account.Status
+	}
+	fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, status)
+	raw, err := json.Marshal(reply)
+	if err != nil {
+		return "", errFailed
+	}
+	return string(raw), nil
+}
+
+// grant sets the grant set of the account of the author. Only an admitted
+// account key sets grants.
 func (s *server) grant(request provider.Request) (string, error) {
 	var req wire.Grants
 	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 || req.At <= 0 || len(req.Devices) > wire.MaxGrants {
@@ -205,7 +272,11 @@ func (s *server) grant(request provider.Request) (string, error) {
 			return "", errInvalidRequest
 		}
 	}
-	if !slices.Contains(s.owners, request.From) {
+	if active, err := s.store.active(request.From); err != nil || !active {
+		if err != nil {
+			fmt.Fprintf(s.log, "account %.8s: %v\n", request.From, err)
+			return "", errFailed
+		}
 		return "", errNotOwner
 	}
 	if err := s.store.grant(request.From, req.Devices, req.At); err != nil {
@@ -386,11 +457,11 @@ func (s *session) handle(req wire.Request) error {
 		}
 		return s.reply(wire.Reply{Entries: entries, Next: next})
 	case wire.OpUsage:
-		used, blobs, err := s.store.usage(s.account)
+		r, err := s.store.usage(s.account)
 		if err != nil {
 			return s.refuse(err)
 		}
-		return s.reply(wire.Reply{Used: used, Quota: s.store.quota, Blobs: blobs})
+		return s.reply(r)
 	}
 	return s.reply(wire.Reply{Error: wire.ErrInvalidRequest, Message: "unknown operation " + strconv.Quote(req.Op)})
 }

@@ -2,7 +2,9 @@
 
 The storage app holds blobs for the owners of a storage citizen. A storage
 citizen is a citizen that serves this app. The first storage citizen is a
-machine of the user, such as a Mac mini at home. There is no billing.
+machine of the user, such as a Mac mini at home. There is no billing. Each
+account has a quota, a plan name and an end time. The plan and the end keep
+a place for a paid service later.
 
 ARC carries one call for each session: a WebRTC offer, signed by the account
 key of the owner or by a device key with a grant. The bytes go on the direct pipe of `sdk/direct`, not through
@@ -16,13 +18,15 @@ wraps, reconciliation and the sync of the journal.
 | Part | Status |
 | --- | --- |
 | The service: put, list from a cursor, get, delete and usage | Built. Tested with the built `arc`, a local relay, a storage citizen, two arc homes of one owner and a stranger. |
-| The quota of each account | Built. Tested. |
+| Admission by a join call: the rules `invite`, `ask` and `open` | Built. Tested through `arc keys storage add` and the commands of the operator. |
+| The quota, plan, end and state of each account | Built. Tested: a put over the quota of one account fails while another account has room. |
+| The usage line of `arc sync` | Not built. `arc-storage usage` prints the usage. |
+| The removal of the bytes of a closed account | Not built. The operator removes the directory of the account. |
 | The account key of the owner | Built. Tested: the two homes of the owner use one account, named by the account key, not by the key of the owner. |
 | Grant sets for device keys, and revocation | Built. Tested with a device behind a bunker, a revoked device, and a second storage citizen. |
 | The owner check, by the key of the caller | Built. Tested. |
 | Two machines on different networks | Not tested. The transfer app tested the same pipe by hand; see its README. |
 | Encryption of the blobs | Not in this app. `arc sync` encrypts each blob of self data. `arc-storage put` does not encrypt. See "What the storage citizen sees". |
-| Invites | Not built. See "Later steps". |
 | The sync of the journal and the other self data | Built in `arc sync`, step 2 of the proposal. See [the storage spec](../../docs/storage/SPEC.md). |
 | The storage list of kind 10273 | Not built. A later step of the proposal. |
 
@@ -32,19 +36,23 @@ them.
 
 ## How it works
 
-1. The operator of the storage citizen serves the app, and names the
-   account keys of its owners and the quota.
-2. An owner installs the app of the storage citizen one time on each
+1. The operator of the storage citizen serves the app, and chooses a rule
+   of admission. The default rule is `invite`: the operator makes an invite
+   link, and gives it to a citizen.
+2. The citizen runs `arc keys storage add <link>` on its signer. The account
+   key sends one join call. The app admits the account at the quota of the
+   invite. The signer installs the app of the storage citizen.
+3. An owner installs the app of the storage citizen one time on each
    machine. On the signer, `arc keys devices add` sends the grant set: the
    device keys that can use the account.
-3. `arc-storage` makes a WebRTC offer. It runs the manifest command `open`
+4. `arc-storage` makes a WebRTC offer. It runs the manifest command `open`
    of the installed app, which sends one ARC call. On the signer, ARC signs
    the call with the account key. On a device behind a bunker, ARC signs it
    with the device key.
-4. The app finds the account of the caller: an account key in
-   `STORAGE_OWNERS`, or a device key in the newest grant set of an account.
-   It replies with a WebRTC answer.
-5. The two programs open one data channel. `arc-storage` sends its
+5. The app finds the account of the caller: an admitted account key, or a
+   device key in the newest grant set of an admitted account. It replies
+   with a WebRTC answer.
+6. The two programs open one data channel. `arc-storage` sends its
    requests on it, one at a time.
 
 ## The account key and the grants
@@ -75,28 +83,94 @@ Build with `mise run build`, and use `bin/arc` and `bin/arc-storage`.
 ### The storage citizen
 
 Make a citizen with its own key on the machine that stays on. Give it a
-relay. The owner runs this on the signer, and gives the account key to the
-operator:
+relay. Then serve the app:
 
 ```sh
-arc keys account <key of the storage citizen>
+arc serve apps/storage
 ```
 
-Then serve the app with the account keys of its owners and the quota:
+`arc serve` prints the key of the storage citizen. Make an invite link for
+each citizen that may use it, and give the link to the citizen as text or a
+QR code:
 
 ```sh
-STORAGE_OWNERS=<account key of the owner> STORAGE_QUOTA=1GiB arc serve apps/storage
+arc-storage invite -quota 1GiB -plan friend
 ```
 
-`arc serve` prints the key of the storage citizen. To keep other citizens
-from the app, also set `allow` in the `Arcfile` to the account keys and the
-device keys of the owners. Then `arc serve` refuses the others before the
-program sees them. A new device then needs a new `allow` entry too.
+```text
+storage+arc://3b6a…?invite=9f2c…
+```
+
+The link admits one account, and is good for 7 days.
+
+`allow` in the `Arcfile` matches the key of the caller. The caller is an
+account key or a device key, which no one can join to a citizen key. Thus
+`allow` cannot name friends. The invite token carries the consent.
+
+### The rules of admission
+
+`STORAGE_ADMIT` chooses the rule for a join with no invite token. A good
+token admits under each rule.
+
+| Rule | A join with no token |
+| --- | --- |
+| `invite` (the default) | Refused: `this storage citizen admits only with an invite`. |
+| `ask` | Pending. The app keeps the request for 30 days. The operator decides. |
+| `open` | Admitted at `STORAGE_OPEN_QUOTA`, until the sum of the quotas passes `STORAGE_CAPACITY`. |
+
+Under `ask`, the operator lists the requests, and admits or refuses each:
+
+```sh
+arc-storage requests
+arc-storage accept <account key> -quota 1GiB
+arc-storage refuse <account key>
+```
+
+`requests` prints one line for each request: the account key, the bytes
+that it wants, the time, the citizen key or `-`, and the note. A join shows
+the citizen key only if the citizen runs `arc keys storage add --show-key`.
+
+`accept` can also admit an account key that the citizen gave by hand, with
+`arc keys account <key of the storage citizen>`. `STORAGE_OWNERS` still
+admits account keys at `STORAGE_QUOTA`, as before.
+
+### The accounts
+
+```sh
+arc-storage account set <account key> -quota 2GiB -plan friend -expires 2027-01-31
+arc-storage account close <account key>
+```
+
+- A lower quota than the bytes in use stops each put. Reads and deletes
+  work.
+- `close`, or the day of `-expires`, makes the account `closing`: it refuses
+  each put, and keeps reads, lists and deletes for 30 days. Then it is
+  `closed`, and takes no session.
+
+The commands of the operator change the files in `STORAGE_DIR` under the
+locks of the app. They run while the app runs, and each change counts at
+the next call. Each takes `-dir`; the default is `STORAGE_DIR`.
 
 ### The owner
 
-Install the app of the storage citizen one time on each machine of the
-owner:
+On the signer, ask for an account with the invite link:
+
+```sh
+arc keys storage add 'storage+arc://<key>?invite=<token>'
+```
+
+```text
+storage: admitted: 0 B of 1 GiB in use, plan friend, open
+installed storage
+```
+
+Without a link, give the key of the storage citizen. Under the rule `ask`,
+the reply is `pending`; run the command again after the operator decides.
+`--want 2GiB` and `--note <text>` go to the operator. `--as <name>` names
+the install.
+
+Install the app of the storage citizen one time on each other machine of
+the owner:
 
 ```sh
 arc install <key of the storage citizen> storage
@@ -136,7 +210,8 @@ arc-storage list -after 2
 arc-storage get -dir pages 3f1c… 9a07…
 ```
 
-Delete a blob, and show the bytes in use:
+Delete a blob, and show the bytes in use, the quota, the plan and the state
+of the account:
 
 ```sh
 arc-storage delete 3f1c…
@@ -151,8 +226,11 @@ environment to the program.
 | Variable | Value |
 | --- | --- |
 | `STORAGE_DIR` | The directory of the blobs. The default is `~/.local/state/arc-storage`. |
-| `STORAGE_OWNERS` | The account keys, in hex, that can open an account, separated by spaces or commas. `arc keys account <key of the storage citizen>` prints the account key of a citizen. If it is not set, the app refuses each caller. |
-| `STORAGE_QUOTA` | The quota of each account, such as `65536`, `64KiB`, `512MiB` or `1GiB`. The default is `1GiB`. |
+| `STORAGE_OWNERS` | Account keys, in hex, that the app admits with no join, separated by spaces or commas. `arc keys account <key of the storage citizen>` prints the account key of a citizen. |
+| `STORAGE_QUOTA` | The quota of each account of `STORAGE_OWNERS`, such as `65536`, `64KiB`, `512MiB` or `1GiB`. The default is `1GiB`. |
+| `STORAGE_ADMIT` | The rule of admission: `invite` (the default), `ask` or `open`. |
+| `STORAGE_OPEN_QUOTA` | The quota of an account under `open`. The default is `STORAGE_QUOTA`. |
+| `STORAGE_CAPACITY` | The largest sum of the quotas under `open`. `open` needs it. |
 | `STORAGE_STUN` | The STUN server, or `none`. If it is not set, the service asks the first relay of `ARC_RELAYS` on port 3478. The commands read it too. |
 | `STORAGE_LOOPBACK` | If set, an end also uses the loopback address. The tests set it, because their two ends are on one machine. The commands read it too. |
 
@@ -172,16 +250,16 @@ Each command takes these flags:
 
 ## Rules of the storage citizen
 
-- The app takes a session from an account key in `STORAGE_OWNERS`, or from
-  a device key in the newest grant set of one of these accounts. It refuses
-  each other caller with `not_owner`. No pipe opens.
-- Only an account key in `STORAGE_OWNERS` sets the grant set of its
-  account. A set with an older `at` than the set of the account gets
+- The app takes a session from an admitted account key, or from a device
+  key in the newest grant set of an admitted account. It refuses each other
+  caller, and each caller of a closed account, with `not_owner`. No pipe
+  opens.
+- Only an admitted account key sets the grant set of its account. A set with an older `at` than the set of the account gets
   `stale_grants`.
 - A blob has a size that is a power of two, from 4 KiB to 64 MiB. The app
   refuses another size with `bad_size`.
-- The quota counts the sizes of the blobs. A put that passes the quota gets
-  `over_quota`, with the bytes in use, the quota and the size of the blob:
+- The quota of the account counts the sizes of its blobs. A put that passes
+  the quota gets `over_quota`, with the bytes in use, the quota and the size of the blob:
   `over quota: the account uses 4096 of 65536 bytes, and this blob needs 65536 more`.
 - A put of an ID that the account holds gets `held`. No bytes go.
 - A delete removes the bytes at once, and keeps the ID as a tombstone. For
@@ -195,13 +273,17 @@ Each command takes these flags:
 ## Storage on disk
 
 ```text
-<STORAGE_DIR>/accounts/<account key>/state.json   the grant set, the cursor, the entries
+<STORAGE_DIR>/invites.json                        the SHA-256 of each invite token, its quota, plan and end
+<STORAGE_DIR>/accounts/<account key>/state.json   the record, the grant set, the cursor, the entries
 <STORAGE_DIR>/accounts/<account key>/blobs/<id>   the bytes of one blob
 ```
 
 Each file is written to a temporary file, flushed, and renamed
 (`sdk/atomicfile`). A lock on each account covers each change of
-`state.json`. A put writes the blob first, and then the state. A delete
+`state.json`. A lock on `invites.json` covers each join, and then the lock
+of the account. A join spends the token first, and then admits the account:
+if the program stops between the two, the token is lost, and no token
+admits twice. A put writes the blob first, and then the state. A delete
 writes the state first, and then removes the blob. If the program stops
 between the two, a file with no entry stays. The app does not serve it,
 and the next put of that ID replaces it.
@@ -269,8 +351,26 @@ signs. `at` is the time of the device list event:
 {"v":1,"devices":2}
 ```
 
-The errors are `invalid_request`, `not_owner` (the author is not in
-`STORAGE_OWNERS`), `stale_grants` and `storage_failed`.
+The errors are `invalid_request`, `not_owner` (the author is not an
+admitted account), `stale_grants` and `storage_failed`.
+
+The signer asks for an account in a third call, which the account key
+signs. Each field of `join` is optional. `citizen` and `sig` show the
+citizen key, by choice; the storage spec, section 3.2, defines the
+signature.
+
+```json
+{"v":1,"join":{"invite":"9f2c…","want":1073741824,"note":"Ana from the choir"}}
+```
+
+```json
+{"v":1,"account":{"status":"admitted","quota":1073741824,"used":0,"plan":"friend","state":"open","tombstone_days":90,"read_days_after_close":30}}
+{"v":1,"account":{"status":"pending","message":"the operator decides by hand; ask again later"}}
+{"v":1,"error":"refused","message":"this storage citizen admits only with an invite"}
+```
+
+A refusal is a reply body with a message, not an error of the call. An
+older storage app answers the join with `invalid_request`.
 
 ### The pipe
 
@@ -284,17 +384,21 @@ the next request.
 | `{"op":"list","after":6,"limit":1000}` | `{"entries":[{"seq":7,"id":"…","size":4096},{"seq":8,"id":"…","deleted":true}],"next":8}` |
 | `{"op":"get","id":"<64 hex>"}` | `{"size":4096}`, then the bytes of the blob. |
 | `{"op":"delete","id":"<64 hex>"}` | `{"status":"deleted","seq":9}`, or `{"status":"absent"}`. |
-| `{"op":"usage"}` | `{"used":8192,"quota":1073741824,"blobs":2}` |
+| `{"op":"usage"}` | `{"used":8192,"quota":1073741824,"blobs":2,"state":"open","plan":"free"}` |
 
 The bytes of a blob go in binary messages of 16 KiB, with the flow control
 of the direct pipe spec, section 3.4. A refused request gets
 `{"error":"<code>","message":"<text>"}`. The codes are `invalid_request`,
-`bad_size`, `over_quota`, `not_found` and `storage_failed`.
+`bad_size`, `over_quota`, `refused` (a put on a closing account),
+`not_found` and `storage_failed`.
 
 ## Later steps
 
-- **Invites.** `arc-storage invite --quota 1GiB` replaces
-  `STORAGE_OWNERS`, as section 2.2 of the proposal says.
+- **The storage list.** Kind 10273 names the storage citizens of a
+  citizen, so that each device installs them. Until then, each device runs
+  `arc install`.
+- **A paid service.** An `offer` in a refused or pending reply, and a `pay`
+  field in the join. `plan` and `expires` keep the place.
 
 ## Tests
 
@@ -314,6 +418,16 @@ with the key of one owner, and a stranger. They check these things:
   gets `tombstoned`.
 - A put over the quota fails with the bytes in use and the quota.
 - A stranger gets `not_owner`, and no pipe opens.
+- Under `invite`, a join with no token, with a wrong token, and with a
+  spent token is refused. A join with a token is admitted at its quota and
+  plan.
+- Under `ask`, a join is pending. `requests` shows it with the citizen key
+  and the note. `accept` admits it, and `refuse` refuses it.
+- Under `open`, joins are admitted at the open quota until the capacity.
+  A put over the quota of one account fails while another account has
+  room. `usage` reports the quota, plan and state of each account.
+  `account set` raises a quota, and `account close` refuses puts and keeps
+  lists.
 - A newer grant set revokes a device key, and an older set cannot bring it
   back (`go test ./apps/storage/server/`).
 
