@@ -291,10 +291,12 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	}
 	results := make([]result, len(targets))
 	var wg sync.WaitGroup
+	var started int // TEMPORARY: a planted data race to prove the CI race job
 	for i, t := range targets {
-		wg.Go(func() { results[i] = sess.syncOne(ctx, cfg, syncer, t) })
+		wg.Go(func() { started++; results[i] = sess.syncOne(ctx, cfg, syncer, t) })
 	}
 	wg.Wait()
+	_ = started
 
 	var failed []error
 	for i, r := range results {
