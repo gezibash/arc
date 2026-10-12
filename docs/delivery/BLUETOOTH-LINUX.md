@@ -145,7 +145,10 @@ the three-node mesh proof, remains incomplete.
 PR 4 connects secure direct sessions, compact events and frames to the existing
 ARC transport contracts. PR 5 integrates normal commands and providers and
 records the two-device acceptance evidence in the
-[implementation plan](BLUETOOTH-PLAN.md#direct-delivery-acceptance-gate-before-pr-6).
+[implementation plan](../proposals/bluetooth.md#direct-delivery-acceptance-gate-before-pr-6).
 That gate includes signed events, private content, disconnect/retry and a live
 capability request/reply with relay fallback disabled. Mesh forwarding follows
 only after this direct workflow works. The probe remains a diagnostic.
+
+The [Stage 4 adapter](BLUETOOTH-DIRECT.md) uses a separate secure profile.
+The probe and phone echo steps above do not test that adapter.

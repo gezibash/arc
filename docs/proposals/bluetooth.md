@@ -10,9 +10,9 @@ This plan follows the current Go delivery design in [the delivery spec](../deliv
 shared transport interface already exists, so extracting another transport
 interface is not the first step.
 
-## Current status: PRs 1–3 (radio hardware validation pending)
+## Current status: PRs 1–3 merged; Stage 4 adapter under development
 
-`core/compact` implements the compact event format from section 7.3 of the
+`core/compact` implements the compact event format from section 3.9 of the
 specification. Think of it as packing the same signed message into a smaller
 envelope. It preserves the public key, signature, timestamp, kind, tags and
 content. The receiver rebuilds the event ID from those fields.
@@ -31,7 +31,7 @@ signed-event round trips. A fuzz check is available with
 
 `adapters/transport/ble` and the separate `arc-ble-probe` command now provide
 an experimental Linux BlueZ discovery and byte-round-trip test. See the
-[Linux hardware guide](BLUETOOTH-LINUX.md). Automated checks and cross-builds
+[Linux hardware guide](../delivery/BLUETOOTH-LINUX.md). Automated checks and cross-builds
 are not a substitute for complete hardware validation. A user-reported iPhone
 to Raspberry Pi echo test passed; the remaining radio checks are listed in the guide. ARC messages and
 capability calls are not connected to Bluetooth yet.
@@ -54,6 +54,11 @@ It preserves tag order, repeated tags, empty tags and empty strings.
 Tests cover a fixed wire example, signed-event round trips, store rejection of
 a corrupted signature, malformed input, size limits and fuzzed input.
 
+Stage 4 adds an experimental secure direct event adapter. See the
+[adapter guide](../delivery/BLUETOOTH-DIRECT.md) for its API, limits and tests.
+It has no normal CLI selection or real-radio proof yet. Stage 5 must provide
+that integration, including multiple watches and repeated live calls.
+
 ## Small, reviewable PRs
 
 Each row is a separate proposed PR. Later rows remain planned; their exact
@@ -75,7 +80,7 @@ scope can be refined as hardware testing reveals constraints.
 This order supersedes the earlier plan that placed mesh before normal ARC
 integration. PRs 4 and 5 are small parts of one next milestone: usable direct
 ARC communication. A secure byte session alone does not complete that milestone.
-Specification section 7.1 now describes the actual Go event contract; frame
+The transport interface section of the specification now describes the actual Go event contract; frame
 sizes and radio discovery remain adapter details rather than a second public
 transport interface. The radio probe stays a diagnostic.
 
@@ -88,8 +93,8 @@ transport interface. The radio probe stays a diagnostic.
   cancellation and errors. Implement `Watch` for live subscriptions. The probe's
   internal `radio` interface remains only a diagnostic testing boundary.
 - Integrate normal CLI startup and provider paths. In particular, `watchAll`
-  currently asserts `relay.Relay`; audit related watches and calls and use the
-  appropriate shared contracts without changing relay-specific discovery rules.
+  now checks `transport.Live`; reuse that path and audit the remaining
+  composition needs without changing relay-specific discovery rules.
 - Test two real devices using normal ARC commands, with relay fallback disabled
   and no internet delivery path. Record hardware, OS, BlueZ versions, build
   revision, commands and observed results. A phone echo app cannot prove this gate.

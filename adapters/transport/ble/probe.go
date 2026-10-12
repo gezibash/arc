@@ -1,5 +1,5 @@
-// Package ble provides an experimental BlueZ radio probe, not an ARC event
-// transport. Its GATT service is deliberately separate from future secure ARC.
+// Package ble provides a BlueZ radio probe and an experimental direct event
+// adapter. Their GATT profiles are separate. Normal CLI integration is pending.
 package ble
 
 import (

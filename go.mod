@@ -8,6 +8,7 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/coder/websocket v1.8.13
 	github.com/creack/pty v1.1.24
+	github.com/flynn/noise v1.1.0
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pion/logging v0.2.4
