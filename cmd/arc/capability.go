@@ -19,7 +19,6 @@ import (
 	"github.com/gezibash/arc/adapters/provider/host"
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/call"
-	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/mail"
 	"github.com/gezibash/arc/core/relaylist"
@@ -715,11 +714,9 @@ func callCapability(command *cobra.Command, args []string) error {
 
 // publishRelayList tells other citizens which relays this citizen reads and
 // writes on, as NIP-65 defines, and which relays it reads its mail on, as
-// NIP-17 defines. It also publishes the private relay list of NIP-37, which
-// names the relays that hold the citizen's drafts. It returns the indexers
-// that did not get each public list.
+// NIP-17 defines. It returns the indexers that did not get each list.
 func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Transport {
-	// The public lists go to the indexers too. The private list does not.
+	// The lists go to the relays and to the indexers.
 	type list struct {
 		event nostr.Event
 		to    []transport.Transport
@@ -737,12 +734,6 @@ func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Tr
 		fmt.Fprintf(os.Stderr, "the relay list was not signed: %v\n", err)
 	} else {
 		lists = append(lists, list{inbox, public})
-	}
-	private, err := draft.RelayList(ctx, sess.Signer, sess.URLs, nostr.Now())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "the private relay list was not signed: %v\n", err)
-	} else {
-		lists = append(lists, list{private, sess.Relays})
 	}
 	var owed []transport.Transport
 	for _, l := range lists {

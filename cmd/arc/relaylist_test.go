@@ -42,6 +42,38 @@ func TestRelayAddPublishesTheNIP65RelayList(t *testing.T) {
 	}
 }
 
+// A citizen that adds a relay publishes no private relay list of NIP-37,
+// kind 10013 (docs/storage/SPEC.md, section 7). A relay that is not an ARC
+// relay takes every kind, so it would keep one.
+func TestRelayAddPublishesNoPrivateRelayList(t *testing.T) {
+	url := testrelay.StartStandard(t)
+	home := t.TempDir()
+	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
+		if err := arc(t, home, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	mine, err := listCitizens(home)
+	if err != nil || len(mine) != 1 {
+		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
+	}
+	id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := (relay.Relay{URL: url, Signer: id.signer}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{10002, 10013}, Authors: []nostr.PubKey{id.key.Public}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []nostr.Kind
+	for _, e := range batch.Events {
+		kinds = append(kinds, e.Kind)
+	}
+	if !slices.Equal(kinds, []nostr.Kind{10002}) {
+		t.Fatalf("the relay holds kinds %v of the citizen, want 10002 only", kinds)
+	}
+}
+
 // A caller and a provider share no relay. The provider's NIP-65 list, on the
 // caller's relay, names the relay where the provider reads. The live call
 // finds the provider's announcement there, and goes there
@@ -93,8 +125,7 @@ func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
 }
 
 // An indexer takes the public relay lists of a citizen, NIP-65 and NIP-17,
-// and they name only the citizen's relays. The private NIP-37 list stays off
-// the indexer.
+// and they name only the citizen's relays.
 func TestAnIndexerHoldsOnlyThePublicRelayLists(t *testing.T) {
 	relayURL := testrelay.Start(t)
 	indexer := testrelay.Start(t)
@@ -105,8 +136,7 @@ func TestAnIndexerHoldsOnlyThePublicRelayLists(t *testing.T) {
 		}
 	}
 
-	// The relay serves a private relay list only to its author, so ask as
-	// the citizen.
+	// Ask as the citizen, so that a private relay list would show too.
 	mine, err := listCitizens(home)
 	if err != nil || len(mine) != 1 {
 		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)

@@ -16,6 +16,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore"
+	"github.com/gezibash/arc/core/draft"
 )
 
 // MaxQuery caps the events that one query returns.
@@ -162,6 +163,9 @@ func (s *Store) save(b Backend, event nostr.Event) (Result, error) {
 		return Result{Outcome: Refused, Reason: "the event has expired"}, nil
 	}
 
+	if draft.IsMoved(event) {
+		return Result{Outcome: Refused, Reason: "a deletion of drafts that moved to a storage citizen is for relays only"}, nil
+	}
 	if has(b, event.ID) {
 		return Result{Outcome: Duplicate}, nil
 	}

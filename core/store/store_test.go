@@ -150,6 +150,29 @@ func TestADeletionRemovesAndKeepsOut(t *testing.T) {
 	}
 }
 
+// A deletion that a device sends to relays for the drafts that moved to a
+// storage citizen is for relays only (docs/storage/SPEC.md, section 4.2).
+// A store refuses it, so the drafts stay, and can still come in.
+func TestAStoreRefusesAMovedDeletion(t *testing.T) {
+	s := open(t)
+	k := keys.Generate()
+	kept := signed(t, k, 31234, 100, "v1", nostr.Tag{"d", "x"})
+	later := signed(t, k, 1234, 100, "c1")
+	save(t, s, kept)
+
+	moved := signed(t, k, nostr.KindDeletion, 200, "", nostr.Tag{"arc", "moved"},
+		nostr.Tag{"e", kept.ID.Hex()}, nostr.Tag{"e", later.ID.Hex()}, nostr.Tag{"k", "1234"}, nostr.Tag{"k", "31234"})
+	if got := save(t, s, moved); got.Outcome != store.Refused {
+		t.Fatalf("the moved deletion was %s, want refused", got.Outcome)
+	}
+	if !testutil.Must(s.Has(kept.ID)) {
+		t.Error("a moved deletion deleted a draft of the store")
+	}
+	if got := save(t, s, later); got.Outcome != store.Stored {
+		t.Errorf("a draft that a moved deletion names was %s, want stored", got.Outcome)
+	}
+}
+
 func TestATieKeepsTheLowerID(t *testing.T) {
 	s := open(t)
 	k := keys.Generate()

@@ -896,7 +896,8 @@ and [files](../../apps/files/README.md).
 ### 7.4 Sealed data moved off the relays
 
 Before this change, a sealed event went to the relays of the citizen's NIP-37
-list, kind 10013, and `arc sync` reconciled it with each relay. Now it stays
+list, kind 10013, and `arc sync` reconciled it with each relay. ARC no longer
+makes that list. Now it stays
 in the local store, and syncs with the storage citizens of the citizen. The
 [storage spec](../storage/SPEC.md) defines the sync. Section 7.5 says how an
 older client behaves.
@@ -909,10 +910,12 @@ older client behaves.
   pages of the older client.
 - An older client does not see the pages of a newer client, because they do
   not go to a relay. The user updates each device.
-- A newer client does not delete the drafts on the relays. They stay for 90
-  days, for the older clients. A later step deletes them (storage spec,
-  section 7).
-- A relay does not change. It still takes sealed events from their author.
+- A newer client deletes the drafts on its ARC relays after a storage
+  citizen holds them (storage spec, section 4.2.1).
+- An ARC relay refuses new sealed events, and still serves the old ones to
+  their author until 2027-01-10. An older client then gets
+  `blocked: this relay keeps no drafts` for each new page. The storage spec,
+  section 7, says how older clients and older relays behave.
 
 ### 7.6 Limits of the Nostr standards
 
