@@ -67,7 +67,8 @@ func storageServer(t *testing.T, work, url string, signer machine, name, app str
 	command := app
 	if delay > 0 {
 		command = program("slowcall")
-		store = store.with("SLOWCALL_PROGRAM="+app, fmt.Sprintf("SLOWCALL_MS=%d", delay.Milliseconds()))
+		store = store.with("SLOWCALL_PROGRAM="+app, fmt.Sprintf("SLOWCALL_MS=%d", delay.Milliseconds()),
+			"SLOWCALL_LOG="+holdLog(work, name))
 	}
 	store.run("relay", "add", url)
 	dir := filepath.Join(work, name+"-app")
