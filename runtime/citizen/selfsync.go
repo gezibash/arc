@@ -42,9 +42,16 @@ type SelfSync struct {
 	// TURN gets a credential for the TURN server of the first relay.
 	TURN    func(ctx context.Context) (direct.Credential, error)
 	Options direct.Options
+	// Path is the path of the citizen (arc path): direct uses no TURN, and
+	// turn uses only TURN. auto and session try a direct path first.
+	Path direct.Policy
 	// Out gets one line for each storage citizen. Errs gets the notes of
 	// the pipe and each refused blob.
 	Out, Errs io.Writer
+	// Repair lets the sync audit and repair pieces: arc serve on each
+	// tick, arc sync with --repair. RepairTURN lets repair use a pipe through
+	// TURN.
+	Repair, RepairTURN bool
 }
 
 // selfKeys is the one place that chooses the keys of the blobs. A new blob
@@ -288,6 +295,8 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Keys:    once(sess.selfKeysAt),
 		Devices: onceList(sess.DeviceList),
 		State:   cfg.Dir,
+		Repair:  cfg.Repair,
+		TURN:    cfg.RepairTURN,
 	}
 	// Each pipe opens at the same time. Then one sync lists each storage
 	// citizen, reads the pieces that this machine lacks, and puts the
@@ -352,6 +361,15 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		if side.Old {
 			fmt.Fprintf(cfg.Errs, "%s runs an older storage app: it holds full copies; update it for erasure coding\n", as)
 		}
+		if side.Audited > 0 {
+			fmt.Fprintf(cfg.Out, "%s: audit checked %d pieces, %d failed\n", as, side.Audited, side.AuditFailed)
+		}
+		if side.Suspect {
+			fmt.Fprintf(cfg.Errs, "%s is suspect: %d pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, side.FailedToday, as)
+		}
+		if side.Empty {
+			fmt.Fprintf(cfg.Out, "%s holds no piece now; run arc keys storage rm %s --gone on the signer\n", as, as)
+		}
 	}
 	fmt.Fprintf(cfg.Out, "self data: took %d records, already held %d", report.Received, report.Held)
 	if report.T > 0 {
@@ -365,8 +383,22 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		failed = append(failed, fmt.Errorf("%d records wait", report.Waiting))
 		fmt.Fprintf(cfg.Errs, "self data: %d records wait: a new blob needs %d storage citizens that answer; the next sync puts them\n", report.Waiting, report.K)
 	}
-	if report.Mixed > 0 {
-		fmt.Fprintf(cfg.Errs, "self data: %d blobs have fewer than k pieces of one seal on the storage citizens; a later step repairs them\n", report.Mixed)
+	rep := report.Repair
+	if cfg.Repair {
+		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, deleted %d; %d bytes down, %d bytes up\n",
+			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Deleted, rep.Down, rep.Up)
+	} else if rep.Pending > 0 {
+		fmt.Fprintf(cfg.Errs, "self data: %d blobs need repair; arc serve repairs them on its tick, or run arc sync --repair\n", rep.Pending)
+	}
+	if rep.WaitDirect > 0 && cfg.Repair {
+		var relayed []string
+		for i, o := range opened {
+			if o.conn != nil && o.conn.Path == "relay" {
+				relayed = append(relayed, targets[i].install.As)
+			}
+		}
+		fmt.Fprintf(cfg.Errs, "self data: the repair of %d blobs waits for a direct path: the pipe to %s goes through TURN; arc sync --repair --turn allows TURN\n",
+			rep.WaitDirect, strings.Join(relayed, ", "))
 	}
 	if n := len(report.Unreadable); n > 0 {
 		failed = append(failed, fmt.Errorf("%d blobs cannot be read now", n))
@@ -404,6 +436,7 @@ func (sess *Session) openOne(ctx context.Context, cfg SelfSync, syncer *selfsync
 			return sess.openStorage(ctx, cfg.Installs, install.As, session)
 		},
 		TURN: cfg.TURN, Options: cfg.Options, Notes: &o.notes,
+		NoRelay: cfg.Path == direct.DirectOnly, OnlyRelay: cfg.Path == direct.RelayOnly,
 	}
 	conn, err := client.Open(ctx, 0)
 	o.opened = time.Now()

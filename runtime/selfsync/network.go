@@ -50,17 +50,16 @@ type sealed struct {
 	pieces map[int][]piece
 }
 
-// count is the number of indices of the seal that some storage citizen
-// lists.
-func (s *sealed) count() int { return len(s.pieces) }
-
 // mapped is what the listings say of one blob.
 type mapped struct {
 	seals map[SealID]*sealed
 	// old holds the sides that list a blob of format 1 with this ID.
 	old []int
-	// sides holds each side that lists a piece of the blob.
+	// sides holds each side that lists a piece of the blob, also a lost
+	// one or one of another seal.
 	sides map[int]bool
+	// lost holds the pieces that failed an audit or did not open.
+	lost []piece
 }
 
 // run is one sync over all storage citizens.
@@ -82,6 +81,10 @@ type run struct {
 	seen    map[string]bool
 	devices []nostr.PubKey
 	listed  bool
+	// written holds the blobs that this sync coded with a new seal.
+	written map[string]bool
+	// repairing says that fetch and put count their bytes as repair.
+	repairing bool
 }
 
 // SyncAll syncs with each storage citizen at the same time
@@ -96,7 +99,7 @@ type run struct {
 func (s *Syncer) SyncAll(ctx context.Context, sides []Side) (Report, error) {
 	r := &run{s: s, sides: sides, states: make([]state, len(sides)), open: make([]bool, len(sides)),
 		old: make([]bool, len(sides)), idKeys: make([][]byte, len(sides)),
-		keys: map[uint32]Keys{}, failed: map[uint32]error{}, blobs: map[string]*mapped{}}
+		keys: map[uint32]Keys{}, failed: map[uint32]error{}, blobs: map[string]*mapped{}, written: map[string]bool{}}
 	r.report.Sides = make([]SideReport, len(sides))
 	seen, err := s.loadSeen()
 	if err != nil {
@@ -130,12 +133,22 @@ func (s *Syncer) SyncAll(ctx context.Context, sides []Side) (Report, error) {
 	if err := r.mapPieces(ctx); err != nil {
 		return r.report, errors.Join(err, r.save())
 	}
+	if s.Repair {
+		if err := r.audit(ctx); err != nil {
+			return r.report, errors.Join(err, r.save())
+		}
+	}
 	if err := r.read(ctx); err != nil {
 		return r.report, errors.Join(err, r.save())
 	}
 	if err := r.write(ctx); err != nil {
 		return r.report, errors.Join(err, r.save())
 	}
+	if err := r.repair(ctx); err != nil {
+		return r.report, errors.Join(err, r.save())
+	}
+	r.drained()
+	r.suspects()
 	return r.report, r.save()
 }
 
@@ -195,6 +208,10 @@ func (r *run) list(ctx context.Context) {
 		for _, e := range entries {
 			st.Remote[e.ID] = !e.Deleted
 			delete(st.Tags, e.ID)
+			if e.Deleted {
+				delete(st.Lost, e.ID)
+				delete(st.Proofs, e.ID)
+			}
 			if !e.Deleted && e.Tag != "" {
 				st.Tags[e.ID] = e.Tag
 			}
@@ -235,6 +252,7 @@ func (r *run) refuse(format string, args ...any) {
 // also of a side with no pipe now. Each device builds it alone; no device
 // writes a shared map.
 func (r *run) mapPieces(ctx context.Context) error {
+	r.blobs = map[string]*mapped{}
 	gens := map[uint32]int{}
 	for i := range r.sides {
 		st := &r.states[i]
@@ -272,11 +290,16 @@ func (r *run) mapPieces(ctx context.Context) error {
 			}
 			// A storage citizen that moves a tag to another ID gives a
 			// piece that the device did not put there.
-			if PieceID(r.idKeys[i], h.Blob, h.Index) != id {
+			if PieceID(r.idKeys[i], h.Blob, h.Seal, h.Index) != id {
 				r.refuse("%s: piece %s: the tag names another piece", r.sides[i].Label, id)
 				continue
 			}
 			m := r.blob(h.Blob)
+			m.sides[i] = true
+			if st.Lost[id] {
+				m.lost = append(m.lost, piece{side: i, id: id, tag: tag, h: h})
+				continue
+			}
 			sl := m.seals[h.Seal]
 			if sl == nil {
 				sl = &sealed{h: h, pieces: map[int][]piece{}}
@@ -287,7 +310,6 @@ func (r *run) mapPieces(ctx context.Context) error {
 				continue
 			}
 			sl.pieces[h.Index] = append(sl.pieces[h.Index], piece{side: i, id: id, tag: tag, h: h})
-			m.sides[i] = true
 		}
 	}
 	for gen, n := range gens {
@@ -455,9 +477,17 @@ func (r *run) fetch(ctx context.Context, all []*rebuilding) error {
 				data, err := got[i][n], errs[i][n]
 				if err != nil {
 					r.refuse("%s: %s: %v", r.sides[i].Label, p.id, err)
+					// A listed piece that the storage citizen does not find
+					// is lost.
+					if b.sl != nil && storage.IsRefused(err, storage.ErrNotFound) {
+						r.states[i].Lost[p.id] = true
+					}
 					continue
 				}
 				r.report.Sides[i].Got++
+				if r.repairing {
+					r.report.Repair.Down += int64(len(data))
+				}
 				if b.sl == nil {
 					b.blob = data
 					continue
@@ -467,6 +497,9 @@ func (r *run) fetch(ctx context.Context, all []*rebuilding) error {
 					var shard []byte
 					if shard, err = OpenPiece(keys, p.tag, p.h, data); err == nil {
 						b.shards[p.h.Index] = shard
+						r.states[i].Proofs[p.id] = newProof(p.id, data)
+					} else {
+						r.states[i].Lost[p.id] = true
 					}
 				}
 				if err != nil {
@@ -613,27 +646,18 @@ type put struct {
 
 // write puts each record that the storage citizens lack. A new record gets
 // a new seal: t pieces on the t active storage citizens with a pipe that
-// rank highest for its blob. A blob with k or more pieces of one seal
-// keeps that seal; if it has fewer than t pieces, the device rebuilds it
-// and puts each missing index on the next active storage citizen that
-// holds no piece of it. A storage citizen with an older app gets whole
-// blobs of format 1.
+// rank highest for its blob. A blob that a storage citizen already holds
+// is left to repair. A storage citizen with an older app gets whole blobs
+// of format 1.
 func (r *run) write(ctx context.Context) error {
-	// S counts each active storage citizen whose app keeps tags, or whose
-	// app the device did not ask yet.
-	var s int
+	s := r.count()
 	var pieceSides []int
 	for i, side := range r.sides {
-		if !side.Active || r.old[i] {
-			continue
-		}
-		s++
-		if r.open[i] {
+		if side.Active && !r.old[i] && r.open[i] {
 			pieceSides = append(pieceSides, i)
 		}
 	}
 	r.report.K, r.report.T = Code(s)
-	direct := slices.DeleteFunc(slices.Clone(pieceSides), func(i int) bool { return r.sides[i].Relayed })
 	writers := slices.ContainsFunc(r.sides, func(side Side) bool { return side.Active })
 	if !writers {
 		return nil
@@ -643,7 +667,6 @@ func (r *run) write(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var grow []*rebuilding
 	for chunk := range slices.Chunk(records, putChunk) {
 		var puts []put
 		for _, event := range chunk {
@@ -668,75 +691,59 @@ func (r *run) write(ctx context.Context) error {
 			if s == 0 {
 				continue
 			}
-			switch {
-			case m != nil && len(m.old) > 0:
-				// A blob of format 1 still holds the record. A later step
-				// moves it to pieces.
-			case m == nil || len(m.seals) == 0:
-				p, err := r.code(event, id, pieceSides)
-				if err != nil {
-					return err
-				}
-				puts = append(puts, p...)
-			default:
-				sl := r.best(m, false)
-				if sl == nil {
-					// Only the listings of each storage citizen show that no
-					// seal has k pieces.
-					if !slices.ContainsFunc(r.states, func(st state) bool { return !st.Listed }) {
-						r.report.Mixed++
-					}
-					continue
-				}
-				if sl.count() < min(s, 2*sl.h.K) && slices.ContainsFunc(direct, func(i int) bool { return !m.sides[i] }) {
-					grow = append(grow, &rebuilding{id: id, sl: sl, shards: map[int][]byte{}, tried: map[string]bool{}})
-				}
-			}
-		}
-		if err := r.put(ctx, puts); err != nil {
-			return err
-		}
-	}
-	// A missing piece costs k pieces down and one up. Only direct pipes
-	// carry it. This is the last step of the sync, so the relayed pipes
-	// stay closed to it.
-	for i, side := range r.sides {
-		r.open[i] = r.open[i] && !side.Relayed
-	}
-	for chunk := range slices.Chunk(grow, getChunk) {
-		if err := r.fetch(ctx, chunk); err != nil {
-			return err
-		}
-		var puts []put
-		for _, b := range chunk {
-			if b.blob == nil {
+			// A blob with pieces, also lost ones, is for repair. A blob of
+			// format 1 still holds the record: a later step moves it to
+			// pieces.
+			if m != nil && (len(m.old) > 0 || len(m.seals) > 0 || len(m.lost) > 0) {
 				continue
 			}
-			p, err := r.extend(b, s, direct)
+			blob, err := r.sealRecord(event)
 			if err != nil {
 				return err
 			}
+			p, err := r.code(blob, id, pieceSides)
+			if err != nil {
+				return err
+			}
+			if p != nil {
+				r.report.Sent++
+				r.written[id] = true
+			}
 			puts = append(puts, p...)
 		}
-		if err := r.put(ctx, puts); err != nil {
+		if _, err := r.put(ctx, puts); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// code seals a record into a new blob, codes it, and makes one piece for
-// each of the first t sides of its rank. With fewer than k sides, it puts
-// nothing: the record waits for the next sync.
-func (r *run) code(event nostr.Event, id string, sides []int) ([]put, error) {
-	k, t := r.report.K, r.report.T
+// count is S: each active storage citizen whose app keeps tags, or whose
+// app the device did not ask yet.
+func (r *run) count() int {
+	s := 0
+	for i, side := range r.sides {
+		if side.Active && !r.old[i] {
+			s++
+		}
+	}
+	return s
+}
+
+// sealRecord seals a record into a new blob with the newest keys.
+func (r *run) sealRecord(event nostr.Event) ([]byte, error) {
+	_, blob, err := Seal(r.current, r.s.Device, event)
+	return blob, err
+}
+
+// code codes a blob with a new seal and the code of S, and makes one
+// piece for each of the first t sides of its rank. With fewer than k
+// sides, it puts nothing: the record waits for the next sync.
+func (r *run) code(blob []byte, id string, sides []int) ([]put, error) {
+	k, t := Code(r.count())
 	if len(sides) < k {
 		r.report.Waiting++
 		return nil, nil
-	}
-	_, blob, err := Seal(r.current, r.s.Device, event)
-	if err != nil {
-		return nil, err
 	}
 	shards, err := Shards(blob, k)
 	if err != nil {
@@ -757,52 +764,15 @@ func (r *run) code(event nostr.Event, id string, sides []int) ([]put, error) {
 		if err != nil {
 			return nil, err
 		}
-		puts = append(puts, put{side: i, blob: storage.Blob{ID: PieceID(r.idKeys[i], id, index), Data: data, Tag: tag}})
-	}
-	r.report.Sent++
-	return puts, nil
-}
-
-// extend makes the missing indices of a seal that k or more pieces hold,
-// from the rebuilt blob, for the sides that hold no piece of the blob, in
-// the rank of the blob. The other pieces stay.
-func (r *run) extend(b *rebuilding, s int, sides []int) ([]put, error) {
-	shards, err := Shards(b.blob, b.sl.h.K)
-	if err != nil {
-		return nil, err
-	}
-	m := r.blobs[b.id]
-	rank := r.rankOf(b.id)
-	var free []int
-	for _, i := range sides {
-		if !m.sides[i] {
-			free = append(free, i)
-		}
-	}
-	slices.SortFunc(free, func(a, b int) int { return rank[a] - rank[b] })
-	need := min(s, 2*b.sl.h.K) - b.sl.count()
-	var puts []put
-	for index := 0; index < 2*b.sl.h.K && need > 0 && len(free) > 0; index++ {
-		if _, held := b.sl.pieces[index]; held {
-			continue
-		}
-		h := b.sl.h
-		h.Index = index
-		tag, data, err := SealPiece(r.current, h, shards[index])
-		if err != nil {
-			return nil, err
-		}
-		i := free[0]
-		free = free[1:]
-		puts = append(puts, put{side: i, blob: storage.Blob{ID: PieceID(r.idKeys[i], b.id, index), Data: data, Tag: tag}})
-		need--
+		puts = append(puts, put{side: i, blob: storage.Blob{ID: PieceID(r.idKeys[i], id, seal, index), Data: data, Tag: tag}})
 	}
 	return puts, nil
 }
 
 // put sends the puts to each side, all sides at the same time, and keeps
-// what each side stored.
-func (r *run) put(ctx context.Context, puts []put) error {
+// what each side stored. ok says, for each put, that the side holds the ID
+// now.
+func (r *run) put(ctx context.Context, puts []put) ([]bool, error) {
 	bySide := make([][]storage.Blob, len(r.sides))
 	for _, p := range puts {
 		bySide[p.side] = append(bySide[p.side], p.blob)
@@ -818,6 +788,7 @@ func (r *run) put(ctx context.Context, puts []put) error {
 			r.fail(i, err)
 		}
 	})
+	held := map[[2]string]bool{}
 	for i, blobs := range bySide {
 		st := &r.states[i]
 		for n, res := range results[i] {
@@ -826,14 +797,20 @@ func (r *run) put(ctx context.Context, puts []put) error {
 			case res.Err != nil:
 				r.fail(i, fmt.Errorf("put %s: %w", b.ID, res.Err))
 			case res.Status == storage.StatusStored:
+				held[[2]string{fmt.Sprint(i), b.ID}] = true
 				r.report.Sides[i].Stored++
 				st.Remote[b.ID] = true
+				if r.repairing {
+					r.report.Repair.Up += int64(len(b.Data))
+				}
 				if b.Tag != nil {
 					st.Tags[b.ID] = base64.StdEncoding.EncodeToString(b.Tag)
+					st.Proofs[b.ID] = newProof(b.ID, b.Data)
 				}
 			case res.Status == storage.StatusHeld:
 				// Another put of this ID came after the listing. The next
 				// listing gives the tag of a piece.
+				held[[2]string{fmt.Sprint(i), b.ID}] = true
 				r.report.Sides[i].Held++
 				if b.Tag == nil {
 					st.Remote[b.ID] = true
@@ -843,5 +820,9 @@ func (r *run) put(ctx context.Context, puts []put) error {
 			}
 		}
 	}
-	return ctx.Err()
+	ok := make([]bool, len(puts))
+	for n, p := range puts {
+		ok[n] = held[[2]string{fmt.Sprint(p.side), p.blob.ID}]
+	}
+	return ok, ctx.Err()
 }

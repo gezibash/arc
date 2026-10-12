@@ -170,6 +170,11 @@ The policy is the choice of an end for one session:
 - A command of `cmd/arc` takes the flag `--path`. If the flag is not set,
   it reads the file `path` in the home of the citizen. `arc path <policy>`
   writes that file.
+- The sync of self data of `arc sync` and `arc serve` reads only the file
+  `path`. It opens each pipe to a storage citizen through TURN only with
+  `turn`, and with no TURN with `direct`. `session` acts as `auto` there,
+  because a storage app needs a pipe ([the storage spec](../storage/SPEC.md),
+  section 4.6).
 - A provider program reads `ARC_PATH`. `arc-http` and `arc-releases` stop
   at their start if the value is not a policy. `httpadapter.New` opens no
   pipe for such a value.

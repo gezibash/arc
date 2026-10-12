@@ -742,6 +742,11 @@ func syncCommand() *cobra.Command {
 			}
 			defer sess.Close()
 			sealed := sealedFilter(sess.Key.Public)
+			repair, _ := command.Flags().GetBool("repair")
+			turn, _ := command.Flags().GetBool("turn")
+			if turn && !repair {
+				return errors.New("--turn allows TURN for repair: give it with --repair")
+			}
 
 			targets := sess.Relays
 			dir, _ := command.Flags().GetString("dir")
@@ -798,6 +803,7 @@ func syncCommand() *cobra.Command {
 					return err
 				}
 				again, _ := command.Flags().GetBool("import")
+				cfg.Repair, cfg.RepairTURN = repair, turn
 				if syncSelf(command.Context(), sess, cfg, again) != nil {
 					failed = true
 				}
@@ -810,6 +816,8 @@ func syncCommand() *cobra.Command {
 	}
 	command.Flags().String("dir", "", "sync with this directory instead of the relays")
 	command.Flags().Bool("import", false, "import the drafts that the relays hold again")
+	command.Flags().Bool("repair", false, "audit the pieces on the storage citizens, and rebuild, move or delete pieces; arc serve does this on each tick")
+	command.Flags().Bool("turn", false, "with --repair, let repair use a pipe through TURN; it waits for a direct path by default")
 	return command
 }
 

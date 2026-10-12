@@ -231,6 +231,9 @@ func serve(command *cobra.Command, args []string) error {
 		return err
 	}
 	self.Out, self.Errs = os.Stderr, os.Stderr
+	// Each device that runs arc serve repairs on its tick, and waits for
+	// a direct path (decisions 4 and 7 of the storage network proposal).
+	self.Repair = true
 	go func() {
 		tick := time.NewTicker(selfSyncEvery)
 		defer tick.Stop()
