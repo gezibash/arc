@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,7 +239,7 @@ func TestHelloAndWindow(t *testing.T) {
 	dc, messages, closed := rawPipe(t, s)
 	sendJSON(t, dc, wire.Request{Op: wire.OpHello, N: 7})
 	hello := readReply(t, messages)
-	if hello.N != 7 || hello.Version != 2 || len(hello.Features) != 1 || hello.Features[0] != wire.FeatureBatch || hello.Window != wire.Window {
+	if hello.N != 7 || hello.Version != 2 || !slices.Equal(hello.Features, []string{wire.FeatureBatch, wire.FeatureAudit, wire.FeatureDrain}) || hello.Window != wire.Window {
 		t.Fatalf("hello gave %+v", hello)
 	}
 
@@ -260,5 +261,34 @@ func TestHelloAndWindow(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatalf("the app kept the pipe open with %d puts in flight", wire.Window+1)
 		}
+	}
+}
+
+// TestAuditReplay audits one blob twice through the real app and client,
+// with two nonces. Each answer is the proof of the bytes for its own
+// nonce. The answer to the first nonce does not pass for the second, so a
+// storage citizen that keeps old answers in place of the bytes fails.
+func TestAuditReplay(t *testing.T) {
+	s := testServer(t, t.TempDir())
+	conn := testConn(t, s)
+	ctx := context.Background()
+	b := testBlobs(1, wire.MinBlob)[0]
+	if _, err := conn.Put(ctx, b.ID, b.Data); err != nil {
+		t.Fatal(err)
+	}
+	first, second := wire.NewNonce(), wire.NewNonce()
+	old, err := conn.Audit(ctx, []string{b.ID}, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := conn.Audit(ctx, []string{b.ID}, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old[0].Proof != wire.AuditProof(first, b.ID, b.Data) || fresh[0].Proof != wire.AuditProof(second, b.ID, b.Data) {
+		t.Fatalf("the answers %+v and %+v are not the proofs of the bytes", old[0], fresh[0])
+	}
+	if old[0].Proof == wire.AuditProof(second, b.ID, b.Data) {
+		t.Fatal("the answer to the first nonce passes an audit with the second nonce")
 	}
 }
