@@ -253,6 +253,14 @@ arc-storage drain
 draining: 2 blobs of 12288 bytes remain
 ```
 
+With `arc`, you do not run `drain` by hand. Run `arc keys storage rm
+<name>` on the signer. Each sync of each device then sends `drain` to the
+storage citizen, and repair moves the pieces off it. When the storage
+citizen holds no piece, the next sync of the signer marks it `gone` in the
+storage list. The signer removes the `gone` entry after 30 days. If the
+storage list names the storage citizen `active` again, the sync of the
+signer sends `drain -off`.
+
 ## Settings
 
 The service reads its settings from the environment. `arc serve` gives its

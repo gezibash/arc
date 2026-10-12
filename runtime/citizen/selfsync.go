@@ -265,6 +265,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	if err != nil {
 		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
 	}
+	if listed && !sess.Remote {
+		list = sess.pruneStorageList(ctx, list, cfg)
+	}
 	installs, err := storageInstalls(cfg.Installs)
 	if err != nil {
 		return err
@@ -359,8 +362,10 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		failed = append(failed, err)
 		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
 	}
+	var empty []int
 	for i, o := range opened {
 		as := targets[i].install.As
+		_, _ = cfg.Out.Write(o.said.Bytes())
 		_, _ = cfg.Errs.Write(o.notes.Bytes())
 		side := report.Sides[i]
 		if o.err == nil && side.Err != nil {
@@ -392,8 +397,19 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		if side.Suspect {
 			fmt.Fprintf(cfg.Errs, "%s is suspect: %d pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, side.FailedToday, as)
 		}
-		if side.Empty {
+		switch {
+		case side.Empty && o.locked && !sess.Remote && listed:
+			empty = append(empty, i)
+		case side.Empty && o.locked:
+			fmt.Fprintf(cfg.Out, "%s holds no piece now; the signer marks it gone at its next sync\n", as)
+		case side.Empty:
 			fmt.Fprintf(cfg.Out, "%s holds no piece now; run arc keys storage rm %s --gone on the signer\n", as, as)
+		}
+	}
+	if len(empty) > 0 {
+		if err := sess.markGone(ctx, cfg, list, targets, opened, empty); err != nil {
+			failed = append(failed, err)
+			fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
 		}
 	}
 	fmt.Fprintf(cfg.Out, "self data: took %d records, already held %d", report.Received, report.Held)
@@ -455,6 +471,10 @@ type opening struct {
 	opened time.Time
 	err    error
 	silent time.Duration
+	// locked says that the account of a draining storage citizen takes no
+	// put now, from any device.
+	locked bool
+	said   bytes.Buffer
 	notes  bytes.Buffer
 }
 
@@ -486,7 +506,96 @@ func (sess *Session) openOne(ctx context.Context, cfg SelfSync, syncer *selfsync
 		return o
 	}
 	o.conn = conn
+	o.locked, o.err = sess.setDrain(ctx, conn, t, &o.said, &o.notes)
 	return o
+}
+
+// setDrain makes the account follow the storage list before the sync
+// lists it. Each device sends a drain request to a draining storage
+// citizen, so that it refuses each put, also from an older device. Only
+// the signer ends a drain, for an entry that the list names active: a
+// device can hold an older list. It reports if the account takes no put.
+func (sess *Session) setDrain(ctx context.Context, conn *storage.Conn, t target, out, notes io.Writer) (bool, error) {
+	as := t.install.As
+	switch {
+	case t.state == storage.StateDraining:
+		usage, err := conn.Drain(ctx, false)
+		if errors.Is(err, storage.ErrOlderApp) {
+			fmt.Fprintf(notes, "%s runs a storage app from before drain requests: it still takes a put from an older device; update it\n", as)
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("the drain request failed: %w", err)
+		}
+		return usage.State == storage.StateDraining || usage.State == storage.StateClosing || usage.State == storage.StateClosed, nil
+	case t.state == storage.StateActive && !sess.Remote:
+		usage, err := conn.Usage(ctx)
+		if err != nil || usage.State != storage.StateDraining {
+			return false, err
+		}
+		if _, err := conn.Drain(ctx, true); err != nil {
+			fmt.Fprintf(notes, "%s: the storage list names it active, but the end of its drain failed, so it takes no put: %v\n", as, err)
+			return false, nil
+		}
+		fmt.Fprintf(out, "%s: the storage list names it active, so its drain ended\n", as)
+	}
+	return false, nil
+}
+
+// markGone sets gone in the storage list for each draining storage
+// citizen that holds no piece and no blob, and takes no put. Only the
+// signer does this. The usage of the account confirms that it is empty.
+func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.List, targets []target, opened []opening, empty []int) error {
+	var gone []string
+	for _, i := range empty {
+		as := targets[i].install.As
+		usage, err := opened[i].conn.Usage(ctx)
+		if err != nil {
+			return fmt.Errorf("%s: the usage did not come, so it stays draining: %w", as, err)
+		}
+		if usage.Blobs != 0 {
+			fmt.Fprintf(cfg.Errs, "%s: the listing is empty, but its usage counts %d blobs, so it stays draining\n", as, usage.Blobs)
+			continue
+		}
+		entry, ok := list.Find(targets[i].install.Provider)
+		if !ok {
+			continue
+		}
+		entry.State, entry.Since = storage.StateGone, nostr.Now()
+		if list, err = list.Put(entry); err != nil {
+			return err
+		}
+		fmt.Fprintf(cfg.Out, "%s holds no piece now and takes no put, so the storage list marks it gone\n", as)
+		gone = append(gone, entry.Name)
+	}
+	if len(gone) == 0 {
+		return nil
+	}
+	if _, err := sess.PublishStorageList(ctx, list); err != nil {
+		return fmt.Errorf("the storage list did not change, so %s stays draining: %w", strings.Join(gone, ", "), err)
+	}
+	for _, name := range gone {
+		fmt.Fprintf(cfg.Out, "storage list: %s is gone; each device removes its install at its next sync\n", name)
+	}
+	return nil
+}
+
+// pruneStorageList removes each entry that is gone for 30 days or more,
+// and publishes the list. Only the signer does this. If the list does not
+// publish, it returns the list as it was.
+func (sess *Session) pruneStorageList(ctx context.Context, list storage.List, cfg SelfSync) storage.List {
+	pruned, removed := list.Prune(time.Now())
+	if len(removed) == 0 {
+		return list
+	}
+	if _, err := sess.PublishStorageList(ctx, pruned); err != nil {
+		fmt.Fprintf(cfg.Errs, "self data: the storage list keeps its old gone entries: %v\n", err)
+		return list
+	}
+	for _, e := range removed {
+		fmt.Fprintf(cfg.Out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02"))
+	}
+	return pruned
 }
 
 // once gives the keys of each generation from get, and asks get once for
