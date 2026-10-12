@@ -10,6 +10,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/store"
 )
 
 // TestDataRoots checks the rules of docs/devices/SPEC.md section 3.5: the
@@ -150,4 +151,36 @@ func roundTrip(t *testing.T, citizen keys.Key, r devices.Roots, now nostr.Timest
 		t.Fatal(err)
 	}
 	return opened
+}
+
+// TestRootsSize measures the largest roots event: 64 device wraps, and
+// generation 128 with 127 older roots in the chain. Its JSON must fit the
+// limit of one kept event.
+func TestRootsSize(t *testing.T) {
+	ctx := context.Background()
+	citizen := keys.Generate()
+	var devs []nostr.PubKey
+	for range devices.MaxDevices {
+		devs = append(devs, keys.Generate().Public)
+	}
+	older := map[uint32][32]byte{}
+	for gen := uint32(1); gen < devices.MaxGenerations; gen++ {
+		older[gen] = [32]byte{byte(gen)}
+	}
+	r, root, err := devices.NewGeneration(ctx, citizen, older, devs, 0)
+	if err != nil || root.Gen != devices.MaxGenerations {
+		t.Fatalf("generation %d, %v; want %d", root.Gen, err, devices.MaxGenerations)
+	}
+	event, err := devices.SealRoots(ctx, citizen, r, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := len(event.String())
+	t.Logf("the largest roots event is %d bytes; the limit is %d", size, store.MaxEvent)
+	if size > store.MaxEvent {
+		t.Fatalf("the largest roots event is %d bytes, above the limit of %d", size, store.MaxEvent)
+	}
+	if _, _, err := devices.NewGeneration(ctx, citizen, map[uint32][32]byte{devices.MaxGenerations: {}}, devs, 0); err == nil {
+		t.Fatal("the signer made a generation above the limit")
+	}
 }

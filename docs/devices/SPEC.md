@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, adapters, runtime
 - Owns: core/devices
-- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestRootsEvent|TestContentKey)$' ./internal/proof/ ./core/devices/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs a device with no path to the signer: today each `arc` command of a device connects to the signer first, so a device cannot open the data roots that it holds without the signer. No app seals its data with the data roots yet; the journal sync of issue #205 is the first.
+- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
+- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs a device with no path to the signer: today each `arc` command of a device connects to the signer first, so a device cannot open the data roots that it holds without the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. No app seals its data with the data roots yet; the journal sync of issue #205 is the first.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -140,8 +140,8 @@ The JSON inside is:
 - Only the citizen key MUST sign the roots. Readers apply the rules of
   section 3.2 for the author, the signature, the content and the newest event.
 - `gen` MUST be from 1 to 128. The event MUST hold at most 64 device wraps.
-  With 64 devices and 128 generations, the event stays below the limit of
-  64 KiB for one kept event.
+  With 64 devices and 128 generations, the event is 44,125 bytes (measured by
+  `TestRootsSize`), below the limit of 65,536 bytes for one kept event.
 - The relay rules of section 3.3 apply to kind 10275. The signer MUST refuse
   to sign kind 10275 for any device. A manifest MUST NOT name kind 10275.
 
@@ -243,10 +243,10 @@ restart keeps the list.
 | No relay takes a new list | The command fails. The list stays in the store of the signer, so the bunker loads it at its next start. The next `add` or `revoke` sends a newer list to the relays. The running bunker keeps the list that it has. |
 | No relay answers when `add` or `revoke` starts, and the store holds no list | The command fails. It does not make a list that could replace a list on a relay. |
 | A list does not open | The bunker logs a warning and keeps the list that it has. |
-| No relay takes the roots after `add` or `revoke` | The command fails after the list is published, and names `arc keys roots`. The signer then makes the roots follow the list. A device that the list drops cannot ask the signer, so it cannot fetch roots in the meantime. |
+| No relay takes the roots after `add` or `revoke` | The command fails after the list is published, and names `arc keys roots`. The signer then makes the roots follow the list. Until then, the other devices seal under the old newest root, which the dropped device holds. |
 | A device cannot reach the signer or the relays | It uses the data roots that it keeps on its disk, and warns that the newest roots did not come. |
 | Data names a generation that the machine does not hold | `arc keys unseal` fails, and names the generation. |
-| The citizen has 128 generations | The signer refuses to make another one. |
+| The citizen has 128 generations | The signer refuses to make another one. `revoke` fails after it publishes the list, so the signer refuses the device, but the device keeps the newest root, and data sealed after the revocation stays readable to it. No command repairs this yet. |
 | The bunker starts with no relay, and its store holds no list | The bunker admits by the bunker secret until it loads a list. On the signer, `add` and `revoke` keep each list in the store, so this happens only when another machine made the list. |
 
 ## 6. Security
@@ -326,13 +326,17 @@ restart keeps the list.
   data before the first list, as generation 0. After the signer adds both
   devices, each device opens the data of the other, of generation 0 and 1,
   and another app cannot open it. The signer revokes the phone, and
-  generation 2 has a wrap only to the laptop. The laptop seals under
-  generation 2 and opens each generation. The phone cannot open generation
-  2. A new machine with only the seed opens each generation.
+  the signer shows that generation 2 has a wrap only to the laptop. The
+  laptop seals under generation 2 and opens each generation. The phone
+  cannot open generation 2, because the signer refuses it before the phone
+  reaches its roots. The core test below proves that the phone key cannot
+  open generation 2 even with the event. A new machine with only the seed
+  opens each generation.
 - `TestDataRoots` in `core/devices` checks that a revoked device key gets no
   wrap of a new generation, that an older root cannot open the chain of a
   newer one, that a new device opens each older generation, and that data
   opens only with its own generation and app. `TestRootsEvent` checks the
   kind, the NIP-70 tag, the sealed content, and the refusal of another author
-  and of changed content. `TestContentKey` checks the content key against a
+  and of changed content. `TestRootsSize` measures the largest event, and
+  checks the refusal of generation 129. `TestContentKey` checks the content key against a
   value from the HMAC of the Python standard library.
