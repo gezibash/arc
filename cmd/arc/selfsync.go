@@ -38,6 +38,10 @@ func selfSyncConfig(command *cobra.Command, sess *citizen.Session) (citizen.Self
 	if err != nil {
 		return citizen.SelfSync{}, fmt.Errorf("the device key: %w", err)
 	}
+	path, err := citizenPath(dir)
+	if err != nil {
+		return citizen.SelfSync{}, err
+	}
 	return citizen.SelfSync{
 		Installs: installs,
 		Device:   device,
@@ -57,6 +61,7 @@ func selfSyncConfig(command *cobra.Command, sess *citizen.Session) (citizen.Self
 			return credential, nil
 		},
 		Options: direct.EnvOptions(sess.URLs),
+		Path:    path,
 		Out:     command.OutOrStdout(),
 		Errs:    command.ErrOrStderr(),
 	}, nil

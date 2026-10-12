@@ -25,6 +25,8 @@ type memStorage struct {
 	entries map[string]storage.Entry
 	data    map[string][]byte
 	puts    int
+	deletes int
+	audits  int
 }
 
 func newMemStorage() *memStorage {
@@ -71,8 +73,11 @@ func (m *memStorage) PutMany(_ context.Context, blobs []storage.Blob) ([]storage
 	defer m.mu.Unlock()
 	out := make([]storage.PutResult, len(blobs))
 	for i, b := range blobs {
-		if _, ok := m.data[b.ID]; ok {
+		if e, ok := m.entries[b.ID]; ok {
 			out[i].Status = storage.StatusHeld
+			if e.Deleted {
+				out[i].Status = storage.StatusTombstoned
+			}
 			continue
 		}
 		m.seq++
@@ -80,6 +85,39 @@ func (m *memStorage) PutMany(_ context.Context, blobs []storage.Blob) ([]storage
 		m.data[b.ID] = b.Data
 		m.entries[b.ID] = storage.Entry{Seq: m.seq, ID: b.ID, Size: int64(len(b.Data)), Tag: encodeTag(b.Tag)}
 		out[i].Status = storage.StatusStored
+	}
+	return out, nil
+}
+
+func (m *memStorage) DeleteMany(_ context.Context, ids []string) ([]storage.Item, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]storage.Item, len(ids))
+	for i, id := range ids {
+		out[i] = storage.Item{ID: id, Status: storage.StatusAbsent}
+		if e, ok := m.entries[id]; ok && !e.Deleted {
+			m.seq++
+			m.entries[id] = storage.Entry{Seq: m.seq, ID: id, Deleted: true}
+			delete(m.data, id)
+			m.deletes++
+			out[i].Status = storage.StatusDeleted
+		}
+	}
+	return out, nil
+}
+
+func (m *memStorage) Audit(_ context.Context, ids []string, nonce []byte) ([]storage.Item, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.audits += len(ids)
+	out := make([]storage.Item, len(ids))
+	for i, id := range ids {
+		data, ok := m.data[id]
+		if !ok {
+			out[i] = storage.Item{ID: id, Error: storage.ErrNotFound}
+			continue
+		}
+		out[i] = storage.Item{ID: id, Size: int64(len(data)), Proof: storage.AuditProof(nonce, id, data)}
 	}
 	return out, nil
 }
@@ -140,6 +178,7 @@ func TestNewStorageCitizenAddsPiece(t *testing.T) {
 		sides[i] = Side{Key: keys.Generate().Public, Label: fmt.Sprint("s", i), Conn: stores[i], Active: true}
 	}
 	device := testSyncer(t, citizen, local)
+	device.Repair = true
 	syncOn := func(s *Syncer, sides []Side) Report {
 		t.Helper()
 		r, err := s.SyncAll(ctx, sides)

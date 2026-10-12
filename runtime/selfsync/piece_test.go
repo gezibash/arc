@@ -39,14 +39,14 @@ func testKeys(t *testing.T, gen uint32) Keys {
 //	hkdf(data, b"arc-storage-piece-v1")
 //	hkdf(keyed, b"arc-storage-piece-id-v1" + b"\xaa" * 32)
 //	hkdf(keyed, b"arc-storage-place-v1")
-//	hmac.new(piece_id_key, bytes(range(100, 132)) + bytes([2]), sha256)
+//	hmac.new(piece_id_key, bytes(range(100, 132)) + bytes(range(200, 208)) + bytes([2]), sha256)
 func TestPieceKeys(t *testing.T) {
 	const (
 		pieceOfData  = "df9dbf87edef6efb25be2fba3a4c01399d89a28a6a7dd743f726a70491ed2f8f"
 		pieceOfKeyed = "66b3f5225aedab409b9b4112a452451157429fa64bcfb94484af527f538b1121"
 		pieceIDKey   = "ee089f199107759c3eb3a1c8d1c4ae41cc3ae3e24fa02a0daa99181402cd38aa"
 		placeKey     = "1a5d594d4000f97061bf6fd02c78b8365f3eb5daef9f4784025d914ff68df4a3"
-		pieceID      = "d6269e5cdab5f1de3ce7944cebf35a1f2fae8dd5449ee54f4d7f526a7385f11e"
+		pieceID      = "ee417a775e59033d689f42096d240f1d549bd28584cfbbecd88d8ac5ceb8bc47"
 	)
 	zero, two := testKeys(t, 0), testKeys(t, 2)
 	if got := hex.EncodeToString(zero.Piece); got != pieceOfKeyed {
@@ -74,7 +74,11 @@ func TestPieceKeys(t *testing.T) {
 		for i := range blob {
 			blob[i] = byte(100 + i)
 		}
-		if got := PieceID(idKey, hex.EncodeToString(blob), 2); got != pieceID {
+		var seal SealID
+		for i := range seal {
+			seal[i] = byte(200 + i)
+		}
+		if got := PieceID(idKey, hex.EncodeToString(blob), seal, 2); got != pieceID {
 			t.Fatalf("the piece ID is %s, want %s", got, pieceID)
 		}
 	}
@@ -192,7 +196,7 @@ func TestPieceIDsDiffer(t *testing.T) {
 			t.Fatal(err)
 		}
 		for index := range 4 {
-			id := PieceID(idKey, blob, index)
+			id := PieceID(idKey, blob, SealID{}, index)
 			if other, ok := seen[id]; ok {
 				t.Fatalf("storage citizen %d, index %d has the ID of %s", s, index, other)
 			}

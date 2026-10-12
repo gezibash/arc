@@ -32,6 +32,9 @@ type Client struct {
 	HoldFirst bool
 	// NoRelay stops after the direct attempts.
 	NoRelay bool
+	// OnlyRelay skips the direct attempts: the pipe goes through the TURN
+	// server of the relay.
+	OnlyRelay bool
 	// Notes gets one line for each event that a person wants to know.
 	Notes io.Writer
 }
@@ -61,7 +64,7 @@ func (c Client) Open(ctx context.Context, need int64) (*Conn, error) {
 	}
 	var opened *Conn
 	err := direct.Attempts{
-		Options: c.Options, HoldFirst: c.HoldFirst, NoRelay: c.NoRelay, TURN: c.TURN, Notes: c.Notes,
+		Options: c.Options, HoldFirst: c.HoldFirst, NoRelay: c.NoRelay, OnlyRelay: c.OnlyRelay, TURN: c.TURN, Notes: c.Notes,
 		Need: func() int64 { return need },
 	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
 		opened, err = c.attempt(ctx, options, hold)
