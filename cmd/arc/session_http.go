@@ -27,7 +27,8 @@ func websocketRequest(body string) (string, error) {
 }
 
 // httpSessionCLI writes the response body to standard output, and the path
-// of the body on standard error.
+// of the body on standard error. An upload gets a line for the request
+// body too.
 func httpSessionCLI(cmd *cobra.Command, piped *httpadapter.ClientSession) error {
 	response, err := piped.Copy(cmd.OutOrStdout())
 	if err != nil {
@@ -39,6 +40,12 @@ func httpSessionCLI(cmd *cobra.Command, piped *httpadapter.ClientSession) error 
 			message = failure
 		}
 		return fmt.Errorf("nested session failed: %s", message)
+	}
+	if piped.StreamBody {
+		fmt.Fprintln(cmd.ErrOrStderr(), "upload "+direct.Report(piped.Path, response.RequestBytes, response.RequestElapsed))
+		if response.RequestBytes < response.RequestSent {
+			fmt.Fprintf(cmd.ErrOrStderr(), "the provider answered after %d of the %d bytes of the request body\n", response.RequestBytes, response.RequestSent)
+		}
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), direct.Report(piped.Path, response.Bytes, response.Elapsed))
 	if response.Status >= 400 {

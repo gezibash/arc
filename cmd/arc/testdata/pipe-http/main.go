@@ -4,7 +4,8 @@
 //	old    a provider that is older than the pipe: it refuses the field
 //	       "direct" with invalid_request, and sends the body in frames
 //	deaf   it answers each offer, but no pipe opens
-//	break  the pipe opens, and closes after 64 KiB of the body
+//	break  the pipe opens, and closes after 64 KiB of the body; in an
+//	       upload, after 64 KiB of the request body
 //
 // PIPE_HTTP_LOG gets one line for each session: "offer" or "frames".
 package main
@@ -12,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -36,7 +38,8 @@ func (a *app) HandleRequest(ctx context.Context, r provider.Request) (string, er
 
 func (a *app) HandleSession(ctx context.Context, r provider.Request, stream *provider.Stream) error {
 	var in struct {
-		Direct *direct.Offer `json:"direct"`
+		Direct     *direct.Offer `json:"direct"`
+		StreamBody bool          `json:"stream_body"`
 	}
 	_ = json.Unmarshal([]byte(r.Message), &in)
 	note(in.Direct != nil)
@@ -91,6 +94,11 @@ func (a *app) HandleSession(ctx context.Context, r provider.Request, stream *pro
 		if err = pipe.Wait(ctx); err != nil {
 			return httpadapter.ErrNoPath
 		}
+		if in.StreamBody {
+			_, _ = io.ReadFull(pipe, make([]byte, 64<<10))
+			_ = pipe.Close()
+			return httpadapter.ErrPipeFailed
+		}
 		if err = encoder.Encode(httpadapter.SessionRecord{Type: "response", Status: 200}); err != nil {
 			return err
 		}
@@ -118,6 +126,7 @@ func note(offer bool) {
 
 func main() {
 	body := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
 		_, _ = w.Write(make([]byte, size))
 	})
 	stdio.Main("pipe-http", func(ctx context.Context, opts provider.Options) error {

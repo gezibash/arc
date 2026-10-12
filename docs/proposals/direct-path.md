@@ -378,6 +378,9 @@ body byte.
 5. Then, http downloads (`server_stream`) over the pipe, in
    `sdk/httpadapter` and `cmd/arc/session_http.go`. Then releases. Then the
    storage citizen, after #173. Uploads (`stream_body`) come last.
+   Downloads are built (#202). Uploads are built (#243): the request body
+   goes on the same pipe, in the other direction. [The HTTP spec](../http/SPEC.md),
+   section 3.8, defines them.
 
 The proof of step 5 is the acceptance of #167. Run it on two machines
 behind NAT. The provider serves a file of 100 MB through `arc serve` with an

@@ -67,8 +67,9 @@ These rules hold:
 
 ## Large response bodies
 
-A consumer can ask for the response body of a session on a direct pipe.
-The session stays on the relay, and the pipe carries only the body.
+A consumer can ask for the bodies of a session on a direct pipe: the
+response body, and the request body of a `stream_body` upload. The session
+stays on the relay, and the pipe carries only the bodies.
 [The HTTP spec](../../docs/http/SPEC.md), section 3.7, defines it. These
 variables of `arc-http` set the pipe:
 

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"github.com/coder/websocket"
 	"io"
@@ -112,6 +113,17 @@ func main() {
 			}
 			n -= m
 		}
+	})
+	// /upload reads the request body, and answers with its length and its
+	// SHA-256 in hex.
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		sum := sha256.New()
+		n, err := io.Copy(sum, r.Body)
+		if err != nil {
+			http.Error(w, "read failed", 500)
+			return
+		}
+		fmt.Fprintf(w, "%d %x", n, sum.Sum(nil))
 	})
 	if err := http.ListenAndServe("127.0.0.1:"+os.Getenv("PORT"), mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -134,7 +134,12 @@ func runSession(command *cobra.Command, args []string) error {
 	if wsMode {
 		return websocketCLI(command, stream)
 	}
-	if mode == session.Duplex {
+	if mode == session.Duplex && httpMode {
+		// The HTTP session sends standard input as the request body, on
+		// the pipe or in the session input.
+		piped.Body = command.InOrStdin()
+		defer closeOnEnd(stream, piped.Body)()
+	} else if mode == session.Duplex {
 		input := command.InOrStdin()
 		defer closeOnEnd(stream, input)()
 		go func() {
