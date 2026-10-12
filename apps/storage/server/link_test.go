@@ -128,3 +128,20 @@ func envFloat(t *testing.T, name string, fallback float64) float64 {
 	}
 	return f
 }
+
+func putAll(ctx context.Context, t *testing.T, conn *wire.Conn, blobs []wire.Blob) int {
+	results, err := conn.PutMany(ctx, blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := 0
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatal(r.Err)
+		}
+		if r.Status == wire.StatusStored {
+			stored++
+		}
+	}
+	return stored
+}

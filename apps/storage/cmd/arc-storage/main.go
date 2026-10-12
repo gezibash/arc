@@ -115,14 +115,20 @@ func put(ctx context.Context, args []string) error {
 		return err
 	}
 	defer s.Close()
-	for _, it := range items {
-		status, err := s.Put(ctx, it.id, it.blob)
-		if err != nil {
-			return fmt.Errorf("%s: the storage citizen refused the put: %w", it.file, err)
-		}
-		fmt.Printf("%s\t%s\t%s\n", it.id, status, it.file)
+	blobs := make([]wire.Blob, len(items))
+	for i, it := range items {
+		blobs[i] = wire.Blob{ID: it.id, Data: it.blob}
 	}
-	return nil
+	results, err := s.PutMany(ctx, blobs)
+	for i, r := range results {
+		if r.Err != nil {
+			return fmt.Errorf("%s: the storage citizen refused the put: %w", items[i].file, r.Err)
+		}
+		if r.Status != "" {
+			fmt.Printf("%s\t%s\t%s\n", items[i].id, r.Status, items[i].file)
+		}
+	}
+	return err
 }
 
 // list prints the last change of each blob after the cursor, one line for
@@ -181,8 +187,7 @@ func get(ctx context.Context, args []string) error {
 		return err
 	}
 	defer s.Close()
-	for _, id := range flags.Args() {
-		blob, err := s.Get(ctx, id)
+	return s.GetMany(ctx, flags.Args(), func(id string, blob []byte, err error) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", id, err)
 		}
@@ -201,8 +206,8 @@ func get(ctx context.Context, args []string) error {
 			return err
 		}
 		fmt.Println(file)
-	}
-	return nil
+		return nil
+	})
 }
 
 // remove deletes each blob, and prints the ID and the status.
@@ -220,14 +225,14 @@ func remove(ctx context.Context, args []string) error {
 		return err
 	}
 	defer s.Close()
-	for _, id := range flags.Args() {
-		status, err := s.Delete(ctx, id)
-		if err != nil {
-			return fmt.Errorf("%s: %w", id, err)
+	items, err := s.DeleteMany(ctx, flags.Args())
+	for _, item := range items {
+		if item.Error != "" {
+			return fmt.Errorf("%s: the storage citizen refused the delete: %s", item.ID, item.Error)
 		}
-		fmt.Printf("%s\t%s\n", id, status)
+		fmt.Printf("%s\t%s\n", item.ID, item.Status)
 	}
-	return nil
+	return err
 }
 
 // showUsage prints the bytes in use, the quota and the number of blobs.

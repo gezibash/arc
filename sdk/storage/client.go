@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/gezibash/arc/sdk/direct"
@@ -41,6 +42,11 @@ type Conn struct {
 	closed   chan struct{}
 	// Path names the kinds of the two addresses of the connection.
 	Path string
+	// window is the count of requests that the app takes in flight, from
+	// hello: 0 before hello, 1 for an older app.
+	window int
+	// n is the N of the last numbered request.
+	n uint64
 }
 
 // Open opens a pipe. need is the number of bytes that the session sends or
@@ -76,16 +82,7 @@ func (c Client) attempt(ctx context.Context, options direct.Options, hold time.D
 	if err != nil {
 		return nil, err
 	}
-	s := &Conn{pc: pc, dc: dc, messages: make(chan webrtc.DataChannelMessage, 1024), closed: make(chan struct{})}
-	opened := make(chan struct{})
-	dc.OnOpen(func() { close(opened) })
-	dc.OnClose(func() { close(s.closed) })
-	dc.OnMessage(func(m webrtc.DataChannelMessage) {
-		select {
-		case s.messages <- m:
-		case <-s.closed:
-		}
-	})
+	s, opened := newConn(pc, dc)
 
 	local, err := pc.CreateOffer(nil)
 	if err == nil {
@@ -124,6 +121,22 @@ func (c Client) attempt(ctx context.Context, options direct.Options, hold time.D
 	return s, nil
 }
 
+// newConn makes the Conn of a data channel. opened closes when the data
+// channel opens.
+func newConn(pc *webrtc.PeerConnection, dc *webrtc.DataChannel) (*Conn, chan struct{}) {
+	s := &Conn{pc: pc, dc: dc, messages: make(chan webrtc.DataChannelMessage, 1024), closed: make(chan struct{})}
+	opened := make(chan struct{})
+	dc.OnOpen(func() { close(opened) })
+	dc.OnClose(func() { close(s.closed) })
+	dc.OnMessage(func(m webrtc.DataChannelMessage) {
+		select {
+		case s.messages <- m:
+		case <-s.closed:
+		}
+	})
+	return s, opened
+}
+
 // Close closes the data channel, so that the storage citizen frees the
 // slot of the session at once, and then closes the connection.
 func (s *Conn) Close() {
@@ -141,10 +154,11 @@ type Refused struct{ Code, Message string }
 
 func (r *Refused) Error() string { return r.Message }
 
-// IsRefused says if err is a refusal with the code.
+// IsRefused says if err is a refusal with the code. An empty code
+// matches each refusal.
 func IsRefused(err error, code string) bool {
 	var r *Refused
-	return errors.As(err, &r) && r.Code == code
+	return errors.As(err, &r) && (code == "" || r.Code == code)
 }
 
 func (s *Conn) next(ctx context.Context) (webrtc.DataChannelMessage, error) {
@@ -162,14 +176,18 @@ func (s *Conn) next(ctx context.Context) (webrtc.DataChannelMessage, error) {
 
 // do sends a request, and reads its reply.
 func (s *Conn) do(ctx context.Context, req Request) (Reply, error) {
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return Reply{}, err
-	}
-	if err := s.dc.SendText(string(raw)); err != nil {
+	if err := s.send(req); err != nil {
 		return Reply{}, err
 	}
 	return s.reply(ctx)
+}
+
+func (s *Conn) send(req Request) error {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	return s.dc.SendText(string(raw))
 }
 
 func (s *Conn) reply(ctx context.Context) (Reply, error) {
@@ -225,16 +243,21 @@ func (s *Conn) Get(ctx context.Context, id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !GoodSize(r.Size) {
-		return nil, fmt.Errorf("the storage citizen announced a blob of %d bytes", r.Size)
+	return s.blob(ctx, r.Size)
+}
+
+// blob reads the bytes of one blob of a get.
+func (s *Conn) blob(ctx context.Context, size int64) ([]byte, error) {
+	if !GoodSize(size) {
+		return nil, fmt.Errorf("the storage citizen announced a blob of %d bytes", size)
 	}
-	data := make([]byte, 0, r.Size)
-	for int64(len(data)) < r.Size {
+	data := make([]byte, 0, size)
+	for int64(len(data)) < size {
 		m, err := s.next(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if m.IsString || int64(len(data)+len(m.Data)) > r.Size {
+		if m.IsString || int64(len(data)+len(m.Data)) > size {
 			return nil, errors.New("the storage citizen sent other bytes than the size of the blob")
 		}
 		data = append(data, m.Data...)
@@ -263,4 +286,214 @@ type Usage struct {
 func (s *Conn) Usage(ctx context.Context) (Usage, error) {
 	r, err := s.do(ctx, Request{Op: OpUsage})
 	return Usage{Used: r.Used, Quota: r.Quota, Blobs: r.Blobs, State: r.State, Plan: r.Plan, Expires: r.Expires}, err
+}
+
+// Window asks the app for its features once, with hello, and returns the
+// count of requests that the device keeps in flight: Window or less for an
+// app with FeatureBatch, and 1 for an older app.
+func (s *Conn) Window(ctx context.Context) (int, error) {
+	if s.window > 0 {
+		return s.window, nil
+	}
+	r, err := s.do(ctx, Request{Op: OpHello})
+	switch {
+	case IsRefused(err, ErrInvalidRequest):
+		s.window = 1
+	case err != nil:
+		return 0, err
+	case slices.Contains(r.Features, FeatureBatch) && r.Window > 1:
+		s.window = min(r.Window, Window)
+	default:
+		s.window = 1
+	}
+	return s.window, nil
+}
+
+// PutResult is the result of one put of PutMany: a status of Put, or a
+// refusal.
+type PutResult struct {
+	Status string
+	Err    error
+}
+
+// PutMany gives several blobs, with at most Window puts in flight. Each
+// result is for the blob at the same index. A refusal of one put is in
+// its result, and the other puts go on. The error says that the pipe
+// failed; the results then hold the puts that ended before.
+func (s *Conn) PutMany(ctx context.Context, blobs []Blob) ([]PutResult, error) {
+	results := make([]PutResult, len(blobs))
+	if len(blobs) == 0 {
+		return results, nil
+	}
+	window, err := s.Window(ctx)
+	if err != nil {
+		return results, err
+	}
+	if window <= 1 {
+		for i, b := range blobs {
+			status, err := s.Put(ctx, b.ID, b.Data)
+			if err != nil && !IsRefused(err, "") {
+				return results, err
+			}
+			results[i] = PutResult{Status: status, Err: err}
+		}
+		return results, nil
+	}
+
+	// One writer sends the bytes, in the order of the send replies. The
+	// app gives each run of bytes to the oldest put that it answered send.
+	bytesOf := make(chan []byte, window)
+	failed := make(chan error, 1)
+	go func() {
+		for data := range bytesOf {
+			if err := direct.Send(s.dc, bytes.NewReader(data), int64(len(data))); err != nil {
+				failed <- err
+				for range bytesOf {
+				}
+				return
+			}
+		}
+	}()
+	defer close(bytesOf)
+
+	inFlight := map[uint64]int{}
+	next := 0
+	for next < len(blobs) || len(inFlight) > 0 {
+		for next < len(blobs) && len(inFlight) < window {
+			s.n++
+			if err := s.send(Request{Op: OpPut, N: s.n, ID: blobs[next].ID, Size: int64(len(blobs[next].Data))}); err != nil {
+				return results, err
+			}
+			inFlight[s.n] = next
+			next++
+		}
+		select {
+		case err := <-failed:
+			return results, err
+		default:
+		}
+		r, err := s.reply(ctx)
+		if err != nil && !IsRefused(err, "") {
+			return results, err
+		}
+		i, ok := inFlight[r.N]
+		if !ok {
+			return results, fmt.Errorf("the storage citizen answered the request %d, which is not in flight", r.N)
+		}
+		switch {
+		case err != nil:
+			results[i].Err = err
+			delete(inFlight, r.N)
+		case r.Status == StatusSend:
+			bytesOf <- blobs[i].Data
+		default:
+			results[i].Status = r.Status
+			delete(inFlight, r.N)
+		}
+	}
+	return results, nil
+}
+
+// GetMany gets several blobs, MaxBatch IDs in one request. It calls f for
+// each ID, in order, with its bytes or a refusal, such as not_found. If f
+// returns an error, GetMany reads the rest of the bytes of that request,
+// and returns the error.
+func (s *Conn) GetMany(ctx context.Context, ids []string, f func(id string, blob []byte, err error) error) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	window, err := s.Window(ctx)
+	if err != nil {
+		return err
+	}
+	if window <= 1 {
+		for _, id := range ids {
+			blob, err := s.Get(ctx, id)
+			if err != nil && !IsRefused(err, "") {
+				return err
+			}
+			if err := f(id, blob, err); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for chunk := range slices.Chunk(ids, MaxBatch) {
+		r, err := s.batch(ctx, OpGet, chunk)
+		if err != nil {
+			return err
+		}
+		var stop error
+		for i, item := range r.Items {
+			var blob []byte
+			var refused error
+			if item.Error != "" {
+				refused = &Refused{Code: item.Error, Message: fmt.Sprintf("%s: %s", item.ID, item.Error)}
+			} else if blob, err = s.blob(ctx, item.Size); err != nil {
+				return err
+			}
+			if stop == nil {
+				stop = f(chunk[i], blob, refused)
+			}
+		}
+		if stop != nil {
+			return stop
+		}
+	}
+	return nil
+}
+
+// DeleteMany removes several blobs, MaxBatch IDs in one request. Each item
+// is for the ID at the same index: StatusDeleted or StatusAbsent, or an
+// error code.
+func (s *Conn) DeleteMany(ctx context.Context, ids []string) ([]Item, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	window, err := s.Window(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]Item, 0, len(ids))
+	if window <= 1 {
+		for _, id := range ids {
+			status, err := s.Delete(ctx, id)
+			item := Item{ID: id, Status: status}
+			if r, ok := errors.AsType[*Refused](err); ok {
+				item.Error = r.Code
+			} else if err != nil {
+				return items, err
+			}
+			items = append(items, item)
+		}
+		return items, nil
+	}
+	for chunk := range slices.Chunk(ids, MaxBatch) {
+		r, err := s.batch(ctx, OpDelete, chunk)
+		if err != nil {
+			return items, err
+		}
+		items = append(items, r.Items...)
+	}
+	return items, nil
+}
+
+// batch sends one get or delete with IDs, and checks that the reply has
+// one item for each ID, in order.
+func (s *Conn) batch(ctx context.Context, op string, ids []string) (Reply, error) {
+	s.n++
+	n := s.n
+	r, err := s.do(ctx, Request{Op: op, N: n, IDs: ids})
+	if err != nil {
+		return r, err
+	}
+	if r.N != n || len(r.Items) != len(ids) {
+		return r, fmt.Errorf("the storage citizen answered %d items for request %d, not %d items for request %d", len(r.Items), r.N, len(ids), n)
+	}
+	for i, item := range r.Items {
+		if item.ID != ids[i] {
+			return r, fmt.Errorf("the storage citizen answered %s in place of %s", item.ID, ids[i])
+		}
+	}
+	return r, nil
 }
