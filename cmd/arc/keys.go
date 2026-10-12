@@ -324,7 +324,7 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			showSeed(command.ErrOrStderr(), words, passphrase != "")
-			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
 			return nil
 		},
 	}
@@ -360,7 +360,7 @@ func keysCommand() *cobra.Command {
 			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
-			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
 			return nil
 		},
 	}
@@ -400,7 +400,7 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s\n%s\n", k.Name(), k.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
 			return nil
 		},
 	}
@@ -417,7 +417,7 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			if len(all) == 0 {
-				fmt.Println("no identities: make one with arc keys gen")
+				fmt.Fprintln(command.OutOrStdout(), "no identities: make one with arc keys gen")
 				return nil
 			}
 			active := defaultName(root)
@@ -426,7 +426,7 @@ func keysCommand() *cobra.Command {
 				if c.name == active {
 					mark = "*"
 				}
-				fmt.Printf("%s %s  %s\n", mark, c.name, c.public)
+				fmt.Fprintf(command.OutOrStdout(), "%s %s  %s\n", mark, c.name, c.public)
 			}
 			return nil
 		},
@@ -445,7 +445,7 @@ func keysCommand() *cobra.Command {
 			if err := os.WriteFile(defaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
 				return err
 			}
-			fmt.Printf("the default is %s\n", args[0])
+			fmt.Fprintf(command.OutOrStdout(), "the default is %s\n", args[0])
 			return nil
 		},
 	}
@@ -467,7 +467,7 @@ func keysCommand() *cobra.Command {
 				return fmt.Errorf("no identity %q on this machine: see arc keys list", name)
 			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
-				fmt.Printf("Remove %s, its key and its store? [y/N] ", name)
+				fmt.Fprintf(command.OutOrStdout(), "Remove %s, its key and its store? [y/N] ", name)
 				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					return errors.New("nothing was removed")
@@ -481,7 +481,7 @@ func keysCommand() *cobra.Command {
 					return err
 				}
 			}
-			fmt.Printf("removed %s\n", name)
+			fmt.Fprintf(command.OutOrStdout(), "removed %s\n", name)
 			return nil
 		},
 	}
@@ -505,7 +505,7 @@ func keysCommand() *cobra.Command {
 			if err := keyfile.Write(keyPath(dir), sealed); err != nil {
 				return err
 			}
-			fmt.Println("the key is sealed; arc asks for the passphrase, or reads ARC_PASSPHRASE")
+			fmt.Fprintln(command.OutOrStdout(), "the key is sealed; arc asks for the passphrase, or reads ARC_PASSPHRASE")
 			return nil
 		},
 	}
@@ -526,7 +526,7 @@ func whoamiCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s\n%s\nchosen by %s\n", filepath.Base(dir), strings.TrimSpace(string(public)), source)
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\nchosen by %s\n", filepath.Base(dir), strings.TrimSpace(string(public)), source)
 			return nil
 		},
 	}
@@ -725,9 +725,9 @@ func serveBunker(command *cobra.Command, _ []string) error {
 
 	// With a device list, the secret admits nobody, so the URI leaves it out.
 	if g.listed() {
-		fmt.Printf("bunker://%s?relay=%s\n", pk.Hex(), url)
+		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s\n", pk.Hex(), url)
 	} else {
-		fmt.Printf("bunker://%s?relay=%s&secret=%s\n", pk.Hex(), url, secret)
+		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), url, secret)
 	}
 	go watchDevices(ctx, relay.Relay{URL: url, Signer: id.key}, id.key, g, log)
 	for {

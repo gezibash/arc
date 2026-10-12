@@ -72,7 +72,10 @@ func TestStorageNetworkSync(t *testing.T) {
 		slowest = max(slowest, took)
 	}
 	t.Logf("measured: arc sync took %s; the storage citizens took %s together, the slowest %s", whole.Round(time.Millisecond), sum, slowest)
-	if whole >= sum*8/10 {
+	// A sync one after the other takes at least the sum, so a time below
+	// the sum proves that the syncs overlap. The start of the process adds
+	// to the whole and not to the sum; a race build makes that start slow.
+	if whole >= sum {
 		t.Fatalf("arc sync took %s, and the storage citizens took %s together: they did not sync at the same time", whole, sum)
 	}
 	t.Log("ok: one sync writes a piece to three storage citizens at the same time")

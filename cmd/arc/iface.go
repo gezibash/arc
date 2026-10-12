@@ -42,7 +42,7 @@ func dispatch(command *cobra.Command, args []string) error {
 	}
 	// arc update runs a new program with --version before it swaps it in.
 	if args[0] == "--version" || args[0] == "-v" {
-		fmt.Printf("arc %s\n", version)
+		fmt.Fprintf(command.OutOrStdout(), "arc %s\n", version)
 		return nil
 	}
 	return runCapability(command, args[0], args[1:])
@@ -70,7 +70,7 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 		return err
 	}
 	env := &citizen.Environment{Session: sess, Installs: installs, Tool: name, Lists: store}
-	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: os.Stdout, Err: os.Stderr})
+	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: command.OutOrStdout(), Err: os.Stderr})
 }
 
 // helpCommand shows the help of a command of arc, or of an app.

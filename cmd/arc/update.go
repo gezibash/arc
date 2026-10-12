@@ -154,19 +154,19 @@ func update(command *cobra.Command, apply bool) error {
 	platform := release.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
 	newest, err := release.Newest(ctx, source, checkpoint, publisher[:], channel, platform, version)
 	if errors.Is(err, release.ErrNoRelease) {
-		fmt.Printf("arc %s is the newest release of %s for %s/%s\n", version, channel, platform.OS, platform.Arch)
+		fmt.Fprintf(command.OutOrStdout(), "arc %s is the newest release of %s for %s/%s\n", version, channel, platform.OS, platform.Arch)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s names arc %s for %s/%s\n", channel, newest.Version, platform.OS, platform.Arch)
-	fmt.Printf("  build   %s\n", newest.Build)
-	fmt.Printf("  hash    %s\n", newest.Archive().SHA256)
-	fmt.Printf("  size    %d bytes\n", newest.Archive().Size)
+	fmt.Fprintf(command.OutOrStdout(), "%s names arc %s for %s/%s\n", channel, newest.Version, platform.OS, platform.Arch)
+	fmt.Fprintf(command.OutOrStdout(), "  build   %s\n", newest.Build)
+	fmt.Fprintf(command.OutOrStdout(), "  hash    %s\n", newest.Archive().SHA256)
+	fmt.Fprintf(command.OutOrStdout(), "  size    %d bytes\n", newest.Archive().Size)
 	if !apply {
-		fmt.Println("\nrun arc update apply to install it")
+		fmt.Fprintln(command.OutOrStdout(), "\nrun arc update apply to install it")
 		return nil
 	}
 
@@ -196,7 +196,7 @@ func update(command *cobra.Command, apply bool) error {
 	}
 	started, finished := time.Now(), time.Time{}
 	progress := func(read, total int64) {
-		fmt.Printf("\r  read    %d of %d bytes", read, total)
+		fmt.Fprintf(command.OutOrStdout(), "\r  read    %d of %d bytes", read, total)
 		if read == total {
 			finished = time.Now()
 		}
@@ -204,13 +204,13 @@ func update(command *cobra.Command, apply bool) error {
 	if err := release.Apply(ctx, source, newest, program, progress); err != nil {
 		return err
 	}
-	fmt.Println()
+	fmt.Fprintln(command.OutOrStdout())
 	if piped != nil {
 		path = piped.path
 	}
 	fmt.Fprintln(command.ErrOrStderr(), direct.Report(path, newest.Archive().Size, finished.Sub(started)))
-	fmt.Printf("arc %s is installed at %s\n", newest.Version, program)
-	fmt.Printf("the release it replaced stands at %s.previous\n", program)
+	fmt.Fprintf(command.OutOrStdout(), "arc %s is installed at %s\n", newest.Version, program)
+	fmt.Fprintf(command.OutOrStdout(), "the release it replaced stands at %s.previous\n", program)
 	return nil
 }
 
@@ -285,7 +285,7 @@ func releaseCommand() *cobra.Command {
 			if err := os.Rename(temporary, target); err != nil {
 				return err
 			}
-			fmt.Printf("signed %s, sequence %v, as %s\n", target, unsigned["sequence"], id.key.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "signed %s, sequence %v, as %s\n", target, unsigned["sequence"], id.key.Public.Hex())
 			return nil
 		},
 	}

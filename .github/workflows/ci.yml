@@ -126,6 +126,60 @@ jobs:
           cache: true
       - run: go test -count=1 -run '^TestInterface' ./internal/proof/
 
+  # The race detector runs in its own jobs, so the jobs above stay fast.
+  # GOFLAGS reaches each `go build` that a test runs, so the programs that
+  # the tests start also have the race detector. Each process writes its
+  # race reports to a file. A program that a test stops cannot report a
+  # race in its exit status, so the last step fails on any report file.
+  race:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
+    name: Race detector (${{ matrix.part }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: packages
+            run: go test -count=1 $(go list ./... | grep -v '/internal/proof$')
+          - part: delivery proofs
+            run: go test -count=1 -timeout 40m -run '^TestDelivery' ./internal/proof/
+          - part: interface proofs
+            run: go test -count=1 -timeout 40m -run '^TestInterface' ./internal/proof/
+          - part: other proofs
+            run: go test -count=1 -timeout 40m -skip '^Test(Delivery|Interface)' ./internal/proof/
+    steps:
+      # A storage proof builds an older storage app from git history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+          cache: true
+      - name: Test with the race detector
+        env:
+          GOFLAGS: -race
+          GORACE: log_path=${{ runner.temp }}/race/report
+        run: |
+          mkdir -p "$RUNNER_TEMP/race"
+          ${{ matrix.run }}
+      - name: Fail on a race report from any process
+        if: ${{ !cancelled() }}
+        run: |
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/race/report.*)
+          for report in "${reports[@]}"; do
+            echo "::group::$report"
+            cat "$report"
+            echo "::endgroup::"
+          done
+          if [ "${#reports[@]}" -gt 0 ]; then
+            echo "::error::${#reports[@]} processes reported a data race"
+            exit 1
+          fi
+
   # Check the actual release recipe only when its inputs change.
   # Skipped jobs still satisfy the existing required status checks.
   clean-build:
