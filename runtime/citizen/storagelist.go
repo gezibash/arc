@@ -75,17 +75,18 @@ func (sess *Session) RelayURLs() []string {
 // or draining under the name of the entry, and removes the install of each
 // entry that is gone. It names each local install that the list does not
 // hold. With no list, it changes nothing: an older signer publishes none.
-func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Installs, out, errs io.Writer) error {
+// It returns the list, and false when no list exists.
+func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Installs, out, errs io.Writer) (storage.List, bool, error) {
 	list, ok, err := sess.StorageList(ctx)
 	if err != nil {
-		return fmt.Errorf("the storage list did not come, so this machine syncs with its own installs: %w", err)
+		return storage.List{}, false, fmt.Errorf("the storage list did not come, so this machine syncs with its own installs: %w", err)
 	}
 	if !ok {
-		return nil
+		return storage.List{}, false, nil
 	}
 	all, err := installs.List()
 	if err != nil {
-		return err
+		return list, true, err
 	}
 	installed := map[string]catalog.Install{}
 	names := map[string]catalog.Install{}
@@ -103,7 +104,7 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 		switch {
 		case entry.State == storage.StateGone && have:
 			if _, err := installs.Remove(install.As); err != nil {
-				return err
+				return list, true, err
 			}
 			fmt.Fprintf(out, "removed %s: the storage list says it is gone\n", install.As)
 		case entry.Used() && !have:
@@ -117,7 +118,7 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 				continue
 			}
 			if err := installs.Add(offer, entry.Name); err != nil {
-				return err
+				return list, true, err
 			}
 			fmt.Fprintf(out, "installed %s from the storage list\n", entry.Name)
 		}
@@ -127,5 +128,5 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 			fmt.Fprintf(errs, "%s is not in the storage list; run arc keys storage add on the signer\n", install.As)
 		}
 	}
-	return nil
+	return list, true, nil
 }

@@ -38,6 +38,14 @@ func storageCitizen(t *testing.T, work, url string, signer machine) string {
 // namedStorageCitizen is storageCitizen with its own directories under work.
 func namedStorageCitizen(t *testing.T, work, url string, signer machine, name string) string {
 	t.Helper()
+	key, _ := servedStorageCitizen(t, work, url, signer, name)
+	return key
+}
+
+// servedStorageCitizen is namedStorageCitizen that also returns the process
+// of arc serve, so that a test can stop the storage citizen.
+func servedStorageCitizen(t *testing.T, work, url string, signer machine, name string) (string, *process) {
+	t.Helper()
 	store := arc(t, filepath.Join(work, name))
 	store.run("keys", "gen")
 	key := store.key()
@@ -48,10 +56,11 @@ func namedStorageCitizen(t *testing.T, work, url string, signer machine, name st
 	app := filepath.Join(work, name+"-app")
 	write(t, filepath.Join(app, "Arcfile"), fmt.Sprintf("version = 2\n\n[serve]\ncommand = %q\nmanifest = %q\n",
 		program("arc-storage"), filepath.Join(repo, "apps/storage/manifest.json")), 0o600)
-	if p := store.serve(app); !p.waitFor("serves storage", 10*time.Second) {
+	p := store.serve(app)
+	if !p.waitFor("serves storage", 10*time.Second) {
 		t.Fatalf("the storage citizen did not serve:\n%s", p.output())
 	}
-	return key
+	return key, p
 }
 
 // relaySelfData returns the self data of the citizen of home that the relay

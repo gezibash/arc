@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
@@ -86,6 +87,42 @@ type state struct {
 	Remote map[string]bool `json:"remote"`
 	// Seen holds the IDs that the device got, whatever the store did.
 	Seen map[string]bool `json:"seen"`
+	// Answered is the Unix time of the last pipe that opened.
+	Answered int64 `json:"answered,omitempty"`
+	// SilentSince is the Unix time of the first failed open after the
+	// last pipe that opened. It is 0 while the storage citizen answers.
+	SilentSince int64 `json:"silent_since,omitempty"`
+}
+
+// SilentWarning is the time with no answer after which each sync warns
+// that a storage citizen is silent. Only the user marks it gone.
+const SilentWarning = 7 * 24 * time.Hour
+
+// Answered records that a pipe to the storage citizen opened at the time at.
+func (s *Syncer) Answered(name string, at time.Time) error {
+	st, err := s.load(name)
+	if err != nil {
+		return err
+	}
+	st.Answered, st.SilentSince = at.Unix(), 0
+	return s.save(name, st)
+}
+
+// Unanswered records that no pipe to the storage citizen opened at the time
+// at. It returns the time since the first failed open after the last
+// answer: a device that was off itself does not count that time.
+func (s *Syncer) Unanswered(name string, at time.Time) (time.Duration, error) {
+	st, err := s.load(name)
+	if err != nil {
+		return 0, err
+	}
+	if st.SilentSince == 0 {
+		st.SilentSince = at.Unix()
+		if err := s.save(name, st); err != nil {
+			return 0, err
+		}
+	}
+	return at.Sub(time.Unix(st.SilentSince, 0)), nil
 }
 
 func (s *Syncer) statePath(name string) string {
@@ -126,10 +163,11 @@ func (s *Syncer) save(name string, st state) error {
 
 // Sync syncs with one storage citizen. name names the storage citizen in
 // the state directory, such as its key in hex. The device first gets the
-// blobs that it lacks, and then puts the records that the storage citizen
-// lacks. A deletion that it gets first thus drops the old records from the
-// store before the device would put them back.
-func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error) {
+// blobs that it lacks, and then, if put is true, puts the records that the
+// storage citizen lacks. A deletion that it gets first thus drops the old
+// records from the store before the device would put them back. A storage
+// citizen that the citizen drains gets no put.
+func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Report, error) {
 	var report Report
 	st, err := s.load(name)
 	if err != nil {
@@ -222,6 +260,10 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error)
 		default:
 			report.Held++
 		}
+	}
+
+	if !put {
+		return report, s.save(name, st)
 	}
 
 	// Read the store again: a deletion that came in removed records.
