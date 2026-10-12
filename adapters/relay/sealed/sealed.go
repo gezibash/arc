@@ -2,8 +2,8 @@
 // as NIP-37 recommends for private storage.
 //
 // Sealed data is a NIP-37 draft, a draft checkpoint, a part of a draft, a
-// private relay list, or a device list. The content is already encrypted to its author. The
-// relay also keeps the events themselves from everyone else, so nobody else
+// private relay list, a device list, the data roots, or a storage list. The
+// content is already encrypted to its author. The relay also keeps the events themselves from everyone else, so nobody else
 // learns how many drafts a citizen has, or when they wrote them.
 //
 // A query that names a sealed kind needs NIP-42 authentication, and must name
@@ -20,10 +20,11 @@ import (
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/sdk/storage"
 )
 
 // Kinds are the kinds that a relay serves only to their author.
-var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, draft.RelayListKind, devices.Kind, devices.RootsKind}
+var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, draft.RelayListKind, devices.Kind, devices.RootsKind, storage.ListKind}
 
 // Protect makes a relay serve sealed events only to their author. Call it
 // after the relay has its event store.

@@ -11,8 +11,9 @@ import (
 )
 
 // errSignerOnly says that a machine without the citizen key cannot change
-// the device list. A signer refuses to sign it for a device.
-var errSignerOnly = errors.New("only the signer, which holds the citizen key, changes the device list")
+// the device list or the storage list. A signer refuses to sign them for a
+// device.
+var errSignerOnly = errors.New("only the signer, which holds the citizen key, changes the device list and the storage list")
 
 // DeviceList returns the newest device list of this citizen, from the store
 // and the relays. It returns false when no list exists.
