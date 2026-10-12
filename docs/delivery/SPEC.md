@@ -5,7 +5,7 @@
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
 - Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList)$' ./internal/proof/ ./core/store/
 - Remaining: phases 5 and 6 of section 8.1
-- Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has no test between two real NATs, or on the relay ports of Fly.io. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
+- Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
 Phases 1 to 4 are built, see section 8.1. Phases 5 and 6 are not built.
 Phase 4 made this layer the only ARC stack in v0.11.0. The older stack used
