@@ -19,9 +19,9 @@ shards='
 delivery ^TestDelivery$
 interface ^TestInterface$
 storage-pieces ^Test(StoragePieces|StorageFormat1)$
-storage-repair ^Test(StorageRepair|StorageRepairTURN)$
+storage-repair ^Test(StorageRepair|StorageRepairTURN|StorageSealsWithDataRoots)$
 storage-sync ^Test(StorageNetworkSync|StorageJournalSync|StorageList)$
-other ^Test(Devices|MessageWatch|ExecKeep|DataRoots|Seed|StorageSealsWithDataRoots|StorageImportsDrafts)$
+other ^Test(Devices|MessageWatch|ExecKeep|DataRoots|Seed|StorageImportsDrafts)$
 '
 
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
