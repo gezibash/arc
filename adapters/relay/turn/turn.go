@@ -126,7 +126,8 @@ func Serve(conn net.PacketConn, config Config) (*Server, error) {
 					MaxPort:      config.MaxPort,
 					Net:          config.Net,
 				},
-				ledger: s.ledger,
+				ledger:  s.ledger,
+				localIP: localIP(config),
 			},
 		}},
 	})
@@ -135,6 +136,18 @@ func Serve(conn net.PacketConn, config Config) (*Server, error) {
 	}
 	s.turn = server
 	return s, nil
+}
+
+// localIP is the address that the relay sockets listen on, if it is not
+// the public address. On Fly.io, the network drops a packet from the relay
+// to its own public address. So a relay socket sends a packet for another
+// relay socket to this address, and the host delivers it (#264).
+func localIP(config Config) net.IP {
+	addr, err := net.ResolveIPAddr("ip4", config.RelayHost)
+	if err != nil || addr.IP == nil || addr.IP.IsUnspecified() || addr.IP.Equal(config.PublicIP) {
+		return nil
+	}
+	return addr.IP
 }
 
 // Close stops the server and its allocations.
@@ -237,6 +250,9 @@ func (l *ledger) spend(key string, n int) bool {
 type meteredGenerator struct {
 	*pturn.RelayAddressGeneratorPortRange
 	ledger *ledger
+	// localIP is the address that the relay sockets listen on, if it is
+	// not the public address and not unspecified.
+	localIP net.IP
 }
 
 func (g *meteredGenerator) AllocatePacketConn(config pturn.AllocateListenerConfig) (net.PacketConn, net.Addr, error) {
@@ -244,7 +260,12 @@ func (g *meteredGenerator) AllocatePacketConn(config pturn.AllocateListenerConfi
 	if err != nil {
 		return nil, nil, err
 	}
-	return &meteredConn{PacketConn: conn, key: config.UserID, ledger: g.ledger}, addr, nil
+	c := &meteredConn{PacketConn: conn, key: config.UserID, ledger: g.ledger}
+	if g.localIP != nil {
+		c.publicIP, c.localIP = g.RelayAddress, g.localIP
+		c.minPort, c.maxPort = int(g.MinPort), int(g.MaxPort)
+	}
+	return c, addr, nil
 }
 
 // meteredConn is a relay socket. When the citizen used its quota, the
@@ -253,6 +274,12 @@ type meteredConn struct {
 	net.PacketConn
 	key    string
 	ledger *ledger
+	// publicIP and localIP are set if the socket listens on localIP behind
+	// publicIP. A peer that is another relay socket then has localIP on
+	// the host and publicIP for the clients. Only the ports of the relay
+	// sockets change, so a client cannot reach another service of the host.
+	publicIP, localIP net.IP
+	minPort, maxPort  int
 }
 
 func (c *meteredConn) ReadFrom(b []byte) (int, net.Addr, error) {
@@ -261,7 +288,7 @@ func (c *meteredConn) ReadFrom(b []byte) (int, net.Addr, error) {
 		_ = c.Close()
 		return 0, nil, errQuota
 	}
-	return n, addr, err
+	return n, c.swapIP(addr, c.localIP, c.publicIP), err
 }
 
 func (c *meteredConn) WriteTo(b []byte, addr net.Addr) (int, error) {
@@ -269,5 +296,15 @@ func (c *meteredConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 		_ = c.Close()
 		return 0, errQuota
 	}
-	return c.PacketConn.WriteTo(b, addr)
+	return c.PacketConn.WriteTo(b, c.swapIP(addr, c.publicIP, c.localIP))
+}
+
+// swapIP gives addr with the IP address to in place of from. It gives
+// addr unchanged if its IP address is not from, or its port is not the
+// port of a relay socket.
+func (c *meteredConn) swapIP(addr net.Addr, from, to net.IP) net.Addr {
+	if u, ok := addr.(*net.UDPAddr); ok && from != nil && u.IP.Equal(from) && u.Port >= c.minPort && u.Port <= c.maxPort {
+		return &net.UDPAddr{IP: to, Port: u.Port}
+	}
+	return addr
 }
