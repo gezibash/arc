@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -330,4 +331,30 @@ func TestSessionOpensWhenDataArrivesBeforeAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	line(t, reader, "kept\n")
+}
+
+// A provider can refuse an open before the relay confirms the open. The
+// refusal ends the stream, which cancels the send. The refusal is the outcome.
+func TestSessionRefusalArrivesBeforeTheOpenIsConfirmed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	owner := keys.Generate()
+	liveSessionProvider(t, ctx, owner, r, session.RequestReply)
+	_, err := call.OpenSession(ctx, keys.Generate(), owner.Public, call.Request{Capability: "primary"}, session.Duplex, lateOK{r})
+	if !errors.Is(err, session.ErrUnsupported) {
+		t.Fatalf("refused open = %v", err)
+	}
+}
+
+// lateOK delivers each event, and confirms it only when the context of the
+// send ends, as a relay on a loaded machine can.
+type lateOK struct{ relay.Relay }
+
+func (l lateOK) Send(ctx context.Context, event nostr.Event) error {
+	if err := l.Relay.Send(ctx, event); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return fmt.Errorf("publish: %w", context.Cause(ctx))
 }
