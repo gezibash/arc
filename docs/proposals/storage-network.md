@@ -112,9 +112,9 @@ These facts limit the design, or must change before it.
 | `allow` in the Arcfile matches the key of the caller. | `apps/storage/README.md:79-81` |
 | `go.etcd.io/bbolt` is a dependency already. `klauspost/reedsolomon` is not. | `go.mod:20` |
 
-The work of #209 is not merged. These facts come from the note of the #209
-session and from the diff in its worktree, on 2026-10-12. They have no
-stable line numbers.
+The work of #209 is in PR #213, which is not merged. These facts come from
+the notes of the #209 session and from its diff, on 2026-10-12. They have
+no stable line numbers.
 
 - The account key is
   `HKDF-SHA256(citizen secret, info = "arc-storage-account-v1" || storage key)`.
@@ -123,6 +123,10 @@ stable line numbers.
 - The signer pushes a grant set, `{"v":1,"grants":[...],"at":<unix>}`, in a
   live call that the account key authors. A newer set replaces an older one.
 - `STORAGE_OWNERS` lists account keys.
+- `arc keys account <storage key>` prints the account key. A builtin
+  command `arc storage` would hide the installed app `storage`, which
+  `arc-storage` runs as `arc storage open`. This proposal therefore puts its
+  commands under `arc keys storage`.
 
 ## 3. Admission
 
@@ -135,7 +139,7 @@ its grant from the push of #209.
 
 ### 3.2 The call
 
-The signer runs `arc storage add <link or key>`. It derives the account key
+The signer runs `arc keys storage add <link or key>`. It derives the account key
 for that storage citizen, and sends one live call to the capability
 `storage`. The account key authors the call. The body is:
 
@@ -274,16 +278,16 @@ Its content is this JSON, sealed with NIP-44 to the citizen key:
 - **Pick.** The user picks storage citizens. ARC does not pick them. A
   storage citizen announces the app as any provider does. The Arc Portal or
   an invite link shows it.
-- **Add.** `arc storage add <link>` on the signer: `join` (section 3), then a
+- **Add.** `arc keys storage add <link>` on the signer: `join` (section 3), then a
   new 10273 with the entry `active`, then the grant push of #209. The next
   sync of each device places new pieces on it, and adds a piece to old blobs
   (section 6.4).
-- **Drop.** `arc storage rm charlie` on the signer sets `draining` in 10273.
+- **Drop.** `arc keys storage rm charlie` on the signer sets `draining` in 10273.
   Each device moves the pieces off Charlie (section 6.8). When Charlie holds
   no piece, the signer sets `gone`, sends a close call that the account key
   authors, and removes the entry after 30 days.
 - **Gone without notice.** If Charlie does not answer for 7 days, a device
-  says so on each sync. `arc storage rm charlie --gone` on the signer sets
+  says so on each sync. `arc keys storage rm charlie --gone` on the signer sets
   `gone`. Each device then rebuilds the pieces of Charlie from the other
   pieces (section 6.8).
 
@@ -303,7 +307,7 @@ account key, and syncs as in step 4.
 
 A local install of `storage` that 10273 does not name still syncs. On each
 sync the device prints
-`charlie is not in the storage list; run arc storage add on the signer`.
+`charlie is not in the storage list; run arc keys storage add on the signer`.
 
 ## 6. Reed-Solomon
 
@@ -527,7 +531,7 @@ queue of Storj does
 ([file repair](https://storj.dev/learn/concepts/file-repair)).
 
 A device must not repair through TURN by default. Repair waits for a direct
-path. `arc storage repair --turn` allows TURN. Section 6.10 explains why.
+path. `arc sync --repair --turn` allows TURN. Section 6.10 explains why.
 
 ### 6.9 Audits
 
@@ -541,7 +545,7 @@ random piece, and open it.
 - A failure marks the piece as lost in the local cache. Repair rebuilds it.
 - Three failures in one day mark the storage citizen as suspect. `arc sync`
   then says so. The device does not drop the storage citizen by itself. The
-  user decides with `arc storage rm`.
+  user decides with `arc keys storage rm`.
 
 With s pieces of one storage citizen that lost a fraction f of its pieces,
 one round finds the loss with chance 1 − (1 − f)^s. With s = 32 a day
@@ -746,12 +750,12 @@ Each step is one PR. Each step names what proves it, through the real CLI.
 | --- | --- | --- |
 | 0 | Seal blobs with the data roots: replace the body of `sealSelf` (`runtime/citizen/selfsync.go:49-58`) with the key of `DataRoot`, as the #204 note planned. | A proof test: revoke a device, write a page, sync. The revoked device cannot open the new blob. |
 | 1 | #209: per-device grants. In progress in another session. | Its own tests. |
-| 2 | Admission and quota for each account: `join` with the rules `invite`, `ask` and `open`; the account record; `usage` with the quota of the account; `arc storage add`; `arc-storage invite`, `requests`, `accept`, `refuse`, `account set`, `account close`. | A proof test with a real relay and `arc-storage`: a `join` with no token is refused; a `join` with a token is admitted at its quota; a second token use is refused; under `ask`, `pending`, then `accept`, then `admitted`; a put over the quota of the account fails while another account has room. |
+| 2 | Admission and quota for each account: `join` with the rules `invite`, `ask` and `open`; the account record; `usage` with the quota of the account; `arc keys storage add`; `arc-storage invite`, `requests`, `accept`, `refuse`, `account set`, `account close`. | A proof test with a real relay and `arc-storage`: a `join` with no token is refused; a `join` with a token is admitted at its quota; a second token use is refused; under `ask`, `pending`, then `accept`, then `admitted`; a put over the quota of the account fails while another account has room. |
 | 3 | Scale the storage app: several requests in flight on one pipe, and an index that a put does not rewrite whole. Open question 8 asks where the index lives. | The `DIRECT_LINK_RTT_MS` harness with 44 ms: 1,000 puts of 4 KiB, before and after. The PR states both times. |
-| 4 | Kind 10273: the signer publishes it; each device reads it and installs each storage citizen; `arc storage ls` and `rm`; a row in `docs/KINDS.md`. | A home with only the seed finds two storage citizens and reads every page. |
+| 4 | Kind 10273: the signer publishes it; each device reads it and installs each storage citizen; `arc keys storage ls` and `rm`; a row in `docs/KINDS.md`. | A home with only the seed finds two storage citizens and reads every page. |
 | 5 | Several storage citizens with full copies (k = 1), synced at the same time. | Two storage citizens. Stop one. A new device reads every page from the other. |
 | 6 | Reed-Solomon: the piece format, tags in `put` and `list`, `hello`, placement, decode on read, the piece id key for each storage citizen. Pin `klauspost/reedsolomon`, and keep a test of the prefix property. Breaking. | Three storage citizens, k = 2. Delete the directory of one. A new device reads every page. No piece file holds text of a page. Each piece file is about half its blob. |
-| 7 | Repair, drain and audits. | Remove a storage citizen with `arc storage rm --gone`. `arc serve` rebuilds its pieces on a fourth one. Change one byte of a piece file. The next audit finds it, and repair replaces it. A drain empties a storage citizen, and the data stays readable. |
+| 7 | Repair, drain and audits. | Remove a storage citizen with `arc keys storage rm --gone`. `arc serve` rebuilds its pieces on a fourth one. Change one byte of a piece file. The next audit finds it, and repair replaces it. A drain empties a storage citizen, and the data stays readable. |
 | 8 | Migration of blobs of format 1. | A home with blobs of format 1 on two new storage citizens ends with pieces only. An older `arc` still syncs, and its puts get `tombstoned` or are coded again. |
 
 Steps 0, 2 and 3 do not depend on each other. Step 4 needs step 2. Steps 5
