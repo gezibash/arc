@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
 - Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, the storage list of kind 10273, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test measures a sync of 1,000 pages. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -163,17 +163,48 @@ nothing for it.
 
 ### 3.3 The requests on the pipe
 
-The device sends one request as one text message of JSON. The storage app
-answers each request with one text message of JSON before the device sends
-the next request.
+The device sends each request as one text message of JSON. The storage app
+answers with text messages of JSON, in the order of the requests.
 
 | Request | Reply |
 | --- | --- |
+| `{"op":"hello"}` | `{"v":2,"features":["batch"],"window":32}` |
 | `{"op":"put","id":"<64 hex>","size":<n>}` | `{"status":"send"}`, then the device sends the bytes, and the app answers `{"status":"stored","seq":<n>}`. Or `{"status":"held"}` or `{"status":"tombstoned"}`, and no bytes go. |
 | `{"op":"list","after":<cursor>,"limit":<n>}` | `{"entries":[{"seq":<n>,"id":"…","size":<n>}, {"seq":<n>,"id":"…","deleted":true}],"next":<cursor>}` |
 | `{"op":"get","id":"<64 hex>"}` | `{"size":<n>}`, then the bytes of the blob. |
+| `{"op":"get","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","size":<n>},{"id":"…","error":"not_found"}]}`, then the bytes of each found blob, in the order of `ids`. |
 | `{"op":"delete","id":"<64 hex>"}` | `{"status":"deleted","seq":<n>}` or `{"status":"absent"}`. |
+| `{"op":"delete","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","status":"deleted","seq":<n>},{"id":"…","status":"absent"}]}` |
 | `{"op":"usage"}` | `{"used":<n>,"quota":<n>,"blobs":<n>,"state":"<state>","plan":"<plan>","expires":<n>}` |
+
+**Requests in flight.**
+
+- Before a device keeps requests in flight or sends `ids`, it MUST send
+  `hello`, one time in each session. If the reply holds the feature
+  `batch`, the device can keep requests in flight. If the reply is the
+  error `invalid_request`, or holds no `batch`, the device MUST send one
+  request at a time, with no `n`, and wait for its last reply.
+- With `batch`, the device MUST number each request with `n`, from 1, one
+  higher for each request of the session. The app MUST put the `n` of the
+  request in each reply to it, also in a refusal.
+- The device MUST keep at most `window` puts in flight. A put is in flight
+  from its request to its last reply: `stored`, `held`, `tombstoned`, or an
+  error. The window is 32. The app MUST end the pipe if a 33rd put comes.
+- The device MUST send the bytes of each put after its `send` reply, in
+  the order of the `send` replies. The app MUST give each run of bytes to
+  the oldest put that got `send` and has not all its bytes. Thus the order
+  of the bytes of each put is kept. A text request can come between two
+  runs, and not inside one binary message.
+- The app MUST write the entry of a put before it answers `stored`. It MAY
+  write the entries of several puts in one transaction.
+- The app MUST write the entries of the puts that wait before it answers a
+  request that is not a put. Thus a `list` sees each put that came before
+  it.
+- A request with `ids` MUST name 1 to 256 IDs, and MUST NOT have `id`. The
+  app answers `invalid_request` to another list. A delete with `ids` is one
+  change of the index.
+
+**The other rules.**
 
 - The bytes of a blob MUST go in binary messages of at most 16 KiB.
 - A refused request gets `{"error":"<code>","message":"<text>"}`. The codes
@@ -182,13 +213,18 @@ the next request.
 - The `quota` of a usage reply MUST be the quota of the account. `state`,
   `plan` and `expires` are the account record (section 3.7). `expires` is
   absent if the account has no end.
-- A put MUST be refused with `over_quota` if the bytes in use and the blob
-  pass the quota of the account. If the operator lowers the quota below
-  the bytes in use, each put is refused, and each read and delete works.
+- A put MUST be refused with `over_quota` if the bytes in use, the bytes
+  of the puts of the session in flight and the blob pass the quota of the
+  account. If the operator lowers the quota below the bytes in use, each
+  put is refused, and each read and delete works.
 - A put on a closing account MUST be refused with `refused`. Each read,
   list and delete works until the reads end.
 - A list MUST give at most 1,000 entries. A device lists again from `next`
   until a list gives no entry.
+
+Reason: a put takes two round trips. One request at a time, 1,000 puts at
+44 ms took 117.1 to 121.3 s on an emulated link. With 32 puts in flight, they took
+7.9 to 8.5 s (measured, section 8.1).
 
 ### 3.4 The blob
 
@@ -317,7 +353,10 @@ because a direct path takes seconds to open.
    did not list, and put it.
 6. Keep the cursor and the IDs in `<home>/selfsync/<key of the storage citizen>.json`.
 
-Steps 4 and 5 run in this order. A device that was offline thus gets a
+Steps 4 and 5 keep requests in flight on a storage app with `batch`
+(section 3.3): step 4 gets 256 blobs with each request, and step 5 seals 64
+records at a time and keeps 32 puts in flight. Steps 4 and 5 run in this
+order. A device that was offline thus gets a
 deletion before it could put the old records back.
 
 ### 4.2 The import
@@ -463,6 +502,23 @@ run while the app runs. Each change counts at the next call.
   because those blobs are of generation 0. The user updates each device.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
+- Requests in flight add `hello`, `n` and `ids`. They change no earlier
+  message:
+  - An older device sends no `hello` and no `n`. It sends one request at a
+    time. A newer storage app answers each request in order, with no `n`,
+    as before.
+  - A newer device sends `hello` to an older storage app. The older app
+    answers `invalid_request`, because the request has no blob ID, and
+    keeps the pipe open. The device then sends one request at a time, with
+    no `n`, and `get` and `delete` with one `id` each.
+  - The Go interface `Blobs` of `runtime/selfsync` has `GetMany` and
+    `PutMany` in place of `Get` and `Put`. `*storage.Conn` has both.
+- A newer storage app keeps the index of each account in `index.db`. At its
+  start, it imports the entries of each older `state.json` once, and keeps
+  the record and the grant set in `state.json`. The sequence numbers do not
+  change, so the cursor of each device stays good. An older storage app
+  cannot read `index.db`, and sees each account as empty after the import.
+  The operator does not go back to an older storage app.
 - Admission adds the join call and fields of the usage reply. It changes no
   earlier message:
   - An older storage citizen answers the join with `invalid_request`,
@@ -561,6 +617,44 @@ runs `arc keys storage add`, and is not in `STORAGE_OWNERS`. It proves:
   list works.
 
 Each check failed with a temporary break of its behavior.
+
+`go test -count=1 -run '^(TestPutManyWindow|TestPutManyOlderApp)$' ./sdk/storage/`
+runs the client against a fake app on the loopback address. It proves:
+
+- The client keeps at most 32 puts in flight, and each reply goes to its
+  own request, although the app answers out of order.
+- The bytes of each put reach the app in the order of the `send` replies.
+- After `invalid_request` to `hello`, the client sends one put at a time,
+  with no `n`.
+
+`go test -count=1 -run '^(TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly)$' ./apps/storage/server/`
+runs the storage app and the client of `sdk/storage` on the loopback
+address, and the index on disk. It proves:
+
+- 105 puts of 4 KiB and 4 of 16 KiB in flight are stored with their own
+  bytes, in the order of the requests. A second put of one ID in the same
+  window gets `held`. A get and a delete with `ids` answer each ID, and
+  `not_found` or `absent` for an unknown ID.
+- `hello` gives the version, `batch` and the window. A 33rd put in flight
+  ends the pipe.
+- A program that stops after the bytes of a put and before its entry
+  leaves an index whose entries each have a file of their size, and whose
+  bytes in use and count agree. The app does not serve that put, and the
+  next put of the ID gets the next sequence number.
+- An older `state.json` with a record, a grant set, two blobs and a
+  tombstone is imported once, with its sequence numbers. A command of the
+  operator before the import keeps the entries. A second start does not
+  import again.
+- 10,000 puts in one account write about 31 KB of index for each put. The
+  last 1,000 puts write at most 2 times the bytes of the first 1,000.
+
+Each check failed with a temporary break of its behavior.
+
+`STORAGE_LINK_PUTS=1000 go test -count=1 -v -run TestEmulatedLinkPuts ./apps/storage/server/`
+measures puts on an emulated link of 92.5 Mbit/s and 44 ms. It is a
+measurement, not a check. On an Apple Silicon Mac, 2026-10-12, 1,000 puts
+of 4 KiB took 117.1 to 121.3 s in three runs one at a time with `state.json`, and 7.9 to 8.5 s in
+four runs with 32 in flight and `index.db`.
 
 `go test ./sdk/storage/ -run TestVerifyJoin` checks that the signature of
 the citizen key in a join verifies only over its account key and its

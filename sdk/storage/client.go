@@ -428,7 +428,11 @@ func (s *Conn) GetMany(ctx context.Context, ids []string, f func(id string, blob
 			var blob []byte
 			var refused error
 			if item.Error != "" {
-				refused = &Refused{Code: item.Error, Message: fmt.Sprintf("%s: %s", item.ID, item.Error)}
+				message := item.Error
+				if item.Error == ErrNotFound {
+					message = "the account holds no blob " + item.ID
+				}
+				refused = &Refused{Code: item.Error, Message: message}
 			} else if blob, err = s.blob(ctx, item.Size); err != nil {
 				return err
 			}

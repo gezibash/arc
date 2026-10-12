@@ -58,8 +58,8 @@ func (f *fakeApp) serve(dc *webrtc.DataChannel, messages <-chan webrtc.DataChann
 	var done []Reply
 	finish := func() {
 		// The final replies go in reverse order.
-		for i := len(done) - 1; i >= 0; i-- {
-			reply(done[i])
+		for _, r := range slices.Backward(done) {
+			reply(r)
 		}
 		f.mu.Lock()
 		f.inFlight -= len(done)
