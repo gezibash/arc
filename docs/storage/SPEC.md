@@ -184,8 +184,9 @@ answers with text messages of JSON, in the order of the requests.
   `batch`, the device can keep requests in flight. If the reply is the
   error `invalid_request`, or holds no `batch`, the device MUST send one
   request at a time, with no `n`, and wait for its last reply.
-- With `batch`, the device MUST number each request with `n`, from 1, one
-  higher for each request of the session. The app MUST put the `n` of the
+- With `batch`, the device MUST number each request that it keeps in
+  flight, and each request with `ids`, with `n`: from 1, one higher for
+  each numbered request of the session. Another request can have no `n`. The app MUST put the `n` of the
   request in each reply to it, also in a refusal.
 - The device MUST keep at most `window` puts in flight. A put is in flight
   from its request to its last reply: `stored`, `held`, `tombstoned`, or an
@@ -631,7 +632,7 @@ runs the client against a fake app on the loopback address. It proves:
 runs the storage app and the client of `sdk/storage` on the loopback
 address, and the index on disk. It proves:
 
-- 105 puts of 4 KiB and 4 of 16 KiB in flight are stored with their own
+- 101 puts of 4 KiB and 4 of 16 KiB in flight are stored with their own
   bytes, in the order of the requests. A second put of one ID in the same
   window gets `held`. A get and a delete with `ids` answer each ID, and
   `not_found` or `absent` for an unknown ID.

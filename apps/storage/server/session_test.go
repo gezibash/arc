@@ -82,8 +82,9 @@ func TestRequestsInFlight(t *testing.T) {
 	in := testBlobs(3*wire.Window+5, wire.MinBlob)
 	// A blob of 16 KiB runs over several messages of the pipe.
 	in = append(in, testBlobs(4, 4*wire.MinBlob)...)
-	// The same ID twice in one window: the second gets held.
-	in = append(in, in[0])
+	// The same ID twice in one window: the second gets held while the
+	// first waits for its bytes or its entry.
+	in = append(in, in[len(in)-1])
 
 	results, err := conn.PutMany(ctx, in)
 	if err != nil {
