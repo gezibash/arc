@@ -354,7 +354,7 @@ proof on real devices come before mesh forwarding.
 | --- | --- | --- | --- | --- |
 | relay | yes, while connected | the relay's limit | through tags | NIP-01 over WebSocket. |
 | file | no | none | no | A directory: a USB stick, a shared folder, a disk. |
-| Bluetooth LE | yes | about 469 bytes per fragment | yes | Mesh. Linux first. Not built. |
+| Bluetooth LE | yes | about 469 bytes per fragment | yes | Linux direct CLI integrated; radio proof and mesh pending. |
 | LoRa | yes, slowly | 233 bytes per packet | yes | Mesh. Later. Not built. |
 
 **Relay.** A node connects to relays over WebSocket, as NIP-01 defines. It
@@ -399,7 +399,9 @@ each line. Another node reads the directory, imports each event that it does
 not hold, and writes each event that the directory lacks. A person carries
 the directory between the two nodes.
 
-**Bluetooth LE.** Not built as an event transport. Every node takes both
+**Bluetooth LE.** The experimental direct adapter is integrated with normal CLI
+commands. Hardware proof is pending; see the [direct guide](BLUETOOTH-DIRECT.md).
+Not built: the mesh design below. In that design, every node takes both
 roles at once: central and peripheral. BlueZ supports both roles at once on
 Linux, if the controller supports them. The Linux radio probe calls BlueZ
 through `godbus/dbus` directly, because its server needs the BlueZ write
@@ -1117,7 +1119,7 @@ merge. `mise run delivery` runs the proofs of phases 1 to 3.
 | 2 | The outbox, acknowledgements, route tags, couriers, and sync | A message reaches an offline recipient through a third machine that carries a USB stick. | Built |
 | 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay, and the round-trip time is recorded. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. | Built |
 | 4 | The switchover: `arc` runs on this layer only, and the older stack is removed | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `arc update apply` of v0.10.0 installs a later signed build. | Built |
-| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. | Not built. The experimental direct BLE adapter uses `core/compact` and `core/frame`; normal CLI integration, hardware proof and mesh are pending. |
+| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. | Not built. The experimental direct BLE adapter uses `core/compact` and `core/frame`; normal CLI integration has simulated-radio proof; hardware proof and mesh are pending. |
 | 6 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. | Not built |
 
 Phases 1 and 2 are built: the packages under `core/` and `adapters/`, and

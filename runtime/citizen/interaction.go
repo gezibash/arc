@@ -19,7 +19,7 @@ func (sess *Session) OpenSessionAddress(ctx context.Context, installs catalog.In
 	if err != nil {
 		return nil, err
 	}
-	if err = sess.Waker.Wake(ctx, provider[:], sess.online); err != nil {
+	if err = sess.wakePeer(ctx, provider); err != nil {
 		return nil, err
 	}
 	targets, err := sess.liveRelays(ctx, provider)
@@ -35,7 +35,9 @@ func (sess *Session) OpenSessionAddress(ctx context.Context, installs catalog.In
 		}
 		stream, err := call.OpenSession(ctx, sess.Signer, provider, request, mode, live)
 		if err == nil {
-			sess.Waker.Answered(provider[:])
+			if sess.Bluetooth == nil {
+				sess.Waker.Answered(provider[:])
+			}
 			return stream, nil
 		}
 		if _, ok := errors.AsType[*transport.NotSubmittedError](err); !ok {

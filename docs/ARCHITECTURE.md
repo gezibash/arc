@@ -160,7 +160,8 @@ does not resume it or repeat its commands. The provider owns its REPL variables,
 SQL transaction context and other application state.
 
 Relay delivery already supports live event subscriptions. Directory delivery
-supports carried events. Bluetooth remains planned. Adding a carrier must retain
+supports carried events. Bluetooth has an experimental Linux direct path in normal commands;
+real-radio validation and mesh remain pending. Adding a carrier must retain
 core verification and the existing mail/call rules; see
 [the transport contract](delivery/TRANSPORTS.md).
 

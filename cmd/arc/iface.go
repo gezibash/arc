@@ -13,11 +13,11 @@ import (
 
 // dispatch runs a command of an installed app: arc <name> <path...>.
 // The root command does not parse flags, so the app reads its own;
-// dispatch reads only a leading --home and --key.
+// dispatch reads leading ARC configuration flags.
 func dispatch(command *cobra.Command, args []string) error {
 	for len(args) > 0 {
 		flag := ""
-		for _, name := range []string{"home", "key"} {
+		for _, name := range []string{"home", "key", "bluetooth-peer", "bluetooth-address", "bluetooth-adapter", "bluetooth-listen"} {
 			if args[0] == "--"+name || strings.HasPrefix(args[0], "--"+name+"=") {
 				flag = name
 			}
@@ -27,6 +27,9 @@ func dispatch(command *cobra.Command, args []string) error {
 		}
 		value, ok := strings.CutPrefix(args[0], "--"+flag+"=")
 		args = args[1:]
+		if !ok && flag == "bluetooth-listen" {
+			value, ok = "true", true
+		}
 		if !ok {
 			if len(args) == 0 {
 				return fmt.Errorf("--%s needs a value", flag)

@@ -55,7 +55,9 @@ import (
 )
 
 func main() {
-	if err := root().Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := root().ExecuteContext(ctx); err != nil {
 		// An app set the exit status from its reply, and wrote its
 		// output already.
 		if status, ok := errors.AsType[iface.ExitError](err); ok {
@@ -81,6 +83,10 @@ func root() *cobra.Command {
 	}
 	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc)")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
+	command.PersistentFlags().String("bluetooth-peer", "", "use Bluetooth only, with this citizen public key")
+	command.PersistentFlags().String("bluetooth-address", "", "Bluetooth address of the peer to connect to")
+	command.PersistentFlags().String("bluetooth-adapter", "hci0", "Linux Bluetooth adapter")
+	command.PersistentFlags().Bool("bluetooth-listen", false, "accept Bluetooth connections from the selected peer")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
 		appsCommand(), infoCommand(), resolveCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand(), pathCommand())
@@ -573,6 +579,10 @@ func open(command *cobra.Command) (*citizen.Session, error) {
 
 // openDir opens the session of the identity in dir.
 func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
+	bc, err := bluetoothConfig(command, dir)
+	if err != nil {
+		return nil, err
+	}
 	id, err := loadIdentity(command.Context(), dir)
 	if err != nil {
 		return nil, err
@@ -595,7 +605,7 @@ func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
 			return nil, err
 		}
 	}
-	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: os.Stderr})
+	return citizen.Open(citizen.Config{Context: command.Context(), Bluetooth: bc, Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: os.Stderr})
 }
 
 func errRemote(what string) error {
@@ -823,7 +833,7 @@ func syncCommand() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
 				}
 			}
-			if dir == "" {
+			if dir == "" && sess.Bluetooth == nil {
 				cfg, err := selfSyncConfig(command, sess)
 				if err != nil {
 					return err

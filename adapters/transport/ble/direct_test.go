@@ -265,9 +265,11 @@ func TestDirectCoreCapabilityCall(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("provider not ready")
 	}
-	reply, _, err := call.Live(ctx, ka, kb.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/", Body: "hello"}, a)
-	if err != nil || reply.Body != "echo: hello" {
-		t.Fatalf("call: %+v %v", reply, err)
+	for range 3 {
+		reply, _, err := call.Live(ctx, ka, kb.Public, call.Request{Capability: "primary", Method: "ECHO", Path: "/", Body: "hello"}, a)
+		if err != nil || reply.Body != "echo: hello" {
+			t.Fatalf("call: %+v %v", reply, err)
+		}
 	}
 	cancel()
 	<-done
@@ -356,5 +358,67 @@ func TestRecordRejectsOversize(t *testing.T) {
 	}
 	if _, err := readRecord(t.Context(), b); err == nil {
 		t.Fatal("accepted oversized record")
+	}
+}
+
+func TestDirectIndependentWatches(t *testing.T) {
+	a, b, ka, _ := pair(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	first, err := b.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := b.Watch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("watch did not end")
+	}
+	e := signed(t, ka, 1, "still connected")
+	if err = a.Send(t.Context(), e); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-second:
+		if got.ID != e.ID {
+			t.Fatal("wrong event")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("other watch ended")
+	}
+	if _, err = b.Fetch(t.Context(), nostr.Filter{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectWatchCapacity(t *testing.T) {
+	a, _, _, _ := pair(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var subscriptions []<-chan nostr.Event
+	for range maxWatches {
+		ch, err := a.Watch(ctx, nostr.Filter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subscriptions = append(subscriptions, ch)
+	}
+	if _, err := a.Watch(ctx, nostr.Filter{}); err == nil {
+		t.Fatal("unbounded watches")
+	}
+	cancel()
+	for _, ch := range subscriptions {
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			t.Fatal("watch leaked")
+		}
+	}
+	if _, err := a.Fetch(t.Context(), nostr.Filter{}); err != nil {
+		t.Fatal("limit closed link", err)
 	}
 }

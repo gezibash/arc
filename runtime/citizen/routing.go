@@ -45,6 +45,12 @@ func (s *Session) online(ctx context.Context, citizen []byte) (bool, error) {
 // relays of this citizen, then each read relay of the provider's NIP-65 list
 // that this citizen does not use. See docs/delivery/SPEC.md, section 4.10.
 func (s *Session) liveRelays(ctx context.Context, provider nostr.PubKey) ([]transport.Transport, error) {
+	if s.Bluetooth != nil {
+		if provider != s.Bluetooth.Peer {
+			return nil, errors.New("bluetooth: provider is not the selected peer")
+		}
+		return s.Relays, nil
+	}
 	out := append([]transport.Transport(nil), s.Relays...)
 	urls, err := relaylist.ReadRelays(ctx, s.Node, provider, slices.Concat(s.Relays, s.Indexers))
 	if err != nil {
@@ -75,7 +81,7 @@ func (sess *Session) LiveCallAs(ctx context.Context, signer keys.Signer, provide
 	if len(sess.Relays) == 0 {
 		return call.Reply{}, 0, "", errors.New("no relay, so no live path: add a relay, or use --later to store and forward the call")
 	}
-	if err := sess.Waker.Wake(ctx, provider[:], sess.online); err != nil {
+	if err := sess.wakePeer(ctx, provider); err != nil {
 		return call.Reply{}, 0, "", err
 	}
 	targets, err := sess.liveRelays(ctx, provider)
@@ -83,8 +89,15 @@ func (sess *Session) LiveCallAs(ctx context.Context, signer keys.Signer, provide
 		return call.Reply{}, 0, "", err
 	}
 	reply, rtt, path, err := LiveCall(ctx, signer, provider, request, targets, timeout)
-	if err == nil {
+	if err == nil && sess.Bluetooth == nil {
 		sess.Waker.Answered(provider[:])
 	}
 	return reply, rtt, path, err
+}
+
+func (sess *Session) wakePeer(ctx context.Context, peer nostr.PubKey) error {
+	if sess.Bluetooth != nil {
+		return nil
+	}
+	return sess.Waker.Wake(ctx, peer[:], sess.online)
 }

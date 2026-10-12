@@ -94,6 +94,9 @@ func serve(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if sess.Bluetooth != nil {
+		relays = nil
+	}
 	root, err := rootDir(command)
 	if err != nil {
 		return err
@@ -200,12 +203,12 @@ func serve(command *cobra.Command, args []string) error {
 			if _, err := sess.Node.Sync(ctx, mine, r); err != nil {
 				log.Debug("the announcement did not sync", "transport", r.Name(), "error", err)
 			}
-		}, log)
+		}, log, sess.Bluetooth != nil)
 	}
 
 	// Say "serves" only when a relay has the watch, so that a caller that
 	// waits for the line can call at once.
-	missing, err := watchAll(ctx, server, sess.Relays, log)
+	missing, err := watchAll(ctx, server, sess.Relays, log, sess.Bluetooth != nil)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "the service is stopping")
 		return nil
@@ -238,7 +241,7 @@ func serve(command *cobra.Command, args []string) error {
 		tick := time.NewTicker(selfSyncEvery)
 		defer tick.Stop()
 		for {
-			if hasStorage(installs) {
+			if sess.Bluetooth == nil && hasStorage(installs) {
 				if err := syncSelf(ctx, sess, self, false); err != nil && ctx.Err() == nil {
 					log.Warn("self data did not sync", "error", err)
 				}
@@ -370,7 +373,7 @@ func inUses(ctx context.Context, installs catalog.Installs, uses map[string]stri
 // If no relay has the watch, watchAll waits until one relay takes it. It
 // returns the relays whose first watch failed. Those relays get the watch
 // when they come back.
-func watchAll(ctx context.Context, server *call.Server, relays []transport.Transport, log *slog.Logger) ([]string, error) {
+func watchAll(ctx context.Context, server *call.Server, relays []transport.Transport, log *slog.Logger, waitForPeer ...bool) ([]string, error) {
 	type result struct {
 		index int
 		err   error
@@ -393,7 +396,7 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 			case <-started:
 			case <-ctx.Done():
 			}
-		}, log)
+		}, log, waitForPeer...)
 	}
 
 	answered := map[int]bool{}
@@ -420,7 +423,7 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 // the relay drops the connection. After each attempt to watch, it calls
 // report: with nil when the watch begins, and with the error when the watch
 // does not begin.
-func keepServing(ctx context.Context, server *call.Server, r transport.Live, report func(error), log *slog.Logger) {
+func keepServing(ctx context.Context, server *call.Server, r transport.Live, report func(error), log *slog.Logger, waitForPeer ...bool) {
 	for {
 		began := false
 		err := server.ServeLive(ctx, r, func() {
@@ -431,7 +434,10 @@ func keepServing(ctx context.Context, server *call.Server, r transport.Live, rep
 			return
 		}
 		if began {
-			log.Warn("the relay ended the watch; watching again", "relay", r.Name(), "error", err)
+			log.Warn("the transport ended the watch; watching again", "transport", r.Name(), "error", err)
+			if len(waitForPeer) > 0 && waitForPeer[0] {
+				continue
+			}
 		} else {
 			report(err)
 			log.Warn("the relay did not take the watch; trying again", "relay", r.Name(), "error", err)
@@ -447,13 +453,19 @@ func keepServing(ctx context.Context, server *call.Server, r transport.Live, rep
 // keepMail watches the mail of one relay, and watches again when the relay
 // drops the connection. A watch that ends at midnight starts again at once,
 // with the route tags of the new day.
-func keepMail(ctx context.Context, box *mail.Mail, r transport.Live, ready func(), log *slog.Logger) {
+func keepMail(ctx context.Context, box *mail.Mail, r transport.Live, ready func(), log *slog.Logger, waitForPeer ...bool) {
 	for {
-		err := box.Watch(ctx, r, ready)
+		began := false
+		err := box.Watch(ctx, r, func() {
+			began = true
+			if ready != nil {
+				ready()
+			}
+		})
 		if ctx.Err() != nil {
 			return
 		}
-		if err == nil {
+		if err == nil || (began && len(waitForPeer) > 0 && waitForPeer[0]) {
 			continue
 		}
 		log.Warn("the mail watch ended; watching again", "relay", r.Name(), "error", err)
@@ -716,6 +728,9 @@ func callCapability(command *cobra.Command, args []string) error {
 // writes on, as NIP-65 defines, and which relays it reads its mail on, as
 // NIP-17 defines. It returns the indexers that did not get each list.
 func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Transport {
+	if sess.Bluetooth != nil {
+		return nil
+	}
 	// The lists go to the relays and to the indexers.
 	type list struct {
 		event nostr.Event

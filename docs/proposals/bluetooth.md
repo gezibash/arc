@@ -56,8 +56,10 @@ a corrupted signature, malformed input, size limits and fuzzed input.
 
 Stage 4 adds an experimental secure direct event adapter. See the
 [adapter guide](../delivery/BLUETOOTH-DIRECT.md) for its API, limits and tests.
-It has no normal CLI selection or real-radio proof yet. Stage 5 must provide
-that integration, including multiple watches and repeated live calls.
+Stage 5 adds normal CLI selection, independent watches and repeated live calls.
+Its two-home test replaces only radio I/O. Status: integrated, verification
+pending. The [device guide](../delivery/BLUETOOTH-CLI.md) defines the remaining
+real-radio acceptance gate. Do not begin mesh on the strength of simulated I/O.
 
 ## Small, reviewable PRs
 

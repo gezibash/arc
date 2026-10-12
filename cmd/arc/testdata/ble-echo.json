@@ -1,0 +1,18 @@
+{
+  "interface": 1,
+  "id": "echo",
+  "shape": "service",
+  "title": "Bluetooth test echo",
+  "summary": "Returns the request text without running a command.",
+  "service": {"method": "ECHO", "path": "/", "max_bytes": 4096},
+  "kinds": {},
+  "formats": {},
+  "commands": [
+    {
+      "path": ["say"],
+      "summary": "Send text and show the echo",
+      "args": [{"name": "text", "kind": "positional", "type": "text", "required": true}],
+      "action": {"call": {"class": "live", "body": "{{text}}"}}
+    }
+  ]
+}

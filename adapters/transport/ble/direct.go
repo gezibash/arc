@@ -16,6 +16,7 @@ import (
 )
 
 const maxResults = 64
+const maxWatches = 16
 const operationTimeout = 30 * time.Second
 
 // DirectConfig selects one explicitly trusted peer. Share must limit which local
@@ -33,28 +34,34 @@ type DirectConfig struct {
 // Direct is a single authenticated Bluetooth connection. It has no routing,
 // automatic reconnect, replay, or forwarding. OpenDirect supplies the Linux I/O.
 type Direct struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	conn     *secureLink
-	config   DirectConfig
-	gate     chan struct{}
-	out      chan message
-	replies  chan message
-	events   chan nostr.Event
-	mu       sync.Mutex
-	remote   *nostr.Filter
-	local    *nostr.Filter
-	watching bool
-	err      error
-	next     uint64
-	pending  uint64
-	wg       sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	conn    *secureLink
+	config  DirectConfig
+	gate    chan struct{}
+	out     chan message
+	replies chan message
+
+	mu        sync.Mutex
+	remote    map[uint64]nostr.Filter
+	local     map[uint64]*subscription
+	nextWatch uint64
+	err       error
+	next      uint64
+	pending   uint64
+	wg        sync.WaitGroup
 }
 
 var _ transport.Live = (*Direct)(nil)
 var ErrDisconnected = errors.New("bluetooth: direct link disconnected")
 
+type subscription struct {
+	filter nostr.Filter
+	events chan nostr.Event
+}
+
 type message struct {
+	Sub    uint64        `json:"sub,omitempty"`
 	Op     string        `json:"op"`
 	ID     uint64        `json:"id,omitempty"`
 	Filter *nostr.Filter `json:"filter,omitempty"`
@@ -64,7 +71,7 @@ type message struct {
 
 func newDirect(ctx context.Context, conn *secureLink, c DirectConfig) *Direct {
 	ctx, cancel := context.WithCancel(ctx)
-	d := &Direct{ctx: ctx, cancel: cancel, conn: conn, config: c, gate: make(chan struct{}, 1), out: make(chan message, 66), replies: make(chan message, 65), events: make(chan nostr.Event, maxResults)}
+	d := &Direct{ctx: ctx, cancel: cancel, conn: conn, config: c, gate: make(chan struct{}, 1), out: make(chan message, 66), replies: make(chan message, 65), local: make(map[uint64]*subscription), remote: make(map[uint64]nostr.Filter)}
 	d.wg.Add(2)
 	go d.writeLoop()
 	go d.readLoop()
@@ -118,7 +125,14 @@ func (d *Direct) writeLoop() {
 }
 func (d *Direct) readLoop() {
 	defer d.wg.Done()
-	defer close(d.events)
+	defer func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for id, sub := range d.local {
+			close(sub.events)
+			delete(d.local, id)
+		}
+	}()
 	for {
 		b, err := d.conn.receive(d.ctx)
 		if err != nil {
@@ -205,13 +219,17 @@ func (d *Direct) handle(m message) error {
 			return err
 		}
 		d.mu.Lock()
-		filter := d.local
-		d.mu.Unlock()
-		if filter == nil || !filter.Matches(e) {
+		defer d.mu.Unlock()
+		sub := d.local[m.Sub]
+		// A canceled watch can still have packets in flight.
+		if sub == nil {
+			return nil
+		}
+		if !sub.filter.Matches(e) {
 			return errors.New("bluetooth: event outside subscription")
 		}
 		select {
-		case d.events <- e:
+		case sub.events <- e:
 			return nil
 		default:
 			return errors.New("bluetooth: slow watch consumer")
@@ -219,9 +237,14 @@ func (d *Direct) handle(m message) error {
 	case "send":
 		e, err := unpack(m.Frames)
 		d.mu.Lock()
-		filter := d.local
-		d.mu.Unlock()
-		if err == nil && e.Kind.IsEphemeral() && (filter == nil || !filter.Matches(e)) {
+		defer d.mu.Unlock()
+		matched := false
+		for _, sub := range d.local {
+			if sub.filter.Matches(e) {
+				matched = true
+			}
+		}
+		if err == nil && e.Kind.IsEphemeral() && !matched {
 			err = errors.New("bluetooth: no live subscriber")
 		}
 		if err == nil && !e.Kind.IsEphemeral() {
@@ -235,14 +258,13 @@ func (d *Direct) handle(m message) error {
 		if err != nil {
 			reply.Error = "event refused"
 		} else {
-			d.mu.Lock()
-			filter := d.local
-			d.mu.Unlock()
-			if filter != nil && filter.Matches(e) {
-				select {
-				case d.events <- e:
-				default:
-					return errors.New("bluetooth: slow watch consumer")
+			for _, sub := range d.local {
+				if sub.filter.Matches(e) {
+					select {
+					case sub.events <- e:
+					default:
+						return errors.New("bluetooth: slow watch consumer")
+					}
 				}
 			}
 		}
@@ -272,12 +294,12 @@ func (d *Direct) handle(m message) error {
 		}
 		if m.Op == "watch" {
 			d.mu.Lock()
-			if d.remote != nil {
+			if m.Sub == 0 || len(d.remote) >= maxWatches {
 				d.mu.Unlock()
-				return errors.New("bluetooth: one watch per link")
+				return d.enqueue(message{Op: "end", ID: m.ID, Error: "watch capacity exceeded"})
 			}
 			f := *m.Filter
-			d.remote = &f
+			d.remote[m.Sub] = f
 			d.mu.Unlock()
 		}
 		for _, e := range allowed {
@@ -289,14 +311,14 @@ func (d *Direct) handle(m message) error {
 			if m.Op == "watch" {
 				op = "event"
 			}
-			if err = d.enqueue(message{Op: op, ID: m.ID, Frames: fs}); err != nil {
+			if err = d.enqueue(message{Op: op, ID: m.ID, Sub: m.Sub, Frames: fs}); err != nil {
 				return err
 			}
 		}
 		return d.enqueue(message{Op: "end", ID: m.ID})
 	case "unwatch":
 		d.mu.Lock()
-		d.remote = nil
+		delete(d.remote, m.Sub)
 		d.mu.Unlock()
 		return nil
 	default:
@@ -386,37 +408,56 @@ func (d *Direct) Fetch(ctx context.Context, f nostr.Filter) (transport.Batch, er
 	return d.request(ctx, message{Op: "fetch", Filter: &f})
 }
 
-// Watch supports one subscription for the connection lifetime. Cancellation
-// closes the connection so a later call cannot consume events from an old watch.
+// Watch owns an independent bounded subscription. Canceling it releases only
+// that subscription. A lost connection closes all subscriptions.
 func (d *Direct) Watch(ctx context.Context, f nostr.Filter) (<-chan nostr.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
-	if d.watching {
+	if d.ctx.Err() != nil {
 		d.mu.Unlock()
-		return nil, errors.New("bluetooth: one watch per link")
+		return nil, ErrDisconnected
 	}
-	d.watching = true
-	d.local = &f
+	if len(d.local) >= maxWatches {
+		d.mu.Unlock()
+		return nil, errors.New("bluetooth: watch capacity exceeded")
+	}
+	d.nextWatch++
+	id := d.nextWatch
+	sub := &subscription{filter: f, events: make(chan nostr.Event, maxResults)}
+	d.local[id] = sub
 	d.mu.Unlock()
-	if _, err := d.request(ctx, message{Op: "watch", Filter: &f}); err != nil {
-		d.stop(err)
+	remove := func() {
+		d.mu.Lock()
+		if d.local[id] != nil {
+			delete(d.local, id)
+			close(sub.events)
+		}
+		d.mu.Unlock()
+		if err := d.enqueue(message{Op: "unwatch", Sub: id}); err != nil && d.ctx.Err() == nil {
+			d.stop(err)
+		}
+	}
+	if _, err := d.request(ctx, message{Op: "watch", Sub: id, Filter: &f}); err != nil {
+		remove()
 		return nil, err
 	}
 	go func() {
 		select {
 		case <-ctx.Done():
-			d.stop(ctx.Err())
+			remove()
 		case <-d.ctx.Done():
 		}
 	}()
-	return d.events, nil
+	return sub.events, nil
 }
 
 // Exchange subscribes before submission. A failure after Send starts is uncertain
 // and must not trigger automatic retry on another carrier.
 func (d *Direct) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (nostr.Event, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	events, err := d.Watch(ctx, answers)
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}

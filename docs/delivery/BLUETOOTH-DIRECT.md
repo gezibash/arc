@@ -1,9 +1,9 @@
 # Direct Bluetooth event adapter
 
-Stage 4 is an experimental adapter component. Normal ARC commands do not select
-it yet. Stage 5 must supply configuration, lifecycle and the two-device CLI proof
-before Bluetooth is described as usable. See the
-[implementation plan](../proposals/bluetooth.md).
+Status: **Integrated, verification pending.** Stage 5 connects the secure
+adapter to normal ARC commands on Linux. Automated tests use a simulated radio;
+no two-device test has yet proved this profile over BlueZ. See the
+[Linux test guide](BLUETOOTH-CLI.md) and [implementation plan](../proposals/bluetooth.md).
 
 ## What this adds
 
@@ -42,26 +42,36 @@ The existing `arc-ble-probe` remains unchanged and uses a different service.
   refuses a query with more than 64. Narrow the filter when this occurs. The
   share policy is applied before the caller's result limit. No silent partial
   batch is returned. The receiving core still owns sync and mail behavior.
-- `Watch` takes one subscription per link lifetime. It returns after the peer
+- `Watch` takes up to 16 independent subscriptions per link. It returns after the peer
   has accepted the subscription and queued the initial permitted events. It
   then receives matching events sent through this link. Writes to the injected
   store through unrelated adapters do not generate notifications here.
 - `Exchange` installs a watch before sending a live request. A failure after
   submission begins is uncertain; it never causes automatic replay or failover.
-  A new exchange needs a new link after the one lifetime watch has been used.
+  It releases its subscription when the exchange finishes; later calls reuse the link.
 - One outbound request runs at a time. Each has a 30-second cap, subject to an
   earlier caller deadline. Cancellation after submission closes the link.
-- There are 66 outbound message slots, 65 reply slots and 64 watched-event slots.
+- There are 66 outbound message slots, 65 reply slots and 64 event slots per subscription.
   A slow consumer or excess queued work closes the connection explicitly.
 - An event's JSON is limited to core's 64 KiB limit. An encoded wire message is
   at most 256 KiB. Record buffers are at most 4,098 bytes. Each GATT direction
   has at most 256 queued packets of 20 bytes.
 
-These limits are for a first direct adapter, not a general mesh or a multiplexed
-provider connection. Stage 5 must address multiple subscriptions required by
-normal mail/provider composition, repeated calls, and explicit error reporting
-when a watch closes. `Direct.Err` exposes the terminal cause. `Fetch` does not
-claim reconciliation. Durable retry, forwarding and macOS support are absent.
+A canceled established watch closes only its own channel. Connection loss closes
+all watches; core ends the affected sessions. Canceling a pending wire request
+still closes the connection because its outcome may be uncertain. `Direct.Err`
+exposes the terminal cause. `Fetch` does not claim reconciliation.
+
+`Listen` accepts successive connections from the selected citizen. It starts
+advertising when the first local watch starts, after `arc serve` has saved its
+announcement. Disconnect ends the old watches. Normal provider/mail loops open
+new watches on a new connection; they do not resume or replay live calls.
+No peer within 30 seconds starts a new bounded admission attempt. Configuration,
+authentication and other setup errors are reported; restart after correcting them.
+
+Mesh, a forwarding relay, self-data/bulk transfers, macOS and automatic fallback
+are not supported. Existing core mail can retain and acknowledge direct mail;
+Stage 7's broader durable-delivery work remains separate.
 
 ## Experimental wire profile
 
@@ -95,12 +105,13 @@ across connections, and the recipient and role prevent reflection.
 After the handshake, records are Noise ciphertexts. A plaintext message begins
 with its four-byte big-endian JSON length. The plaintext stream is split across
 records of at most 4,080 plaintext bytes. The JSON has `op`, optional `id`,
-`filter`, `frames`, and `error` fields. `frames` contains base64 byte arrays from
+`sub`, `filter`, `frames`, and `error` fields. `frames` contains base64 byte arrays from
 `core/frame` with a 1,024-byte frame limit and zero forwarding hops.
 
 Operations are `send`/`ack`, `fetch`/`result`/`end`, and `watch`/`event`/`end`.
-`unwatch` clears the remote subscription; the public API instead closes the link
-on watch cancellation to prevent reuse of stale events. Each request has a
+`watch` and its snapshot `event` messages carry a positive `sub` ID, distinct
+from the request ID. `unwatch` removes that subscription. IDs are never reused
+within a connection. Late snapshot packets for canceled subscriptions are discarded. Each request has a
 positive connection-local ID. Fragments are assembled within one bounded
 message; incomplete messages are discarded with the connection. Partial records
 and messages have a 30-second budget once their first data arrives. Idle watches
@@ -118,6 +129,10 @@ An authenticated peer sees events explicitly sent or permitted by the share
 policy. An untrusted radio peer can occupy the single admission slot until the
 30-second setup timeout. This profile needs security review before production use.
 
+The profile string stays `v1` while Bluetooth is unreleased. A wire change
+before the first release updates both endpoints together; a change after it
+needs a negotiated profile, see the reserved handshake frame in the delivery spec.
+
 ## Evidence and the remaining acceptance gate
 
 `go test -race ./adapters/transport/ble` exercises two adapter endpoints through
@@ -127,8 +142,13 @@ watch readiness and cancellation, ephemeral delivery, wrong identities,
 ciphertext corruption, and a request/reply through the real `core/call` server.
 The provider program is replaced at core's existing provider boundary in that test.
 
-These tests do not exercise BlueZ or a radio. Stage 4 has no new real-device
-results. The earlier iPhone/Pi echo test does not validate this secure profile.
+`TestBluetoothCLI` builds the normal CLI with a test-only Go overlay replacing
+OS radio I/O by ordered Unix-socket packets. Two separate homes discover and
+install an echo service, make repeated calls on successive connections, deliver
+private mail and sync. A local HTTP trap detects unintended relay access. The
+production binary has no socket option or test environment-variable hook.
+
+These tests do not exercise BlueZ or a radio. There are no new real-device results. The earlier iPhone/Pi echo test does not validate this secure profile.
 Before completing Stage 5, normal ARC commands must run on two devices with
 relay fallback disabled. Record device/OS/BlueZ/build versions, signed/private
 event delivery, live calls, disconnect/retry, cancellation and restart. Neither

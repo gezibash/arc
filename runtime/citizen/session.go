@@ -27,9 +27,11 @@ import (
 // Session is a citizen's application state. Cobra supplies configuration;
 // operations here can also serve another UI or an embedded caller.
 type Session struct {
-	Key    keys.Key
-	Signer keys.Signer
-	Remote bool
+	Bluetooth *BluetoothConfig
+	bluetooth interface{ Close() error }
+	Key       keys.Key
+	Signer    keys.Signer
+	Remote    bool
 	// Device is the device key of a machine that signs through a remote
 	// signer. It opens the data roots wrapped to this device.
 	Device   keys.Key
@@ -56,6 +58,8 @@ type Session struct {
 }
 
 type Config struct {
+	Context           context.Context
+	Bluetooth         *BluetoothConfig
 	Home, Root        string
 	Key               keys.Key
 	Signer            keys.Signer
@@ -102,21 +106,34 @@ func Open(cfg Config) (*Session, error) {
 	for _, url := range cfg.IndexerURLs {
 		sess.Indexers = append(sess.Indexers, relay.Relay{URL: url, Signer: once})
 	}
+	if cfg.Bluetooth != nil {
+		ctx := cfg.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := sess.useBluetooth(ctx, *cfg.Bluetooth); err != nil {
+			sess.Close()
+			return nil, err
+		}
+	}
 	sess.Mail, err = mailbox.Open(filepath.Join(cfg.Home, "store"), cfg.Signer, sess.Node, sess.Relays)
 	if err != nil {
-		sess.receipts.Close()
-		sess.roots.Close()
-		s.Close()
+		sess.Close()
 		return nil, err
 	}
 	sess.Mail.Indexers = sess.Indexers
-	sess.Mail.InboxRelay = func(url string) transport.Transport {
-		return relay.Relay{URL: url, Signer: keyer.NewPlainKeySigner(nostr.Generate())}
+	if cfg.Bluetooth == nil {
+		sess.Mail.InboxRelay = func(url string) transport.Transport {
+			return relay.Relay{URL: url, Signer: keyer.NewPlainKeySigner(nostr.Generate())}
+		}
 	}
 	sess.Waker = wake.Load(filepath.Join(cfg.Root, wake.FileName), filepath.Join(cfg.Root, wake.StateDirName))
 	return sess, nil
 }
 func (s *Session) Close() {
+	if s.bluetooth != nil {
+		_ = s.bluetooth.Close()
+	}
 	s.keptMu.Lock()
 	for _, r := range s.kept {
 		_ = r.Close()

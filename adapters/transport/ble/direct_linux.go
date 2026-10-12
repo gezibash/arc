@@ -352,3 +352,5 @@ func (c *directCharacteristic) ReadValue(sender dbus.Sender, opts map[string]dbu
 		return []byte{}, nil
 	}
 }
+
+func directSupported() error { return nil }
