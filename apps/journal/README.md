@@ -86,8 +86,10 @@ says so. `arc sync --dir <path>` still carries the pages on a USB stick.
 Each change is one blob. The device pads it to a power of two, at least 4 KiB,
 encrypts it, and signs the change inside the encrypted bytes. A machine that
 holds the citizen key signs with it. A device that signs through a bunker signs
-with its device key; its bunker must run with `--decrypt all`, so that the
-device opens the reply of the storage citizen. If the citizen has a device
+with its device key. It also signs its calls to the storage citizen with its
+device key, so its bunker keeps the default `--decrypt self`. The signer sends
+a grant for each device on the device list to each storage citizen that it
+installed. If the citizen has a device
 list, another device takes only the changes of the citizen key and of a device
 on the list. [The storage spec](../../docs/storage/SPEC.md) defines
 the blob and the sync.

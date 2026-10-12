@@ -19,8 +19,10 @@ const TombstoneAge = 90 * 24 * time.Hour
 
 // store keeps the blobs of each account under its own directory:
 //
-//	accounts/<account>/state.json   the grants, the cursor and the entries
+//	accounts/<account>/state.json   the grant set, the cursor and the entries
 //	accounts/<account>/blobs/<id>   the bytes of one blob
+//
+// The name of an account is its account key, in hex.
 //
 // Each write is atomic. The lock of the account covers each change of
 // state.json, so two sessions of one account do not lose a change.
@@ -32,11 +34,11 @@ type store struct {
 
 // account is the content of state.json.
 type account struct {
-	// Grants are the keys that can use the account. The first key that
-	// opens the account gets the first grant. A later step adds grants
-	// for device keys, which the account key signs; see
-	// docs/proposals/storage.md, section 2.3.
-	Grants []string `json:"grants"`
+	// Devices are the device keys of the newest grant set. Each can use
+	// the account. A device key that the set does not hold has no grant.
+	Devices []string `json:"devices,omitempty"`
+	// GrantsAt is the time of the newest grant set, in Unix seconds.
+	GrantsAt int64 `json:"grants_at,omitempty"`
 	// Seq is the sequence number of the last change.
 	Seq uint64 `json:"seq"`
 	// Used is the sum of the sizes of the blobs.
@@ -112,17 +114,25 @@ func (s *store) load(name string) (*account, error) {
 	return a, nil
 }
 
-// authorize lets key use an account. A new account takes key as its first
-// grant. An account with grants refuses another key with errNoGrant.
-func (s *store) authorize(name, key string) error {
+// granted says if the newest grant set of an account holds a device key.
+func (s *store) granted(name, device string) (bool, error) {
+	a, err := s.load(name)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(a.Devices, device), nil
+}
+
+// grant keeps a grant set of an account, unless the account holds a newer
+// set. A set of the same time replaces the set, so a signer can send it
+// again.
+func (s *store) grant(name string, devices []string, at int64) error {
 	return s.change(name, func(a *account) (bool, error) {
-		if slices.Contains(a.Grants, key) {
-			return false, nil
+		if at < a.GrantsAt {
+			return false, refusal{wire.ErrStaleGrants, fmt.Sprintf("the account holds a grant set of %d, which is newer than %d", a.GrantsAt, at)}
 		}
-		if len(a.Grants) > 0 {
-			return false, errNoGrant
-		}
-		a.Grants = []string{key}
+		a.Devices = slices.Clone(devices)
+		a.GrantsAt = at
 		return true, nil
 	})
 }

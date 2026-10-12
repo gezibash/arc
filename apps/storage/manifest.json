@@ -32,7 +32,7 @@
       "action": {
         "call": {
           "class": "live",
-          "body": "{\"v\":1,\"account\":\"{{author|keyed:account}}\",\"session\":{{session}}}"
+          "body": "{\"v\":1,\"session\":{{session}}}"
         }
       },
       "output": {

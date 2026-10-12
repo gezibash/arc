@@ -3,6 +3,7 @@ package citizen
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
@@ -57,6 +59,102 @@ func (sess *Session) sealSelf(ctx context.Context, gen uint32) (selfsync.Keys, e
 	return selfsync.KeysFromRoot(root)
 }
 
+// StorageSigner is the key that signs the calls to one storage citizen. A
+// machine with the citizen key signs with the account key for that storage
+// citizen. A device that signs through a remote signer signs with its device
+// key, which a grant set of the account key names. The storage citizen
+// never sees the citizen key.
+func (sess *Session) StorageSigner(storage nostr.PubKey) (keys.Signer, error) {
+	if !sess.Remote {
+		return selfsync.AccountKey(sess.Key.Secret, storage)
+	}
+	if sess.Device.Public == (nostr.PubKey{}) {
+		return nil, errors.New("this machine has no device key, so it cannot call a storage citizen: run arc keys device")
+	}
+	return sess.Device, nil
+}
+
+// AccountKey is the account key of this citizen for one storage citizen.
+// Only a machine with the citizen key derives it.
+func (sess *Session) AccountKey(storage nostr.PubKey) (keys.Key, error) {
+	if err := sess.RequireSigner(); err != nil {
+		return keys.Key{}, err
+	}
+	return selfsync.AccountKey(sess.Key.Secret, storage)
+}
+
+// PushGrants sends the grant set of the device list to each storage citizen
+// that this citizen installed. The account key of each storage citizen
+// signs the call. A device key that the list does not hold loses its grant.
+// It returns the storage citizens that took the set, and one error for each
+// storage citizen that did not.
+func (sess *Session) PushGrants(ctx context.Context, installs catalog.Installs, list devices.List) ([]catalog.Install, error) {
+	if err := sess.RequireSigner(); err != nil {
+		return nil, err
+	}
+	targets, err := storageInstalls(installs)
+	if err != nil {
+		return nil, err
+	}
+	body, err := grantsBody(list)
+	if err != nil {
+		return nil, err
+	}
+	var reached []catalog.Install
+	var failed []error
+	for _, install := range targets {
+		if err := sess.pushGrants(ctx, install, body); err != nil {
+			failed = append(failed, fmt.Errorf("%s: the grants did not reach the storage citizen: %w", install.As, err))
+			continue
+		}
+		reached = append(reached, install)
+	}
+	return reached, errors.Join(failed...)
+}
+
+func grantsBody(list devices.List) ([]byte, error) {
+	grants := storage.Grants{Version: 1, Devices: []string{}, At: int64(list.At)}
+	for _, d := range list.Devices {
+		grants.Devices = append(grants.Devices, d.Key.Hex())
+	}
+	return json.Marshal(grants)
+}
+
+func (sess *Session) pushGrants(ctx context.Context, install catalog.Install, body []byte) error {
+	provider, err := nostr.PubKeyFromHex(install.Provider)
+	if err != nil {
+		return err
+	}
+	account, err := selfsync.AccountKey(sess.Key.Secret, provider)
+	if err != nil {
+		return err
+	}
+	request := call.Request{Capability: install.ID, Method: "RAW", Path: "/", Body: string(body)}
+	reply, _, _, err := sess.LiveCallAs(ctx, account, provider, request, call.Timeout)
+	if err != nil {
+		return err
+	}
+	if reply.Err != "" {
+		return errors.New(reply.Err)
+	}
+	return nil
+}
+
+// storageInstalls returns each storage citizen that the citizen installed.
+func storageInstalls(installs catalog.Installs) ([]catalog.Install, error) {
+	all, err := installs.List()
+	if err != nil {
+		return nil, err
+	}
+	var out []catalog.Install
+	for _, install := range all {
+		if install.ID == StorageApp && install.As != "" {
+			out = append(out, install)
+		}
+	}
+	return out, nil
+}
+
 // importedFile marks that this machine imported the drafts of the relays.
 const importedFile = "imported"
 
@@ -90,15 +188,9 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 // citizen that the citizen installed. With none, the data stays on this
 // machine, and it says so.
 func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
-	installs, err := cfg.Installs.List()
+	targets, err := storageInstalls(cfg.Installs)
 	if err != nil {
 		return err
-	}
-	var targets []catalog.Install
-	for _, install := range installs {
-		if install.ID == StorageApp && install.As != "" {
-			targets = append(targets, install)
-		}
 	}
 	if len(targets) == 0 {
 		fmt.Fprintln(cfg.Out, "self data stays on this machine: no storage citizen; install one with arc install <key> storage")
@@ -110,6 +202,17 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	signer := cfg.Device.Secret
 	if !sess.Remote {
 		signer = sess.Key.Secret
+	}
+	// The signer sends the grant set first, so that a revocation reaches
+	// each storage citizen even when the signer was offline at the revoke.
+	if !sess.Remote {
+		if list, ok, err := sess.DeviceList(ctx); err != nil {
+			fmt.Fprintf(cfg.Errs, "self data: the device list did not come, so no grants went: %v\n", err)
+		} else if ok {
+			if _, err := sess.PushGrants(ctx, cfg.Installs, list); err != nil {
+				fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+			}
+		}
 	}
 	syncer := &selfsync.Syncer{
 		Citizen: sess.Key.Public,
@@ -163,10 +266,11 @@ func (sess *Session) openStorage(ctx context.Context, installs catalog.Installs,
 	err = iface.Run(ctx, env, in, []string{"open", session}, iface.Stdio{In: strings.NewReader(""), Out: &out, Err: &errs})
 	if err != nil {
 		text := strings.TrimSpace(errs.String())
+		refusal := text + " " + err.Error()
 		switch {
-		case strings.Contains(text, "not_owner"):
-			return nil, errors.New("the storage citizen refused this citizen: it is not an owner of the account")
-		case strings.Contains(text, "busy"):
+		case strings.Contains(refusal, "not_owner"):
+			return nil, errors.New("the storage citizen refused this machine: its key is neither an account key in STORAGE_OWNERS nor a device key with a grant; the signer sends grants with arc keys devices add and arc sync")
+		case strings.Contains(refusal, "busy"):
 			return nil, errors.New("the storage citizen runs too many sessions now; try again later")
 		case text != "":
 			return nil, fmt.Errorf("the ARC call failed: %s", text)

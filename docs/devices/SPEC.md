@@ -196,7 +196,9 @@ the revocation, and the chain lets each later root open the older data.
    first if there is none.
 2. On the signer: `arc keys devices add <device key> --name <name>`. The
    signer reads the newest list from its store and its relays, adds the
-   device, seals the new list, keeps it, and sends it to its relays.
+   device, seals the new list, keeps it, and sends it to its relays. It then
+   sends the grant set to each storage citizen that it installed
+   ([the storage spec](../storage/SPEC.md), section 4.4).
 3. The running bunker watches its relay for kind 10274 of the citizen, and
    loads each newer list.
 4. On the device: `arc keys add bunker://<citizen>?relay=<url>`. With a
@@ -216,6 +218,8 @@ On the signer: `arc keys devices revoke <name or device key>`. The signer
 publishes a new list without the device. The bunker loads it from the relay.
 The next request of the revoked device gets the refusal "the signer refuses
 this device: its key is not on the device list". The other devices go on.
+The signer also sends the new grant set to each storage citizen that it
+installed, and each of them refuses the device key with `not_owner`.
 
 ### 4.4 The data roots
 

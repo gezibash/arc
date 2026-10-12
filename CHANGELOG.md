@@ -6,6 +6,27 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking.** A storage citizen knows a citizen by an account key, never
+  by the citizen key. The signer derives one account key for each storage
+  citizen, and `arc keys account <key of the storage citizen>` prints it.
+  `STORAGE_OWNERS` lists account keys. The account key signs the grant set:
+  each device key of the device list. `arc keys devices add` and `revoke`
+  send it to each storage citizen that the signer installed, and `arc sync`
+  on the signer sends it again. A device behind a bunker signs its storage
+  calls with its device key, and a revoked device gets `not_owner` from the
+  storage citizen. An older storage citizen refuses a newer client with
+  `invalid_request`, and a newer storage citizen refuses an older client
+  with `not_owner`: update both. An account under a pseudonym stays on disk,
+  and the first sync puts each blob again in the new account.
+
+### Fixed
+
+- A device behind a bunker syncs with a storage citizen while the bunker
+  keeps its default `--decrypt self`. The reply of the storage citizen is
+  sealed to the device key (#209).
+
 ## [0.25.0] - 2026-10-12
 
 Bulk bytes now leave the relay, and self data leaves it too. http bodies and
@@ -13,9 +34,6 @@ release archives go over the direct pipe. Each device has its own key, and
 the signer can revoke it. Self data is sealed with random data roots, and
 the journal keeps its pages on the device and syncs them with a storage
 citizen. Several changes are breaking; read each entry.
-
-Known issue: a device behind a bunker needs the bunker to run with
-`--decrypt all` to sync with a storage citizen (#209).
 
 ### Added
 

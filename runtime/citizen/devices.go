@@ -53,16 +53,18 @@ func NewestDeviceList(ctx context.Context, k nostr.Keyer, citizen nostr.PubKey, 
 }
 
 // PublishDeviceList seals the list with the citizen key, keeps it, and
-// sends it to the relays of the citizen. It fails when no relay takes it.
-func (sess *Session) PublishDeviceList(ctx context.Context, list devices.List) error {
+// sends it to the relays of the citizen. It returns the list with the time
+// of its event. It fails when no relay takes it.
+func (sess *Session) PublishDeviceList(ctx context.Context, list devices.List) (devices.List, error) {
 	if sess.Remote {
-		return errSignerOnly
+		return devices.List{}, errSignerOnly
 	}
 	event, err := devices.Seal(ctx, sess.Signer, list, nostr.Now())
 	if err != nil {
-		return err
+		return devices.List{}, err
 	}
-	return sess.publishOwn(ctx, event, "the device list")
+	list.At = event.CreatedAt
+	return list, sess.publishOwn(ctx, event, "the device list")
 }
 
 // publishOwn keeps an event of the citizen and sends it to the relays of the
