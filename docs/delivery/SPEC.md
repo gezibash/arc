@@ -315,8 +315,10 @@ registry uses these numbers:
 
 Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
 data, such as a journal page, a KPI series or a file, is a NIP-37 draft of
-kind 31234, with checkpoints of kind 1234 and a relay list of kind 10013. A
-part of kind 3275 carries only content past the first 32 KiB of a draft. See
+kind 31234, with checkpoints of kind 1234. A part of kind 3275 carries
+only content past the first 32 KiB of a draft. It stays on the device and on
+storage citizens, and an ARC relay refuses it (section 4.11). ARC does not
+make the private relay list of NIP-37, kind 10013. See
 docs/interface/SPEC.md, section 3.9. ARC registers its five kinds in the
 registry. [The kind registry](../KINDS.md) lists every kind that ARC uses.
 
@@ -360,14 +362,15 @@ NIP-65 relay lists, see section 4.10, and sends a direct message to the
 NIP-17 relay list of its recipient. It syncs with NIP-77 where a relay
 supports it.
 
-A citizen publishes three relay lists to its relays: NIP-65, kind 10002; the
-NIP-17 list, kind 10050; and the private NIP-37 list, kind 10013. Each list
-names every relay of the citizen. `arc relay add`, `arc relay rm`, and
+A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
+the NIP-17 list, kind 10050. Each list names every relay of the citizen. A
+citizen does not publish the private NIP-37 list, kind 10013, because no
+relay holds its drafts. `arc relay add`, `arc relay rm`, and
 `arc serve` publish them. `core/relaylist` holds the NIP-65 list.
 
 A citizen can also name indexer relays with `arc relay add <url> --index`.
 An indexer holds only relay lists. The citizen publishes its NIP-65 and NIP-17
-lists there, but not its private list. The citizen looks up the lists of
+lists there. The citizen looks up the lists of
 others in its store, then on its relays and its indexers. A one-time key
 answers the NIP-42 challenge of an indexer, so the indexer does not learn who
 looks up a list. `arc` names no indexer by default.
@@ -796,11 +799,24 @@ its own nodes through its storage citizens, or a directory that it carries. It
 does not send it to a relay. The data is a NIP-37 draft, and `core/draft`
 makes it. See docs/interface/SPEC.md, section 3.9, and docs/storage/SPEC.md.
 
-An older client sends drafts to its relays. A relay takes a draft only from
-its author, because the draft carries the NIP-70 tag. The relay transport answers the NIP-42 challenge of the relay
-with the citizen's key. The store applies a NIP-09 deletion of an author to
-the events of that author, and refuses them after that, so a stick or a relay
-cannot bring a deleted event back.
+An ARC relay refuses new drafts, checkpoints, parts and private relay lists,
+kinds 31234, 1234, 3275 and 10013. The one exception is the draft with the d
+tag `arc-keyed-root`. The relay still serves the old events of these kinds
+to their author, until the author deletes them or the operator removes
+them. The NIP-11 document of the relay has the tag `arc-drafts-retired`. See
+docs/storage/SPEC.md, sections 4.2.1 and 7.
+
+An older client sends drafts to its relays. An older relay takes a draft
+only from its author, because the draft carries the NIP-70 tag. The relay
+transport answers the NIP-42 challenge of the relay with the citizen's key.
+
+The store applies a NIP-09 deletion of an author to the events of that
+author, and refuses them after that, so a stick or a relay cannot bring a
+deleted event back. The one exception is a deletion with the tag
+`["arc", "moved"]`. A device sends it to an ARC relay for the drafts that a
+storage citizen holds. The store refuses it, and the relay applies it and
+then serves it to nobody. A deletion whose `k` tag names a sealed kind is
+sealed: the relay serves it only to its author.
 
 ### 4.12 Relay paths for direct connections
 
