@@ -393,8 +393,8 @@ draft, a checkpoint, a part and a deletion have this format:
   `created_at` is earlier than the time of the revocation, and its
   generation is earlier than the generation of the revocation. Section 3.2
   of the devices spec holds the revocations.
-- A query of sealed kinds reads the local store only. It asks no relay and
-  no signer.
+- A query of sealed kinds reads the local store only. It asks no relay. A
+  page of this format opens with no request to the signer.
 
 A reader still opens a draft of the format before the data roots, which the
 citizen key sealed to itself and signed. It opens it through the signer.
