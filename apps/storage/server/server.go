@@ -8,14 +8,15 @@
 // wire.Open, with a WebRTC offer, from the account key or from a device
 // key with a grant. The reply is wire.Answer, with the
 // WebRTC answer. The two programs then open one pipe of sdk/direct, and
-// the client sends hello, put, list, get, delete and usage requests on
-// it, several in flight. No blob goes through ARC.
+// the client sends hello, put, list, get, delete, usage, audit and drain
+// requests on it, several in flight. No blob goes through ARC.
 package server
 
 import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -473,7 +474,14 @@ func (s *session) serve() error {
 func (s *session) handle(req wire.Request) error {
 	switch req.Op {
 	case wire.OpHello:
-		return s.reply(wire.Reply{N: req.N, Version: 2, Features: []string{wire.FeatureBatch, wire.FeaturePieces}, Window: wire.Window})
+		return s.reply(wire.Reply{N: req.N, Version: 2, Features: []string{wire.FeatureBatch, wire.FeaturePieces, wire.FeatureAudit, wire.FeatureDrain}, Window: wire.Window})
+	case wire.OpDrain:
+		r, err := s.store.drain(s.account, req.Off)
+		if err != nil {
+			return s.refuse(req.N, err)
+		}
+		r.N = req.N
+		return s.reply(r)
 	case wire.OpList:
 		limit := req.Limit
 		if limit <= 0 || limit > wire.MaxList {
@@ -504,6 +512,22 @@ func (s *session) handle(req wire.Request) error {
 		return s.put(req)
 	case wire.OpGet:
 		return s.get(req, ids)
+	case wire.OpAudit:
+		if !wire.IsNonce(req.Nonce) {
+			return s.reply(wire.Reply{N: req.N, Error: wire.ErrInvalidRequest, Message: fmt.Sprintf("an audit has a nonce of %d bytes in lower-case hex", wire.NonceSize)})
+		}
+		nonce, _ := hex.DecodeString(req.Nonce)
+		items, err := s.store.audit(s.account, ids, nonce)
+		if err != nil {
+			return s.refuse(req.N, err)
+		}
+		if req.IDs != nil {
+			return s.reply(wire.Reply{N: req.N, Items: items})
+		}
+		if items[0].Error != "" {
+			return s.reply(wire.Reply{N: req.N, Error: items[0].Error, Message: "the account holds no blob " + req.ID})
+		}
+		return s.reply(wire.Reply{N: req.N, Size: items[0].Size, Proof: items[0].Proof})
 	case wire.OpDelete:
 		items, err := s.store.remove(s.account, ids)
 		if err != nil {

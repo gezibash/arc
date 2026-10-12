@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,6 +53,9 @@ type account struct {
 	Devices []string `json:"devices,omitempty"`
 	// GrantsAt is the time of the newest grant set, in Unix seconds.
 	GrantsAt int64 `json:"grants_at,omitempty"`
+	// Draining is the time at which the owner started the drain of the
+	// account, in Unix seconds, or 0. A draining account takes no put.
+	Draining int64 `json:"draining,omitempty"`
 
 	// Seq, Used, Blobs and Tombstones are the index of an older app. The
 	// service imports them into index.db once, and then removes them. An
@@ -210,6 +215,9 @@ func (s *store) admit(name, id string, size, reserved int64, piece bool) (string
 // quota of the account.
 func (s *store) room(name string, a *account, used, size int64) error {
 	v := s.standing(name, a)
+	if v.state == wire.StateDraining {
+		return refusal{wire.ErrRefused, "the account is draining: it takes no put, and keeps each read, list and delete"}
+	}
 	if v.state != wire.StateOpen {
 		return refusal{wire.ErrRefused, fmt.Sprintf("the account is %s: it takes no put, and its reads end at %s", v.state, time.Unix(v.readsEnd, 0).UTC().Format(time.DateOnly))}
 	}
@@ -436,4 +444,63 @@ func (s *store) usage(name string) (wire.Reply, error) {
 	}
 	v := s.standing(name, a)
 	return wire.Reply{Used: used, Quota: v.quota, Blobs: int(count), State: v.state, Plan: v.plan, Expires: v.expires}, nil
+}
+
+// audit answers an audit: the size and the AuditProof of each blob for
+// the nonce, or the code not_found. A blob whose file is gone is
+// not_found, as a blob with no entry is. The app reads each file whole for
+// each nonce, and keeps no proof.
+func (s *store) audit(name string, ids []string, nonce []byte) ([]wire.Item, error) {
+	items, err := s.sizes(name, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].Error != "" {
+			continue
+		}
+		proof, err := s.proof(name, items[i].ID, nonce)
+		if errors.Is(err, os.ErrNotExist) {
+			items[i] = wire.Item{ID: items[i].ID, Error: wire.ErrNotFound}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		items[i].Proof = proof
+	}
+	return items, nil
+}
+
+// proof hashes the file of one blob for an audit.
+func (s *store) proof(name, id string, nonce []byte) (string, error) {
+	f, err := os.Open(s.blobPath(name, id))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := wire.AuditHash(nonce, id)
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// drain sets the drain of an account, or ends it with off, and returns
+// the usage of the account.
+func (s *store) drain(name string, off bool) (wire.Reply, error) {
+	err := s.change(name, func(a *account) (bool, error) {
+		if off == (a.Draining == 0) {
+			return false, nil
+		}
+		a.Draining = 0
+		if !off {
+			a.Draining = s.now().Unix()
+		}
+		return true, nil
+	})
+	if err != nil {
+		return wire.Reply{}, err
+	}
+	return s.usage(name)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,8 +47,8 @@ type Conn struct {
 	// window is the count of requests that the app takes in flight, from
 	// hello: 0 before hello, 1 for an older app.
 	window int
-	// pieces says that the app keeps tags, from hello.
-	pieces bool
+	// features are the features of the reply to hello.
+	features []string
 	// n is the N of the last numbered request.
 	n uint64
 }
@@ -312,6 +313,7 @@ func (s *Conn) Window(ctx context.Context) (int, error) {
 		return s.window, nil
 	}
 	r, err := s.do(ctx, Request{Op: OpHello})
+	s.features = r.Features
 	switch {
 	case IsRefused(err, ErrInvalidRequest):
 		s.window = 1
@@ -322,15 +324,13 @@ func (s *Conn) Window(ctx context.Context) (int, error) {
 	default:
 		s.window = 1
 	}
-	s.pieces = err == nil && slices.Contains(r.Features, FeaturePieces)
 	return s.window, nil
 }
 
 // Pieces says if the app keeps the tags of pieces. It asks hello once. An
 // older app ignores a tag, so a device puts only blobs of format 1 on it.
 func (s *Conn) Pieces(ctx context.Context) (bool, error) {
-	_, err := s.Window(ctx)
-	return s.pieces, err
+	return s.Has(ctx, FeaturePieces)
 }
 
 // PutResult is the result of one put of PutMany: a status of Put, or a
@@ -443,7 +443,7 @@ func (s *Conn) GetMany(ctx context.Context, ids []string, f func(id string, blob
 		return nil
 	}
 	for chunk := range slices.Chunk(ids, MaxBatch) {
-		r, err := s.batch(ctx, OpGet, chunk)
+		r, err := s.batch(ctx, Request{Op: OpGet, IDs: chunk})
 		if err != nil {
 			return err
 		}
@@ -497,7 +497,7 @@ func (s *Conn) DeleteMany(ctx context.Context, ids []string) ([]Item, error) {
 		return items, nil
 	}
 	for chunk := range slices.Chunk(ids, MaxBatch) {
-		r, err := s.batch(ctx, OpDelete, chunk)
+		r, err := s.batch(ctx, Request{Op: OpDelete, IDs: chunk})
 		if err != nil {
 			return items, err
 		}
@@ -506,12 +506,63 @@ func (s *Conn) DeleteMany(ctx context.Context, ids []string) ([]Item, error) {
 	return items, nil
 }
 
-// batch sends one get or delete with IDs, and checks that the reply has
+// Has says if the app announced a feature in its reply to hello. An older
+// app announces none.
+func (s *Conn) Has(ctx context.Context, feature string) (bool, error) {
+	if _, err := s.Window(ctx); err != nil {
+		return false, err
+	}
+	return slices.Contains(s.features, feature), nil
+}
+
+// ErrOlderApp says that the storage app does not know a request. It runs
+// an older version.
+var ErrOlderApp = errors.New("the storage citizen runs an older storage app; it must update")
+
+// Audit asks the app to prove that it holds blobs, MaxBatch IDs in one
+// request. Each item is for the ID at the same index: Size and Proof, or
+// an error code. The caller compares each Proof with the AuditProof of the
+// bytes that it expects. nonce must be NewNonce, new for this audit.
+func (s *Conn) Audit(ctx context.Context, ids []string, nonce []byte) ([]Item, error) {
+	if ok, err := s.Has(ctx, FeatureAudit); err != nil || !ok {
+		if err == nil {
+			err = ErrOlderApp
+		}
+		return nil, err
+	}
+	items := make([]Item, 0, len(ids))
+	for chunk := range slices.Chunk(ids, MaxBatch) {
+		r, err := s.batch(ctx, Request{Op: OpAudit, IDs: chunk, Nonce: hex.EncodeToString(nonce)})
+		if err != nil {
+			return items, err
+		}
+		items = append(items, r.Items...)
+	}
+	return items, nil
+}
+
+// Drain sets the account to StateDraining: the app refuses each put, and
+// keeps each read, list and delete. off sets it back to StateOpen. The
+// result tells what remains.
+func (s *Conn) Drain(ctx context.Context, off bool) (Usage, error) {
+	if ok, err := s.Has(ctx, FeatureDrain); err != nil || !ok {
+		if err == nil {
+			err = ErrOlderApp
+		}
+		return Usage{}, err
+	}
+	r, err := s.do(ctx, Request{Op: OpDrain, Off: off})
+	return Usage{Used: r.Used, Quota: r.Quota, Blobs: r.Blobs, State: r.State, Plan: r.Plan, Expires: r.Expires}, err
+}
+
+// batch sends one get, delete or audit with IDs, and checks that the reply has
 // one item for each ID, in order.
-func (s *Conn) batch(ctx context.Context, op string, ids []string) (Reply, error) {
+func (s *Conn) batch(ctx context.Context, req Request) (Reply, error) {
 	s.n++
 	n := s.n
-	r, err := s.do(ctx, Request{Op: op, N: n, IDs: ids})
+	req.N = n
+	ids := req.IDs
+	r, err := s.do(ctx, req)
 	if err != nil {
 		return r, err
 	}

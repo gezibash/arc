@@ -83,6 +83,16 @@ type standing struct {
 
 // standing reads the record of an account at the time now.
 func (s *store) standing(name string, a *account) standing {
+	v := s.admission(name, a)
+	if v.admitted && v.state == wire.StateOpen && a.Draining > 0 {
+		v.state = wire.StateDraining
+	}
+	return v
+}
+
+// admission reads the record of an account at the time now, with no
+// drain.
+func (s *store) admission(name string, a *account) standing {
 	r := a.Record
 	if r == nil || r.Status != statusAdmitted {
 		if slices.Contains(s.owners, name) {

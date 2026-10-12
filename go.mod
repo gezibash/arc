@@ -109,8 +109,11 @@ require (
 	modernc.org/sqlite v1.37.1 // indirect
 )
 
-// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with one fix: a send on a
-// subscription channel can race its close. Upstream submission is pending
-// (https://github.com/gezibash/nostrlib, branch fix-events-close-race).
-// Remove this replace when upstream merges the fix.
+// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with fixes for two races:
+// a send on sub.Events or on sub.countResult can race the close of that channel.
+// Upstream nostrlib has one item for each race (NIP-34 event ids):
+//   - sub.Events: pull request e6561592ddc2132bc8304260b1d40affc2f79c67368f66769c88acdcfeccd08e
+//   - sub.countResult: patch 26040f3bdc58a6665238b526b92c847bc240c5f7898d848c81d0025e6c5f5227
+// Copy: https://github.com/gezibash/nostrlib, branch fix-events-close-race-27e395a.
+// Remove this replace when upstream merges both.
 replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261012101157-cd24ae69871c

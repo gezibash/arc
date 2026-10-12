@@ -89,6 +89,12 @@ const (
 	// OpHello asks the app for its version and its features. An older app
 	// answers invalid_request.
 	OpHello = "hello"
+	// OpAudit asks the app to prove that it holds blobs: it answers the
+	// AuditProof of each ID for the nonce of the request.
+	OpAudit = "audit"
+	// OpDrain sets the account to StateDraining, or back to StateOpen with
+	// Off. The reply is the reply of a usage request.
+	OpDrain = "drain"
 )
 
 const (
@@ -102,8 +108,12 @@ const (
 	// Window is the largest number of requests that a client keeps in
 	// flight on one pipe: sent, with no final reply yet.
 	Window = 32
-	// MaxBatch is the largest number of IDs in one get or delete.
+	// MaxBatch is the largest number of IDs in one get, delete or audit.
 	MaxBatch = 256
+	// FeatureAudit says that the app answers OpAudit.
+	FeatureAudit = "audit"
+	// FeatureDrain says that the app answers OpDrain.
+	FeatureDrain = "drain"
 )
 
 // Request is one text message from the client on the pipe. A client that
@@ -131,6 +141,10 @@ type Request struct {
 	After uint64 `json:"after,omitempty"`
 	// Limit is the largest number of entries of a list.
 	Limit int `json:"limit,omitempty"`
+	// Nonce is the challenge of an audit: NonceSize random bytes, in hex.
+	Nonce string `json:"nonce,omitempty"`
+	// Off ends the drain of an account.
+	Off bool `json:"off,omitempty"`
 }
 
 // The statuses of a reply.
@@ -173,7 +187,8 @@ type Reply struct {
 	Message string `json:"message,omitempty"`
 	// Seq is the sequence number of the change that a put or a delete made.
 	Seq uint64 `json:"seq,omitempty"`
-	// Size is the size of the blob of a get. Its bytes follow the reply.
+	// Size is the size of the blob of a get, whose bytes follow the reply,
+	// or of an audit, which no bytes follow.
 	Size int64 `json:"size,omitempty"`
 	// Entries and Next are the result of a list. Next is the cursor for the
 	// next list.
@@ -193,19 +208,23 @@ type Reply struct {
 	Version  int      `json:"v,omitempty"`
 	Features []string `json:"features,omitempty"`
 	Window   int      `json:"window,omitempty"`
-	// Items are the results of a get or a delete with IDs, one for each
+	// Proof is the answer to an audit with ID: the AuditProof, in hex.
+	Proof string `json:"proof,omitempty"`
+	// Items are the results of a get, a delete or an audit with IDs, one for each
 	// ID, in order. The bytes of each found blob of a get follow the
 	// reply, in the same order.
 	Items []Item `json:"items,omitempty"`
 }
 
-// Item is the result for one ID of a get or a delete with IDs. A get
-// gives Size, or Error. A delete gives Status and Seq, or Error.
+// Item is the result for one ID of a get, a delete or an audit with IDs.
+// A get gives Size, or Error. A delete gives Status and Seq, or Error. An
+// audit gives Size and Proof, or Error.
 type Item struct {
 	ID     string `json:"id"`
 	Size   int64  `json:"size,omitempty"`
 	Status string `json:"status,omitempty"`
 	Seq    uint64 `json:"seq,omitempty"`
+	Proof  string `json:"proof,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
 

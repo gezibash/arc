@@ -224,6 +224,35 @@ arc-storage delete 3f1c…
 arc-storage usage
 ```
 
+Audit files: check that the storage citizen still holds the blob of each
+file, with no get. `audit` sends a new random nonce, and compares each
+answer with the proof of the local file. It prints `pass`, `fail` (other
+bytes) or `lost` (no blob) for each file, and fails if one blob does not
+pass:
+
+```sh
+arc-storage audit page-1.enc page-2.enc
+```
+
+```text
+3f1c…	pass	page-1.enc
+9a07…	fail	page-2.enc
+arc-storage: 1 of 2 blobs failed the audit
+```
+
+Drain the account before you leave the storage citizen. A draining
+account refuses each put, and keeps each get, list, delete and audit, so
+the data can move to another storage citizen. `drain` prints what
+remains. `drain -off` ends the drain:
+
+```sh
+arc-storage drain
+```
+
+```text
+draining: 2 blobs of 12288 bytes remain
+```
+
 ## Settings
 
 The service reads its settings from the environment. `arc serve` gives its
@@ -273,6 +302,15 @@ Each command takes these flags:
 - Each put and each delete gets the next sequence number of the account. A
   list gives the last change of each ID after the cursor, in order, at most
   1000 for each request. `arc-storage list` asks until the end.
+- A draining account refuses each put with `refused`. It keeps each get,
+  list, delete, usage and audit, with no end. Any session of the account
+  starts or ends the drain.
+- An audit answers, for each ID, the proof
+  `SHA-256("arc-storage-audit-v1" || 0x00 || nonce || id || bytes)` over
+  the bytes that the app holds. The app reads the bytes for each audit,
+  and keeps no proof. An ID with no entry, or with no file, gets
+  `not_found`. Section 3.9 of [the storage spec](../../docs/storage/SPEC.md)
+  gives the reason.
 - The app holds at most 4 pipes at a time. A pipe that carries no request
   for 30 s closes.
 - The app answers the requests of a pipe in order. A client keeps at most
@@ -341,7 +379,7 @@ and removes the padding.
 `arc sync` makes another blob, as section 3.4 of the storage spec says: its
 ID is a keyed hash of the record ID, and the padding is inside the
 encryption. Then it codes the blob into pieces with Reed-Solomon, and puts
-one piece on each storage citizen, as section 3.9 says. A piece comes with
+one piece on each storage citizen, as section 3.10 says. A piece comes with
 a sealed tag of 87 bytes. The app keeps the tag, and gives it back in each
 listing. The app does not open the tag, and does not decode a piece.
 
@@ -425,7 +463,7 @@ in order.
 
 | Request | Reply |
 | --- | --- |
-| `{"op":"hello"}` | `{"v":2,"features":["batch","pieces"],"window":32}`. An older app answers `invalid_request`. |
+| `{"op":"hello"}` | `{"v":2,"features":["batch","pieces","audit","drain"],"window":32}`. An older app answers `invalid_request`. |
 | `{"op":"put","id":"<64 hex>","size":4096}` | `{"status":"send"}`, then the client sends the bytes, and the app answers `{"status":"stored","seq":7}`. Or `{"status":"held"}` or `{"status":"tombstoned"}`, and no bytes go. |
 | `{"op":"put","id":"<64 hex>","size":2093,"tag":"<base64>"}` | The put of a piece, with the same replies. |
 | `{"op":"list","after":6,"limit":1000}` | `{"entries":[{"seq":7,"id":"…","size":4096},{"seq":8,"id":"…","size":2093,"tag":"<base64>"},{"seq":9,"id":"…","deleted":true}],"next":9}` |
@@ -434,6 +472,8 @@ in order.
 | `{"op":"delete","id":"<64 hex>"}` | `{"status":"deleted","seq":9}`, or `{"status":"absent"}`. |
 | `{"op":"delete","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","status":"deleted","seq":9},{"id":"…","status":"absent"}]}` |
 | `{"op":"usage"}` | `{"used":8192,"quota":1073741824,"blobs":2,"state":"open","plan":"free"}` |
+| `{"op":"audit","ids":["<64 hex>",…],"nonce":"<64 hex>"}` | `{"items":[{"id":"…","size":4096,"proof":"<64 hex>"},{"id":"…","error":"not_found"}]}`. With one `id`, `{"size":4096,"proof":"<64 hex>"}`. |
+| `{"op":"drain"}` or `{"op":"drain","off":true}` | The usage reply, with the new state. |
 
 - The client sends `hello` one time in each session, before its first
   request in flight. If `hello` gives the feature `batch`, the client numbers each request
@@ -445,6 +485,8 @@ in order.
   oldest put that got `send` and has not all its bytes. A text request can
   come between two runs.
 - A request with `ids` names 1 to 256 IDs.
+- The client sends `audit` and `drain` only if `hello` gives the features
+  `audit` and `drain`. An older app has neither.
 - Without `batch`, the client sends one request at a time, with no `n`, as
   before.
 - A put with `tag` is a piece. The tag is 87 bytes in standard base64.
@@ -457,7 +499,7 @@ The bytes of a blob go in binary messages of 16 KiB, with the flow control
 of the direct pipe spec, section 3.4. A refused request gets
 `{"error":"<code>","message":"<text>"}`, with the `n` of the request. The
 codes are `invalid_request`, `bad_size`, `over_quota`, `refused` (a put on
-a closing account), `not_found` and `storage_failed`.
+a closing or draining account), `not_found` and `storage_failed`.
 
 ### Measure the puts
 
@@ -516,6 +558,12 @@ with the key of one owner, and a stranger. They check these things:
   room. `usage` reports the quota, plan and state of each account.
   `account set` raises a quota, and `account close` refuses puts and keeps
   lists.
+- An audit of held blobs passes. After the test changes one byte of one
+  blob file and removes another, the audit gives `fail` and `lost`.
+- A draining account refuses a put, and keeps usage, list, get and audit.
+  `drain -off` takes puts again.
+- An audit answer for an older nonce does not pass for a new nonce
+  (`go test ./apps/storage/server/ -run TestAuditReplay`).
 - A newer grant set revokes a device key, and an older set cannot bring it
   back (`go test ./apps/storage/server/`).
 
