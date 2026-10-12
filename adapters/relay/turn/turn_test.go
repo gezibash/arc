@@ -246,3 +246,93 @@ func TestBinding(t *testing.T) {
 		t.Errorf("mapped address %s, want %s", mapped, want)
 	}
 }
+
+// TestRelayToRelay sends packets between two allocations on one relay. The
+// relay sockets listen on 127.0.0.1 behind the public address 192.0.2.1,
+// where nothing listens, as on Fly.io, where the network drops a packet
+// from the relay to its own public address (#264).
+func TestRelayToRelay(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := net.IPv4(192, 0, 2, 1)
+	s, err := Serve(conn, Config{Secret: "secret", PublicIP: public, RelayHost: "127.0.0.1", MinPort: 51000, MaxPort: 51999, Quota: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	allocate := func() (string, net.PacketConn) {
+		k := keys.Generate()
+		credential, err := s.Credential(k.Public.Hex(), "127.0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := pturn.NewClient(&pturn.ClientConfig{TURNServerAddr: conn.LocalAddr().String(), Username: credential.Username, Password: credential.Password, Realm: Realm, Conn: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Listen(); err != nil {
+			t.Fatal(err)
+		}
+		relayed, err := client.Allocate()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = relayed.Close(); client.Close(); _ = c.Close() })
+		return k.Public.Hex(), relayed
+	}
+	keyA, a := allocate()
+	keyB, b := allocate()
+	for _, r := range []net.PacketConn{a, b} {
+		if ip := r.LocalAddr().(*net.UDPAddr).IP; !ip.Equal(public) {
+			t.Fatalf("relayed address %s, want the public address %s", r.LocalAddr(), public)
+		}
+	}
+
+	// B writes first, so the relay lets A in. A has no permission for B
+	// yet, so the relay drops this packet after it counts it.
+	if _, err := b.WriteTo([]byte("B->A"), a.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := a.WriteTo([]byte("A->B"), b.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1500)
+	_ = b.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, from, err := b.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("B got nothing from A: %v", err)
+	}
+	if string(buf[:n]) != "A->B" || from.String() != a.LocalAddr().String() {
+		t.Errorf("B got %q from %s, want %q from %s", buf[:n], from, "A->B", a.LocalAddr())
+	}
+
+	// A has a permission for B now, so B reaches A too.
+	if _, err := b.WriteTo([]byte("B->A"), a.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, from, err = a.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("A got nothing from B: %v", err)
+	}
+	if string(buf[:n]) != "B->A" || from.String() != b.LocalAddr().String() {
+		t.Errorf("A got %q from %s, want %q from %s", buf[:n], from, "B->A", b.LocalAddr())
+	}
+
+	// A relay socket counts each packet that it sends or gets against its
+	// own citizen, as for a peer on the network. Each of A and B sent or
+	// got three packets of 4 bytes.
+	for _, key := range []string{keyA, keyB} {
+		if used := 1<<20 - s.Left(key); used != 12 {
+			t.Errorf("citizen %s used %d bytes, want 12", key[:8], used)
+		}
+	}
+}
