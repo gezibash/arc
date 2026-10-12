@@ -268,7 +268,9 @@ func olderStorageApp(t *testing.T) string {
 }
 
 // olderProgram builds a program of olderCommit from the history of the
-// repository, outside the checkout.
+// repository, outside the checkout. Each build is in a new directory, so
+// -trimpath keeps the directory out of the build cache keys. The cache then
+// keeps the compiled packages of olderCommit between runs.
 func olderProgram(t *testing.T, pkg string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -279,7 +281,7 @@ func olderProgram(t *testing.T, pkg string) string {
 		exec.Command("git", "-C", repo, "archive", "--format=tar", "-o", tarball, olderCommit),
 		exec.Command("mkdir", src),
 		exec.Command("tar", "-xf", tarball, "-C", src),
-		exec.Command("go", "build", "-o", bin, pkg),
+		exec.Command("go", "build", "-trimpath", "-o", bin, pkg),
 	}
 	steps[3].Dir = src
 	for _, step := range steps {
