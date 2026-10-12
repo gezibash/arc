@@ -6,6 +6,38 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-12
+
+A transfer works when both ends use only the TURN relay. Storage citizens
+end a drain without the user, and delete the blobs of replaced and deleted
+records. Update the relay to get the TURN fix; clients need no change for it.
+
+### Added
+
+- Each device sends a `drain` request to a storage citizen that the storage
+  list names `draining`. The storage citizen then refuses each put of the
+  account. The signer marks an empty draining storage citizen `gone`, and
+  removes an entry that is `gone` for 30 days or more (#263).
+- Repair deletes each piece and whole copy of the blob of a replaced or
+  deleted record, on each storage citizen. A note in
+  `<home>/selfsync/old.json` keeps an interrupted deletion until the next
+  repair. Checkpoints stay, because `journal history` reads them (#266).
+- A blob with fewer than k pieces of every seal no longer fails a sync, if
+  each storage citizen was listed to the end once (#266).
+
+### Fixed
+
+- TURN: if the relay sockets listen on a private address behind the public
+  TURN address, as on Fly.io, the relay delivers a packet from one of its
+  relay ports to another on the host. Before, a transfer where both ends
+  used only relayed addresses got no path (#267).
+
+### Documentation
+
+- `docs/direct/SPEC.md` records 100 MB downloads between two machines behind
+  NAT through the production relay: about 810 Mbit/s direct and 68 Mbit/s
+  through TURN (#265).
+
 ## [0.26.0] - 2026-10-12
 
 The storage network is complete. A citizen keeps its self data with several
