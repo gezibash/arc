@@ -410,10 +410,15 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	}
 	rep := report.Repair
 	if cfg.Repair {
-		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, coded %d blobs of format 1 into pieces, deleted %d; %d bytes down, %d bytes up\n",
-			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Coded, rep.Deleted, rep.Down, rep.Up)
-	} else if rep.Pending > 0 {
-		fmt.Fprintf(cfg.Errs, "self data: %d blobs need repair; arc serve repairs them on its tick, or run arc sync --repair\n", rep.Pending)
+		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, coded %d blobs of format 1 into pieces, removed %d blobs of replaced records, deleted %d; %d bytes down, %d bytes up\n",
+			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Coded, rep.Replaced, rep.Deleted, rep.Down, rep.Up)
+	} else {
+		if rep.Pending > 0 {
+			fmt.Fprintf(cfg.Errs, "self data: %d blobs need repair; arc serve repairs them on its tick, or run arc sync --repair\n", rep.Pending)
+		}
+		if rep.Replaced > 0 {
+			fmt.Fprintf(cfg.Out, "self data: %d blobs of replaced or deleted records wait; arc serve deletes them on its tick, or run arc sync --repair\n", rep.Replaced)
+		}
 	}
 	if rep.Old > 0 {
 		fmt.Fprintf(cfg.Out, "self data: %d blobs of format 1 remain; repair codes them into pieces\n", rep.Old)
@@ -427,6 +432,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		}
 		fmt.Fprintf(cfg.Errs, "self data: the repair of %d blobs waits for a direct path: the pipe to %s goes through TURN; arc sync --repair --turn allows TURN\n",
 			rep.WaitDirect, strings.Join(relayed, ", "))
+	}
+	if report.Short > 0 {
+		fmt.Fprintf(cfg.Out, "self data: %d blobs have fewer than k pieces of one seal on the storage citizens: a deletion that did not end, or lost pieces; repair ends them\n", report.Short)
 	}
 	if n := len(report.Unreadable); n > 0 {
 		failed = append(failed, fmt.Errorf("%d blobs cannot be read now", n))

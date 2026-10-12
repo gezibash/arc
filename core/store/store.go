@@ -52,6 +52,10 @@ func (o Outcome) String() string {
 	return [...]string{"stored", "duplicate", "superseded", "refused"}[o]
 }
 
+// ReasonDeleted is the reason of a refused event that a stored deletion
+// request of its author names.
+const ReasonDeleted = "its author deleted it"
+
 // Result is the outcome of one Save.
 type Result struct {
 	Outcome Outcome
@@ -170,7 +174,7 @@ func (s *Store) save(b Backend, event nostr.Event) (Result, error) {
 		return Result{Outcome: Duplicate}, nil
 	}
 	if deleted(b, event) {
-		return Result{Outcome: Refused, Reason: "its author deleted it"}, nil
+		return Result{Outcome: Refused, Reason: ReasonDeleted}, nil
 	}
 
 	if event.Kind.IsReplaceable() || event.Kind.IsAddressable() {
