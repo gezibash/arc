@@ -77,7 +77,7 @@ func TestDelivery(t *testing.T) {
 
 	// The journal is a local app. Its pages cross a storage citizen, and the
 	// relay introduces the two ends of the pipe.
-	storeKey := storageCitizen(t, work, url, author)
+	storeKey := storageCitizen(t, work, url, a)
 	a.run("install", storeKey, "storage", "--yes")
 	b.run("install", storeKey, "storage", "--yes")
 	a.input("---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup\n",
@@ -98,7 +98,7 @@ func TestDelivery(t *testing.T) {
 	t.Log("ok: the relay holds neither the text nor the address")
 
 	// The storage citizen holds ciphertext only.
-	err = filepath.WalkDir(filepath.Join(work, "blobs"), func(path string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(filepath.Join(work, "storage-blobs"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}

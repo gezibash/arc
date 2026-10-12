@@ -23,6 +23,7 @@ var env struct {
 	owner, second      string // two arc homes with the key of the owner
 	stranger           string // the arc home of another citizen
 	ownerKey, storeKey string
+	accountKey         string // the account key of the owner for the storage citizen
 }
 
 // quota is the quota of each account in the tests.
@@ -134,10 +135,18 @@ func setup(m *testing.M) int {
 		return fail("the two homes of the owner have two keys: %s and %s", env.ownerKey, keys[env.second])
 	}
 
+	// The owner of the account is the account key that the owner derives
+	// for this storage citizen.
+	account, err := exec.Command(env.arc, "--home", env.owner, "keys", "account", env.storeKey).Output()
+	if err != nil {
+		return fail("arc keys account: %v", err)
+	}
+	env.accountKey = strings.TrimSpace(string(account))
+
 	// The storage citizen. The two ends are on one machine, so they use
 	// the loopback address and no STUN server.
 	serve := exec.Command(env.arc, "--home", store, "serve", app)
-	serve.Env = append(os.Environ(), "STORAGE_DIR="+env.dir, "STORAGE_OWNERS="+env.ownerKey,
+	serve.Env = append(os.Environ(), "STORAGE_DIR="+env.dir, "STORAGE_OWNERS="+env.accountKey,
 		fmt.Sprintf("STORAGE_QUOTA=%dKiB", quota>>10), "STORAGE_STUN=none", "STORAGE_LOOPBACK=1")
 	served := &output{}
 	serve.Stdout, serve.Stderr = served, served
@@ -273,14 +282,14 @@ func TestSecondHomeSyncsFromCursor(t *testing.T) {
 		}
 	}
 
-	// On the disk of the storage citizen: one account, named by a
-	// pseudonym, not by the key of the owner, and each blob padded.
+	// On the disk of the storage citizen: one account, named by the
+	// account key, not by the key of the owner, and each blob padded.
 	accounts, err := os.ReadDir(filepath.Join(env.dir, "accounts"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(accounts) != 1 || len(accounts[0].Name()) != 22 || strings.Contains(accounts[0].Name(), env.ownerKey[:16]) {
-		t.Fatalf("the accounts are %v, want one pseudonym of 22 characters for both homes", accounts)
+	if len(accounts) != 1 || accounts[0].Name() != env.accountKey || env.accountKey == env.ownerKey {
+		t.Fatalf("the accounts are %v, want only the account key %s for both homes", accounts, env.accountKey)
 	}
 	for _, id := range []string{ids[0], ids[1], newIDs[0]} {
 		info, err := os.Stat(filepath.Join(env.dir, "accounts", accounts[0].Name(), "blobs", id))

@@ -24,17 +24,42 @@ const (
 	MaxList = 1000
 )
 
-// Open is the body of the ARC call to the app. It opens one pipe for one
-// session. The manifest command "open" makes it from the Session that the
-// client gives, and adds the account.
+// Open is the body of the ARC call that opens one pipe for one session.
+// The manifest command "open" makes it from the Session that the client
+// gives. The author of the call names the account: the account key of the
+// citizen for this storage citizen, or a device key that the newest grant
+// set of an account holds.
 type Open struct {
 	Version int `json:"v"`
-	// Account is the pseudonym of the owner for this storage citizen: a
-	// keyed value of the citizen (interface spec, section 3.7.1). The key
-	// of the storage citizen goes into the keyed value, so another storage
-	// citizen sees another pseudonym.
-	Account string  `json:"account"`
+	// Account is the pseudonym of an older client. The storage app does not
+	// use it.
+	Account string  `json:"account,omitempty"`
 	Session Session `json:"session"`
+}
+
+// MaxGrants is the largest number of device keys in one grant set. It is
+// the largest device list (docs/devices/SPEC.md).
+const MaxGrants = 64
+
+// Grants is the body of the ARC call that sets the grant set of an
+// account. The account key of the citizen for this storage citizen
+// authors the call, so the call is the signed record. The set holds each
+// device key that can use the account. A device key that a newer set does
+// not hold is revoked.
+type Grants struct {
+	Version int `json:"v"`
+	// Devices are the device keys, in hex.
+	Devices []string `json:"grants"`
+	// At is the time of the device list that the set follows, in Unix
+	// seconds. The app refuses a set that is older than the set it holds.
+	At int64 `json:"at"`
+}
+
+// Granted is the reply to Grants: the number of device keys in the set
+// that the app holds.
+type Granted struct {
+	Version int `json:"v"`
+	Devices int `json:"devices"`
 }
 
 // Session holds the WebRTC offer of the client.
@@ -103,6 +128,9 @@ const (
 	ErrOverQuota      = "over_quota"
 	ErrNotFound       = "not_found"
 	ErrFailed         = "storage_failed"
+	// ErrStaleGrants refuses a grant set that is older than the set that
+	// the account holds.
+	ErrStaleGrants = "stale_grants"
 )
 
 // Reply is one text message from the app on the pipe.
@@ -133,17 +161,10 @@ type Entry struct {
 	Deleted bool   `json:"deleted,omitempty"`
 }
 
-var (
-	idPattern      = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	accountPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
-)
+var idPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // IsID says if id names a blob: 64 lower-case hex digits.
 func IsID(id string) bool { return idPattern.MatchString(id) }
-
-// IsAccount says if account is a pseudonym: a keyed value of 22 characters
-// of base64url.
-func IsAccount(account string) bool { return accountPattern.MatchString(account) }
 
 // IsHex64 says if key is a public key in hex.
 func IsHex64(key string) bool {

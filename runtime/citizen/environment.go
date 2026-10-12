@@ -299,11 +299,33 @@ func (e *Environment) Call(ctx context.Context, provider nostr.PubKey, request i
 		}
 		return iface.CallResult{Queued: true}, nil
 	}
-	reply, _, _, err := e.Session.LiveCall(ctx, provider, r, call.Timeout)
+	signer, err := e.callSigner(provider)
+	if err != nil {
+		return iface.CallResult{}, err
+	}
+	reply, _, _, err := e.Session.LiveCallAs(ctx, signer, provider, r, call.Timeout)
 	if err != nil {
 		return iface.CallResult{}, err
 	}
 	return iface.CallResult{Body: reply.Body, Err: reply.Err}, nil
+}
+
+// callSigner is the key that signs a live call of the running command. A
+// call to a storage citizen goes from the account key or the device key, so
+// that the storage citizen never sees the citizen key. Each other call goes
+// from the citizen key.
+func (e *Environment) callSigner(provider nostr.PubKey) (keys.Signer, error) {
+	if e.Tool == "" || e.Installs.Path == "" {
+		return e.Session.Signer, nil
+	}
+	install, ok, err := e.Installs.Named(e.Tool)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || install.ID != StorageApp || install.Provider != provider.Hex() {
+		return e.Session.Signer, nil
+	}
+	return e.Session.StorageSigner(provider)
 }
 
 // List returns the members of a list of the running command, as keys.

@@ -8,6 +8,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/call"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/relaylist"
 	"github.com/gezibash/arc/core/transport"
@@ -60,9 +61,15 @@ func (s *Session) liveRelays(ctx context.Context, provider nostr.PubKey) ([]tran
 	return out, nil
 }
 
-// liveCall tries each relay in turn, and returns the first reply, the round
-// trip, and the relay that carried it.
+// LiveCall tries each relay in turn, and returns the first reply, the round
+// trip, and the relay that carried it. The citizen key signs the call.
 func (sess *Session) LiveCall(ctx context.Context, provider nostr.PubKey, request call.Request, timeout time.Duration) (call.Reply, time.Duration, string, error) {
+	return sess.LiveCallAs(ctx, sess.Signer, provider, request, timeout)
+}
+
+// LiveCallAs is LiveCall with another key as the author of the call. The
+// provider seals the reply to that key.
+func (sess *Session) LiveCallAs(ctx context.Context, signer keys.Signer, provider nostr.PubKey, request call.Request, timeout time.Duration) (call.Reply, time.Duration, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, min(timeout, call.Timeout))
 	defer cancel()
 	if len(sess.Relays) == 0 {
@@ -75,7 +82,7 @@ func (sess *Session) LiveCall(ctx context.Context, provider nostr.PubKey, reques
 	if err != nil {
 		return call.Reply{}, 0, "", err
 	}
-	reply, rtt, path, err := LiveCall(ctx, sess.Signer, provider, request, targets, timeout)
+	reply, rtt, path, err := LiveCall(ctx, signer, provider, request, targets, timeout)
 	if err == nil {
 		sess.Waker.Answered(provider[:])
 	}

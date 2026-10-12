@@ -297,7 +297,7 @@ func TestInterface(t *testing.T) {
 	desktop := home("desktop").with(loopback...)
 	desktop.input(read(t, keyfile(t, caller.home)), "keys", "add")
 	desktop.run("relay", "add", url)
-	storeKey := storageCitizen(t, work, url, callerKey)
+	storeKey := storageCitizen(t, work, url, laptop)
 	sync := func() {
 		t.Helper()
 		laptop.run("sync")

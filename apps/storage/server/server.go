@@ -1,8 +1,11 @@
 // Package server holds encrypted blobs for the owners of a storage
 // citizen. It cannot read them.
 //
-// A request is one ARC call, wire.Open: the pseudonym of the owner for this
-// storage citizen, and a WebRTC offer. The reply is wire.Answer, with the
+// An owner is an account key: a key that the signer of a citizen derives
+// for this one storage citizen. The account key sends wire.Grants, the
+// device keys that can use the account. A request is one ARC call,
+// wire.Open, with a WebRTC offer, from the account key or from a device
+// key with a grant. The reply is wire.Answer, with the
 // WebRTC answer. The two programs then open one pipe of sdk/direct, and
 // the client sends put, list, get, delete and usage requests on it. No blob
 // goes through ARC.
@@ -59,8 +62,10 @@ type server struct {
 // settings:
 //
 //	STORAGE_DIR       the directory of the blobs
-//	STORAGE_OWNERS    the public keys, in hex, that can open an account,
-//	                  separated by spaces or commas
+//	STORAGE_OWNERS    the account keys, in hex, that can open an account,
+//	                  separated by spaces or commas. arc keys account
+//	                  prints the account key of a citizen for this
+//	                  storage citizen.
 //	STORAGE_QUOTA     the quota of each account, such as 512MiB or 1GiB
 //	STORAGE_STUN      the STUN server, or "none"; unset asks the first
 //	                  relay of ARC_RELAYS on port 3478
@@ -135,27 +140,30 @@ func ParseSize(value string) (int64, error) {
 	return n << shift, nil
 }
 
-// HandleRequest answers one call: it checks the caller and the request,
-// opens its end of the pipe, and returns the answer.
+// HandleRequest answers one call. A call with a grant set sets the grants
+// of the account of its author. Another call opens a session: it checks
+// the caller and the request, opens its end of the pipe, and returns the
+// answer.
 func (s *server) HandleRequest(_ context.Context, request provider.Request) (string, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(request.Message), &fields) != nil {
+		return "", errInvalidRequest
+	}
+	if _, ok := fields["grants"]; ok {
+		return s.grant(request)
+	}
 	var req wire.Open
-	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 ||
-		!wire.IsAccount(req.Account) || req.Session.HoldMS < 0 ||
+	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 || req.Session.HoldMS < 0 ||
 		time.Duration(req.Session.HoldMS)*time.Millisecond > direct.MaxHold ||
 		req.Session.SDP.Type != webrtc.SDPTypeOffer || (req.Session.STUN != "" && !direct.IsIPSTUN(req.Session.STUN)) {
 		return "", errInvalidRequest
 	}
-	// The owner check. A later step also takes a device key with a grant
-	// that the account key signed; see docs/proposals/storage.md, section
-	// 2.3.
-	if !slices.Contains(s.owners, request.From) {
-		return "", errNotOwner
-	}
-	if err := s.store.authorize(req.Account, request.From); err != nil {
+	account, err := s.accountOf(request.From)
+	if err != nil {
 		if errors.Is(err, errNoGrant) {
 			return "", errNotOwner
 		}
-		fmt.Fprintf(s.log, "account %s: %v\n", req.Account, err)
+		fmt.Fprintf(s.log, "%.8s: %v\n", request.From, err)
 		return "", errFailed
 	}
 	select {
@@ -163,7 +171,56 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	default:
 		return "", errBusy
 	}
-	return s.connect(req.Account, req.Session, fmt.Sprintf("%.8s from %.8s", req.Account, request.From))
+	return s.connect(account, req.Session, fmt.Sprintf("%.8s from %.8s", account, request.From))
+}
+
+// accountOf finds the account of the author of a call. An account key in
+// STORAGE_OWNERS uses its own account. A device key uses the account whose
+// newest grant set holds it.
+func (s *server) accountOf(author string) (string, error) {
+	if slices.Contains(s.owners, author) {
+		return author, nil
+	}
+	for _, owner := range s.owners {
+		granted, err := s.store.granted(owner, author)
+		if err != nil {
+			return "", err
+		}
+		if granted {
+			return owner, nil
+		}
+	}
+	return "", errNoGrant
+}
+
+// grant sets the grant set of the account of the author. Only an account
+// key in STORAGE_OWNERS sets grants.
+func (s *server) grant(request provider.Request) (string, error) {
+	var req wire.Grants
+	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 || req.At <= 0 || len(req.Devices) > wire.MaxGrants {
+		return "", errInvalidRequest
+	}
+	for _, device := range req.Devices {
+		if !wire.IsID(device) {
+			return "", errInvalidRequest
+		}
+	}
+	if !slices.Contains(s.owners, request.From) {
+		return "", errNotOwner
+	}
+	if err := s.store.grant(request.From, req.Devices, req.At); err != nil {
+		if r, ok := errors.AsType[refusal](err); ok {
+			return "", provider.Error(r.code)
+		}
+		fmt.Fprintf(s.log, "account %.8s: %v\n", request.From, err)
+		return "", errFailed
+	}
+	fmt.Fprintf(s.log, "account %.8s: %d device keys have a grant\n", request.From, len(req.Devices))
+	raw, err := json.Marshal(wire.Granted{Version: 1, Devices: len(req.Devices)})
+	if err != nil {
+		return "", errFailed
+	}
+	return string(raw), nil
 }
 
 // connect opens the end of the app for the WebRTC offer of a request, and

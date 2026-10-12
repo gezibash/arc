@@ -66,6 +66,36 @@ func deviceCommand() *cobra.Command {
 	}
 }
 
+func accountCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "account <key of the storage citizen>",
+		Short: "Show the account key of this citizen for a storage citizen",
+		Long: "arc derives the account key of this citizen for one storage citizen\n" +
+			"from the citizen key, and prints its public half. Give it to the\n" +
+			"operator of the storage citizen for STORAGE_OWNERS. Two storage\n" +
+			"citizens get two account keys, and neither sees the citizen key.\n" +
+			"Run this on the signer.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			storage, ok := keys.ParsePublic(args[0])
+			if !ok {
+				return fmt.Errorf("%q is not the key of a storage citizen", args[0])
+			}
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.Close()
+			account, err := sess.AccountKey(storage)
+			if err != nil {
+				return err
+			}
+			fmt.Println(account.Public.Hex())
+			return nil
+		},
+	}
+}
+
 func devicesCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "devices",
@@ -161,7 +191,8 @@ func changeDevices(command *cobra.Command, change func(devices.List) (devices.Li
 	if err != nil {
 		return err
 	}
-	if err := sess.PublishDeviceList(command.Context(), l); err != nil {
+	l, err = sess.PublishDeviceList(command.Context(), l)
+	if err != nil {
 		return err
 	}
 	fmt.Println(said)
@@ -170,6 +201,17 @@ func changeDevices(command *cobra.Command, change func(devices.List) (devices.Li
 		return fmt.Errorf("the device list changed, but the data roots did not: %w; run arc keys roots on the signer to try again", err)
 	}
 	fmt.Printf("data roots: generation %d\n", root.Gen)
+	installs, err := installsOf(command)
+	if err != nil {
+		return err
+	}
+	targets, err := sess.PushGrants(command.Context(), installs, l)
+	for _, install := range targets {
+		fmt.Printf("grants: sent to the storage citizen %s\n", install.As)
+	}
+	if err != nil {
+		return fmt.Errorf("the device list changed, but %w; run arc sync on the signer to try again", err)
+	}
 	return nil
 }
 

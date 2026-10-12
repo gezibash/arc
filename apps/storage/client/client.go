@@ -77,8 +77,9 @@ func (c Client) Open(ctx context.Context, need int64) (*storage.Conn, error) {
 	return inner.Open(ctx, need)
 }
 
-// call runs the manifest command "open" of the installed app. The command
-// adds the pseudonym of the account, and makes the ARC call.
+// call runs the manifest command "open" of the installed app. ARC signs
+// the call with the account key of the citizen for this storage citizen, or
+// with the device key of a machine that signs through a remote signer.
 func (c Client) call(ctx context.Context, session string) ([]byte, error) {
 	app := c.App
 	if app == "" {
@@ -98,7 +99,7 @@ func (c Client) call(ctx context.Context, session string) ([]byte, error) {
 func CallError(text string) error {
 	switch {
 	case strings.Contains(text, "not_owner"):
-		return errors.New("the storage citizen refused this citizen: it is not an owner of the account")
+		return errors.New("the storage citizen refused this machine: it is not an owner of an account, and it has no grant")
 	case strings.Contains(text, "busy"):
 		return errors.New("the storage citizen runs too many sessions now; try again later")
 	}

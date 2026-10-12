@@ -608,3 +608,21 @@ The other items take the recommended answer of this proposal.
 11. **Files keep the parts of 32 KiB in the first version.** Zim, 2026-10-11.
     Reason: the record format then does not change. A file can become one
     large blob later.
+12. **The signer sends the grant set to each storage citizen. A device
+    carries no grant.** Zim, 2026-10-12, for #209. The details:
+    - The signer sends the set in a live call that the account key authors,
+      after `arc keys devices add` and `revoke`, and on each `arc sync` of
+      the signer. The call is the record, so no new kind holds a grant.
+    - The account key is section 2.3's HKDF, with the key of the storage
+      citizen as its 32 bytes. A result of 0, or not less than the order of
+      secp256k1, is an error.
+    - The account key names the account. The storage citizen finds the
+      account from the author of each call.
+    - `STORAGE_OWNERS` lists account keys, and `arc keys account` prints one.
+    - The signer knows only the storage citizens that it installed, until the
+      storage list of kind 10273 exists.
+    - A machine with the citizen key signs storage calls with the account key.
+
+    Reason: a revocation must reach the storage citizen with no help from the
+    revoked device. Docs: [the storage spec](../storage/SPEC.md), sections
+    3.1, 3.2 and 4.4.
