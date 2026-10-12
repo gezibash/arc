@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -66,5 +67,28 @@ func TestStorageListRules(t *testing.T) {
 	}
 	if _, err := OpenList(ctx, citizen, me, later); err == nil || !strings.Contains(err.Error(), "update arc") {
 		t.Fatalf("a list of version 2 gave %v; want a refusal that says to update arc", err)
+	}
+}
+
+// TestPruneGone gives the clock: a gone entry stays for 30 days after its
+// since, and goes at 30 days. An old active or draining entry stays.
+func TestPruneGone(t *testing.T) {
+	since := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	at := nostr.Timestamp(since.Unix())
+	list := List{At: 7, Entries: []ListEntry{
+		{Key: nostr.Generate().Public(), Name: "charlie", State: StateGone, Since: at},
+		{Key: nostr.Generate().Public(), Name: "dana", State: StateActive, Since: 1},
+		{Key: nostr.Generate().Public(), Name: "erin", State: StateDraining, Since: 1},
+	}}
+	kept, removed := list.Prune(since.Add(30*24*time.Hour - time.Second))
+	if len(removed) != 0 || len(kept.Entries) != 3 {
+		t.Fatalf("29 days 23:59:59 after gone: removed %v, kept %d entries; want none removed", removed, len(kept.Entries))
+	}
+	kept, removed = list.Prune(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	if len(removed) != 1 || removed[0].Name != "charlie" {
+		t.Fatalf("30 days after gone: removed %v; want charlie", removed)
+	}
+	if len(kept.Entries) != 2 || kept.Entries[0].Name != "dana" || kept.Entries[1].Name != "erin" || kept.At != 7 {
+		t.Fatalf("30 days after gone: kept %+v; want dana and erin at 7", kept)
 	}
 }
