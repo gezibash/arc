@@ -113,10 +113,12 @@ func TestStorageList(t *testing.T) {
 	fromSeed := paper.run("sync")
 	has(t, fromSeed, "installed charlie from the storage list", "the sync of the machine from the seed")
 	has(t, fromSeed, "installed dana from the storage list", "the sync of the machine from the seed")
-	if got := syncOf(t, "charlie", fromSeed); got.received == 0 {
-		t.Fatalf("the machine from the seed took nothing from charlie: %+v", got)
+	// Both storage citizens sync at the same time. The first to answer
+	// gives the blobs, and the other then finds them held.
+	charlieGot, danaGot := syncOf(t, "charlie", fromSeed), syncOf(t, "dana", fromSeed)
+	if charlieGot.received+danaGot.received == 0 {
+		t.Fatalf("the machine from the seed took nothing from charlie or dana: %+v, %+v", charlieGot, danaGot)
 	}
-	syncOf(t, "dana", fromSeed)
 	if strings.Contains(fromSeed, "erin") {
 		t.Fatalf("the machine from the seed installed erin, which the list does not name:\n%s", fromSeed)
 	}
