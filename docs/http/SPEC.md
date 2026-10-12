@@ -4,7 +4,7 @@
 - Layers: sdk
 - Owns: sdk/httpadapter
 - Proof: go test -count=1 -run '^(TestAGoHandlerAnswersACallThroughARelay|TestLargeBodyOverPipeThroughRelay|TestOlderProviderFallsBackToFrames|TestPipeFailureIsAnError|TestBrokenPipeIsAnError|TestLargeUploadOverPipeThroughRelay|TestOlderProviderUploadFallsBackToFrames|TestUploadPipeFailureIsAnError|TestBrokenUploadPipeIsAnError)$' ./cmd/arc/
-- Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. A provider with `ARC_PATH=turn` under `arc serve` ran by hand on one machine only.
+- Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. Runs by hand between two machines behind NAT are in section 8.2 of [the direct spec](../direct/SPEC.md). A provider with `ARC_PATH=turn` under `arc serve` gave a path on one machine only. Between two machines behind NAT it gave no path ([#264](https://github.com/gezibash/arc/issues/264)).
 
 One ARC call carries one HTTP exchange. The package `sdk/httpadapter` maps
 the exchange onto a call, and onto a session.
@@ -472,4 +472,9 @@ Unverified:
   the TURN server of a relay. The tests use the loopback address.
 - `--path turn`, and a provider with `ARC_PATH=turn` under `arc serve`, ran
   by hand on one Mac, through a local relay with TURN. No test runs them.
-- No run on two machines behind NATs.
+- Runs by hand on two machines behind NAT, through the production relay,
+  gave `direct (srflx to srflx)` with `--path direct` and `--path auto`, and
+  `turn (relay)` with `--path turn` and a provider on `auto`
+  ([the direct spec](../direct/SPEC.md), section 8.2). With a provider on
+  `ARC_PATH=turn`, `--path turn` gave no path
+  ([#264](https://github.com/gezibash/arc/issues/264)).

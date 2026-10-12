@@ -5,7 +5,7 @@
 - Owns: sdk/direct
 - Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
-- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
+- Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` gave a path on one Mac only. Between two machines behind NAT, through the production relay, it gave no path in 6 of 6 runs ([#264](https://github.com/gezibash/arc/issues/264)).
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
 WebRTC data channel. It carries bulk bytes outside the relay. One ARC call
@@ -424,8 +424,67 @@ The transfer app measured the pipe on real links. Its README gives the
 runs: a median of 97.0 Mbit/s on a direct path, and about 89 Mbit/s and
 10.5 Mbit/s through the TURN server of the relay.
 
+`arc session --http` measured a body of 104,857,600 bytes between two
+machines behind NAT on 2026-10-12 and 2026-10-13. The machines were two
+boat.dev sandboxes on different hosts, with `arc` and `arc-http` of the
+v0.26.0 release (`arc-0.26.0-linux-x86_64.tar.gz`, SHA-256 checked). The
+relay was `wss://relay.republic.sh` on Fly.io. Each machine had a private
+IPv4 address (`192.168.122.x`) and a different public IPv4 address from
+the STUN server of the relay. The NAT kept the port. The firewall of each
+machine dropped each unsolicited incoming packet. The round trip was 2 to
+3 ms between the machines, so they were in one region, and about 7 ms to
+the relay. The speeds do not show a long link.
+
+The provider served the file with `python3 -m http.server` through
+`arc serve`. The file is `big.bin` of section 8.2: byte i is i mod 251.
+Six runs of each path. Each body that arrived had the SHA-256 of the file
+(`85a38859…ebed76`). The speed is the speed of the path line (measured):
+
+| Provider | Consumer | Path line | Median | Range |
+| --- | --- | --- | --- | --- |
+| `ARC_PATH=auto` | `--path direct` | `direct (srflx to srflx)` | 810.4 Mbit/s, 96.6 MiB/s | 669.2 to 827.1 Mbit/s |
+| `ARC_PATH=auto` | `--path auto` | `direct (srflx to srflx)` | 788.4 Mbit/s, 94.0 MiB/s | 683.2 to 821.9 Mbit/s |
+| `ARC_PATH=auto` | `--path turn` | `turn (relay)` | 68.3 Mbit/s, 8.1 MiB/s | 56.5 to 74.0 Mbit/s |
+| `ARC_PATH=turn` | `--path turn` | none; 0 bytes in 6 of 6 runs | | |
+
+With `ARC_PATH=turn` on the provider, each run stopped after 8.4 to 8.5 s
+with `no direct path, and no path through the relay: no direct path`.
+Both ends got an address on the TURN server.
+[#264](https://github.com/gezibash/arc/issues/264) holds the evidence.
+The relay sessions ran on 2026-10-13, after the sandboxes moved to other
+hosts; the machines were again behind NAT.
+
+The commands, with `P` the key of the provider:
+
+```sh
+arc --home "$W/provider" keys gen
+arc --home "$W/provider" relay add wss://relay.republic.sh
+ARC_PATH=auto arc --home "$W/provider" serve ./app
+arc --home "$W/consumer" keys gen
+arc --home "$W/consumer" relay add wss://relay.republic.sh
+arc --home "$W/consumer" install "$P" --yes
+arc --home "$W/consumer" session --http --mode server_stream --timeout 10m --path direct "http+arc://$P/big.bin" > out.bin
+sha256sum out.bin
+```
+
+`./app` holds `manifest.json`, a copy of
+`cmd/arc/testdata/streaming-http/interface.json`, and this Arcfile:
+
+```toml
+version = 2
+
+[serve]
+command = "sh"
+args = ["-c", "cd <directory of big.bin> && exec python3 -m http.server --bind 127.0.0.1 $PORT"]
+protocol = "http"
+manifest = "./manifest.json"
+```
+
 ### 8.3 Unverified
 
 - No automated test runs two machines behind real NATs.
+- A provider with the policy `turn` gave no path between two machines
+  behind NAT through the production relay
+  ([#264](https://github.com/gezibash/arc/issues/264)).
 - No automated test makes the second direct attempt after a first attempt
   with no path.
