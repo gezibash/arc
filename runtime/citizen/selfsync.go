@@ -44,19 +44,35 @@ type SelfSync struct {
 	Out, Errs io.Writer
 }
 
-// sealSelf is the one place that chooses the keys of the blobs. Today the
-// keys of generation 0 follow from the keyed root, which each holder of
-// the citizen key derives. Base step 2 (random data roots) replaces this
-// function.
-func (sess *Session) sealSelf(ctx context.Context, gen uint32) (selfsync.Keys, error) {
-	if gen != 0 {
-		return selfsync.Keys{}, fmt.Errorf("the blob is of generation %d, and this machine knows only generation 0: update arc", gen)
-	}
-	root, err := sess.KeyedRoot(ctx)
+// selfKeys is the one place that chooses the keys of the blobs. A new blob
+// is sealed with the newest data root that this machine holds. A blob of
+// generation g opens with the data root of g. A device that the signer
+// revoked gets no newer data root, so it cannot open a blob that another
+// device seals after the revocation. The ID key stays on the keyed root.
+func (sess *Session) selfKeys(ctx context.Context, root devices.Root) (selfsync.Keys, error) {
+	keyed, err := sess.KeyedRoot(ctx)
 	if err != nil {
 		return selfsync.Keys{}, err
 	}
-	return selfsync.KeysFromRoot(root)
+	return selfsync.NewKeys(root.Gen, root.Key[:], keyed)
+}
+
+// newestSelfKeys returns the keys of the newest generation of this machine.
+func (sess *Session) newestSelfKeys(ctx context.Context) (selfsync.Keys, error) {
+	root, err := sess.DataRoot(ctx)
+	if err != nil {
+		return selfsync.Keys{}, err
+	}
+	return sess.selfKeys(ctx, root)
+}
+
+// selfKeysAt returns the keys of one generation.
+func (sess *Session) selfKeysAt(ctx context.Context, gen uint32) (selfsync.Keys, error) {
+	key, err := sess.DataRootAt(ctx, gen)
+	if err != nil {
+		return selfsync.Keys{}, fmt.Errorf("the blob is of generation %d: %w", gen, err)
+	}
+	return sess.selfKeys(ctx, devices.Root{Gen: gen, Key: key})
 }
 
 // StorageSigner is the key that signs the calls to one storage citizen. A
@@ -218,7 +234,8 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Citizen: sess.Key.Public,
 		Device:  signer,
 		Store:   sess.Node.Store,
-		Keys:    sess.sealSelf,
+		Newest:  sess.newestSelfKeys,
+		Keys:    sess.selfKeysAt,
 		Devices: func(ctx context.Context) (devices.List, bool, error) { return sess.DeviceList(ctx) },
 		State:   cfg.Dir,
 	}

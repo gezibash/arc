@@ -4,7 +4,7 @@
 - Layers: core, adapters, runtime
 - Owns: core/devices
 - Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs a device with no path to the signer: today each `arc` command of a device connects to the signer first, so a device cannot open the data roots that it holds without the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. No app seals its data with the data roots yet; the journal sync of issue #205 is the first.
+- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs a device with no path to the signer: today each `arc` command of a device connects to the signer first, so a device cannot open the data roots that it holds without the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -178,8 +178,9 @@ Data sealed with a data root:
   knows which root opens it.
 - `arc keys seal <app>` writes the generation in decimal, a colon, and the
   NIP-44 payload of the text with the content key of the app as the
-  conversation key. A storage blob names its generation in its header, as
-  [the storage proposal](../proposals/storage.md), section 2.4, defines.
+  conversation key. A self-sync blob names its generation in its header, and
+  its blob key comes from the data root of that generation, as
+  [the storage spec](../storage/SPEC.md), section 3.4, defines.
 
 Issue #204 asked that data of an old generation is sealed again in the
 background, and named decision 6 of the base proposal. Section 5.2 of the

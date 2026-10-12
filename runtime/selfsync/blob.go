@@ -37,24 +37,27 @@ type Keys struct {
 	ID []byte
 }
 
-// KeysFromRoot derives the keys of generation 0 from the keyed root of the
-// citizen (interface spec, section 3.7.1). Generation 0 is the sealing of
-// today: each holder of the citizen key derives it. Random data roots
-// (docs/proposals/base.md, section 5.2) replace the blob key of later
-// generations. The ID key stays on the keyed root.
-func KeysFromRoot(root []byte) (Keys, error) {
-	if len(root) != 32 {
+// NewKeys derives the keys of the blobs of generation gen. The blob key
+// comes from the data root of that generation (devices spec, section 3.5).
+// The ID key comes from the keyed root of the citizen (interface spec,
+// section 3.7.1), so a blob keeps its ID in each generation. The data root
+// of generation 0 is the keyed root itself.
+func NewKeys(gen uint32, dataRoot, keyedRoot []byte) (Keys, error) {
+	if len(dataRoot) != 32 {
+		return Keys{}, errors.New("the data root is not 32 bytes")
+	}
+	if len(keyedRoot) != 32 {
 		return Keys{}, errors.New("the keyed root is not 32 bytes")
 	}
-	blob, err := hkdf.Key(sha256.New, root, nil, "arc-storage-blob-v1", 32)
+	blob, err := hkdf.Key(sha256.New, dataRoot, nil, "arc-storage-blob-v1", 32)
 	if err != nil {
 		return Keys{}, err
 	}
-	id, err := hkdf.Key(sha256.New, root, nil, "arc-storage-id-v1", 32)
+	id, err := hkdf.Key(sha256.New, keyedRoot, nil, "arc-storage-id-v1", 32)
 	if err != nil {
 		return Keys{}, err
 	}
-	return Keys{Gen: 0, Blob: blob, ID: id}, nil
+	return Keys{Gen: gen, Blob: blob, ID: id}, nil
 }
 
 // BlobID names the blob of a record: HMAC-SHA256 of the ID key and the
