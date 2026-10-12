@@ -580,8 +580,9 @@ fails does not stop the others.
 5. Read the store again. For each record:
    - Put a blob of format 1 on each active storage citizen without
      `pieces` that does not list the blob ID.
-   - If a storage citizen lists a blob of format 1 with the ID, leave the
-     blob to repair (section 4.6), which codes it into pieces.
+   - If a storage citizen lists a blob of format 1 with the ID, put no
+     piece. If the storage citizen has `pieces` or drains, repair codes
+     the blob into pieces (section 4.6).
    - If no storage citizen lists a piece of the blob, seal the blob, code
      it with a new seal, and put t pieces (section 3.10). If fewer than k
      active storage citizens with `pieces` have an open pipe, put nothing:
@@ -856,6 +857,9 @@ citizen. For a blob with such copies:
 3. The device deletes only the copies on storage citizens with a pipe
    that repair can use. A copy on another storage citizen waits for the
    next repair.
+
+A blob whose only whole copies are on active storage citizens with no
+`pieces` stays whole, and gets no pieces.
 
 One sync moves at most 1,024 blobs of format 1, after each other blob of
 the plan. Each sync, also one that does not repair, prints the count of
