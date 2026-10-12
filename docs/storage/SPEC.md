@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
-- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, the removal of the old drafts from the relays, the end of a drain on the signer, and a `drain` request from the device.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time.
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
+- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, a command that removes the old drafts from a relay, the end of a drain on the signer, and a `drain` request from the device.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -31,7 +31,8 @@ This spec defines:
   pipe (`sdk/storage`),
 - the blob that holds one record, and the pieces of a blob,
 - the sync of a device with its storage citizens,
-- the one-time import of the drafts that the relays hold.
+- the one-time import of the drafts that the relays hold, and their removal
+  from the relays.
 
 The storage app documents its service, its settings and its storage on disk
 in [its README](../../apps/storage/README.md).
@@ -644,6 +645,49 @@ event once.
 If a relay does not answer, the import is not marked, and the next sync runs
 it again.
 
+The import never keeps a deletion with the tag `["arc", "moved"]`. The
+local store refuses one too (section 4.2.1).
+
+#### 4.2.1 The removal of the old drafts from the relays
+
+After the sync with the storage citizens, the device deletes the old drafts
+from its relays. These rules apply:
+
+- The device does this only after the import is marked done.
+- The device asks each relay for its NIP-11 document. It sends a deletion
+  only to a relay whose `tags` hold `arc-drafts-retired`. An ARC relay of
+  this version has the tag. Section 7 says why another relay gets no
+  deletion.
+- The device lists the events of kinds 31234, 1234, 3275 and 10013 of the
+  citizen on each such relay. It does not delete the draft with the d tag
+  `arc-keyed-root`: a device that signs through a bunker reads its keyed
+  root from it.
+- An event is movable when two conditions are true. The local store holds
+  the event, a newer version of its d tag, or a deletion that names it. The
+  storage citizens hold that record of the store.
+- The storage citizens hold a record when their last listings show k pieces
+  of one seal of its blob, or a whole blob of format 1. A put that a storage
+  citizen answers `held` counts at the next listing.
+- A private relay list, kind 10013, is always movable. It holds no self
+  data.
+- The device sends one NIP-09 deletion, kind 5, for each 100 movable events
+  or fewer. The deletion names each event in an `e` tag, names their kinds
+  in `k` tags, and has the tag `["arc", "moved"]`. The signer signs it as
+  the citizen.
+- The deletion goes to the relay only. A store never keeps a deletion with
+  the tag `["arc", "moved"]`: there the deletion deletes the drafts that it
+  names, and the sync then takes them from each device.
+- An event that is not movable stays. The next sync tries again.
+- When each relay answered, and each relay with the tag holds no event that
+  the device can delete, the device writes `<home>/selfsync/moved`. Later
+  syncs then do not ask the relays. `arc sync --import` removes the marker.
+- A bunker that runs with `--allow-kind` signs the deletion only if it
+  allows kind 5. If it does not, the drafts stay, and each sync says why.
+
+`arc sync` prints `<relay>: deleted <n> old drafts and private relay lists
+from the relay`, and `<relay>: <n> drafts stay until the storage citizens
+hold them` for the events that are not movable.
+
 ### 4.3 How a device finds its storage citizen
 
 Each install of the app `storage` is a storage citizen of the citizen. At
@@ -943,6 +987,11 @@ bytes up.
 | A storage citizen runs a storage app without `pieces` | It gets whole blobs of format 1, and does not count in S. | `<name> runs an older storage app: it holds full copies; update it for erasure coding` |
 | A put passes the quota | The sync stops. The cursor and the IDs so far are kept. | The `over_quota` message, with the bytes in use and the quota. |
 | A relay does not answer during the import | The import is not marked. | `the import of the drafts on the relays is not complete` |
+| A relay has no tag `arc-drafts-retired` | The device sends it no deletion. The drafts stay on it. | `<relay>: an older or another relay; the old drafts stay on it, because it would serve their deletion to older devices` |
+| A relay does not give its NIP-11 document, or does not list the drafts | The device deletes nothing there, and does not write the marker. | `<relay>: the relay did not say if it hides deletions, so no draft was deleted: <reason>`, or `<relay>: the drafts on the relay were not listed, so none were deleted: <reason>` |
+| The signer does not sign a deletion | The drafts stay. The next sync tries again. | `<relay>: the deletion of <n> drafts was not signed: <reason>` |
+| A relay refuses a deletion | The drafts stay. The next sync tries again. | `<relay>: the relay did not take the deletion of <n> drafts: <reason>` |
+| An older client sends a draft to an ARC relay | The relay refuses it. | `blocked: this relay keeps no drafts; arc keeps them on the device and syncs them with a storage citizen; update arc` |
 
 ## 6. Security
 
@@ -1009,16 +1058,59 @@ bytes up.
 
 ## 7. Compatibility
 
-- An older client still writes drafts to its relays, and reads only from its
-  relays. A newer client still reads drafts from the relays when it queries
-  self data, so it sees the pages of an older client. An older client does
-  not see the pages that a newer client writes. The user updates each device.
-- The newer client does not delete the drafts on the relays in this step.
-  Older clients read them. The proposal keeps them on the relays for 90 days
-  (proposal, decision 6). A later step sends a NIP-09 deletion for each
-  imported draft, once a storage citizen holds it. After 90 days, the relay
-  operator removes each event of kinds 31234, 1234, 3275 and 10013, and the
-  relay refuses these kinds.
+- An ARC relay of this version refuses new events of kinds 31234, 1234,
+  3275 and 10013. The one exception is the draft with the d tag
+  `arc-keyed-root`. The reason is `blocked: this relay keeps no drafts; arc
+  keeps them on the device and syncs them with a storage citizen; update
+  arc`. The relay still serves the old events of these kinds to their
+  author. This is a breaking change for an older client:
+  - An older client still writes drafts to its relays. The relay refuses
+    each one. The draft stays in the local store of the older client, and
+    its `arc sync` reports it as not sent. The older client reads only from
+    its relays, so it does not see the pages of a newer client.
+  - An older client publishes kind 10013 with `arc relay add`. The relay
+    refuses it, and the older client prints `the relay list did not reach`.
+  - A newer client still reads drafts from the relays when it queries self
+    data, so it sees the old pages of an older client.
+  - The user updates each device.
+- A newer client deletes the drafts on its ARC relays after a storage
+  citizen holds them (section 4.2.1). An older client of the same citizen
+  that has not imported its drafts then does not find them on the relay.
+  It finds them on the storage citizen after the user updates it.
+- The proposal keeps old drafts on the relays for reads for 90 days after
+  the breaking release (proposal, decision 6). The breaking release is
+  v0.25.0, of 2026-10-12. Thus the relay serves the old drafts to their
+  author until 2027-01-10, unless the author deletes them first. The
+  proposal refuses writes from the breaking release, and keeps only reads
+  (proposal, section 3.3, step 2). This step therefore refuses writes now.
+- After 2027-01-10 the operator removes each event of kinds 31234, 1234,
+  3275 and 10013, except the drafts with the d tag `arc-keyed-root`.
+  `arc relay serve` has no command for this. That is not built (section
+  8.2).
+- The relay applies a deletion with the tag `["arc", "moved"]`, and then
+  serves it to nobody, also not to its author. A v0.25.0 client keeps each
+  deletion of its drafts that its import gets, and its store applies it.
+  That client would then delete its own drafts, and its sync would send the
+  deletion to the storage citizens and so to each device. For the same
+  reason a newer store refuses such a deletion, also one that comes from a
+  storage citizen or a stick.
+- A newer client sends no deletion to a relay without the tag
+  `arc-drafts-retired`: an older ARC relay, or a relay that is not an ARC
+  relay. Such a relay would serve the deletion to a v0.25.0 device. The old
+  drafts stay on that relay. A relay that is not an ARC relay serves them to
+  anyone, as before. After the operator updates an older ARC relay, the
+  user runs `arc sync --import` on one device, and that device deletes the
+  drafts.
+- Update the relays before the devices. A v0.25.0 device whose store took a
+  moved deletion from an older relay refuses the drafts that it names, also
+  after an update. No newer client sends a deletion to an older relay, so
+  this does not happen through this version.
+- An ARC relay of this version serves a deletion whose `k` tag names a
+  sealed kind only to its author, because its `e` tags count the drafts.
+  An older ARC relay serves such a deletion to anyone.
+- The private relay list, kind 10013, is retired. A newer client does not
+  publish it. A newer client still lists kind 10013 on its relays, to delete
+  the old ones.
 - The blob format names its generation. A device that knows only generation
   0 refuses a blob of a later generation, and says to update arc. Each
   device of a citizen with a device list seals new blobs with generation 1
@@ -1224,9 +1316,32 @@ storage citizens. It proves:
   0 and 1 opens. The tablet reads each page. A device that the signer adds
   after the revocation, and a new machine from the seed, open each blob of
   each generation.
-- The first sync imports the drafts that an older client put on the relay,
-  and puts them on the storage citizen. A second import changes nothing.
-  The drafts stay on the relay.
+- An older relay, `arc relay serve` of commit d53e91b, takes the drafts and
+  the private relay list of an older client. After the update the relay
+  refuses a new draft, and says why. It still serves the old drafts and the
+  private relay list to their author.
+- The first sync imports the drafts, and puts them on the storage citizen.
+  Then it deletes the drafts and the private relay list from the ARC relay.
+  The draft of the keyed root stays. The relay serves no moved deletion,
+  also not to the author.
+- A relay that is not an ARC relay gets no deletion, keeps its drafts, and
+  the sync says so.
+- A second import takes nothing, and keeps no moved deletion. A second new
+  machine of the citizen imports from the relay, and reads each page
+  through the storage citizen.
+
+`go test -count=1 -run '^(TestMovable|TestMoves|TestKept)$' ./runtime/selfsync/`
+proves that an old draft is movable only when the storage citizens hold the
+record that replaces it on the device, that one deletion names at most 100
+events and has the tag, and that a record is kept only with k pieces.
+`go test -count=1 -run '^TestAStoreRefusesAMovedDeletion$' ./core/store/`
+proves that a store refuses a moved deletion. `go test -count=1 -run
+'^(TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor)$'
+./adapters/relay/sealed/` proves the refusal, the exception of the keyed
+root, the hidden moved deletion, the NIP-11 tag, and that the old drafts
+still go to their author. `go test -count=1 -run
+'^TestRelayAddPublishesNoPrivateRelayList$' ./cmd/arc/` proves that
+`arc relay add` publishes no kind 10013 to a relay that takes any kind.
 
 `go test -count=1 -run '^TestStorageList$' ./internal/proof/` builds `arc`
 and `arc-storage`, and runs them with a local relay and three storage
@@ -1561,8 +1676,11 @@ that an older set is refused.
   does the work.
 - Not built. The deletion of the blobs of old versions. Each version of a
   draft and each checkpoint stays on the storage citizen.
-- Not built. The NIP-09 deletion of the imported drafts on the relays, and a
-  relay that refuses self data.
+- Not built. A command of `arc relay serve` that removes the old drafts
+  from the store of the relay on 2027-01-10. The operator must remove them
+  from the store by other means.
+- Not built. A repair for a v0.25.0 device whose store took a moved
+  deletion from a relay that served it.
 - Not built. The end of a drain on the signer (section 5.2 of the storage
   network proposal): the signer does not set `gone` by itself, and sends no
   close call. The device says when the storage citizen is empty, and the
