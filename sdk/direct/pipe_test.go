@@ -100,8 +100,8 @@ func TestPipeAnswererRelayOnly(t *testing.T) {
 		c, err := relay.Credential("0000000000000000000000000000000000000000000000000000000000000003", "1.2.3.4")
 		return Credential{URLs: c.URLs, Username: c.Username, Password: c.Password, QuotaLeft: 1 << 30}, err
 	}
-	pipe, err := pipePair(t, DialConfig{Policy: DirectOnly, Options: Options{STUN: stun, net: a}},
-		AcceptConfig{Policy: RelayOnly, Options: Options{STUN: stun, net: b}, TURN: turn}, func(p *Pipe) {
+	pipe, err := pipePair(t, DialConfig{Policy: DirectOnly, Options: Options{STUN: stun, Net: a}},
+		AcceptConfig{Policy: RelayOnly, Options: Options{STUN: stun, Net: b}, TURN: turn}, func(p *Pipe) {
 			defer p.Close()
 			if _, err := p.Write(make([]byte, 256<<10)); err == nil {
 				_ = p.CloseWrite(t.Context())

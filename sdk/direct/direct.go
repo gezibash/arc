@@ -54,9 +54,9 @@ type Options struct {
 	// after a loss. Zero keeps the default of pion.
 	MinWindow uint32
 
-	// net replaces the network of the machine. Tests use it for an
-	// emulated link.
-	net transport.Net
+	// Net replaces the network of the machine. A test sets it for an
+	// emulated link. Nil uses the network of the machine.
+	Net transport.Net
 }
 
 // sctpCAStep is the growth of the SCTP send window for each round trip
@@ -155,8 +155,8 @@ func NewConnection(o Options) (*webrtc.PeerConnection, error) {
 	engine.SetICEMaxBindingRequests(30)
 	engine.SetICETimeouts(4*time.Second, 4*time.Second, time.Second)
 	engine.SetIncludeLoopbackCandidate(o.Loopback)
-	if o.net != nil {
-		engine.SetNet(o.net)
+	if o.Net != nil {
+		engine.SetNet(o.Net)
 	}
 	engine.SetSCTPCwndCAStep(sctpCAStep)
 	if o.MinWindow > 0 {

@@ -66,12 +66,12 @@ func TestEmulatedLinkSpeed(t *testing.T) {
 
 	size := int64(mib * (1 << 20))
 
-	sender, err := NewConnection(Options{net: senderNet})
+	sender, err := NewConnection(Options{Net: senderNet})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sender.Close() })
-	receiver, err := NewConnection(Options{net: receiverNet})
+	receiver, err := NewConnection(Options{Net: receiverNet})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -86,12 +86,34 @@ const (
 	OpGet    = "get"
 	OpDelete = "delete"
 	OpUsage  = "usage"
+	// OpHello asks the app for its version and its features. An older app
+	// answers invalid_request.
+	OpHello = "hello"
 )
 
-// Request is one text message from the client on the pipe. The client
-// sends the next request only after the reply to this one.
+const (
+	// FeatureBatch says that the app takes requests in flight, numbered
+	// with n, and a list of IDs in get and delete.
+	FeatureBatch = "batch"
+	// Window is the largest number of requests that a client keeps in
+	// flight on one pipe: sent, with no final reply yet.
+	Window = 32
+	// MaxBatch is the largest number of IDs in one get or delete.
+	MaxBatch = 256
+)
+
+// Request is one text message from the client on the pipe. A client that
+// did not get FeatureBatch from hello sends the next request only after
+// the reply to this one. With FeatureBatch, it keeps at most Window
+// requests in flight, each with its own N.
 type Request struct {
 	Op string `json:"op"`
+	// N numbers a request in flight. Each reply to it carries the same N.
+	// Zero is a client that sends one request at a time.
+	N uint64 `json:"n,omitempty"`
+	// IDs name the blobs of a get or a delete with FeatureBatch, at most
+	// MaxBatch. A request has ID or IDs, not both.
+	IDs []string `json:"ids,omitempty"`
 	// ID names a blob: 64 hex digits.
 	ID string `json:"id,omitempty"`
 	// Size is the size of the blob of a put.
@@ -135,6 +157,8 @@ const (
 
 // Reply is one text message from the app on the pipe.
 type Reply struct {
+	// N is the N of the request.
+	N      uint64 `json:"n,omitempty"`
 	Status string `json:"status,omitempty"`
 	// Error is a short code. Message says the same for a person.
 	Error   string `json:"error,omitempty"`
@@ -157,6 +181,24 @@ type Reply struct {
 	State   string `json:"state,omitempty"`
 	Plan    string `json:"plan,omitempty"`
 	Expires int64  `json:"expires,omitempty"`
+	// Version, Features and Window are the reply to hello.
+	Version  int      `json:"v,omitempty"`
+	Features []string `json:"features,omitempty"`
+	Window   int      `json:"window,omitempty"`
+	// Items are the results of a get or a delete with IDs, one for each
+	// ID, in order. The bytes of each found blob of a get follow the
+	// reply, in the same order.
+	Items []Item `json:"items,omitempty"`
+}
+
+// Item is the result for one ID of a get or a delete with IDs. A get
+// gives Size, or Error. A delete gives Status and Seq, or Error.
+type Item struct {
+	ID     string `json:"id"`
+	Size   int64  `json:"size,omitempty"`
+	Status string `json:"status,omitempty"`
+	Seq    uint64 `json:"seq,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Entry is the last change of one blob ID.
@@ -218,4 +260,10 @@ func Unpad(blob []byte) ([]byte, error) {
 		return nil, errors.New("the length in the blob is larger than the blob")
 	}
 	return blob[8 : 8+n], nil
+}
+
+// Blob is one blob of a batch put.
+type Blob struct {
+	ID   string
+	Data []byte
 }
