@@ -6,6 +6,49 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-12
+
+The storage network is complete. A citizen keeps its self data with several
+storage citizens: each storage citizen admits it by a join call, keeps a
+quota for its account, and holds only Reed-Solomon pieces of each blob.
+Devices audit the storage citizens, repair lost pieces, and move old whole
+blobs to pieces. Old drafts leave the relays. CI runs the tests with the race
+detector, in about 7 minutes. Most storage changes are breaking: update the
+relay, each storage citizen and each device together.
+
+### Added
+
+- Admission: the signer sends `join` to a storage citizen, signed by the
+  account key of that storage citizen. The storage citizen answers
+  `admitted`, `pending` or `refused`, by an invite token (the default), by
+  the approval of its operator, or by open admission with a fixed quota.
+  Each account has its own quota, plan name and end time (#216, #224).
+- The storage list: the signer keeps the storage citizens of a citizen in a
+  sealed replaceable event of kind 10273 on the relays. `arc keys storage
+  add`, `ls` and `rm` (with `--gone`) change it. A device installs each
+  storage citizen in the list, and a device with only the seed finds it
+  (#218, #225).
+- A device syncs each storage citizen at the same time. A storage citizen
+  that does not answer for 7 days gets a warning on each sync; only the user
+  marks it gone (#219, #227).
+- Reed-Solomon: a blob is coded into pieces, any k of which rebuild it, with
+  one piece on each storage citizen. k is the half of the active storage
+  citizens, rounded up. Each storage citizen has its own piece ID key
+  (#220, #234).
+- Audits, repair and drain: the storage citizen answers an audit challenge
+  over the stored bytes, and a draining account takes no new puts. A device
+  that repairs (`arc serve`, `arc sync --repair`) audits 32 pieces of each
+  storage citizen each day, rebuilds lost pieces, seals a record again when
+  fewer than k pieces hold it, and empties a draining storage citizen
+  (#230, #232, #221, #238).
+- Blobs of format 1 (whole copies from before pieces) move to pieces during
+  a sync that repairs, at most 1,024 blobs in each sync (#222, #240).
+- A device keeps the data roots that it unwrapped, sealed to its device key,
+  and uses them when it has no path to the signer. Commands that need the
+  citizen key say so. The journal still needs the signer until its pages
+  change format (#244, #253, #255).
+- Experimental: a secure direct event adapter over Bluetooth (#239).
+
 ### Changed
 
 - **Breaking.** `arc session --http --mode duplex` with `stream_body` sends
@@ -30,11 +73,45 @@ All notable changes to ARC are recorded here. The format follows
   with `not_owner`: update both. An account under a pseudonym stays on disk,
   and the first sync puts each blob again in the new account.
 
+- **Breaking.** Self-sync blobs are sealed with the newest data root. A
+  revoked device cannot open a blob that a later generation seals
+  (#215, #223).
+- **Breaking.** The storage app keeps a bbolt index for each account in
+  place of `state.json`, and a device sends several requests on the pipe
+  before the first reply. The disk change is one-way: an older storage app
+  sees each account as empty (#217, #226).
+- **Breaking.** The old drafts leave the relays. A device deletes each
+  imported draft from its relays with NIP-09. An ARC relay refuses new
+  events of kinds 31234, 1234, 3275 and 10013. It keeps serving old ones to
+  their authors until its operator removes them, about 2027-01-10 (#245, #258).
+- `arc path` applies to the storage sync. A plain `arc sync` adds no piece
+  for a new storage citizen; a sync that repairs does. Audits and repair wait
+  for a direct path, unless `--turn` is given (#238).
+- CI runs the tests with a race-enabled `arc`, and splits the slow race job
+  into shards, with a check that each proof test runs in exactly one shard.
+  A whole CI run takes about 7 minutes, not 17 (#231, #233, #259, #260).
+
 ### Fixed
 
 - A device behind a bunker syncs with a storage citizen while the bunker
   keeps its default `--decrypt self`. The reply of the storage citizen is
   sealed to the device key (#209).
+- A send on a subscription channel of `fiatjaf.com/nostr` could race its
+  close and panic with "send on closed channel". ARC uses a fixed copy of
+  the library through a `replace` in go.mod until upstream takes the fixes
+  (#228, #229).
+- The khatru relay changed its subscription index sets while another
+  goroutine read them (#236).
+- Data races in ARC code under the race detector (#231, #233).
+- `core/call` sessions reported `publish: EOF` or `publish: context
+  canceled` when the peer answered or closed before the relay confirmed the
+  frame. The session now takes the peer's answer as the outcome (#237, #257).
+- A slow relay made a query return no events and no error, because the
+  library made up an end of stored events after 7 s. ARC now waits for the
+  real end, within the deadline of the call, and reports an error when it
+  does not come (#235, #261).
+- A test proves that the direct pipe refuses a peer with the wrong DTLS
+  fingerprint (#241, #254).
 
 ## [0.25.0] - 2026-10-12
 
