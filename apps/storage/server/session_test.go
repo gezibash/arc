@@ -314,6 +314,15 @@ func TestPieceTags(t *testing.T) {
 		if len(got) != len(piece.Data) {
 			t.Fatalf("%s, a get of the piece gave %d bytes, want %d", when, len(got), len(piece.Data))
 		}
+		// An audit of a piece hashes its stored bytes, not its tag.
+		nonce := wire.NewNonce()
+		items, err := conn.Audit(ctx, []string{piece.ID}, nonce)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := wire.AuditProof(nonce, piece.ID, piece.Data); len(items) != 1 || items[0].Proof != want {
+			t.Fatalf("%s, the audit of the piece gave %+v, want the proof %s", when, items, want)
+		}
 	}
 	check(conn, "after the puts")
 	conn.Close()
