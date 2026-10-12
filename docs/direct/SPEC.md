@@ -5,7 +5,7 @@
 - Owns: sdk/direct
 - Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
-- Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` gave a path on one Mac only. Between two machines behind NAT, through the production relay, it gave no path in 6 of 6 runs ([#264](https://github.com/gezibash/arc/issues/264)).
+- Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` and a consumer with `--path turn` gave a path between two machines behind NAT through the production relay in 6 of 6 runs, with the relay of v0.27.0 (section 8.2).
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
 WebRTC data channel. It carries bulk bytes outside the relay. One ARC call
@@ -445,14 +445,30 @@ Six runs of each path. Each body that arrived had the SHA-256 of the file
 | `ARC_PATH=auto` | `--path direct` | `direct (srflx to srflx)` | 810.4 Mbit/s, 96.6 MiB/s | 669.2 to 827.1 Mbit/s |
 | `ARC_PATH=auto` | `--path auto` | `direct (srflx to srflx)` | 788.4 Mbit/s, 94.0 MiB/s | 683.2 to 821.9 Mbit/s |
 | `ARC_PATH=auto` | `--path turn` | `turn (relay)` | 68.3 Mbit/s, 8.1 MiB/s | 56.5 to 74.0 Mbit/s |
-| `ARC_PATH=turn` | `--path turn` | none; 0 bytes in 6 of 6 runs | | |
+| `ARC_PATH=turn` | `--path turn` | `turn (relay)` | 49.6 Mbit/s, 5.9 MiB/s | 33.1 to 68.7 Mbit/s |
 
-With `ARC_PATH=turn` on the provider, each run stopped after 8.4 to 8.5 s
-with `no direct path, and no path through the relay: no direct path`.
-Both ends got an address on the TURN server.
-[#264](https://github.com/gezibash/arc/issues/264) holds the evidence.
-The relay sessions ran on 2026-10-13, after the sandboxes moved to other
-hosts; the machines were again behind NAT.
+The relay sessions with `ARC_PATH=auto` on the provider ran on 2026-10-13,
+after the sandboxes moved to other hosts; the machines were again behind
+NAT.
+
+The last row ran on 2026-10-12, on two other boat.dev sandboxes from the
+snapshot `arc-ready`, with `arc` and `arc-http` of the v0.27.0 release
+(`arc-0.27.0-linux-x86_64.tar.gz`, SHA-256 checked against `SHA256SUMS`).
+The relay ran v0.27.0. Each machine was behind NAT, and its firewall
+dropped each unsolicited incoming packet. `arc-http` on the provider had
+`ARC_PATH=turn` in its environment. So each end had only an address on the
+TURN server, and the relay carried each packet between two of its own
+relay ports. The path lines of the six runs were 57.3, 33.1, 48.0, 50.2,
+48.9 and 68.7 Mbit/s. After the six runs, each end had used about 683 to
+686 MB of its quota for 629,145,600 bytes of bodies.
+
+With the relay of v0.26.0, the same row gave no path in 6 of 6 runs: each
+run stopped after 8.4 to 8.5 s with `no direct path, and no path through
+the relay: no direct path`. On Fly.io, the relay ports listen on a private
+address behind the public address, and the network dropped a packet from
+the host to its own public address. Since v0.27.0, the relay sends such a
+packet to the private address
+([#264](https://github.com/gezibash/arc/issues/264)).
 
 The commands, with `P` the key of the provider:
 
@@ -483,8 +499,5 @@ manifest = "./manifest.json"
 ### 8.3 Unverified
 
 - No automated test runs two machines behind real NATs.
-- A provider with the policy `turn` gave no path between two machines
-  behind NAT through the production relay
-  ([#264](https://github.com/gezibash/arc/issues/264)).
 - No automated test makes the second direct attempt after a first attempt
   with no path.
