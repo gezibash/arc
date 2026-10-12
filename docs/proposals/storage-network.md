@@ -719,6 +719,9 @@ harness of `DIRECT_LINK_RTT_MS` measures the result with a real round trip
   format 1. Section 3.4 of the storage spec then skips it after the first
   refusal (`docs/storage/SPEC.md:135-137`). The older device does not see
   data that a newer device wrote as pieces. The user updates it.
+  Build step 6 found that this is wrong: the client of an older device
+  refuses a get whose size is not a power of two, so its whole sync with
+  that storage citizen fails. Section 7 of the storage spec states it.
 - An older device puts its own records as blobs of format 1. A newer device
   reads them, codes them, and deletes the blob. The tombstone of 90 days
   then answers each new put of that blob with `tombstoned`
@@ -754,7 +757,7 @@ Each step is one PR. Each step names what proves it, through the real CLI.
 | 3 | Scale the storage app: several requests in flight on one pipe, and an index that a put does not rewrite whole. The index lives in `go.etcd.io/bbolt` (decision 8 of section 12). Done in PR #226. | The `DIRECT_LINK_RTT_MS` harness with 44 ms: 1,000 puts of 4 KiB, before and after. The PR states both times. |
 | 4 | Kind 10273: the signer publishes it; each device reads it and installs each storage citizen; `arc keys storage ls` and `rm`; a row in `docs/KINDS.md`. | A home with only the seed finds two storage citizens and reads every page. |
 | 5 | Several storage citizens with full copies (k = 1), synced at the same time. Done in PR #227. | Two storage citizens. Stop one. A new device reads every page from the other. |
-| 6 | Reed-Solomon: the piece format, tags in `put` and `list`, `hello`, placement, decode on read, the piece id key for each storage citizen. Pin `klauspost/reedsolomon`, and keep a test of the prefix property. Breaking. | Three storage citizens, k = 2. Delete the directory of one. A new device reads every page. No piece file holds text of a page. Each piece file is about half its blob. |
+| 6 | Reed-Solomon: the piece format, tags in `put` and `list`, `hello`, placement, decode on read, the piece id key for each storage citizen. Pin `klauspost/reedsolomon`, and keep a test of the prefix property. Breaking. Done in PR #234, except rule 2 of section 6.7. | Three storage citizens, k = 2. Delete the directory of one. A new device reads every page. No piece file holds text of a page. Each piece file is about half its blob. |
 | 7 | Repair, drain and audits. | Remove a storage citizen with `arc keys storage rm --gone`. `arc serve` rebuilds its pieces on a fourth one. Change one byte of a piece file. The next audit finds it, and repair replaces it. A drain empties a storage citizen, and the data stays readable. |
 | 8 | Migration of blobs of format 1. | A home with blobs of format 1 on two new storage citizens ends with pieces only. An older `arc` still syncs, and its puts get `tombstoned` or are coded again. |
 

@@ -3,7 +3,6 @@ package proof
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,9 +47,7 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	if got := selfSync(t, signer.run("sync")); got.sent == 0 {
 		t.Fatalf("the signer put nothing on the storage citizen: %+v", got)
 	}
-	account := ifaceTrim(signer.run("keys", "account", storeKey))
-	blobs := filepath.Join(work, "storage-blobs", "accounts", account, "blobs")
-	zero := blobsByGen(t, blobs)
+	zero := blobsByGen(t, signer)
 	if len(zero[0]) == 0 || len(zero) != 1 {
 		t.Fatalf("before the device list, the blobs by generation are %v, want generation 0 only", count(zero))
 	}
@@ -82,7 +79,7 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 		"journal", "write", "hrs/roots/2")
 	phone.run("sync")
 	tablet.run("sync")
-	one := blobsByGen(t, blobs)
+	one := blobsByGen(t, signer)
 	if len(one[1]) == 0 {
 		t.Fatalf("the phone sealed no blob with generation 1: %v", count(one))
 	}
@@ -95,7 +92,7 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	tablet.input("---\ntitle: Two\npage: 3\nnotebook: hrs/roots\n---\nafter the revocation\n",
 		"journal", "write", "hrs/roots/3")
 	tablet.run("sync")
-	two := blobsByGen(t, blobs)
+	two := blobsByGen(t, signer)
 	if len(two[2]) == 0 {
 		t.Fatalf("the tablet sealed no blob with generation 2 after the revocation: %v", count(two))
 	}
@@ -121,18 +118,14 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	if _, ok := roots[0]; !ok {
 		t.Fatalf("the phone holds no root of generation 0, so the thief test proves nothing: %v", gens(roots))
 	}
-	for gen, ids := range two {
-		for _, id := range ids {
-			blob, err := os.ReadFile(filepath.Join(blobs, id))
-			if err != nil {
-				t.Fatal(err)
-			}
-			opened := opensWithAny(roots, id, blob)
+	for gen, items := range two {
+		for _, it := range items {
+			opened := opensWithAny(roots, gen, it)
 			switch {
 			case gen == 2 && opened != "":
-				t.Fatalf("the revoked phone opens blob %s of generation 2 with %s", id, opened)
+				t.Fatalf("the revoked phone opens piece %s of generation 2 with %s", it.id, opened)
 			case gen < 2 && opened == "":
-				t.Fatalf("the phone does not open blob %s of generation %d with its roots %v", id, gen, gens(roots))
+				t.Fatalf("the phone does not open piece %s of generation %d with its roots %v", it.id, gen, gens(roots))
 			}
 		}
 	}
@@ -181,30 +174,30 @@ func TestStorageSealsWithDataRoots(t *testing.T) {
 	t.Log("ok: the seed alone, on a new machine, opens each blob of each generation, and reads each page that a listed device wrote")
 }
 
-// blobsByGen returns the IDs of the blob files in dir, by the generation in
-// their header.
-func blobsByGen(t *testing.T, dir string) map[uint32][]string {
+// blobsByGen lists the pieces that the storage citizen "storage" holds
+// for the signer, by the generation in their tags. A blob of format 1
+// names its generation in its header.
+func blobsByGen(t *testing.T, signer machine) map[uint32][]listed {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[uint32][]string{}
-	for _, entry := range entries {
-		blob, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+	out := map[uint32][]listed{}
+	for _, it := range listAll(t, signer, "storage") {
+		gen, err := genOf(it)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", it.id, err)
 		}
-		gen, err := selfsync.Gen(blob)
-		if err != nil {
-			t.Fatalf("%s: %v", entry.Name(), err)
-		}
-		out[gen] = append(out[gen], entry.Name())
+		out[gen] = append(out[gen], it)
 	}
 	return out
 }
 
-func count(byGen map[uint32][]string) map[uint32]int {
+func genOf(it listed) (uint32, error) {
+	if it.tag == nil {
+		return selfsync.Gen(it.data)
+	}
+	return selfsync.TagGen(it.tag)
+}
+
+func count(byGen map[uint32][]listed) map[uint32]int {
 	out := map[uint32]int{}
 	for gen, ids := range byGen {
 		out[gen] = len(ids)
@@ -244,19 +237,31 @@ func gens(roots map[uint32][32]byte) []uint32 {
 	return out
 }
 
-// opensWithAny tries each root as the blob key of the blob, whatever
-// generation its header names. The ID key is the root of generation 0, the
-// keyed root. It names the root that opens the blob, or nothing.
-func opensWithAny(roots map[uint32][32]byte, id string, blob []byte) string {
+// opensWithAny tries each root as the piece key and the blob key of a
+// piece, whatever generation its tag names. The ID key is the root of
+// generation 0, the keyed root. A piece of k = 1 holds the whole blob. It
+// names the root that opens the piece and its blob, or nothing.
+func opensWithAny(roots map[uint32][32]byte, gen uint32, it listed) string {
 	keyed := roots[0]
-	gen, err := selfsync.Gen(blob)
-	if err != nil {
-		return ""
-	}
 	for g, root := range roots {
 		k, err := selfsync.NewKeys(gen, root[:], keyed[:])
 		if err != nil {
 			continue
+		}
+		id, blob := it.id, it.data
+		if it.tag != nil {
+			h, err := selfsync.OpenTag(k, it.tag)
+			if err != nil {
+				continue
+			}
+			shard, err := selfsync.OpenPiece(k, it.tag, h, it.data)
+			if err != nil {
+				continue
+			}
+			if blob, err = selfsync.Rebuild(h, map[int][]byte{h.Index: shard}); err != nil {
+				continue
+			}
+			id = h.Blob
 		}
 		if _, err := selfsync.Open(k, id, blob); err == nil {
 			return fmt.Sprintf("the root of generation %d", g)
