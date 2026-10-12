@@ -170,6 +170,10 @@ func TestStoragePieces(t *testing.T) {
 	for page, want := range pages {
 		has(t, journalDoc(t, begin, reader.run("journal", "read", page)), want, "the reading of "+page+" with the pieces of dana changed")
 	}
+	// The device asks the 2 storage citizens that rank highest for each
+	// blob. Dana ranks in the first 2 for a blob with a chance of 2 in 3,
+	// so with 8 blobs it is asked first, and refused, almost always.
+	has(t, mended.Stderr, "the piece does not open; the device asks another storage citizen", "the sync with charlie back")
 	if strings.Contains(mended.Stderr, "cannot be read now") {
 		t.Fatalf("the sync with charlie back still names blobs that cannot be read:\n%s", mended.Stderr)
 	}
