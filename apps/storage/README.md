@@ -20,9 +20,14 @@ wraps, reconciliation and the sync of the journal.
 | The pseudonym of the owner | Built. Tested on one storage citizen: the two homes of the owner use one account, and the name of the account is not the key of the owner. |
 | The owner check, by the key of the caller | Built. Tested. |
 | Two machines on different networks | Not tested. The transfer app tested the same pipe by hand; see its README. |
-| Encryption of the blobs | Not in this app. The client must encrypt each blob before the put. See "What the storage citizen sees". |
+| Encryption of the blobs | Not in this app. `arc sync` encrypts each blob of self data. `arc-storage put` does not encrypt. See "What the storage citizen sees". |
 | Device keys, grants that the account key signs, invites | Not built. See "Later steps". |
-| The sync of the journal, the storage list of kind 10273 | Not built. Later steps of the proposal. |
+| The sync of the journal and the other self data | Built in `arc sync`, step 2 of the proposal. See [the storage spec](../../docs/storage/SPEC.md). |
+| The storage list of kind 10273 | Not built. A later step of the proposal. |
+
+The ARC call and the messages on the pipe are in the package `sdk/storage`, so
+`arc` uses them too. [The storage spec](../../docs/storage/SPEC.md) defines
+them.
 
 ## How it works
 
@@ -193,17 +198,17 @@ endian, then the bytes of the file, then zeros up to the next power of two,
 at least 4 KiB. The ID is the SHA-256 of the blob. `get` checks the SHA-256,
 and removes the padding.
 
-The sync client of a later step makes another blob, as section 2.4 of the
-proposal says: its ID is a keyed hash of the record ID, and the padding is
-inside the encryption. The app does not read the blob, so the app does not
-change for it.
+`arc sync` makes another blob, as section 3.3 of the storage spec says: its
+ID is a keyed hash of the record ID, and the padding is inside the
+encryption. The app does not read the blob, so the app does not change for
+it.
 
 ## What the storage citizen sees
 
 - `arc-storage` does not encrypt. The storage citizen can read a file that
   the owner did not encrypt before the put. The SHA-256 of a blob also
   names a file that the storage citizen knows. Encrypt each file before the
-  put, until the sync client of a later step encrypts the records.
+  put. `arc sync` encrypts each record of self data.
 - The storage citizen sees the citizen key of the owner, because the owner
   signs the ARC call with it (see "The pseudonym of the owner").
 - It sees the count of the blobs, their padded sizes, and the times of the
@@ -266,8 +271,6 @@ of the direct pipe spec, section 3.4. A refused request gets
   messages on the pipe stay.
 - **Invites.** `arc-storage invite --quota 1GiB` replaces
   `STORAGE_OWNERS`, as section 2.2 of the proposal says.
-- **Sync.** A transport adapter encrypts the records of the local store,
-  and syncs them with this app.
 
 ## Tests
 

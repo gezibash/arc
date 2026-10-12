@@ -48,8 +48,10 @@ func TestDelivery(t *testing.T) {
 	}
 	t.Log("ok: arc and the exec provider build")
 
-	a := arc(t, filepath.Join(work, "laptop"))
-	b := arc(t, filepath.Join(work, "desktop"))
+	// The pipes to the storage citizen open on this machine, with the
+	// loopback address and no STUN server.
+	a := arc(t, filepath.Join(work, "laptop")).with(loopback...)
+	b := arc(t, filepath.Join(work, "desktop")).with(loopback...)
 
 	// The relay keeps the limits of the public deploy that bear on this proof:
 	// the size of an event, and authentication before a gift wrap.
@@ -73,14 +75,20 @@ func TestDelivery(t *testing.T) {
 	b.run("install", author, "journal", "--yes")
 	t.Log("ok: both machines install the journal")
 
-	// Through a relay.
+	// The journal is a local app. Its pages cross a storage citizen, and the
+	// relay introduces the two ends of the pipe.
+	storeKey := storageCitizen(t, work, url, author)
+	a.run("install", storeKey, "storage", "--yes")
+	b.run("install", storeKey, "storage", "--yes")
 	a.input("---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup\n",
 		"journal", "write", "hrs/ablations/1", "--title", "LR sweep")
+	a.run("sync")
 	b.run("sync")
 	got := trim(journalDoc(t, begin, b.run("journal", "read", "hrs/ablations/1")))
 	want(got == "---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\n---\nauc 0.871\nnext: try warmup",
 		"the desktop read %s", got)
-	t.Log("ok: a page crosses the relay")
+	want(len(relaySelfData(t, url, a.home)) == 0, "the relay holds a draft of the journal")
+	t.Log("ok: a page crosses the storage citizen, and the relay holds no draft of it")
 
 	// The relay holds ciphertext only.
 	db, err := os.ReadFile(filepath.Join(work, "relay", "relay.db"))
@@ -88,6 +96,20 @@ func TestDelivery(t *testing.T) {
 	want(!bytes.Contains(db, []byte("try warmup")), "the relay holds the page text")
 	want(!bytes.Contains(db, []byte("lr-sweep")), "the relay holds the page address")
 	t.Log("ok: the relay holds neither the text nor the address")
+
+	// The storage citizen holds ciphertext only.
+	err = filepath.WalkDir(filepath.Join(work, "blobs"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err == nil && (bytes.Contains(data, []byte("try warmup")) || bytes.Contains(data, []byte("hrs/ablations"))) {
+			err = fmt.Errorf("%s holds the page", path)
+		}
+		return err
+	})
+	want(err == nil, "%v", err)
+	t.Log("ok: the storage citizen holds neither the text nor the address")
 
 	// Through a USB stick, with no relay.
 	stick := filepath.Join(work, "stick")
@@ -155,22 +177,27 @@ func TestDelivery(t *testing.T) {
 	}
 	big := page.String()
 	a.input(big, "journal", "write", "hrs/data/1")
+	a.run("sync")
+	b.run("sync")
 	back := b.run("journal", "read", "hrs/data/1")
 	want(strings.Count(back, "\n") == 3007, "the large page did not read back whole: %d lines", strings.Count(back, "\n"))
 	want(journalDoc(t, begin, back) == big, "the large page came back changed")
-	t.Logf("ok: a large page of %d bytes crosses the relay in parts", len(big))
+	t.Logf("ok: a large page of %d bytes crosses the storage citizen in parts", len(big))
 
-	phone := arc(t, filepath.Join(work, "phone"))
+	phone := arc(t, filepath.Join(work, "phone")).with(loopback...)
 	phone.input(read(t, keyfile(t, a.home)), "keys", "add")
 	phone.run("relay", "add", url)
 	phone.run("install", author, "journal", "--yes")
+	phone.run("install", storeKey, "storage", "--yes")
+	phone.run("sync")
 	got = trim(phone.run("journal", "read", "hrs/data/1", "--lines", "1500:1501"))
 	want(got == line(big, 1498)+"\n"+line(big, 1499), "the range read gave %s", got)
-	t.Log("ok: a range of two lines reads on a machine that held nothing")
+	t.Log("ok: a range of two lines reads on a new machine after one sync")
 
-	// Tail streams what is appended. The tail shows nothing before the first
+	// Tail streams what is appended on the same machine. Another machine
+	// sees the notes after a sync. The tail shows nothing before the first
 	// write, so a short sleep lets it start.
-	tail := b.start("journal", "tail", "hrs/log/1")
+	tail := a.start("journal", "tail", "hrs/log/1")
 	time.Sleep(500 * time.Millisecond)
 	a.input("---\ntitle: Live\npage: 1\nnotebook: hrs/log\n---\nfirst note\n", "journal", "write", "hrs/log/1")
 	a.run("journal", "append", "hrs/log/1", "second", "note")
@@ -180,7 +207,7 @@ func TestDelivery(t *testing.T) {
 	tail.stop()
 	t.Log("ok: tail streams each note as it is appended")
 
-	t.Log("phase 1 holds: relay, USB stick, refusal, parts, and tail")
+	t.Log("phase 1 holds: storage citizen, USB stick, refusal, parts, and tail")
 
 	// Phase 2: a message reaches an offline recipient through a third machine
 	// that carries a USB stick. Nobody has a relay.

@@ -1,7 +1,7 @@
-// Package wire holds what the two ends of the storage app share: the ARC
+// Package storage holds what the two ends of the storage app share: the ARC
 // call that opens a pipe, the messages on the pipe, and the padding of a
 // blob. The pipe itself is the package sdk/direct.
-package wire
+package storage
 
 import (
 	"encoding/binary"

@@ -10,8 +10,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/gezibash/arc/apps/storage/wire"
 	"github.com/gezibash/arc/sdk/atomicfile"
+	wire "github.com/gezibash/arc/sdk/storage"
 )
 
 // TombstoneAge is how long the app refuses a put of a deleted ID.

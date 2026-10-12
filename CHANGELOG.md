@@ -25,8 +25,23 @@ All notable changes to ARC are recorded here. The format follows
 - `arc-releases` answers the offer of a pipe. `ARC_PATH` sets its policy,
   and its manifest takes requests of 16 KiB.
 
+- `arc sync` syncs the journal, the files and the other self data with
+  the storage citizens of the citizen: each change is one encrypted blob,
+  padded to a power of two, and signed inside the encryption by the
+  citizen key or, through a bunker, by the device key. `arc serve` syncs
+  when it starts and every 15 minutes. The
+  first `arc sync` imports the drafts that the relays hold; `--import` runs
+  the import again.
+
 ### Changed
 
+- **Breaking.** Self data no longer goes to relays. A sealed kind of a
+  manifest, such as a journal page, stays in the local store, and another
+  device gets it through a storage citizen or `arc sync --dir`. An older
+  arc does not see the pages that this arc writes. The drafts on the relays
+  stay there for older clients. `journal tail` reads the local store.
+- The messages of the storage app moved from `apps/storage/wire` to
+  `sdk/storage`. The bytes on the pipe did not change.
 - `arc session --http` offers a pipe by default. It then shows the IP
   address of this machine to the provider, and needs UDP. An older provider
   refuses the offer, and arc gets the body in session frames, as before.

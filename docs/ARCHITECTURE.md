@@ -35,6 +35,7 @@ flowchart LR
 | `core/kv` | Atomic key-value persistence operations consumed by the durable mail state machine. |
 | `core/compact`, `core/frame`, `core/relaylist` | Event encoding, bounded fragmentation and relay-list protocol. |
 | `runtime/citizen`, `runtime/catalog`, `runtime/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
+| `runtime/selfsync` | The blob and the sync of self data with a storage citizen. |
 | Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
 | `apps/<name>/` | One complete app: manifest, Arcfile, service implementation in `server/`, and its program in `cmd/arc-<name>`. Data apps can consist of a manifest. |
 | `cmd/arc` | The arc program. It imports no app. |
@@ -43,6 +44,7 @@ flowchart LR
 | `sdk/providerconfig`, `sdk/strictjson`, `sdk/atomicfile`, `sdk/limitio` | Configuration files, strict JSON, atomic file writes and bounded buffers. |
 | `sdk/providertest` | A real session for the tests of an app. |
 | `sdk/direct` | A pipe between two citizens for bulk bytes: a WebRTC data channel, with the TURN server of the relay as the last resort. |
+| `sdk/storage` | The ARC call and the requests on the pipe to a storage citizen, for the storage app and for `arc sync`. |
 | `adapters/transport/relay`, `adapters/transport/file` | Nostr relay and carried-directory event delivery. |
 | `adapters/provider/host` | Subprocess hosting of a provider program. |
 | `adapters/keyfile`, `adapters/nip05` | Identity files and network name resolution. |

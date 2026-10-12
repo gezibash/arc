@@ -101,8 +101,11 @@ arc message inbox
 
 A message is a NIP-17 direct message, so a NIP-17 client opens it. The
 message waits in the outbox until the recipient acknowledges it. `arc sync`
-reconciles this machine with its relays. `arc sync --dir <path>` syncs with
-a directory instead: a USB stick, a shared folder, or a disk that you carry.
+reconciles this machine with its relays. It also syncs the journal and the
+other self data with your storage citizens; self data never goes to a relay
+(see [the storage app](apps/storage/README.md)). `arc sync --dir <path>`
+syncs with a directory instead: a USB stick, a shared folder, or a disk that
+you carry.
 
 ### Watch the inbox
 
