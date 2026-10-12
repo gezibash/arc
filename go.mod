@@ -107,3 +107,9 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.37.1 // indirect
 )
+
+// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with one fix: a send on a
+// subscription channel can race its close. Upstream submission is pending
+// (https://github.com/gezibash/nostrlib, branch fix-events-close-race).
+// Remove this replace when upstream merges the fix.
+replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261012101157-cd24ae69871c
