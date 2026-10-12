@@ -503,7 +503,7 @@ func TestInterface(t *testing.T) {
 	// public notes.
 	bunker := owner.start("keys", "bunker", "--relay", url,
 		"--allow-kind", "31234", "--allow-kind", "1234", "--allow-kind", "3275",
-		"--allow-kind", "13", "--allow-kind", "10050", "--allow-kind", "10013")
+		"--allow-kind", "13", "--allow-kind", "10050")
 	uri := ifaceLine(bunker, "bunker://", limit)
 	if uri == "" {
 		t.Fatalf("the bunker did not start:\n%s", bunker.output())

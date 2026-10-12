@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/internal/testrelay"
 	"github.com/gezibash/arc/sdk/storage"
 )
 
@@ -84,7 +85,8 @@ func storageServer(t *testing.T, work, url string, signer machine, name, app str
 
 // relaySelfData returns the self data of the citizen of home that the relay
 // holds: drafts, checkpoints, parts and their deletions. It leaves out the
-// draft of the keyed root, which stays on the relay.
+// draft of the keyed root, which stays on the relay, and the deletions that
+// a device sent for the drafts that it moved to a storage citizen.
 func relaySelfData(t *testing.T, url, home string) []nostr.Event {
 	t.Helper()
 	key, err := keyfiles.Load(keyfile(t, home))
@@ -104,7 +106,7 @@ func relaySelfData(t *testing.T, url, home string) []nostr.Event {
 	}
 	var out []nostr.Event
 	for _, event := range batch.Events {
-		if event.Kind == draft.Kind && event.Tags.GetD() == "arc-keyed-root" {
+		if event.Kind == draft.Kind && event.Tags.GetD() == "arc-keyed-root" || draft.IsMoved(event) {
 			continue
 		}
 		out = append(out, event)
@@ -409,13 +411,24 @@ func holdsKey(t *testing.T, dir, key string) string {
 	return found
 }
 
-// TestStorageImportsDrafts proves the one-time import: the drafts that an
-// older client put on the relay move to the local store and to the storage
-// citizen. A second import changes nothing.
+// TestStorageImportsDrafts proves the one-time import, and the removal of
+// the drafts from the relays (docs/storage/SPEC.md, sections 4.2 and 7). An
+// older relay takes the drafts of an older client. After the update the
+// relay refuses new drafts, and still serves the old ones to their author.
+// A new machine imports them into the local store, puts them on a storage
+// citizen, and then deletes them from the relay with NIP-09. A second
+// import, and a second machine of the citizen, still read every page: the
+// deletion for the relay never deletes a local record.
 func TestStorageImportsDrafts(t *testing.T) {
 	begin := time.Now()
 	work := t.TempDir()
-	url := startRelay(t, filepath.Join(work, "relay"))
+	older := olderProgram(t, "./cmd/arc")
+	relayHome := arc(t, filepath.Join(work, "relay"))
+	before := relayHome.using(older).start("relay", "serve", "--listen", "127.0.0.1:0")
+	if !before.waitFor("relay listens on ", 10*time.Second) {
+		t.Fatalf("the older relay did not start:\n%s", before.output())
+	}
+	url := strings.TrimSpace(regexp.MustCompile(`relay listens on (\S+)`).FindStringSubmatch(before.output())[1])
 
 	old := arc(t, filepath.Join(work, "old")).with(loopback...)
 	old.run("keys", "gen")
@@ -424,9 +437,9 @@ func TestStorageImportsDrafts(t *testing.T) {
 	old.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
 	old.run("install", citizen, "journal", "--yes")
 
-	// An older client sent each draft to the relay. Here one machine
-	// writes two pages, and the test sends the events to the relay as
-	// that client did.
+	// An older client sent each draft to the relay, and its private relay
+	// list. Here one machine writes two pages, and the test sends the
+	// events to the older relay as that client did.
 	old.input("---\ntitle: One\npage: 1\nnotebook: hrs/old\n---\nfirst page\n", "journal", "write", "hrs/old/1")
 	old.input("---\ntitle: Two\npage: 2\nnotebook: hrs/old\n---\nsecond page\n", "journal", "write", "hrs/old/2")
 	stick := filepath.Join(work, "stick")
@@ -435,41 +448,75 @@ func TestStorageImportsDrafts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := relay.New(url, keyer.NewPlainKeySigner(key.Secret))
+	signer := keyer.NewPlainKeySigner(key.Secret)
 	files, err := filepath.Glob(filepath.Join(stick, "events", "*"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("the stick holds no events: %v", err)
 	}
-	sent := 0
+	var drafts []nostr.Event
 	for _, path := range files {
 		var event nostr.Event
 		if err := json.Unmarshal([]byte(read(t, path)), &event); err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
-		if event.PubKey != key.Public || event.Kind == nostr.KindDeletion {
-			continue
+		if event.PubKey == key.Public && event.Kind != nostr.KindDeletion {
+			drafts = append(drafts, event)
 		}
-		if err := r.Send(context.Background(), event); err != nil {
-			t.Fatalf("the relay refused a draft: %v", err)
+	}
+	list := nostr.Event{Kind: 10013, CreatedAt: nostr.Now(), Content: "sealed", Tags: nostr.Tags{}}
+	if err := signer.SignEvent(context.Background(), &list); err != nil {
+		t.Fatal(err)
+	}
+	// The older client also used a relay that is not an ARC relay.
+	standard := testrelay.StartStandard(t)
+	for _, to := range []string{url, standard} {
+		r := relay.New(to, signer)
+		for _, event := range append(drafts, list) {
+			if err := r.Send(context.Background(), event); err != nil {
+				t.Fatalf("%s refused an event of kind %d: %v", to, event.Kind, err)
+			}
 		}
-		sent++
+		r.Close()
+	}
+	onStandard := len(relaySelfData(t, standard, old.home))
+
+	// The operator updates the relay. Its store keeps what it took.
+	before.stop()
+	after := relayHome.start("relay", "serve", "--listen", strings.TrimPrefix(url, "ws://"))
+	if !after.waitFor("relay listens on ", 10*time.Second) {
+		t.Fatalf("the relay did not start again:\n%s", after.output())
+	}
+	onRelay := len(relaySelfData(t, url, old.home))
+	if onRelay == 0 || len(relayKinds(t, url, old.home, 10013)) != 1 {
+		t.Fatalf("after the update the relay serves %d drafts of the %d that the older client sent, and %d private relay lists", onRelay, len(drafts), len(relayKinds(t, url, old.home, 10013)))
+	}
+	t.Logf("ok: after the update the relay still serves %d drafts and the private relay list of an older client to their author", onRelay)
+
+	r := relay.New(url, signer)
+	page, err := draft.Wrap(context.Background(), signer, "hrs/old/3", nostr.Event{Kind: 30023, CreatedAt: nostr.Now(), Content: "third page"}, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Send(context.Background(), page); err == nil || !strings.Contains(err.Error(), "keeps no drafts") {
+		t.Fatalf("the relay took a new draft of an older client: %v", err)
 	}
 	r.Close()
-	onRelay := len(relaySelfData(t, url, old.home))
-	if onRelay == 0 {
-		t.Fatalf("the relay holds no draft of the older client (sent %d)", sent)
-	}
-	t.Logf("ok: the relay holds %d drafts, checkpoints and parts of an older client", onRelay)
+	t.Log("ok: the relay refuses a new draft, and says why")
 
 	// A new machine of the citizen, with a storage citizen.
 	fresh := arc(t, filepath.Join(work, "fresh")).with(loopback...)
 	fresh.input(read(t, keyfile(t, old.home)), "keys", "add")
 	fresh.run("relay", "add", url)
+	fresh.run("relay", "add", standard)
 	storeKey := storageCitizen(t, work, url, fresh)
 	fresh.run("install", citizen, "journal", "--yes")
 	fresh.run("install", storeKey, "storage", "--yes")
 
-	first := fresh.run("sync")
+	synced := fresh.try("", "sync")
+	if synced.Err != nil {
+		t.Fatalf("arc sync: %v\n%s\n%s", synced.Err, synced.Stdout, synced.Stderr)
+	}
+	first := synced.Stdout
 	imported := regexp.MustCompile(`imported (\d+) drafts`).FindStringSubmatch(first)
 	if imported == nil {
 		t.Fatalf("the first sync imported nothing:\n%s", first)
@@ -487,9 +534,37 @@ func TestStorageImportsDrafts(t *testing.T) {
 	}
 	t.Logf("ok: the first sync imports %d drafts, and puts them on the storage citizen", onRelay)
 
+	deleted := regexp.MustCompile(`deleted (\d+) old drafts and private relay lists from the relay`).FindStringSubmatch(first)
+	if deleted == nil {
+		t.Fatalf("the first sync deleted no draft from the relay:\n%s", first)
+	}
+	if left := relaySelfData(t, url, old.home); len(left) != 0 {
+		t.Fatalf("the relay holds %d drafts after the sync, want 0: kind %d", len(left), left[0].Kind)
+	}
+	if lists := relayKinds(t, url, old.home, 10013); len(lists) != 0 {
+		t.Fatalf("the relay holds %d private relay lists after the sync, want 0", len(lists))
+	}
+	if roots := relayKinds(t, url, old.home, draft.Kind); len(roots) != 1 || roots[0].Tags.GetD() != "arc-keyed-root" {
+		t.Fatalf("the relay holds %d drafts, want only the keyed root", len(roots))
+	}
+	t.Logf("ok: the sync deletes %s events from the relay: the drafts and the private relay list; the keyed root stays", deleted[1])
+
+	// The relay that is not an ARC relay would serve the deletion to an
+	// older device, so it gets none, and keeps the drafts.
+	if !strings.Contains(synced.Stderr, standard+": an older or another relay; the old drafts stay on it") {
+		t.Fatalf("the sync did not say that the drafts stay on %s:\n%s", standard, synced.Stderr)
+	}
+	if left := relaySelfData(t, standard, old.home); len(left) != onStandard {
+		t.Fatalf("the relay that is not an ARC relay holds %d drafts after the sync, want the %d it had", len(left), onStandard)
+	}
+	if moved := relayKinds(t, url, old.home, nostr.KindDeletion); len(moved) != 0 {
+		t.Fatalf("the ARC relay serves %d deletions to the author, want none", len(moved))
+	}
+	t.Log("ok: the ARC relay serves no moved deletion, and a relay that is not an ARC relay keeps its drafts and gets no deletion")
+
 	second := fresh.run("sync", "--import")
-	if strings.Contains(second, "imported") {
-		t.Fatalf("a second import took drafts again:\n%s", second)
+	if strings.Contains(second, "imported") || strings.Contains(second, "deleted") {
+		t.Fatalf("a second import took or deleted drafts again:\n%s", second)
 	}
 	if got := selfSync(t, second); got.sent != 0 || got.received != 0 {
 		t.Fatalf("a second import changed the storage citizen: %+v", got)
@@ -497,8 +572,41 @@ func TestStorageImportsDrafts(t *testing.T) {
 	if ls := fresh.run("journal", "ls"); strings.Count(ls, "hrs/old/") != 2 {
 		t.Fatalf("the journal lists %d pages after two imports, want 2:\n%s", strings.Count(ls, "hrs/old/"), ls)
 	}
-	if left := len(relaySelfData(t, url, old.home)); left != onRelay {
-		t.Fatalf("the relay holds %d drafts after the import, want the same %d: they stay for older clients", left, onRelay)
+	t.Log("ok: a second import takes nothing, and keeps no deletion that the relay holds")
+
+	// A second new machine imports from the relay that holds only the
+	// deletions, and reads each page from the storage citizen.
+	desk := arc(t, filepath.Join(work, "desk")).with(loopback...)
+	desk.input(read(t, keyfile(t, old.home)), "keys", "add")
+	desk.run("relay", "add", url)
+	desk.run("install", citizen, "journal", "--yes")
+	desk.run("install", storeKey, "storage", "--yes")
+	if got := selfSync(t, desk.run("sync")); got.received < onRelay {
+		t.Fatalf("the second machine took %d records from the storage citizen, want at least %d", got.received, onRelay)
 	}
-	t.Log("ok: a second import changes nothing, and the drafts stay on the relay for older clients")
+	for n, text := range []string{"first page", "second page"} {
+		if got := journalDoc(t, begin, desk.run("journal", "read", fmt.Sprintf("hrs/old/%d", n+1))); !strings.Contains(got, text) {
+			t.Fatalf("the second machine did not read page %d:\n%s", n+1, got)
+		}
+	}
+	t.Log("ok: a second machine of the citizen reads each page through the storage citizen")
+}
+
+// relayKinds returns the events of these kinds that the relay serves to
+// the citizen of home.
+func relayKinds(t *testing.T, url, home string, kinds ...nostr.Kind) []nostr.Event {
+	t.Helper()
+	key, err := keyfiles.Load(keyfile(t, home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := relay.New(url, keyer.NewPlainKeySigner(key.Secret))
+	defer r.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	batch, err := r.Fetch(ctx, nostr.Filter{Kinds: kinds, Authors: []nostr.PubKey{key.Public}})
+	if err != nil {
+		t.Fatalf("the relay did not answer: %v", err)
+	}
+	return batch.Events
 }
