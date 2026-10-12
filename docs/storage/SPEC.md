@@ -265,6 +265,7 @@ refuses each device of the citizen. Invites and the storage list of kind
 | No storage citizen is installed | The data stays on the device. | `self data stays on this machine: no storage citizen; install one with arc install <key> storage` |
 | The storage citizen refuses the caller: the account key is not in `STORAGE_OWNERS`, or the device key is in no grant set | No pipe opens. | `the storage citizen refused this machine: its key is neither an account key in STORAGE_OWNERS nor a device key with a grant; the signer sends grants with arc keys devices add and arc sync` |
 | A grant set does not reach a storage citizen | `arc keys devices add` or `revoke` fails after it publishes the device list. The storage citizen keeps the older set until the next sync of the signer. | `the device list changed, but <name>: the grants did not reach the storage citizen: <reason>; run arc sync on the signer to try again` |
+| A device signs through a bunker, and the citizen has no device list | No grant set exists, so the storage citizen refuses the device key. | The refusal above. Add the device on the signer with `arc keys devices add`. |
 | A grant set is older than the set of the account | The storage citizen keeps its set. | `stale_grants` |
 | No path opens | The sync of that storage citizen fails. The other storage citizens still sync. | The error of the direct pipe, and `some transports failed`. |
 | A blob does not pass section 3.5 | The device skips it. | `refused <id>: <reason>` |
@@ -323,6 +324,9 @@ refuses each device of the citizen. Invites and the storage list of kind
   - A newer storage citizen refuses an older client with `not_owner`,
     because the citizen key is not an account key. The user updates the
     device.
+  - A device behind a bunker with no device list worked before with
+    `--decrypt all`. Now no grant set names it, so it gets `not_owner`. The
+    user adds it on the signer with `arc keys devices add`.
   - An older signer sends no grant set. A newer storage citizen then refuses
     each device behind it with `not_owner`. The user updates the signer.
   - The operator replaces each citizen key in `STORAGE_OWNERS` with the
