@@ -6,6 +6,17 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-12
+
+Bulk bytes now leave the relay, and self data leaves it too. http bodies and
+release archives go over the direct pipe. Each device has its own key, and
+the signer can revoke it. Self data is sealed with random data roots, and
+the journal keeps its pages on the device and syncs them with a storage
+citizen. Several changes are breaking; read each entry.
+
+Known issue: a device behind a bunker needs the bunker to run with
+`--decrypt all` to sync with a storage citizen (#209).
+
 ### Added
 
 - `arc session --http` gets the response body on a direct pipe of
