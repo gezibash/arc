@@ -19,6 +19,8 @@ wraps, reconciliation and the sync of the journal.
 | --- | --- |
 | The service: put, list from a cursor, get, delete and usage | Built. Tested with the built `arc`, a local relay, a storage citizen, two arc homes of one owner and a stranger. |
 | Admission by a join call: the rules `invite`, `ask` and `open` | Built. Tested through `arc keys storage add` and the commands of the operator. |
+| Requests in flight, lists of IDs in `get` and `delete`, and `hello` | Built. Tested: the client keeps at most 32 puts in flight, each reply goes to its own request, the bytes of each put keep their order, and the app ends a pipe with more puts in flight. On an emulated link of 44 ms, 1,000 puts of 4 KiB took 117.1 to 121.3 s before and 7.9 to 8.5 s after (measured). |
+| The index of each account in bbolt | Built. Tested: a stop between the bytes and the entry leaves a consistent index, and the app imports an older `state.json` once. |
 | The quota, plan, end and state of each account | Built. Tested: a put over the quota of one account fails while another account has room. |
 | The usage line of `arc sync` | Not built. `arc-storage usage` prints the usage. |
 | The removal of the bytes of a closed account | Not built. The operator removes the directory of the account. |
@@ -53,7 +55,7 @@ them.
    device key in the newest grant set of an admitted account. It replies
    with a WebRTC answer.
 6. The two programs open one data channel. `arc-storage` sends its
-   requests on it, one at a time.
+   requests on it, at most 32 in flight.
 
 ## The account key and the grants
 
@@ -272,24 +274,61 @@ Each command takes these flags:
   1000 for each request. `arc-storage list` asks until the end.
 - The app holds at most 4 pipes at a time. A pipe that carries no request
   for 30 s closes.
+- The app answers the requests of a pipe in order. A client keeps at most
+  32 puts in flight. If a client sends a 33rd put, the app ends the pipe.
 
 ## Storage on disk
 
 ```text
 <STORAGE_DIR>/invites.json                        the SHA-256 of each invite token, its quota, plan and end
-<STORAGE_DIR>/accounts/<account key>/state.json   the record, the grant set, the cursor, the entries
+<STORAGE_DIR>/accounts/<account key>/state.json   the record and the grant set
+<STORAGE_DIR>/accounts/<account key>/index.db     the index: the cursor, the bytes in use and the entries
 <STORAGE_DIR>/accounts/<account key>/blobs/<id>   the bytes of one blob
 ```
 
-Each file is written to a temporary file, flushed, and renamed
-(`sdk/atomicfile`). A lock on each account covers each change of
-`state.json`. A lock on `invites.json` covers each join, and then the lock
-of the account. A join spends the token first, and then admits the account:
-if the program stops between the two, the token is lost, and no token
-admits twice. A put writes the blob first, and then the state. A delete
-writes the state first, and then removes the blob. If the program stops
-between the two, a file with no entry stays. The app does not serve it,
-and the next put of that ID replaces it.
+`state.json` and `invites.json` are written to a temporary file, flushed,
+and renamed (`sdk/atomicfile`). A lock on each account covers each change
+of `state.json`. A lock on `invites.json` covers each join, and then the
+lock of the account. A join spends the token first, and then admits the
+account: if the program stops between the two, the token is lost, and no
+token admits twice.
+
+`index.db` is a [bbolt](https://github.com/etcd-io/bbolt) file with pages
+of 4 KiB. Only the service opens it; the commands of the operator change
+only `state.json` and `invites.json`. A put or a delete changes a few keys
+in one transaction, and does not write the whole index. With 10,000 blobs
+in one account, a put wrote about 31 KB of index pages, and the last 1,000
+of 10,000 puts wrote 1.35 times the bytes of the first 1,000 (measured).
+Before, each put wrote the whole `state.json`, about 132 bytes for each
+entry: 1.3 MB for each put at 10,000 entries (computed from the measured
+entry size).
+
+A put writes the blob first, and then the entry. The app writes the file
+of each put when its bytes are complete. It syncs the directory and writes
+the entries of a group of puts in one transaction, and only then answers
+`stored`. A delete writes the entry first, and then removes the blob. If
+the program stops between the two, a file with no entry stays. The app
+does not serve it, and the next put of that ID replaces it.
+
+### The import of an older state.json
+
+Before `index.db`, `state.json` also held the cursor, the bytes in use and
+the entries. At its start, the service opens the index of each account.
+If `state.json` holds entries, the service imports them into `index.db` in
+one transaction, with a mark, and then writes `state.json` without them.
+The lock of the account covers the import.
+
+- If the program stops before the transaction ends, `index.db` holds
+  nothing of the import, and the next start imports again.
+- If the program stops after the transaction and before `state.json` is
+  written, the next start sees the mark. It does not import again. It only
+  writes `state.json`.
+- A command of the operator that runs before the import keeps the entries
+  in `state.json`.
+- The sequence numbers do not change, so the cursor of each device stays
+  good.
+- An older storage app cannot read `index.db`. After the import, it sees
+  each account as empty. Do not go back to an older storage app.
 
 ## The blob format of `arc-storage`
 
@@ -378,22 +417,59 @@ older storage app answers the join with `invalid_request`.
 ### The pipe
 
 `arc-storage` opens one data channel. Each request is one text message of
-JSON. The app answers each request with one text message of JSON before
-the next request.
+JSON. Each reply is one text message of JSON. The app answers the requests
+in order.
 
 | Request | Reply |
 | --- | --- |
+| `{"op":"hello"}` | `{"v":2,"features":["batch"],"window":32}`. An older app answers `invalid_request`. |
 | `{"op":"put","id":"<64 hex>","size":4096}` | `{"status":"send"}`, then the client sends the bytes, and the app answers `{"status":"stored","seq":7}`. Or `{"status":"held"}` or `{"status":"tombstoned"}`, and no bytes go. |
 | `{"op":"list","after":6,"limit":1000}` | `{"entries":[{"seq":7,"id":"…","size":4096},{"seq":8,"id":"…","deleted":true}],"next":8}` |
 | `{"op":"get","id":"<64 hex>"}` | `{"size":4096}`, then the bytes of the blob. |
+| `{"op":"get","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","size":4096},{"id":"…","error":"not_found"}]}`, then the bytes of each found blob, in order. |
 | `{"op":"delete","id":"<64 hex>"}` | `{"status":"deleted","seq":9}`, or `{"status":"absent"}`. |
+| `{"op":"delete","ids":["<64 hex>",…]}` | `{"items":[{"id":"…","status":"deleted","seq":9},{"id":"…","status":"absent"}]}` |
 | `{"op":"usage"}` | `{"used":8192,"quota":1073741824,"blobs":2,"state":"open","plan":"free"}` |
+
+- The client sends `hello` one time in each session, before its first
+  request in flight. If `hello` gives the feature `batch`, the client numbers each request
+  with `n`, from 1. Each reply to the request carries the same `n`. The
+  client keeps at most `window` puts in flight: sent, with no `stored`,
+  `held`, `tombstoned` or error yet.
+- The client sends the bytes of each put after its `send` reply, in the
+  order of the `send` replies. The app gives each run of bytes to the
+  oldest put that got `send` and has not all its bytes. A text request can
+  come between two runs.
+- A request with `ids` names 1 to 256 IDs.
+- Without `batch`, the client sends one request at a time, with no `n`, as
+  before.
 
 The bytes of a blob go in binary messages of 16 KiB, with the flow control
 of the direct pipe spec, section 3.4. A refused request gets
-`{"error":"<code>","message":"<text>"}`. The codes are `invalid_request`,
-`bad_size`, `over_quota`, `refused` (a put on a closing account),
-`not_found` and `storage_failed`.
+`{"error":"<code>","message":"<text>"}`, with the `n` of the request. The
+codes are `invalid_request`, `bad_size`, `over_quota`, `refused` (a put on
+a closing account), `not_found` and `storage_failed`.
+
+### Measure the puts
+
+`TestEmulatedLinkPuts` puts blobs through the app and the client on a link
+that pion emulates, as `TestEmulatedLinkSpeed` of `sdk/direct` does. It
+prints the time, and does not check it:
+
+```sh
+STORAGE_LINK_PUTS=1000 DIRECT_LINK_RTT_MS=44 go test ./apps/storage/server -run TestEmulatedLinkPuts -count=1 -v
+```
+
+Results on an Apple Silicon Mac, 2026-10-12, link of 92.5 Mbit/s, 44 ms and
+a queue of 128 KiB, 1,000 puts of 4 KiB:
+
+| Code | Time |
+| --- | --- |
+| One request at a time, `state.json` (before) | 117.1 to 121.3 s, three runs |
+| 32 puts in flight, `index.db` (after) | 7.9 to 8.5 s, four runs |
+
+After, the disk takes most of the time: each blob file gets its own sync,
+and one sync costs about 4.9 ms on this Mac (measured).
 
 ## Later steps
 

@@ -206,7 +206,11 @@ func (s *store) join(name string, req wire.Join, r rules) (wire.JoinReply, error
 		return wire.JoinReply{}, err
 	}
 	if v := s.standing(name, a); v.admitted {
-		return wire.JoinReply{Version: 1, Account: v.account(a.Used)}, nil
+		used, err := s.used(name)
+		if err != nil {
+			return wire.JoinReply{}, err
+		}
+		return wire.JoinReply{Version: 1, Account: v.account(used)}, nil
 	}
 	now := s.now().Unix()
 	if req.Invite != "" {
@@ -259,10 +263,14 @@ func refused(message string) wire.JoinReply {
 
 // admitAccount makes the record of an account admitted, and keeps its blobs.
 func (s *store) admitAccount(name string, quota int64, plan string, expires int64) (wire.JoinReply, error) {
+	used, err := s.used(name)
+	if err != nil {
+		return wire.JoinReply{}, err
+	}
 	var reply wire.JoinReply
-	err := s.change(name, func(a *account) (bool, error) {
+	err = s.change(name, func(a *account) (bool, error) {
 		a.Record = &record{Status: statusAdmitted, Quota: quota, Plan: plan, Expires: expires}
-		reply = wire.JoinReply{Version: 1, Account: s.standing(name, a).account(a.Used)}
+		reply = wire.JoinReply{Version: 1, Account: s.standing(name, a).account(used)}
 		return true, nil
 	})
 	return reply, err

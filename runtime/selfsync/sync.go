@@ -38,11 +38,17 @@ type Store interface {
 }
 
 // Blobs is one open session with a storage citizen. *storage.Conn is one.
+// GetMany and PutMany keep several requests in flight on a storage app
+// that supports it, and send one request at a time to an older one.
 type Blobs interface {
 	List(ctx context.Context, after uint64) ([]storage.Entry, uint64, error)
-	Get(ctx context.Context, id string) ([]byte, error)
-	Put(ctx context.Context, id string, blob []byte) (string, error)
+	GetMany(ctx context.Context, ids []string, f func(id string, blob []byte, err error) error) error
+	PutMany(ctx context.Context, blobs []storage.Blob) ([]storage.PutResult, error)
 }
+
+// putChunk is the count of records that a device seals before it puts
+// them.
+const putChunk = 64
 
 // Syncer syncs the self data of one citizen on one device.
 type Syncer struct {
@@ -211,8 +217,8 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Repo
 		return report, errors.Join(err, s.save(name, st))
 	}
 
-	// list is nil until the first blob that the device takes. An absent
-	// device list is an empty slice that is not nil.
+	// The device reads the device list only if it takes a blob. An absent
+	// device list is an empty slice.
 	var list []nostr.PubKey
 	// Each blob that the device lacks, also one of an earlier listing that
 	// a device that was not on the list made.
@@ -223,25 +229,28 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Repo
 		}
 	}
 	slices.Sort(lack)
-	for _, id := range lack {
-		if list == nil {
-			l, ok, err := s.Devices(ctx)
-			if err != nil {
-				return report, errors.Join(fmt.Errorf("the device list: %w", err), s.save(name, st))
-			}
-			list = []nostr.PubKey{}
-			if ok {
-				// The citizen key may always write.
-				list = append(list, s.Citizen)
-				for _, d := range l.Devices {
-					list = append(list, d.Key)
-				}
+	if len(lack) > 0 {
+		l, ok, err := s.Devices(ctx)
+		if err != nil {
+			return report, errors.Join(fmt.Errorf("the device list: %w", err), s.save(name, st))
+		}
+		list = []nostr.PubKey{}
+		if ok {
+			// The citizen key may always write.
+			list = append(list, s.Citizen)
+			for _, d := range l.Devices {
+				list = append(list, d.Key)
 			}
 		}
-		result, err := s.take(ctx, b, id, list, keysOf)
+	}
+	err = b.GetMany(ctx, lack, func(id string, blob []byte, err error) error {
+		var result store.Result
+		if err == nil {
+			result, err = s.take(ctx, id, blob, list, keysOf)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return report, errors.Join(err, s.save(name, st))
+				return err
 			}
 			report.Refused = append(report.Refused, fmt.Sprintf("%s: %v", id, err))
 			// A device can join the list later, so its blob gets a new
@@ -249,7 +258,7 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Repo
 			if !errors.Is(err, errNotListed) {
 				st.Seen[id] = true
 			}
-			continue
+			return nil
 		}
 		st.Seen[id] = true
 		switch result.Outcome {
@@ -260,6 +269,10 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Repo
 		default:
 			report.Held++
 		}
+		return nil
+	})
+	if err != nil {
+		return report, errors.Join(err, s.save(name, st))
 	}
 
 	if !put {
@@ -271,34 +284,46 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs, put bool) (Repo
 	if err != nil {
 		return report, errors.Join(err, s.save(name, st))
 	}
+	var unlisted []nostr.Event
 	for _, event := range records {
-		id := current.BlobID(event.ID)
-		if _, listed := st.Remote[id]; listed {
-			continue
+		if _, listed := st.Remote[current.BlobID(event.ID)]; !listed {
+			unlisted = append(unlisted, event)
 		}
-		id, blob, err := Seal(current, s.Device, event)
-		if err != nil {
-			return report, errors.Join(err, s.save(name, st))
+	}
+	// The puts go in chunks, so that a device seals at most putChunk
+	// records before it gives them.
+	for chunk := range slices.Chunk(unlisted, putChunk) {
+		blobs := make([]storage.Blob, len(chunk))
+		for i, event := range chunk {
+			id, blob, err := Seal(current, s.Device, event)
+			if err != nil {
+				return report, errors.Join(err, s.save(name, st))
+			}
+			blobs[i] = storage.Blob{ID: id, Data: blob}
 		}
-		status, err := b.Put(ctx, id, blob)
-		if err != nil {
-			return report, errors.Join(fmt.Errorf("put %s: %w", id, err), s.save(name, st))
+		results, err := b.PutMany(ctx, blobs)
+		var failed []error
+		for i, r := range results {
+			switch {
+			case r.Err != nil:
+				failed = append(failed, fmt.Errorf("put %s: %w", blobs[i].ID, r.Err))
+			case r.Status != "":
+				st.Remote[blobs[i].ID] = r.Status != storage.StatusTombstoned
+				if r.Status == storage.StatusStored {
+					report.Sent++
+				}
+			}
 		}
-		st.Remote[id] = status != storage.StatusTombstoned
-		if status == storage.StatusStored {
-			report.Sent++
+		if err != nil || len(failed) > 0 {
+			return report, errors.Join(err, errors.Join(failed...), s.save(name, st))
 		}
 	}
 	return report, s.save(name, st)
 }
 
-// take gets one blob, opens it, checks who made it, and gives the record
-// to the store.
-func (s *Syncer) take(ctx context.Context, b Blobs, id string, list []nostr.PubKey, keysOf func(context.Context, uint32) (Keys, error)) (store.Result, error) {
-	blob, err := b.Get(ctx, id)
-	if err != nil {
-		return store.Result{}, err
-	}
+// take opens one blob, checks who made it, and gives the record to the
+// store.
+func (s *Syncer) take(ctx context.Context, id string, blob []byte, list []nostr.PubKey, keysOf func(context.Context, uint32) (Keys, error)) (store.Result, error) {
 	gen, err := Gen(blob)
 	if err != nil {
 		return store.Result{}, err
