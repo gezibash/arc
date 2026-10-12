@@ -205,7 +205,11 @@ func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []stri
 	return nil
 }
 func (f *fakeEnv) Fetch(_ context.Context, filter nostr.Filter, relays []string) ([]nostr.Event, error) {
-	f.fetchedIDs += len(filter.IDs)
+	// Only fetches by ID count, so a tail that reads in another goroutine
+	// does not write the counter.
+	if len(filter.IDs) > 0 {
+		f.fetchedIDs += len(filter.IDs)
+	}
 	if relays != nil {
 		return f.net.relay(f.t, relays[0]).Query(filter)
 	}
