@@ -2,6 +2,7 @@ package selfsync
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -33,7 +34,18 @@ type RepairReport struct {
 	// WaitDirect is the number of blobs whose repair needs a pipe through
 	// TURN, which the device does not use for repair by default.
 	WaitDirect int
+	// Coded is the number of blobs of format 1 that the device moved to
+	// pieces: it put k or more pieces, and deleted the whole copies.
+	Coded int
+	// Old is the number of blobs that still have a whole copy of format 1
+	// to move to pieces after the sync.
+	Old int
 }
+
+// migrateMax is the most blobs of format 1 that one sync moves to pieces.
+// The move puts up to 2 times the bytes of each blob, so one tick of arc
+// serve does a bounded part of a large home.
+const migrateMax = 1024
 
 // job is the repair of one blob.
 type job struct {
@@ -54,6 +66,16 @@ type job struct {
 	puts  []put
 	// moved is the number of puts that are moves; they come first.
 	moved int
+	// migrate says that the blob has whole copies of format 1 to move to
+	// pieces. olds are those copies on sides that repair may use. The job
+	// deletes them once k pieces of its seal are held.
+	migrate bool
+	olds    []piece
+	// dropsOld says that the drops hold the whole copies.
+	dropsOld bool
+	// whole are the sides with a pipe that hold a whole copy, for a blob
+	// with no record in the store and no seal of k pieces.
+	whole []int
 }
 
 // move copies one piece from a draining storage citizen to a free one.
@@ -102,17 +124,31 @@ func (r *run) repair(ctx context.Context) error {
 			jobs = append(jobs, j)
 		}
 	}
+	defer r.countOld()
 	if !r.s.Repair {
 		r.report.Repair.Pending = len(jobs)
 		return nil
 	}
-	// The blobs with the fewest spare pieces go first.
+	// The blobs with the fewest spare pieces go first. A blob of format 1
+	// goes after each blob that can lose a piece: its whole copies still
+	// serve.
 	slices.SortFunc(jobs, func(a, b *job) int {
+		if a.migrate != b.migrate {
+			if a.migrate {
+				return 1
+			}
+			return -1
+		}
 		if a.spare != b.spare {
 			return a.spare - b.spare
 		}
 		return strings.Compare(a.id, b.id)
 	})
+	// One sync moves at most migrateMax blobs of format 1. The next sync
+	// moves the rest.
+	if n := slices.IndexFunc(jobs, func(j *job) bool { return j.migrate }); n >= 0 && len(jobs)-n > migrateMax {
+		jobs = jobs[:n+migrateMax]
+	}
 	// Repair reads and writes only on the pipes that it may use.
 	open := slices.Clone(r.open)
 	defer func() {
@@ -133,14 +169,40 @@ func (r *run) repair(ctx context.Context) error {
 	return nil
 }
 
+// countOld counts the blobs that still have a whole copy of format 1 to
+// move to pieces.
+func (r *run) countOld() {
+	for id, m := range r.blobs {
+		if slices.ContainsFunc(m.old, func(i int) bool {
+			return !(r.sides[i].Active && r.old[i]) && r.states[i].Remote[id]
+		}) {
+			r.report.Repair.Old++
+		}
+	}
+}
+
 // plan says what one blob needs. usable says which sides repair may use.
 // It returns nil if the blob needs nothing, or if repair cannot help it
 // now.
 func (r *run) plan(id string, m *mapped, event *nostr.Event, usable func(int) bool) *job {
 	s := r.count()
-	// A blob of format 1 moves to pieces in a later step. A blob that this
-	// sync coded is new.
-	if s == 0 || len(m.old) > 0 || r.written[id] {
+	// A blob that this sync coded is new.
+	if s == 0 || r.written[id] {
+		return nil
+	}
+	// A whole copy of format 1 moves to pieces, except on an active
+	// storage citizen whose app keeps no tags: it holds whole copies.
+	j := &job{id: id, event: event, sl: r.best(m, false)}
+	for _, i := range m.old {
+		if r.sides[i].Active && r.old[i] {
+			continue
+		}
+		j.migrate = true
+		if usable(i) {
+			j.olds = append(j.olds, piece{side: i, id: id})
+		}
+	}
+	if !j.migrate && len(m.old) > 0 && len(m.seals) == 0 && len(m.lost) == 0 {
 		return nil
 	}
 	rank := r.rankOf(id)
@@ -152,7 +214,6 @@ func (r *run) plan(id string, m *mapped, event *nostr.Event, usable func(int) bo
 			writers = append(writers, i)
 		}
 	}
-	j := &job{id: id, event: event, sl: r.best(m, false)}
 	all := slices.Clone(m.lost)
 	for _, sl := range m.seals {
 		for _, ps := range sl.pieces {
@@ -167,14 +228,23 @@ func (r *run) plan(id string, m *mapped, event *nostr.Event, usable func(int) bo
 		}
 	}
 	reseal := func() *job {
-		// A new seal needs the record, or k pieces of a seal to rebuild
-		// the blob, and k sides for its pieces.
+		// A new seal needs the record, k pieces of a seal, or a whole copy
+		// of format 1 to rebuild the blob, and k sides for its pieces.
 		k, _ := Code(s)
-		if (event == nil && j.sl == nil) || len(writers) < k {
+		if j.sl == nil && event == nil {
+			for _, i := range m.old {
+				if usable(i) {
+					j.whole = append(j.whole, i)
+				}
+			}
+		}
+		if (event == nil && j.sl == nil && len(j.whole) == 0) || len(writers) < k {
 			return nil
 		}
 		j.reseal, j.spare, j.moves, j.grows, j.drops = true, -1, nil, nil, nil
 		drop(all)
+		// The new seal puts k or more pieces before any delete.
+		j.drops, j.dropsOld = append(j.drops, j.olds...), true
 		return j
 	}
 	// Rule 2 of section 6.7 of the proposal: no seal has k pieces. Or S
@@ -202,6 +272,12 @@ func (r *run) plan(id string, m *mapped, event *nostr.Event, usable func(int) bo
 		}
 		if !active[index] && len(ps) > 0 {
 			draining = append(draining, index)
+		}
+	}
+	listed := 0
+	for index := range active {
+		if slices.ContainsFunc(sl.pieces[index], func(p piece) bool { return r.sides[p.side].Active && r.open[p.side] }) {
+			listed++
 		}
 	}
 	healthy := len(sl.pieces)
@@ -264,6 +340,11 @@ func (r *run) plan(id string, m *mapped, event *nostr.Event, usable func(int) bo
 		return reseal()
 	}
 	drop(m.lost)
+	// A whole copy goes when k indices of the seal are on active storage
+	// citizens that listed this sync, or come with the puts of this job.
+	if listed+len(j.moves)+len(j.grows) >= sl.h.K {
+		j.drops, j.dropsOld = append(j.drops, j.olds...), true
+	}
 	if have >= want {
 		drop(extra)
 		for _, other := range m.seals {
@@ -313,11 +394,28 @@ func (r *run) runJobs(ctx context.Context, jobs []*job) error {
 				continue
 			}
 		}
-		j.b = &rebuilding{id: j.id, sl: j.sl, shards: map[int][]byte{}, tried: map[string]bool{}}
+		j.b = &rebuilding{id: j.id, sl: j.sl, shards: map[int][]byte{}, tried: map[string]bool{}, old: j.whole}
 		rebuild = append(rebuild, j.b)
 	}
-	if err := r.fetch(ctx, rebuild); err != nil {
-		return err
+	// A whole copy is coded only if it opens: a storage citizen that gives
+	// other bytes must not replace the copies of the others. The device
+	// then asks the next storage citizen that holds a copy.
+	for len(rebuild) > 0 {
+		if err := r.fetch(ctx, rebuild); err != nil {
+			return err
+		}
+		var again []*rebuilding
+		for _, b := range rebuild {
+			if b.sl != nil || b.blob == nil {
+				continue
+			}
+			if err := r.whole(ctx, b.id, b.blob); err != nil {
+				r.refuse("%s: a whole copy of format 1 does not open: %v", b.id, err)
+				b.blob = nil
+				again = append(again, b)
+			}
+		}
+		rebuild = again
 	}
 	var puts []put
 	for _, j := range jobs {
@@ -350,12 +448,33 @@ func (r *run) runJobs(ctx context.Context, jobs []*job) error {
 		if slices.Contains(got, false) || (needs && len(j.puts) == 0) {
 			continue
 		}
-		if j.reseal {
+		if j.reseal && !j.migrate {
 			r.report.Repair.Sealed++
+		}
+		if j.dropsOld && len(j.olds) > 0 {
+			r.report.Repair.Coded++
 		}
 		drops = append(drops, j.drops...)
 	}
 	return r.drop(ctx, drops)
+}
+
+// whole checks a whole copy of format 1 before the device codes it: its
+// size, its generation, and that it opens under its ID.
+func (r *run) whole(ctx context.Context, id string, blob []byte) error {
+	if !storage.GoodSize(int64(len(blob))) {
+		return fmt.Errorf("a blob of %d bytes", len(blob))
+	}
+	gen, err := Gen(blob)
+	if err != nil {
+		return err
+	}
+	keys, err := r.keysOf(ctx, gen)
+	if err != nil {
+		return err
+	}
+	_, err = Open(keys, id, blob)
+	return err
 }
 
 // getMoves gets the piece of each move from its draining side, and keeps
