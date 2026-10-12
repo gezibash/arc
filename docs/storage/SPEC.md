@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
-- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, the storage list of kind 10273, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file.
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
+- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -46,8 +46,11 @@ on a relay.
 - **Self data**: the events of kinds 31234 (draft), 1234 (checkpoint) and
   3275 (part) that a citizen signed, and the kind 5 deletions of these
   events.
-- **Storage citizen**: a citizen that serves the storage app. A citizen uses
-  a storage citizen after `arc install <key> storage`.
+- **Storage citizen**: a citizen that serves the storage app. A device uses
+  a storage citizen that it installed: from the storage list, or with
+  `arc install <key> storage`.
+- **Storage list**: the sealed event of kind 10273 that names the storage
+  citizens of a citizen (section 3.8). Only the signer changes it.
 - **Record**: one event of self data.
 - **Blob**: the encrypted bytes of one record.
 - **Device key**: the random key of one machine. [The device spec](../devices/SPEC.md)
@@ -335,13 +338,64 @@ disk cannot use it.
 The token is 16 random bytes, as 32 lower-case hex digits. The query holds
 only `invite`.
 
+### 3.8 The storage list
+
+The storage list is one replaceable event of kind 10273:
+
+| Field | Value |
+| --- | --- |
+| `kind` | 10273 |
+| `pubkey` | the citizen key |
+| `tags` | exactly `[["-"]]`, the NIP-70 tag |
+| `content` | the list as JSON, encrypted with NIP-44 from the citizen key to the citizen key |
+
+The JSON inside is:
+
+```json
+{"v":1,"storage":[
+  {"key":"<64 hex>","name":"charlie","relays":["wss://relay.republic.sh"],"state":"active","since":1791800000}
+]}
+```
+
+| Field | Rule |
+| --- | --- |
+| `key` | The key of the storage citizen. |
+| `name` | The installed name of its storage app on each device. 1 to 64 bytes, and no control characters. |
+| `relays` | The relays of the citizen when the signer added the entry. At most 8. |
+| `state` | `active`, `draining` or `gone`. |
+| `since` | Unix seconds of the last change of `state`. |
+
+- Only the citizen key MUST sign a storage list.
+- A list MUST hold at most 16 entries. Two entries MUST NOT have the same
+  key or the same name.
+- `v` is 1. A reader MUST refuse another version, and say to update arc.
+- A new list MUST have a `created_at` later than the list that it replaces.
+- A reader MUST ignore a JSON field that it does not know.
+- A reader MUST refuse a list with another author, a bad signature, content
+  that does not open, or a limit that is broken. Of the lists that open, the
+  reader takes the newest, as NIP-01 orders replaceable events.
+- A device syncs with each storage citizen that is `active` or `draining`.
+  It removes the install of a storage citizen that is `gone`. In this step,
+  `draining` changes nothing else; a later step moves the data off.
+- A relay MUST serve kind 10273 only to its author after NIP-42
+  authentication, as it serves kind 10274. `adapters/relay/sealed` enforces
+  this for an ARC relay. The relay sees that the citizen has a storage list,
+  its size and its time. It does not see the storage citizens.
+- The signer MUST refuse to sign kind 10273 for any device, whatever its
+  `--allow-kind` flags say. A manifest MUST NOT name kind 10273.
+  `runtime/iface` reserves it.
+
 ## 4. Behavior
 
 ### 4.1 One sync
 
 `arc sync`, the start of `arc serve`, and each 15 minutes of `arc serve` run
-these steps for each installed storage citizen. A write never starts a sync,
-because a direct path takes seconds to open.
+these steps. A write never starts a sync, because a direct path takes
+seconds to open.
+
+0. Follow the storage list (section 4.3).
+
+Then for each installed storage citizen:
 
 1. On a signer with a device list, send the grant set to each installed
    storage citizen (section 3.2). A failure is a note, and the sync goes on.
@@ -374,10 +428,45 @@ it again.
 
 ### 4.3 How a device finds its storage citizen
 
-Each install of the app `storage` is a storage citizen of the citizen. Each
-device installs it once: `arc install <key> storage`. This is a local
-setting of each device. The sealed storage list of kind 10273 replaces it in
-a later step.
+Each install of the app `storage` is a storage citizen of the citizen. At
+the start of each sync, a device reads the newest storage list from its
+store and the relays of the citizen (section 3.8). A machine that signs
+through a remote signer opens the list there, with `--decrypt self`.
+
+1. For each entry that is `active` or `draining` and that no install of the
+   app `storage` names by its key, the device installs the storage app of
+   the entry under `name`, and prints `installed <name> from the storage list`.
+   If another app has the name, the device prints a note, and skips the
+   entry.
+2. For each entry that is `gone`, the device removes the install of the
+   storage app of that key, and prints
+   `removed <name>: the storage list says it is gone`.
+3. A local install of `storage` that the list does not name still syncs.
+   The device prints
+   `<name> is not in the storage list; run arc keys storage add on the signer`.
+4. If no storage list exists, the device changes no install and prints
+   nothing. It syncs with its local installs.
+5. If the list does not come, and the store holds none, the device prints a
+   note, and syncs with its local installs.
+
+The signer is a device too, so its own sync follows the list.
+
+A machine with only the seed derives the citizen key with
+`arc keys recover`. With the relay of the citizen and the app `journal`
+installed, its first `arc sync` reads the storage list, installs each
+storage citizen, derives each account key, and syncs.
+
+The signer changes the list:
+
+| Command | What it does |
+| --- | --- |
+| `arc keys storage add <link or key> [--as <name>]` | After `admitted`, puts the entry as `active`, and publishes the list. Then it sends the grant set (section 4.4). An entry with the same key is replaced, so a storage citizen that the citizen left can come back. |
+| `arc keys storage ls` | Prints each entry: name, state, key, `since` and relays. |
+| `arc keys storage rm <name or key>` | Sets `draining`, and publishes the list. |
+| `arc keys storage rm <name or key> --gone` | Sets `gone`, and publishes the list. |
+
+A device that runs `add` or `rm` gets `only the signer, which holds the
+citizen key, changes the device list and the storage list`. `since` changes only with `state`.
 
 ### 4.4 Accounts and grants
 
@@ -387,30 +476,30 @@ a later step.
 2. The citizen runs `arc keys storage add <link or key>` on the signer. The
    signer sends the join (section 3.2).
    - On `admitted`, it prints the quota and the plan, installs the storage
-     app of the storage citizen if it is not installed, and sends the grant
-     set if a device list exists.
+     app of the storage citizen if it is not installed, puts the storage
+     citizen in the storage list as `active`, and sends the grant set if a
+     device list exists.
    - On `pending`, it prints the message and installs nothing. The citizen
      runs the command again after the operator decides.
    - On `refused`, it fails with the message.
-3. Each other device installs the storage citizen with
-   `arc install <key> storage`, as before. The storage list of kind 10273
-   replaces this in a later step.
+3. Each other device installs the storage citizen from the storage list at
+   its next sync (section 4.3).
 4. An operator can still admit an account by hand: the citizen runs
    `arc keys account <key of the storage citizen>` on the signer, and the
    operator puts the account key in `STORAGE_OWNERS`, or runs
    `arc-storage accept <account key>`.
 5. `arc keys devices add` and `arc keys devices revoke` publish the device
    list, and then send the grant set to each storage citizen that the signer
-   installed. Each line `grants: sent to the storage citizen <name>` names a
+   installed, and to each storage citizen that the storage list names as
+   `active` or `draining`. Each line `grants: sent to the storage citizen <name>` names a
    storage citizen that took the set.
 6. `arc sync` on the signer sends the grant set again (section 4.1). A
    revocation that did not reach a storage citizen thus reaches it on the
    next sync of the signer.
 
-The signer knows a storage citizen only if it installed it. A signer that did
-not install a storage citizen sends it no grant set, and that storage citizen
-refuses each device of the citizen. The storage list of kind 10273 replaces
-this in a later step.
+The signer knows a storage citizen if it installed it, or if the storage
+list names it. A storage citizen that neither names gets no grant set, and
+refuses each device of the citizen.
 
 ### 4.5 The commands of the operator
 
@@ -439,6 +528,11 @@ run while the app runs. Each change counts at the next call.
 | A put on a closing account | The sync stops, as for `over_quota`. | `the account is closing: it takes no put, and its reads end at <day>` |
 | A grant set does not reach a storage citizen | `arc keys devices add` or `revoke` fails after it publishes the device list. The storage citizen keeps the older set until the next sync of the signer. | `the device list changed, but <name>: the grants did not reach the storage citizen: <reason>; run arc sync on the signer to try again` |
 | A device signs through a bunker, and the citizen has no device list | No grant set exists, so the storage citizen refuses the device key. | The refusal above. Add the device on the signer with `arc keys devices add`. |
+| The storage list names a storage citizen whose app is not found | The device skips that entry. The other entries sync. | `<name>: the storage list names it, but its storage app was not found: <reason>` |
+| A local install has the name of a list entry | The device skips that entry. | `<name>: the storage list names it, but this machine uses the name for <app> of <key>; remove that install to sync with it` |
+| A local storage install is not in the storage list | It still syncs. | `<name> is not in the storage list; run arc keys storage add on the signer` |
+| The storage list does not come, and the store holds none | The device syncs with its local installs. | `self data: the storage list did not come, so this machine syncs with its own installs: <reason>` |
+| A device asks the signer to sign kind 10273 | The device refuses first. A device that skips that check gets the refusal of the signer. | `only the signer, which holds the citizen key, changes the device list and the storage list`, or `the bunker never signs a storage list; run arc keys storage on the signer` |
 | A grant set is older than the set of the account | The storage citizen keeps its set. | `stale_grants` |
 | No path opens | The sync of that storage citizen fails. The other storage citizens still sync. | The error of the direct pipe, and `some transports failed`. |
 | A blob does not pass section 3.5 | The device skips it. | `refused <id>: <reason>` |
@@ -471,6 +565,12 @@ run while the app runs. Each change counts at the next call.
 - With no device list, the AEAD is the only check of who made a blob: only a
   holder of the keyed root makes one that opens. With a list, each device
   checks the device key of each change.
+- The storage list is sealed to the citizen key. A relay serves it only to
+  the citizen. The relay sees its size and its time, not the storage
+  citizens. A storage citizen does not see the list.
+- A device cannot change the storage list: it holds no citizen key, and the
+  signer refuses to sign kind 10273 for a device. A device that lost its
+  place on the device list cannot add a storage citizen.
 - A hostile storage citizen can withhold or delete blobs. A device keeps its
   full copy. It cannot change or make a blob that opens.
 - An invite token carries the consent of the operator. Whoever holds the
@@ -501,6 +601,22 @@ run while the app runs. Each change counts at the next call.
   or later. Thus an older device does not get the changes of a newer
   device. A newer device still opens each blob that an older device sealed,
   because those blobs are of generation 0. The user updates each device.
+- The storage list adds kind 10273. It changes no earlier message:
+  - An older device does not read kind 10273. It syncs with its local
+    installs, as before. The user installs each storage citizen on it with
+    `arc install <key> storage`, or updates it.
+  - An older signer publishes no storage list. A newer device then finds no
+    list, changes no install, and syncs with its local installs. Its
+    `arc keys storage add` installs and grants, as before.
+  - A newer signer that adds a storage citizen publishes a list with that
+    one entry. A storage citizen that the signer installed before the list
+    is not in it. Each sync of a newer device names it, and the user runs
+    `arc keys storage add` for it once.
+  - An older ARC relay, or a relay that is not an ARC relay, serves kind
+    10273 to anyone who asks. The content stays sealed to the citizen key.
+    Such a relay shows that the citizen has a list, its size and its time.
+  - An older bunker signs kind 10273 for a device that asks. A newer device
+    does not ask. The user updates the signer.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
 - Requests in flight add `hello`, `n` and `ids`. They change no earlier
@@ -592,6 +708,32 @@ storage citizens. It proves:
   and puts them on the storage citizen. A second import changes nothing.
   The drafts stay on the relay.
 
+`go test -count=1 -run '^TestStorageList$' ./internal/proof/` builds `arc`
+and `arc-storage`, and runs them with a local relay and three storage
+citizens. It proves:
+
+- `arc keys storage add` on the signer puts two storage citizens in the
+  storage list as `active`, and `arc keys storage ls` prints both.
+- A storage citizen that the signer installs by hand, and that the list
+  does not name, still syncs, and the sync names it.
+- A phone that signs through the bunker installs both storage citizens from
+  the list at its first sync, syncs with both, and reads the page of the
+  signer.
+- The phone cannot run `arc keys storage rm`.
+- A machine with only the seed, the relay and the journal installs both
+  storage citizens from the list, and reads every page. It does not install
+  the storage citizen that the list does not name.
+- `rm` sets `draining`, and the phone still syncs with it. `rm --gone` sets
+  `gone`, and the next sync of the phone removes the install.
+- The relay gives the list to the citizen, and refuses another citizen with
+  `restricted`.
+
+Each check failed with a temporary break of its behavior. With the check of
+the device removed, the real bunker refused the request with
+`the bunker never signs a storage list`. `go test ./cmd/arc -run
+TestTheBunkerPolicy` checks that the bunker refuses kind 10273 also with
+`--allow-kind 10273`.
+
 The proofs of the delivery spec and of the app interface spec carry pages
 through a storage citizen and through a directory.
 
@@ -673,7 +815,6 @@ that an older set is refused.
   removes its directory.
 - Not built. An `offer` in a refused or pending reply, and a `pay` field
   in the join, for a paid service. `plan` and `expires` keep the place.
-- Not built. The sealed storage list of kind 10273.
 - Not built. Set reconciliation over blob IDs. The cursor of section 4.1
   does the work.
 - Not built. The deletion of the blobs of old versions. Each version of a

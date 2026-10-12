@@ -311,7 +311,7 @@ restart keeps the list.
 - **An older relay** that does not know kind 10275 serves it to anyone who
   asks by author. The content stays sealed.
 - Kind 10272 stays reserved for a migration record. Kind 10273 is the
-  storage list of [the storage proposal](../proposals/storage.md).
+  storage list of [the storage spec](../storage/SPEC.md), section 3.8.
 
 ## 8. Proof
 

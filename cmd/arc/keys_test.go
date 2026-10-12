@@ -34,6 +34,8 @@ func TestTheBunkerPolicy(t *testing.T) {
 		{"any kind", policy{decrypt: "self"}, sign(0), ""},
 		{"never a device list", policy{decrypt: "self"}, sign(10274), "never signs a device list"},
 		{"a device list even when allowed", policy{kinds: []nostr.Kind{10274}, decrypt: "self"}, sign(10274), "never signs a device list"},
+		{"never a storage list", policy{decrypt: "self"}, sign(10273), "never signs a storage list"},
+		{"a storage list even when allowed", policy{kinds: []nostr.Kind{10273}, decrypt: "self"}, sign(10273), "never signs a storage list"},
 		{"never the data roots", policy{kinds: []nostr.Kind{10275}, decrypt: "self"}, sign(10275), "never signs the data roots"},
 		{"self opens own", policy{decrypt: "self"}, decrypt(owner), ""},
 		{"self refuses others", policy{decrypt: "self"}, decrypt(other), "decrypts only"},

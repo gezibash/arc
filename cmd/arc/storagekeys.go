@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/runtime/catalog"
@@ -14,8 +17,12 @@ import (
 func storageKeysCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "storage",
-		Short: "Ask storage citizens for an account",
-		Args:  cobra.NoArgs,
+		Short: "Ask storage citizens for an account, and keep the storage list",
+		Long: "The storage list names the storage citizens of this citizen. It is an\n" +
+			"event of kind 10273 on the relays of the citizen, sealed to the citizen\n" +
+			"key. Only the signer changes it. Each device reads it at each sync, and\n" +
+			"installs each storage citizen that it names.",
+		Args: cobra.NoArgs,
 	}
 	add := &cobra.Command{
 		Use:   "add <invite link or key of the storage citizen>",
@@ -24,7 +31,8 @@ func storageKeysCommand() *cobra.Command {
 			"and sends one join call that the account key signs. The link\n" +
 			"storage+arc://<key>?invite=<token> of the operator carries an invite.\n" +
 			"If the storage citizen admits the account, arc installs its storage\n" +
-			"app and sends the grant set of the device list. If the operator\n" +
+			"app, adds it to the storage list as active, and sends the grant set\n" +
+			"of the device list. If the operator\n" +
 			"decides by hand, the account is pending: run the command again later.\n" +
 			"Run this on the signer.",
 		Args: cobra.ExactArgs(1),
@@ -34,8 +42,89 @@ func storageKeysCommand() *cobra.Command {
 	add.Flags().String("note", "", "a note for the operator, at most 140 bytes")
 	add.Flags().Bool("show-key", false, "show the citizen key to the operator, signed over the account key")
 	add.Flags().String("as", citizen.StorageApp, "the installed name of the storage citizen")
-	command.AddCommand(add)
+	ls := &cobra.Command{
+		Use:   "ls",
+		Short: "Print the storage list",
+		Args:  cobra.NoArgs,
+		RunE:  listStorage,
+	}
+	rm := &cobra.Command{
+		Use:   "rm <name or key>",
+		Short: "Mark a storage citizen draining, or gone with --gone",
+		Long: "rm sets the state draining in the storage list: each device still\n" +
+			"syncs with the storage citizen. With --gone, it sets the state gone:\n" +
+			"each device removes its install at the next sync. Run this on the signer.",
+		Args: cobra.ExactArgs(1),
+		RunE: removeStorage,
+	}
+	rm.Flags().Bool("gone", false, "the storage citizen is gone: each device removes its install")
+	command.AddCommand(add, ls, rm)
 	return command
+}
+
+func listStorage(command *cobra.Command, _ []string) error {
+	sess, err := open(command)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	list, ok, err := sess.StorageList(command.Context())
+	if err != nil {
+		return err
+	}
+	if !ok || len(list.Entries) == 0 {
+		fmt.Println("the storage list is empty; add a storage citizen with arc keys storage add on the signer")
+		return nil
+	}
+	for _, entry := range list.Entries {
+		since := time.Unix(int64(entry.Since), 0).UTC().Format("2006-01-02 15:04")
+		fmt.Printf("%s\t%s\t%s\tsince %s\t%s\n", entry.Name, entry.State, entry.Key.Hex(), since, strings.Join(entry.Relays, " "))
+	}
+	return nil
+}
+
+func removeStorage(command *cobra.Command, args []string) error {
+	gone, _ := command.Flags().GetBool("gone")
+	sess, err := open(command)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	if err := sess.RequireSigner(); err != nil {
+		return err
+	}
+	ctx := command.Context()
+	list, ok, err := sess.StorageList(ctx)
+	if err != nil {
+		return err
+	}
+	entry, found := list.Find(args[0])
+	if !ok || !found {
+		return fmt.Errorf("the storage list names no storage citizen %s; see arc keys storage ls", args[0])
+	}
+	state := storage.StateDraining
+	if gone {
+		state = storage.StateGone
+	}
+	return putStorage(ctx, sess, list, entry.Key, entry.Name, entry.Relays, state)
+}
+
+// putStorage sets the state of one storage citizen in the storage list,
+// and publishes the list. Since changes only with the state.
+func putStorage(ctx context.Context, sess *citizen.Session, list storage.List, key nostr.PubKey, name string, relays []string, state string) error {
+	entry := storage.ListEntry{Key: key, Name: name, Relays: relays, State: state, Since: nostr.Now()}
+	if have, ok := list.Find(key.Hex()); ok && have.State == state {
+		entry.Since = have.Since
+	}
+	list, err := list.Put(entry)
+	if err != nil {
+		return err
+	}
+	if _, err := sess.PublishStorageList(ctx, list); err != nil {
+		return fmt.Errorf("the storage list did not change: %w", err)
+	}
+	fmt.Printf("storage list: %s is %s\n", name, state)
+	return nil
 }
 
 func addStorage(command *cobra.Command, args []string) error {
@@ -86,7 +175,15 @@ func addStorage(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := installStorage(command, sess, installs, provider, as); err != nil {
+	name, err := installStorage(command, sess, installs, provider, as)
+	if err != nil {
+		return err
+	}
+	storageList, _, err := sess.StorageList(ctx)
+	if err != nil {
+		return fmt.Errorf("the storage list did not come, so it does not name %s: %w; run arc keys storage add again", name, err)
+	}
+	if err := putStorage(ctx, sess, storageList, provider, name, sess.RelayURLs(), storage.StateActive); err != nil {
 		return err
 	}
 	list, ok, err := sess.DeviceList(ctx)
@@ -107,30 +204,32 @@ func addStorage(command *cobra.Command, args []string) error {
 }
 
 // installStorage installs the storage app of the storage citizen as name,
-// unless it is installed.
-func installStorage(command *cobra.Command, sess *citizen.Session, installs catalog.Installs, provider nostr.PubKey, as string) error {
+// unless it is installed. It returns the installed name.
+func installStorage(command *cobra.Command, sess *citizen.Session, installs catalog.Installs, provider nostr.PubKey, as string) (string, error) {
 	all, err := installs.List()
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, install := range all {
 		if install.Provider == provider.Hex() && install.ID == citizen.StorageApp {
-			return nil
+			return install.As, nil
 		}
+	}
+	for _, install := range all {
 		if install.As == as {
-			return fmt.Errorf("the name %s is installed for another app; choose another name with --as", as)
+			return "", fmt.Errorf("the name %s is installed for another app; choose another name with --as", as)
 		}
 	}
 	if builtinName(command.Root(), as) {
-		return fmt.Errorf("%s is a command of arc; choose another name with --as", as)
+		return "", fmt.Errorf("%s is a command of arc; choose another name with --as", as)
 	}
 	offer, err := sess.FindOffer(command.Context(), provider, citizen.StorageApp)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := installs.Add(offer, as); err != nil {
-		return err
+		return "", err
 	}
 	fmt.Printf("installed %s\n", as)
-	return nil
+	return as, nil
 }

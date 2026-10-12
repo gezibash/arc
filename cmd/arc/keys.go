@@ -27,6 +27,7 @@ import (
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/sdk/storage"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -785,6 +786,10 @@ func (p policy) refusal(req nip46.Request, owner nostr.PubKey) error {
 		// A device must not change which devices hold the data roots.
 		if event.Kind == devices.RootsKind {
 			return errors.New("the bunker never signs the data roots; run arc keys devices on the signer")
+		}
+		// A device must not change which storage citizens hold the data.
+		if event.Kind == storage.ListKind {
+			return errors.New("the bunker never signs a storage list; run arc keys storage on the signer")
 		}
 		if len(p.kinds) == 0 {
 			return nil
