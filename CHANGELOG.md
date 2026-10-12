@@ -6,6 +6,51 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-13
+
+A device writes and reads its journal with no path to the signer. The device
+key signs each page under the data roots. This change is breaking: update
+the signer and each device together. The relay needs no update.
+
+### Changed
+
+- **Breaking:** the device key signs each journal draft, checkpoint, part
+  and deletion. The tag `["p", <citizen>]` names the citizen, and the tag
+  `["gen", <n>]` names the data root. The kinds do not change. An older arc
+  cannot read a page of this format (#270).
+- **Breaking:** the store keeps self data by the citizen of the `p` tag. It
+  takes self data of another key only if that key is on the device list
+  (#270).
+- Reads of sealed kinds (journal pages, kpi, the index and files) use the
+  local store only. They ask no relay and no signer (#270).
+- The device keeps the device list on its disk, sealed to the device key,
+  and asks the signer only for a newer list (#270).
+- Sync keeps its seen set in `seen-2.json`. After the update, each device
+  fetches each blob once more (#270).
+
+### Added
+
+- The device list gains `revoked`. A revoked key cannot join the list again.
+  `arc keys devices revoke` records the time and the next generation. A
+  device takes data of a revoked key only from a storage citizen, and only
+  if the data is older than the revocation (#270).
+- Each `arc sync` that reaches the signer seals each page of the old format
+  again, and prints `sealed <n> pages again under the data roots` (#270).
+
+### Upgrade
+
+- Update the signer first. An older signer drops `revoked` when it
+  publishes the device list.
+- Then update each device, and run `arc sync` with the signer once. A device
+  on v0.27.0 or older cannot read pages that a newer device wrote, until it
+  is updated.
+
+### Documentation
+
+- `docs/direct/SPEC.md` records six 100 MB transfers with both ends on
+  TURN, through the production relay: all six passed, median 49.6 Mbit/s
+  (#269).
+
 ## [0.27.0] - 2026-10-12
 
 A transfer works when both ends use only the TURN relay. Storage citizens
