@@ -50,8 +50,11 @@ type Syncer struct {
 	// citizen key on the machine that holds it.
 	Device nostr.SecretKey
 	Store  Store
-	// Keys returns the keys of a generation of blobs. Today only
-	// generation 0 exists; see KeysFromRoot.
+	// Newest returns the keys of the newest generation that this device
+	// holds. The device seals each new blob with them.
+	Newest func(ctx context.Context) (Keys, error)
+	// Keys returns the keys of one generation, to open a blob of it. It
+	// fails for a generation that this device does not hold.
 	Keys func(ctx context.Context, gen uint32) (Keys, error)
 	// Devices returns the device list of the citizen, and false when the
 	// citizen has none.
@@ -132,19 +135,33 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error)
 	if err != nil {
 		return report, err
 	}
-	current, err := s.Keys(ctx, 0)
+	current, err := s.Newest(ctx)
 	if err != nil {
 		return report, err
+	}
+	// Each generation once for each sync: the keys of a generation can
+	// need the relays and the signer.
+	held := map[uint32]Keys{current.Gen: current}
+	keysOf := func(ctx context.Context, gen uint32) (Keys, error) {
+		if k, ok := held[gen]; ok {
+			return k, nil
+		}
+		k, err := s.Keys(ctx, gen)
+		if err == nil {
+			held[gen] = k
+		}
+		return k, err
 	}
 
-	// The local records, by blob ID.
-	local, err := s.Store.Query(Filter(s.Citizen))
+	// The local records, by blob ID. The ID key is the same in each
+	// generation.
+	records, err := s.Store.Query(Filter(s.Citizen))
 	if err != nil {
 		return report, err
 	}
-	held := make(map[string]bool, len(local))
-	for _, event := range local {
-		held[current.BlobID(event.ID)] = true
+	local := make(map[string]bool, len(records))
+	for _, event := range records {
+		local[current.BlobID(event.ID)] = true
 	}
 
 	entries, next, err := b.List(ctx, st.Cursor)
@@ -163,7 +180,7 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error)
 	// a device that was not on the list made.
 	var lack []string
 	for id, present := range st.Remote {
-		if present && !held[id] && !st.Seen[id] {
+		if present && !local[id] && !st.Seen[id] {
 			lack = append(lack, id)
 		}
 	}
@@ -183,7 +200,7 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error)
 				}
 			}
 		}
-		result, err := s.take(ctx, b, id, list)
+		result, err := s.take(ctx, b, id, list, keysOf)
 		if err != nil {
 			if ctx.Err() != nil {
 				return report, errors.Join(err, s.save(name, st))
@@ -208,11 +225,11 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error)
 	}
 
 	// Read the store again: a deletion that came in removed records.
-	local, err = s.Store.Query(Filter(s.Citizen))
+	records, err = s.Store.Query(Filter(s.Citizen))
 	if err != nil {
 		return report, errors.Join(err, s.save(name, st))
 	}
-	for _, event := range local {
+	for _, event := range records {
 		id := current.BlobID(event.ID)
 		if _, listed := st.Remote[id]; listed {
 			continue
@@ -235,7 +252,7 @@ func (s *Syncer) Sync(ctx context.Context, name string, b Blobs) (Report, error)
 
 // take gets one blob, opens it, checks who made it, and gives the record
 // to the store.
-func (s *Syncer) take(ctx context.Context, b Blobs, id string, list []nostr.PubKey) (store.Result, error) {
+func (s *Syncer) take(ctx context.Context, b Blobs, id string, list []nostr.PubKey, keysOf func(context.Context, uint32) (Keys, error)) (store.Result, error) {
 	blob, err := b.Get(ctx, id)
 	if err != nil {
 		return store.Result{}, err
@@ -244,7 +261,7 @@ func (s *Syncer) take(ctx context.Context, b Blobs, id string, list []nostr.PubK
 	if err != nil {
 		return store.Result{}, err
 	}
-	keys, err := s.Keys(ctx, gen)
+	keys, err := keysOf(ctx, gen)
 	if err != nil {
 		return store.Result{}, err
 	}

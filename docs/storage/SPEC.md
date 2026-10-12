@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/
-- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, the storage list of kind 10273, random data roots, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test measures a sync of 1,000 pages. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock.
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/
+- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, the storage list of kind 10273, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test measures a sync of 1,000 pages. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -213,10 +213,18 @@ pad(e)   = length of e (8 bytes, big endian) || e || zeros
   remote signer MUST sign with its device key.
 - The record MUST be signed by the citizen key, as the local store requires
   today.
-- For generation 0, the keys MUST be
-  `blob key = HKDF-SHA256(keyed root, info = "arc-storage-blob-v1")` and
+- For generation g, the keys MUST be
+  `blob key = HKDF-SHA256(data root of g, info = "arc-storage-blob-v1")` and
   `id key = HKDF-SHA256(keyed root, info = "arc-storage-id-v1")`, with no
-  salt, 32 bytes each.
+  salt, 32 bytes each. The data roots are in section 3.5 of
+  [the devices spec](../devices/SPEC.md). The data root of generation 0 is
+  the keyed root. Thus a blob of generation 0 has the keys of a blob that an
+  older device sealed, and a blob keeps its ID in each generation.
+- A device MUST seal each new blob with the newest data root that it holds,
+  and MUST write the generation of that root in `gen`. With no roots event,
+  the newest data root is generation 0.
+- A device MUST open a blob with the data root of the generation in `gen`.
+  If it holds no data root of that generation, it refuses the blob.
 
 ### 3.5 What a device takes
 
@@ -412,9 +420,14 @@ run while the app runs. Each change counts at the next call.
   citizen, so the remote signer keeps `--decrypt self`.
 - A stolen account key opens the account and sets its grants. It does not
   give the citizen key, nor the account of another storage citizen.
+- A revoked device gets no data root of the generation that the signer
+  makes at the revocation. It cannot open a blob that another device seals
+  after the revocation, also if a storage citizen gives the blob to it.
+- A revoked device keeps each data root that it held, and the keyed root. It
+  can still open each blob of generation 0 and of each generation that it
+  held. No device seals these blobs again.
 - In generation 0, each holder of the citizen key derives the blob key. A
-  revoked device keeps the keyed root, so it can open each blob. Random data
-  roots fix this in a later step.
+  device that knows the keyed root opens each blob of generation 0.
 - With no device list, the AEAD is the only check of who made a blob: only a
   holder of the keyed root makes one that opens. With a list, each device
   checks the device key of each change.
@@ -443,7 +456,11 @@ run while the app runs. Each change counts at the next call.
   operator removes each event of kinds 31234, 1234, 3275 and 10013, and the
   relay refuses these kinds.
 - The blob format names its generation. A device that knows only generation
-  0 refuses a blob of a later generation, and says to update arc.
+  0 refuses a blob of a later generation, and says to update arc. Each
+  device of a citizen with a device list seals new blobs with generation 1
+  or later. Thus an older device does not get the changes of a newer
+  device. A newer device still opens each blob that an older device sealed,
+  because those blobs are of generation 0. The user updates each device.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
 - Admission adds the join call and fields of the usage reply. It changes no
@@ -507,6 +524,13 @@ storage citizens. It proves:
   joins the list again, the next sync takes it.
 - Each storage citizen names its one account by the account key, and no file
   of a storage citizen holds the citizen key, in hex or as its bytes.
+- Before a device list, the signer seals blobs with generation 0. A device
+  on the list seals with generation 1. After the signer revokes the phone, a
+  tablet seals with generation 2. With each data root on the disk of the
+  revoked phone, no blob of generation 2 opens, and each blob of generations
+  0 and 1 opens. The tablet reads each page. A device that the signer adds
+  after the revocation, and a new machine from the seed, open each blob of
+  each generation.
 - The first sync imports the drafts that an older client put on the relay,
   and puts them on the storage citizen. A second import changes nothing.
   The drafts stay on the relay.
@@ -540,8 +564,9 @@ Each check failed with a temporary break of its behavior.
 
 `go test ./sdk/storage/ -run TestVerifyJoin` checks that the signature of
 the citizen key in a join verifies only over its account key and its
-storage key. `go test ./runtime/selfsync/ -run TestAccountKey` checks the account key
-against HKDF-SHA256 that the Python standard library computed. `go test
+storage key. `go test ./runtime/selfsync/ -run 'TestAccountKey|TestNewKeys'` checks the
+account key and the keys of section 3.4 against HKDF-SHA256 that the Python
+standard library computed. `go test
 ./apps/storage/...` checks that a newer grant set revokes a device key, and
 that an older set is refused.
 
@@ -554,7 +579,6 @@ that an older set is refused.
 - Not built. An `offer` in a refused or pending reply, and a `pay` field
   in the join, for a paid service. `plan` and `expires` keep the place.
 - Not built. The sealed storage list of kind 10273.
-- Not built. Random data roots and generations after 0 (base step 2).
 - Not built. Set reconciliation over blob IDs. The cursor of section 4.1
   does the work.
 - Not built. The deletion of the blobs of old versions. Each version of a
