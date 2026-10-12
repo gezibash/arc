@@ -687,7 +687,9 @@ not reach directly. It uses a controlled flood:
 
 ### 4.6 Live links
 
-Not built. Two nodes with a live mesh link open a Noise session with the XX
+Not built as an integrated transport. The experimental
+[direct adapter](BLUETOOTH-DIRECT.md) has in-memory event and call proofs,
+but no normal CLI or secure-radio proof. Two nodes with a live mesh link open a Noise session with the XX
 pattern, with Curve25519, ChaCha20-Poly1305, and SHA-256. The session
 authenticates both nodes and gives forward secrecy on that link.
 
@@ -987,7 +989,7 @@ merge. `mise run delivery` runs the proofs of phases 1 to 3.
 | 2 | The outbox, acknowledgements, route tags, couriers, and sync | A message reaches an offline recipient through a third machine that carries a USB stick. | Built |
 | 3 | The capability layer: announcements, discovery, install, and both classes of call; direct messages on NIP-17 | A live call to `exec` succeeds over a relay, and the round-trip time is recorded. A store-and-forward call crosses the courier path. An ARC direct message opens in a NIP-17 client. | Built |
 | 4 | The switchover: `arc` runs on this layer only, and the older stack is removed | No package imports `relay`, `session`, `packet`, `frame`, `direct`, `sealedbox`, `client` or `identity`. `arc update apply` of v0.10.0 installs a later signed build. | Built |
-| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. | Not built. `core/compact` and `core/frame` exist; no transport uses them. |
+| 5 | Bluetooth LE on Linux, the compact form, fragments, the mesh relay, and Noise links | Three Linux nodes in a line pass a message from one end to the other. The two end nodes are out of each other's reach. | Not built. The experimental direct BLE adapter uses `core/compact` and `core/frame`; normal CLI integration, hardware proof and mesh are pending. |
 | 6 | LoRa through a local Reticulum instance | A message crosses two LoRa nodes with no internet. | Not built |
 
 Phases 1 and 2 are built: the packages under `core/` and `adapters/`, and
