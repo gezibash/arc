@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -68,12 +69,43 @@ func loadIdentity(ctx context.Context, dir string) (signerIdentity, error) {
 	return signerIdentity{key: k, signer: k}, nil
 }
 
-// remoteIdentity connects to a NIP-46 signer. This machine keeps a key of its
-// own for the connection, in <home>/bunker-client; it signs nothing else.
+// remoteIdentity is an identity of a NIP-46 signer. This machine keeps a key
+// of its own for the connection, in <home>/bunker-client; it signs nothing
+// else. An identity that this machine added knows its public key, so it
+// connects at the first signature or decryption. Thus a command that needs
+// neither runs with no path to the signer. While it adds the identity, it
+// connects at once, to learn the key.
 func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error) {
 	if err := ctx.Err(); err != nil {
 		return signerIdentity{}, err
 	}
+	text, err := os.ReadFile(publicPath(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		signer, pk, err := connectSigner(ctx, dir, uri)
+		if err != nil {
+			return signerIdentity{}, err
+		}
+		return signerIdentity{key: keys.Key{Public: pk}, signer: keys.Identity{Public: pk, Keyer: signer}, remote: true}, nil
+	}
+	if err != nil {
+		return signerIdentity{}, err
+	}
+	pk, err := nostr.PubKeyFromHex(strings.TrimSpace(string(text)))
+	if err != nil {
+		return signerIdentity{}, fmt.Errorf("%s holds no public key: %w", publicPath(dir), err)
+	}
+	lazy := &lazySigner{public: pk, now: time.Now, connect: func() (nostr.Keyer, error) {
+		signer, got, err := connectSigner(ctx, dir, uri)
+		if err == nil && got != pk {
+			err = fmt.Errorf("the remote signer signs as %s, not as this identity %s", got.Hex(), pk.Hex())
+		}
+		return signer, err
+	}}
+	return signerIdentity{key: keys.Key{Public: pk}, signer: keys.Identity{Public: pk, Keyer: lazy}, remote: true}, nil
+}
+
+// connectSigner connects to a NIP-46 signer, and asks for its public key.
+func connectSigner(ctx context.Context, dir, uri string) (nostr.Keyer, nostr.PubKey, error) {
 	// Keep a successful connection for the command lifetime. Stop a failed or
 	// abandoned handshake so its subscriptions cannot outlive the attempt.
 	connectCtx, stop := context.WithCancel(ctx)
@@ -86,12 +118,12 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 	path := filepath.Join(dir, "bunker-client")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		if err := keyfile.Save(path, keys.Generate()); err != nil {
-			return signerIdentity{}, err
+			return nil, nostr.PubKey{}, err
 		}
 	}
 	client, err := keyfile.Load(path)
 	if err != nil {
-		return signerIdentity{}, err
+		return nil, nostr.PubKey{}, err
 	}
 	// The client listens for answers for as long as its context lives, so
 	// the context is the command's own. A timer bounds the first contact.
@@ -118,18 +150,17 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 	select {
 	case r := <-done:
 		if err := ctx.Err(); err != nil {
-			return signerIdentity{}, err
+			return nil, nostr.PubKey{}, err
 		}
 		if r.err != nil {
-			return signerIdentity{}, r.err
+			return nil, nostr.PubKey{}, r.err
 		}
 		connected = true
-		remote := timed{r.signer}
-		return signerIdentity{key: keys.Key{Public: r.pk}, signer: keys.Identity{Public: r.pk, Keyer: remote}, remote: true}, nil
+		return timed{r.signer}, r.pk, nil
 	case <-ctx.Done():
-		return signerIdentity{}, ctx.Err()
+		return nil, nostr.PubKey{}, ctx.Err()
 	case <-timer.C:
-		return signerIdentity{}, fmt.Errorf("the remote signer did not answer in 15 seconds: %w", context.DeadlineExceeded)
+		return nil, nostr.PubKey{}, fmt.Errorf("the remote signer did not answer in 15 seconds: %w", context.DeadlineExceeded)
 	}
 }
 
@@ -860,6 +891,86 @@ func bunkerSecret(dir string) (string, error) {
 
 // timed bounds each request to a remote signer, so a lost answer fails the
 // command instead of stopping it.
+// signerRetry is the time after a failed connection to the signer in which
+// each use fails at once with the same reason.
+const signerRetry = 15 * time.Second
+
+// lazySigner connects to a remote signer at its first use. After a failed
+// connection, each use in the next signerRetry fails at once, so a command
+// waits for the signer only once. A later use connects again, so arc serve
+// finds the signer when it comes back.
+type lazySigner struct {
+	public  nostr.PubKey
+	connect func() (nostr.Keyer, error)
+	now     func() time.Time
+	mu      sync.Mutex
+	keyer   nostr.Keyer
+	err     error
+	failed  time.Time
+}
+
+func (l *lazySigner) get() (nostr.Keyer, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.keyer != nil {
+		return l.keyer, nil
+	}
+	if l.err != nil && l.now().Sub(l.failed) < signerRetry {
+		return nil, l.err
+	}
+	k, err := l.connect()
+	if err != nil {
+		l.err, l.failed = fmt.Errorf("this needs the signer of the citizen, and %w", err), l.now()
+		return nil, l.err
+	}
+	l.keyer, l.err = k, nil
+	return k, nil
+}
+
+func (l *lazySigner) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
+	return l.public, ctx.Err()
+}
+
+func (l *lazySigner) SignEvent(ctx context.Context, event *nostr.Event) error {
+	k, err := l.get()
+	if err != nil {
+		return err
+	}
+	return k.SignEvent(ctx, event)
+}
+
+func (l *lazySigner) Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
+	k, err := l.get()
+	if err != nil {
+		return "", err
+	}
+	return k.Encrypt(ctx, plaintext, to)
+}
+
+func (l *lazySigner) Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
+	k, err := l.get()
+	if err != nil {
+		return "", err
+	}
+	return k.Decrypt(ctx, ciphertext, from)
+}
+
+func (l *lazySigner) Nip04Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
+	k, err := l.get()
+	if err != nil {
+		return "", err
+	}
+	return k.Nip04Encrypt(ctx, plaintext, to)
+}
+
+func (l *lazySigner) Nip04Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
+	k, err := l.get()
+	if err != nil {
+		return "", err
+	}
+	return k.Nip04Decrypt(ctx, ciphertext, from)
+}
+
 type timed struct{ nostr.Keyer }
 
 const signerTimeout = 20 * time.Second

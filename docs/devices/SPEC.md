@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, adapters, runtime
 - Owns: core/devices
-- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs a device with no path to the signer: today each `arc` command of a device connects to the signer first, so a device cannot open the data roots that it holds without the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
+- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
+- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. A journal page is a draft that the citizen key seals and signs, so a device cannot read or write the journal with no path to the signer. Issue #253 tracks a page format under the data roots. No test runs `arc sync` with the signer stopped. The device opens the device list through the signer, so a sync of changes from other devices needs the signer. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -62,6 +62,10 @@ proposal and [the storage proposal](../proposals/storage.md) describe them.
   key as its NIP-46 client key, in `<home>/citizens/<name>/bunker-client`.
 - An identity that was added before the device key keeps its own
   `bunker-client` key. That key is its device key.
+- `arc keys add bunker://...` connects to the signer, and keeps the citizen
+  key in `<home>/citizens/<name>/public`. After that, `arc` connects to the
+  signer at the first signature or decryption of a command, not at its
+  start. A command that needs neither runs with no path to the signer.
 
 ### 3.2 The device list event
 
@@ -168,6 +172,25 @@ A device reads the roots like this:
 3. The device keeps each root on its disk, and adds generation 0 from the
    keyed root.
 
+The root cache:
+
+- `arc` keeps the roots in `<home>/citizens/<name>/store/data-roots.db`. The
+  file has mode 600, as a key file has.
+- Each root is 64 hex characters, encrypted with NIP-44 from the device key
+  to the device key. A machine that holds the citizen key uses the citizen
+  key in place of the device key. Thus a copy of the cache alone opens no
+  data.
+- A device MUST open data of a generation that it holds from the cache,
+  with no request to the signer or to a relay.
+- A device asks the signer only for a generation that it does not hold, and
+  for the newest roots when it seals new data. If the signer does not
+  answer, the device seals under the newest generation that it holds, and
+  warns.
+- The keyed root, generation 0, also comes from the cache after its first
+  opening.
+- A device MUST NOT remove a root from its cache. A revoked device thus keeps
+  each generation that it held, and gets no new one.
+
 A machine that holds the citizen key, such as the signer or a machine that
 recovered the seed, opens the wrap to the citizen key in step 2.
 
@@ -250,6 +273,8 @@ restart keeps the list.
 | A list does not open | The bunker logs a warning and keeps the list that it has. |
 | No relay takes the roots after `add` or `revoke` | The command fails after the list is published, and names `arc keys roots`. The signer then makes the roots follow the list. Until then, the other devices seal under the old newest root, which the dropped device holds. |
 | A device cannot reach the signer or the relays | It uses the data roots that it keeps on its disk, and warns that the newest roots did not come. |
+| A command needs the citizen key, and the signer does not answer | The command fails, and says "this needs the signer of the citizen". With a relay and no signer, the command waits 15 seconds once. In the next 15 seconds, each use of the signer fails at once. After that, a use connects again, so `arc serve` finds the signer when it comes back. Examples: a journal page, mail, and the device list. |
+| A root in the cache does not open with the key of the machine | The command fails, and names the generation. |
 | Data names a generation that the machine does not hold | `arc keys unseal` fails, and names the generation. |
 | The citizen has 128 generations | The signer refuses to make another one. `revoke` fails after it publishes the list, so the signer refuses the device, but the device keeps the newest root, and data sealed after the revocation stays readable to it. No command repairs this yet. |
 | The bunker starts with no relay, and its store holds no list | The bunker admits by the bunker secret until it loads a list. On the signer, `add` and `revoke` keep each list in the store, so this happens only when another machine made the list. |
@@ -305,6 +330,11 @@ restart keeps the list.
   generation 0 with the keyed root.
 - **A signer with a list from before the data roots** makes generation 1 at
   its next `add`, `revoke` or `arc keys roots`.
+- **An older device** connects to the signer at the start of each command,
+  so it runs no command with no path to the signer. It keeps each root in
+  clear text, as 32 bytes. A new `arc` reads such a root, and seals it at its
+  next write of the cache. An older `arc` ignores a sealed root, and asks the
+  signer for the roots again.
 - **An older device** ignores kind 10275, and seals under generation 0.
   Data of a later generation does not open on it. It gets the roots after
   its update.
@@ -337,6 +367,14 @@ restart keeps the list.
   reaches its roots. The core test below proves that the phone key cannot
   open generation 2 even with the event. A new machine with only the seed
   opens each generation.
+- `TestOfflineDevice` in `internal/proof` runs the real `arc` program, a
+  real local relay, a signer and two devices. It checks that the root cache
+  of a device has mode 600, and that each root in it opens only with its
+  device key. With the bunker stopped, the phone opens data of generation 1
+  in less than 5 seconds, seals under generation 1 with a warning, and fails
+  a journal write with "this needs the signer of the citizen". After the
+  signer revokes the phone, the phone still opens generation 1, and cannot
+  open generation 2: it holds no root of generation 2.
 - `TestDataRoots` in `core/devices` checks that a revoked device key gets no
   wrap of a new generation, that an older root cannot open the chain of a
   newer one, that a new device opens each older generation, and that data

@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -220,5 +221,59 @@ func TestReadKeepsAChunkWhenItsAckFails(t *testing.T) {
 	}
 	if err = s.Wait(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCloseWriteSucceedsWhenThePeerClosesFirst(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	id := session.ID()
+	var s *session.Stream
+	s, err := session.New(ctx, id, session.Duplex, true, func(ctx context.Context, f session.Frame) error {
+		if f.Op != "end" {
+			return nil
+		}
+		// The peer finishes when the end reaches it. Its close can arrive
+		// before the transport confirms the end, and cancels the send.
+		if err := s.Receive(session.Frame{Version: 1, ID: id, Op: "close"}); err != nil {
+			return err
+		}
+		return fmt.Errorf("publish: %w", context.Cause(ctx))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Receive(session.Frame{Version: 1, ID: id, Op: "accept", Mode: session.Duplex}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CloseWrite(); err != nil {
+		t.Fatalf("close write = %v", err)
+	}
+	if err = s.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloseWriteReportsAFailedSend(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	id := session.ID()
+	// A lost connection can end in a wrapped io.EOF. It is not a close of
+	// the peer.
+	lost := fmt.Errorf("publish: %w", io.EOF)
+	s, err := session.New(ctx, id, session.Duplex, true, func(ctx context.Context, f session.Frame) error {
+		if f.Op == "end" {
+			return lost
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Receive(session.Frame{Version: 1, ID: id, Op: "accept", Mode: session.Duplex}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CloseWrite(); !errors.Is(err, lost) {
+		t.Fatalf("close write = %v", err)
 	}
 }
