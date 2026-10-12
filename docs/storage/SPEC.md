@@ -770,6 +770,16 @@ section:
    rebuild does (decision 4 of the proposal).
 3. Audits wait for a direct path, as repair does. `--turn` allows both.
 
+Zim accepted these on 2026-10-12, with the move of blobs of format 1:
+
+4. Only a sync that repairs moves blobs of format 1 to pieces: `arc serve`,
+   or `arc sync --repair`. A plain `arc sync` counts them.
+5. One sync moves at most 1,024 blobs of format 1.
+6. The device deletes the whole copies of a blob only when k indices of
+   its seal are on active storage citizens that listed in this sync, or
+   come with the puts of the plan, and only after each put of the plan
+   answered `stored` or `held`.
+
 **Audits.** In a sync that repairs, the device audits each storage citizen
 with a pipe that repair can use, once in 24 hours:
 
