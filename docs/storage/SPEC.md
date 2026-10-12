@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestStorageNetworkSync|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/
 - Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, the deletion of blobs, and the removal of the old drafts from the relays.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -375,8 +375,10 @@ The JSON inside is:
   that does not open, or a limit that is broken. Of the lists that open, the
   reader takes the newest, as NIP-01 orders replaceable events.
 - A device syncs with each storage citizen that is `active` or `draining`.
-  It removes the install of a storage citizen that is `gone`. In this step,
-  `draining` changes nothing else; a later step moves the data off.
+  It removes the install of a storage citizen that is `gone`, and does not
+  sync with it.
+- A device reads from a `draining` storage citizen, and MUST NOT put a blob
+  on it. A later step moves the data off.
 - A relay MUST serve kind 10273 only to its author after NIP-42
   authentication, as it serves kind 10274. `adapters/relay/sealed` enforces
   this for an ARC relay. The relay sees that the citizen has a storage list,
@@ -394,19 +396,46 @@ these steps. A write never starts a sync, because a direct path takes
 seconds to open.
 
 0. Follow the storage list (section 4.3).
-
-Then for each installed storage citizen:
-
 1. On a signer with a device list, send the grant set to each installed
    storage citizen (section 3.2). A failure is a note, and the sync goes on.
-2. Open a pipe (section 3.2).
+
+Then the device runs steps 2 to 6 for each installed storage citizen that
+is not `gone`, all at the same time, each on its own pipe. Each storage
+citizen holds a full copy of each blob. A storage citizen that fails does
+not stop the others.
+
+2. Open a pipe (section 3.2). If no pipe opens, keep the silence record
+   (below), and end the sync of this storage citizen.
 3. List from the cursor of this storage citizen, and keep the IDs.
 4. Get each listed blob that the store does not hold. Open it, check it
    (section 3.5), and give the record to the store. The store applies a
    deletion, and refuses a record that a deletion names.
 5. Read the store again. Seal each record whose blob ID the storage citizen
-   did not list, and put it.
+   did not list, and put it. Skip this step for a `draining` storage
+   citizen.
 6. Keep the cursor and the IDs in `<home>/selfsync/<key of the storage citizen>.json`.
+
+After each storage citizen ends, the device prints one line for each, in
+the order of the installs:
+
+```text
+charlie: self data received 0, sent 3, already held 0 in 1.36s
+dana: self data received 2, sent 0, already held 1 in 950ms; draining, so nothing new goes to it
+```
+
+A storage citizen that fails gets `<name>: self data: <reason>` on
+standard error, and `arc sync` ends with `some transports failed`. The
+other lines still print.
+
+The silence record is two fields of the same file. `answered` is the Unix
+time of the last pipe that opened. `silent_since` is the Unix time of the
+first failed open after it, and is absent while the storage citizen
+answers. If no pipe opens and `silent_since` is 7 days old or more, the
+device prints
+`<name>: no answer for <days> days; if it is gone, run arc keys storage rm <name> --gone on the signer`.
+It prints this at each sync. Only the user marks a storage citizen `gone`.
+The count starts at the first failed open, not at the last answer. Thus a
+device that was off itself for 7 days does not warn at its first sync.
 
 Steps 4 and 5 keep requests in flight on a storage app with `batch`
 (section 3.3): step 4 gets 256 blobs with each request, and step 5 seals 64
@@ -534,7 +563,8 @@ run while the app runs. Each change counts at the next call.
 | The storage list does not come, and the store holds none | The device syncs with its local installs. | `self data: the storage list did not come, so this machine syncs with its own installs: <reason>` |
 | A device asks the signer to sign kind 10273 | The device refuses first. A device that skips that check gets the refusal of the signer. | `only the signer, which holds the citizen key, changes the device list and the storage list`, or `the bunker never signs a storage list; run arc keys storage on the signer` |
 | A grant set is older than the set of the account | The storage citizen keeps its set. | `stale_grants` |
-| No path opens | The sync of that storage citizen fails. The other storage citizens still sync. | The error of the direct pipe, and `some transports failed`. |
+| No path opens | The sync of that storage citizen fails. The other storage citizens still sync at the same time. | The error of the direct pipe, and `some transports failed`. |
+| No pipe opens to a storage citizen for 7 days | Each sync of the device warns. The device does not mark it `gone`. | `<name>: no answer for <days> days; if it is gone, run arc keys storage rm <name> --gone on the signer` |
 | A blob does not pass section 3.5 | The device skips it. | `refused <id>: <reason>` |
 | A put passes the quota | The sync stops. The cursor and the IDs so far are kept. | The `over_quota` message, with the bytes in use and the quota. |
 | A relay does not answer during the import | The import is not marked. | `the import of the drafts on the relays is not complete` |
@@ -617,6 +647,14 @@ run while the app runs. Each change counts at the next call.
     Such a relay shows that the citizen has a list, its size and its time.
   - An older bunker signs kind 10273 for a device that asks. A newer device
     does not ask. The user updates the signer.
+- The sync of all storage citizens at the same time changes no message:
+  - An older device syncs its storage citizens one after another. A device
+    with the storage list but before this step still puts blobs on a
+    `draining` storage citizen. Both still read and write full copies, so
+    a newer device reads what they put.
+  - An older device ignores `answered` and `silent_since` in its state
+    file, and drops them when it writes the file. A newer device then
+    starts the count again at its next failed open.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
 - Requests in flight add `hello`, `n` and `ids`. They change no earlier
@@ -733,6 +771,31 @@ the device removed, the real bunker refused the request with
 `the bunker never signs a storage list`. `go test ./cmd/arc -run
 TestTheBunkerPolicy` checks that the bunker refuses kind 10273 also with
 `--allow-kind 10273`.
+
+`go test -count=1 -run '^TestStorageNetworkSync$' ./internal/proof/`
+builds `arc`, `arc-storage` and `slowcall`, and runs them with a local
+relay and three storage citizens in the storage list. `slowcall` holds each
+ARC call to the storage app of charlie for 400 ms, of dana for 800 ms and of
+erin for 1,200 ms. It proves:
+
+- One `arc sync` puts each page on all three storage citizens. The whole
+  sync takes less than 80% of the sum of the times of the three. A run took
+  1.46 s, with 2.9 s for the sum and 1.36 s for the slowest (measured).
+- With charlie stopped, `arc sync` names the failure of charlie, and still
+  puts the new page on dana and erin. A machine with only the seed then
+  reads every page.
+- The first failed sync does not warn. With `silent_since` moved 8 days
+  back, the next sync prints `charlie: no answer for 8 days; ...`.
+- After `rm dana`, a sync puts no blob on dana: its blob files do not
+  change, and erin gets the new page. With charlie and erin stopped, a new
+  machine from the seed reads every page that dana holds.
+- After `rm dana --gone`, the sync does not sync with dana.
+
+Each check failed with a temporary break: a sync one after another, a
+failure that cancels the other storage citizens, a warning after 70 days, a
+put on a draining storage citizen, and a sync that keeps a gone storage
+citizen. `go test -count=1 -run '^TestSilence$' ./runtime/selfsync/` checks
+the count of 7 days with a given clock.
 
 The proofs of the delivery spec and of the app interface spec carry pages
 through a storage citizen and through a directory.

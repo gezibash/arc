@@ -30,7 +30,8 @@ wraps, reconciliation and the sync of the journal.
 | Two machines on different networks | Not tested. The transfer app tested the same pipe by hand; see its README. |
 | Encryption of the blobs | Not in this app. `arc sync` encrypts each blob of self data. `arc-storage put` does not encrypt. See "What the storage citizen sees". |
 | The sync of the journal and the other self data | Built in `arc sync`, step 2 of the proposal. See [the storage spec](../../docs/storage/SPEC.md). |
-| The storage list of kind 10273 | Not built. A later step of the proposal. |
+| The storage list of kind 10273 | Built in `arc keys storage` and `arc sync`, step 4 of the proposal. |
+| Several storage citizens, each with a full copy, synced at the same time | Built in `arc sync`, step 5 of the proposal. Tested with three storage citizens: one stopped, one draining, one gone, and a warning after 7 days of silence. Reed-Solomon pieces are a later step. |
 
 The ARC call and the messages on the pipe are in the package `sdk/storage`, so
 `arc` uses them too. [The storage spec](../../docs/storage/SPEC.md) defines

@@ -38,20 +38,35 @@ func storageCitizen(t *testing.T, work, url string, signer machine) string {
 // namedStorageCitizen is storageCitizen with its own directories under work.
 func namedStorageCitizen(t *testing.T, work, url string, signer machine, name string) string {
 	t.Helper()
+	key, _ := servedStorageCitizen(t, work, url, signer, name, 0)
+	return key
+}
+
+// servedStorageCitizen is namedStorageCitizen that also returns the process
+// of arc serve, so that a test can stop the storage citizen. With a delay,
+// slowcall holds each call to the storage app for that time.
+func servedStorageCitizen(t *testing.T, work, url string, signer machine, name string, delay time.Duration) (string, *process) {
+	t.Helper()
 	store := arc(t, filepath.Join(work, name))
 	store.run("keys", "gen")
 	key := store.key()
 	account := ifaceTrim(signer.run("keys", "account", key))
 	store = store.with("STORAGE_DIR="+filepath.Join(work, name+"-blobs"),
 		"STORAGE_OWNERS="+account, "STORAGE_STUN=none", "STORAGE_LOOPBACK=1")
+	command := program("arc-storage")
+	if delay > 0 {
+		command = program("slowcall")
+		store = store.with("SLOWCALL_PROGRAM="+program("arc-storage"), fmt.Sprintf("SLOWCALL_MS=%d", delay.Milliseconds()))
+	}
 	store.run("relay", "add", url)
 	app := filepath.Join(work, name+"-app")
 	write(t, filepath.Join(app, "Arcfile"), fmt.Sprintf("version = 2\n\n[serve]\ncommand = %q\nmanifest = %q\n",
-		program("arc-storage"), filepath.Join(repo, "apps/storage/manifest.json")), 0o600)
-	if p := store.serve(app); !p.waitFor("serves storage", 10*time.Second) {
+		command, filepath.Join(repo, "apps/storage/manifest.json")), 0o600)
+	p := store.serve(app)
+	if !p.waitFor("serves storage", 10*time.Second) {
 		t.Fatalf("the storage citizen did not serve:\n%s", p.output())
 	}
-	return key
+	return key, p
 }
 
 // relaySelfData returns the self data of the citizen of home that the relay

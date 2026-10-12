@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/call"
@@ -220,15 +222,34 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 }
 
 // SyncStorage syncs the self data of this machine with each storage
-// citizen that the citizen installed. With none, the data stays on this
-// machine, and it says so.
+// citizen that the citizen installed, all at the same time. Each storage
+// citizen holds a full copy of each blob. A storage citizen that the
+// storage list drains gets no put. A storage citizen that fails does not
+// stop the others. With none, the data stays on this machine, and it says
+// so. After all of them end, it prints one line for each, in the order of
+// the installs.
 func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
-	if err := sess.FollowStorageList(ctx, cfg.Installs, cfg.Out, cfg.Errs); err != nil {
+	list, listed, err := sess.FollowStorageList(ctx, cfg.Installs, cfg.Out, cfg.Errs)
+	if err != nil {
 		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
 	}
-	targets, err := storageInstalls(cfg.Installs)
+	installs, err := storageInstalls(cfg.Installs)
 	if err != nil {
 		return err
+	}
+	// A local install that the list does not name syncs as active. A gone
+	// entry whose install is still here gets no sync.
+	var targets []target
+	for _, install := range installs {
+		state := storage.StateActive
+		if listed {
+			if entry, ok := list.Find(install.Provider); ok {
+				state = entry.State
+			}
+		}
+		if state != storage.StateGone {
+			targets = append(targets, target{install, state})
+		}
 	}
 	if len(targets) == 0 {
 		fmt.Fprintln(cfg.Out, "self data stays on this machine: no storage citizen; install one with arc install <key> storage")
@@ -252,44 +273,137 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 			}
 		}
 	}
+	// The keys and the device list come once for all storage citizens: on
+	// a phone each one is a question to the signer.
+	newest, err := sess.newestSelfKeys(ctx)
+	if err != nil {
+		fmt.Fprintf(cfg.Errs, "self data: the keys of the blobs did not come, so no storage citizen synced: %v\n", err)
+		return err
+	}
 	syncer := &selfsync.Syncer{
 		Citizen: sess.Key.Public,
 		Device:  signer,
 		Store:   sess.Node.Store,
-		Newest:  sess.newestSelfKeys,
-		Keys:    sess.selfKeysAt,
-		Devices: func(ctx context.Context) (devices.List, bool, error) { return sess.DeviceList(ctx) },
+		Newest:  func(context.Context) (selfsync.Keys, error) { return newest, nil },
+		Keys:    once(sess.selfKeysAt),
+		Devices: onceList(sess.DeviceList),
 		State:   cfg.Dir,
 	}
+	results := make([]result, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Go(func() { results[i] = sess.syncOne(ctx, cfg, syncer, t) })
+	}
+	wg.Wait()
+
 	var failed []error
-	for _, install := range targets {
-		report, err := sess.syncOne(ctx, cfg, syncer, install)
-		if err != nil {
-			failed = append(failed, fmt.Errorf("%s: %w", install.As, err))
-			fmt.Fprintf(cfg.Errs, "%s: self data: %v\n", install.As, err)
+	for i, r := range results {
+		as := targets[i].install.As
+		_, _ = cfg.Errs.Write(r.notes.Bytes())
+		if r.err != nil {
+			failed = append(failed, fmt.Errorf("%s: %w", as, r.err))
+			fmt.Fprintf(cfg.Errs, "%s: self data: %v\n", as, r.err)
+			if r.silent >= selfsync.SilentWarning {
+				fmt.Fprintf(cfg.Errs, "%s: no answer for %d days; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, int(r.silent/(24*time.Hour)), as)
+			}
 			continue
 		}
-		fmt.Fprintf(cfg.Out, "%s: self data received %d, sent %d, already held %d\n", install.As, report.Received, report.Sent, report.Held)
-		for _, reason := range report.Refused {
+		fmt.Fprintf(cfg.Out, "%s: self data received %d, sent %d, already held %d in %s", as, r.report.Received, r.report.Sent, r.report.Held, r.took.Round(10*time.Millisecond))
+		if targets[i].state == storage.StateDraining {
+			fmt.Fprint(cfg.Out, "; draining, so nothing new goes to it")
+		}
+		fmt.Fprintln(cfg.Out)
+		for _, reason := range r.report.Refused {
 			fmt.Fprintf(cfg.Errs, "  refused %s\n", reason)
 		}
 	}
 	return errors.Join(failed...)
 }
 
-func (sess *Session) syncOne(ctx context.Context, cfg SelfSync, syncer *selfsync.Syncer, install catalog.Install) (selfsync.Report, error) {
+// target is one storage citizen of a sync, with its state in the storage
+// list.
+type target struct {
+	install catalog.Install
+	state   string
+}
+
+// result is what the sync of one storage citizen did. notes holds what the
+// pipe printed, so that the notes of two storage citizens do not mix.
+type result struct {
+	report selfsync.Report
+	took   time.Duration
+	err    error
+	silent time.Duration
+	notes  bytes.Buffer
+}
+
+func (sess *Session) syncOne(ctx context.Context, cfg SelfSync, syncer *selfsync.Syncer, t target) (r result) {
+	start := time.Now()
+	defer func() { r.took = time.Since(start) }()
+	install := t.install
 	client := storage.Client{
 		Call: func(ctx context.Context, session string) ([]byte, error) {
 			return sess.openStorage(ctx, cfg.Installs, install.As, session)
 		},
-		TURN: cfg.TURN, Options: cfg.Options, Notes: cfg.Errs,
+		TURN: cfg.TURN, Options: cfg.Options, Notes: &r.notes,
 	}
 	conn, err := client.Open(ctx, 0)
 	if err != nil {
-		return selfsync.Report{}, err
+		r.err = err
+		if silent, serr := syncer.Unanswered(install.Provider, time.Now()); serr != nil {
+			r.err = errors.Join(err, serr)
+		} else {
+			r.silent = silent
+		}
+		return r
 	}
 	defer conn.Close()
-	return syncer.Sync(ctx, install.Provider, conn)
+	if err := syncer.Answered(install.Provider, time.Now()); err != nil {
+		r.err = err
+		return r
+	}
+	r.report, r.err = syncer.Sync(ctx, install.Provider, conn, t.state == storage.StateActive)
+	return r
+}
+
+// once gives the keys of each generation from get, and asks get once for
+// each generation that it gave.
+func once(get func(context.Context, uint32) (selfsync.Keys, error)) func(context.Context, uint32) (selfsync.Keys, error) {
+	var mu sync.Mutex
+	held := map[uint32]selfsync.Keys{}
+	return func(ctx context.Context, gen uint32) (selfsync.Keys, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if k, ok := held[gen]; ok {
+			return k, nil
+		}
+		k, err := get(ctx, gen)
+		if err == nil {
+			held[gen] = k
+		}
+		return k, err
+	}
+}
+
+// onceList gives the device list from get, and asks get until it answers.
+func onceList(get func(context.Context) (devices.List, bool, error)) func(context.Context) (devices.List, bool, error) {
+	var mu sync.Mutex
+	var done bool
+	var list devices.List
+	var ok bool
+	return func(ctx context.Context) (devices.List, bool, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if done {
+			return list, ok, nil
+		}
+		l, has, err := get(ctx)
+		if err != nil {
+			return l, has, err
+		}
+		done, list, ok = true, l, has
+		return list, ok, nil
+	}
 }
 
 // openStorage runs the manifest command "open" of an installed storage

@@ -21,7 +21,7 @@ var (
 	// repo is the root of the checkout.
 	repo string
 	// programs holds the built programs: arc, arc-exec, arc-sqlite,
-	// arc-releases and arc-storage.
+	// arc-releases, arc-storage and slowcall.
 	programs string
 )
 
@@ -46,6 +46,7 @@ func run(m *testing.M) int {
 		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
 		"arc-releases": "./apps/releases/cmd/arc-releases",
 		"arc-storage":  "./apps/storage/cmd/arc-storage",
+		"slowcall":     "./internal/proof/testdata/slowcall",
 	} {
 		if err := build(filepath.Join(programs, name), pkg, ""); err != nil {
 			fmt.Fprintln(os.Stderr, err)

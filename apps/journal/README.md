@@ -83,6 +83,13 @@ change on this device at once, and each change from another device after a
 sync. With no storage citizen, the pages stay on this device, and `arc sync`
 says so. `arc sync --dir <path>` still carries the pages on a USB stick.
 
+Use two or more storage citizens, so that one storage citizen cannot lose
+your pages. Add each one on the signer with `arc keys storage add`. Each
+storage citizen holds a full copy. `arc sync` syncs with all of them at the
+same time, and prints one line for each. If one storage citizen does not
+answer, the others still sync. After 7 days with no answer, each sync warns,
+and names `arc keys storage rm <name> --gone`.
+
 Each change is one blob. The device pads it to a power of two, at least 4 KiB,
 encrypts it, and signs the change inside the encrypted bytes. A machine that
 holds the citizen key signs with it. A device that signs through a bunker signs
