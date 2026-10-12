@@ -109,6 +109,10 @@ type Report struct {
 	// Unreadable holds one reason for each blob that the device lacks and
 	// cannot rebuild now: fewer than k of its pieces answered.
 	Unreadable []string
+	// Short is the number of blobs that the device lacks, and that no
+	// listing holds k pieces of one seal of: a deletion that did not end,
+	// or lost pieces.
+	Short int
 	// Repair says what repair did, or what it would do.
 	Repair RepairReport
 	// Refused holds one reason for each blob or piece that the device did
@@ -300,31 +304,32 @@ func (s *Syncer) loadSeen() (map[string]bool, error) {
 
 // take opens one blob, checks who made it, and gives the record to the
 // store.
-func (s *Syncer) take(ctx context.Context, id string, blob []byte, list []nostr.PubKey, keysOf func(context.Context, uint32) (Keys, error)) (store.Result, error) {
+func (s *Syncer) take(ctx context.Context, id string, blob []byte, list []nostr.PubKey, keysOf func(context.Context, uint32) (Keys, error)) (nostr.Event, store.Result, error) {
 	gen, err := Gen(blob)
 	if err != nil {
-		return store.Result{}, err
+		return nostr.Event{}, store.Result{}, err
 	}
 	keys, err := keysOf(ctx, gen)
 	if err != nil {
-		return store.Result{}, err
+		return nostr.Event{}, store.Result{}, err
 	}
 	env, err := Open(keys, id, blob)
 	if err != nil {
-		return store.Result{}, err
+		return nostr.Event{}, store.Result{}, err
 	}
 	if env.Record.PubKey != s.Citizen {
-		return store.Result{}, errors.New("the record is of another citizen")
+		return nostr.Event{}, store.Result{}, errors.New("the record is of another citizen")
 	}
 	if !isSelf(env.Record.Kind) {
-		return store.Result{}, fmt.Errorf("the record has kind %d, which is not self data", env.Record.Kind)
+		return nostr.Event{}, store.Result{}, fmt.Errorf("the record has kind %d, which is not self data", env.Record.Kind)
 	}
 	// With a device list, the device key must be on it. With no list, the
 	// AEAD is the check: only a holder of the keys made the blob.
 	if len(list) > 0 && !slices.Contains(list, env.Device) {
-		return store.Result{}, fmt.Errorf("%w: %s", errNotListed, env.Device.Hex())
+		return nostr.Event{}, store.Result{}, fmt.Errorf("%w: %s", errNotListed, env.Device.Hex())
 	}
-	return s.Store.Save(env.Record)
+	result, err := s.Store.Save(env.Record)
+	return env.Record, result, err
 }
 
 func isSelf(kind nostr.Kind) bool { return slices.Contains(Kinds, kind) }
