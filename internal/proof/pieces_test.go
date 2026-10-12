@@ -84,8 +84,10 @@ func TestStoragePieces(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			blob := 2 * (int64(len(data)) - storage.PieceOverhead)
-			if !storage.GoodSize(blob) {
+			// The pages make blobs of 4 KiB. A shard of 2 KiB holds half of
+			// one, and no shard can hold a whole blob.
+			shard := int64(len(data)) - storage.PieceOverhead
+			if shard >= storage.MinBlob || !storage.GoodSize(2*shard) {
 				t.Fatalf("%s: a piece of %d bytes is not half of a blob plus %d bytes", name, len(data), storage.PieceOverhead)
 			}
 			for _, text := range pages {
