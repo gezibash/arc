@@ -509,7 +509,7 @@ func keysCommand() *cobra.Command {
 		},
 	}
 
-	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand())
+	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand(), rootsCommand(), sealCommand(), unsealCommand())
 	return command
 }
 
@@ -781,6 +781,10 @@ func (p policy) refusal(req nip46.Request, owner nostr.PubKey) error {
 		// A device must not change the list of devices that the signer admits.
 		if event.Kind == devices.Kind {
 			return errors.New("the bunker never signs a device list; run arc keys devices on the signer")
+		}
+		// A device must not change which devices hold the data roots.
+		if event.Kind == devices.RootsKind {
+			return errors.New("the bunker never signs the data roots; run arc keys devices on the signer")
 		}
 		if len(p.kinds) == 0 {
 			return nil

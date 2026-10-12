@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,7 +165,143 @@ func changeDevices(command *cobra.Command, change func(devices.List) (devices.Li
 		return err
 	}
 	fmt.Println(said)
+	root, err := sess.PublishDataRoots(command.Context(), l)
+	if err != nil {
+		return fmt.Errorf("the device list changed, but the data roots did not: %w; run arc keys roots on the signer to try again", err)
+	}
+	fmt.Printf("data roots: generation %d\n", root.Gen)
 	return nil
+}
+
+func rootsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "roots",
+		Short: "List the generations of data roots that this machine holds",
+		Long: "A data root seals the self data of the citizen. The signer wraps the\n" +
+			"newest root to each device on the device list and to the citizen key,\n" +
+			"and makes a new generation when it revokes a device. Generation 0 is\n" +
+			"the keyed root, which follows from the citizen key. On the signer, this\n" +
+			"command first makes the data roots follow the device list.",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.Close()
+			ctx := command.Context()
+			var holders []string
+			if !sess.Remote {
+				l, ok, err := sess.DeviceList(ctx)
+				if err != nil {
+					return err
+				}
+				if ok {
+					if _, err := sess.PublishDataRoots(ctx, l); err != nil {
+						return err
+					}
+				}
+				if r, ok, err := sess.NewestRoots(ctx); err != nil {
+					return err
+				} else if ok {
+					for key := range r.Devices {
+						name := "a device not on the list"
+						if d, found := l.Find(key.Hex()); found {
+							name = d.Name
+						}
+						holders = append(holders, fmt.Sprintf("  wrapped to %s  %s", name, key.Hex()))
+					}
+					slices.Sort(holders)
+				}
+			}
+			held, err := sess.DataRoots(ctx)
+			if len(held) == 0 {
+				return err
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "arc: the newest data roots did not come: %v\n", err)
+			}
+			gens := slices.Sorted(maps.Keys(held))
+			slices.Reverse(gens)
+			for i, gen := range gens {
+				if i == 0 {
+					fmt.Printf("generation %d (newest)\n", gen)
+					for _, h := range holders {
+						fmt.Println(h)
+					}
+				} else {
+					fmt.Printf("generation %d\n", gen)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func sealCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "seal <app>",
+		Short: "Seal standard input for an app with the newest data root",
+		Long: "arc encrypts standard input with the content key of the app under the\n" +
+			"newest data root, and prints the generation, a colon and the NIP-44\n" +
+			"payload. arc keys unseal opens it on each machine that holds the root.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			text, err := io.ReadAll(command.InOrStdin())
+			if err != nil {
+				return err
+			}
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.Close()
+			root, err := sess.DataRoot(command.Context())
+			if err != nil {
+				return err
+			}
+			sealed, err := devices.SealData(root, args[0], string(text))
+			if err != nil {
+				return err
+			}
+			fmt.Println(sealed)
+			return nil
+		},
+	}
+}
+
+func unsealCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unseal <app>",
+		Short: "Open data that arc keys seal sealed for an app",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			sealed, err := io.ReadAll(command.InOrStdin())
+			if err != nil {
+				return err
+			}
+			text := strings.TrimSpace(string(sealed))
+			gen, err := devices.DataGeneration(text)
+			if err != nil {
+				return err
+			}
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.Close()
+			root, err := sess.DataRootAt(command.Context(), gen)
+			if err != nil {
+				return err
+			}
+			plain, err := devices.OpenData(root, args[0], text)
+			if err != nil {
+				return err
+			}
+			fmt.Print(plain)
+			return nil
+		},
+	}
 }
 
 // guard decides which devices a bunker admits. With no device list, it

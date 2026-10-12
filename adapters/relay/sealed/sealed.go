@@ -23,7 +23,7 @@ import (
 )
 
 // Kinds are the kinds that a relay serves only to their author.
-var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, draft.RelayListKind, devices.Kind}
+var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, draft.RelayListKind, devices.Kind, devices.RootsKind}
 
 // Protect makes a relay serve sealed events only to their author. Call it
 // after the relay has its event store.

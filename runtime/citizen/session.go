@@ -25,9 +25,12 @@ import (
 // Session is a citizen's application state. Cobra supplies configuration;
 // operations here can also serve another UI or an embedded caller.
 type Session struct {
-	Key      keys.Key
-	Signer   keys.Signer
-	Remote   bool
+	Key    keys.Key
+	Signer keys.Signer
+	Remote bool
+	// Device is the device key of a machine that signs through a remote
+	// signer. It opens the data roots wrapped to this device.
+	Device   keys.Key
 	Node     *node.Node
 	Mail     *mail.Mail
 	Relays   []transport.Transport
@@ -38,6 +41,7 @@ type Session struct {
 	Errors   io.Writer
 	store    *store.Store
 	receipts kv.Store
+	roots    kv.Store
 	search   *blevesearch.Index
 	// kept holds the relay of each URL that NewRelay gave.
 	keptMu sync.Mutex
@@ -49,6 +53,7 @@ type Config struct {
 	Key               keys.Key
 	Signer            keys.Signer
 	Remote            bool
+	Device            keys.Key
 	URLs, IndexerURLs []string
 	Errors            io.Writer
 }
@@ -59,8 +64,9 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
+	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
 	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
 	// Each relay keeps one connection for its sends. One URL gives one relay,
 	// so a long run does not open a connection for each call.
@@ -84,6 +90,7 @@ func Open(cfg Config) (*Session, error) {
 	sess.Mail, err = mailbox.Open(filepath.Join(cfg.Home, "store"), cfg.Signer, sess.Node, sess.Relays)
 	if err != nil {
 		sess.receipts.Close()
+		sess.roots.Close()
 		s.Close()
 		return nil, err
 	}
@@ -108,6 +115,9 @@ func (s *Session) Close() {
 	}
 	if s.receipts != nil {
 		s.receipts.Close()
+	}
+	if s.roots != nil {
+		s.roots.Close()
 	}
 	if s.store != nil {
 		s.store.Close()

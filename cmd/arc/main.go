@@ -37,6 +37,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/khatru"
+	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
@@ -575,7 +576,13 @@ func open(command *cobra.Command) (*citizen.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, URLs: urls, IndexerURLs: indexers, Errors: os.Stderr})
+	var device keys.Key
+	if id.remote {
+		if device, err = keyfile.Load(filepath.Join(dir, "bunker-client")); err != nil {
+			return nil, err
+		}
+	}
+	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: os.Stderr})
 }
 
 func errRemote(what string) error {
