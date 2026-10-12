@@ -179,7 +179,8 @@ type Reply struct {
 	Message string `json:"message,omitempty"`
 	// Seq is the sequence number of the change that a put or a delete made.
 	Seq uint64 `json:"seq,omitempty"`
-	// Size is the size of the blob of a get. Its bytes follow the reply.
+	// Size is the size of the blob of a get, whose bytes follow the reply,
+	// or of an audit, which no bytes follow.
 	Size int64 `json:"size,omitempty"`
 	// Entries and Next are the result of a list. Next is the cursor for the
 	// next list.

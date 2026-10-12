@@ -322,7 +322,7 @@ The storage app keeps one record for each account:
 - A draining account MUST refuse each put with `refused`. It MUST keep each
   get, list, delete, usage and audit, with no end. Its usage reply gives
   what remains: `blobs` and `used`. A list from cursor 0 names each blob
-  that remains.
+  that remains, and each deletion.
 
 Reason: a citizen that drops a storage citizen moves its data away first
 (proposal, section 5.2). A drain stops new data there, and keeps the reads

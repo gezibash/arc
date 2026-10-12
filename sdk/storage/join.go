@@ -37,6 +37,9 @@ const (
 	StateClosed = "closed"
 )
 
+// An account can also be StateDraining: it refuses each put, and keeps
+// each read, list, delete and audit, until a drain with Off.
+
 // ErrRefused is the error of a reply to a join that the storage citizen
 // refused. It is also the error of a put on a closing account.
 const ErrRefused = "refused"
