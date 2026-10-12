@@ -49,7 +49,7 @@ These facts limit the design, or must change before it.
    costs 2.67 times its bytes before any coding (computed: 24,576 bytes of
    file make 32,768 bytes of base64 text, which make one blob of 65,536
    bytes). This is a cost of decision 11 of the storage proposal
-   (`docs/proposals/storage.md:608-610`). Open question 9 asks about it.
+   (`docs/proposals/storage.md:608-610`). Decision 9 of section 12 keeps it for now.
 4. **Erasure coding does not hide size, time or count.** Each storage citizen
    still sees how many pieces an account holds, their sizes and the times of
    the puts. Two storage citizens that work together can still join one
@@ -174,7 +174,7 @@ The operator cannot admit friends by their citizen keys. Under #209 the
 caller is an account key that no one can join to a citizen key. Thus `allow`
 in the Arcfile, which matches the caller key, cannot name friends. The
 invite token carries the consent instead. The operator gives the link to the
-friend by hand, as text or a QR code. Open question 3 asks if a citizen can
+friend by hand, as text or a QR code. Decision 3 of section 12 lets a citizen
 show its citizen key in `join`, by choice, for the `ask` rule.
 
 ### 3.4 What the signer learns
@@ -336,7 +336,7 @@ code for the pack, as restic packs blobs. A pack hides the count and the
 sizes of the records better. It also needs a repack to free the space of
 deleted records. It breaks the idempotent put of a blob, which is the reason
 for decision 8. It changes sync from blob IDs to pack IDs. This proposal
-rejects packs for now. Open question 5 says when to revisit.
+rejects packs for now. Decision 5 of section 12 says when to revisit.
 
 The cost of one code for each blob is many small pieces and many requests.
 Section 6.12 gives the numbers, and build step 3 removes the request cost.
@@ -412,8 +412,8 @@ default for the same reason
 
 The table also shows a cost. Two of three reads worse than one of two at
 each p. The rule takes 2-of-3 because it stores 1.5 times the bytes, not 2
-times, and loses one storage citizen in both cases. Open question 6 asks
-about it.
+times, and loses one storage citizen in both cases. Decision 6 of
+section 12 takes it.
 
 With one storage citizen the code is k = 1: one whole copy, as today. With
 two it is k = 1 with two copies: a mirror. Erasure coding starts at three.
@@ -675,8 +675,8 @@ harness of `DIRECT_LINK_RTT_MS` measures the result with a real round trip
    common ID. Decision 8 kept one id key so that a device can copy a blob
    between storage citizens without opening it
    (`docs/proposals/storage.md:599-601`). With Reed-Solomon each storage
-   citizen holds a different piece, so no device copies a blob. Open
-   question 1 asks to revise decision 8.
+   citizen holds a different piece, so no device copies a blob. Decision
+   1 of section 12 revises decision 8.
 2. **Sizes.** Each piece of one blob has the same size, on each storage
    citizen. Padding to a power of two keeps the classes coarse
    (decision 9). The size ratio tells a storage citizen roughly what k is.
@@ -751,7 +751,7 @@ Each step is one PR. Each step names what proves it, through the real CLI.
 | 0 | Seal blobs with the data roots: replace the body of `sealSelf` (`runtime/citizen/selfsync.go:49-58`) with the key of `DataRoot`, as the #204 note planned. | A proof test: revoke a device, write a page, sync. The revoked device cannot open the new blob. |
 | 1 | #209: per-device grants. In progress in another session. | Its own tests. |
 | 2 | Admission and quota for each account: `join` with the rules `invite`, `ask` and `open`; the account record; `usage` with the quota of the account; `arc keys storage add`; `arc-storage invite`, `requests`, `accept`, `refuse`, `account set`, `account close`. | A proof test with a real relay and `arc-storage`: a `join` with no token is refused; a `join` with a token is admitted at its quota; a second token use is refused; under `ask`, `pending`, then `accept`, then `admitted`; a put over the quota of the account fails while another account has room. |
-| 3 | Scale the storage app: several requests in flight on one pipe, and an index that a put does not rewrite whole. Open question 8 asks where the index lives. | The `DIRECT_LINK_RTT_MS` harness with 44 ms: 1,000 puts of 4 KiB, before and after. The PR states both times. |
+| 3 | Scale the storage app: several requests in flight on one pipe, and an index that a put does not rewrite whole. The index lives in `go.etcd.io/bbolt` (decision 8 of section 12). | The `DIRECT_LINK_RTT_MS` harness with 44 ms: 1,000 puts of 4 KiB, before and after. The PR states both times. |
 | 4 | Kind 10273: the signer publishes it; each device reads it and installs each storage citizen; `arc keys storage ls` and `rm`; a row in `docs/KINDS.md`. | A home with only the seed finds two storage citizens and reads every page. |
 | 5 | Several storage citizens with full copies (k = 1), synced at the same time. | Two storage citizens. Stop one. A new device reads every page from the other. |
 | 6 | Reed-Solomon: the piece format, tags in `put` and `list`, `hello`, placement, decode on read, the piece id key for each storage citizen. Pin `klauspost/reedsolomon`, and keep a test of the prefix property. Breaking. | Three storage citizens, k = 2. Delete the directory of one. A new device reads every page. No piece file holds text of a page. Each piece file is about half its blob. |
@@ -785,48 +785,45 @@ of format 1, the direct pipe and the cursor sync. Add three things:
 
 Do step 0 first. Without it, a revoked device opens every piece.
 
-## 12. Open questions for Zim
+## 12. Decisions
 
-Each question has a recommended answer.
+Zim accepted each recommended answer on 2026-10-12, and said to start with
+build step 0.
 
-1. **Each storage citizen gets its own piece id key. This revises decision
-   8.** Recommended: yes. With Reed-Solomon, no device copies a blob between
-   storage citizens, so the reason for decision 8 is gone. Two storage
-   citizens then see no common ID.
-2. **The default rule of admission.** Recommended: `invite`. It needs no
-   operator at the time of the request, and the token carries the consent
-   that `allow` can no longer carry.
-3. **Can a citizen show its citizen key in `join`, by choice, so that a
-   friend under the `ask` rule knows who asks?** Recommended: yes, as an
+1. **Each storage citizen gets its own piece id key.** This revises decision
+   8 of the storage proposal (`docs/proposals/storage.md:599-601`). Zim,
+   2026-10-12. Reason: with Reed-Solomon no device copies a blob between
+   storage citizens, so two storage citizens must see no common ID.
+2. **The default rule of admission is `invite`.** Zim, 2026-10-12. Reason:
+   it needs no operator at the time of the request, and the token carries
+   the consent that `allow` can no longer carry.
+3. **A citizen can show its citizen key in `join`, by choice.** It is an
    optional signature of the citizen key over the account key and the
-   storage key. The default sends none.
-4. **Who repairs?** Recommended: each device that runs `arc serve`, on its
-   tick. A phone repairs only on `arc sync --repair`. Two repairs at the same
-   time cost one extra piece, which the next sync deletes.
-5. **One code for each blob, or packs?** Recommended: one code for each blob
-   now. Revisit packs if an account passes 100,000 pieces, or if hiding the
-   count of records becomes a goal.
-6. **The rule for k.** Recommended: k = ⌈S/2⌉ and t = min(S, 2k). This keeps
-   the expansion at 2 or less, and loses ⌊t/2⌋ storage citizens. The other
-   choice for S = 3 is a mirror of three copies: it reads better and loses
-   two, at 3 times the bytes.
-7. **May repair use TURN?** Recommended: no by default. A rebuild of 1 GiB
-   needs more than the TURN quota of one day. `--turn` allows it.
-8. **Where does the index of an account live in the storage app?**
-   `go.etcd.io/bbolt` is a dependency of the repository (`go.mod:20`). The
-   rules put Bolt implementations under `adapters/`, and an app imports only
-   `sdk/`. Recommended: the storage app uses `bbolt` directly as a library
-   for its own disk, as it uses `sdk/atomicfile` today. It is the private
-   disk format of one app, not an ARC interface. The other choice is a log
-   that the app appends to, in plain files.
-9. **File parts make blobs of 64 KiB, 2.67 times the file bytes.**
-   Recommended: keep decision 11 for this work. Open a separate issue to
-   store a file as one large blob of its raw bytes, with no base64 inside
-   NIP-44. Reed-Solomon then codes the large blob with no change.
-10. **How long does a device wait before it calls a silent storage citizen
-    gone?** Recommended: it warns after 7 days, and only the user marks it
-    `gone`. A home machine that is off for a holiday must not cost a
-    rebuild.
-11. **How many pieces does an audit sample?** Recommended: 32 for each
-    storage citizen each day. This costs at most about 1 to 2 MiB a day, and finds
-    a loss of 1% of the pieces in 30 days with a chance of 0.99994.
+   storage key. The default sends none. Zim, 2026-10-12. Reason: a friend
+   under the `ask` rule then knows who asks.
+4. **Each device that runs `arc serve` repairs on its tick. A phone repairs
+   only on `arc sync --repair`.** Zim, 2026-10-12. Reason: two repairs at the
+   same time cost one extra piece, which the next sync deletes.
+5. **The code is one code for each blob, not packs.** Revisit packs if an
+   account passes 100,000 pieces, or if hiding the count of records becomes a
+   goal. Zim, 2026-10-12. Reason: a blob is already the unit of sync,
+   deletion, tombstones and quota.
+6. **k = ⌈S/2⌉ and t = min(S, 2k).** Zim, 2026-10-12. Reason: the expansion
+   stays at 2 or less, and the citizen can lose ⌊t/2⌋ storage citizens.
+7. **Repair does not use TURN by default. `--turn` allows it.** Zim,
+   2026-10-12. Reason: a rebuild of 1 GiB needs more than the TURN quota of
+   one day.
+8. **The storage app keeps the index of an account in `go.etcd.io/bbolt`,
+   used directly as a library for its own disk.** Zim, 2026-10-12. Reason:
+   it is the private disk format of one app, not an ARC interface, as
+   `sdk/atomicfile` is today.
+9. **Decision 11 stays for this work. A separate issue stores a file as one
+   large blob of its raw bytes, with no base64 inside NIP-44.** Zim,
+   2026-10-12. Reason: a file part makes a blob of 64 KiB, 2.67 times the
+   file bytes, and Reed-Solomon codes a large blob with no change.
+10. **A device warns after 7 days of silence. Only the user marks a storage
+    citizen `gone`.** Zim, 2026-10-12. Reason: a home machine that is off for
+    a holiday must not cost a rebuild.
+11. **An audit samples 32 pieces of each storage citizen each day.** Zim,
+    2026-10-12. Reason: it costs at most about 1 to 2 MiB a day, and finds a
+    loss of 1% of the pieces in 30 days with a chance of 0.99994.
