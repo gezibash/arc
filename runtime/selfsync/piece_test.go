@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"fiatjaf.com/nostr"
@@ -244,6 +245,63 @@ func TestParityPrefix(t *testing.T) {
 	for i := range 3 {
 		if !bytes.Equal(ss[i], shards[i]) {
 			t.Fatalf("shard %d of RS(2, 4) differs from shard %d of RS(2, 3)", i, i)
+		}
+	}
+}
+
+// BenchmarkPieces measures the piece pipeline of a device for the codes of
+// 3 to 6 storage citizens: encode is Shards and SealPiece of t pieces;
+// decode is OpenPiece and Rebuild from k pieces, with the first data
+// pieces lost. Throughput is blob bytes.
+func BenchmarkPieces(b *testing.B) {
+	keys := Keys{Gen: 1, Piece: make([]byte, 32)}
+	for _, s := range []int{3, 4, 5, 6} {
+		k, n := Code(s)
+		for _, size := range []int{4 << 10, 64 << 10, 1 << 20, 64 << 20} {
+			blob := make([]byte, size)
+			_, _ = rand.Read(blob)
+			id := hex.EncodeToString(blob[:32])
+			h := Header{Blob: id, K: k, Size: int64(size)}
+			label := fmt.Sprintf("%dof%d/%dKiB", k, n, size>>10)
+			b.Run("encode/"+label, func(b *testing.B) {
+				b.SetBytes(int64(size))
+				for b.Loop() {
+					shards, err := Shards(blob, k)
+					if err != nil {
+						b.Fatal(err)
+					}
+					for i := range n {
+						h.Index = i
+						if _, _, err := SealPiece(keys, h, shards[i]); err != nil {
+							b.Fatal(err)
+						}
+					}
+				}
+			})
+			shards, _ := Shards(blob, k)
+			tags, pieces := make([][]byte, n), make([][]byte, n)
+			for i := range n {
+				h.Index = i
+				tags[i], pieces[i], _ = SealPiece(keys, h, shards[i])
+			}
+			b.Run("decode/"+label, func(b *testing.B) {
+				b.SetBytes(int64(size))
+				for b.Loop() {
+					got := map[int][]byte{}
+					for i := n - k; i < n; i++ {
+						hi := h
+						hi.Index = i
+						shard, err := OpenPiece(keys, tags[i], hi, pieces[i])
+						if err != nil {
+							b.Fatal(err)
+						}
+						got[i] = shard
+					}
+					if _, err := Rebuild(h, got); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		}
 	}
 }

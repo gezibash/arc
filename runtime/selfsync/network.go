@@ -27,6 +27,10 @@ type Side struct {
 	// storage citizen gets new pieces, and counts in the code of a new
 	// blob. A draining one is read.
 	Active bool
+	// Relayed says that the pipe goes through TURN. A device does not add
+	// a missing piece through it: that is repair, and repair waits for a
+	// direct path (decision 7 of the storage network proposal).
+	Relayed bool
 }
 
 // getChunk is the count of blobs that a device rebuilds in one round.
@@ -629,6 +633,7 @@ func (r *run) write(ctx context.Context) error {
 		}
 	}
 	r.report.K, r.report.T = Code(s)
+	direct := slices.DeleteFunc(slices.Clone(pieceSides), func(i int) bool { return r.sides[i].Relayed })
 	writers := slices.ContainsFunc(r.sides, func(side Side) bool { return side.Active })
 	if !writers {
 		return nil
@@ -683,7 +688,7 @@ func (r *run) write(ctx context.Context) error {
 					}
 					continue
 				}
-				if sl.count() < min(s, 2*sl.h.K) && slices.ContainsFunc(pieceSides, func(i int) bool { return !m.sides[i] }) {
+				if sl.count() < min(s, 2*sl.h.K) && slices.ContainsFunc(direct, func(i int) bool { return !m.sides[i] }) {
 					grow = append(grow, &rebuilding{id: id, sl: sl, shards: map[int][]byte{}, tried: map[string]bool{}})
 				}
 			}
@@ -691,6 +696,12 @@ func (r *run) write(ctx context.Context) error {
 		if err := r.put(ctx, puts); err != nil {
 			return err
 		}
+	}
+	// A missing piece costs k pieces down and one up. Only direct pipes
+	// carry it. This is the last step of the sync, so the relayed pipes
+	// stay closed to it.
+	for i, side := range r.sides {
+		r.open[i] = r.open[i] && !side.Relayed
 	}
 	for chunk := range slices.Chunk(grow, getChunk) {
 		if err := r.fetch(ctx, chunk); err != nil {
@@ -701,7 +712,7 @@ func (r *run) write(ctx context.Context) error {
 			if b.blob == nil {
 				continue
 			}
-			p, err := r.extend(b, s, pieceSides)
+			p, err := r.extend(b, s, direct)
 			if err != nil {
 				return err
 			}

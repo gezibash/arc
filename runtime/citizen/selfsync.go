@@ -315,6 +315,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		sides[i] = selfsync.Side{Key: key, Label: t.install.As, Active: t.state == storage.StateActive}
 		if opened[i].conn != nil {
 			sides[i].Conn = opened[i].conn
+			sides[i].Relayed = opened[i].conn.Path == "relay"
 		}
 	}
 	report, err := syncer.SyncAll(ctx, sides)

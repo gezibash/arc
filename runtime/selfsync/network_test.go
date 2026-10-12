@@ -173,8 +173,17 @@ func TestNewStorageCitizenAddsPiece(t *testing.T) {
 		t.Fatalf("the first sync put %v pieces; want 3 on each of the 2 that answer", got)
 	}
 
-	// The third answers: it gets the missing piece of each blob. The other
-	// pieces stay.
+	// The third answers through TURN: a missing piece is repair, and
+	// waits for a direct path.
+	relayed := slices.Clone(sides[:3])
+	relayed[2].Relayed = true
+	syncOn(device, relayed)
+	if got := puts(); !slices.Equal(got, []int{3, 3, 0, 0}) {
+		t.Fatalf("a sync through TURN put %v pieces; want no missing piece through TURN", got)
+	}
+
+	// The third answers on a direct path: it gets the missing piece of
+	// each blob. The other pieces stay.
 	r = syncOn(device, sides[:3])
 	if r.Sent != 0 {
 		t.Fatalf("the second sync coded %d records again", r.Sent)
