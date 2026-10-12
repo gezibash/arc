@@ -273,7 +273,7 @@ restart keeps the list.
 | A list does not open | The bunker logs a warning and keeps the list that it has. |
 | No relay takes the roots after `add` or `revoke` | The command fails after the list is published, and names `arc keys roots`. The signer then makes the roots follow the list. Until then, the other devices seal under the old newest root, which the dropped device holds. |
 | A device cannot reach the signer or the relays | It uses the data roots that it keeps on its disk, and warns that the newest roots did not come. |
-| A command needs the citizen key, and the signer does not answer | The command fails, and says "this needs the signer of the citizen". With a relay and no signer, the command waits 15 seconds once. Examples: a journal page, mail, and the device list. |
+| A command needs the citizen key, and the signer does not answer | The command fails, and says "this needs the signer of the citizen". With a relay and no signer, the command waits 15 seconds once. In the next 15 seconds, each use of the signer fails at once. After that, a use connects again, so `arc serve` finds the signer when it comes back. Examples: a journal page, mail, and the device list. |
 | A root in the cache does not open with the key of the machine | The command fails, and names the generation. |
 | Data names a generation that the machine does not hold | `arc keys unseal` fails, and names the generation. |
 | The citizen has 128 generations | The signer refuses to make another one. `revoke` fails after it publishes the list, so the signer refuses the device, but the device keeps the newest root, and data sealed after the revocation stays readable to it. No command repairs this yet. |

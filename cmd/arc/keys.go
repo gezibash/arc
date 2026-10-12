@@ -94,7 +94,7 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 	if err != nil {
 		return signerIdentity{}, fmt.Errorf("%s holds no public key: %w", publicPath(dir), err)
 	}
-	lazy := &lazySigner{public: pk, connect: func() (nostr.Keyer, error) {
+	lazy := &lazySigner{public: pk, now: time.Now, connect: func() (nostr.Keyer, error) {
 		signer, got, err := connectSigner(ctx, dir, uri)
 		if err == nil && got != pk {
 			err = fmt.Errorf("the remote signer signs as %s, not as this identity %s", got.Hex(), pk.Hex())
@@ -891,25 +891,40 @@ func bunkerSecret(dir string) (string, error) {
 
 // timed bounds each request to a remote signer, so a lost answer fails the
 // command instead of stopping it.
+// signerRetry is the time after a failed connection to the signer in which
+// each use fails at once with the same reason.
+const signerRetry = 15 * time.Second
+
 // lazySigner connects to a remote signer at its first use. After a failed
-// connection, each later use fails at once with the same reason, so one
-// command waits for the signer only once.
+// connection, each use in the next signerRetry fails at once, so a command
+// waits for the signer only once. A later use connects again, so arc serve
+// finds the signer when it comes back.
 type lazySigner struct {
 	public  nostr.PubKey
 	connect func() (nostr.Keyer, error)
-	once    sync.Once
+	now     func() time.Time
+	mu      sync.Mutex
 	keyer   nostr.Keyer
 	err     error
+	failed  time.Time
 }
 
 func (l *lazySigner) get() (nostr.Keyer, error) {
-	l.once.Do(func() {
-		l.keyer, l.err = l.connect()
-		if l.err != nil {
-			l.err = fmt.Errorf("this needs the signer of the citizen, and %w", l.err)
-		}
-	})
-	return l.keyer, l.err
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.keyer != nil {
+		return l.keyer, nil
+	}
+	if l.err != nil && l.now().Sub(l.failed) < signerRetry {
+		return nil, l.err
+	}
+	k, err := l.connect()
+	if err != nil {
+		l.err, l.failed = fmt.Errorf("this needs the signer of the citizen, and %w", err), l.now()
+		return nil, l.err
+	}
+	l.keyer, l.err = k, nil
+	return k, nil
 }
 
 func (l *lazySigner) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
