@@ -642,7 +642,7 @@ first failed open after it, and is absent while the storage citizen
 answers. If no pipe opens and `silent_since` is 7 days old or more, the
 device prints
 `<name>: no answer for <days> days; if it is gone, run arc keys storage rm <name> --gone on the signer`.
-It prints this at each sync. Only the user marks a storage citizen `gone`.
+It prints this at each sync. Only the user marks a silent storage citizen `gone`.
 The count starts at the first failed open, not at the last answer. Thus a
 device that was off itself for 7 days does not warn at its first sync.
 
@@ -873,7 +873,7 @@ After an audit, the device prints `<name>: audit checked <n> pieces, <m>
 failed`. It counts the lost pieces of each storage citizen for each day of
 UTC. With 3 or more on one day, each sync of that day prints
 `<name> is suspect: <n> pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm <name> --gone on the signer`.
-The device does not drop the storage citizen. Only the user marks it gone
+The device does not drop the storage citizen. Only the user marks a suspect storage citizen gone
 (decision 10 of the proposal).
 
 **The plan of one blob.** Repair looks at each blob that a storage citizen
@@ -1331,7 +1331,7 @@ bytes up.
     entry. It keeps a local install of that storage citizen, and syncs with
     it as an install that the list does not name. The account takes no
     put, so its sync fails for that storage citizen. The user removes the
-    install with `arc uninstall`.
+    install with `arc apps remove <name>`.
   - A storage list of a newer signer is still version 1. An older reader
     reads it.
 - Before the account key, the citizen key signed each call, the operator
