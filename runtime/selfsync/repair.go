@@ -40,6 +40,11 @@ type RepairReport struct {
 	// Old is the number of blobs that still have a whole copy of format 1
 	// to move to pieces after the sync.
 	Old int
+	// Replaced is the number of blobs whose record a newer version
+	// replaced or a deletion named, and whose pieces and whole copies the
+	// repair deleted. In a sync that does not repair, it is the number of
+	// such blobs that wait.
+	Replaced int
 }
 
 // migrateMax is the most blobs of format 1 that one sync moves to pieces.
@@ -76,6 +81,9 @@ type job struct {
 	// whole are the sides with a pipe that hold a whole copy, for a blob
 	// with no record in the store and no seal of k pieces.
 	whole []int
+	// replaced says that the store replaced or deleted the record of the
+	// blob. The job deletes each piece and whole copy, and puts nothing.
+	replaced bool
 }
 
 // move copies one piece from a draining storage citizen to a free one.
@@ -100,6 +108,14 @@ func (j *job) work() int {
 // section 4.6). Without Syncer.Repair it only counts the blobs that need
 // it. Repair uses a pipe through TURN only with Syncer.TURN.
 func (r *run) repair(ctx context.Context) error {
+	usable := func(turn bool) func(int) bool {
+		return func(i int) bool { return r.open[i] && (turn || !r.sides[i].Relayed) }
+	}
+	if r.s.Repair {
+		if err := r.learnOn(ctx, usable(r.s.TURN)); err != nil {
+			return err
+		}
+	}
 	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
@@ -108,9 +124,7 @@ func (r *run) repair(ctx context.Context) error {
 	for n := range records {
 		local[r.current.BlobID(records[n].ID)] = &records[n]
 	}
-	usable := func(turn bool) func(int) bool {
-		return func(i int) bool { return r.open[i] && (turn || !r.sides[i].Relayed) }
-	}
+	r.deleted(records)
 	var jobs []*job
 	for id, m := range r.blobs {
 		j := r.plan(id, m, local[id], usable(r.s.TURN))
@@ -126,13 +140,26 @@ func (r *run) repair(ctx context.Context) error {
 	}
 	defer r.countOld()
 	if !r.s.Repair {
-		r.report.Repair.Pending = len(jobs)
+		for _, j := range jobs {
+			if j.replaced {
+				r.report.Repair.Replaced++
+			} else {
+				r.report.Repair.Pending++
+			}
+		}
 		return nil
 	}
-	// The blobs with the fewest spare pieces go first. A blob of format 1
-	// goes after each blob that can lose a piece: its whole copies still
-	// serve.
+	// The blobs of replaced records go first: they need no bytes, and they
+	// free quota for the puts. Then the blobs with the fewest spare pieces.
+	// A blob of format 1 goes after each blob that can lose a piece: its
+	// whole copies still serve.
 	slices.SortFunc(jobs, func(a, b *job) int {
+		if a.replaced != b.replaced {
+			if a.replaced {
+				return -1
+			}
+			return 1
+		}
 		if a.migrate != b.migrate {
 			if a.migrate {
 				return 1
@@ -173,6 +200,9 @@ func (r *run) repair(ctx context.Context) error {
 // move to pieces.
 func (r *run) countOld() {
 	for id, m := range r.blobs {
+		if _, old := r.olds.Old[id]; old {
+			continue
+		}
 		if slices.ContainsFunc(m.old, func(i int) bool {
 			return !(r.sides[i].Active && r.old[i]) && r.states[i].Remote[id]
 		}) {
@@ -187,7 +217,13 @@ func (r *run) countOld() {
 func (r *run) plan(id string, m *mapped, event *nostr.Event, usable func(int) bool) *job {
 	s := r.count()
 	// A blob that this sync coded is new.
-	if s == 0 || r.written[id] {
+	if r.written[id] {
+		return nil
+	}
+	if o, ok := r.olds.Old[id]; ok {
+		return r.planReplaced(id, m, o, event, usable)
+	}
+	if s == 0 {
 		return nil
 	}
 	// A whole copy of format 1 moves to pieces, except on an active
@@ -454,9 +490,79 @@ func (r *run) runJobs(ctx context.Context, jobs []*job) error {
 		if j.dropsOld && len(j.olds) > 0 {
 			r.report.Repair.Coded++
 		}
+		if j.replaced {
+			r.report.Repair.Replaced++
+		}
 		drops = append(drops, j.drops...)
 	}
 	return r.drop(ctx, drops)
+}
+
+// planReplaced plans the deletion of the blob of a record that the store
+// replaced or deleted: each piece, also lost ones and those of each seal,
+// and each whole copy, on the sides that repair may use. It waits until
+// the storage citizens hold the record that replaced or deleted it, so
+// that each other device still reads the newest state.
+func (r *run) planReplaced(id string, m *mapped, o replaced, event *nostr.Event, usable func(int) bool) *job {
+	// The store keeps the record again: the note is wrong.
+	if event != nil {
+		delete(r.olds.Old, id)
+		return nil
+	}
+	by, err := r.replacer(o)
+	if err != nil || by == nil || !r.onStorage(*by) {
+		return nil
+	}
+	j := &job{id: id, replaced: true}
+	all := slices.Clone(m.lost)
+	for _, sl := range m.seals {
+		for _, ps := range sl.pieces {
+			all = append(all, ps...)
+		}
+	}
+	for _, i := range m.old {
+		all = append(all, piece{side: i, id: id})
+	}
+	for _, p := range all {
+		if usable(p.side) {
+			j.drops = append(j.drops, p)
+		}
+	}
+	if len(j.drops) == 0 {
+		return nil
+	}
+	return j
+}
+
+// learnOn learns about the blobs that the device got before this version,
+// on the pipes that repair may use.
+func (r *run) learnOn(ctx context.Context, usable func(int) bool) error {
+	records, err := Records(r.s.Store, r.s.Citizen)
+	if err != nil {
+		return err
+	}
+	local := make(map[string]bool, len(records))
+	for _, event := range records {
+		local[r.current.BlobID(event.ID)] = true
+	}
+	r.deleted(records)
+	open := slices.Clone(r.open)
+	may := make([]bool, len(r.open))
+	for i := range r.open {
+		may[i] = usable(i)
+		r.open[i] = may[i]
+	}
+	r.repairing = true
+	err = r.learn(ctx, local)
+	r.repairing = false
+	// A side that repair may not use keeps its pipe for the rest of the
+	// sync. A side that failed stays closed.
+	for i := range r.open {
+		if !may[i] {
+			r.open[i] = open[i]
+		}
+	}
+	return err
 }
 
 // whole checks a whole copy of format 1 before the device codes it: its

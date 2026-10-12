@@ -877,6 +877,12 @@ port 3478 of its host. A machine asks it for its public address.
   allocations that it has.
 - A relay sets its relay ports with `--turn-ports`, and the public address
   of those ports with `--turn-ip`.
+- The relay MUST relay a packet from one of its allocations to another of
+  its allocations. If the relay ports listen on a private address behind
+  the public address, as on Fly.io, the network can drop a packet from the
+  host to its own public address. The relay then sends the packet to the
+  private address, and shows the public address as the source to the other
+  allocation. Only the relay ports get this change.
 
 `arc relay turn [url]` signs the NIP-98 request with the key of the citizen
 and prints the reply. An app gets a credential with this command, because
@@ -1069,6 +1075,9 @@ another key, and a bad checksum and words as arguments are refused.
 The relay paths of section 4.12 have these tests:
 `go test -run '^(TestCredential|TestQuota)$' ./adapters/relay/turn/` checks
 the NIP-98 refusals and the byte quota on a real TURN allocation.
+`go test -run '^TestRelayToRelay$' ./adapters/relay/turn/` sends packets
+between two allocations of a relay whose public address does not reach the
+host.
 `go test -run '^TestRelayPath$' ./sdk/direct/` puts two ends behind
 symmetric NATs on an emulated network: the direct attempt finds no path, and
 the attempt through TURN sends the file.

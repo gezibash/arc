@@ -79,6 +79,7 @@ type run struct {
 	failed  map[uint32]error
 	blobs   map[string]*mapped
 	seen    map[string]bool
+	olds    oldState
 	listed  bool
 	// written holds the blobs that this sync coded with a new seal.
 	written map[string]bool
@@ -105,6 +106,9 @@ func (s *Syncer) SyncAll(ctx context.Context, sides []Side) (Report, error) {
 		return r.report, err
 	}
 	r.seen = seen
+	if r.olds, err = s.loadOld(); err != nil {
+		return r.report, err
+	}
 	for i, side := range sides {
 		st, err := s.load(side.Key.Hex())
 		if err != nil {
@@ -172,10 +176,11 @@ func (r *run) kept(ctx context.Context) error {
 	}
 	r.report.Kept = map[nostr.ID]bool{}
 	for _, event := range records {
-		if m := r.blobs[r.current.BlobID(event.ID)]; m != nil && (len(m.old) > 0 || r.best(m, false) != nil) {
+		if r.onStorage(event) {
 			r.report.Kept[event.ID] = true
 		}
 	}
+	r.prune()
 	return nil
 }
 
@@ -184,7 +189,7 @@ func (r *run) save() error {
 	for i, side := range r.sides {
 		errs = append(errs, r.s.save(side.Key.Hex(), r.states[i]))
 	}
-	errs = append(errs, r.s.writeJSON(r.s.seenPath(), r.seen))
+	errs = append(errs, r.s.writeJSON(r.s.seenPath(), r.seen), r.s.writeJSON(r.s.oldPath(), r.olds))
 	return errors.Join(errs...)
 }
 
@@ -566,28 +571,18 @@ func (r *run) read(ctx context.Context) error {
 	for _, event := range records {
 		local[r.current.BlobID(event.ID)] = true
 	}
+	r.deleted(records)
 	var lack []string
 	for id, m := range r.blobs {
-		if !local[id] && !r.seen[id] && (len(m.old) > 0 || len(m.seals) > 0) {
+		// The blob of a replaced or deleted record is not got again.
+		if _, old := r.olds.Old[id]; !old && !local[id] && !r.seen[id] && (len(m.old) > 0 || len(m.seals) > 0) {
 			lack = append(lack, id)
 		}
 	}
 	slices.Sort(lack)
 	for chunk := range slices.Chunk(lack, getChunk) {
-		var all []*rebuilding
-		for _, id := range chunk {
-			m := r.blobs[id]
-			b := &rebuilding{id: id, shards: map[int][]byte{}, tried: map[string]bool{}}
-			// A blob of format 1 on a side with a pipe is one get. Else the
-			// pieces rebuild it.
-			if slices.ContainsFunc(m.old, func(i int) bool { return r.open[i] }) {
-				b.old = m.old
-			} else if b.sl = r.best(m, true); b.sl == nil {
-				r.report.Unreadable = append(r.report.Unreadable, r.short(id, m))
-				continue
-			}
-			all = append(all, b)
-		}
+		all, unreadable := r.rebuildable(chunk)
+		r.report.Unreadable = append(r.report.Unreadable, unreadable...)
 		if err := r.fetch(ctx, all); err != nil {
 			return err
 		}
@@ -596,12 +591,50 @@ func (r *run) read(ctx context.Context) error {
 				r.report.Unreadable = append(r.report.Unreadable, r.short(b.id, r.blobs[b.id]))
 				continue
 			}
-			if err := r.take(ctx, b.id, b.blob); err != nil {
+			if err := r.take(ctx, b.id, b.blob, false); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// allListed says that the device listed each side to the end once, so
+// its listings show each piece that the storage citizens hold.
+func (r *run) allListed() bool {
+	for i := range r.sides {
+		if !r.states[i].Listed {
+			return false
+		}
+	}
+	return true
+}
+
+// rebuildable returns a rebuild for each blob that the pipes can give,
+// and a reason for each other blob that a storage citizen that answers
+// later can give. It counts each blob that no listing holds k pieces of
+// one seal of in Report.Short.
+func (r *run) rebuildable(ids []string) (all []*rebuilding, unreadable []string) {
+	for _, id := range ids {
+		m := r.blobs[id]
+		b := &rebuilding{id: id, shards: map[int][]byte{}, tried: map[string]bool{}}
+		// A blob of format 1 on a side with a pipe is one get. Else the
+		// pieces rebuild it.
+		if slices.ContainsFunc(m.old, func(i int) bool { return r.open[i] }) {
+			b.old = m.old
+		} else if b.sl = r.best(m, true); b.sl == nil {
+			// No wait gives k pieces of one seal: a deletion that did not
+			// end, or lost pieces. Repair ends both.
+			if len(m.old) == 0 && r.best(m, false) == nil && r.allListed() {
+				r.report.Short++
+			} else {
+				unreadable = append(unreadable, r.short(id, m))
+			}
+			continue
+		}
+		all = append(all, b)
+	}
+	return all, unreadable
 }
 
 // short says why a blob cannot be rebuilt now.
@@ -624,8 +657,10 @@ func (r *run) short(id string, m *mapped) string {
 	return fmt.Sprintf("%s: %d of the %d pieces that rebuild it answered", id, open, k)
 }
 
-// take gives the record of a blob to the store, as section 3.5 says.
-func (r *run) take(ctx context.Context, id string, blob []byte) error {
+// take gives the record of a blob to the store, as section 3.5 says, and
+// notes a record that the store replaced or deleted. A blob that the
+// device learns about counts in no total of the report.
+func (r *run) take(ctx context.Context, id string, blob []byte, learning bool) error {
 	if !r.listed {
 		// The store checks each record against the device list that
 		// this machine keeps. Bring it up to date once, before the first
@@ -635,19 +670,30 @@ func (r *run) take(ctx context.Context, id string, blob []byte) error {
 		}
 		r.listed = true
 	}
-	result, err := r.s.take(ctx, id, blob, r.keysOf)
+	record, result, err := r.s.take(ctx, id, blob, r.keysOf)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		r.refuse("%s: %v", id, err)
 		r.seen[id] = true
+		r.olds.Checked[id] = true
 		return nil
 	}
 	// A device can join the list later, so a record of a key that is not
 	// on it gets a new chance on the next sync.
-	if result.Outcome != store.Refused || result.Reason != store.ReasonUnlisted {
-		r.seen[id] = true
+	if result.Outcome == store.Refused && result.Reason == store.ReasonUnlisted {
+		if !learning {
+			r.refuse("%s: the store refused it: %s", id, result.Reason)
+		}
+		return nil
+	}
+	r.seen[id] = true
+	if err := r.classify(id, record, result); err != nil {
+		return err
+	}
+	if learning && result.Outcome != store.Stored {
+		return nil
 	}
 	switch result.Outcome {
 	case store.Stored:
