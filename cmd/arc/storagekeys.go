@@ -52,9 +52,12 @@ func storageKeysCommand() *cobra.Command {
 	rm := &cobra.Command{
 		Use:   "rm <name or key>",
 		Short: "Mark a storage citizen draining, or gone with --gone",
-		Long: "rm sets the state draining in the storage list: each device still\n" +
-			"syncs with the storage citizen. With --gone, it sets the state gone:\n" +
-			"each device removes its install at the next sync. Run this on the signer.",
+		Long: "rm sets the state draining in the storage list. Each device sends the\n" +
+			"storage citizen a drain request, so that it takes no put, and repair\n" +
+			"moves its pieces. When it holds no piece, the sync of the signer sets\n" +
+			"the state gone. With --gone, rm sets the state gone now: each device\n" +
+			"removes its install at the next sync. The signer removes a gone entry\n" +
+			"after 30 days. Run this on the signer.",
 		Args: cobra.ExactArgs(1),
 		RunE: removeStorage,
 	}
@@ -117,6 +120,7 @@ func putStorage(ctx context.Context, out io.Writer, sess *citizen.Session, list 
 	if have, ok := list.Find(key.Hex()); ok && have.State == state {
 		entry.Since = have.Since
 	}
+	list, removed := list.Prune(time.Now())
 	list, err := list.Put(entry)
 	if err != nil {
 		return err
@@ -124,7 +128,13 @@ func putStorage(ctx context.Context, out io.Writer, sess *citizen.Session, list 
 	if _, err := sess.PublishStorageList(ctx, list); err != nil {
 		return fmt.Errorf("the storage list did not change: %w", err)
 	}
+	for _, e := range removed {
+		fmt.Fprintf(out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02"))
+	}
 	fmt.Fprintf(out, "storage list: %s is %s\n", name, state)
+	if state == storage.StateDraining {
+		fmt.Fprintf(out, "each sync sends %s a drain request, and repair moves its pieces; the signer marks it gone when it holds none\n", name)
+	}
 	return nil
 }
 
