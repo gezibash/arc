@@ -53,12 +53,15 @@ func TestStorageNetworkSync(t *testing.T) {
 		writePage(n, fmt.Sprintf("page %d of the network", n))
 	}
 
-	// One sync writes to each storage citizen at the same time. Thus the
-	// sync takes about the time of the slowest one, not the sum.
+	// One sync writes to each storage citizen at the same time. The slow
+	// link of each storage citizen logs when it holds a call. A sync one
+	// after the other ends its calls to one storage citizen before it
+	// starts the calls to the next, so no moment has a call held on each
+	// link. Load makes each step slower, but does not change that order.
 	start := time.Now()
 	first := signer.run("sync")
-	whole := time.Since(start)
-	var sum, slowest time.Duration
+	end := time.Now()
+	busy := map[string][2]time.Time{}
 	for _, name := range []string{"charlie", "dana", "erin"} {
 		got, took := syncTook(t, name, first)
 		if got.sent == 0 {
@@ -67,17 +70,20 @@ func TestStorageNetworkSync(t *testing.T) {
 		if took < delays[name] {
 			t.Fatalf("%s took %s, less than the delay of its link, %s", name, took, delays[name])
 		}
-		t.Logf("measured: %s took %s with a delay of %s", name, took, delays[name])
-		sum += took
-		slowest = max(slowest, took)
+		busy[name] = heldBetween(t, holdLog(work, name), start, end)
+		t.Logf("measured: %s took %s with a delay of %s; its link held calls from %s to %s after the start", name, took, delays[name],
+			busy[name][0].Sub(start).Round(time.Millisecond), busy[name][1].Sub(start).Round(time.Millisecond))
 	}
-	t.Logf("measured: arc sync took %s; the storage citizens took %s together, the slowest %s", whole.Round(time.Millisecond), sum, slowest)
-	// A sync one after the other takes at least the sum, so a time below
-	// the sum proves that the syncs overlap. The start of the process adds
-	// to the whole and not to the sum; a race build makes that start slow.
-	if whole >= sum {
-		t.Fatalf("arc sync took %s, and the storage citizens took %s together: they did not sync at the same time", whole, sum)
+	lastStart, firstEnd := busy["charlie"][0], busy["charlie"][1]
+	for _, span := range busy {
+		lastStart, firstEnd = maxTime(lastStart, span[0]), minTime(firstEnd, span[1])
 	}
+	if !lastStart.Before(firstEnd) {
+		t.Fatalf("no moment of the sync had a call held on each link: the last link began at %s, and the first link ended at %s after the start",
+			lastStart.Sub(start).Round(time.Millisecond), firstEnd.Sub(start).Round(time.Millisecond))
+	}
+	t.Logf("measured: arc sync took %s; each link held a call from %s to %s after the start", end.Sub(start).Round(time.Millisecond),
+		lastStart.Sub(start).Round(time.Millisecond), firstEnd.Sub(start).Round(time.Millisecond))
 	t.Log("ok: one sync writes a piece to three storage citizens at the same time")
 
 	// With charlie stopped, the sync still writes to dana and erin.
@@ -190,6 +196,51 @@ func syncTook(t *testing.T, name, output string) (selfCounts, time.Duration) {
 		t.Fatal(err)
 	}
 	return got, took
+}
+
+// holdLog is the file where the slow link of a storage citizen logs each
+// call that it holds.
+func holdLog(work, name string) string {
+	return filepath.Join(work, name+"-holds.log")
+}
+
+// heldBetween reads a hold log, and gives the start of the first hold and
+// the end of the last hold between from and to.
+func heldBetween(t *testing.T, path string, from, to time.Time) [2]time.Time {
+	t.Helper()
+	var span [2]time.Time
+	for line := range strings.SplitSeq(strings.TrimSpace(read(t, path)), "\n") {
+		var start, end int64
+		if _, err := fmt.Sscanf(line, "%d %d", &start, &end); err != nil {
+			t.Fatalf("%s: %q: %v", path, line, err)
+		}
+		begin, done := time.Unix(0, start), time.Unix(0, end)
+		if begin.Before(from) || done.After(to) {
+			continue
+		}
+		if span[0].IsZero() || begin.Before(span[0]) {
+			span[0] = begin
+		}
+		span[1] = maxTime(span[1], done)
+	}
+	if span[0].IsZero() {
+		t.Fatalf("%s holds no call between %s and %s", path, from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+	}
+	return span
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // selfState finds the sync state of one storage citizen under home.

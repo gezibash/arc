@@ -25,6 +25,14 @@ import (
 // Timeout bounds one call to a relay.
 const Timeout = 15 * time.Second
 
+// realEOSE turns off the end of stored events that the Nostr library makes
+// up when a relay does not send one within 7 seconds. A loaded relay can be
+// slower. The made-up end drops the stored events that are still on the
+// way, so a query would give too few events, and no error. A caller then
+// takes an announced provider for offline. Each call waits for the real end
+// of stored events, within its own deadline.
+const realEOSE = time.Duration(math.MaxInt64)
+
 // errAuthRequired says that the relay wants NIP-42 authentication first.
 var errAuthRequired = errors.New("the relay asks for authentication")
 
@@ -260,7 +268,7 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 // stored reads the stored events of one subscription, up to its end of
 // stored events.
 func stored(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) ([]nostr.Event, error) {
-	sub, err := conn.Subscribe(ctx, filter, nostr.SubscriptionOptions{Label: "arc"})
+	sub, err := conn.Subscribe(ctx, filter, nostr.SubscriptionOptions{Label: "arc", MaxWaitForEOSE: realEOSE})
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +328,7 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 	}
 	defer func() { _ = conn.Close() }()
 
-	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange"})
+	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange", MaxWaitForEOSE: realEOSE})
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: fmt.Errorf("relay %s: %w", r.URL, err)}
 	}
@@ -556,7 +564,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 
 	sub, err := conn.Subscribe(ctx, filter, nostr.SubscriptionOptions{
 		Label:          "arc-watch",
-		MaxWaitForEOSE: time.Duration(math.MaxInt64),
+		MaxWaitForEOSE: realEOSE,
 	})
 	if err != nil {
 		_ = conn.Close()
