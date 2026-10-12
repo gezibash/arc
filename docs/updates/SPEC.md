@@ -4,7 +4,7 @@
 - Layers: runtime
 - Owns: none
 - Proof: go test -count=1 -run '^TestDelivery$' ./internal/proof/
-- Unverified: Official signed channels and automatic application are not enabled. The proof signs its own channel and serves it through a local relay.
+- Unverified: Official signed channels and automatic application are not enabled. The proof signs its own channel and serves it through a local relay. No test sends an archive on a pipe between two machines, or through the TURN server of a relay.
 
 `arc update` replaces the program on this machine with one that the publisher
 signed. It reads a channel document from a citizen that serves releases,
@@ -122,8 +122,9 @@ by itself, and grants no permission to restart.
 
 ### 3.4 Distribution
 
-- Discovery, channel metadata and package transfer go through a releases
-  provider, as live calls over the configured relays.
+- Discovery and channel metadata go through a releases provider, as live
+  calls over the configured relays. The archive goes over a pipe of a
+  session with that provider (section 3.7), or in chunks of live calls.
 - A local package may be supplied for offline operation. A first
   installation is a bootstrap operation.
 - GitHub may build or store artifacts, but the updater must not bypass the
@@ -132,6 +133,9 @@ by itself, and grants no permission to restart.
   digest. One reply carries at most 64 KiB of an archive. A gift wrap grows a
   reply about 2.4 times, and a relay takes an event of at most 256 KiB.
 - Resume a partial download only against the same digest.
+- A session over the relay can also carry the archive, as raw bytes. The
+  provider keeps this path for older clients. `arc update` does not use it,
+  because chunks were faster on a local relay (section 8).
 
 ### 3.5 Applying a release
 
@@ -156,6 +160,71 @@ identity directory is `~/.config/arc/citizens/<name>`.
 - A record that cannot be read is an error, not an empty record: the update
   stops, and the operator looks. To start again, remove the file.
 
+### 3.7 The archive on a pipe
+
+A consumer can get the archive on a pipe of
+[the direct spec](../direct/SPEC.md), section 3.7. The session stays on the
+relay. It carries the request, the `direct` record, the `end` record and the
+final outcome. The pipe carries only the archive bytes of that one session.
+
+| Order | On the relay (session records) | On the pipe |
+| --- | --- | --- |
+| 1 | Open: `{"op":"archive","digest":"sha256:<hex>","direct":<offer>}` | |
+| 2 | `{"type":"direct","sdp":"<answer>"}` | |
+| 3 | | The data channel opens. The provider has not opened the archive. |
+| 4 | | The archive bytes, then `end`; the consumer answers `ok` |
+| 5 | `{"type":"end","body_bytes":<n>}` | |
+| 6 | Close: the final outcome | |
+
+The session is a `server_stream` session. A session request holds at most
+16 KiB, and the offer adds about 1 to 3 KiB, so the manifest of the
+releases app declares `max_bytes` 16384.
+
+The provider:
+
+1. If the request has no `direct`, it MUST send the raw archive bytes on the
+   session, as before.
+2. If the digest is not valid, it MUST close the session with
+   `invalid_request`, before the pipe.
+3. If its policy is `session`, it MUST close the session with `no_pipe`.
+   `ARC_PATH` sets the policy, as the direct spec defines.
+4. If it holds 4 pipes, it MUST close the session with `busy`.
+5. It answers the offer with the `direct` record, and waits for the pipe. If
+   the pipe does not open, it MUST close the session with `no_path`. It MUST
+   NOT open the archive before the pipe opens.
+6. It writes the archive on the pipe, and closes the write side of the
+   pipe. After the consumer has the last byte, it sends the `end` record.
+   `n` is the number of archive bytes on the pipe.
+7. If the pipe breaks during the archive, it MUST close the session with
+   `pipe_failed`.
+
+The consumer:
+
+- It picks the path before the first archive byte: `--path`, else the
+  setting of `arc path`, else `auto`. It MUST NOT move a download to
+  another path.
+- It offers a pipe only to a provider that this identity installed, and
+  whose interface declares `server_stream`. A session needs both.
+- Each attempt of the direct spec is one new session. An attempt that
+  fails sent no archive bytes, so the next attempt is not a replay.
+- It MUST compare the number of bytes on the pipe with `body_bytes`. A
+  different number is an error.
+- It MUST check the length and the SHA-256 of the archive against the
+  channel document, as for chunks (section 3.5). A pipe gives no other trust.
+- If the pipe closes before its end, the consumer MUST stop with an error
+  that says the outcome is not known. It MUST NOT ask again, and it MUST
+  NOT replace the program.
+- In `auto`, a pipe that does not open is an error. The consumer MUST NOT
+  then use chunks.
+- In `auto`, if the provider refuses the offer with `invalid_request`,
+  `no_pipe` or `request_too_large`, the consumer reads the archive in
+  chunks, and writes `the provider has no pipe; using chunks over the
+  relay`. In `direct` and `turn`, it stops with an error.
+- In `auto`, if this identity did not install the releases app with
+  `server_stream`, the consumer reads the archive in chunks, and writes the
+  reason. In `direct` and `turn`, it stops with an error.
+- In `session`, the consumer reads the archive in chunks.
+
 ## 4. Behavior
 
 ### 4.1 The commands
@@ -174,6 +243,7 @@ Each command takes:
 | `--publisher` | The public key that signs the channel |
 | `--channel` | The channel to read. The default is `stable` |
 | `--program` | The program to replace. The default is this one |
+| `--path` | The path of the archive: `auto`, `direct`, `turn` or `session`. The default is the setting of `arc path`, else `auto` |
 
 The relays are the relays of the identity, from `arc relay add`. The identity
 comes from `arc keys use`, from `ARC_KEY`, or from `--key`.
@@ -190,10 +260,17 @@ comes from `arc keys use`, from `ARC_KEY`, or from `--key`.
 3. Selects the newest release for this operating system and CPU that carries
    an archive and is eligible.
 4. Reports what it found. `apply` continues.
-5. Downloads the archive through the relay, and checks its length and its
-   SHA-256. If this identity installed the releases app, and its interface
-   declares `server_stream`, the archive comes as one session stream.
-   Otherwise it comes in chunks of 64 KiB.
+5. Downloads the archive, and checks its length and its SHA-256. If this
+   identity installed the releases app, and its interface declares
+   `server_stream`, the archive comes on a pipe (section 3.7). Otherwise,
+   and with `--path session`, it comes in chunks of 64 KiB through the
+   relay. At the end, arc writes one line on standard error with the path,
+   the bytes, the time and the speed:
+
+   ```text
+   path direct (host to host): 21056992 bytes in 0.3 s, 529.9 Mbit/s
+   path chunks (relay replies): 21056992 bytes in 2.9 s, 59.0 Mbit/s
+   ```
 6. Reads one program out of the archive, see section 3.5.
 7. Writes the candidate, proves that it starts, and renames it over the
    target, see section 3.5.
@@ -236,6 +313,9 @@ reload an external program that a provider runs.
   rewrite the configuration of a deployment platform from the updater.
 - A record that cannot be read stops the update, see section 3.6.
 
+- A pipe that does not open, or that breaks, stops the update with an
+  error. The program stays, see section 3.7.
+
 ## 6. Security
 
 - A publisher, a provider, or anyone between them could otherwise serve an
@@ -251,6 +331,10 @@ reload an external program that a provider runs.
   release. The release pipeline must exercise every supported platform.
 - To know a relay address, or to connect as a citizen, grants no update
   authority.
+- A pipe shows the IP address of each end to the other end, as the direct
+  spec says. `arc update` offers a pipe by default. An operator who does
+  not want this runs `arc path turn` or `arc path session`. A provider sets
+  `ARC_PATH`.
 - Any later remote control must use explicit operator authorization over ARC,
   with its own scope for update operations. A relay or a provider never
   inherits that authority. A background check must not turn a status call
@@ -262,6 +346,17 @@ reload an external program that a provider runs.
   not read them.
 - A client of v0.9.0 or older reads only schemas `1` and `2`, so it must
   install a newer release with `install.sh` first.
+- An older client never sends `direct`. It gets the archive in chunks, or
+  as raw bytes on a session, as before. No older client breaks.
+- An older provider decodes the archive request strictly, and refuses
+  `direct` with `invalid_request` before it opens the archive. A provider
+  with `max_bytes` 4096 refuses the larger request with
+  `request_too_large`. In `auto`, a new client then reads chunks, and says
+  so. With `--path direct` or `--path turn`, it stops:
+  `the provider has no pipe; run again with --path session`.
+- `arc update apply` now offers a pipe by default. It then shows the IP
+  address of this machine to the provider, and needs UDP. `--path session`
+  keeps the old chunk path.
 
 ## 8. Proof
 
@@ -273,6 +368,29 @@ The tests cover the signature domain, a changed document, an expired
 document, a replayed sequence, platform selection, a wrong hash, a short
 download, an archive that escapes its directory, and a program that does not
 start after the swap.
+
+These tests prove section 3.7, each through a local relay:
+
+```sh
+go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestOlderReleasesProviderFallsBackToChunks|TestArchivePipeFailureIsAnError|TestBrokenArchivePipeIsAnError|TestBadArchiveOverPipeIsRefused)$' ./cmd/arc/
+go test -count=1 -run '^TestArchiveOfferRefusals$' ./apps/releases/server/
+```
+
+They cover the archive on the pipe and the path line, `--path session`, a
+citizen that did not install the app, an older provider, a pipe that does
+not open, a pipe that breaks, a changed archive byte, `no_pipe` and `busy`.
+
+A run on one Mac, through a local relay with no rate limit, on the loopback
+address, 2026-10-12. The archive held a build of `arc`: 21,056,992 bytes.
+Three runs of each path:
+
+| Path | Time | Speed |
+| --- | --- | --- |
+| pipe, `--path direct` and `auto` | 0.3 s | 523.5 to 533.4 Mbit/s |
+| chunks (a citizen that did not install the app) | 2.8 to 2.9 s | 58.1 to 59.2 Mbit/s |
+| session frames (the raw-byte session that v0.24.0 reads) | 5.9 s | 28.3 to 28.5 Mbit/s |
+
+The loopback address and a relay with no rate limit flatter each path.
 
 `mise run delivery` proves the whole path. A publisher signs a channel with
 `arc release sign`, a releases provider serves it through a relay, and an

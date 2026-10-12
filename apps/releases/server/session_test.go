@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/providertest"
 )
@@ -46,5 +47,32 @@ func TestReleaseSessionArchiveAndPathBoundary(t *testing.T) {
 	}
 	if _, err := io.ReadAll(archiveStream(t, s, "sha256:"+linked)); err == nil {
 		t.Fatal("followed symlink")
+	}
+}
+
+// TestArchiveOfferRefusals: a provider with ARC_PATH=session answers an
+// offer with no_pipe, and a provider that holds direct.MaxPipes pipes
+// answers busy. Neither opens the archive.
+func TestArchiveOfferRefusals(t *testing.T) {
+	offer := map[string]any{"v": 1, "sdp": "v=0"}
+	open := func(s *server) error {
+		body, _ := json.Marshal(map[string]any{"op": "archive", "digest": "sha256:" + strings.Repeat("f", 64), "direct": offer})
+		stream := providertest.Start(t, provider.ServerStream, func(ctx context.Context, stream *provider.Stream) error {
+			return s.HandleSession(ctx, provider.Request{Message: string(body), Meta: map[string]any{"method": "RAW", "path": "/releases"}}, stream)
+		})
+		_, _ = io.ReadAll(stream)
+		return stream.Wait()
+	}
+	s, _ := testReleases(t)
+	s.pipes, s.slots = direct.AcceptConfig{Policy: direct.Off}, make(chan struct{}, direct.MaxPipes)
+	if err := open(s); err == nil || !strings.Contains(err.Error(), "no_pipe") {
+		t.Fatalf("ARC_PATH=session: %v, want no_pipe", err)
+	}
+	s.pipes.Policy = direct.Auto
+	for range direct.MaxPipes {
+		s.slots <- struct{}{}
+	}
+	if err := open(s); err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("pipe %d: %v, want busy", direct.MaxPipes+1, err)
 	}
 }

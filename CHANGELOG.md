@@ -17,6 +17,13 @@ All notable changes to ARC are recorded here. The format follows
   local relay on the loopback address.
 - `arc-http` and `httpadapter.New` answer the offer of a pipe. `ARC_PATH`
   sets the policy of the provider. A provider holds at most 4 pipes.
+- `arc update apply` gets the release archive on a direct pipe from an
+  installed releases provider. `--path` picks the path, as for
+  `arc session --http`, and arc writes the path and the speed on standard
+  error. An archive of 21 MB on one Mac took 0.3 s on the pipe and 2.9 s in
+  chunks, through a local relay on the loopback address.
+- `arc-releases` answers the offer of a pipe. `ARC_PATH` sets its policy,
+  and its manifest takes requests of 16 KiB.
 
 ### Changed
 
@@ -24,6 +31,10 @@ All notable changes to ARC are recorded here. The format follows
   address of this machine to the provider, and needs UDP. An older provider
   refuses the offer, and arc gets the body in session frames, as before.
   `--path session` keeps the old behavior.
+- `arc update apply` offers a pipe to an installed releases provider by
+  default, with the same IP address and UDP effects. An older provider
+  refuses the offer, and arc reads chunks. With no pipe, arc now always
+  reads chunks: it no longer reads the archive as raw bytes on a session.
 
 ## [0.24.0] - 2026-10-11
 
