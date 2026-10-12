@@ -45,6 +45,7 @@ import (
 	"github.com/gezibash/arc/adapters/transport/file"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
@@ -741,7 +742,7 @@ func syncCommand() *cobra.Command {
 				return err
 			}
 			defer sess.Close()
-			sealed := sealedFilter(sess.Key.Public)
+			sealed := sealedFilters(sess.Key.Public)
 			repair, _ := command.Flags().GetBool("repair")
 			turn, _ := command.Flags().GetBool("turn")
 			if turn && !repair {
@@ -757,12 +758,15 @@ func syncCommand() *cobra.Command {
 				return errors.New("nothing to sync with: add a relay, or give --dir")
 			}
 
+			if dir != "" {
+				refreshDevices(command.Context(), sess, command.ErrOrStderr())
+			}
 			failed := false
 			for _, t := range targets {
 				// Self data goes to a directory that the citizen carries,
 				// but never to a relay.
 				if dir != "" {
-					report, err := sess.Node.Sync(command.Context(), sealed, t)
+					report, err := syncSealed(command.Context(), sess.Node, sealed, t)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
 						failed = true
@@ -821,11 +825,35 @@ func syncCommand() *cobra.Command {
 	return command
 }
 
-// sealedFilter matches what a citizen seals to their own key: drafts, their
-// checkpoints and parts, and deletion requests.
-func sealedFilter(me nostr.PubKey) nostr.Filter {
-	return nostr.Filter{
-		Kinds:   []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, nostr.KindDeletion},
-		Authors: []nostr.PubKey{me},
+// sealedFilters match the self data of a citizen: drafts, their checkpoints
+// and parts, and deletion requests. The first matches what the citizen key
+// signed. The second matches what a device key signed, by the p tag that
+// names the citizen.
+func sealedFilters(me nostr.PubKey) []nostr.Filter {
+	kinds := []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, nostr.KindDeletion}
+	return []nostr.Filter{
+		{Kinds: kinds, Authors: []nostr.PubKey{me}},
+		{Kinds: kinds, Tags: nostr.TagMap{"p": {me.Hex()}}},
 	}
+}
+
+// syncSealed syncs each filter of self data with one transport, and adds
+// the reports.
+func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t transport.Transport) (node.Report, error) {
+	var sum node.Report
+	for _, filter := range filters {
+		report, err := n.Sync(ctx, filter, t)
+		if err != nil {
+			return sum, err
+		}
+		sum.Transport = report.Transport
+		sum.Received += report.Received
+		sum.Duplicate += report.Duplicate
+		sum.Superseded += report.Superseded
+		sum.Refused = append(sum.Refused, report.Refused...)
+		sum.Unreadable += report.Unreadable
+		sum.Sent += report.Sent
+		sum.SendFailed = append(sum.SendFailed, report.SendFailed...)
+	}
+	return sum, nil
 }

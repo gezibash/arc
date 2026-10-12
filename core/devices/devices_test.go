@@ -57,12 +57,24 @@ func TestDeviceList(t *testing.T) {
 	}
 
 	// A revocation in the same second must still replace the list.
-	revoked, err := devices.Seal(ctx, citizen, opened.Remove(phone), 1000)
+	revoked, err := devices.Seal(ctx, citizen, opened.Revoke(phone, 1000, 2), 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if revoked.CreatedAt != 1001 || !devices.Newer(revoked, event) {
 		t.Fatalf("the revocation is at %d; want 1001, later than the list before it", revoked.CreatedAt)
+	}
+	// The list keeps the revocation, so that a reader knows the time
+	// before which the key wrote honestly.
+	after, err := devices.Open(ctx, citizen, citizen.Public, revoked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := after.RevokedAt(phone); after.Has(phone) || !ok || r.At != 1000 || r.Gen != 2 {
+		t.Fatalf("after the revocation the list holds %+v", after)
+	}
+	if _, err := after.Add(devices.Device{Key: phone, Name: "phone again"}); err == nil {
+		t.Fatal("a revoked device key was added again")
 	}
 
 	if _, err := opened.Add(devices.Device{Key: phone, Name: "other"}); err == nil {

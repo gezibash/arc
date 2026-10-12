@@ -273,12 +273,18 @@ func olderStorageApp(t *testing.T) string {
 // keeps the compiled packages of olderCommit between runs.
 func olderProgram(t *testing.T, pkg string) string {
 	t.Helper()
+	return olderProgramAt(t, olderCommit, pkg)
+}
+
+// olderProgramAt builds a program of the repository as of one commit.
+func olderProgramAt(t *testing.T, commit, pkg string) string {
+	t.Helper()
 	dir := t.TempDir()
 	tarball := filepath.Join(dir, "src.tar")
 	src := filepath.Join(dir, "src")
 	bin := filepath.Join(dir, filepath.Base(pkg))
 	steps := []*exec.Cmd{
-		exec.Command("git", "-C", repo, "archive", "--format=tar", "-o", tarball, olderCommit),
+		exec.Command("git", "-C", repo, "archive", "--format=tar", "-o", tarball, commit),
 		exec.Command("mkdir", src),
 		exec.Command("tar", "-xf", tarball, "-C", src),
 		exec.Command("go", "build", "-trimpath", "-o", bin, pkg),

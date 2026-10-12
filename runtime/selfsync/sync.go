@@ -22,18 +22,41 @@ import (
 // only to storage citizens, as blobs.
 var Kinds = []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind, nostr.KindDeletion}
 
-// Filter matches the self data of a citizen in the local store.
+// Filter matches the self data that the citizen key signed: the drafts of
+// the format before the data roots, and the drafts of a machine that holds
+// the citizen key.
 func Filter(me nostr.PubKey) nostr.Filter {
 	return nostr.Filter{Kinds: Kinds, Authors: []nostr.PubKey{me}}
 }
 
-// errNotListed refuses a change of a device key that is not on the device
-// list.
-var errNotListed = errors.New("the device key is not on the device list")
+// Records returns the self data of a citizen in the local store: what the
+// citizen key signed, and what a device key signed with a p tag that names
+// the citizen.
+func Records(s Store, me nostr.PubKey) ([]nostr.Event, error) {
+	signed, err := s.Query(Filter(me))
+	if err != nil {
+		return nil, err
+	}
+	named, err := s.Query(nostr.Filter{Kinds: Kinds, Tags: nostr.TagMap{"p": {me.Hex()}}})
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[nostr.ID]bool, len(signed))
+	for _, event := range signed {
+		seen[event.ID] = true
+	}
+	for _, event := range named {
+		if !seen[event.ID] && draft.Owner(event) == me {
+			signed = append(signed, event)
+		}
+	}
+	return signed, nil
+}
 
 // Store is the local store of the device.
 type Store interface {
 	Save(nostr.Event) (store.Result, error)
+	SaveFrom(nostr.Event, store.Source) (store.Result, error)
 	Query(nostr.Filter) ([]nostr.Event, error)
 }
 
@@ -176,7 +199,7 @@ type state struct {
 	// once.
 	Listed bool `json:"listed,omitempty"`
 	// Seen holds the blob IDs that an older device got. A device of this
-	// version moves them to the shared file seen.json.
+	// version moves them to the shared file seen-2.json.
 	Seen map[string]bool `json:"seen,omitempty"`
 	// Answered is the Unix time of the last pipe that opened.
 	Answered int64 `json:"answered,omitempty"`
@@ -285,7 +308,10 @@ func (s *Syncer) writeJSON(path string, v any) error {
 
 // seenPath is the file of the blob IDs that the device got from any
 // storage citizen, whatever the store did.
-func (s *Syncer) seenPath() string { return filepath.Join(s.State, "seen.json") }
+// The record format of the data roots changed the name: an older arc marked
+// such blobs as seen when it refused them, so a device fetches each blob
+// once more after its update.
+func (s *Syncer) seenPath() string { return filepath.Join(s.State, "seen-2.json") }
 
 func (s *Syncer) loadSeen() (map[string]bool, error) {
 	seen := map[string]bool{}
@@ -304,7 +330,7 @@ func (s *Syncer) loadSeen() (map[string]bool, error) {
 
 // take opens one blob, checks who made it, and gives the record to the
 // store.
-func (s *Syncer) take(ctx context.Context, id string, blob []byte, list []nostr.PubKey, keysOf func(context.Context, uint32) (Keys, error)) (nostr.Event, store.Result, error) {
+func (s *Syncer) take(ctx context.Context, id string, blob []byte, keysOf func(context.Context, uint32) (Keys, error)) (nostr.Event, store.Result, error) {
 	gen, err := Gen(blob)
 	if err != nil {
 		return nostr.Event{}, store.Result{}, err
@@ -317,18 +343,16 @@ func (s *Syncer) take(ctx context.Context, id string, blob []byte, list []nostr.
 	if err != nil {
 		return nostr.Event{}, store.Result{}, err
 	}
-	if env.Record.PubKey != s.Citizen {
+	if draft.Owner(env.Record) != s.Citizen {
 		return nostr.Event{}, store.Result{}, errors.New("the record is of another citizen")
 	}
 	if !isSelf(env.Record.Kind) {
 		return nostr.Event{}, store.Result{}, fmt.Errorf("the record has kind %d, which is not self data", env.Record.Kind)
 	}
-	// With a device list, the device key must be on it. With no list, the
-	// AEAD is the check: only a holder of the keys made the blob.
-	if len(list) > 0 && !slices.Contains(list, env.Device) {
-		return nostr.Event{}, store.Result{}, fmt.Errorf("%w: %s", errNotListed, env.Device.Hex())
-	}
-	result, err := s.Store.Save(env.Record)
+	// The store checks the key that signed the record against the device
+	// list. A record of a revoked key comes only from a storage citizen,
+	// which refused the key after its revocation.
+	result, err := s.Store.SaveFrom(env.Record, store.StorageCitizen)
 	return env.Record, result, err
 }
 

@@ -1,10 +1,12 @@
 # Files app
 
-Files are private files, sealed to your own key. The app is a data app: its
+Files are private files, sealed with a key of the files app under the data
+roots of your devices. The app is a data app: its
 [manifest](manifest.json) adds the commands `put`, `list`, `get` and `delete`,
 and no service program answers them.
 
-A file is a NIP-94 file metadata event, kind 1063, inside a NIP-37 draft. The
+A file is a NIP-94 file metadata event, kind 1063, inside a draft in the
+shape of NIP-37, which the device key signs. The
 metadata holds the name, the media type, the size, and the SHA-256 hash, in
 the tags that NIP-94 defines. The bytes travel as the content, and in parts
 past 32 KiB, as section 3.9.2 of the

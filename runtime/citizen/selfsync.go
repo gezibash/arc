@@ -318,7 +318,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	syncer := &selfsync.Syncer{
 		Citizen: sess.Key.Public,
 		Device:  signer,
-		Store:   sess.Node.Store,
+		Store:   sess.store,
 		Newest:  func(context.Context) (selfsync.Keys, error) { return newest, nil },
 		Keys:    once(sess.selfKeysAt),
 		Devices: onceList(sess.DeviceList),

@@ -16,6 +16,8 @@ import (
 	"fiatjaf.com/nostr/nip19"
 	blevesearch "github.com/gezibash/arc/adapters/search/bleve"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
+	"github.com/gezibash/arc/core/devices"
+	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 )
@@ -161,6 +163,28 @@ func (f *fakeEnv) SearchIndex() SearchIndex {
 	return f.search
 }
 func (f *fakeEnv) Keyer() nostr.Keyer { return keyer.NewPlainKeySigner(f.me) }
+
+// contentKey is the content key of an app under generation 0, the keyed
+// root of the citizen.
+func (f *fakeEnv) contentKey(app string) ([32]byte, error) {
+	root, err := KeyedRoot(f.me)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return devices.ContentKey([32]byte(root), app)
+}
+func (f *fakeEnv) Sealer(_ context.Context, app string) (draft.Sealer, error) {
+	key, err := f.contentKey(app)
+	return draft.Sealer{Citizen: f.me.Public(), Signer: f.Keyer(), Key: key}, err
+}
+func (f *fakeEnv) Opener(app string) draft.Opener {
+	return draft.Opener{Citizen: f.me.Public(), Keyer: f.Keyer(), Key: func(_ context.Context, gen uint32) ([32]byte, error) {
+		if gen != 0 {
+			return [32]byte{}, errors.New("no such generation")
+		}
+		return f.contentKey(app)
+	}}
+}
 func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []string) error {
 	for _, event := range events {
 		s := f.store
@@ -181,7 +205,11 @@ func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []stri
 	return nil
 }
 func (f *fakeEnv) Fetch(_ context.Context, filter nostr.Filter, relays []string) ([]nostr.Event, error) {
-	f.fetchedIDs += len(filter.IDs)
+	// Only fetches by ID count, so a tail that reads in another goroutine
+	// does not write the counter.
+	if len(filter.IDs) > 0 {
+		f.fetchedIDs += len(filter.IDs)
+	}
 	if relays != nil {
 		return f.net.relay(f.t, relays[0]).Query(filter)
 	}

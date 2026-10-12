@@ -299,13 +299,16 @@ func TestStorageJournalSync(t *testing.T) {
 	// The phone writes, and is revoked before the laptop syncs. The signer
 	// sends the new grant set at once. The storage citizen then refuses the
 	// device key itself, so a thief who holds the device key and skips the
-	// bunker gets no session. The laptop also refuses the change of the
-	// revoked device. After the phone joins the list again, both take it.
+	// bunker gets no session. The change of the phone is older than the
+	// revocation, and comes from the storage citizen, so the laptop takes
+	// it. The revoked key cannot join the list again.
 	phone.run("journal", "append", "hrs/ablations/1", "from", "the", "phone")
 	phone.run("sync")
 	if code := openStorage(t, url, phoneKey, storeKey); code != "invalid_request" {
 		t.Fatalf("the storage citizen answered the granted phone with %q, want invalid_request for the fake offer", code)
 	}
+	// A change of the second of the revocation counts as after it.
+	time.Sleep(time.Second)
 	if revoked := laptop.run("keys", "devices", "revoke", "phone"); !strings.Contains(revoked, "grants: sent to the storage citizen storage") {
 		t.Fatalf("the signer did not send the revocation to the storage citizen:\n%s", revoked)
 	}
@@ -315,26 +318,16 @@ func TestStorageJournalSync(t *testing.T) {
 		}
 	}
 	t.Log("ok: a revoked device gets no session from either storage citizen")
-	refused := laptop.try("", "sync")
-	if !strings.Contains(refused.Stderr, "not on the device list: "+phoneDevice) {
-		t.Fatalf("the laptop took a change of a revoked device:\nstdout: %s\nstderr: %s", refused.Stdout, refused.Stderr)
-	}
-	if got := laptop.run("journal", "read", "hrs/ablations/1"); strings.Contains(got, "from the phone") {
-		t.Fatalf("the laptop reads the change of the revoked phone:\n%s", got)
-	}
-	laptop.run("keys", "devices", "add", phoneDevice, "--name", "phone")
-	if code := openStorage(t, url, phoneKey, storeKey); code != "invalid_request" {
-		t.Fatalf("the storage citizen answered the phone on the list again with %q, want invalid_request", code)
-	}
 	// With two storage citizens, k is 1, and the one piece may come from
 	// either. The line of the whole sync counts the records.
-	if got := took(t, laptop.run("sync")); got == 0 {
-		t.Fatal("the laptop did not take the change after the phone joined the list again")
+	if synced := laptop.try("", "sync"); synced.Err != nil || took(t, synced.Stdout) == 0 {
+		t.Fatalf("the laptop did not take the change that the phone made before its revocation: %v\n%s\n%s", synced.Err, synced.Stdout, synced.Stderr)
 	}
 	if got := laptop.run("journal", "read", "hrs/ablations/1"); !strings.Contains(got, "from the phone") {
-		t.Fatalf("the laptop did not read the change of the listed phone:\n%s", got)
+		t.Fatalf("the laptop did not read the change that the phone made before its revocation:\n%s", got)
 	}
-	t.Log("ok: the device key signs each change, and a change of a device that is not on the list is refused")
+	has(t, laptop.refuse("keys", "devices", "add", phoneDevice, "--name", "phone"), "the device key was revoked", "a revoked key joining the list again")
+	t.Log("ok: the device key signs each change, a change from before the revocation stays readable, and a revoked key cannot join again")
 
 	// Neither storage citizen learns the citizen key. Each account is named
 	// by its account key, and no file of a storage citizen holds the
@@ -349,8 +342,8 @@ func TestStorageJournalSync(t *testing.T) {
 			t.Fatalf("the accounts of %s are %v, want only the account key %s", c.name, entries, account)
 		}
 		state := read(t, filepath.Join(work, c.name+"-blobs", "accounts", account, "state.json"))
-		if !strings.Contains(state, phoneDevice) {
-			t.Fatalf("the account of %s holds no grant of the phone:\n%s", c.name, state)
+		if strings.Contains(state, phoneDevice) {
+			t.Fatalf("the account of %s holds a grant of the revoked phone:\n%s", c.name, state)
 		}
 		for _, dir := range []string{c.name, c.name + "-blobs"} {
 			if path := holdsKey(t, filepath.Join(work, dir), citizen); path != "" {

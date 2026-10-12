@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/store"
 )
 
@@ -89,19 +90,22 @@ func (r *run) classify(id string, record nostr.Event, result store.Result) error
 // deletionOf returns the ID of a deletion request in the store that names
 // the record: by its ID, or by the coordinate of an addressable record.
 func (r *run) deletionOf(record nostr.Event) (string, error) {
-	filters := []nostr.Filter{{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{r.s.Citizen},
+	// A device key can sign the deletion, so the owner names the citizen.
+	filters := []nostr.Filter{{Kinds: []nostr.Kind{nostr.KindDeletion},
 		Tags: nostr.TagMap{"e": {record.ID.Hex()}}}}
 	if record.Kind.IsAddressable() {
-		filters = append(filters, nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{r.s.Citizen},
-			Tags: nostr.TagMap{"a": {fmt.Sprintf("%d:%s:%s", record.Kind, record.PubKey.Hex(), record.Tags.GetD())}}, Since: record.CreatedAt})
+		filters = append(filters, nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion},
+			Tags: nostr.TagMap{"a": {fmt.Sprintf("%d:%s:%s", record.Kind, draft.Owner(record).Hex(), record.Tags.GetD())}}, Since: record.CreatedAt})
 	}
 	for _, f := range filters {
 		found, err := r.s.Store.Query(f)
 		if err != nil {
 			return "", err
 		}
-		if len(found) > 0 {
-			return found[0].ID.Hex(), nil
+		for _, e := range found {
+			if draft.Owner(e) == r.s.Citizen {
+				return e.ID.Hex(), nil
+			}
 		}
 	}
 	return "", nil
@@ -137,7 +141,9 @@ func (r *run) deleted(records []nostr.Event) {
 // replacer returns the record that replaced or deleted the record of an
 // old blob, if the store holds it.
 func (r *run) replacer(o replaced) (*nostr.Event, error) {
-	f := nostr.Filter{Authors: []nostr.PubKey{r.s.Citizen}}
+	// A device key can sign the newer record, so the owner names the
+	// citizen.
+	var f nostr.Filter
 	if o.By != "" {
 		id, err := nostr.IDFromHex(o.By)
 		if err != nil {
@@ -151,10 +157,15 @@ func (r *run) replacer(o replaced) (*nostr.Event, error) {
 		}
 	}
 	found, err := r.s.Store.Query(f)
-	if err != nil || len(found) == 0 {
+	if err != nil {
 		return nil, err
 	}
-	return &found[0], nil
+	for i := range found {
+		if draft.Owner(found[i]) == r.s.Citizen {
+			return &found[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // onStorage says that the storage citizens hold the blob of a record,

@@ -22,6 +22,8 @@ const Kind nostr.Kind = 10274
 const (
 	MaxDevices = 64
 	MaxName    = 64
+	// MaxRevoked bounds the revocations that one list keeps.
+	MaxRevoked = 256
 )
 
 // protected is the NIP-70 tag: a relay takes the event only from its author.
@@ -34,14 +36,37 @@ type Device struct {
 	Added nostr.Timestamp `json:"added"`
 }
 
+// Revocation records a device key that the citizen removed. A reader
+// accepts self data of the key only when it is older than At, and only from
+// a storage citizen.
+type Revocation struct {
+	Key nostr.PubKey    `json:"key"`
+	At  nostr.Timestamp `json:"at"`
+	// Gen is the first generation of the data roots that the key never
+	// held, or 0 when the signer did not know it.
+	Gen uint32 `json:"gen"`
+}
+
 // List is the device list. At is the time of the event that holds it.
 type List struct {
 	Devices []Device
+	Revoked []Revocation
 	At      nostr.Timestamp
 }
 
 type body struct {
-	Devices []Device `json:"devices"`
+	Devices []Device     `json:"devices"`
+	Revoked []Revocation `json:"revoked,omitempty"`
+}
+
+// RevokedAt returns the revocation of a key, if the list records one.
+func (l List) RevokedAt(key nostr.PubKey) (Revocation, bool) {
+	for _, r := range l.Revoked {
+		if r.Key == key {
+			return r, true
+		}
+	}
+	return Revocation{}, false
 }
 
 // Has reports whether a device key is on the list.
@@ -65,6 +90,9 @@ func (l List) Add(d Device) (List, error) {
 	if err := checkName(d.Name); err != nil {
 		return l, err
 	}
+	if _, ok := l.RevokedAt(d.Key); ok {
+		return l, errors.New("the device key was revoked: the device must make a new key")
+	}
 	for _, have := range l.Devices {
 		if have.Key == d.Key {
 			return l, fmt.Errorf("the device key is on the list already, as %q", have.Name)
@@ -76,13 +104,23 @@ func (l List) Add(d Device) (List, error) {
 	if len(l.Devices) >= MaxDevices {
 		return l, fmt.Errorf("the list holds %d devices, the most it can", MaxDevices)
 	}
-	out := List{Devices: append(slices.Clone(l.Devices), d), At: l.At}
+	out := List{Devices: append(slices.Clone(l.Devices), d), Revoked: l.Revoked, At: l.At}
 	return out, nil
 }
 
-// Remove returns a list without the device that has this key.
-func (l List) Remove(key nostr.PubKey) List {
-	return List{Devices: slices.DeleteFunc(slices.Clone(l.Devices), func(d Device) bool { return d.Key == key }), At: l.At}
+// Revoke returns a list without the device that has this key, and records
+// its revocation at the time at. gen is the first generation that the key
+// never holds. The oldest revocation goes when the list holds MaxRevoked.
+func (l List) Revoke(key nostr.PubKey, at nostr.Timestamp, gen uint32) List {
+	revoked := slices.DeleteFunc(slices.Clone(l.Revoked), func(r Revocation) bool { return r.Key == key })
+	revoked = append(revoked, Revocation{Key: key, At: at, Gen: gen})
+	if len(revoked) > MaxRevoked {
+		revoked = revoked[len(revoked)-MaxRevoked:]
+	}
+	return List{
+		Devices: slices.DeleteFunc(slices.Clone(l.Devices), func(d Device) bool { return d.Key == key }),
+		Revoked: revoked, At: l.At,
+	}
 }
 
 func checkName(name string) error {
@@ -108,7 +146,10 @@ func Seal(ctx context.Context, k nostr.Keyer, l List, now nostr.Timestamp) (nost
 	if err != nil {
 		return nostr.Event{}, err
 	}
-	text, err := json.Marshal(body{Devices: append([]Device{}, l.Devices...)})
+	if len(l.Revoked) > MaxRevoked {
+		return nostr.Event{}, fmt.Errorf("the list holds more than %d revocations", MaxRevoked)
+	}
+	text, err := json.Marshal(body{Devices: append([]Device{}, l.Devices...), Revoked: l.Revoked})
 	if err != nil {
 		return nostr.Event{}, err
 	}
@@ -152,7 +193,10 @@ func Open(ctx context.Context, k nostr.Keyer, citizen nostr.PubKey, event nostr.
 			return List{}, fmt.Errorf("devices: %w", err)
 		}
 	}
-	return List{Devices: b.Devices, At: event.CreatedAt}, nil
+	if len(b.Revoked) > MaxRevoked {
+		return List{}, fmt.Errorf("devices: the list holds more than %d revocations", MaxRevoked)
+	}
+	return List{Devices: b.Devices, Revoked: b.Revoked, At: event.CreatedAt}, nil
 }
 
 // Newer reports whether event a replaces event b, as NIP-01 orders

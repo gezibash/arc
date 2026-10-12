@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, adapters, runtime
 - Owns: core/devices
-- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. A journal page is a draft that the citizen key seals and signs, so a device cannot read or write the journal with no path to the signer. Issue #253 tracks a page format under the data roots. No test runs `arc sync` with the signer stopped. The device opens the device list through the signer, so a sync of changes from other devices needs the signer. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
+- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
+- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped: `TestDevicePages` writes and reads the journal with the signer stopped, and syncs when it is back. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -26,7 +26,10 @@ Before this spec, the bunker admitted each client that gave one fixed secret,
 and kept its admissions only in memory. A copy of the `bunker://` URI admitted
 a thief again after each restart.
 
-This spec does not define the sealing of journal data into blobs, pairing
+A device signs the pages of the journal with its device key, so it writes
+the journal with no path to the signer.
+[The interface spec](../interface/SPEC.md), section 3.9.4, defines the
+page. This spec does not define the sealing of journal data into blobs, pairing
 codes, a policy for each device, or storage citizens. The base
 proposal and [the storage proposal](../proposals/storage.md) describe them.
 
@@ -81,8 +84,17 @@ The device list is one replaceable event of kind 10274:
 The JSON inside is:
 
 ```json
-{"devices": [{"key": "<64 hex>", "name": "laptop", "added": 1760000000}]}
+{"devices": [{"key": "<64 hex>", "name": "laptop", "added": 1760000000}],
+ "revoked": [{"key": "<64 hex>", "at": 1760100000, "gen": 2}]}
 ```
+
+- `revoked` lists each device key that the citizen removed: the time of the
+  revocation, and the first generation of the data roots that the key never
+  held. A reader takes self data of a revoked key only if it is older than
+  `at`, has a generation below `gen`, and came from a storage citizen
+  ([the interface spec](../interface/SPEC.md), section 3.9.4).
+- A revoked key MUST NOT join the list again. The device makes a new key.
+- A list MUST hold at most 256 revocations. The oldest one goes first.
 
 - Only the citizen key MUST sign a device list.
 - A list MUST hold at most 64 devices. A name MUST have 1 to 64 bytes and no
@@ -91,7 +103,8 @@ The JSON inside is:
 - A new list MUST have a `created_at` later than the list that it replaces.
   If the clock gives the same second, the new list takes the second after it.
 - A reader MUST ignore a JSON field that it does not know. A later step adds
-  a policy for each device in this way.
+  a policy for each device in this way. An older signer ignores `revoked`,
+  and still refuses a revoked key, because it is not in `devices`.
 - A reader MUST refuse a list with another author, a bad signature, content
   that does not open, or a limit that is broken. Of the lists that open, the
   reader takes the newest, as NIP-01 orders replaceable events.
@@ -182,10 +195,13 @@ The root cache:
   data.
 - A device MUST open data of a generation that it holds from the cache,
   with no request to the signer or to a relay.
-- A device asks the signer only for a generation that it does not hold, and
-  for the newest roots when it seals new data. If the signer does not
-  answer, the device seals under the newest generation that it holds, and
-  warns.
+- A device seals self data under the newest generation in its cache, with
+  no request to the signer or a relay. `arc sync`, `arc serve` and
+  `arc keys seal` ask for the newest roots first. If the newest roots event
+  is the event that the device opened last, the device asks the signer
+  nothing. If the signer does not answer, the device seals under the newest
+  generation that it holds, and warns.
+- A device asks the signer for a generation that it does not hold.
 - The keyed root, generation 0, also comes from the cache after its first
   opening.
 - A device MUST NOT remove a root from its cache. A revoked device thus keeps
@@ -193,6 +209,20 @@ The root cache:
 
 A machine that holds the citizen key, such as the signer or a machine that
 recovered the seed, opens the wrap to the citizen key in step 2.
+
+The device list cache:
+
+- `arc` keeps the device list that the machine opened last in the file of
+  the root cache, sealed with NIP-44 from the device key to the device key,
+  as the roots are. A machine that holds the citizen key uses the citizen
+  key.
+- The store checks the signer of each page against this cache, with no
+  request to the signer.
+- `arc sync`, `arc sync --dir`, `arc keys devices` and the signer's `add`
+  and `revoke` bring it up to date. If the newest list event is not newer
+  than the cached list, the machine asks the signer nothing.
+- The key of the machine itself counts as on the list, unless the cache
+  records its revocation. Thus a device writes before it learns the list.
 
 Data sealed with a data root:
 
@@ -239,7 +269,8 @@ and the day of admission.
 ### 4.3 Revoke a device
 
 On the signer: `arc keys devices revoke <name or device key>`. The signer
-publishes a new list without the device. The bunker loads it from the relay.
+publishes a new list without the device, and records the revocation in
+`revoked`, with the time and the next generation. The bunker loads it from the relay.
 The next request of the revoked device gets the refusal "the signer refuses
 this device: its key is not on the device list". The other devices go on.
 The signer also sends the new grant set to each storage citizen that it
@@ -273,7 +304,7 @@ restart keeps the list.
 | A list does not open | The bunker logs a warning and keeps the list that it has. |
 | No relay takes the roots after `add` or `revoke` | The command fails after the list is published, and names `arc keys roots`. The signer then makes the roots follow the list. Until then, the other devices seal under the old newest root, which the dropped device holds. |
 | A device cannot reach the signer or the relays | It uses the data roots that it keeps on its disk, and warns that the newest roots did not come. |
-| A command needs the citizen key, and the signer does not answer | The command fails, and says "this needs the signer of the citizen". With a relay and no signer, the command waits 15 seconds once. In the next 15 seconds, each use of the signer fails at once. After that, a use connects again, so `arc serve` finds the signer when it comes back. Examples: a journal page, mail, and the device list. |
+| A command needs the citizen key, and the signer does not answer | The command fails, and says "this needs the signer of the citizen". With a relay and no signer, the command waits 15 seconds once. In the next 15 seconds, each use of the signer fails at once. After that, a use connects again, so `arc serve` finds the signer when it comes back. Examples: mail, a page of the format before the data roots, and a device list newer than the cache. A journal page of the data roots needs no signer. |
 | A root in the cache does not open with the key of the machine | The command fails, and names the generation. |
 | Data names a generation that the machine does not hold | `arc keys unseal` fails, and names the generation. |
 | The citizen has 128 generations | The signer refuses to make another one. `revoke` fails after it publishes the list, so the signer refuses the device, but the device keeps the newest root, and data sealed after the revocation stays readable to it. No command repairs this yet. |
@@ -298,6 +329,14 @@ restart keeps the list.
   keys and names.
 - **A device cannot change the list.** The signer never signs kind 10274 for a
   device. A device key cannot sign a list that a reader accepts.
+- **Pages after revocation.** A revoked device keeps its device key, so it
+  can still sign a page. Other devices refuse a page that it signed at or
+  after the time of the revocation. They take its earlier pages only from a
+  storage citizen, which refuses the device key after the revocation. The
+  device can backdate a page. A hostile storage citizen that works with the
+  thief can therefore give such a page to other devices. Two storage
+  citizens show the difference. A device that has not yet seen the new
+  list takes the page from a stick.
 - **Data roots after revocation.** A revoked device keeps each root that it
   opened before. It never gets a root of a later generation: the new root has
   no wrap to its key, and the chain opens only with the new root. Thus it
@@ -340,6 +379,12 @@ restart keeps the list.
   its update.
 - **An older relay** that does not know kind 10275 serves it to anyone who
   asks by author. The content stays sealed.
+- **An older device** reads a list with `revoked`, and ignores the field.
+  It does not refuse pages of a revoked key, because it reads no page that
+  a device key signed.
+- **An older signer** that publishes a list drops `revoked`. A newer device
+  then has no time for the revocation, and refuses each page of the key
+  that it does not hold already.
 - Kind 10272 stays reserved for a migration record. Kind 10273 is the
   storage list of [the storage spec](../storage/SPEC.md), section 3.8.
 
@@ -371,8 +416,17 @@ restart keeps the list.
   real local relay, a signer and two devices. It checks that the root cache
   of a device has mode 600, and that each root in it opens only with its
   device key. With the bunker stopped, the phone opens data of generation 1
-  in less than 5 seconds, seals under generation 1 with a warning, and fails
-  a journal write with "this needs the signer of the citizen". After the
+  in less than 5 seconds, seals under generation 1, writes and reads a
+  journal page, and fails to send mail with "this needs the signer of the
+  citizen".
+- `TestDevicePages` in `internal/proof` runs the real `arc` program, an
+  older `arc` of v0.26.0, a real local relay, a storage citizen and a
+  signer. The first sync seals the pages of the older `arc` again, and the
+  second seals nothing. With the bunker stopped, the phone writes and reads
+  the journal. When the bunker is back, the laptop reads the page of the
+  phone, also after an older `arc` refused the blob. After the revocation,
+  the laptop and a new tablet refuse a page that the phone wrote then, from
+  a stick, and the tablet reads the page from before the revocation. After the
   signer revokes the phone, the phone still opens generation 1, and cannot
   open generation 2: it holds no root of generation 2.
 - `TestDataRoots` in `core/devices` checks that a revoked device key gets no

@@ -221,6 +221,8 @@ func (f frozen) Save(nostr.Event) (store.Result, error) {
 	return store.Result{Outcome: store.Refused, Reason: "the store is frozen"}, nil
 }
 
+func (f frozen) SaveFrom(e nostr.Event, _ store.Source) (store.Result, error) { return f.Save(e) }
+
 func (f frozen) Query(nostr.Filter) ([]nostr.Event, error) { return f.held, nil }
 
 // TestReplacedReturns checks a deleted blob that comes back: a device

@@ -116,7 +116,7 @@ func (r *run) repair(ctx context.Context) error {
 			return err
 		}
 	}
-	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
 	}
@@ -537,7 +537,7 @@ func (r *run) planReplaced(id string, m *mapped, o replaced, event *nostr.Event,
 // learnOn learns about the blobs that the device got before this version,
 // on the pipes that repair may use.
 func (r *run) learnOn(ctx context.Context, usable func(int) bool) error {
-	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
 	}

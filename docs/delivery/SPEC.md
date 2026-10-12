@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed)$' ./internal/proof/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList)$' ./internal/proof/ ./core/store/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -520,6 +520,27 @@ A node keeps these events:
 The store MUST refuse an event that fails verification. It keeps one copy of
 each event, by ID. It removes an event when its `expiration` tag passes.
 
+Self data is a draft, a checkpoint, a part, or a deletion whose `k` tag names
+one of their kinds (section 4.11). The owner of self data is the citizen
+that its `p` tag names, or else its author. The owner of each other event is
+its author.
+
+- The store MUST keep one version of a replaceable or addressable event for
+  each owner, kind and `d` tag. Thus two devices of one citizen write one
+  page, not two.
+- The store MUST apply a NIP-09 deletion to the events of its owner.
+- If a key other than the owner signed self data, the store MUST ask the
+  device list of the owner. The store is given the list; core reads no
+  file. It MUST take the event only if the key is on the list. For a
+  revoked key, it MUST take the event only if the event came from a storage
+  citizen, its `created_at` is earlier than the revocation, and its
+  generation is earlier than the generation of the revocation. If the
+  owner has no device list at all, it takes the event. A store that is
+  given no device list takes self data only from its owner.
+- A refusal of a key that is not on the list says
+  `the signer is not on the device list of the citizen`. The key can join
+  the list later, so a sync checks such a record again.
+
 ## 4. Behavior
 
 ### 4.1 The router
@@ -793,11 +814,14 @@ A provider publishes its relay list with NIP-65:
 
 ### 4.11 Data that a citizen keeps for itself
 
-Some data belongs to one citizen only, such as a private journal. The citizen
-seals it to its own key, and keeps it in the local store. It syncs it between
+Some data belongs to one citizen only, such as a private journal. A device
+of the citizen seals it with a data root, signs it with its device key, and
+keeps it in the local store. A `p` tag names the citizen. It syncs it between
 its own nodes through its storage citizens, or a directory that it carries. It
-does not send it to a relay. The data is a NIP-37 draft, and `core/draft`
-makes it. See docs/interface/SPEC.md, section 3.9, and docs/storage/SPEC.md.
+does not send it to a relay. The data has the shape of a NIP-37 draft, and
+`core/draft` makes it. See docs/interface/SPEC.md, section 3.9.4, and
+docs/storage/SPEC.md. Data of the format before the data roots is sealed to
+the citizen key, and the citizen key signs it.
 
 An ARC relay refuses new drafts, checkpoints, parts and private relay lists,
 kinds 31234, 1234, 3275 and 10013. The one exception is the draft with the d
@@ -810,9 +834,9 @@ An older client sends drafts to its relays. An older relay takes a draft
 only from its author, because the draft carries the NIP-70 tag. The relay
 transport answers the NIP-42 challenge of the relay with the citizen's key.
 
-The store applies a NIP-09 deletion of an author to the events of that
-author, and refuses them after that, so a stick or a relay cannot bring a
-deleted event back. The one exception is a deletion with the tag
+The store applies a NIP-09 deletion of an owner to the events of that
+owner, and refuses them after that, so a stick or a relay cannot bring a
+deleted event back (section 3.11). The one exception is a deletion with the tag
 `["arc", "moved"]`. A device sends it to an ARC relay for the drafts that a
 storage citizen holds. The store refuses it, and the relay applies it and
 then serves it to nobody. A deletion whose `k` tag names a sealed kind is
@@ -997,6 +1021,16 @@ The seed changes no wire format and no key file. An older client reads the
 key file of a key that a seed derived, because the file holds the secret key
 as before. A key from before the seed stays valid. ARC does not move it to a
 seed.
+
+### 7.4 Self data of device keys
+
+The owner rule of section 3.11 changes the store. An older store names self
+data by its author. It therefore refuses nothing that a device key signed
+for the citizen, but keeps it as data of the device key, and its reader does
+not open it. An older device that gets such a record from a storage citizen
+refuses it, because the record does not name the citizen as its author. It
+reads the record after its update. [The storage spec](../storage/SPEC.md),
+section 7, says how the newer device fetches it again.
 
 ## 8. Proof
 

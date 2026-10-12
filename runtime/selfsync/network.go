@@ -80,7 +80,6 @@ type run struct {
 	blobs   map[string]*mapped
 	seen    map[string]bool
 	olds    oldState
-	devices []nostr.PubKey
 	listed  bool
 	// written holds the blobs that this sync coded with a new seal.
 	written map[string]bool
@@ -171,7 +170,7 @@ func (r *run) kept(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
 	}
@@ -564,7 +563,7 @@ func binaryGen(tag []byte) uint32 {
 // read gets each blob that the device lacks, and gives its record to the
 // store.
 func (r *run) read(ctx context.Context) error {
-	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
 	}
@@ -663,30 +662,29 @@ func (r *run) short(id string, m *mapped) string {
 // device learns about counts in no total of the report.
 func (r *run) take(ctx context.Context, id string, blob []byte, learning bool) error {
 	if !r.listed {
-		l, ok, err := r.s.Devices(ctx)
-		if err != nil {
-			return fmt.Errorf("the device list: %w", err)
+		// The store checks each record against the device list that
+		// this machine keeps. Bring it up to date once, before the first
+		// record. Without the signer, the kept list serves.
+		if _, _, err := r.s.Devices(ctx); err != nil && ctx.Err() == nil {
+			r.refuse("the device list did not come, so the list on this machine serves: %v", err)
 		}
-		r.listed, r.devices = true, []nostr.PubKey{}
-		if ok {
-			// The citizen key may always write.
-			r.devices = append(r.devices, r.s.Citizen)
-			for _, d := range l.Devices {
-				r.devices = append(r.devices, d.Key)
-			}
-		}
+		r.listed = true
 	}
-	record, result, err := r.s.take(ctx, id, blob, r.devices, r.keysOf)
+	record, result, err := r.s.take(ctx, id, blob, r.keysOf)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		r.refuse("%s: %v", id, err)
-		// A device can join the list later, so its blob gets a new chance
-		// on the next sync.
-		if !errors.Is(err, errNotListed) {
-			r.seen[id] = true
-			r.olds.Checked[id] = true
+		r.seen[id] = true
+		r.olds.Checked[id] = true
+		return nil
+	}
+	// A device can join the list later, so a record of a key that is not
+	// on it gets a new chance on the next sync.
+	if result.Outcome == store.Refused && result.Reason == store.ReasonUnlisted {
+		if !learning {
+			r.refuse("%s: the store refused it: %s", id, result.Reason)
 		}
 		return nil
 	}
@@ -733,7 +731,7 @@ func (r *run) write(ctx context.Context) error {
 		return nil
 	}
 	// Read the store again: a deletion that came in removed records.
-	records, err := r.s.Store.Query(Filter(r.s.Citizen))
+	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
 		return err
 	}

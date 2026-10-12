@@ -20,8 +20,9 @@ import (
 // with no path to the signer, through the normal CLI and a real relay. The
 // device keeps its roots on its disk, sealed to its device key, in a file
 // that only its user reads. With the signer stopped, the device opens and
-// seals data of each generation that it holds. A command that needs the
-// citizen key fails, and names the signer. After a revocation, the device
+// seals data of each generation that it holds, and writes and reads its
+// journal. A command that needs the citizen key, such as mail, fails, and
+// names the signer. After a revocation, the device
 // keeps each older generation, and never gets the new one.
 func TestOfflineDevice(t *testing.T) {
 	const limit = 10 * time.Second
@@ -90,16 +91,17 @@ func TestOfflineDevice(t *testing.T) {
 	if !strings.HasPrefix(sealed.Stdout, "1:") {
 		t.Fatalf("the phone did not seal with generation 1: %q", sealed.Stdout)
 	}
-	has(t, sealed.Stderr, "the newest data roots did not come", "the warning of the phone")
 	has(t, laptop.input(ifaceTrim(sealed.Stdout), "keys", "unseal", "journal"), "from the phone", "the laptop opening the data of the phone")
-	t.Log("ok: with the signer stopped, the phone seals with the newest generation that it holds, and warns")
+	t.Log("ok: with the signer stopped, the phone seals with the newest generation that it holds")
 
-	refused := phone.try("---\ntitle: Off\npage: 1\nnotebook: hrs/offline\n---\noffline\n", "journal", "write", "hrs/offline/1")
+	phone.input("---\ntitle: Off\npage: 1\nnotebook: hrs/offline\n---\noffline\n", "journal", "write", "hrs/offline/1")
+	has(t, phone.run("journal", "read", "hrs/offline/1"), "offline", "the journal of the phone with the signer stopped")
+	refused := phone.try("", "message", "send", laptopKey, "needs", "the", "signer")
 	if refused.Err == nil {
-		t.Fatal("the phone wrote a journal page with the signer stopped; the page format needs the citizen key (issue #253)")
+		t.Fatal("the phone sent mail with the signer stopped")
 	}
-	has(t, refused.Stderr, "this needs the signer of the citizen", "the journal write with the signer stopped")
-	t.Logf("ok: a journal write needs the signer, and says so: %s", strings.TrimSpace(refused.Stderr))
+	has(t, refused.Stderr, "this needs the signer of the citizen", "mail with the signer stopped")
+	t.Logf("ok: a journal page needs no signer; mail needs it, and says so: %s", strings.TrimSpace(refused.Stderr))
 
 	bunker = signer.start("keys", "bunker", "--relay", url)
 	if ifaceLine(bunker, "bunker://", limit) == "" {

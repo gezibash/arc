@@ -8,6 +8,11 @@ The journal is a local app. Its pages live in the local store of each device,
 and never go to a relay. `arc sync` syncs them with your storage citizens, as
 encrypted blobs; see "Sync between devices".
 
+A device writes and reads its journal with no path to the signer. The device
+key signs each page, and a data root that the device keeps on its disk seals
+it. Only commands that need the citizen key, such as mail, wait for the
+signer. See "Pages without the signer".
+
 ## Install its commands
 
 Install the journal interface from an author you trust:
@@ -101,6 +106,22 @@ list, another device takes only the changes of the citizen key and of a device
 on the list. [The storage spec](../../docs/storage/SPEC.md) defines
 the blob and the sync.
 
+### Pages without the signer
+
+Each page is sealed with a key of the journal under the newest data root
+that the device keeps, and the device key signs it. A `p` tag names the
+citizen, so two devices write one page, not two. A device takes a page of
+another device only if that device key is on the device list. After the
+signer revokes a device, other devices refuse each page that it signs from
+then on. They still take its earlier pages from a storage citizen.
+
+A page of an older arc is sealed to the citizen key, and opens only through
+the signer. Each `arc sync` that reaches the signer seals such pages again
+under the data roots, once. The output says `sealed <n> pages again under the
+data roots`. An older arc cannot read the pages of this arc, so update each
+device. [The app interface](../../docs/interface/SPEC.md), section 3.9.4,
+defines the page.
+
 ### Pages on the relays
 
 An older arc wrote each page to the relays. The first `arc sync` of this arc
@@ -123,10 +144,11 @@ The [manifest](manifest.json) defines every command of the journal. The
 [app interface](../../docs/interface/SPEC.md) defines the primitives that it
 uses.
 
-A page is a NIP-23 article, kind 30023, inside a NIP-37 draft. The article's
-`d` tag is the page address, sealed inside the draft; the draft's `d` tag is a
-keyed value of the address. A client that knows NIP-37 opens the page as a
-draft article. The checkpoints of the draft are the history of the page.
+A page is a NIP-23 article, kind 30023, inside a draft in the shape of
+NIP-37. The article's `d` tag is the page address, sealed inside the draft;
+the draft's `d` tag is a keyed value of the address. The content key comes
+from the data roots, so no other Nostr client opens the page. The
+checkpoints of the draft are the history of the page.
 
 The journal is a collection of notebooks. A notebook is namespaced as
 `project/notebook`, such as `arc/architecture`. Each new page has a positive

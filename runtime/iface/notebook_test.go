@@ -131,7 +131,7 @@ func TestNotebookIndexTocAndSectionReferences(t *testing.T) {
 		if strings.Contains(event.Content, "Result") || strings.Contains(event.Tags.GetD(), "arc/research") {
 			t.Fatal("index or page leaked plaintext")
 		}
-		opened, err := draft.Open(context.Background(), c.env.Keyer(), event)
+		opened, err := c.env.Opener("journal").Open(context.Background(), event)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -306,7 +306,7 @@ func TestNotebookTimestampGrowthKeepsMultipartContentWithinBounds(t *testing.T) 
 	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Tags: nostr.TagMap{"k": {"30023"}}}))
 	var opened draft.Draft
 	for _, wrap := range wraps {
-		value, err := draft.Open(context.Background(), c.env.Keyer(), wrap)
+		value, err := c.env.Opener("journal").Open(context.Background(), wrap)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -323,7 +323,7 @@ func TestNotebookTimestampGrowthKeepsMultipartContentWithinBounds(t *testing.T) 
 			t.Fatal(err)
 		}
 		parts := testutil.Must(c.env.store.Query(nostr.Filter{IDs: []nostr.ID{partID}}))
-		text, err := draft.OpenPart(context.Background(), c.env.Keyer(), parts[0])
+		text, err := c.env.Opener("journal").OpenPart(context.Background(), parts[0])
 		if err != nil || len(text) > draft.PartSize {
 			t.Fatalf("part exceeds protocol bound: %d %v", len(text), err)
 		}

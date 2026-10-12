@@ -132,6 +132,8 @@ func encodeTag(tag []byte) string {
 // memStore is a local store in memory.
 type memStore struct{ events map[nostr.ID]nostr.Event }
 
+func (s *memStore) SaveFrom(e nostr.Event, _ store.Source) (store.Result, error) { return s.Save(e) }
+
 func (s *memStore) Save(e nostr.Event) (store.Result, error) {
 	if _, ok := s.events[e.ID]; ok {
 		return store.Result{Outcome: store.Duplicate}, nil
