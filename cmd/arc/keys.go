@@ -509,7 +509,7 @@ func keysCommand() *cobra.Command {
 		},
 	}
 
-	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand(), accountCommand(), rootsCommand(), sealCommand(), unsealCommand())
+	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand(), accountCommand(), storageKeysCommand(), rootsCommand(), sealCommand(), unsealCommand())
 	return command
 }
 

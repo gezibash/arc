@@ -147,10 +147,16 @@ type Reply struct {
 	// next list.
 	Entries []Entry `json:"entries,omitempty"`
 	Next    uint64  `json:"next,omitempty"`
-	// Used, Quota and Blobs are the result of a usage request.
+	// Used, Quota and Blobs are the result of a usage request. Quota is
+	// the quota of the account.
 	Used  int64 `json:"used,omitempty"`
 	Quota int64 `json:"quota,omitempty"`
 	Blobs int   `json:"blobs,omitempty"`
+	// State, Plan and Expires are the record of the account in a usage
+	// reply. An older storage app sends none of them.
+	State   string `json:"state,omitempty"`
+	Plan    string `json:"plan,omitempty"`
+	Expires int64  `json:"expires,omitempty"`
 }
 
 // Entry is the last change of one blob ID.

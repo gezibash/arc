@@ -24,6 +24,7 @@ var env struct {
 	stranger           string // the arc home of another citizen
 	ownerKey, storeKey string
 	accountKey         string // the account key of the owner for the storage citizen
+	root, relay, app   string // the temporary directory, the relay URL, the app directory
 }
 
 // quota is the quota of each account in the tests.
@@ -90,6 +91,7 @@ func setup(m *testing.M) int {
 	}
 	address := listener.Addr().String()
 	listener.Close()
+	env.root, env.relay, env.app = root, "ws://"+address, app
 	relay := exec.Command(env.arc, "--home", filepath.Join(root, "relay"), "relay", "serve", "--listen", address, "--stun", "none")
 	if err := relay.Start(); err != nil {
 		return fail("arc relay serve: %v", err)
