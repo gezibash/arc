@@ -105,7 +105,10 @@ The link admits one account, and is good for 7 days.
 
 `allow` in the `Arcfile` matches the key of the caller. The caller is an
 account key or a device key, which no one can join to a citizen key. Thus
-`allow` cannot name friends. The invite token carries the consent.
+`allow` cannot name friends. The invite token carries the consent. If the
+`Arcfile` has `allow`, `arc serve` refuses the join of each new account key
+before the app sees it, and the signer gets an error of the call, not
+`refused`. Remove `allow` to admit accounts by a join.
 
 ### The rules of admission
 
@@ -116,7 +119,7 @@ token admits under each rule.
 | --- | --- |
 | `invite` (the default) | Refused: `this storage citizen admits only with an invite`. |
 | `ask` | Pending. The app keeps the request for 30 days. The operator decides. |
-| `open` | Admitted at `STORAGE_OPEN_QUOTA`, until the sum of the quotas passes `STORAGE_CAPACITY`. |
+| `open` | Admitted at `STORAGE_OPEN_QUOTA`, until the sum of the quotas passes `STORAGE_CAPACITY`. The sum counts each account of `STORAGE_OWNERS` at `STORAGE_QUOTA`. |
 
 Under `ask`, the operator lists the requests, and admits or refuses each:
 

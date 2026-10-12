@@ -538,7 +538,9 @@ runs `arc keys storage add`, and is not in `STORAGE_OWNERS`. It proves:
 
 Each check failed with a temporary break of its behavior.
 
-`go test ./runtime/selfsync/ -run TestAccountKey` checks the account key
+`go test ./sdk/storage/ -run TestVerifyJoin` checks that the signature of
+the citizen key in a join verifies only over its account key and its
+storage key. `go test ./runtime/selfsync/ -run TestAccountKey` checks the account key
 against HKDF-SHA256 that the Python standard library computed. `go test
 ./apps/storage/...` checks that a newer grant set revokes a device key, and
 that an older set is refused.
