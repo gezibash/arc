@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,4 +130,99 @@ func TestParsePolicy(t *testing.T) {
 	if _, err := ParsePolicy("relay"); err == nil {
 		t.Error("ParsePolicy took relay")
 	}
+}
+
+// fingerprintLine matches the DTLS fingerprint attribute of an SDP.
+var fingerprintLine = regexp.MustCompile(`(?m)^a=fingerprint:\S+ \S+`)
+
+// fingerprintOf returns the fingerprint attribute of the first line of an
+// SDP, or fails the test.
+func fingerprintOf(t *testing.T, sdp string) string {
+	t.Helper()
+	line := fingerprintLine.FindString(sdp)
+	if line == "" {
+		t.Fatalf("no fingerprint in the SDP:\n%s", sdp)
+	}
+	return line
+}
+
+// withFingerprint returns sdp with every fingerprint attribute replaced.
+func withFingerprint(sdp, line string) string {
+	return fingerprintLine.ReplaceAllLiteralString(sdp, line)
+}
+
+// TestPipeFingerprint checks that a pipe opens only if the certificate of
+// the other end has the fingerprint of the signed description. Each case
+// sends the answer or the offer through the open function, where the ARC
+// call would carry it, and changes it there.
+func TestPipeFingerprint(t *testing.T) {
+	local := Options{Loopback: true}
+
+	type attempt struct {
+		pipe     *Pipe // the dialer's pipe
+		err      error
+		accepted chan error // the result of the Wait on the answerer
+	}
+	run := func(t *testing.T, change func(t *testing.T, o *Offer, answer *string, other string)) attempt {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+		t.Cleanup(cancel)
+		a := attempt{accepted: make(chan error, 1)}
+		a.pipe, a.err = Dial(ctx, DialConfig{Policy: DirectOnly, Options: local}, func(ctx context.Context, o Offer) (string, error) {
+			// A second end with its own certificate: the third party.
+			other, otherAnswer, err := Accept(ctx, AcceptConfig{Options: local}, o)
+			if err != nil {
+				return "", err
+			}
+			t.Cleanup(func() { _ = other.Close() })
+			p, answer, err := Accept(ctx, AcceptConfig{Options: local}, o)
+			if err != nil {
+				return "", err
+			}
+			t.Cleanup(func() { _ = p.Close() })
+			change(t, &o, &answer, otherAnswer)
+			go func() { a.accepted <- p.Wait(ctx) }()
+			return answer, nil
+		})
+		if a.pipe != nil {
+			t.Cleanup(func() { _ = a.pipe.Close() })
+		}
+		return a
+	}
+
+	t.Run("correct fingerprint connects", func(t *testing.T) {
+		a := run(t, func(*testing.T, *Offer, *string, string) {})
+		if a.err != nil {
+			t.Fatalf("a pipe with the right fingerprint failed: %v", a.err)
+		}
+		if err := <-a.accepted; err != nil {
+			t.Fatalf("the answerer: %v", err)
+		}
+	})
+
+	t.Run("answer with the fingerprint of another certificate", func(t *testing.T) {
+		// The signed answer says the certificate of the third party, but the
+		// end that answers has its own certificate.
+		a := run(t, func(t *testing.T, _ *Offer, answer *string, other string) {
+			*answer = withFingerprint(*answer, fingerprintOf(t, other))
+		})
+		if a.err == nil {
+			t.Fatal("the dialer opened a pipe to a certificate that has another fingerprint")
+		}
+		t.Logf("dialer error: %v", a.err)
+		if err := <-a.accepted; err == nil {
+			t.Error("the answerer opened a pipe to a dialer that refused its certificate")
+		}
+	})
+
+	t.Run("answer with a changed fingerprint", func(t *testing.T) {
+		a := run(t, func(t *testing.T, _ *Offer, answer *string, _ string) {
+			zero := strings.Repeat("00:", 31) + "00"
+			*answer = withFingerprint(*answer, "a=fingerprint:sha-256 "+zero)
+		})
+		if a.err == nil {
+			t.Fatal("the dialer opened a pipe to a certificate that has a changed fingerprint")
+		}
+		t.Logf("dialer error: %v", a.err)
+	})
 }
