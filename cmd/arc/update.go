@@ -16,9 +16,9 @@ import (
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/internal/canonical"
-	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/release"
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +54,7 @@ func withUpdateFlags(command *cobra.Command) *cobra.Command {
 	command.Flags().String("publisher", "", "the key that signs the channel (ARC_RELEASE_PUBLISHER, default the provider)")
 	command.Flags().String("channel", "stable", "the channel to read")
 	command.Flags().String("program", "", "the program to replace (default: this one)")
+	command.Flags().String("path", "", "the path of the archive: auto, direct, turn or session (default: arc path)")
 	return command
 }
 
@@ -121,21 +122,33 @@ func update(command *cobra.Command, apply bool) error {
 
 	ctx, cancel := context.WithTimeout(command.Context(), 10*time.Minute)
 	defer cancel()
-	var source release.Requester = releaseCaller{sess: sess, provider: provider}
+	pipes, err := dialConfig(command)
+	if err != nil {
+		return err
+	}
+	caller := releaseCaller{sess: sess, provider: provider}
 	// Keep the existing updater usable without installation. An installed provider
 	// that advertises streaming selects the session path before any archive request.
 	trusted, err := installs.Trusted(provider, "releases")
 	if err != nil {
 		return err
 	}
+	streams := false
 	if trusted {
 		_, offer, _, err := sess.Target(ctx, installs, "releases+arc://"+provider.Hex()+"/releases", "")
 		if err != nil {
 			return err
 		}
-		if offer.SupportsInteraction(session.ServerStream) {
-			source = streamReleaseCaller{releaseCaller{sess: sess, provider: provider}, installs}
-		}
+		streams = offer.SupportsInteraction(session.ServerStream)
+	}
+	// With no pipe, the archive comes in chunks: on a local relay they were
+	// faster than session frames, and they need fewer events.
+	var source release.Requester = caller
+	path := chunkPath
+	var piped *pipeReleaseCaller
+	if streams && pipes.Policy != direct.Off {
+		piped = &pipeReleaseCaller{releaseCaller: caller, installs: installs, dial: pipes}
+		source = piped
 	}
 	checkpoint := &release.Checkpoint{Dir: dir}
 	platform := release.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
@@ -169,11 +182,33 @@ func update(command *cobra.Command, apply bool) error {
 	} else if program, err = filepath.Abs(program); err != nil {
 		return err
 	}
-	progress := func(read, total int64) { fmt.Printf("\r  read    %d of %d bytes", read, total) }
+	if !streams && pipes.Policy != direct.Off {
+		// A pipe needs a session, and a session needs the releases app
+		// installed with server_stream.
+		reason := fmt.Sprintf("the releases app of %s is not installed with server_stream, so arc opens no pipe", provider.Hex())
+		if pipes.Policy != direct.Auto {
+			return fmt.Errorf("%s; run arc install %s releases, or run again with --path session", reason, provider.Hex())
+		}
+		fmt.Fprintf(command.ErrOrStderr(), "%s; using chunks over the relay\n", reason)
+	}
+	if piped != nil {
+		piped.dial.Need = newest.Archive().Size
+	}
+	started, finished := time.Now(), time.Time{}
+	progress := func(read, total int64) {
+		fmt.Printf("\r  read    %d of %d bytes", read, total)
+		if read == total {
+			finished = time.Now()
+		}
+	}
 	if err := release.Apply(ctx, source, newest, program, progress); err != nil {
 		return err
 	}
 	fmt.Println()
+	if piped != nil {
+		path = piped.path
+	}
+	fmt.Fprintln(command.ErrOrStderr(), direct.Report(path, newest.Archive().Size, finished.Sub(started)))
 	fmt.Printf("arc %s is installed at %s\n", newest.Version, program)
 	fmt.Printf("the release it replaced stands at %s.previous\n", program)
 	return nil
@@ -330,17 +365,4 @@ func checkSuccessor(target string, unsigned map[string]any) error {
 		return fmt.Errorf("the sequence must be above %d, the sequence of %s", now, target)
 	}
 	return nil
-}
-
-type streamReleaseCaller struct {
-	releaseCaller
-	installs catalog.Installs
-}
-
-func (r streamReleaseCaller) OpenArchive(ctx context.Context, digest string) (release.ArchiveReader, error) {
-	body, err := json.Marshal(map[string]string{"op": "archive", "digest": digest})
-	if err != nil {
-		return nil, err
-	}
-	return r.sess.OpenSessionAddress(ctx, r.installs, "releases+arc://"+r.provider.Hex()+"/releases", string(body), session.ServerStream)
 }

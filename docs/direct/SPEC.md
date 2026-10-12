@@ -4,7 +4,7 @@
 - Layers: sdk
 - Owns: sdk/direct
 - Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestParsePolicy)$' ./sdk/direct/
-- Remaining: the releases, storage citizen and upload steps of [the proposal](../proposals/direct-path.md), section 6; a test that a wrong certificate fingerprint fails, section 6.
+- Remaining: the storage citizen and upload steps of [the proposal](../proposals/direct-path.md), section 6; a test that a wrong certificate fingerprint fails, section 6.
 - Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. No test proves that pion refuses a wrong certificate fingerprint. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
@@ -170,8 +170,9 @@ The policy is the choice of an end for one session:
 - A command of `cmd/arc` takes the flag `--path`. If the flag is not set,
   it reads the file `path` in the home of the citizen. `arc path <policy>`
   writes that file.
-- A provider program reads `ARC_PATH`. `arc-http` stops at its start if
-  the value is not a policy. `httpadapter.New` then opens no pipe.
+- A provider program reads `ARC_PATH`. `arc-http` and `arc-releases` stop
+  at their start if the value is not a policy. `httpadapter.New` opens no
+  pipe for such a value.
 - `ARC_STUN` sets the STUN server of an end, as section 3.1 defines.
   `ARC_LOOPBACK`, if set, adds the loopback address.
 - An answerer with the policy `turn` runs `arc relay turn` for a credential.

@@ -7,7 +7,9 @@
 //	{"op":"chunk","digest":"sha256:<hex>","offset":0,"length":65536}
 //
 // The channel document comes back whole. A chunk comes back as base64, so a
-// large archive travels in pieces that each fit one reply.
+// large archive travels in pieces that each fit one reply. A server_stream
+// session sends one archive, over a pipe of sdk/direct when the request
+// offers one. ARC_PATH sets the policy of the pipe.
 package server
 
 import (
@@ -21,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/strictjson"
 )
@@ -44,7 +47,10 @@ const (
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type server struct {
-	root string
+	root  string
+	pipes direct.AcceptConfig
+	// slots holds one entry for each open pipe.
+	slots chan struct{}
 }
 
 // Run reads the release root and serves the app through core ARC.
@@ -65,8 +71,12 @@ func Run(ctx context.Context, opts provider.Options) error {
 	if info, err := os.Lstat(root); err != nil || !info.IsDir() {
 		return fmt.Errorf("the release root is not a directory")
 	}
+	pipes, err := direct.ProviderConfig()
+	if err != nil {
+		return err
+	}
 	opts.MaxLineBytes = MaxLineBytes
-	return provider.Run(ctx, &server{root: root}, opts)
+	return provider.Run(ctx, &server{root: root, pipes: pipes, slots: make(chan struct{}, direct.MaxPipes)}, opts)
 }
 
 // HandleRequest answers one request.

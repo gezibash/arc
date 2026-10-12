@@ -69,7 +69,10 @@ func Download(ctx context.Context, provider Requester, artifact *Artifact, progr
 	}
 
 	if streaming, ok := provider.(ArchiveSource); ok {
-		return downloadStream(ctx, streaming, artifact, progress)
+		out, err := downloadStream(ctx, streaming, artifact, progress)
+		if !errors.Is(err, ErrUseChunks) {
+			return out, err
+		}
 	}
 	out := make([]byte, 0, artifact.Size)
 
@@ -171,6 +174,10 @@ type ArchiveReader interface {
 	io.ReadCloser
 	Wait() error
 }
+
+// ErrUseChunks is the error of OpenArchive when the provider sends no
+// archive stream. Download then reads the archive in chunks.
+var ErrUseChunks = errors.New("release: the provider sends no archive stream")
 
 // ArchiveSource is selected before submission, when the provider declares streaming.
 type ArchiveSource interface {

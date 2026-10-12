@@ -446,7 +446,10 @@ exit 1
 	rel.run("keys", "gen")
 	rel.run("relay", "add", url)
 	relKey := rel.key()
-	relServing := rel.with("RELEASES_ROOT=" + releases).serve(
+	// The pipe of an archive finds no path when both ends ask the STUN
+	// server of a relay on the loopback address. ARC_STUN=none keeps the
+	// host addresses only, as the pipe tests of cmd/arc do.
+	relServing := rel.with("RELEASES_ROOT="+releases, "ARC_STUN=none").serve(
 		"exec://" + program("arc-releases") + "?manifest=" + filepath.Join(repo, "apps/releases/manifest.json"))
 
 	old := caller.using(oldArc)
@@ -458,17 +461,18 @@ exit 1
 	want(strings.Contains(version(oldArc+".previous"), "0.9.0"), "the previous program is gone")
 	t.Log("ok: an older arc reads the channel over the relay, and replaces itself")
 
-	// Installing the streaming declaration selects core sessions for a second
-	// update.
+	// Installing the streaming declaration lets a second update open a
+	// session, and the archive goes over a pipe of that session.
 	streamArc := filepath.Join(work, "stream-old", "arc")
 	write(t, streamArc, read(t, oldArc+".previous"), 0o755)
-	streamOld := caller.using(streamArc)
+	streamOld := caller.using(streamArc).with("ARC_STUN=none")
 	want(streamOld.try("", "install", relKey, "--yes").Err == nil, "install streaming releases")
 	apply = streamOld.try("", "update", "apply", "--provider", relKey, "--publisher", publisherKey)
 	want(apply.Err == nil, "streaming update apply: %s%s", apply.Stdout, apply.Stderr)
+	want(strings.Contains(apply.Stderr, "path direct ("), "the archive did not go on the pipe: %s", apply.Stderr)
 	want(strings.Contains(version(streamArc), "9.9.9"), "streaming update did not install the release")
 	want(strings.Contains(version(streamArc+".previous"), "0.9.0"), "streaming update lost the old program")
-	t.Log("ok: an installed releases provider streams the verified archive through core sessions")
+	t.Log("ok: an installed releases provider sends the verified archive over a pipe")
 
 	wrong := old.try("", "update", "check", "--provider", relKey, "--publisher", callerKey)
 	want(wrong.Err != nil, "a channel of another publisher passed")

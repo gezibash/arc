@@ -7,7 +7,7 @@
   "service": {
     "method": "RAW",
     "path": "/releases",
-    "max_bytes": 4096,
+    "max_bytes": 16384,
     "interactions": [
       "request_reply",
       "server_stream"

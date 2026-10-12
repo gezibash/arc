@@ -2,10 +2,12 @@ Status: proposed
 
 # A direct path for bulk bytes
 
-It answers [issue #167](https://github.com/gezibash/arc/issues/167). Steps
-1 and 2 of section 6 are built: [the direct spec](../direct/SPEC.md) and
-[the HTTP spec](../http/SPEC.md), section 3.7, define them. The other steps
-are not built.
+It answers [issue #167](https://github.com/gezibash/arc/issues/167). The
+first three steps of section 6 are built: the pipe, http bodies and release
+archives. [The direct spec](../direct/SPEC.md),
+[the HTTP spec](../http/SPEC.md), section 3.7, and
+[the updates spec](../updates/SPEC.md), section 3.7, define them. The other
+steps are not built.
 
 Each number has a tag:
 

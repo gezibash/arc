@@ -205,10 +205,37 @@ arc session --mode server_stream 'releases+arc://<service>/releases' \
 Check the command's exit status before using the output file: a failed session
 may leave a partial file. Validate the archive against its signed channel metadata.
 
-After the consumer installs a releases service that declares streaming,
-`arc update apply` selects this mode automatically. It checks exact byte count,
-SHA-256 and the final core session outcome before unpacking. It retains the
-archive in memory for the existing installer. Services without an installed
-streaming declaration use the existing chunk path, selected before submission;
-a failed stream never silently falls back or resumes. Channel documents remain
+An older `arc update` (v0.24.0) reads this stream after it installs the
+service. A newer `arc update` reads the archive on a pipe, as the next
+section says.
+
+## Archives on a pipe
+
+If the archive request holds the field `direct`, the offer of a pipe of
+`sdk/direct`, the session carries only the setup and the end:
+
+1. The service answers with `{"type":"direct","sdp":"<answer>"}`.
+2. It waits for the pipe, and opens the archive only after the pipe opens.
+3. It writes the archive on the pipe, then sends
+   `{"type":"end","body_bytes":<n>}` on the session.
+
+[The updates spec](../../docs/updates/SPEC.md), section 3.7, defines the
+rules. The service holds at most 4 pipes, and answers `busy` to more. The
+manifest declares `max_bytes` 16384, because the offer adds about 1 to 3 KiB
+to the request.
+
+`ARC_PATH` sets the policy of the service: `auto` (the default), `direct`,
+`turn` or `session`. With `session`, the service answers each offer with
+`no_pipe`, and `arc update` reads chunks. A pipe shows the IP address of
+the service to each caller that the access rules let in. With `turn`, the
+service shows only the address of the TURN server of the relay, and runs
+`arc relay turn` for a credential. The service stops at the start if
+`ARC_PATH` has another value. `ARC_STUN`, `ARC_LOOPBACK` and `ARC_RELAYS`
+work as in `sdk/direct`.
+
+After the consumer installs the service, `arc update apply` offers a pipe.
+It checks the byte count, the SHA-256 and the final session outcome before
+it unpacks. If the pipe does not open, or breaks, the update stops with an
+error, and never falls back or resumes. A service that refuses the offer
+gets chunk requests, and `arc update` says so. Channel documents remain
 ordinary request/reply operations and still require publisher verification.
