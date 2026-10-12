@@ -1107,7 +1107,10 @@ bytes up.
   this does not happen through this version.
 - An ARC relay of this version serves a deletion whose `k` tag names a
   sealed kind only to its author, because its `e` tags count the drafts.
-  An older ARC relay serves such a deletion to anyone.
+  An older ARC relay serves such a deletion to anyone. A query of kind 5
+  alone does not authenticate, so it gets no deletion of drafts from an ARC
+  relay of this version. The import asks with the draft kinds, and gets
+  them.
 - The private relay list, kind 10013, is retired. A newer client does not
   publish it. A newer client still lists kind 10013 on its relays, to delete
   the old ones.

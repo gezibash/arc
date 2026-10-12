@@ -557,8 +557,12 @@ func TestStorageImportsDrafts(t *testing.T) {
 	if left := relaySelfData(t, standard, old.home); len(left) != onStandard {
 		t.Fatalf("the relay that is not an ARC relay holds %d drafts after the sync, want the %d it had", len(left), onStandard)
 	}
-	if moved := relayKinds(t, url, old.home, nostr.KindDeletion); len(moved) != 0 {
-		t.Fatalf("the ARC relay serves %d deletions to the author, want none", len(moved))
+	// A filter with a draft kind makes the client authenticate as the
+	// author.
+	for _, e := range relayKinds(t, url, old.home, draft.Kind, nostr.KindDeletion) {
+		if e.Kind == nostr.KindDeletion {
+			t.Fatalf("the ARC relay serves a deletion to the author: %v", e.Tags)
+		}
 	}
 	t.Log("ok: the ARC relay serves no moved deletion, and a relay that is not an ARC relay keeps its drafts and gets no deletion")
 
