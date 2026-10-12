@@ -116,6 +116,20 @@ type selfCounts struct{ received, sent, held int }
 
 var selfLine = regexp.MustCompile(`storage: self data received (\d+), sent (\d+), already held (\d+)`)
 
+var tookLine = regexp.MustCompile(`self data: took (\d+) records`)
+
+// took reads the count of records that arc sync took from all storage
+// citizens.
+func took(t *testing.T, output string) int {
+	t.Helper()
+	m := tookLine.FindStringSubmatch(output)
+	if m == nil {
+		t.Fatalf("arc sync printed no line of the whole sync:\n%s", output)
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
 // selfSync reads the report line of arc sync for the storage citizen.
 func selfSync(t *testing.T, output string) selfCounts {
 	t.Helper()
@@ -309,8 +323,10 @@ func TestStorageJournalSync(t *testing.T) {
 	if code := openStorage(t, url, phoneKey, storeKey); code != "invalid_request" {
 		t.Fatalf("the storage citizen answered the phone on the list again with %q, want invalid_request", code)
 	}
-	if got := selfSync(t, laptop.run("sync")); got.received == 0 {
-		t.Fatalf("the laptop did not take the change after the phone joined the list again: %+v", got)
+	// With two storage citizens, k is 1, and the one piece may come from
+	// either. The line of the whole sync counts the records.
+	if got := took(t, laptop.run("sync")); got == 0 {
+		t.Fatal("the laptop did not take the change after the phone joined the list again")
 	}
 	if got := laptop.run("journal", "read", "hrs/ablations/1"); !strings.Contains(got, "from the phone") {
 		t.Fatalf("the laptop did not read the change of the listed phone:\n%s", got)
