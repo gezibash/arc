@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"fiatjaf.com/nostr"
@@ -100,7 +101,8 @@ func (sess *Session) AccountKey(storage nostr.PubKey) (keys.Key, error) {
 }
 
 // PushGrants sends the grant set of the device list to each storage citizen
-// that this citizen installed. The account key of each storage citizen
+// that this citizen installed, and to each storage citizen that the storage
+// list names as active or draining. The account key of each storage citizen
 // signs the call. A device key that the list does not hold loses its grant.
 // It returns the storage citizens that took the set, and one error for each
 // storage citizen that did not.
@@ -111,6 +113,11 @@ func (sess *Session) PushGrants(ctx context.Context, installs catalog.Installs, 
 	targets, err := storageInstalls(installs)
 	if err != nil {
 		return nil, err
+	}
+	// The storage list only adds targets. If it does not come, the set
+	// still goes to each install; a sync names the missing list.
+	if storageList, ok, err := sess.StorageList(ctx); err == nil && ok {
+		targets = withListed(targets, storageList)
 	}
 	body, err := grantsBody(list)
 	if err != nil {
@@ -154,6 +161,18 @@ func (sess *Session) pushGrants(ctx context.Context, install catalog.Install, bo
 		return errors.New(reply.Err)
 	}
 	return nil
+}
+
+// withListed adds each storage citizen of the storage list that is active
+// or draining, and that no install names.
+func withListed(targets []catalog.Install, list storage.List) []catalog.Install {
+	for _, entry := range list.Entries {
+		key := entry.Key.Hex()
+		if entry.Used() && !slices.ContainsFunc(targets, func(i catalog.Install) bool { return i.Provider == key }) {
+			targets = append(targets, catalog.Install{Provider: key, ID: StorageApp, As: entry.Name})
+		}
+	}
+	return targets
 }
 
 // storageInstalls returns each storage citizen that the citizen installed.
@@ -204,6 +223,9 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 // citizen that the citizen installed. With none, the data stays on this
 // machine, and it says so.
 func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
+	if err := sess.FollowStorageList(ctx, cfg.Installs, cfg.Out, cfg.Errs); err != nil {
+		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+	}
 	targets, err := storageInstalls(cfg.Installs)
 	if err != nil {
 		return err
