@@ -8,6 +8,15 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Changed
 
+- **Breaking.** `arc session --http --mode duplex` with `stream_body` sends
+  the request body on the direct pipe, and the response body on the same
+  pipe. Before, a request with `stream_body` got no pipe. The `end` record
+  holds `request_bytes`, and arc writes an `upload path` line. A provider
+  older than this refuses the offer with `invalid_request`; in `auto`, arc
+  then sends the body in session frames and says so. 100 MB went in 1.4 to
+  1.5 s on the pipe, against 31.7 to 32.6 s in frames, on the loopback
+  address of one Mac (#243).
+
 - **Breaking.** A storage citizen knows a citizen by an account key, never
   by the citizen key. The signer derives one account key for each storage
   citizen, and `arc keys account <key of the storage citizen>` prints it.

@@ -4,7 +4,7 @@
 - Layers: sdk
 - Owns: sdk/direct
 - Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy)$' ./sdk/direct/
-- Remaining: the storage citizen and upload steps of [the proposal](../proposals/direct-path.md), section 6.
+- Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
 - Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
@@ -205,7 +205,13 @@ The pipe is one data channel with the label `pipe`, reliable and ordered.
 - Another text stops the reader with an error that holds the text.
 - If the connection closes before `end`, the reader MUST stop with an error.
   It MUST NOT take the bytes so far as all of them.
-- The pipe carries bytes in each direction.
+- The pipe carries bytes in each direction. Each direction has its own
+  `end` and `ok`. The HTTP upload of [the HTTP spec](../http/SPEC.md),
+  section 3.8, uses both directions at the same time.
+- A reader that stops before `end` MUST still take the bytes off the
+  channel and drop them. The data channel delivers the messages in order,
+  so bytes that nobody reads also stop the `end` and the `ok` of the other
+  direction.
 
 An answerer holds at most 4 pipes at a time. It MUST refuse more before it
 answers. Each pipe holds sockets and buffers.
@@ -216,6 +222,13 @@ A command writes one line on standard error after the bytes:
 path direct (host to host): 104857600 bytes in 2.4 s, 348.9 Mbit/s
 path turn (relay): 104857600 bytes in 2.5 s, 329.6 Mbit/s
 path session (relay frames): 104857600 bytes in 54.3 s, 15.5 Mbit/s
+```
+
+An upload writes the same line for the request body, after the word
+`upload`:
+
+```text
+upload path direct (host to host): 104857600 bytes in 1.4 s, 587.0 Mbit/s
 ```
 
 These lines are runs on the loopback address of one Mac. Section 8.2 gives
@@ -301,6 +314,9 @@ An answerer that does not see the data channel open closes its end after
   is a change of that app.
 - The policy, the offer and the pipe of section 3.7 are new. The transfer
   app keeps its own request, and does not use them.
+- The rule of section 3.7 that a reader takes the bytes off the channel
+  after it stops changes no message. An older end that has one direction
+  only never meets the case.
 
 ## 8. Proof
 
@@ -382,7 +398,25 @@ ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/consumer" session --http --mode serv
 ```
 
 `origin` is `cmd/arc/testdata/streaming-http`. The loopback and a relay with
-no rate limit flatter both paths. Through a public relay, the session
+no rate limit flatter both paths.
+
+An upload of the same 104,857,600 bytes went to `/upload` of `origin` on
+2026-10-12, on the same Mac, in the same setup. The handler answered with
+the count and the SHA-256 of the bytes that it got. Each of the nine runs
+gave the SHA-256 of the file (`85a38859…ebed76`). The time runs from the
+start of the send, after the pipe opened, to the `end` record (measured):
+
+| Path | Time of the request body | Speed |
+| --- | --- | --- |
+| `--path direct` | 1.4 s in each run | 583.9 to 587.0 Mbit/s |
+| `--path auto` | 1.4 to 1.5 s, on `direct (host to host)` | 571.7 to 592.7 Mbit/s |
+| `--path session` | 31.7 to 32.6 s | 25.8 to 26.5 Mbit/s |
+
+```sh
+ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/consumer" session --http --mode duplex --path direct 'http+arc://<provider key>/upload' '{"stream_body":true}' < big.bin
+```
+
+`big.bin` holds 104,857,600 bytes: byte i is i mod 251. Through a public relay, the session
 frames gave 0.17 to 0.9 Mbit/s ([the proposal](../proposals/direct-path.md),
 section 0).
 

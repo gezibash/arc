@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/httpadapter
-- Proof: go test -count=1 -run '^(TestAGoHandlerAnswersACallThroughARelay|TestLargeBodyOverPipeThroughRelay|TestOlderProviderFallsBackToFrames|TestPipeFailureIsAnError|TestBrokenPipeIsAnError)$' ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestAGoHandlerAnswersACallThroughARelay|TestLargeBodyOverPipeThroughRelay|TestOlderProviderFallsBackToFrames|TestPipeFailureIsAnError|TestBrokenPipeIsAnError|TestLargeUploadOverPipeThroughRelay|TestOlderProviderUploadFallsBackToFrames|TestUploadPipeFailureIsAnError|TestBrokenUploadPipeIsAnError)$' ./cmd/arc/
 - Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. A provider with `ARC_PATH=turn` under `arc serve` ran by hand on one machine only.
 
 One ARC call carries one HTTP exchange. The package `sdk/httpadapter` maps
@@ -142,6 +142,8 @@ Request body stream:
 - Set `stream_body: true` in a duplex initial request to stream raw request
   bytes through the session input. Do not also set `body` or `body_base64`.
 - Input EOF ends the request body, and leaves response output open.
+- If the request also offers a pipe, the request body goes on the pipe,
+  not in the session input. Section 3.8 defines it.
 - SSE uses the same mapping. HTTP writes and flushes reach the consumer before
   the response ends.
 
@@ -158,19 +160,20 @@ WebSockets:
 - Output `ws_close` preserves the peer's close code/reason.
 - Peer ping/pong frames are handled by the WebSocket library.
 
-### 3.7 Response bodies on a pipe
+### 3.7 Bodies on a pipe
 
-A consumer can ask for the response body of a session on a pipe. The
-session stays on the relay. It carries the request, the status, the header
-fields, the trailers, the end record and the final outcome. The pipe carries
-only the body bytes of that one session.
+A consumer can ask for the bodies of a session on a pipe. The session
+stays on the relay. It carries the request, the status, the header fields,
+the trailers, the end record and the final outcome. The pipe carries only
+the body bytes of that one session: the response body, and the request
+body of a `stream_body` request (section 3.8).
 
 The request:
 
 - The initial request MAY hold the field `direct`: the offer of a pipe,
   as [the direct spec](../direct/SPEC.md), section 3.7, defines it.
-- A request with `direct` MUST NOT set `websocket` or `stream_body`. The
-  provider refuses it with `invalid_request`.
+- A request with `direct` MUST NOT set `websocket`. The provider refuses it
+  with `invalid_request`.
 - A buffered call (section 3.2) MUST NOT hold `direct`. The provider
   refuses it with `invalid_request`.
 
@@ -216,6 +219,48 @@ The consumer:
 - In `auto`, a pipe that does not open is an error. The consumer MUST NOT
   then use session frames: the TURN server of the relay is faster than the
   frames in each measured run.
+
+### 3.8 Request bodies on a pipe
+
+A duplex request with `stream_body` and `direct` sends the request body on
+the pipe, from the consumer to the provider. The response body goes on the
+same pipe, in the other direction, as section 3.7 defines. Each direction
+has its own `end` and `ok` ([the direct spec](../direct/SPEC.md),
+section 3.7). The rules of section 3.7 apply, with these additions.
+
+The provider:
+
+1. It opens the pipe as section 3.7 defines, and only then runs the HTTP
+   request. The handler reads the request body from the pipe. The session
+   input carries no body bytes.
+2. If the pipe closes before the `end` of the request body, it MUST close
+   the session with `pipe_failed`.
+3. After the response body, it takes the rest of the request body from the
+   pipe and drops it. Else the data channel stops, and the `ok` of the
+   response body cannot arrive.
+4. The `end` record also holds `request_bytes`: the number of request body
+   bytes that the provider took from the pipe before this record.
+
+```json
+{"type":"end","body_bytes":74,"request_bytes":104857600}
+```
+
+The consumer:
+
+- It MUST send no byte of the request body before the pipe opens. An
+  attempt that fails thus reads no input, and the next attempt or the
+  session frames of `auto` get the whole body.
+- It sends `end` after the last byte of the request body.
+- If it got `ok` for its `end`, `request_bytes` MUST equal the number of
+  bytes that it sent. A different number is an error.
+- The `end` record decides if a closed pipe is a failure:
+  - If the pipe closes before the `end` record, and the session fails with
+    `pipe_failed`, the consumer MUST stop with an error that says the
+    outcome is not known. It MUST NOT ask again.
+  - If the `end` record comes before `ok`, the handler answered before it
+    read the whole body, as a server that answers 413 does. The consumer
+    stops the upload and closes the pipe. This is not an error. The
+    consumer tells the user both counts.
 
 ## 4. Behavior
 
@@ -263,8 +308,9 @@ arc session --websocket 'http+arc://<provider>/socket' '{"subprotocols":["echo"]
 - `--http` writes decoded response bytes, and exits 22 for HTTP error
   statuses. It also rejects an `Arc-Session-Error` trailer from a nested
   provider session.
-- `--http` offers a pipe for the body (section 3.7), unless the request
-  sets `websocket` or `stream_body`. `--path auto|direct|turn|session` picks
+- `--http` offers a pipe for the bodies (sections 3.7 and 3.8), unless the
+  request sets `websocket`. With `--mode duplex` and `stream_body`, standard
+  input is the request body. `--path auto|direct|turn|session` picks
   the path. `arc path <policy>` sets the default of the citizen. The
   default is `auto`.
 - At the end, `--http` writes the path on standard error:
@@ -278,6 +324,18 @@ path session (relay frames): 104857600 bytes in 54.3 s, 15.5 Mbit/s
   local relay on the loopback address (measured, 2026-10-11). A real link
   is slower. [The direct spec](../direct/SPEC.md), section 8.2, gives the
   commands.
+
+- An upload writes one more line first, for the request body. Its time
+  runs from the start of the send, after the pipe opened, to the `end`
+  record:
+
+```text
+upload path direct (host to host): 104857600 bytes in 1.4 s, 587.0 Mbit/s
+path direct (host to host): 74 bytes in 0.0 s, 0.1 Mbit/s
+```
+
+  If the handler answered before it read the whole body, `--http` also
+  writes `the provider answered after N of the M bytes of the request body`.
 
 - A provider program reads its policy from `ARC_PATH`. `arc serve` gives
   it `ARC_RELAYS`, `ARC_HOME` and `ARC_PROGRAM`, so a provider with
@@ -305,7 +363,7 @@ process streams and signals. Other entry points can use `sdk/stdio.Run`. See
 | `no_pipe` | The request offers a pipe, and the policy of the provider is `session`. |
 | `busy` | The request offers a pipe, and the provider holds 4 pipes. |
 | `no_path` | The pipe did not open. The handler did not run. |
-| `pipe_failed` | The pipe broke during the body. |
+| `pipe_failed` | The pipe broke during a body, in either direction. |
 
 What the consumer writes for each failure of a pipe:
 
@@ -316,7 +374,9 @@ What the consumer writes for each failure of a pipe:
 | No path in each attempt | Stops | `no direct path, and no path through the relay: ...` |
 | `busy` | Stops | `the provider has too many pipes open now; try again later` |
 | The pipe breaks during the body | Stops | `the pipe closed after N bytes; the outcome is not known` |
+| The pipe breaks during the request body | Stops | `the pipe closed after N bytes of the request body; the outcome is not known` |
 | `body_bytes` and the count differ | Stops | `the body has N bytes, the provider sent M` |
+| `request_bytes` and the count differ after `ok` | Stops | `the provider read N bytes of the request body, arc sent M` |
 
 - The HTTP adapter rejects canceled requests before dispatch. It reports
   cancellation if the handler returns after the caller stops. An empty
@@ -354,6 +414,14 @@ What the consumer writes for each failure of a pipe:
 - An older provider decodes the request strictly, so it refuses `direct`
   with `invalid_request` before it runs the HTTP request. A consumer in
   `auto` asks again with no offer, and gets the body in frames.
+- An older consumer never sends `direct` with `stream_body`. It sends the
+  request body in session frames, as before.
+- A provider older than section 3.8 refuses `direct` with `stream_body`
+  as `invalid_request`, before it runs the HTTP request and before the
+  consumer reads its input. A consumer in `auto` asks again with no offer,
+  writes `the provider has no pipe; using session frames over the relay`,
+  and sends the body in frames. With `--path direct` or `--path turn`, it
+  stops.
 - A consumer of this version opens a pipe by default. It thus shows its IP
   address to the provider, and it needs UDP. `--path session` or
   `arc path session` gives the old behavior.
@@ -381,6 +449,22 @@ What the consumer writes for each failure of a pipe:
 - `TestBodyOverPipe`, `TestNoPipeAndAuto` and `TestOfferOverLimit` in
   `sdk/httpadapter` check `body_bytes`, the trailers, and the fall back of
   `auto`.
+- `TestLargeUploadOverPipeThroughRelay` in `cmd/arc` sends 16 MiB to
+  `arc-http` through a local relay. The body goes on a pipe, and the
+  handler answers with the count and the SHA-256 of the bytes that it got.
+  `--path session` sends 1 MiB in frames, because 16 MiB in frames takes
+  76 s with `-race`.
+- `TestOlderProviderUploadFallsBackToFrames` sends an upload to a provider
+  that refuses `direct` as `invalid_request`. In `auto`, arc sends the body
+  in frames. With `--path direct`, arc stops.
+- `TestUploadPipeFailureIsAnError` calls a provider that answers each offer,
+  but no pipe opens. arc stops with an error, and reads no byte of its
+  input.
+- `TestBrokenUploadPipeIsAnError` breaks the pipe during the request body.
+- `TestUploadOverPipe`, `TestUploadAnsweredEarly` and
+  `TestFifthUploadPipeIsBusy` in `sdk/httpadapter` check `request_bytes`,
+  a handler that answers 413 before it reads the body, and the limit of 4
+  pipes for uploads.
 
 Unverified:
 

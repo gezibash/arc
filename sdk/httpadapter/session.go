@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -33,6 +34,9 @@ type SessionRecord struct {
 	// BodyBytes is the number of body bytes that went on the pipe, in the
 	// "end" record of a session with a pipe.
 	BodyBytes *int64 `json:"body_bytes,omitempty"`
+	// RequestBytes is the number of request body bytes that the provider
+	// took from the pipe before the "end" record, in an upload with a pipe.
+	RequestBytes *int64 `json:"request_bytes,omitempty"`
 }
 
 // The errors of a session with a pipe. See docs/http/SPEC.md, section 3.7.
@@ -63,7 +67,7 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 	if in.WebSocket && (stream.Mode() != session.Duplex || request.Method != http.MethodGet || in.Body != "" || in.BodyBase64 != "") {
 		return provider.ErrInvalidRequest
 	}
-	if in.Direct != nil && (in.WebSocket || in.StreamBody) {
+	if in.Direct != nil && in.WebSocket {
 		return provider.ErrInvalidRequest
 	}
 	encoder := json.NewEncoder(stream)
@@ -84,11 +88,19 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 	if in.WebSocket {
 		return websocketSession(ctx, client, request, in.Subprotocols, stream)
 	}
+	var upload *pipeReader
 	if in.StreamBody {
 		request.Body = io.NopCloser(stream)
+		if pipe != nil {
+			upload = &pipeReader{pipe: pipe}
+			request.Body = io.NopCloser(upload)
+		}
 		request.ContentLength = -1
 	}
 	response, err := client.Do(request)
+	if upload.broke() {
+		return ErrPipeFailed
+	}
 	if err != nil {
 		return provider.Error("http_exchange_failed")
 	}
@@ -97,7 +109,7 @@ func (a *Adapter) HandleSession(ctx context.Context, req provider.Request, strea
 		return err
 	}
 	if pipe != nil {
-		return pipeBody(ctx, pipe, response, encoder)
+		return pipeBody(ctx, pipe, response, upload, encoder)
 	}
 	buf := make([]byte, session.MaxChunk)
 	for {
@@ -160,15 +172,42 @@ func (a *Adapter) openPipe(ctx context.Context, offer direct.Offer, encoder *jso
 	return pipe, nil
 }
 
-// pipeBody copies the body to the pipe, then sends the trailers and an
-// "end" record with the number of body bytes.
-func pipeBody(ctx context.Context, pipe *direct.Pipe, response *http.Response, encoder *json.Encoder) error {
-	n, err := io.Copy(pipe, response.Body)
+// pipeReader reads the request body of an upload from the pipe, and counts
+// the bytes.
+type pipeReader struct {
+	pipe   *direct.Pipe
+	n      atomic.Int64
+	closed atomic.Bool
+}
+
+func (r *pipeReader) Read(b []byte) (int, error) {
+	n, err := r.pipe.Read(b)
+	r.n.Add(int64(n))
 	if errors.Is(err, direct.ErrPipeClosed) {
+		r.closed.Store(true)
+	}
+	return n, err
+}
+
+// broke says that the pipe closed before the end of the request body.
+func (r *pipeReader) broke() bool { return r != nil && r.closed.Load() }
+
+// pipeBody copies the body to the pipe, then sends the trailers and an
+// "end" record with the number of body bytes. In an upload, the record
+// also holds the number of request body bytes that the handler read.
+func pipeBody(ctx context.Context, pipe *direct.Pipe, response *http.Response, upload *pipeReader, encoder *json.Encoder) error {
+	n, err := io.Copy(pipe, response.Body)
+	if errors.Is(err, direct.ErrPipeClosed) || upload.broke() {
 		return ErrPipeFailed
 	}
 	if err != nil {
 		return provider.Error("http_body_failed")
+	}
+	if upload != nil {
+		// The handler is done. The rest of the request body must leave the
+		// data channel, or the "ok" of CloseWrite cannot arrive. The pipe
+		// closes when the session ends, and this read stops.
+		go func() { _, _ = io.Copy(io.Discard, upload) }()
 	}
 	if err = pipe.CloseWrite(ctx); err != nil {
 		if ctx.Err() != nil {
@@ -176,12 +215,20 @@ func pipeBody(ctx context.Context, pipe *direct.Pipe, response *http.Response, e
 		}
 		return ErrPipeFailed
 	}
+	if upload.broke() {
+		return ErrPipeFailed
+	}
 	if len(response.Trailer) > 0 {
 		if err = encoder.Encode(SessionRecord{Type: "trailers", Headers: response.Trailer}); err != nil {
 			return err
 		}
 	}
-	return encoder.Encode(SessionRecord{Type: "end", BodyBytes: &n})
+	end := SessionRecord{Type: "end", BodyBytes: &n}
+	if upload != nil {
+		read := upload.n.Load()
+		end.RequestBytes = &read
+	}
+	return encoder.Encode(end)
 }
 
 // A private in-memory HTTP connection lets net/http supply real flushing,
