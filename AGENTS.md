@@ -54,6 +54,28 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
   in `go test ./...` and CI. Tests may import concrete adapters to exercise the
   real integration paths; production core must not do so.
 
+## Citizens, the relay and roles
+
+ARC has only citizens and the relay. Model each feature on that spine.
+
+- A citizen is an identity with one or more devices. The citizen key lives
+  on a signer and on a 24-word seed. Each device has its own key.
+- The relay only coordinates. It keeps mail until it expires, carries live
+  calls, announcements and rendezvous, and answers STUN. It carries bulk
+  bytes through TURN only as the last resort.
+- The relay does not keep self data or bulk bytes. Bulk bytes go over the
+  direct pipe of `sdk/direct`.
+- Storage and compute are roles that a citizen serves. Do not add a party
+  that is not a citizen or the relay.
+- A storage citizen is a citizen that runs the storage app. It holds
+  encrypted bytes for other citizens and cannot read them. It knows an
+  owner only by an account key for that one storage citizen.
+- A citizen can use more than one storage citizen, so that one storage
+  citizen cannot lose its data. A storage citizen can be a paid service
+  later.
+- Self data, such as the journal and files, stays on the device. Sync sends
+  encrypted blobs to storage citizens, never to the relay.
+
 ## Specs
 
 Read [how to write a spec](docs/SPEC-TEMPLATE.md) before you write or change
