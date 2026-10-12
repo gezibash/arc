@@ -298,7 +298,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	var failed []error
 	for i, r := range results {
 		as := targets[i].install.As
-		cfg.Errs.Write(r.notes.Bytes())
+		_, _ = cfg.Errs.Write(r.notes.Bytes())
 		if r.err != nil {
 			failed = append(failed, fmt.Errorf("%s: %w", as, r.err))
 			fmt.Fprintf(cfg.Errs, "%s: self data: %v\n", as, r.err)
