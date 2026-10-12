@@ -150,7 +150,10 @@ jobs:
           - part: other proofs
             run: go test -count=1 -timeout 40m -skip '^Test(Delivery|Interface)' ./internal/proof/
     steps:
+      # A storage proof builds an older storage app from git history.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.2"
