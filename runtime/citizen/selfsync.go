@@ -17,8 +17,9 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/devices"
+	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
-	"github.com/gezibash/arc/core/node"
+	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/selfsync"
@@ -203,9 +204,11 @@ func storageInstalls(installs catalog.Installs) ([]catalog.Install, error) {
 const importedFile = "imported"
 
 // ImportDrafts gets the self data of this citizen from each relay, and
-// keeps it in the local store, once. The drafts on the relays stay there.
-// A second run gets nothing new: the store keeps each event once. With
-// again, it runs even if it ran before.
+// keeps it in the local store, once. A second run gets nothing new: the
+// store keeps each event once. With again, it runs even if it ran before,
+// and the drafts that are left on the relays are deleted again. It never
+// keeps a deletion that a device sent for the drafts that it moved to a
+// storage citizen: in the store that deletion deletes the drafts.
 func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (int, error) {
 	marker := filepath.Join(dir, importedFile)
 	if _, err := os.Stat(marker); err == nil && !again {
@@ -214,13 +217,35 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 	if len(sess.Relays) == 0 {
 		return 0, nil
 	}
-	reports, errs := sess.Node.Pull(ctx, selfsync.Filter(sess.Key.Public), sess.Relays)
-	received := 0
-	for _, r := range reports {
-		received += r.Received
+	if again {
+		if err := os.Remove(filepath.Join(dir, movedFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return 0, err
+		}
 	}
-	if err := node.Unreached(reports, errs); err != nil {
-		return received, fmt.Errorf("the import of the drafts on the relays is not complete: %w", err)
+	received, answered := 0, 0
+	var errs []error
+	for _, t := range sess.Relays {
+		batch, err := t.Fetch(ctx, selfsync.Filter(sess.Key.Public))
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		answered++
+		for _, event := range batch.Events {
+			if draft.IsMoved(event) {
+				continue
+			}
+			result, err := sess.Node.Store.Save(event)
+			if err != nil {
+				return received, err
+			}
+			if result.Outcome == store.Stored {
+				received++
+			}
+		}
+	}
+	if answered == 0 && len(errs) > 0 {
+		return received, fmt.Errorf("the import of the drafts on the relays is not complete: no relay answered: %w", errors.Join(errs...))
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return received, err
@@ -409,6 +434,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		for _, reason := range report.Unreadable {
 			fmt.Fprintf(cfg.Errs, "  unreadable %s\n", reason)
 		}
+	}
+	if report.Kept != nil {
+		sess.moveDrafts(ctx, cfg, report.Kept)
 	}
 	return errors.Join(failed...)
 }

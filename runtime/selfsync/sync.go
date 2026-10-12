@@ -117,6 +117,10 @@ type Report struct {
 	// Sides holds what the sync did with each storage citizen, in the
 	// order of the sides.
 	Sides []SideReport
+	// Kept holds the record IDs that the storage citizens hold at the end
+	// of the sync, from their listings: k pieces of one seal, or a whole
+	// blob of format 1. Movable reads it.
+	Kept map[nostr.ID]bool
 }
 
 // SideReport says what one sync did with one storage citizen.

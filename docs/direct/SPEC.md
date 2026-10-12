@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestParsePolicy)$' ./sdk/direct/
-- Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6; a test that a wrong certificate fingerprint fails, section 6.
-- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. No test proves that pion refuses a wrong certificate fingerprint. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
+- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy)$' ./sdk/direct/
+- Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
+- Unverified: No automated test runs two machines behind real NATs. The relay attempt on real machines was tested by hand only, with the transfer app. A provider with the policy `turn` under `arc serve` ran by hand on one Mac only.
 
 The package `sdk/direct` opens a pipe between two citizens. The pipe is a
 WebRTC data channel. It carries bulk bytes outside the relay. One ARC call
@@ -283,8 +283,8 @@ An answerer that does not see the data channel open closes its end after
   of the two citizens. A relay cannot read or change the fingerprints.
 - pion checks that the certificate of the other end has the fingerprint of
   the remote description. So the DTLS link ends at the citizen who signed
-  the call. `sdk/direct` MUST NOT turn off this check. Not built: a test
-  that a wrong fingerprint fails.
+  the call. `sdk/direct` MUST NOT turn off this check. `TestPipeFingerprint`
+  proves that a pipe with a wrong fingerprint does not open.
 - DTLS uses ECDHE, so the pipe has forward secrecy. The ARC call that
   carries the setup has the forward secrecy of the call, as today.
 - A direct attempt shows the public address and the LAN addresses of each
@@ -427,6 +427,5 @@ runs: a median of 97.0 Mbit/s on a direct path, and about 89 Mbit/s and
 ### 8.3 Unverified
 
 - No automated test runs two machines behind real NATs.
-- No test proves that a wrong certificate fingerprint fails.
 - No automated test makes the second direct attempt after a first attempt
   with no path.
