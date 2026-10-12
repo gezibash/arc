@@ -1,7 +1,9 @@
 package selfsync
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -163,6 +165,7 @@ func TestRepairFormat1Drain(t *testing.T) {
 	}
 	b.putOld([]nostr.Event{other}, b.stores[1], b.stores[2])
 	id := testKeys(t, 0).BlobID(other.ID)
+	good := slices.Clone(b.stores[2].data[id])
 	b.stores[1].mu.Lock()
 	b.stores[1].data[id] = slices.Clone(b.stores[1].data[id])
 	b.stores[1].data[id][100] ^= 1
@@ -178,6 +181,24 @@ func TestRepairFormat1Drain(t *testing.T) {
 	}
 	if got := b.held(); !slices.Equal(got, []int{3, 3, 0}) {
 		t.Fatalf("after the drain the storage citizens hold %v pieces", got)
+	}
+	// The piece of the other record holds the good copy.
+	k := testKeys(t, 0)
+	found := false
+	for pid, e := range b.stores[0].entries {
+		tag, _ := base64.StdEncoding.DecodeString(e.Tag)
+		h, err := OpenTag(k, tag)
+		if err != nil || h.Blob != id {
+			continue
+		}
+		shard, err := OpenPiece(k, tag, h, b.stores[0].data[pid])
+		if err != nil || !bytes.Equal(shard, good) {
+			t.Fatalf("the piece of the whole copy does not hold the good copy: %v", err)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("no piece of the whole copy with no record")
 	}
 	b.reads(only(sides, 0))
 	b.reads(only(sides, 1))
