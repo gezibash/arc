@@ -7,6 +7,8 @@
 //	arc-storage get <id>...       get blobs
 //	arc-storage delete <id>...    delete blobs
 //	arc-storage usage             show the bytes in use and the quota
+//	arc-storage audit <file>...   check that the storage citizen holds files
+//	arc-storage drain             refuse new puts; show what remains
 //
 // and the commands of the operator, which work on STORAGE_DIR:
 //
@@ -45,6 +47,8 @@ const usage = `usage:
   arc-storage get [flags] <id>...      get blobs
   arc-storage delete [flags] <id>...   delete blobs
   arc-storage usage [flags]            show the bytes in use and the quota
+  arc-storage audit [flags] <file>...  check that the storage citizen holds files
+  arc-storage drain [flags]            refuse new puts; show what remains
 
 The commands of the operator work on the disk of the storage citizen:
   arc-storage invite [flags]                 make an invite link
@@ -62,7 +66,7 @@ func main() {
 		return
 	}
 	commands := map[string]func(context.Context, []string) error{
-		"put": put, "list": list, "get": get, "delete": remove, "usage": showUsage,
+		"put": put, "list": list, "get": get, "delete": remove, "usage": showUsage, "audit": audit, "drain": drain,
 		"invite": makeInvite, "requests": requests, "accept": accept, "refuse": refuse, "account": changeAccount,
 	}
 	run, ok := commands[os.Args[1]]
@@ -259,6 +263,92 @@ func showUsage(ctx context.Context, args []string) error {
 		line += ", ends " + time.Unix(u.Expires, 0).UTC().Format(time.DateOnly)
 	}
 	fmt.Println(line)
+	return nil
+}
+
+// audit checks that the storage citizen holds the blob of each file,
+// without a get. It sends a new nonce, and compares each answer with the
+// proof of the local bytes. It prints one line for each file: the ID,
+// pass, fail or lost, and the file. A fail or a lost blob is an error.
+func audit(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("arc-storage audit", flag.ContinueOnError)
+	c := clientFlags(flags)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() == 0 {
+		return errors.New("usage: arc-storage audit [flags] <files>")
+	}
+	nonce := wire.NewNonce()
+	files := flags.Args()
+	ids := make([]string, len(files))
+	proofs := make([]string, len(files))
+	for i, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		blob, err := wire.Pad(data)
+		if err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+		sum := sha256.Sum256(blob)
+		ids[i] = hex.EncodeToString(sum[:])
+		proofs[i] = wire.AuditProof(nonce, ids[i], blob)
+	}
+	s, err := open(ctx, c, 0)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	items, err := s.Audit(ctx, ids, nonce)
+	if err != nil {
+		return err
+	}
+	failed := 0
+	for i, item := range items {
+		result := "pass"
+		switch {
+		case item.Error == wire.ErrNotFound:
+			result = "lost"
+		case item.Error != "":
+			result = item.Error
+		case item.Proof != proofs[i]:
+			result = "fail"
+		}
+		if result != "pass" {
+			failed++
+		}
+		fmt.Printf("%s\t%s\t%s\n", ids[i], result, files[i])
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d blobs failed the audit", failed, len(items))
+	}
+	return nil
+}
+
+// drain sets the account to draining, or back to open with -off, and
+// prints what remains.
+func drain(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("arc-storage drain", flag.ContinueOnError)
+	c := clientFlags(flags)
+	off := flags.Bool("off", false, "end the drain: the account takes puts again")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: arc-storage drain [-off]")
+	}
+	s, err := open(ctx, c, 0)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	u, err := s.Drain(ctx, *off)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s: %d blobs of %d bytes remain\n", u.State, u.Blobs, u.Used)
 	return nil
 }
 
