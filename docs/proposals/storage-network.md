@@ -112,9 +112,9 @@ These facts limit the design, or must change before it.
 | `allow` in the Arcfile matches the key of the caller. | `apps/storage/README.md:79-81` |
 | `go.etcd.io/bbolt` is a dependency already. `klauspost/reedsolomon` is not. | `go.mod:20` |
 
-The work of #209 is in PR #213, which is not merged. These facts come from
-the notes of the #209 session and from its diff, on 2026-10-12. They have
-no stable line numbers.
+The work of #209 merged in PR #213 on 2026-10-12, after commit `d1a6662`.
+These facts come from the notes of the #209 session and from its diff. This
+document gives them no line numbers.
 
 - The account key is
   `HKDF-SHA256(citizen secret, info = "arc-storage-account-v1" || storage key)`.
@@ -749,7 +749,7 @@ Each step is one PR. Each step names what proves it, through the real CLI.
 | # | Step | Proof |
 | --- | --- | --- |
 | 0 | Seal blobs with the data roots: replace the body of `sealSelf` (`runtime/citizen/selfsync.go:49-58`) with the key of `DataRoot`, as the #204 note planned. | A proof test: revoke a device, write a page, sync. The revoked device cannot open the new blob. |
-| 1 | #209: per-device grants. In progress in another session. | Its own tests. |
+| 1 | #209: per-device grants. Done in PR #213. | Its own tests. |
 | 2 | Admission and quota for each account: `join` with the rules `invite`, `ask` and `open`; the account record; `usage` with the quota of the account; `arc keys storage add`; `arc-storage invite`, `requests`, `accept`, `refuse`, `account set`, `account close`. | A proof test with a real relay and `arc-storage`: a `join` with no token is refused; a `join` with a token is admitted at its quota; a second token use is refused; under `ask`, `pending`, then `accept`, then `admitted`; a put over the quota of the account fails while another account has room. |
 | 3 | Scale the storage app: several requests in flight on one pipe, and an index that a put does not rewrite whole. The index lives in `go.etcd.io/bbolt` (decision 8 of section 12). | The `DIRECT_LINK_RTT_MS` harness with 44 ms: 1,000 puts of 4 KiB, before and after. The PR states both times. |
 | 4 | Kind 10273: the signer publishes it; each device reads it and installs each storage citizen; `arc keys storage ls` and `rm`; a row in `docs/KINDS.md`. | A home with only the seed finds two storage citizens and reads every page. |
