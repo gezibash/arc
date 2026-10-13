@@ -199,9 +199,10 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 	conn = k.conn
 	return conn, reused, func(err error) {
 		// An answer of the relay shows that the connection works. A caller
-		// that stopped says nothing about it. Any other failure can come from
-		// a connection that stalled, so the next call opens a new one.
-		if err != nil && !answered(err) && ctx.Err() == nil {
+		// that stopped says nothing about it. Any other failure, also a
+		// deadline, can come from a connection that stalled, so the next call
+		// opens a new one.
+		if err != nil && !answered(err) && !errors.Is(err, context.Canceled) {
 			_ = k.drop(conn)
 		}
 	}, nil
@@ -544,7 +545,16 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
-	defer func() { done(err) }()
+	// After the relay took the event, the connection works. A provider that
+	// does not answer in time says nothing about it.
+	taken := false
+	defer func() {
+		if taken {
+			done(nil)
+		} else {
+			done(err)
+		}
+	}()
 
 	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange", MaxWaitForEOSE: realEOSE})
 	if err != nil {
@@ -568,6 +578,7 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 
 		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
+	taken = true
 
 	for {
 		select {

@@ -27,3 +27,11 @@ func SetStallLimit(d time.Duration) func() {
 		forget()
 	}
 }
+
+// SetIdleCheck changes how long a kept connection can be idle before a call
+// checks it, and returns a function that puts the old value back.
+func SetIdleCheck(d time.Duration) func() {
+	old := idleCheck
+	idleCheck = d
+	return func() { idleCheck = old }
+}

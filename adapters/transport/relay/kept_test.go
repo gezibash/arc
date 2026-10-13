@@ -144,3 +144,66 @@ func TestAStoppedCallerSendsNothingOnAUsedConnection(t *testing.T) {
 		t.Fatal("the relay holds an event of a caller that stopped")
 	}
 }
+
+// A query that gets no answer on the shared connection leaves it, so the next
+// call opens a new connection at once.
+func TestAFetchThatStallsLeavesTheConnection(t *testing.T) {
+	url, conns := testrelay.StartTracked(t)
+	r := relay.New(url, nil)
+	defer func() { _ = r.Close() }()
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}, Limit: 1}
+
+	if _, err := r.Fetch(context.Background(), filter); err != nil {
+		t.Fatal(err)
+	}
+	conns.Silence()
+	stalled, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := r.Fetch(stalled, filter); err == nil {
+		t.Fatal("a query on a silent connection got an answer")
+	}
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := r.Fetch(ctx, filter); err != nil {
+		t.Fatalf("the query after the stall failed: %v", err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("the query after the stall took %v, want a new connection at once", took)
+	}
+	if got := conns.Accepted(); got != 2 {
+		t.Errorf("the relay accepted %d connections, want 2", got)
+	}
+}
+
+// A machine that slept leaves a connection that looks open and answers
+// nothing. After a pause, a call checks the connection, and opens a new one.
+func TestACallAfterAPauseLeavesASilentConnection(t *testing.T) {
+	defer relay.SetReuseWait(200 * time.Millisecond)()
+	defer relay.SetIdleCheck(0)()
+	url, conns := testrelay.StartTracked(t)
+	r := relay.New(url, nil)
+	defer func() { _ = r.Close() }()
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}, Limit: 1}
+
+	if _, err := r.Fetch(context.Background(), filter); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Fetch(context.Background(), filter); err != nil {
+		t.Fatalf("the check refused a connection that works: %v", err)
+	}
+	if got := conns.Accepted(); got != 1 {
+		t.Fatalf("a check of a working connection opened another: %d connections, want 1", got)
+	}
+
+	conns.Silence()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := r.Fetch(ctx, filter); err != nil {
+		t.Fatalf("the query after the pause failed: %v", err)
+	}
+	if got := conns.Accepted(); got != 2 {
+		t.Errorf("the relay accepted %d connections, want 2", got)
+	}
+}
