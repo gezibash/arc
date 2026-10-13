@@ -237,7 +237,7 @@ func opensWithAny(roots map[uint32][32]byte, gen uint32, it listed) string {
 			}
 			id = h.Blob
 		}
-		if _, err := selfsync.Open(k, id, blob); err == nil {
+		if _, _, err := selfsync.Open(k, id, blob); err == nil {
 			return fmt.Sprintf("the root of generation %d", g)
 		}
 	}

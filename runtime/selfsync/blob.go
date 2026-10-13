@@ -23,6 +23,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/sdk/storage"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -100,6 +101,10 @@ const changeContext = "arc-storage-change-v1\x00"
 
 // Envelope is the plaintext of a blob: one record, and the signature of
 // the device key that made the change.
+//
+// Version 1 holds a record with no body. Version 2 holds a draft wrap that
+// names a body: the encrypted body follows the JSON in the padded
+// plaintext, and Body is its length.
 type Envelope struct {
 	Version int `json:"v"`
 	// Device is the key that signed the change.
@@ -107,6 +112,8 @@ type Envelope struct {
 	// Sig is the BIP-340 signature of the device key over changeDigest.
 	Sig    string      `json:"sig"`
 	Record nostr.Event `json:"record"`
+	// Body is the length of the body after the JSON, in version 2.
+	Body int64 `json:"body,omitempty"`
 }
 
 // changeDigest is what the device key signs: the context, the blob ID and
@@ -126,8 +133,18 @@ func blobSize(n int) int64 {
 }
 
 // Seal makes the blob of a record. The device key signs the change inside
-// the encrypted bytes.
-func Seal(k Keys, device nostr.SecretKey, record nostr.Event) (string, []byte, error) {
+// the encrypted bytes. A draft wrap that names a body needs that body: the
+// encrypted bytes that its body tag names. Each other record has no body.
+func Seal(k Keys, device nostr.SecretKey, record nostr.Event, body []byte) (string, []byte, error) {
+	env := Envelope{Version: 1, Device: device.Public(), Record: record}
+	if ref, ok := draft.Body(record); ok {
+		if err := ref.Check(body); err != nil {
+			return "", nil, err
+		}
+		env.Version, env.Body = 2, int64(len(body))
+	} else if body != nil {
+		return "", nil, errors.New("the record names no body")
+	}
 	id := k.BlobID(record.ID)
 	digest := changeDigest(id, record.ID)
 	priv, _ := btcec.PrivKeyFromBytes(device[:])
@@ -135,17 +152,19 @@ func Seal(k Keys, device nostr.SecretKey, record nostr.Event) (string, []byte, e
 	if err != nil {
 		return "", nil, err
 	}
-	plain, err := json.Marshal(Envelope{Version: 1, Device: device.Public(), Sig: hex.EncodeToString(sig.Serialize()), Record: record})
+	env.Sig = hex.EncodeToString(sig.Serialize())
+	plain, err := json.Marshal(env)
 	if err != nil {
 		return "", nil, err
 	}
-	size := blobSize(len(plain))
+	size := blobSize(len(plain) + len(body))
 	if size > storage.MaxBlob {
 		return "", nil, fmt.Errorf("the record needs a blob of %d bytes, and the largest blob is %d bytes", size, storage.MaxBlob)
 	}
 	padded := make([]byte, size-int64(overheadSize))
 	binary.BigEndian.PutUint64(padded, uint64(len(plain)))
 	copy(padded[lengthSize:], plain)
+	copy(padded[lengthSize+len(plain):], body)
 
 	blob := make([]byte, headerSize+chacha20poly1305.NonceSizeX, size)
 	raw, _ := hex.DecodeString(id)
@@ -172,57 +191,76 @@ func Gen(blob []byte) (uint32, error) {
 }
 
 // Open opens the blob with the ID id. It checks the ID in the blob, the
-// AEAD, the ID of the record, the signature of the record, and the
-// signature of the device key. The caller checks that the device key may
-// write, and that the citizen signed the record.
-func Open(k Keys, id string, blob []byte) (Envelope, error) {
+// AEAD, the ID of the record, the signature of the record, the body
+// against the body tag of the record, and the signature of the device
+// key. It returns the body, or nil for a record with no body. The caller
+// checks that the device key may write, and that the citizen signed the
+// record.
+func Open(k Keys, id string, blob []byte) (Envelope, []byte, error) {
 	var env Envelope
 	if len(blob) < overheadSize || !storage.GoodSize(int64(len(blob))) {
-		return env, errors.New("the blob has a wrong size")
+		return env, nil, errors.New("the blob has a wrong size")
 	}
 	if hex.EncodeToString(blob[:32]) != id {
-		return env, errors.New("the blob holds another ID")
+		return env, nil, errors.New("the blob holds another ID")
 	}
 	if gen := binary.BigEndian.Uint32(blob[40:]); gen != k.Gen {
-		return env, fmt.Errorf("the blob is of generation %d, not %d", gen, k.Gen)
+		return env, nil, fmt.Errorf("the blob is of generation %d, not %d", gen, k.Gen)
 	}
 	aead, err := chacha20poly1305.NewX(k.Blob)
 	if err != nil {
-		return env, err
+		return env, nil, err
 	}
 	nonce := blob[headerSize : headerSize+chacha20poly1305.NonceSizeX]
 	padded, err := aead.Open(nil, nonce, blob[headerSize+chacha20poly1305.NonceSizeX:], blob[:headerSize])
 	if err != nil {
-		return env, errors.New("the blob does not open")
+		return env, nil, errors.New("the blob does not open")
 	}
 	n := binary.BigEndian.Uint64(padded)
-	if n > uint64(len(padded)-lengthSize) {
-		return env, errors.New("the length in the blob is larger than the blob")
+	room := uint64(len(padded) - lengthSize)
+	if n > room {
+		return env, nil, errors.New("the length in the blob is larger than the blob")
 	}
-	if err := json.Unmarshal(padded[lengthSize:lengthSize+n], &env); err != nil || env.Version != 1 {
-		return env, errors.New("the blob holds no envelope of version 1")
+	if err := json.Unmarshal(padded[lengthSize:lengthSize+n], &env); err != nil || (env.Version != 1 && env.Version != 2) {
+		return env, nil, errors.New("the blob holds no envelope of version 1 or 2")
 	}
 	if !env.Record.CheckID() || k.BlobID(env.Record.ID) != id {
-		return env, errors.New("the record in the blob does not match the ID of the blob")
+		return env, nil, errors.New("the record in the blob does not match the ID of the blob")
 	}
 	if !env.Record.VerifySignature() {
-		return env, errors.New("the record in the blob has a bad signature")
+		return env, nil, errors.New("the record in the blob has a bad signature")
+	}
+	var body []byte
+	ref, named := draft.Body(env.Record)
+	switch {
+	case env.Version == 1 && (named || env.Body != 0):
+		return env, nil, errors.New("an envelope of version 1 holds no body")
+	case env.Version == 2 && !named:
+		return env, nil, errors.New("the envelope holds a body, and the record names none")
+	case env.Version == 2:
+		if env.Body < 0 || uint64(env.Body) > room-n {
+			return env, nil, errors.New("the length of the body is larger than the blob")
+		}
+		body = padded[lengthSize+n : lengthSize+n+uint64(env.Body)]
+		if err := ref.Check(body); err != nil {
+			return env, nil, err
+		}
 	}
 	raw, err := hex.DecodeString(env.Sig)
 	if err != nil {
-		return env, errors.New("the change has no signature of a device")
+		return env, nil, errors.New("the change has no signature of a device")
 	}
 	sig, err := schnorr.ParseSignature(raw)
 	if err != nil {
-		return env, errors.New("the change has no signature of a device")
+		return env, nil, errors.New("the change has no signature of a device")
 	}
 	pub, err := schnorr.ParsePubKey(env.Device[:])
 	if err != nil {
-		return env, errors.New("the device key of the change is not valid")
+		return env, nil, errors.New("the device key of the change is not valid")
 	}
 	digest := changeDigest(id, env.Record.ID)
 	if !sig.Verify(digest[:], pub) {
-		return env, errors.New("the signature of the device does not match the change")
+		return env, nil, errors.New("the signature of the device does not match the change")
 	}
-	return env, nil
+	return env, body, nil
 }

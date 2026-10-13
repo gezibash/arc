@@ -319,6 +319,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Citizen: sess.Key.Public,
 		Device:  signer,
 		Store:   sess.store,
+		Bodies:  sess.bodies,
 		Newest:  func(context.Context) (selfsync.Keys, error) { return newest, nil },
 		Keys:    once(sess.selfKeysAt),
 		Devices: onceList(sess.DeviceList),
@@ -422,6 +423,11 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	fmt.Fprintln(cfg.Out)
 	for _, reason := range report.Refused {
 		fmt.Fprintf(cfg.Errs, "  refused %s\n", reason)
+	}
+	if n, err := sess.PruneBodies(); err != nil {
+		fmt.Fprintf(cfg.Errs, "self data: the bodies of deleted drafts stay: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(cfg.Out, "self data: removed %d bodies of deleted or replaced drafts\n", n)
 	}
 	if report.Waiting > 0 {
 		failed = append(failed, fmt.Errorf("%d records wait", report.Waiting))

@@ -325,7 +325,12 @@ Each command takes these flags:
 - The app holds at most 4 pipes at a time. A pipe that carries no request
   for 30 s closes.
 - The app answers the requests of a pipe in order. A client keeps at most
-  32 puts in flight. If a client sends a 33rd put, the app ends the pipe.
+  32 puts in flight, and at most 128 MiB of them. If a client sends a 33rd
+  put, the app ends the pipe.
+- The app writes the bytes of a put to a temporary file in the `blobs`
+  directory as they come, and renames the file when the last byte comes.
+  A put of 64 MiB thus never waits whole in memory. A pipe that ends in the
+  middle of a put leaves no file.
 
 ## Storage on disk
 

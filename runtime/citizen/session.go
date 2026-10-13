@@ -12,6 +12,7 @@ import (
 	boltkv "github.com/gezibash/arc/adapters/kv/bolt"
 	"github.com/gezibash/arc/adapters/mailbox"
 	blevesearch "github.com/gezibash/arc/adapters/search/bleve"
+	"github.com/gezibash/arc/adapters/store/bodies"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
@@ -45,6 +46,8 @@ type Session struct {
 	roots    kv.Store
 	signers  *signers
 	search   *blevesearch.Index
+	// bodies holds the encrypted bodies of drafts, such as large files.
+	bodies bodies.Dir
 	// kept holds the relay of each URL that NewRelay gave.
 	keptMu sync.Mutex
 	kept   map[string]relay.Relay
@@ -67,6 +70,7 @@ func Open(cfg Config) (*Session, error) {
 		return nil, err
 	}
 	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess.bodies = bodies.Dir{Path: filepath.Join(cfg.Home, "store", "bodies")}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
 	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
 	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}

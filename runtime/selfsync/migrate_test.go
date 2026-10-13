@@ -18,7 +18,7 @@ import (
 func (b *repairBench) putOld(events []nostr.Event, stores ...*memStorage) {
 	b.t.Helper()
 	for _, e := range events {
-		id, blob, err := Seal(testKeys(b.t, 0), b.citizen.Secret, e)
+		id, blob, err := Seal(testKeys(b.t, 0), b.citizen.Secret, e, nil)
 		if err != nil {
 			b.t.Fatal(err)
 		}

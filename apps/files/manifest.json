@@ -9,7 +9,7 @@
   "commands": [
     {"path": ["put"], "summary": "Store a file",
      "args": [{"name": "file", "kind": "positional", "type": "file", "required": true}],
-     "action": {"publish": {"kind": "file", "d": "{{file.sha256|keyed:file}}", "revise": "replace", "content": "{{file}}",
+     "action": {"publish": {"kind": "file", "d": "{{file.sha256|keyed:file}}", "revise": "replace", "body": "{{file}}",
                             "tags": [["d", "{{file.sha256}}"], ["alt", "{{file.name}}"], ["m", "{{file.type}}"],
                                      ["x", "{{file.sha256}}"], ["size", "{{file.size}}"]]}},
      "output": {"format": "put"}},

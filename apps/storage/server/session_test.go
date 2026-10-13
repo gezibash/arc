@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -391,5 +392,55 @@ func TestGetGoneFile(t *testing.T) {
 	}
 	if _, err := conn.Usage(ctx); err != nil {
 		t.Fatalf("the pipe ended after the gone file: %v", err)
+	}
+}
+
+// TestAPutGoesToTheDiskAsItComes checks that the app writes the bytes of a
+// put to a temporary file as they come, so a put of 64 MiB never waits
+// whole in memory, and that a pipe that ends in the middle of a put leaves
+// no file.
+func TestAPutGoesToTheDiskAsItComes(t *testing.T) {
+	s := testServer(t, t.TempDir())
+	dc, messages, _ := rawPipe(t, s)
+	blob := testBlobs(1, 1<<20)[0]
+	sendJSON(t, dc, wire.Request{Op: wire.OpPut, ID: blob.ID, Size: int64(len(blob.Data))})
+	if r := readReply(t, messages); r.Status != wire.StatusSend {
+		t.Fatalf("the put got %+v, not send", r)
+	}
+	half := len(blob.Data) / 2
+	for at := 0; at < half; at += 16 << 10 {
+		if err := dc.Send(blob.Data[at : at+16<<10]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := filepath.Dir(s.store.blobPath(testAccount, blob.ID))
+	temporary := func() (names []string, size int64) {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "."+blob.ID) {
+				info, _ := e.Info()
+				names, size = append(names, e.Name()), info.Size()
+			}
+		}
+		return names, size
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for _, size := temporary(); size < int64(half); _, size = temporary() {
+		if time.Now().After(deadline) {
+			t.Fatalf("after half the bytes, the temporary file holds %d bytes, want %d", size, half)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	_ = dc.Close()
+	deadline = time.Now().Add(10 * time.Second)
+	for names, _ := temporary(); len(names) > 0; names, _ = temporary() {
+		if time.Now().After(deadline) {
+			t.Fatalf("the put that did not end left %v", names)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(s.store.blobPath(testAccount, blob.ID)); !os.IsNotExist(err) {
+		t.Fatalf("the put that did not end left its blob: %v", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/sdk/storage"
 )
@@ -561,7 +562,8 @@ func binaryGen(tag []byte) uint32 {
 }
 
 // read gets each blob that the device lacks, and gives its record to the
-// store.
+// store. A wrap whose body the device lacks counts as lacking: its blob
+// brings the body.
 func (r *run) read(ctx context.Context) error {
 	records, err := Records(r.s.Store, r.s.Citizen)
 	if err != nil {
@@ -569,7 +571,9 @@ func (r *run) read(ctx context.Context) error {
 	}
 	local := make(map[string]bool, len(records))
 	for _, event := range records {
-		local[r.current.BlobID(event.ID)] = true
+		if r.hasBody(event) {
+			local[r.current.BlobID(event.ID)] = true
+		}
 	}
 	r.deleted(records)
 	var lack []string
@@ -740,7 +744,22 @@ func (r *run) write(ctx context.Context) error {
 		for _, event := range chunk {
 			id := r.current.BlobID(event.ID)
 			m := r.blobs[id]
+			// The body of a wrap is read only for a blob that goes out:
+			// a file of 63 MiB is not read on each sync.
 			var whole []byte
+			sealed := func() ([]byte, bool, error) {
+				if whole != nil {
+					return whole, true, nil
+				}
+				body, ok := r.bodyOf(event)
+				if !ok {
+					return nil, false, nil
+				}
+				_, blob, err := Seal(r.current, r.s.Device, event, body)
+				whole = blob
+				return blob, err == nil, err
+			}
+			skip := false
 			// A storage citizen with an older app gets the whole blob.
 			for i, side := range r.sides {
 				if !side.Active || !r.old[i] || !r.open[i] {
@@ -749,14 +768,17 @@ func (r *run) write(ctx context.Context) error {
 				if _, listed := r.states[i].Remote[id]; listed {
 					continue
 				}
-				if whole == nil {
-					if _, whole, err = Seal(r.current, r.s.Device, event); err != nil {
-						return err
-					}
+				blob, ok, err := sealed()
+				if err != nil {
+					return err
 				}
-				puts = append(puts, put{side: i, blob: storage.Blob{ID: id, Data: whole}})
+				if !ok {
+					skip = true
+					break
+				}
+				puts = append(puts, put{side: i, blob: storage.Blob{ID: id, Data: blob}})
 			}
-			if s == 0 {
+			if skip || s == 0 {
 				continue
 			}
 			// A blob with pieces, also lost ones, is for repair. A blob of
@@ -765,9 +787,12 @@ func (r *run) write(ctx context.Context) error {
 			if m != nil && (len(m.old) > 0 || len(m.seals) > 0 || len(m.lost) > 0) {
 				continue
 			}
-			blob, err := r.sealRecord(event)
+			blob, ok, err := sealed()
 			if err != nil {
 				return err
+			}
+			if !ok {
+				continue
 			}
 			p, err := r.code(blob, id, pieceSides)
 			if err != nil {
@@ -799,9 +824,40 @@ func (r *run) count() int {
 }
 
 // sealRecord seals a record into a new blob with the newest keys.
-func (r *run) sealRecord(event nostr.Event) ([]byte, error) {
-	_, blob, err := Seal(r.current, r.s.Device, event)
+func (r *run) sealRecord(event nostr.Event, body []byte) ([]byte, error) {
+	_, blob, err := Seal(r.current, r.s.Device, event, body)
 	return blob, err
+}
+
+// bodyOf reads the body of a wrap that names one. It returns nil for a
+// record with no body. It returns false, and notes why, for a wrap whose
+// body this device lacks: a directory carried the wrap without it. Such a
+// record waits; the device that holds the body puts it.
+func (r *run) bodyOf(event nostr.Event) ([]byte, bool) {
+	ref, ok := draft.Body(event)
+	if !ok {
+		return nil, true
+	}
+	if r.s.Bodies == nil {
+		r.refuse("%s: the draft has a body, and this device keeps no bodies", event.ID.Hex())
+		return nil, false
+	}
+	body, err := r.s.Bodies.Get(ref.Sum)
+	if err != nil {
+		r.refuse("%s: the body of the draft is not on this device: %v", event.ID.Hex(), err)
+		return nil, false
+	}
+	return body, true
+}
+
+// hasBody says if the device holds the body of a record, or the record
+// names none.
+func (r *run) hasBody(event nostr.Event) bool {
+	ref, ok := draft.Body(event)
+	if !ok {
+		return true
+	}
+	return r.s.Bodies != nil && r.s.Bodies.Has(ref.Sum)
 }
 
 // code codes a blob with a new seal and the code of S, and makes one

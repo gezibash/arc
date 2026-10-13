@@ -50,6 +50,7 @@ flowchart LR
 | `adapters/keyfile`, `adapters/nip05` | Identity files and network name resolution. |
 | `adapters/search/bleve` | Bleve indexing, query parsing and local search files. |
 | `adapters/store/bolt`, `adapters/kv/bolt`, `adapters/mailbox` | Bolt persistence and composition with core event/mail rules. |
+| `adapters/store/bodies` | The files of the encrypted bodies of drafts, beside the store and in a carried directory. |
 | `adapters/relay/*` | Khatru integration for sealed-event access, groups and relay limits, and the STUN and TURN server of a relay. |
 | `internal/search` | Shared application search request/result types. No ARC protocol rules. |
 | `internal/` | Small shared types, implementation utilities and test infrastructure. Core does not import these packages. |
