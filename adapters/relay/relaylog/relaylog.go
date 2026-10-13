@@ -262,3 +262,12 @@ func (c *conn) Write(p []byte) (int, error) {
 	c.record(err)
 	return n, err
 }
+
+// CloseWrite keeps the half-close of a TCP connection, which the HTTP server
+// uses to end a plain request.
+func (c *conn) CloseWrite() error {
+	if w, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return w.CloseWrite()
+	}
+	return nil
+}
