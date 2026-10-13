@@ -245,9 +245,11 @@ address, and a store cap.
 
 The relay logs to standard error. It writes a WARN line for each failed
 WebSocket upgrade, each connection that closes with an error, and each
-refused event. Each minute in which something happened, it writes an INFO
-summary: open connections, opened and closed connections, and refusals by
-reason. The log holds no event contents, keys or IP addresses.
+refused event. A gift wrap that comes before NIP-42 authentication is the
+normal first step of the handshake, so its refusal (`wrap-auth`) has a DEBUG
+line, not a WARN line. Each minute in which something happened, the relay
+writes an INFO summary: open connections, opened and closed connections, and
+refusals by reason, `wrap-auth` included. The log holds no event contents, keys or IP addresses.
 
 ## Update
 
