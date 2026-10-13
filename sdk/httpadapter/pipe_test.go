@@ -140,6 +140,39 @@ func TestOfferOverLimit(t *testing.T) {
 	}
 }
 
+// TestRefusalBeforeOpenIsConfirmed falls back to session frames in auto when
+// an older provider refuses the offer as invalid_request before the
+// transport confirms the open. The opener then gives the refusal as its
+// error. The policy direct tells the user to use session frames.
+func TestRefusalBeforeOpenIsConfirmed(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "frames") })
+	adapter := NewWithPipes(handler, direct.AcceptConfig{Policy: direct.Auto, Options: loopback})
+	open := func(_ context.Context, request string) (*session.Stream, error) {
+		if strings.Contains(request, `"direct"`) {
+			// The error of core/call when the answer ends the open.
+			return nil, fmt.Errorf("session open failed; outcome may be unknown: %w", session.RemoteError("invalid_request"))
+		}
+		return providertest.Start(t, session.ServerStream, func(ctx context.Context, s *session.Stream) error {
+			return adapter.HandleSession(ctx, provider.Request{From: "alice", Message: request, Meta: map[string]any{"method": "GET", "path": "/"}}, s)
+		}), nil
+	}
+	var notes bytes.Buffer
+	piped, err := OpenSession(t.Context(), direct.DialConfig{Policy: direct.Auto, Options: loopback, Notes: &notes}, "", open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if _, err := piped.Copy(&got); err != nil || got.String() != "frames" || piped.Path != direct.SessionPath {
+		t.Fatalf("%q on %q: %v", got.String(), piped.Path, err)
+	}
+	if !strings.Contains(notes.String(), "the provider has no pipe; using session frames over the relay") {
+		t.Fatalf("notes: %q", notes.String())
+	}
+	if _, err := OpenSession(t.Context(), direct.DialConfig{Policy: direct.DirectOnly, Options: loopback}, "", open); err == nil || !strings.Contains(err.Error(), "--path session") {
+		t.Fatalf("policy direct with a provider that has no pipe: %v", err)
+	}
+}
+
 // openUpload opens a duplex stream_body session on adapter with the policy
 // of c.
 func openUpload(t *testing.T, adapter *Adapter, c direct.DialConfig) (*ClientSession, error) {
