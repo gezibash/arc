@@ -10,6 +10,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/flynn/noise v1.1.0
 	github.com/godbus/dbus/v5 v5.1.0
+	github.com/klauspost/reedsolomon v1.14.2
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pion/logging v0.2.4
 	github.com/pion/stun/v4 v4.0.1
@@ -67,7 +68,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/klauspost/reedsolomon v1.14.2 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -110,13 +110,15 @@ require (
 	modernc.org/sqlite v1.37.1 // indirect
 )
 
-// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with fixes for three races:
+// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with fixes for four races:
 // a send on sub.Events or on sub.countResult can race the close of that channel,
-// and the khatru dispatcher reads its index sets while a REQ changes them.
+// the khatru dispatcher reads its index sets while a REQ changes them, and a new
+// AUTH challenge replaced the sync.Once of a running Auth (#283).
 // Upstream nostrlib has one item for each channel race (NIP-34 event ids):
 //   - sub.Events: pull request e6561592ddc2132bc8304260b1d40affc2f79c67368f66769c88acdcfeccd08e
 //   - sub.countResult: patch 26040f3bdc58a6665238b526b92c847bc240c5f7898d848c81d0025e6c5f5227
 //   - khatru dispatcher: no upstream item yet.
-// Copy: https://github.com/gezibash/nostrlib, branch fix-dispatcher-index-race-27e395a.
-// Remove this replace when upstream merges all three.
-replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261012114433-776f3d23cd16
+//   - Auth challenge: no upstream item yet.
+// Copy: https://github.com/gezibash/nostrlib, branch fix-auth-challenge-reset-27e395a.
+// Remove this replace when upstream merges all four.
+replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261013160820-2b1423cdaa2c
