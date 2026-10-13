@@ -6,6 +6,13 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Relay: `arc relay serve` logs its client connections to standard error. It
+  writes a WARN line for each failed WebSocket upgrade, each connection that
+  closes with an error, and each refused event, and an INFO summary each
+  minute in which something happened (#274).
+
 ## [0.28.1] - 2026-10-13
 
 ### Fixed

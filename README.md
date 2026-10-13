@@ -243,6 +243,12 @@ size cap, authentication or proof of work for gift wraps, a rate for each IP
 address, and a store cap.
 `arc relay serve --help` lists the flags.
 
+The relay logs to standard error. It writes a WARN line for each failed
+WebSocket upgrade, each connection that closes with an error, and each
+refused event. Each minute in which something happened, it writes an INFO
+summary: open connections, opened and closed connections, and refusals by
+reason. The log holds no event contents, keys or IP addresses.
+
 ## Update
 
 ```bash
