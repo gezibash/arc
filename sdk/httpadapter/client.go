@@ -96,7 +96,9 @@ func OpenSession(ctx context.Context, c direct.DialConfig, request string, open 
 		}
 		stream, err := open(ctx, string(body))
 		if err != nil {
-			return "", err
+			// The answer of the provider can end the open before the
+			// transport confirms it. Then the refusal is the error of open.
+			return "", pipeRefusal(err)
 		}
 		current = &ClientSession{Stream: stream, reader: NewSessionReader(stream)}
 		record, err := current.reader.Next()

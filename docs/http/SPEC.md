@@ -449,6 +449,9 @@ What the consumer writes for each failure of a pipe:
 - `TestBodyOverPipe`, `TestNoPipeAndAuto` and `TestOfferOverLimit` in
   `sdk/httpadapter` check `body_bytes`, the trailers, and the fall back of
   `auto`.
+- `TestRefusalBeforeOpenIsConfirmed` in `sdk/httpadapter` gets the
+  `invalid_request` refusal before the transport confirms the open. In
+  `auto`, arc asks again with no offer. With `--path direct`, arc stops.
 - `TestLargeUploadOverPipeThroughRelay` in `cmd/arc` sends 16 MiB to
   `arc-http` through a local relay. The body goes on a pipe, and the
   handler answers with the count and the SHA-256 of the bytes that it got.
