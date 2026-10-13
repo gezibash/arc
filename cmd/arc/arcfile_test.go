@@ -30,15 +30,7 @@ func serveDir(t *testing.T, ctx context.Context, home, dir string, flags ...stri
 			t.Error("the provider failed to stop")
 		}
 	})
-	if !waitFor(out, "serves", 10*time.Second) {
-		select {
-		case err := <-done:
-			done <- err
-			t.Fatalf("serve %s stopped: %v", dir, err)
-		default:
-			t.Fatalf("provider not ready: %s", out.String())
-		}
-	}
+	waitServes(t, out, done, 10*time.Second)
 	return out
 }
 

@@ -80,6 +80,26 @@ func waitFor(out *output, text string, limit time.Duration) bool {
 	return false
 }
 
+// waitServes waits until arc serve says "serves". If arc serve stops
+// first, it fails at once with the error of arc serve. It puts the error
+// back on done for the cleanup of the caller.
+func waitServes(t *testing.T, out *output, done chan error, limit time.Duration) {
+	t.Helper()
+	deadline := time.After(limit)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for !strings.Contains(out.String(), "serves") {
+		select {
+		case err := <-done:
+			done <- err
+			t.Fatalf("arc serve stopped before it served: %v\n%s", err, out.String())
+		case <-deadline:
+			t.Fatalf("arc serve did not serve in %s: %s", limit, out.String())
+		case <-tick.C:
+		}
+	}
+}
+
 // deadAddress returns the address of a port where no relay listens.
 func deadAddress(t *testing.T) string {
 	t.Helper()

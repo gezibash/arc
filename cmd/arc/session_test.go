@@ -46,9 +46,7 @@ func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
 			t.Error("provider did not stop")
 		}
 	}()
-	if !waitFor(serverOutput, "serves", 10*time.Second) {
-		t.Fatalf("provider not ready: %s", serverOutput.String())
-	}
+	waitServes(t, serverOutput, serverDone, 10*time.Second)
 	lines := strings.Split(strings.TrimSpace(serverOutput.String()), "\n")
 	public := strings.TrimSpace(lines[len(lines)-1])
 	ok(t, consumerHome, "", "install", public, "repl", "--yes")
