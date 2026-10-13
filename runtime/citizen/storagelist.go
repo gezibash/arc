@@ -79,7 +79,7 @@ func (sess *Session) RelayURLs() []string {
 func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Installs, out, errs io.Writer) (storage.List, bool, error) {
 	list, ok, err := sess.StorageList(ctx)
 	if err != nil {
-		return storage.List{}, false, fmt.Errorf("the storage list did not come, so this machine syncs with its own installs: %w", err)
+		return storage.List{}, false, fmt.Errorf("the storage list did not come, so this machine syncs with its own installs: %w", SignerOnly(err))
 	}
 	if !ok {
 		return storage.List{}, false, nil
