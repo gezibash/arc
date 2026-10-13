@@ -616,7 +616,7 @@ func clientFlags(flags *flag.FlagSet) *settings {
 	flags.StringVar(&s.client.Arc.Home, "home", "", "the arc home (default: the home that arc picks)")
 	flags.StringVar(&s.client.App, "app", "storage", "the installed name of the storage app")
 	flags.StringVar(&s.stun, "stun", os.Getenv("STORAGE_STUN"), "the STUN server, or none (default STORAGE_STUN, or the first relay on port "+direct.RelaySTUNPort+")")
-	flags.BoolVar(&s.client.HoldFirst, "hold", false, "ask the storage citizen to wait in the first attempt, not in the second")
+	flags.BoolVar(&s.client.AnswererFirst, "answerer-first", false, "let the storage citizen send first in the first attempt, and ask it to wait in the second")
 	flags.BoolVar(&s.client.NoRelay, "no-relay", false, "fail if no direct path opens; do not send the bytes through the TURN server of the relay")
 	return s
 }

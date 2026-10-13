@@ -198,7 +198,7 @@ The commands take these flags:
 | `offer` | `-to <key>` | A public key that can get the file. |
 | `get` | `-o <file>` | The file to write. The default is the name in the link, in the current directory. |
 | `get`, `put` | `-stun <url>` | The STUN server, or `none`. The default is `TRANSFER_STUN`. If it is not set, the command asks the first relay of `arc relay ls` on port 3478. |
-| `get`, `put` | `-hold` | Ask the other end to wait in the first attempt. See "The order of the attempts". |
+| `get`, `put` | `-answerer-first` | Let the other end send first in the first attempt, and ask it to wait in the second. See "The order of the attempts". |
 | `get`, `put` | `-no-relay` | Do not try the TURN server of the relay. If no direct path opens, the command fails. |
 
 ## Speed
@@ -352,9 +352,10 @@ A refused request has one of these errors:
 [direct pipe spec](../../docs/direct/SPEC.md), sections 3.5 and 3.6: two
 direct attempts in each order of the first packets, then an attempt
 through the TURN server of the first relay. The receiver of a `get` and the
-caller of a `put` make the offer. With `-hold`, the command asks the other
-end to wait in the first attempt, not in the second. With `-no-relay`, it
-makes no relay attempt.
+caller of a `put` make the offer. In the first attempt, the other end
+waits, so the end that makes the offer sends first. With `-answerer-first`,
+the other end sends first in the first attempt, and waits in the second.
+With `-no-relay`, the command makes no relay attempt.
 
 In a relay attempt, the path is `relay`, and `send` prints it for each file
 too. If the relay serves no TURN, or the attempt finds no path, the command
@@ -414,8 +415,9 @@ What no automated test covers:
 
 - `put` between two machines, and `put` from a phone.
 - Two machines on different networks.
-- The second attempt after a first attempt with no path. The test of `-hold`
-  covers the wait of the sender, not the change of the order.
+- The second attempt after a first attempt with no path. The test of
+  `-answerer-first` covers the first attempt with no wait, not the change of
+  the order.
 - A transfer that stops in the middle. The test of the part file starts from
   a part file that the test writes.
 - The limit of 4 transfers at a time, and the error `busy`.

@@ -372,15 +372,15 @@ func TestTheSenderRefusesAFileThatChanged(t *testing.T) {
 	absent(t, output)
 }
 
-// A router can need the receiver to send the first packet. The sender then
-// holds the addresses of the offer back for a time.
-func TestTheSenderCanWaitBeforeItsFirstPacket(t *testing.T) {
+// A router can need the sender to send the first packet. The sender then
+// does not hold the addresses of the offer back in the first attempt.
+func TestTheSenderCanSendTheFirstPacket(t *testing.T) {
 	data := random(t, 1<<20)
 	_, link := offered(t, data)
 	output := filepath.Join(t.TempDir(), "got.bin")
 
-	if log, err := fetch(env.receiver, link, output, "-hold"); err != nil {
-		t.Fatalf("get -hold: %v\n%s", err, log)
+	if log, err := fetch(env.receiver, link, output, "-answerer-first"); err != nil {
+		t.Fatalf("get -answerer-first: %v\n%s", err, log)
 	}
 	if got, _ := os.ReadFile(output); !bytes.Equal(got, data) {
 		t.Fatal("the receiver has other bytes")

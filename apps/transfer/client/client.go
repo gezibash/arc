@@ -90,9 +90,9 @@ type Get struct {
 	Output string
 	// Options are the settings of the connection.
 	Options direct.Options
-	// HoldFirst asks the sender to wait in the first attempt, not in the
-	// second.
-	HoldFirst bool
+	// AnswererFirst lets the sender send first in the first attempt, and
+	// asks it to wait in the second.
+	AnswererFirst bool
 	// NoRelay stops the attempt through the TURN server of the relay after
 	// the direct attempts fail.
 	NoRelay bool
@@ -159,7 +159,7 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 
 	started := time.Now()
 	err = direct.Attempts{
-		Options: g.Options, HoldFirst: g.HoldFirst, NoRelay: g.NoRelay, TURN: g.Arc.TURN, Notes: g.Notes,
+		Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: g.Arc.TURN, Notes: g.Notes,
 		Need: func() int64 { return offer.Size - part.Have() },
 	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
 		result.Path, err = run.attempt(ctx, options, hold)
@@ -346,9 +346,9 @@ type Put struct {
 	File string
 	// Options are the settings of the connection.
 	Options direct.Options
-	// HoldFirst asks the receiver to wait in the first attempt, not in the
-	// second.
-	HoldFirst bool
+	// AnswererFirst lets the receiver send first in the first attempt, and
+	// asks it to wait in the second.
+	AnswererFirst bool
 	// NoRelay stops the attempt through the TURN server of the relay after
 	// the direct attempts fail.
 	NoRelay bool
@@ -397,7 +397,7 @@ func (p Put) Run(ctx context.Context) (PutResult, error) {
 
 	started := time.Now()
 	err = direct.Attempts{
-		Options: p.Options, HoldFirst: p.HoldFirst, NoRelay: p.NoRelay, TURN: p.Arc.TURN, Notes: p.Notes,
+		Options: p.Options, AnswererFirst: p.AnswererFirst, NoRelay: p.NoRelay, TURN: p.Arc.TURN, Notes: p.Notes,
 		Need: func() int64 { return offer.Size },
 	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
 		result.Path, result.Bytes, err = p.attempt(ctx, options, offer, hold)
