@@ -68,6 +68,14 @@ func Run(ctx context.Context, command []string, opts provider.Options) error {
 	if err != nil {
 		return err
 	}
+	// The call endpoint takes its port before freePort chooses PORT. A
+	// listener that opens after freePort can get the same port, and then
+	// the server cannot listen on PORT.
+	calls, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = calls.Close() }()
 	port, err := freePort()
 	if err != nil {
 		return err
@@ -78,10 +86,6 @@ func Run(ctx context.Context, command []string, opts provider.Options) error {
 		return err
 	}
 	a := &adapter{token: token, web: httpadapter.NewWithPipes(forward(origin, opts.Log), pipes)}
-	calls, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
 	endpoint := &http.Server{Handler: a.calls(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := endpoint.Serve(calls); !errors.Is(err, http.ErrServerClosed) {
