@@ -568,6 +568,11 @@ func open(command *cobra.Command) (*citizen.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openDir(command, dir)
+}
+
+// openDir opens the session of the identity in dir.
+func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
 	id, err := loadIdentity(command.Context(), dir)
 	if err != nil {
 		return nil, err

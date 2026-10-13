@@ -69,6 +69,7 @@ func TestDevicePages(t *testing.T) {
 	}
 	t.Log("ok: the first sync seals the 2 old pages again under the data roots, parts too, and the second sync does nothing")
 
+	signer.run("keys", "storage", "add", storeKey)
 	bunker := signer.start("keys", "bunker", "--relay", url)
 	uri := ifaceLine(bunker, "bunker://", limit)
 	if uri == "" {
@@ -90,6 +91,24 @@ func TestDevicePages(t *testing.T) {
 		device.run("install", citizen, "journal", "--yes")
 		device.run("install", storeKey, "storage", "--yes")
 	}
+
+	// The desk uses only a relay of an older arc, which takes no token, so
+	// the desk authenticates with the citizen key there.
+	oldRelay := arc(t, filepath.Join(work, "old-relay")).using(older).start("relay", "serve", "--listen", "127.0.0.1:0")
+	if !oldRelay.waitFor("relay listens on ", limit) {
+		t.Fatalf("the older relay did not start:\n%s", oldRelay.output())
+	}
+	oldURL := strings.TrimSpace(strings.SplitN(strings.SplitN(oldRelay.output(), "relay listens on ", 2)[1], "\n", 2)[0])
+	signer.run("relay", "add", oldURL)
+	desk := arc(t, filepath.Join(work, "desk")).with(loopback...)
+	signer.run("keys", "devices", "add", ifaceTrim(desk.run("keys", "device")), "--name", "desk")
+	if !loads(bunker, 3, limit) {
+		t.Fatalf("the bunker did not load the list of three devices:\n%s", bunker.output())
+	}
+	desk.run("keys", "add", uri)
+	desk.run("relay", "add", oldURL)
+	has(t, desk.run("keys", "devices", "list"), "desk", "the device list from the older relay")
+	t.Log("ok: on a relay of an older arc, the desk authenticates with the citizen key and reads the device list")
 	phone.run("sync")
 
 	bunker.stop()
@@ -105,32 +124,34 @@ func TestDevicePages(t *testing.T) {
 		t.Fatalf("with the signer stopped, one write and two reads took %s", took)
 	}
 	t.Logf("ok: with the signer stopped, the phone writes and reads its journal in %s", time.Since(start).Round(time.Millisecond))
-	// A command that needs the signer fails, names the signer, and shows
-	// no transport error. A command that changes a list fails at once.
+	// The phone reads its sealed lists on the relay with its token, so a
+	// sync and the storage list do not wait for the signer.
+	start = time.Now()
+	has(t, phone.run("keys", "storage", "ls"), storeKey, "the storage list on the phone")
+	synced := phone.try("", "sync")
+	if took := time.Since(start); synced.Err != nil || took > 5*time.Second || strings.Contains(synced.Stderr, "signer") {
+		t.Fatalf("with the signer stopped, the storage list and a sync on the phone took %s, err %v:\n%s", took, synced.Err, synced.Stderr)
+	}
+	if got := selfSync(t, synced.Stdout); got.sent == 0 {
+		t.Fatalf("the phone put nothing on the storage citizen: %+v", got)
+	}
+	t.Logf("ok: with the signer stopped, the storage list and a sync on the phone take %s, and the sync puts the page on the storage citizen", time.Since(start).Round(time.Millisecond))
+	// On the older relay, the desk needs the citizen key, so it waits for
+	// the signer, and then uses the list on its disk.
+	start = time.Now()
+	has(t, desk.run("keys", "devices", "list"), "desk", "the device list on the desk")
+	if took := time.Since(start); took < 10*time.Second {
+		t.Fatalf("with the signer stopped, the desk read the older relay in %s; it must need the citizen key there", took)
+	}
+	t.Logf("ok: on the older relay, the desk waits %s for the signer, and then lists the devices on its disk", time.Since(start).Round(time.Millisecond))
+	// A command that needs the signer fails at once, and names the signer.
 	start = time.Now()
 	refused := phone.try("", "keys", "devices", "revoke", "laptop")
 	has(t, refused.Stderr, "only the signer, which holds the citizen key", "a revocation on the phone")
 	if took := time.Since(start); refused.Err == nil || took > 2*time.Second {
 		t.Fatalf("a revocation on the phone took %s, err %v", took, refused.Err)
 	}
-	start = time.Now()
-	refused = phone.try("", "keys", "storage", "ls")
-	has(t, refused.Stderr, "this needs the signer of the citizen "+citizen, "the storage list on the phone")
-	if took := time.Since(start); refused.Err == nil || took > 20*time.Second || strings.Contains(refused.Stderr, "ws://") {
-		t.Fatalf("the storage list on the phone took %s, err %v:\n%s", took, refused.Err, refused.Stderr)
-	}
-	t.Logf("ok: with the signer stopped, a command that needs it fails in %s and says: %s", time.Since(start).Round(time.Millisecond), strings.TrimSpace(refused.Stderr))
-	// The next command does not wait for the signer again.
-	start = time.Now()
-	synced := phone.try("", "sync")
-	has(t, synced.Stderr, "this needs the signer of the citizen "+citizen, "a sync on the phone")
-	if took := time.Since(start); synced.Err != nil || took > 5*time.Second || strings.Contains(synced.Stderr, "auth") {
-		t.Fatalf("a sync on the phone after a refusal took %s, err %v:\n%s", took, synced.Err, synced.Stderr)
-	}
-	if got := selfSync(t, synced.Stdout); got.sent == 0 {
-		t.Fatalf("the phone put nothing on the storage citizen: %+v", got)
-	}
-	t.Logf("ok: the next command does not wait for the signer: in %s, a sync puts the page on the storage citizen", time.Since(start).Round(time.Millisecond))
+	t.Logf("ok: with the signer stopped, a revocation on the phone fails in %s and says: %s", time.Since(start).Round(time.Millisecond), strings.TrimSpace(refused.Stderr))
 
 	bunker = signer.start("keys", "bunker", "--relay", url)
 	if ifaceLine(bunker, "bunker://", limit) == "" {

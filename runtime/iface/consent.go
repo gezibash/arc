@@ -18,7 +18,7 @@ var reserved = map[int]string{
 	3272: "call request", 3273: "call reply", 3274: "acknowledgement", 3276: "session interaction",
 	9734: "zap request", 9735: "zap",
 	10002: "relay list", 10013: "private relay list", 10050: "direct message relays",
-	10272: "migration record", 10273: "storage list", 10274: "device list", 10275: "data roots", 30272: "capability announcement",
+	10272: "migration record", 10273: "storage list", 10274: "device list", 10275: "data roots", 20274: "device token", 30272: "capability announcement",
 	13194: "wallet connect", 23194: "wallet connect", 23195: "wallet connect",
 	22242: "authentication", 24133: "remote signing", 27235: "HTTP authentication",
 }

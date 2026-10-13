@@ -6,6 +6,18 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A device reads the sealed data of its citizen on a relay with a token,
+  so `arc sync` and `arc keys storage ls` do not wait for a stopped signer.
+  The citizen key signs the token (kind 20274) for one device key, for at
+  most 7 days. A device asks its signer for the token at `arc keys add`, and
+  again when the signer answers. A relay that takes tokens lists
+  `arc-delegation` in NIP-11. Update the signer and the relay before the
+  devices (#293).
+- A device keeps the storage list that it opened last, sealed to its device
+  key, so it reads the list with no signer until a newer list comes (#293).
+
 ### Fixed
 
 - A device names the signer when a command needs it and the signer does not
