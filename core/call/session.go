@@ -129,6 +129,11 @@ func OpenSession(ctx context.Context, me keys.Signer, to nostr.PubKey, request R
 	if err != nil {
 		_ = stream.Close()
 		cancel()
+		// A close with an error gives the result of the open: the provider
+		// refused it. Only an open without an answer has an unknown outcome.
+		if remote, ok := errors.AsType[session.RemoteError](err); ok {
+			return nil, remote
+		}
 		return nil, fmt.Errorf("session open failed; outcome may be unknown: %w", err)
 	}
 	return stream, nil

@@ -217,6 +217,25 @@ func TestProviderConsumesAnotherStreamingProvider(t *testing.T) {
 	}
 }
 
+// A nested provider can refuse an open with a close and no accept. The
+// refusal ends the open, so the client gets the refusal and nothing else.
+func TestNestedRefusalWithoutAcceptReachesTheClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	front := keys.Generate()
+	back := keys.Generate()
+	liveSessionProvider(t, ctx, back, r, session.RequestReply)
+	server := liveSessionProvider(t, ctx, front, r, session.ServerStream)
+	server.SetSessionCaller(func(ctx context.Context, _ call.Outbound, mode session.Mode) (*session.Stream, error) {
+		return call.OpenSession(ctx, front, back.Public, call.Request{Capability: "primary"}, mode, r)
+	})
+	s := openSession(t, ctx, keys.Generate(), front, r, session.ServerStream, "session echo+arc://backend/")
+	if _, err := io.ReadAll(s); err == nil || err.Error() != session.ErrUnsupported.Error() {
+		t.Fatalf("nested refusal = %v", err)
+	}
+}
+
 type watchLoss struct {
 	relay.Relay
 	lost chan struct{}
@@ -334,7 +353,8 @@ func TestSessionOpensWhenDataArrivesBeforeAccept(t *testing.T) {
 }
 
 // A provider can refuse an open before the relay confirms the open. The
-// refusal ends the stream, which cancels the send. The refusal is the outcome.
+// refusal ends the stream, which cancels the send. The refusal is the outcome,
+// so the error is the refusal of the provider and nothing else.
 func TestSessionRefusalArrivesBeforeTheOpenIsConfirmed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -342,7 +362,7 @@ func TestSessionRefusalArrivesBeforeTheOpenIsConfirmed(t *testing.T) {
 	owner := keys.Generate()
 	liveSessionProvider(t, ctx, owner, r, session.RequestReply)
 	_, err := call.OpenSession(ctx, keys.Generate(), owner.Public, call.Request{Capability: "primary"}, session.Duplex, lateOK{r})
-	if !errors.Is(err, session.ErrUnsupported) {
+	if err == nil || err.Error() != session.ErrUnsupported.Error() {
 		t.Fatalf("refused open = %v", err)
 	}
 }

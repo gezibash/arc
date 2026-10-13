@@ -149,8 +149,8 @@ func TestRefusalBeforeOpenIsConfirmed(t *testing.T) {
 	adapter := NewWithPipes(handler, direct.AcceptConfig{Policy: direct.Auto, Options: loopback})
 	open := func(_ context.Context, request string) (*session.Stream, error) {
 		if strings.Contains(request, `"direct"`) {
-			// The error of core/call when the answer ends the open.
-			return nil, fmt.Errorf("session open failed; outcome may be unknown: %w", session.RemoteError("invalid_request"))
+			// The error of core/call when the refusal ends the open.
+			return nil, session.RemoteError("invalid_request")
 		}
 		return providertest.Start(t, session.ServerStream, func(ctx context.Context, s *session.Stream) error {
 			return adapter.HandleSession(ctx, provider.Request{From: "alice", Message: request, Meta: map[string]any{"method": "GET", "path": "/"}}, s)
