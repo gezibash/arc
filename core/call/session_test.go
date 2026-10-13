@@ -217,6 +217,25 @@ func TestProviderConsumesAnotherStreamingProvider(t *testing.T) {
 	}
 }
 
+// A nested provider can refuse an open with a close and no accept. The
+// refusal ends the open, so the client gets the refusal and nothing else.
+func TestNestedRefusalWithoutAcceptReachesTheClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	front := keys.Generate()
+	back := keys.Generate()
+	liveSessionProvider(t, ctx, back, r, session.RequestReply)
+	server := liveSessionProvider(t, ctx, front, r, session.ServerStream)
+	server.SetSessionCaller(func(ctx context.Context, _ call.Outbound, mode session.Mode) (*session.Stream, error) {
+		return call.OpenSession(ctx, front, back.Public, call.Request{Capability: "primary"}, mode, r)
+	})
+	s := openSession(t, ctx, keys.Generate(), front, r, session.ServerStream, "session echo+arc://backend/")
+	if _, err := io.ReadAll(s); err == nil || err.Error() != session.ErrUnsupported.Error() {
+		t.Fatalf("nested refusal = %v", err)
+	}
+}
+
 type watchLoss struct {
 	relay.Relay
 	lost chan struct{}
