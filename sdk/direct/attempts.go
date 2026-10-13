@@ -15,7 +15,8 @@ import (
 )
 
 // HoldWait is the time that the answerer waits in the attempt in which the
-// offerer sends first.
+// offerer sends first. It must be longer than the time that the answer
+// needs to reach the offerer.
 const HoldWait = time.Second
 
 // ErrNoPath says that one attempt found no path: the data channel did not
@@ -29,15 +30,15 @@ func NoPath(err error) error {
 }
 
 // Attempts is the order of the attempts of the end that makes the offer:
-// a direct attempt in which the answerer sends first, a direct attempt in
-// which the offerer sends first, and an attempt through the TURN server of
-// the relay.
+// a direct attempt in which the offerer sends first, a direct attempt in
+// which the answerer sends first, and an attempt through the TURN server
+// of the relay.
 type Attempts struct {
 	// Options are the settings of the direct attempts.
 	Options Options
-	// HoldFirst asks the answerer to wait in the first attempt, not in the
-	// second.
-	HoldFirst bool
+	// AnswererFirst lets the answerer send first in the first attempt, and
+	// asks it to wait in the second.
+	AnswererFirst bool
 	// NoRelay stops after the direct attempts.
 	NoRelay bool
 	// OnlyRelay skips the direct attempts.
@@ -61,10 +62,14 @@ func (a Attempts) Run(ctx context.Context, attempt func(ctx context.Context, opt
 		notes = io.Discard
 	}
 	// The order of the first packets decides on some routers. One attempt
-	// lets the answerer send first. The other makes it wait.
-	holds := []time.Duration{0, HoldWait}
-	if a.HoldFirst {
-		holds = []time.Duration{HoldWait, 0}
+	// makes the answerer wait, so the offerer sends first. The other lets
+	// the answerer send first. With no hold, the answerer always sends
+	// first: it starts before its answer leaves, and the offerer starts
+	// when the answer arrives. A router of the offerer that gets a packet
+	// from outside first can then block the pair, so the hold goes first.
+	holds := []time.Duration{HoldWait, 0}
+	if a.AnswererFirst {
+		holds = []time.Duration{0, HoldWait}
 	}
 	if a.OnlyRelay {
 		holds = nil

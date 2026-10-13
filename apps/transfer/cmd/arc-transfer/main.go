@@ -86,7 +86,7 @@ func get(ctx context.Context, args []string) error {
 	arc := arcFlags(flags)
 	output := flags.String("o", "", "the file to write (default: the name in the link, in this directory)")
 	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or the first relay on port "+direct.RelaySTUNPort+")")
-	hold := flags.Bool("hold", false, "ask the sender to wait in the first attempt, not in the second")
+	answererFirst := flags.Bool("answerer-first", false, "let the sender send first in the first attempt, and ask it to wait in the second")
 	noRelay := flags.Bool("no-relay", false, "fail if no direct path opens; do not send the bytes through the TURN server of the relay")
 	state := flags.String("state", "", "the state directory, for a file that the sender gave with put (default TRANSFER_STATE, or ~/.local/state/arc-transfer)")
 	if err := flags.Parse(args); err != nil {
@@ -100,7 +100,7 @@ func get(ctx context.Context, args []string) error {
 		return err
 	}
 	result, err := client.Get{
-		Arc: *arc, Link: flags.Arg(0), Output: *output, HoldFirst: *hold, NoRelay: *noRelay, Notes: os.Stderr,
+		Arc: *arc, Link: flags.Arg(0), Output: *output, AnswererFirst: *answererFirst, NoRelay: *noRelay, Notes: os.Stderr,
 		State:   server.StateDir(*state),
 		Options: direct.Options{STUN: stunURL, Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
 	}.Run(ctx)
@@ -123,7 +123,7 @@ func put(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("arc-transfer put", flag.ContinueOnError)
 	arc := arcFlags(flags)
 	stun := flags.String("stun", os.Getenv("TRANSFER_STUN"), "the STUN server, or none (default TRANSFER_STUN, or the first relay on port "+direct.RelaySTUNPort+")")
-	hold := flags.Bool("hold", false, "ask the receiver to wait in the first attempt, not in the second")
+	answererFirst := flags.Bool("answerer-first", false, "let the receiver send first in the first attempt, and ask it to wait in the second")
 	noRelay := flags.Bool("no-relay", false, "fail if no direct path opens; do not send the bytes through the TURN server of the relay")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -136,7 +136,7 @@ func put(ctx context.Context, args []string) error {
 		return err
 	}
 	result, err := client.Put{
-		Arc: *arc, To: flags.Arg(0), File: flags.Arg(1), HoldFirst: *hold, NoRelay: *noRelay, Notes: os.Stderr,
+		Arc: *arc, To: flags.Arg(0), File: flags.Arg(1), AnswererFirst: *answererFirst, NoRelay: *noRelay, Notes: os.Stderr,
 		Options: direct.Options{STUN: stunURL, Loopback: os.Getenv("TRANSFER_LOOPBACK") != ""},
 	}.Run(ctx)
 	if err != nil {

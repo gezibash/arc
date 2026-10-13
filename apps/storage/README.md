@@ -285,7 +285,7 @@ Each command takes these flags:
 | `-home <directory>` | The arc home. The default is the home that arc picks. |
 | `-app <name>` | The installed name of the storage app. The default is `storage`. Use `arc install --as` and this flag for a second storage citizen. |
 | `-stun <url>` | The STUN server, or `none`. The default is `STORAGE_STUN`, or the first relay of `arc relay ls` on port 3478. |
-| `-hold` | Ask the storage citizen to wait in the first attempt, not in the second. |
+| `-answerer-first` | Let the storage citizen send first in the first attempt, and ask it to wait in the second. |
 | `-no-relay` | Do not try the TURN server of the relay. If no direct path opens, the command fails. |
 
 `list` takes `-after <cursor>`. `get` takes `-dir <directory>`, or
