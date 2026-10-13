@@ -230,26 +230,58 @@ func (s *store) room(name string, a *account, used, size int64) error {
 // writeBlob writes the bytes of a blob to its file. The directory is
 // synced later, by commit, once for each group of puts.
 func (s *store) writeBlob(name, id string, data []byte) error {
-	dir := filepath.Dir(s.blobPath(name, id))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, "."+id+"-*")
+	f, err := s.createBlob(name, id)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	defer func() { _ = f.Close() }()
-	if _, err := f.Write(data); err != nil {
+	if err := f.write(data); err != nil {
+		f.abort()
 		return err
 	}
-	if err := f.Sync(); err != nil {
+	return f.finish()
+}
+
+// blobFile is the file of a blob while its bytes come, under a temporary
+// name. A put of 64 MiB thus never waits whole in memory.
+type blobFile struct {
+	f    *os.File
+	path string
+}
+
+// createBlob starts the file of a blob.
+func (s *store) createBlob(name, id string) (*blobFile, error) {
+	path := s.blobPath(name, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+id+"-*")
+	if err != nil {
+		return nil, err
+	}
+	return &blobFile{f: f, path: path}, nil
+}
+
+func (b *blobFile) write(data []byte) error {
+	_, err := b.f.Write(data)
+	return err
+}
+
+// finish syncs the file, and renames it to the name of the blob.
+func (b *blobFile) finish() error {
+	defer b.abort()
+	if err := b.f.Sync(); err != nil {
 		return err
 	}
-	if err := f.Close(); err != nil {
+	if err := b.f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), s.blobPath(name, id))
+	return os.Rename(b.f.Name(), b.path)
+}
+
+// abort removes the temporary file. After finish, it removes nothing.
+func (b *blobFile) abort() {
+	_ = b.f.Close()
+	_ = os.Remove(b.f.Name())
 }
 
 // written is a put whose bytes are in their file, and not in the index.

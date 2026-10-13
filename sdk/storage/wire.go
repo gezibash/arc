@@ -110,6 +110,9 @@ const (
 	Window = 32
 	// MaxBatch is the largest number of IDs in one get, delete or audit.
 	MaxBatch = 256
+	// MaxInFlight bounds the bytes of the puts that a client keeps in
+	// flight. A put larger than it goes alone.
+	MaxInFlight = 128 << 20
 	// FeatureAudit says that the app answers OpAudit.
 	FeatureAudit = "audit"
 	// FeatureDrain says that the app answers OpDrain.

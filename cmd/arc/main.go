@@ -795,6 +795,16 @@ func syncCommand() *cobra.Command {
 					for _, err := range report.SendFailed {
 						fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
 					}
+					bodies, err := sess.SyncBodies(dir)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "%s: bodies: %v\n", t.Name(), err)
+						failed = true
+					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
+						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
+						for _, sum := range bodies.Missing {
+							fmt.Fprintf(os.Stderr, "  the body %s is on neither side; the device that wrote it holds it\n", sum)
+						}
+					}
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
