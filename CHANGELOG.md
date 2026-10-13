@@ -6,6 +6,14 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-10-13
+
+### Fixed
+
+- Storage: a storage citizen answers `not_found` for a blob whose file is
+  gone, instead of closing the pipe. Before, repair could not mark the
+  piece as lost, and did not repair it (#272).
+
 ## [0.28.0] - 2026-10-13
 
 A device writes and reads its journal with no path to the signer. The device
