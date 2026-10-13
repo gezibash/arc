@@ -418,7 +418,11 @@ func TestAPutGoesToTheDiskAsItComes(t *testing.T) {
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
 			if strings.HasPrefix(e.Name(), "."+blob.ID) {
-				info, _ := e.Info()
+				// The app can remove the file between ReadDir and Info.
+				info, err := e.Info()
+				if err != nil {
+					continue
+				}
 				names, size = append(names, e.Name()), info.Size()
 			}
 		}
