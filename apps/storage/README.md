@@ -305,6 +305,9 @@ Each command takes these flags:
   the quota gets `over_quota`, with the bytes in use, the quota and the size of the blob:
   `over quota: the account uses 4096 of 65536 bytes, and this blob needs 65536 more`.
 - A put of an ID that the account holds gets `held`. No bytes go.
+- A get of an ID with no entry, or with an entry whose file is gone, gets
+  `not_found`. The pipe stays open, so the device marks the piece lost
+  and repairs it.
 - A delete removes the bytes at once, and keeps the ID as a tombstone. For
   90 days, a put of that ID gets `tombstoned`. No bytes go.
 - Each put and each delete gets the next sequence number of the account. A

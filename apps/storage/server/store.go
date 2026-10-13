@@ -350,17 +350,26 @@ func (s *store) put(name, id string, data []byte) (status string, seq uint64, er
 	return results[0].status, results[0].seq, results[0].err
 }
 
-// sizes returns the size of each blob, or the code not_found.
+// sizes returns the size of each blob, or the code not_found. A blob
+// whose file is gone is not_found, as a blob with no entry is, so that a
+// get answers it and the pipe stays open.
 func (s *store) sizes(name string, ids []string) ([]wire.Item, error) {
 	items := make([]wire.Item, len(ids))
 	err := s.view(name, func(x index) error {
 		for i, id := range ids {
 			items[i].ID = id
-			if b, ok := x.blob(id); ok {
-				items[i].Size = b.Size
-			} else {
+			b, ok := x.blob(id)
+			if !ok {
 				items[i].Error = wire.ErrNotFound
+				continue
 			}
+			if _, err := os.Stat(s.blobPath(name, id)); errors.Is(err, os.ErrNotExist) {
+				items[i].Error = wire.ErrNotFound
+				continue
+			} else if err != nil {
+				return err
+			}
+			items[i].Size = b.Size
 		}
 		return nil
 	})
@@ -376,7 +385,11 @@ func (s *store) get(name, id string) ([]byte, error) {
 	if items[0].Error != "" {
 		return nil, refusal{wire.ErrNotFound, "the account holds no blob " + id}
 	}
-	return os.ReadFile(s.blobPath(name, id))
+	data, err := os.ReadFile(s.blobPath(name, id))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, refusal{wire.ErrNotFound, "the account holds no blob " + id}
+	}
+	return data, err
 }
 
 // remove deletes blobs in one transaction, and keeps each ID as a

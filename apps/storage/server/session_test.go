@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -349,5 +350,46 @@ func TestAuditReplay(t *testing.T) {
 	}
 	if old[0].Proof == wire.AuditProof(second, b.ID, b.Data) {
 		t.Fatal("the answer to the first nonce passes an audit with the second nonce")
+	}
+}
+
+// TestGetGoneFile gets a blob whose entry stays and whose file is gone.
+// The app answers not_found for it, sends the bytes of the other blob,
+// and keeps the pipe open. Repair marks such a piece lost only if the get
+// answers.
+func TestGetGoneFile(t *testing.T) {
+	s := testServer(t, t.TempDir())
+	conn := testConn(t, s)
+	ctx := context.Background()
+	blobs := testBlobs(2, wire.MinBlob)
+	for _, b := range blobs {
+		if _, err := conn.Put(ctx, b.ID, b.Data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gone, kept := blobs[0], blobs[1]
+	if err := os.Remove(s.store.blobPath(testAccount, gone.ID)); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]byte{}
+	refused := map[string]error{}
+	err := conn.GetMany(ctx, []string{gone.ID, kept.ID}, func(id string, blob []byte, err error) error {
+		got[id], refused[id] = blob, err
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("get of a gone file and a kept file: %v", err)
+	}
+	if !wire.IsRefused(refused[gone.ID], wire.ErrNotFound) {
+		t.Fatalf("the gone file got %v, not not_found", refused[gone.ID])
+	}
+	if refused[kept.ID] != nil || !bytes.Equal(got[kept.ID], kept.Data) {
+		t.Fatalf("the kept file got %d bytes and %v", len(got[kept.ID]), refused[kept.ID])
+	}
+	if _, err := conn.Get(ctx, gone.ID); !wire.IsRefused(err, wire.ErrNotFound) {
+		t.Fatalf("a get of one gone file got %v, not not_found", err)
+	}
+	if _, err := conn.Usage(ctx); err != nil {
+		t.Fatalf("the pipe ended after the gone file: %v", err)
 	}
 }
