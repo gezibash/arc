@@ -250,9 +250,9 @@ type DialConfig struct {
 	// Policy is Auto, DirectOnly or RelayOnly.
 	Policy  Policy
 	Options Options
-	// HoldFirst asks the answerer to wait in the first attempt, not in the
-	// second.
-	HoldFirst bool
+	// AnswererFirst lets the answerer send first in the first attempt, and
+	// asks it to wait in the second.
+	AnswererFirst bool
 	// TURN gets a TURN credential, for a relay attempt.
 	TURN func(context.Context) (Credential, error)
 	// Need is the number of bytes to go, for the quota check before a relay
@@ -273,7 +273,7 @@ func Dial(ctx context.Context, c DialConfig, open func(context.Context, Offer) (
 	}
 	var pipe *Pipe
 	err := Attempts{
-		Options: c.Options, HoldFirst: c.HoldFirst, TURN: c.TURN, Notes: c.Notes,
+		Options: c.Options, AnswererFirst: c.AnswererFirst, TURN: c.TURN, Notes: c.Notes,
 		NoRelay: c.Policy == DirectOnly, OnlyRelay: c.Policy == RelayOnly,
 		Need: func() int64 { return max(c.Need, 1) },
 	}.Run(ctx, func(ctx context.Context, options Options, hold time.Duration) error {

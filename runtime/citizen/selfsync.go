@@ -384,6 +384,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 			took = side.Done.Sub(start)
 		}
 		fmt.Fprintf(cfg.Out, "%s: self data received %d, sent %d, already held %d in %s", as, side.Got, side.Stored, side.Held, took.Round(10*time.Millisecond))
+		if o.conn != nil {
+			fmt.Fprintf(cfg.Out, "; path %s", o.conn.Path)
+		}
 		if targets[i].state == storage.StateDraining {
 			fmt.Fprint(cfg.Out, "; draining, so nothing new goes to it")
 		}

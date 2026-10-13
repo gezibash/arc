@@ -2,11 +2,14 @@ package direct
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain lets the test binary play the arc program: with
@@ -45,5 +48,51 @@ func TestRelayQuota(t *testing.T) {
 	}
 	if options.TURN == nil || options.TURN.Username != "1:key" || options.TURN.Credential != "secret" || !strings.HasPrefix(options.TURN.URLs[0], "turn:relay.example.org") {
 		t.Errorf("TURN server %+v", options.TURN)
+	}
+}
+
+// TestOffererSendsFirst models an offerer behind a router that blocks a
+// pair when the first packet comes from outside: only an attempt with a
+// hold opens. Section 3.5 puts that attempt first, so one attempt opens
+// the pipe and the notes stay empty.
+func TestOffererSendsFirst(t *testing.T) {
+	var holds []time.Duration
+	var notes strings.Builder
+	err := Attempts{NoRelay: true, Notes: &notes}.Run(t.Context(), func(_ context.Context, _ Options, hold time.Duration) error {
+		holds = append(holds, hold)
+		if hold == 0 {
+			return ErrNoPath
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || holds[0] != time.Second {
+		t.Errorf("holds %v, want one attempt with a hold of 1s", holds)
+	}
+	if notes.Len() != 0 {
+		t.Errorf("notes %q, want none", notes.String())
+	}
+}
+
+// TestAnswererFirst checks the swapped order of section 3.5: with
+// AnswererFirst, the first attempt has no hold, and the second has a hold
+// of 1 s, after the note.
+func TestAnswererFirst(t *testing.T) {
+	var holds []time.Duration
+	var notes strings.Builder
+	err := Attempts{AnswererFirst: true, NoRelay: true, Notes: &notes}.Run(t.Context(), func(_ context.Context, _ Options, hold time.Duration) error {
+		holds = append(holds, hold)
+		return ErrNoPath
+	})
+	if !errors.Is(err, ErrNoPath) {
+		t.Fatalf("error %v, want ErrNoPath", err)
+	}
+	if want := []time.Duration{0, time.Second}; !slices.Equal(holds, want) {
+		t.Errorf("holds %v, want %v", holds, want)
+	}
+	if want := "no direct path in the first order of the packets; trying the other order\n"; notes.String() != want {
+		t.Errorf("notes %q, want %q", notes.String(), want)
 	}
 }

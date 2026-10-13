@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy)$' ./sdk/direct/
+- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
 - Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` and a consumer with `--path turn` gave a path between two machines behind NAT through the production relay in 6 of 6 runs, with the relay of v0.27.0 (section 8.2).
 
@@ -113,12 +113,20 @@ text `end`.
 On some routers, a direct path opens only if the machine behind that router
 sends the first packet. So the offerer MUST make the attempts in this order:
 
-1. A direct attempt with no hold.
-2. A direct attempt with a hold of 1 s.
+1. A direct attempt with a hold of 1 s.
+2. A direct attempt with no hold.
 3. A relay attempt with no hold, unless the user turned it off.
 
-An offerer MAY swap the first two attempts. An attempt fails if the data
-channel does not open in 12 s plus the hold. The hold that an answerer
+In an attempt with no hold, the answerer always sends first. It starts ICE
+when it sets the offer, before its reply leaves. The offerer starts ICE
+only when the reply arrives. The offerer is usually the device of a person
+behind the router of a home. With the hold first, that device sends first.
+The hold works only if it is longer than the time that the reply needs to
+reach the offerer.
+
+An offerer MAY swap the first two attempts. An attempt fails if ICE fails
+(about 8 s with no path, section 3.2), or if the data channel does not open
+in 12 s plus the hold. The hold that an answerer
 takes MUST be at most 3 s. Before the second attempt and before the relay
 attempt, the offerer MUST write the reason on its notes:
 
@@ -314,6 +322,11 @@ An answerer that does not see the data channel open closes its end after
   is a change of that app.
 - The policy, the offer and the pipe of section 3.7 are new. The transfer
   app keeps its own request, and does not use them.
+- Section 3.5 puts the attempt with the hold first. The offer carries
+  `hold_ms` as before, so an older answerer takes the new order with no
+  change. An older offerer makes the attempt with no hold first, and keeps
+  the wait of section 5 behind a router that needs the offerer to send
+  first.
 - The rule of section 3.7 that a reader takes the bytes off the channel
   after it stops changes no message. An older end that has one direction
   only never meets the case.
@@ -339,6 +352,11 @@ An answerer that does not see the data channel open closes its end after
 - `TestPipeAnswererRelayOnly` gives the answerer the policy `turn`, behind a
   symmetric NAT. The path is `turn (relay)`.
 - `TestParsePolicy` checks the names of section 3.7.
+- `TestOffererSendsFirst` models an offerer behind a router that blocks a
+  pair when the first packet comes from outside. One attempt opens the
+  pipe, with a hold of 1 s, and the notes stay empty.
+- `TestAnswererFirst` checks the swapped order of section 3.5 and the note
+  before the second attempt.
 - The tests of `apps/transfer` run the order of the attempts with the built
   `arc`, a local relay and three citizens.
 
@@ -496,8 +514,20 @@ protocol = "http"
 manifest = "./manifest.json"
 ```
 
+The order of section 3.5 was measured on 2026-10-13 with `arc sync`, five
+runs before and five after the change. The device was a Mac behind the
+router of a home. The three storage citizens were boat sandboxes behind a
+NAT, with arc v0.28.1.
+
+| Order | First attempt | Time to each storage citizen | Wall time of `arc sync` |
+| --- | --- | --- | --- |
+| No hold first | No path in each run. pion traces on the Mac and on one storage citizen: no packet arrived at either end. | 14.45 s to 15.37 s | 15.8 s to 17.0 s |
+| Hold first | Opened in each run, path `srflx to srflx` | 2.04 s to 2.60 s | 3.3 s to 4.6 s |
+
 ### 8.3 Unverified
 
 - No automated test runs two machines behind real NATs.
 - No automated test makes the second direct attempt after a first attempt
-  with no path.
+  with no path through a real connection. `TestOffererSendsFirst` and
+  `TestAnswererFirst` check the order with an attempt function that does
+  not connect.

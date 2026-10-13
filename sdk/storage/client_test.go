@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -239,5 +240,44 @@ func TestPutManyOlderApp(t *testing.T) {
 	}
 	if !slices.ContainsFunc(results, func(r PutResult) bool { return r.Status == StatusStored }) {
 		t.Fatalf("no put stored: %v", results)
+	}
+}
+
+// TestAttemptEndsWhenICEFails gives the client the answer of a far end
+// that closes at once, so no check gets an answer. ICE fails after about
+// 8 s (docs/direct/SPEC.md, section 3.2), and the attempt ends then, not
+// after 12 s.
+func TestAttemptEndsWhenICEFails(t *testing.T) {
+	loopback := direct.Options{Loopback: true}
+	c := Client{Call: func(_ context.Context, session string) ([]byte, error) {
+		var s Session
+		if err := json.Unmarshal([]byte(session), &s); err != nil {
+			return nil, err
+		}
+		far, err := direct.NewConnection(loopback)
+		if err != nil {
+			return nil, err
+		}
+		defer far.Close()
+		if err := far.SetRemoteDescription(s.SDP); err != nil {
+			return nil, err
+		}
+		answer, err := far.CreateAnswer(nil)
+		if err == nil {
+			answer, err = direct.Describe(far, answer)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(Answer{Version: 1, SDP: answer})
+	}}
+	start := time.Now()
+	_, err := c.attempt(t.Context(), loopback, 0)
+	took := time.Since(start)
+	if !errors.Is(err, direct.ErrNoPath) {
+		t.Fatalf("error %v, want %v", err, direct.ErrNoPath)
+	}
+	if took >= direct.OpenWait-time.Second {
+		t.Errorf("the attempt ended after %s, want about 8 s", took.Round(100*time.Millisecond))
 	}
 }

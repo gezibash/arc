@@ -641,11 +641,13 @@ After the sync, the device prints one line for each storage citizen, in
 the order of the installs, and one line for the whole sync. `received` is
 the count of pieces and blobs that the device got from that storage
 citizen, `sent` the count that it stored, and `already held` the count of
-puts that it answered `held`:
+puts that it answered `held`. `path` names the kinds of the two addresses
+of the pipe, as in section 2 of [the direct pipe spec](../direct/SPEC.md),
+or `relay`:
 
 ```text
-charlie: self data received 0, sent 3, already held 0 in 1.36s
-dana: self data received 2, sent 0, already held 1 in 950ms; draining, so nothing new goes to it
+charlie: self data received 0, sent 3, already held 0 in 1.36s; path srflx to srflx
+dana: self data received 2, sent 0, already held 1 in 950ms; path host to host; draining, so nothing new goes to it
 self data: took 2 records, already held 0, coded 3 new records into pieces, 2 of 3 rebuild each
 ```
 

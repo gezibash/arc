@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/gezibash/arc/sdk/direct"
@@ -27,9 +28,9 @@ type Client struct {
 	TURN func(ctx context.Context) (direct.Credential, error)
 	// Options are the settings of the connection.
 	Options direct.Options
-	// HoldFirst asks the storage citizen to wait in the first attempt, not
-	// in the second.
-	HoldFirst bool
+	// AnswererFirst lets the storage citizen send first in the first
+	// attempt, and asks it to wait in the second.
+	AnswererFirst bool
 	// NoRelay stops after the direct attempts.
 	NoRelay bool
 	// OnlyRelay skips the direct attempts: the pipe goes through the TURN
@@ -64,7 +65,7 @@ func (c Client) Open(ctx context.Context, need int64) (*Conn, error) {
 	}
 	var opened *Conn
 	err := direct.Attempts{
-		Options: c.Options, HoldFirst: c.HoldFirst, NoRelay: c.NoRelay, OnlyRelay: c.OnlyRelay, TURN: c.TURN, Notes: c.Notes,
+		Options: c.Options, AnswererFirst: c.AnswererFirst, NoRelay: c.NoRelay, OnlyRelay: c.OnlyRelay, TURN: c.TURN, Notes: c.Notes,
 		Need: func() int64 { return need },
 	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
 		opened, err = c.attempt(ctx, options, hold)
@@ -90,6 +91,15 @@ func (c Client) attempt(ctx context.Context, options direct.Options, hold time.D
 		return nil, err
 	}
 	s, opened := newConn(pc, dc)
+	// ICE fails after about 8 s with no path. The attempt then ends at
+	// once, not after OpenWait.
+	failed := make(chan struct{})
+	var failOnce sync.Once
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+			failOnce.Do(func() { close(failed) })
+		}
+	})
 
 	local, err := pc.CreateOffer(nil)
 	if err == nil {
@@ -119,6 +129,8 @@ func (c Client) attempt(ctx context.Context, options direct.Options, hold time.D
 	}
 	select {
 	case <-opened:
+	case <-failed:
+		return nil, direct.ErrNoPath
 	case <-time.After(direct.OpenWait + hold):
 		return nil, direct.ErrNoPath
 	case <-ctx.Done():
