@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
 - Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, a command that removes the old drafts from a relay, and the close call at the end of a drain.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record. No test puts a file of 63 MiB, the largest body, through the CLI: the proof puts 60 MiB. No test puts a large file on storage citizens on other machines or behind real NATs; the proof uses the loopback address. No test measures the memory of a storage citizen during a put of 64 MiB; a unit test proves that the bytes go to the disk as they come. No test checks the limit of 128 MiB of puts in flight. No test waits one hour for the removal of a body that no draft names: a unit test gives the time. `TestStorageLargeFile` needs commit 9ee6088 in the checkout, so a shallow clone fails it.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -53,6 +53,8 @@ on a relay.
 - **Storage list**: the sealed event of kind 10273 that names the storage
   citizens of a citizen (section 3.8). Only the signer changes it.
 - **Record**: one event of self data.
+- **Body**: the encrypted raw bytes of a draft, such as a file, kept beside
+  its wrap. The interface spec, section 3.9.5, defines it.
 - **Blob**: the encrypted bytes of one record (section 3.4).
 - **Piece**: one shard of the Reed-Solomon code of a blob, sealed alone
   (section 3.10). One storage citizen holds one piece of a blob.
@@ -210,6 +212,12 @@ answers with text messages of JSON, in the order of the requests.
 - The device MUST keep at most `window` puts in flight. A put is in flight
   from its request to its last reply: `stored`, `held`, `tombstoned`, or an
   error. The window is 32. The app MUST end the pipe if a 33rd put comes.
+- The device MUST keep at most 128 MiB of puts in flight, by their sizes.
+  A put larger than that goes alone. An older app needs no change for this
+  rule.
+- The app MUST write the bytes of a put to a temporary file as they come,
+  and MUST NOT keep a whole put in memory. If the pipe ends before all the
+  bytes of a put come, the app MUST remove its temporary file.
 - The device MUST send the bytes of each put after its `send` reply, in
   the order of the `send` replies. The app MUST give each run of bytes to
   the oldest put that got `send` and has not all its bytes. Thus the order
@@ -259,6 +267,10 @@ answers with text messages of JSON, in the order of the requests.
 - A list MUST give at most 1,000 entries. A device lists again from `next`
   until a list gives no entry.
 
+Reason for the bound on bytes: a blob of a file is up to 64 MiB. Without
+the bound, 32 puts in flight would hold 2 GiB in the memory of a small
+storage citizen.
+
 Reason: a put takes two round trips. One request at a time, 1,000 puts at
 44 ms took 117.1 to 121.3 s on an emulated link. With 32 puts in flight, they took
 7.9 to 8.5 s (measured, section 8.1).
@@ -276,14 +288,25 @@ pad(e)   = length of e (8 bytes, big endian) || e || zeros
 
 - The size of the whole blob MUST be the next power of two that holds it,
   and at least 4,096 bytes. The largest blob is 64 MiB.
-- The envelope MUST be this JSON object:
+- The envelope of a record with no body MUST be this JSON object:
   `{"v":1,"device":"<hex>","sig":"<hex>","record":<event>}`.
+- The envelope of a draft wrap with a `body` tag MUST be
+  `{"v":2,"device":"<hex>","sig":"<hex>","record":<event>,"body":<n>}`. The
+  n bytes of the body follow the JSON in the padded plaintext:
+  `pad(e) = length of e (8 bytes) || e || body || zeros`. The body MUST be
+  the bytes that the `body` tag of the record names. A record with no
+  `body` tag MUST NOT have envelope version 2.
+- Thus the blob of a file holds its raw bytes once, encrypted with the body
+  key and then with the blob key. It has no base64 and no parts. The
+  largest body is 63 MiB, so its blob fits in the largest blob of 64 MiB.
 - `sig` MUST be the BIP-340 signature of the key in `device` over
   `SHA-256("arc-storage-change-v1" || 0x00 || id as 64 hex characters || record ID as 32 bytes)`.
   Thus the key of the device signs each change inside the encrypted bytes.
 - If a machine holds the citizen key, it MUST sign with the citizen key. It
   is the signer, and is on no device list. A machine that signs through a
   remote signer MUST sign with its device key.
+- The signature of the record covers the body: the `body` tag names its
+  SHA-256 and its size. The signature of the device covers the record ID.
 - The record MUST be signed by the citizen key, or by a device key with a
   `p` tag that names the citizen, as section 3.9.4 of
   [the interface spec](../interface/SPEC.md) defines. The device key of the
@@ -319,13 +342,17 @@ is true:
 
 - the blob does not open, or its `id` is not the ID that the device asked
   for,
+- the envelope has a version other than 1 or 2, the version does not fit
+  the `body` tag of the record, or the body does not hash to the SHA-256 of
+  the `body` tag, or does not have its size,
 - the HMAC of the record ID is not the `id`,
 - the record has a bad ID or a bad signature, or names another citizen,
 - the record is not self data,
 - the device signature does not verify.
 
-The device then gives the record to its store as a record from a storage
-citizen. The store checks the key that signed the record against the device
+The device then keeps the body, if the blob holds one, beside the store
+under its SHA-256. It gives the record to its store as a record from a
+storage citizen. The store checks the key that signed the record against the device
 list ([the delivery spec](../delivery/SPEC.md), section 3.11). A record of a
 revoked key is taken only if it is older than the revocation. The key in
 `device` needs no check of its own: a storage citizen takes a put only from
@@ -333,14 +360,29 @@ a device key with a grant, and the store checks the record.
 
 A record that the store refused because its key is not on the list gets a
 new check on each sync. A device skips each other refused blob after the
-first refusal.
+first refusal. It keeps the IDs of the skipped blobs in
+`<home>/selfsync/seen-3.json`.
+
+A wrap whose body the device lacks counts as a record that the device
+lacks: the device gets its blob, also if its store holds the wrap. A
+directory that a citizen carries can bring a wrap without its body.
+
+A device MUST NOT put a blob of a wrap whose body it lacks. It reports the
+wrap, and the device that holds the body puts it.
 
 ### 3.6 Where self data goes
 
 - A device MUST NOT send self data to a relay. `arc` keeps it in the local
   store.
 - `arc sync --dir` MUST still carry self data, because the citizen carries
-  the directory.
+  the directory. It carries each body that a wrap of the device names, as
+  the file `bodies/<SHA-256>` of the directory, and takes each body that a
+  wrap names from there. A body that the device takes MUST hash to its
+  name.
+- A device MUST remove a body that no wrap of its store names, at the end of
+  a sync, when the body is older than one hour. Thus the bytes of a deleted
+  or replaced file leave the disk. The hour keeps a body that another
+  program wrote, and has not named in a wrap yet.
 - The draft of the keyed root stays on the relays. A machine that signs
   through NIP-46 reads it there.
 
@@ -633,7 +675,7 @@ fails does not stop the others.
 7. Keep the cursor, the IDs, the tags, the feature `pieces`, the lost
    pieces, the kept proofs and the record of the audits in
    `<home>/selfsync/<key of the storage citizen>.json`, the blob IDs
-   that the device got in `<home>/selfsync/seen-2.json`, and the blobs of
+   that the device got in `<home>/selfsync/seen-3.json`, and the blobs of
    replaced and deleted records in `<home>/selfsync/old.json` (section
    4.7).
 
@@ -1074,6 +1116,10 @@ device keeps the notes in `<home>/selfsync/old.json`. It forgets a note when
 no listing holds a piece or a whole copy of the blob. It does not get a
 noted blob again.
 
+A file that a device puts again replaces its wrap: the `d` tag is the keyed
+SHA-256 of the file. Each device learns the old version by way 1, so
+each gets its blob of up to 64 MiB once.
+
 **When the device deletes.** The deletion follows the repair rules of
 section 4.6:
 
@@ -1167,6 +1213,9 @@ the deletion.
 | No path opens | The sync of that storage citizen fails. The other storage citizens still sync at the same time. | The error of the direct pipe, and `some transports failed`. |
 | No pipe opens to a storage citizen for 7 days | Each sync of the device warns. The device does not mark it `gone`. | `<name>: no answer for <days> days; if it is gone, run arc keys storage rm <name> --gone on the signer` |
 | A blob does not pass section 3.5 | The device skips it. | `refused <id>: <reason>` |
+| The device holds a wrap and not its body | It puts no blob of the wrap. It gets the blob, if a storage citizen holds it. | `refused <id>: the body of the draft is not on this device: <reason>` |
+| A file needs a body larger than 63 MiB | The put writes nothing. | `<path> is over 66060288 bytes` |
+| A wrap names a body that neither the device nor the directory holds | `arc sync --dir` carries the other bodies. | `the body <sum> is on neither side; the device that wrote it holds it` |
 | A piece does not pass section 3.5 | The device gets another piece of the seal. | `refused <name>: piece <id> of blob <blob>: the piece does not open; the device asks another storage citizen` |
 | Fewer than k pieces of a blob answer | The blob waits for the next sync. The sync fails. | `self data: <n> blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again`, and `unreadable <blob>: 1 of the 2 pieces that rebuild it answered` for each |
 | Fewer than k storage citizens answer for a new record | The record waits. The sync fails. | `self data: <n> records wait: a new blob needs <k> storage citizens that answer; the next sync puts them` |
@@ -1194,6 +1243,16 @@ the deletion.
   by the time of the puts, their sizes and the IP address.
 - k storage citizens that work together hold coded ciphertext of the
   blob. They still need the data root to open it.
+- The pieces of a file show its size to a power of two: a file of 33 to
+  63 MiB makes a blob of 64 MiB. A storage citizen thus sees that a citizen
+  keeps a large object, and when it came.
+- A device with a grant and the blob key can put a blob of version 2 whose
+  body is not the body of its wrap. Each other device refuses it by the
+  SHA-256 of the `body` tag, which the signature of the record covers.
+- A file costs t/k times its blob on the storage citizens, and its blob is
+  at most twice the file. With three storage citizens, t/k is 1.5: a file
+  of 60 MiB took 1.60 times its size, and a file of 33 MiB takes about 2.9
+  times. The quota of each account counts its pieces.
 - A storage citizen that changes a piece, moves a tag to another ID, or
   gives a piece of another blob, gets refused by section 3.5. The device
   rebuilds the blob from other pieces. It does not see the
@@ -1246,6 +1305,26 @@ the deletion.
 
 ## 7. Compatibility
 
+- A file is one body of raw bytes in the blob of its wrap (sections 3.4 and
+  3.5). This is a breaking change for an older device:
+  - An older device refuses a blob of version 2 with `the blob holds no
+    envelope of version 1`. It writes nothing to its store, and marks the
+    blob as seen in `seen-2.json`.
+  - A newer device keeps the seen blobs in `seen-3.json`. After its update,
+    the device therefore fetches each blob of each storage citizen once
+    more, and takes the files. The cost is one download of each blob.
+  - An older `arc` cannot parse the manifest of the files app with
+    `body`, so its catalog skips the announcement, and
+    `arc install <citizen> files` says `no announcement from that
+    provider`. An older `arc` with the older manifest installed still puts
+    files in parts.
+  - A newer device reads a file in parts. It does not seal it again as a
+    body.
+  - A storage citizen needs no update: the blob of a file is a blob of at
+    most 64 MiB. An older storage app keeps each put in memory until its
+    last byte. The bound of 128 MiB of puts in flight of a newer device
+    limits that memory.
+  - The user updates each device before a large put.
 - An ARC relay of this version refuses new events of kinds 31234, 1234,
   3275 and 10013. The one exception is the draft with the d tag
   `arc-keyed-root`. The reason is `blocked: this relay keeps no drafts; arc
@@ -1959,6 +2038,36 @@ against SHA-256 that the Python standard library computed. Each test failed
 with a temporary break: an app that hashes only the first KiB, a client
 that ignores another proof, an app that hashes a lost file as empty, an app
 that ignores the nonce, and an app that takes a put on a draining account.
+
+`go test -count=1 -run '^TestStorageLargeFile$' ./internal/proof/` runs
+`arc` and `arc-storage` with a local relay and three storage citizens. It
+proves the body of a file:
+
+- `arc` of v0.30.0 puts a file of 100,000 bytes in parts and syncs it.
+- This version puts a file of 60 MiB. The sync codes its blob into three
+  pieces, 2 of 3 rebuild it. Measured: the file of 62,914,560 bytes added
+  100,669,710 bytes on the storage citizens, 1.60 times the file. No piece
+  holds raw bytes of the file.
+- A second machine of the citizen syncs, and writes both files with the
+  same SHA-256. A device that signs through the bunker of the laptop, with
+  its device key, writes the file of 60 MiB with the same SHA-256.
+- `arc` of v0.30.0 refuses the new blob with `no envelope of version 1`,
+  and skips the new manifest. The same home with this version gets the
+  file after one sync.
+- `arc sync --dir` carries the body. A machine reads the file from the
+  directory alone.
+- A deletion of the file, and two repairs, free 100,657,152 bytes on the
+  storage citizens.
+
+`TestAFileTravelsAsOneBlob` codes the blob of a wrap with a body into
+pieces in memory. A second device gets the body, and a device with the
+wrap and no body gets the body from the pieces. A device without the body
+puts nothing. `TestABlobMustCarryTheBodyOfItsWrap` refuses another body, a
+short body, a body past the blob, a version 1 envelope of a wrap with a
+body, and a body for a record with no `body` tag.
+`TestAPutGoesToTheDiskAsItComes` checks that the storage app writes half
+of a put to its temporary file before the rest comes, and removes the file
+when the pipe ends.
 
 `go test ./sdk/storage/ -run TestVerifyJoin` checks that the signature of
 the citizen key in a join verifies only over its account key and its

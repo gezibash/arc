@@ -60,6 +60,14 @@ type Store interface {
 	Query(nostr.Filter) ([]nostr.Event, error)
 }
 
+// Bodies keeps the encrypted bodies of drafts on the device, by the
+// SHA-256 of their bytes. A blob of version 2 carries the body of its wrap.
+type Bodies interface {
+	Has(sum string) bool
+	Get(sum string) ([]byte, error)
+	Put(sum string, data []byte) error
+}
+
 // Blobs is one open session with a storage citizen. *storage.Conn is one.
 // GetMany and PutMany keep several requests in flight on a storage app
 // that supports it, and send one request at a time to an older one.
@@ -85,6 +93,8 @@ type Syncer struct {
 	// citizen key on the machine that holds it.
 	Device nostr.SecretKey
 	Store  Store
+	// Bodies keeps the bodies of the drafts that name one.
+	Bodies Bodies
 	// Newest returns the keys of the newest generation that this device
 	// holds. The device seals each new blob with them.
 	Newest func(ctx context.Context) (Keys, error)
@@ -199,7 +209,7 @@ type state struct {
 	// once.
 	Listed bool `json:"listed,omitempty"`
 	// Seen holds the blob IDs that an older device got. A device of this
-	// version moves them to the shared file seen-2.json.
+	// version moves them to the shared file seen-3.json.
 	Seen map[string]bool `json:"seen,omitempty"`
 	// Answered is the Unix time of the last pipe that opened.
 	Answered int64 `json:"answered,omitempty"`
@@ -311,7 +321,10 @@ func (s *Syncer) writeJSON(path string, v any) error {
 // The record format of the data roots changed the name: an older arc marked
 // such blobs as seen when it refused them, so a device fetches each blob
 // once more after its update.
-func (s *Syncer) seenPath() string { return filepath.Join(s.State, "seen-2.json") }
+// seenPath names the blobs that the device took or refused for good. An
+// older device refused each blob of version 2, so this version starts a
+// new file: each device gets each blob once more.
+func (s *Syncer) seenPath() string { return filepath.Join(s.State, "seen-3.json") }
 
 func (s *Syncer) loadSeen() (map[string]bool, error) {
 	seen := map[string]bool{}
@@ -339,7 +352,7 @@ func (s *Syncer) take(ctx context.Context, id string, blob []byte, keysOf func(c
 	if err != nil {
 		return nostr.Event{}, store.Result{}, err
 	}
-	env, err := Open(keys, id, blob)
+	env, body, err := Open(keys, id, blob)
 	if err != nil {
 		return nostr.Event{}, store.Result{}, err
 	}
@@ -352,6 +365,17 @@ func (s *Syncer) take(ctx context.Context, id string, blob []byte, keysOf func(c
 	// The store checks the key that signed the record against the device
 	// list. A record of a revoked key comes only from a storage citizen,
 	// which refused the key after its revocation.
+	if body != nil {
+		// The body goes to the disk before the wrap that names it. The
+		// store can still refuse the wrap; prune removes such a body.
+		if s.Bodies == nil {
+			return nostr.Event{}, store.Result{}, errors.New("the record has a body, and this device keeps no bodies")
+		}
+		ref, _ := draft.Body(env.Record)
+		if err := s.Bodies.Put(ref.Sum, body); err != nil {
+			return nostr.Event{}, store.Result{}, err
+		}
+	}
 	result, err := s.Store.SaveFrom(env.Record, store.StorageCitizen)
 	return env.Record, result, err
 }

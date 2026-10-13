@@ -44,6 +44,11 @@ type Store interface {
 	// Private syncs the mail, and returns the private events of these kinds
 	// that the citizen received and sent, oldest first.
 	Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error)
+	// KeepBody keeps the encrypted body of a draft on this machine, under
+	// the SHA-256 of its bytes, before the wrap that names it.
+	KeepBody(sum string, data []byte) error
+	// Body reads the encrypted body with the SHA-256 sum.
+	Body(sum string) ([]byte, error)
 }
 
 // entry is one record, and what the pipeline needs to know about its event.
@@ -56,6 +61,8 @@ type entry struct {
 	// lines are the line ends in the content and in each part, when the
 	// event says. A range of lines then needs only some parts.
 	lines []int
+	// wrap is the wrap of a draft that names a body. save writes the body.
+	wrap *nostr.Event
 }
 
 func (r *run) kindOf(name string) Kind { return r.in.Manifest.Kinds[name] }
@@ -98,7 +105,7 @@ func entryOf(d draft.Draft, name string) *entry {
 			}
 		}
 	}
-	return &entry{
+	e := &entry{
 		rec: Record{
 			"id": d.Event.ID.Hex(), "kind": name, "author": d.Event.PubKey.Hex(),
 			"created": int64(d.Event.CreatedAt), "tags": tags, "content": d.Event.Content,
@@ -107,6 +114,11 @@ func entryOf(d draft.Draft, name string) *entry {
 		d:     d.D,
 		lines: lineCounts(d.Event.Tags, len(d.Parts())),
 	}
+	if _, ok := draft.Body(d.Wrap); ok {
+		wrap := d.Wrap
+		e.wrap = &wrap
+	}
+	return e
 }
 
 // lineCounts reads the lines tag: the line ends in the content, then in each
@@ -333,13 +345,37 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	}
 
 	inner := nostr.Event{Kind: nostr.Kind(kind.Kind), CreatedAt: now, Tags: tags, Content: head, PubKey: r.env.Me()}
-	if r.flags.DryRun {
-		return nil, r.dryRun(map[string]any{
-			"draft": d, "sealed": true, "parts": len(rest), "event": unsignedOf(inner),
-		})
+	var body []byte
+	if name := bodyArg(p); name != "" {
+		file, ok := r.values[name].(fileValue)
+		if !ok {
+			return nil, fmt.Errorf("the body needs the file %s", name)
+		}
+		body = file.Bytes
 	}
-	wrap, err := k.Wrap(r.ctx, d, inner, now)
-	if err != nil {
+	if r.flags.DryRun {
+		preview := map[string]any{"draft": d, "sealed": true, "parts": len(rest), "event": unsignedOf(inner)}
+		if body != nil {
+			preview["body"] = len(body)
+		}
+		return nil, r.dryRun(preview)
+	}
+	var wrap nostr.Event
+	if body != nil {
+		// The body goes to the disk first: a wrap never names a body that
+		// this machine lacks.
+		sealed, ref, err := k.SealBody(body)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.env.KeepBody(ref.Sum, sealed); err != nil {
+			return nil, err
+		}
+		wrap, err = k.WrapBody(r.ctx, d, inner, ref, now)
+		if err != nil {
+			return nil, err
+		}
+	} else if wrap, err = k.Wrap(r.ctx, d, inner, now); err != nil {
 		return nil, err
 	}
 	checkpoint, err := k.Checkpoint(r.ctx, d, inner, now)

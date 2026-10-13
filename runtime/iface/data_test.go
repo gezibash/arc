@@ -3,8 +3,10 @@ package iface
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -263,6 +265,86 @@ func TestFilesGoInAndComeOut(t *testing.T) {
 	}
 	if _, err := c.run("files", "", "get", id, "--output", out); err == nil || !strings.Contains(err.Error(), "never replaces") {
 		t.Errorf("get replaced a file: %v", err)
+	}
+}
+
+// A file goes beside its draft as one body of raw bytes, not as base64
+// in parts. It can be larger than the 6 MiB of a file in parts.
+func TestAFileIsOneBody(t *testing.T) {
+	c := newCitizen(t)
+	dir := t.TempDir()
+	data := make([]byte, 7<<20)
+	rand.Read(data)
+	in := filepath.Join(dir, "model.bin")
+	os.WriteFile(in, data, 0o600)
+	sum := sha256.Sum256(data)
+
+	id := strings.TrimSpace(c.must("files", "", "put", in))
+	parts, err := c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}})
+	if err != nil || len(parts) != 0 {
+		t.Fatalf("the file made %d parts (%v), want none", len(parts), err)
+	}
+	if len(c.env.bodies) != 1 {
+		t.Fatalf("the machine keeps %d bodies, want 1", len(c.env.bodies))
+	}
+	for _, body := range c.env.bodies {
+		// The nonce and the tag of the AEAD: 24 + 16 bytes.
+		if len(body) != len(data)+40 {
+			t.Errorf("the body has %d bytes, want %d", len(body), len(data)+40)
+		}
+		if bytes.Contains(body, data[:64]) {
+			t.Error("the body holds the raw bytes in the clear")
+		}
+	}
+	out := filepath.Join(dir, "back.bin")
+	c.must("files", "", "get", id, "--output", out)
+	back, _ := os.ReadFile(out)
+	if got := sha256.Sum256(back); got != sum {
+		t.Errorf("the file came back with %d bytes and another SHA-256", len(back))
+	}
+
+	// A body that changed on the disk does not open.
+	for sum := range c.env.bodies {
+		c.env.bodies[sum][100] ^= 1
+	}
+	if _, err := c.run("files", "", "get", id, "--output", filepath.Join(dir, "bad.bin")); err == nil {
+		t.Error("get wrote a body that changed on the disk")
+	}
+}
+
+// A file that an older arc put in parts, as base64 text, still reads.
+func TestAFileInPartsStillReads(t *testing.T) {
+	c := newCitizen(t)
+	dir := t.TempDir()
+	data := make([]byte, 100_000)
+	rand.Read(data)
+	in := filepath.Join(dir, "old.bin")
+	os.WriteFile(in, data, 0o600)
+
+	files := specManifests(t)["files"]
+	raw, _ := json.Marshal(files)
+	var older Manifest
+	if err := json.Unmarshal(raw, &older); err != nil {
+		t.Fatal(err)
+	}
+	for i := range older.Commands {
+		if p := older.Commands[i].Action.Publish; p != nil {
+			p.Body, p.Content = "", Content{Text: "{{file}}"}
+		}
+	}
+	var out, errs bytes.Buffer
+	if err := Run(context.Background(), c.env, Installed{Manifest: &older, Author: c.author, Name: "files"}, []string{"put", in},
+		Stdio{In: strings.NewReader(""), Out: &out, Err: &errs}); err != nil {
+		t.Fatal(err)
+	}
+	parts, _ := c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}})
+	if len(parts) == 0 || len(c.env.bodies) != 0 {
+		t.Fatalf("the older put made %d parts and %d bodies", len(parts), len(c.env.bodies))
+	}
+	back := filepath.Join(dir, "back.bin")
+	c.must("files", "", "get", strings.TrimSpace(out.String()), "--output", back)
+	if got, _ := os.ReadFile(back); !bytes.Equal(got, data) {
+		t.Errorf("the file in parts came back with %d bytes", len(got))
 	}
 }
 

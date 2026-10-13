@@ -395,15 +395,27 @@ func (s *Conn) PutMany(ctx context.Context, blobs []Blob) ([]PutResult, error) {
 	}()
 	defer close(bytesOf)
 
+	// The window counts puts, and MaxInFlight counts their bytes, so that
+	// large blobs do not fill the memory of a small storage citizen.
 	inFlight := map[uint64]int{}
+	var flying int64
+	done := func(n uint64) {
+		flying -= int64(len(blobs[inFlight[n]].Data))
+		delete(inFlight, n)
+	}
 	next := 0
 	for next < len(blobs) || len(inFlight) > 0 {
 		for next < len(blobs) && len(inFlight) < window {
+			size := int64(len(blobs[next].Data))
+			if len(inFlight) > 0 && flying+size > MaxInFlight {
+				break
+			}
 			s.n++
-			if err := s.send(Request{Op: OpPut, N: s.n, ID: blobs[next].ID, Size: int64(len(blobs[next].Data)), Tag: tagOf(blobs[next])}); err != nil {
+			if err := s.send(Request{Op: OpPut, N: s.n, ID: blobs[next].ID, Size: size, Tag: tagOf(blobs[next])}); err != nil {
 				return results, err
 			}
 			inFlight[s.n] = next
+			flying += size
 			next++
 		}
 		select {
@@ -422,12 +434,12 @@ func (s *Conn) PutMany(ctx context.Context, blobs []Blob) ([]PutResult, error) {
 		switch {
 		case err != nil:
 			results[i].Err = err
-			delete(inFlight, r.N)
+			done(r.N)
 		case r.Status == StatusSend:
 			bytesOf <- blobs[i].Data
 		default:
 			results[i].Status = r.Status
-			delete(inFlight, r.N)
+			done(r.N)
 		}
 	}
 	return results, nil

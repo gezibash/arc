@@ -137,6 +137,23 @@ type fakeEnv struct {
 	request    CallRequest
 	later      bool
 	calls      int
+	bodies     map[string][]byte
+}
+
+func (f *fakeEnv) KeepBody(sum string, data []byte) error {
+	if f.bodies == nil {
+		f.bodies = map[string][]byte{}
+	}
+	f.bodies[sum] = bytes.Clone(data)
+	return nil
+}
+
+func (f *fakeEnv) Body(sum string) ([]byte, error) {
+	data, ok := f.bodies[sum]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return data, nil
 }
 
 func (f *fakeEnv) ResolveKey(_ context.Context, text string) (nostr.PubKey, error) {
