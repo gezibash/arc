@@ -19,9 +19,11 @@ const releasedCommit = "7cc7aa5a9412e8b5246470e402dbef6b2515a0b0"
 // normal CLI, a real relay and a storage citizen. An older arc writes two
 // pages that the citizen key seals; the first sync seals them again under
 // the data roots, and the second sync does nothing. With the signer
-// stopped, a phone writes and reads its journal. When the signer comes
-// back, the phone syncs, and the laptop reads the page of the phone, also
-// after it ran an older arc that refused it. After the signer revokes the
+// stopped, a phone writes and reads its journal, and puts its page on the
+// storage citizen. A command that needs the signer fails, and names it; the
+// next command does not wait for the signer again. When the signer comes
+// back, the laptop reads the page of the phone, also after it ran an older
+// arc that refused it. After the signer revokes the
 // phone, a page that the phone writes then is refused by the other
 // devices, and the page that it wrote before still opens on a new device.
 func TestDevicePages(t *testing.T) {
@@ -103,13 +105,36 @@ func TestDevicePages(t *testing.T) {
 		t.Fatalf("with the signer stopped, one write and two reads took %s", took)
 	}
 	t.Logf("ok: with the signer stopped, the phone writes and reads its journal in %s", time.Since(start).Round(time.Millisecond))
+	// A command that needs the signer fails, names the signer, and shows
+	// no transport error. A command that changes a list fails at once.
+	start = time.Now()
+	refused := phone.try("", "keys", "devices", "revoke", "laptop")
+	has(t, refused.Stderr, "only the signer, which holds the citizen key", "a revocation on the phone")
+	if took := time.Since(start); refused.Err == nil || took > 2*time.Second {
+		t.Fatalf("a revocation on the phone took %s, err %v", took, refused.Err)
+	}
+	start = time.Now()
+	refused = phone.try("", "keys", "storage", "ls")
+	has(t, refused.Stderr, "this needs the signer of the citizen "+citizen, "the storage list on the phone")
+	if took := time.Since(start); refused.Err == nil || took > 20*time.Second || strings.Contains(refused.Stderr, "ws://") {
+		t.Fatalf("the storage list on the phone took %s, err %v:\n%s", took, refused.Err, refused.Stderr)
+	}
+	t.Logf("ok: with the signer stopped, a command that needs it fails in %s and says: %s", time.Since(start).Round(time.Millisecond), strings.TrimSpace(refused.Stderr))
+	// The next command does not wait for the signer again.
+	start = time.Now()
+	synced := phone.try("", "sync")
+	has(t, synced.Stderr, "this needs the signer of the citizen "+citizen, "a sync on the phone")
+	if took := time.Since(start); synced.Err != nil || took > 5*time.Second || strings.Contains(synced.Stderr, "auth") {
+		t.Fatalf("a sync on the phone after a refusal took %s, err %v:\n%s", took, synced.Err, synced.Stderr)
+	}
+	if got := selfSync(t, synced.Stdout); got.sent == 0 {
+		t.Fatalf("the phone put nothing on the storage citizen: %+v", got)
+	}
+	t.Logf("ok: the next command does not wait for the signer: in %s, a sync puts the page on the storage citizen", time.Since(start).Round(time.Millisecond))
 
 	bunker = signer.start("keys", "bunker", "--relay", url)
 	if ifaceLine(bunker, "bunker://", limit) == "" {
 		t.Fatalf("the bunker did not start again:\n%s", bunker.output())
-	}
-	if got := selfSync(t, phone.run("sync")); got.sent == 0 {
-		t.Fatalf("the phone put nothing on the storage citizen: %+v", got)
 	}
 	// An older arc refuses a page that a device key signed. After its
 	// update, the laptop fetches the blob again and reads the page.
@@ -121,7 +146,7 @@ func TestDevicePages(t *testing.T) {
 	if got := journalDoc(t, begin, laptop.run("journal", "read", "hrs/off/1")); !strings.Contains(got, "written with the signer stopped") {
 		t.Fatalf("the laptop did not read the page of the phone:\n%s", got)
 	}
-	t.Log("ok: when the signer comes back, the phone syncs, and the laptop reads its page, also after an older arc refused it")
+	t.Log("ok: the laptop reads the page of the phone, also after an older arc refused it")
 
 	signer.run("keys", "devices", "revoke", "phone")
 	if !loads(bunker, 1, limit) {
@@ -131,7 +156,7 @@ func TestDevicePages(t *testing.T) {
 	phone.input("---\ntitle: After\npage: 1\nnotebook: hrs/after\n---\nwritten after the revocation\n", "journal", "write", "hrs/after/1")
 	stick := filepath.Join(work, "stick")
 	phone.run("sync", "--dir", stick)
-	refused := laptop.try("", "sync", "--dir", stick)
+	refused = laptop.try("", "sync", "--dir", stick)
 	has(t, refused.Stderr, "the device key was revoked", "the laptop refusing the page of the revoked phone")
 	if got := laptop.try("", "journal", "read", "hrs/after/1"); strings.Contains(got.Stdout, "written after the revocation") {
 		t.Fatal("the laptop reads a page that the revoked phone wrote after its revocation")

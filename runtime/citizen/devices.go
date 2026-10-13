@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
@@ -14,6 +15,38 @@ import (
 // the device list or the storage list. A signer refuses to sign them for a
 // device.
 var errSignerOnly = errors.New("only the signer, which holds the citizen key, changes the device list and the storage list")
+
+// SignerError says that a command needs the signer of the citizen, and the
+// signer did not answer. Its text names the signer, and not the path, such
+// as a relay authentication, through which the command needed it. Retry is
+// the time after which the machine asks the signer again, if it is set.
+type SignerError struct {
+	Citizen nostr.PubKey
+	Err     error
+	Retry   time.Time
+}
+
+func (e *SignerError) Error() string {
+	if !errors.Is(e.Err, context.DeadlineExceeded) {
+		return fmt.Sprintf("this needs the signer of the citizen %s, and %v", e.Citizen.Hex(), e.Err)
+	}
+	text := fmt.Sprintf("this needs the signer of the citizen %s, and the signer did not answer", e.Citizen.Hex())
+	if !e.Retry.IsZero() {
+		text += "; arc asks it again after " + e.Retry.Format(time.TimeOnly)
+	}
+	return text + "; start arc keys bunker on the machine that holds the seed"
+}
+
+func (e *SignerError) Unwrap() error { return e.Err }
+
+// SignerOnly returns the signer error inside err, or else err. A message
+// that shows it does not show the transport errors around it.
+func SignerOnly(err error) error {
+	if signer, ok := errors.AsType[*SignerError](err); ok {
+		return signer
+	}
+	return err
+}
 
 // DeviceList returns the newest device list of this citizen, from the store
 // and the relays. It returns false when no list exists. It keeps the list on
