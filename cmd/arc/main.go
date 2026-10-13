@@ -61,7 +61,7 @@ func main() {
 		if status, ok := errors.AsType[iface.ExitError](err); ok {
 			os.Exit(status.Code)
 		}
-		fmt.Fprintln(os.Stderr, "arc:", err)
+		fmt.Fprintln(os.Stderr, "arc:", citizen.SignerOnly(err))
 		os.Exit(1)
 	}
 }
