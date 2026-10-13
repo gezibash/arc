@@ -362,6 +362,24 @@ NIP-65 relay lists, see section 4.10, and sends a direct message to the
 NIP-17 relay list of its recipient. It syncs with NIP-77 where a relay
 supports it.
 
+A session keeps one WebSocket connection to each of its relays. Each call
+of the session uses this connection: sends, queries, NIP-77 sessions,
+watches and live calls. The session fetches the NIP-11 document of a relay
+once. When the session ends, it closes the connection. If a connection was
+idle for 10 seconds, the next call first asks the relay for one answer. If
+no answer comes within 5 seconds, the call opens a new connection. A call
+to an indexer, or to the relay of another citizen, opens a connection of
+its own.
+
+A network can lose the packets of one address family, often IPv6. If the
+TCP connect, the TLS handshake or the WebSocket handshake to a relay does
+not end within 4 seconds, the node tries once more over the other address
+family. For the life of the process, the node remembers each relay host
+that IPv4 reached, and tries IPv4 first for it. For any other host, the
+node races both families, IPv6 first, and starts IPv4 after 300 ms.
+`TestACallMovesToIPv4WhenIPv6Stalls` and
+`TestSyncUsesOneConnectionPerRelay` prove this.
+
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
 the NIP-17 list, kind 10050. Each list names every relay of the citizen. A
 citizen does not publish the private NIP-37 list, kind 10013, because no

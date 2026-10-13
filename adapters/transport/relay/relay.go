@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -51,13 +53,20 @@ func sealedKinds(filter nostr.Filter) bool {
 	return false
 }
 
-// reuseWait bounds the wait for an answer on a connection that Send used
+// reuseWait bounds the wait for an answer on a connection that a call used
 // before. A connection can end without notice, for example while the machine
 // sleeps. Send then opens a new connection, and sends the event again.
 var reuseWait = 5 * time.Second
 
+// idleCheck is how long a kept connection can be idle before the next call
+// first asks the relay for one answer on it. A connection that gives no
+// answer within reuseWait is replaced. Calls that follow each other closely,
+// as in a sync, do not pay for the check.
+var idleCheck = 10 * time.Second
+
 // Relay is one relay, by its WebSocket URL. A Relay opens a connection for
-// each call. A Relay from New keeps one connection for Send.
+// each call. A Relay from New keeps one connection, and each of its calls
+// uses it.
 type Relay struct {
 	URL string
 	// Signer answers the NIP-42 challenge of a relay, when one is set. A
@@ -68,51 +77,144 @@ type Relay struct {
 	kept *kept
 }
 
-// kept is the connection that Send uses again. It carries one Send at a
-// time. A relay sends a new NIP-42 challenge with each refusal, and the
-// library cannot answer a challenge while a second one arrives.
+// kept is the connection that each call of a Relay from New uses. Many
+// subscriptions share it. Sends go one at a time: a relay sends a new NIP-42
+// challenge with each refusal, and the library cannot answer a challenge
+// while a second one arrives.
 type kept struct {
-	// turn holds one token. The Send that put it there owns conn.
+	// turn holds one token. The Send that put it there sends next.
 	turn chan struct{}
+
+	// mu guards conn and used. A call holds it while it connects.
+	mu   sync.Mutex
 	conn *nostr.Relay
+	// used is when a call last took conn.
+	used time.Time
+
+	// info is the NIP-11 document, after the first fetch that worked.
+	infoMu sync.Mutex
+	info   *nip11.RelayInformationDocument
+
+	// auth makes one authentication at a time. authed is the connection
+	// that answered the challenge of the relay.
+	auth   sync.Mutex
+	authed *nostr.Relay
+
+	// sessions sends each NIP-77 message on conn to its session.
+	sessions *sessions
 }
 
-// New returns a relay that keeps one connection for Send. An event then does
-// not pay for a new connection and a new authentication. Send opens the
-// connection, and opens it again after it ended. Close ends it.
+// New returns a relay that keeps one connection for all of its calls. A call
+// then does not pay for a new connection and a new authentication. A call
+// opens the connection, and opens it again after it ended. Close ends it.
 func New(url string, signer nostr.Signer) Relay {
-	return Relay{URL: url, Signer: signer, kept: &kept{turn: make(chan struct{}, 1)}}
+	return Relay{URL: url, Signer: signer, kept: &kept{turn: make(chan struct{}, 1), sessions: &sessions{}}}
 }
 
 // Tags returns the tags of the NIP-11 document of the relay.
 func (r Relay) Tags(ctx context.Context) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	info, err := nip11.Fetch(ctx, r.URL)
+	info, err := r.information(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 	return info.Tags, nil
 }
 
-// Close ends the kept connection. A later Send opens a new one.
+// information returns the NIP-11 document of the relay. A Relay from New
+// fetches it once.
+func (r Relay) information(ctx context.Context) (nip11.RelayInformationDocument, error) {
+	if r.kept == nil {
+		return information(ctx, r.URL)
+	}
+	r.kept.infoMu.Lock()
+	defer r.kept.infoMu.Unlock()
+	if r.kept.info != nil {
+		return *r.kept.info, nil
+	}
+	info, err := information(ctx, r.URL)
+	if err == nil {
+		r.kept.info = &info
+	}
+	return info, err
+}
+
+// Close ends the kept connection. A later call opens a new one.
 func (r Relay) Close() error {
 	if r.kept == nil {
 		return nil
 	}
 	r.kept.turn <- struct{}{}
 	defer func() { <-r.kept.turn }()
-	return r.kept.drop()
+	r.kept.mu.Lock()
+	conn := r.kept.conn
+	r.kept.mu.Unlock()
+	return r.kept.drop(conn)
 }
 
-// drop closes the kept connection, so the next Send connects.
-func (k *kept) drop() error {
-	if k.conn == nil {
+// drop closes conn. If conn is the kept connection, the next call connects.
+func (k *kept) drop(conn *nostr.Relay) error {
+	if conn == nil {
 		return nil
 	}
-	conn := k.conn
-	k.conn = nil
+	k.mu.Lock()
+	if k.conn == conn {
+		k.conn = nil
+	}
+	k.mu.Unlock()
 	return conn.Close()
+}
+
+// open returns the connection for one call. For a Relay from New, it is the
+// kept connection, and reused says whether an earlier call opened it. The
+// caller must call done when the call ends, with the error of the call.
+func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done func(error), err error) {
+	k := r.kept
+	if k == nil {
+		conn, err = r.connect(ctx, &sessions{})
+		if err != nil {
+			return nil, false, nil, err
+		}
+		return conn, false, func(error) { _ = conn.Close() }, nil
+	}
+
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.conn != nil && k.conn.IsConnected() && time.Since(k.used) > idleCheck && !alive(ctx, k.conn) {
+		_ = k.conn.Close()
+	}
+	if k.conn != nil && k.conn.IsConnected() {
+		reused = true
+	} else {
+		if k.conn != nil {
+			_ = k.conn.Close()
+			k.conn = nil
+		}
+		if k.conn, err = r.connect(ctx, k.sessions); err != nil {
+			return nil, false, nil, err
+		}
+	}
+	k.used = time.Now()
+	conn = k.conn
+	return conn, reused, func(err error) {
+		// An answer of the relay shows that the connection works. A caller
+		// that stopped says nothing about it. Any other failure can come from
+		// a connection that stalled, so the next call opens a new one.
+		if err != nil && !answered(err) && ctx.Err() == nil {
+			_ = k.drop(conn)
+		}
+	}, nil
+}
+
+// alive says whether a connection still carries an answer of the relay. It
+// asks for an event that no relay holds, and waits for the end of stored
+// events.
+func alive(ctx context.Context, conn *nostr.Relay) bool {
+	ctx, cancel := context.WithTimeout(ctx, reuseWait)
+	defer cancel()
+	_, err := stored(ctx, conn, nostr.Filter{IDs: []nostr.ID{{}}})
+	return err == nil || answered(err)
 }
 
 // Name says which relay this is.
@@ -133,27 +235,28 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 		return err
 	}
 
-	if k.conn != nil && k.conn.IsConnected() {
+	conn, reused, _, err := r.open(ctx)
+	if err != nil {
+		return err
+	}
+	if reused {
 		first, cancel := context.WithTimeout(ctx, reuseWait)
-		err := r.publish(first, k.conn, event)
+		err := r.publish(first, conn, event)
 		cancel()
 		// A refusal is an answer of the relay: the connection works.
 		if err == nil || refused(err) {
 			return r.named(err)
 		}
+		_ = k.drop(conn)
 		if err := ctx.Err(); err != nil {
-			_ = k.drop()
+			return err
+		}
+		if conn, _, _, err = r.open(ctx); err != nil {
 			return err
 		}
 	}
-	_ = k.drop()
-	conn, err := r.connect(ctx)
-	if err != nil {
-		return err
-	}
-	k.conn = conn
 	if err = r.publish(ctx, conn, event); err != nil && !refused(err) {
-		_ = k.drop()
+		_ = k.drop(conn)
 	}
 	return r.named(err)
 }
@@ -161,6 +264,18 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 // refused says whether an error is the answer of a relay that did not take
 // an event.
 func refused(err error) bool { return strings.HasPrefix(err.Error(), "msg: ") }
+
+// answerError is the reason of a CLOSED message: an answer of the relay.
+type answerError struct{ reason string }
+
+func (e answerError) Error() string { return "the relay closed the query: " + e.reason }
+
+// answered says whether an error is an answer of the relay, so the connection
+// that carried it works.
+func answered(err error) bool {
+	var answer answerError
+	return refused(err) || errors.Is(err, errAuthRequired) || errors.As(err, &answer)
+}
 
 // named adds the relay to an error.
 func (r Relay) named(err error) error {
@@ -170,14 +285,80 @@ func (r Relay) named(err error) error {
 	return fmt.Errorf("relay %s: %w", r.URL, err)
 }
 
-func (r Relay) connect(ctx context.Context) (*nostr.Relay, error) {
-	conn, err := nostr.RelayConnect(ctx, r.URL, nostr.RelayOptions{
-		NoticeHandler: func(*nostr.Relay, string) {},
+// connect opens a connection to the relay. It sends each NIP-77 message to
+// its session in s. If the first attempt fails or stalls, connect tries the
+// other address family once.
+func (r Relay) connect(ctx context.Context, s *sessions) (*nostr.Relay, error) {
+	var conn *nostr.Relay
+	err := reach(ctx, r.URL, func(ctx context.Context, client *http.Client) error {
+		conn = nostr.NewRelay(context.Background(), r.URL, nostr.RelayOptions{
+			NoticeHandler: func(*nostr.Relay, string) {},
+			CustomHandler: s.dispatch,
+		})
+		if err := conn.ConnectWithClient(ctx, client); err != nil {
+			_ = conn.Close()
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 	return conn, nil
+}
+
+// sessions holds the NIP-77 sessions that run on one connection, by
+// subscription ID.
+type sessions struct {
+	next    atomic.Int64
+	mu      sync.Mutex
+	replies map[string]func(nostr.Envelope)
+}
+
+// add registers a session, and returns its subscription ID, the channel of
+// its messages, and a function that removes it.
+func (s *sessions) add(ctx context.Context) (string, <-chan nostr.Envelope, func()) {
+	id := "arc-negentropy-" + strconv.FormatInt(s.next.Add(1), 10)
+	replies := make(chan nostr.Envelope)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.replies == nil {
+		s.replies = map[string]func(nostr.Envelope){}
+	}
+	s.replies[id] = func(env nostr.Envelope) {
+		select {
+		case replies <- env:
+		case <-ctx.Done():
+		}
+	}
+	return id, replies, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		delete(s.replies, id)
+	}
+}
+
+// dispatch gives one NIP-77 message to its session.
+func (s *sessions) dispatch(data string) {
+	env := negMessage(data)
+	if env == nil {
+		return
+	}
+	var id string
+	switch env := env.(type) {
+	case *nip77.MessageEnvelope:
+		id = env.SubscriptionID
+	case *nip77.ErrorEnvelope:
+		id = env.SubscriptionID
+	default:
+		return
+	}
+	s.mu.Lock()
+	deliver := s.replies[id]
+	s.mu.Unlock()
+	if deliver != nil {
+		deliver(env)
+	}
 }
 
 // Send publishes one event. A relay that already holds it accepts it again.
@@ -188,7 +369,7 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	if r.kept != nil {
 		return r.sendKept(ctx, event)
 	}
-	conn, err := r.connect(ctx)
+	conn, err := r.connect(ctx, &sessions{})
 	if err != nil {
 		return err
 	}
@@ -212,7 +393,26 @@ func (r Relay) publish(ctx context.Context, conn *nostr.Relay, event nostr.Event
 
 // authenticate answers the relay's challenge. The challenge can arrive just
 // after the refusal that asked for it, so authenticate waits for it briefly.
+// On the kept connection, one call answers, and the calls that wait for it
+// then use its answer.
 func (r Relay) authenticate(ctx context.Context, conn *nostr.Relay) error {
+	if k := r.kept; k != nil {
+		k.auth.Lock()
+		defer k.auth.Unlock()
+		if k.authed == conn {
+			return nil
+		}
+		if err := r.challenge(ctx, conn); err != nil {
+			return err
+		}
+		k.authed = conn
+		return nil
+	}
+	return r.challenge(ctx, conn)
+}
+
+// challenge answers the challenge of the relay on conn.
+func (r Relay) challenge(ctx context.Context, conn *nostr.Relay) error {
 	var err error
 	for range 20 {
 		if err = conn.Auth(ctx, r.Signer.SignEvent); err == nil || !strings.Contains(err.Error(), "no challenge") {
@@ -234,12 +434,17 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
-	conn, err := r.connect(ctx)
+	conn, _, done, err := r.open(ctx)
 	if err != nil {
 		return transport.Batch{}, err
 	}
-	defer func() { _ = conn.Close() }()
+	batch, err := r.fetch(ctx, conn, filter)
+	done(err)
+	return batch, err
+}
 
+// fetch reads the pages of a query on one connection.
+func (r Relay) fetch(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) (transport.Batch, error) {
 	seen := map[nostr.ID]bool{}
 	var batch transport.Batch
 
@@ -327,19 +532,19 @@ func closed(reason string) error {
 	if strings.HasPrefix(reason, "auth-required") {
 		return errAuthRequired
 	}
-	return errors.New("the relay closed the query: " + reason)
+	return answerError{reason}
 }
 
 // Exchange sends one event and waits for the first answer that matches. It
 // subscribes, waits until the relay has taken the subscription, and only then
 // sends, all on one connection. An answer to a live call is ephemeral, and a
 // relay never stores it, so a subscription that came after it would miss it.
-func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (nostr.Event, error) {
-	conn, err := r.connect(ctx)
+func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (answer nostr.Event, err error) {
+	conn, _, done, err := r.open(ctx)
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { done(err) }()
 
 	sub, err := conn.Subscribe(ctx, answers, nostr.SubscriptionOptions{Label: "arc-exchange", MaxWaitForEOSE: realEOSE})
 	if err != nil {
@@ -392,7 +597,7 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
-	info, err := nip11.Fetch(ctx, r.URL)
+	info, err := r.information(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
@@ -409,27 +614,28 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 
 // negentropy runs one NIP-77 session. The session of the nostr library opens
 // its own connection, which cannot answer a challenge, so a relay would
-// refuse it sealed data. This session answers the challenge, and opens again.
-func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.Querier) ([]nostr.ID, []nostr.ID, error) {
-	const id = "arc-negentropy"
+// refuse it sealed data. This session runs on the connection of the other
+// calls, answers the challenge, and opens again.
+func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.Querier) (need []nostr.ID, give []nostr.ID, err error) {
 	const frame = 60_000
 
-	replies := make(chan nostr.Envelope)
-	conn, err := nostr.RelayConnect(ctx, r.URL, nostr.RelayOptions{
-		NoticeHandler: func(*nostr.Relay, string) {},
-		CustomHandler: func(data string) {
-			if env := negMessage(data); env != nil {
-				select {
-				case replies <- env:
-				case <-ctx.Done():
-				}
-			}
-		},
-	})
+	s := &sessions{}
+	if r.kept != nil {
+		s = r.kept.sessions
+	}
+	var conn *nostr.Relay
+	var done func(error)
+	if r.kept != nil {
+		conn, _, done, err = r.open(ctx)
+	} else if conn, err = r.connect(ctx, s); err == nil {
+		done = func(error) { _ = conn.Close() }
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { done(err) }()
+	id, replies, remove := s.add(ctx)
+	defer remove()
 
 	vec := vector.New()
 	for event := range local.QueryEvents(filter) {
@@ -453,7 +659,6 @@ func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.
 
 	// Reconcile writes the IDs on two channels, and blocks when they are
 	// full, so they are read while the session runs.
-	var need, give []nostr.ID
 	var wg sync.WaitGroup
 	reading, authed := false, false
 	for {
@@ -466,7 +671,7 @@ func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.
 		switch env := env.(type) {
 		case *nip77.ErrorEnvelope:
 			if authed || r.Signer == nil || !strings.HasPrefix(env.Reason, "auth-required:") {
-				return nil, nil, errors.New(env.Reason)
+				return nil, nil, answerError{env.Reason}
 			}
 			if err := r.authenticate(ctx, conn); err != nil {
 				return nil, nil, err
@@ -556,7 +761,7 @@ func supports(nips []any, nip int) bool {
 // it does not keep. If no end of stored events comes within Timeout, Watch
 // returns an error.
 func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Event, error) {
-	conn, err := r.connect(ctx)
+	conn, _, done, err := r.open(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +774,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		probe.Limit = 1
 		if _, err := stored(ctx, conn, probe); errors.Is(err, errAuthRequired) {
 			if err := r.authenticate(ctx, conn); err != nil {
-				_ = conn.Close()
+				done(err)
 				return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 			}
 		}
@@ -580,7 +785,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		MaxWaitForEOSE: realEOSE,
 	})
 	if err != nil {
-		_ = conn.Close()
+		done(err)
 		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
 	}
 
@@ -592,14 +797,14 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 	cancel()
 	if err != nil {
 		sub.Unsub()
-		_ = conn.Close()
+		done(err)
 		return nil, fmt.Errorf("relay %s: the relay did not take the subscription: %w", r.URL, err)
 	}
 
 	out := make(chan nostr.Event)
 	go func() {
 		defer close(out)
-		defer func() { _ = conn.Close() }()
+		defer done(nil)
 		defer sub.Unsub()
 
 		for _, event := range pending {
