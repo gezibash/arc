@@ -6,12 +6,34 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-13
+
+arc works better on lossy networks, such as a cafe with broken IPv6. A sync
+uses one connection to each relay, and the relay logs its connections.
+Update the relay to get the log; clients need no relay update.
+
 ### Added
 
 - Relay: `arc relay serve` logs its client connections to standard error. It
   writes a WARN line for each failed WebSocket upgrade, each connection that
   closes with an error, and each refused event, and an INFO summary each
-  minute in which something happened (#274).
+  minute in which something happened (#276).
+
+### Changed
+
+- A process keeps one WebSocket connection to each of its relays, and each
+  call uses it. One `arc sync` opens 2 connections instead of 6 to 8. A call
+  after an idle connection checks it, and opens a new one if the relay does
+  not answer within 5 s (#277).
+
+### Fixed
+
+- If the connect, the TLS handshake or the WebSocket handshake to a relay
+  does not end within 4 s, arc tries once more over the other address
+  family. For the life of the process, arc tries IPv4 first for a host that
+  IPv4 reached (#277).
+- The test of a blocked write in `core/session` no longer fails in 1 of
+  about 100 runs (#279).
 
 ## [0.28.1] - 2026-10-13
 
