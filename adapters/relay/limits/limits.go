@@ -64,7 +64,19 @@ type Policy struct {
 	// Now is the clock that decides expiration. If it is nil, the relay
 	// uses time.Now.
 	Now func() time.Time
+	// Refused gets the reason of each event that the policy refuses, one
+	// of the Refused constants. It can be nil.
+	Refused func(reason string)
 }
+
+// The reasons that Policy.Refused gets.
+const (
+	RefusedExpired  = "expired"
+	RefusedSize     = "size"
+	RefusedWrapAuth = "wrap-auth"
+	RefusedRate     = "rate"
+	RefusedStore    = "store-full"
+)
 
 // Apply makes the relay keep the policy. The store is the database of the
 // relay. Call Apply after the relay has its event store.
@@ -86,34 +98,40 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, p Policy) {
 	}
 	expire(rl, now)
 
+	refuse := func(reason, message string) (bool, string) {
+		if p.Refused != nil {
+			p.Refused(reason)
+		}
+		return true, message
+	}
 	onEvent := rl.OnEvent
 	rl.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
 		if store.Expired(event, now()) {
-			return true, "invalid: the expiration of this event has passed"
+			return refuse(RefusedExpired, "invalid: the expiration of this event has passed")
 		}
 		size := len(event.String())
 		if event.Kind == private.WrapKind && size > private.MaxWrap {
-			return true, fmt.Sprintf("invalid: the gift wrap holds %d bytes, and mail holds at most %d", size, private.MaxWrap)
+			return refuse(RefusedSize, fmt.Sprintf("invalid: the gift wrap holds %d bytes, and mail holds at most %d", size, private.MaxWrap))
 		}
 		limit := kept
 		if event.Kind.IsEphemeral() {
 			limit = p.MaxEventBytes
 		}
 		if limit > 0 && size > limit {
-			return true, fmt.Sprintf("invalid: the event holds %d bytes, and this relay takes at most %d", size, limit)
+			return refuse(RefusedSize, fmt.Sprintf("invalid: the event holds %d bytes, and this relay takes at most %d", size, limit))
 		}
 		if p.WrapAuth && isWrap(event.Kind) && len(khatru.GetAllAuthed(ctx)) == 0 &&
 			(p.WrapPoW == 0 || nip13.Check(event.ID, p.WrapPoW) != nil) {
 			if p.WrapPoW > 0 {
-				return true, fmt.Sprintf("auth-required: a gift wrap needs authentication, or proof of work of %d bits", p.WrapPoW)
+				return refuse(RefusedWrapAuth, fmt.Sprintf("auth-required: a gift wrap needs authentication, or proof of work of %d bits", p.WrapPoW))
 			}
-			return true, "auth-required: a gift wrap needs authentication"
+			return refuse(RefusedWrapAuth, "auth-required: a gift wrap needs authentication")
 		}
 		if bucket != nil && !bucket.take(clientIP(ctx, p.IPHeader)) {
-			return true, "rate-limited: this address writes too many events"
+			return refuse(RefusedRate, "rate-limited: this address writes too many events")
 		}
 		if p.MaxStoreBytes > 0 && !event.Kind.IsEphemeral() && event.Kind != nostr.KindDeletion && used(db) >= p.MaxStoreBytes {
-			return true, "error: the store of this relay is full"
+			return refuse(RefusedStore, "error: the store of this relay is full")
 		}
 		if onEvent != nil {
 			return onEvent(ctx, event)

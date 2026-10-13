@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -39,6 +39,7 @@ import (
 	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relaylog"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
 	"github.com/gezibash/arc/adapters/relay/turn"
@@ -377,20 +378,23 @@ func announceRelays(command *cobra.Command) {
 }
 
 // newRelay makes the relay of arc relay serve, with its store in the file at
-// path. Call the returned function to close the store.
-func newRelay(path string, p limits.Policy) (*khatru.Relay, func(), error) {
+// path. The relay logs its connections to logger. Call the returned function
+// to close the store.
+func newRelay(path string, p limits.Policy, logger *slog.Logger) (*khatru.Relay, *relaylog.Log, func(), error) {
 	db := &boltdb.BoltBackend{Path: path}
 	if err := db.Init(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	connections := relaylog.New(logger)
+	p.Refused = connections.Refused
 	rl := khatru.NewRelay()
-	rl.Log = log.New(io.Discard, "", 0)
 	rl.UseEventstore(db, 500)
 	rl.Negentropy = true
 	rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
 	sealed.Protect(rl)
 	limits.Apply(rl, db.DB, p)
-	return rl, db.Close, nil
+	connections.Watch(rl)
+	return rl, connections, db.Close, nil
 }
 
 func serveCommand() *cobra.Command {
@@ -410,7 +414,8 @@ func serveCommand() *cobra.Command {
 				path = filepath.Join(dir, "relay.db")
 			}
 
-			rl, closeDB, err := newRelay(path, writePolicy(command))
+			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+			rl, connections, closeDB, err := newRelay(path, writePolicy(command), logger)
 			if err != nil {
 				return err
 			}
@@ -420,6 +425,7 @@ func serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			listener = connections.Listen(listener)
 			fmt.Fprintf(command.OutOrStdout(), "relay listens on ws://%s\n", listener.Addr())
 			turnConfig, err := turnSetting(command)
 			if err != nil {
@@ -469,8 +475,9 @@ func serveCommand() *cobra.Command {
 				mux.Handle(turn.Path, turnServer)
 				handler = mux
 			}
-			server := &http.Server{Handler: handler}
+			server := &http.Server{Handler: handler, ConnContext: connections.ConnContext}
 			go func() { <-ctx.Done(); _ = server.Close() }()
+			go connections.Run(ctx, time.Minute)
 			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}
