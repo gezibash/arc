@@ -19,6 +19,16 @@
 // until the author deletes them or the operator removes them. The one draft
 // that the relay still takes holds the keyed root of a citizen.
 //
+// A device key reads the sealed data of a citizen with a token of kind
+// devices.TokenKind, which the citizen key signs. The device authenticates
+// with its own key, then sends the token on the same connection. The relay
+// checks it, and then serves the sealed data of the citizen on that
+// connection until the token ends. It never keeps or broadcasts a token, so
+// khatru answers a token that it took with "mute: no one was listening for
+// this". A refused token gets "restricted:" or "auth-required:".
+// The NIP-11 document lists devices.TokenTag, so that a device sends a
+// token only to a relay that takes it.
+//
 // The relay applies a deletion with the tag draft.Moved, and then serves it
 // to nobody, also not to its author. An older client imports each deletion
 // of its drafts into its store, and its store would delete them there. The
@@ -31,6 +41,8 @@ import (
 	"iter"
 	"slices"
 	"strconv"
+	"sync"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/khatru"
@@ -85,16 +97,99 @@ func refused(event nostr.Event) bool {
 	return event.Kind != draft.Kind || event.Tags.GetD() != keyedRootD
 }
 
+// grant is one token that a connection gave: it reads the sealed data of
+// citizen until end.
+type grant struct {
+	citizen nostr.PubKey
+	end     nostr.Timestamp
+}
+
+// grants holds the tokens of each connection.
+type grants struct {
+	mu sync.Mutex
+	by map[*khatru.WebSocket][]grant
+}
+
+// take checks a token against the keys that authenticated on the
+// connection, and keeps it.
+func (g *grants) take(ctx context.Context, event nostr.Event, now nostr.Timestamp) (bool, string) {
+	ws := khatru.GetConnection(ctx)
+	if ws == nil {
+		return true, "restricted: a token needs a connection"
+	}
+	authed := khatru.GetAllAuthed(ctx)
+	if len(authed) == 0 {
+		khatru.RequestAuth(ctx)
+		return true, "auth-required: authenticate with the device key before the token"
+	}
+	var last error
+	for _, device := range authed {
+		citizen, end, err := devices.CheckToken(event, device, now)
+		if err != nil {
+			last = err
+			continue
+		}
+		g.mu.Lock()
+		g.by[ws] = append(g.by[ws], grant{citizen: citizen, end: end})
+		g.mu.Unlock()
+		return false, ""
+	}
+	return true, "restricted: " + last.Error()
+}
+
+// readers returns the keys whose sealed data the connection reads: each key
+// that authenticated, and each citizen of a token that has not ended.
+func (g *grants) readers(ws *khatru.WebSocket, authed []nostr.PubKey, now nostr.Timestamp) []nostr.PubKey {
+	if ws == nil {
+		return authed
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	given := g.by[ws]
+	if len(given) == 0 {
+		return authed
+	}
+	keys := slices.Clone(authed)
+	for _, t := range given {
+		if t.end > now {
+			keys = append(keys, t.citizen)
+		}
+	}
+	return keys
+}
+
+func (g *grants) drop(ws *khatru.WebSocket) {
+	g.mu.Lock()
+	delete(g.by, ws)
+	g.mu.Unlock()
+}
+
 // Protect makes a relay serve sealed events only to their author, and
 // refuse the retired kinds. Call it after the relay has its event store.
 func Protect(rl *khatru.Relay) {
-	rl.Info.Tags = append(rl.Info.Tags, draft.RetiredTag)
+	protect(rl, func() nostr.Timestamp { return nostr.Timestamp(time.Now().Unix()) })
+}
+
+func protect(rl *khatru.Relay, now func() nostr.Timestamp) {
+	rl.Info.Tags = append(rl.Info.Tags, draft.RetiredTag, devices.TokenTag)
+	g := &grants{by: map[*khatru.WebSocket][]grant{}}
+	readers := func(ctx context.Context) []nostr.PubKey {
+		return g.readers(khatru.GetConnection(ctx), khatru.GetAllAuthed(ctx), now())
+	}
+	onDisconnect := rl.OnDisconnect
+	rl.OnDisconnect = func(ctx context.Context) {
+		g.drop(khatru.GetConnection(ctx))
+		if onDisconnect != nil {
+			onDisconnect(ctx)
+		}
+	}
+
 	query := rl.QueryStored
 	rl.QueryStored = func(ctx context.Context, filter nostr.Filter) iter.Seq[nostr.Event] {
 		if khatru.IsInternalCall(ctx) {
 			return query(ctx, filter)
 		}
-		authed := khatru.GetAllAuthed(ctx)
+		authed := readers(ctx)
 		return func(yield func(nostr.Event) bool) {
 			for event := range query(ctx, filter) {
 				if draft.IsMoved(event) || isSealed(event) && !slices.Contains(authed, event.PubKey) {
@@ -112,6 +207,9 @@ func Protect(rl *khatru.Relay) {
 		if refused(event) {
 			return true, Refusal
 		}
+		if event.Kind == devices.TokenKind {
+			return g.take(ctx, event, now())
+		}
 		if onEvent != nil {
 			return onEvent(ctx, event)
 		}
@@ -120,7 +218,7 @@ func Protect(rl *khatru.Relay) {
 
 	onRequest := rl.OnRequest
 	rl.OnRequest = func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		if reject, msg := check(ctx, filter); reject {
+		if reject, msg := check(ctx, filter, readers(ctx)); reject {
 			return reject, msg
 		}
 		if onRequest != nil {
@@ -130,7 +228,7 @@ func Protect(rl *khatru.Relay) {
 	}
 	onCount := rl.OnCount
 	rl.OnCount = func(ctx context.Context, filter nostr.Filter) (bool, string) {
-		if reject, msg := check(ctx, filter); reject {
+		if reject, msg := check(ctx, filter, readers(ctx)); reject {
 			return reject, msg
 		}
 		if onCount != nil {
@@ -141,7 +239,7 @@ func Protect(rl *khatru.Relay) {
 
 	prevent := rl.PreventBroadcast
 	rl.PreventBroadcast = func(ws *khatru.WebSocket, filter nostr.Filter, event nostr.Event) bool {
-		if draft.IsMoved(event) || isSealed(event) && !slices.Contains(ws.AuthedPublicKeys, event.PubKey) {
+		if event.Kind == devices.TokenKind || draft.IsMoved(event) || isSealed(event) && !slices.Contains(g.readers(ws, ws.AuthedPublicKeys, now()), event.PubKey) {
 			return true
 		}
 		return prevent != nil && prevent(ws, filter, event)
@@ -149,12 +247,12 @@ func Protect(rl *khatru.Relay) {
 }
 
 // check refuses a query that names a sealed kind, unless the citizen who
-// asks has authenticated and names only themselves as the author.
-func check(ctx context.Context, filter nostr.Filter) (bool, string) {
+// asks has authenticated, or gave a token, and names only themselves as the
+// author. Readers are the keys that the connection reads for.
+func check(ctx context.Context, filter nostr.Filter, authed []nostr.PubKey) (bool, string) {
 	if !slices.ContainsFunc(filter.Kinds, func(k nostr.Kind) bool { return slices.Contains(Kinds, k) }) {
 		return false, ""
 	}
-	authed := khatru.GetAllAuthed(ctx)
 	if len(authed) == 0 {
 		khatru.RequestAuth(ctx)
 		return true, "auth-required: sealed data is served only to its author"

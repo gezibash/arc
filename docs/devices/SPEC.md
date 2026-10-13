@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, adapters, runtime
 - Owns: core/devices
-- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize)$' ./internal/proof/ ./core/devices/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped and no cached storage list: in `TestDevicePages` the phone syncs with its own installs. No test measures the wait for a signer on a slow network: a signer that answers after 15 seconds counts as silent. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
+- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize|TestADeviceReadsSealedDataWithAToken|TestTheBunkerPolicy)$' ./internal/proof/ ./core/devices/ ./adapters/relay/sealed/ ./cmd/arc/
+- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped and no cached storage list. No test renews a token after 3.5 days, or lets one end during a command. No test measures the wait for a signer on a slow network: a signer that answers after 15 seconds counts as silent. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -112,8 +112,9 @@ The JSON inside is:
 ### 3.3 The relay
 
 - A relay MUST serve kind 10274 only to its author after NIP-42
-  authentication, as it serves a NIP-37 draft. `adapters/relay/sealed`
-  enforces this for an ARC relay.
+  authentication, as it serves a NIP-37 draft, or to a device key that gave
+  a token of the author (section 3.6). `adapters/relay/sealed` enforces
+  this for an ARC relay.
 - The list is coordination data. It stays on the relays of the citizen.
 
 ### 3.4 The signer
@@ -242,6 +243,35 @@ held the old root and the data that it sealed, so a new seal of old data
 hides nothing from it. A new generation hides only the data that comes after
 the revocation, and the chain lets each later root open the older data.
 
+### 3.6 The token
+
+A token lets a device key read the sealed data of the citizen on a relay
+with no signature of the citizen key. Section 4.13 of
+[the delivery spec](../delivery/SPEC.md) gives how a relay takes it.
+
+- A token is an event of kind 20274. The citizen key signs it. It has one
+  tag `["p", <device key>]`, one tag `["expiration", <T>]` of NIP-40, and
+  empty content.
+- T MUST be at most 7 days (604800 seconds) after the time of the token. A
+  reader MUST refuse a token whose time is more than 10 minutes ahead of
+  its clock, or whose T has passed.
+- The scope of a token is the sealed data of the citizen on a relay:
+  kinds 10273, 10274, 10275, and the drafts of section 4.11 of the delivery
+  spec. A token gives no other power. A device publishes a protected event
+  (NIP-70) after it authenticates with the citizen key.
+- A device asks the signer to sign its token. The signer MUST sign kind
+  20274 only when the `p` tag is the key of the device that asks, and T is
+  at most 7 days ahead. It signs it also when `--allow-kind` does not name
+  kind 20274.
+- A device asks for a token at `arc keys add bunker://...`. It asks again
+  when the signer answered a relay challenge for the citizen key, and its
+  token is missing or in the second half of its time. It asks once for each
+  command.
+- A device uses a token only while it lasts one more hour. It keeps the
+  token in `<home>/store/data-roots.db`. A token is not secret: only the
+  device key can use it.
+- A manifest MUST NOT name kind 20274.
+
 ## 4. Behavior
 
 ### 4.1 Add a device
@@ -257,6 +287,9 @@ the revocation, and the chain lets each later root open the older data.
    loads each newer list.
 4. On the device: `arc keys add bunker://<citizen>?relay=<url>`. With a
    device list, the bunker prints its URI without the secret.
+5. In the same command, the device asks the signer for its first token
+   (section 3.6). If the signer does not answer, the device warns, and
+   reads sealed data through the signer until it has a token.
 
 If the signer refuses the device in step 4, `arc` names the device key and
 the command to run on the signer.
@@ -305,6 +338,9 @@ restart keeps the list.
 | No relay takes the roots after `add` or `revoke` | The command fails after the list is published, and names `arc keys roots`. The signer then makes the roots follow the list. Until then, the other devices seal under the old newest root, which the dropped device holds. |
 | A device cannot reach the signer or the relays | It uses the data roots that it keeps on its disk, and warns that the newest roots did not come. |
 | A command needs the citizen key, and the signer does not answer | The command fails, and says "this needs the signer of the citizen", the citizen key, and the time after which `arc` asks the signer again. The message shows no relay or transport error, also when the signer was needed for a relay authentication. With a relay and no signer, the command waits 15 seconds once. The device keeps the time in the file `signer-silent` of the identity. In the next 60 seconds, each use of the signer fails at once, also in the next commands of the device. After that, a use connects again, so `arc serve` finds the signer when it comes back. An answer of the signer removes the file. Examples: mail, `arc keys storage ls` with no cached list, a page of the format before the data roots, and a device list newer than the cache. A journal page of the data roots needs no signer. `arc sync` warns, and syncs with the installs of the device. |
+| The signer is stopped, and a device reads its storage list, device list or data roots | A relay with the tag `arc-delegation` serves the sealed events to the token of the device, so the device asks the signer nothing. When no event is newer than the list that the device opened last, it uses the list on its disk. A newer list needs the signer. A relay without the tag needs the citizen key, so the device waits for the signer as above. |
+| A device asks for a token for another key, or for longer than 7 days | The signer refuses, and says that it signs a token only for the device that asks, for at most 7 days. |
+| A device has no token, or its token lasts less than one hour | The device authenticates with the citizen key, through the signer. When the signer answers, the device asks it for a new token. |
 | A root in the cache does not open with the key of the machine | The command fails, and names the generation. |
 | Data names a generation that the machine does not hold | `arc keys unseal` fails, and names the generation. |
 | The citizen has 128 generations | The signer refuses to make another one. `revoke` fails after it publishes the list, so the signer refuses the device, but the device keeps the newest root, and data sealed after the revocation stays readable to it. No command repairs this yet. |
@@ -348,6 +384,15 @@ restart keeps the list.
 - **A device can read the roots event.** Through the signer, it opens the
   content, and sees the device keys that hold wraps. It cannot open the wraps
   to other device keys.
+- **Tokens after revocation.** A revoked device keeps its token until T, at
+  most 7 days. Until then, a relay serves it the sealed events of the
+  citizen. The content of the events stays sealed to the citizen key, and
+  the device holds no root of a generation after its revocation. It can
+  learn when a list changed, and the size of the change. The signer refuses
+  a new token, because it refuses each request of the device.
+- **A stolen token** is of no use without the device key. A relay takes it
+  only from a connection that authenticated with the key that its `p` tag
+  names.
 - **The list size** is at most 64 devices. A list is one small event, so the
   relay stores one event for each citizen.
 
@@ -385,6 +430,14 @@ restart keeps the list.
 - **An older signer** that publishes a list drops `revoked`. A newer device
   then has no time for the revocation, and refuses each page of the key
   that it does not hold already.
+- **An older signer** that allows each kind signs a token, and does not
+  check the `p` tag. A device on the list can then get a token for another
+  key. An older signer with `--allow-kind` refuses kind 20274, and the
+  device authenticates with the citizen key, as before.
+- **An older device** asks for no token, and authenticates with the citizen
+  key, as before.
+- **An older relay** has no tag `arc-delegation`. A device does not send its
+  token there, and authenticates with the citizen key, as before.
 - Kind 10272 stays reserved for a migration record. Kind 10273 is the
   storage list of [the storage spec](../storage/SPEC.md), section 3.8.
 
@@ -400,7 +453,15 @@ restart keeps the list.
   tag, the sealed content, the refusal of another author and of changed
   content, and a revocation in the same second.
 - `TestTheBunkerPolicy` in `cmd/arc` checks that the bunker never signs kind
-  10274, also with `--allow-kind 10274`, and never signs kind 10275.
+  10274, also with `--allow-kind 10274`, and never signs kind 10275. It
+  signs a token of kind 20274 for the device that asks, also with
+  `--allow-kind`, and refuses a token for another key, for longer than 7
+  days, or that has ended.
+- `TestADeviceReadsSealedDataWithAToken` in `adapters/relay/sealed` checks
+  that a device reads a draft of the citizen with a token while the citizen
+  signer fails each signature. The relay refuses a token for another key, a
+  token that has ended, and the data of a citizen who did not sign the
+  token. It keeps no token, and a watch of kind 20274 gets none.
 - `TestDataRoots` in `internal/proof` runs the real `arc` program, a real
   local relay, a signer made from a seed, and two devices. A device seals
   data before the first list, as generation 0. After the signer adds both
@@ -420,13 +481,18 @@ restart keeps the list.
   journal page, and fails to send mail with "this needs the signer of the
   citizen".
 - `TestDevicePages` in `internal/proof` runs the real `arc` program, an
-  older `arc` of v0.26.0, a real local relay, a storage citizen and a
-  signer. The first sync seals the pages of the older `arc` again, and the
-  second seals nothing. With the bunker stopped, the phone writes and reads
-  the journal. A revocation on the phone fails in less than 2 seconds and
-  names the signer. `arc keys storage ls` fails, names the signer, and shows
-  no relay error. The next `arc sync` takes less than 5 seconds, and puts
-  the page on the storage citizen. When the bunker is back, the laptop reads the page of the
+  older `arc` of v0.26.0, a real local relay, a relay of the older `arc`, a
+  storage citizen and a signer. The first sync seals the pages of the older
+  `arc` again, and the second seals nothing. A desk that uses only the older
+  relay reads the device list with the citizen key. With the bunker stopped,
+  the phone writes and reads the journal. With its token, the phone lists
+  the storage list and syncs in less than 5 seconds, with no word of the
+  signer, and the sync puts the page on the storage citizen. With the
+  temporary edit that ignores the tag of the relay, this check fails after
+  15 seconds. The desk waits at least 10 seconds for the signer on the
+  older relay, and then lists the devices on its disk. A revocation on the
+  phone fails in less than 2 seconds and names the signer. When the bunker
+  is back, the laptop reads the page of the
   phone, also after an older `arc` refused the blob. After the revocation,
   the laptop and a new tablet refuse a page that the phone wrote then, from
   a stick, and the tablet reads the page from before the revocation. After the

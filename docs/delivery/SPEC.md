@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList)$' ./internal/proof/ ./core/store/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -311,6 +311,7 @@ registry uses these numbers:
 | 10273 | replaceable | the sealed storage list; see [storage](../storage/SPEC.md), section 3.8 |
 | 10274 | replaceable | the sealed device list; see [devices](../devices/SPEC.md) |
 | 10275 | replaceable | the sealed data roots; see [devices](../devices/SPEC.md), section 3.5 |
+| 20274 | ephemeral | the token of a device; see section 4.13 and [devices](../devices/SPEC.md), section 3.6 |
 | 30272 | addressable | a capability announcement |
 
 Relays never see 3272, 3273 or 3274, because a gift wrap hides them. Sealed
@@ -319,7 +320,7 @@ kind 31234, with checkpoints of kind 1234. A part of kind 3275 carries
 only content past the first 32 KiB of a draft. It stays on the device and on
 storage citizens, and an ARC relay refuses it (section 4.11). ARC does not
 make the private relay list of NIP-37, kind 10013. See
-docs/interface/SPEC.md, section 3.9. ARC registers its five kinds in the
+docs/interface/SPEC.md, section 3.9. ARC registers its kinds in the
 registry. [The kind registry](../KINDS.md) lists every kind that ARC uses.
 
 ### 3.8 Transports
@@ -911,6 +912,48 @@ user that the bytes go through the relay. Before it starts an attempt
 through the relay, it compares `quota_left` with the bytes that remain, and
 refuses with an error if the quota is too small.
 
+### 4.13 Authentication of a device
+
+A device signs through a remote signer (docs/devices/SPEC.md). A relay
+serves sealed data, such as the storage list, only to its author. Before
+the token, the device answered the NIP-42 challenge with the citizen key,
+so each read of sealed data needed the signer. A token of kind 20274
+(docs/devices/SPEC.md, section 3.6) lets the device key read the sealed
+data of the citizen with no signature of the citizen key.
+
+Rules for an ARC relay:
+
+- The relay MUST list the tag `arc-delegation` in its NIP-11 document.
+- The relay MUST take a token only on a connection that authenticated with
+  NIP-42. It MUST check the signature, that the `p` tag names a key that
+  authenticated on the connection, the time, and T. It MUST refuse a token
+  that fails a check, with a reason that starts with `restricted:`, or with
+  `auth-required:` when no key authenticated.
+- After it takes a token, the relay MUST serve the sealed data of the
+  citizen who signed it on that connection, until T. The token MUST NOT
+  give any other right: the NIP-70 check still needs the key of the author.
+- The relay MUST NOT keep a token, and MUST NOT send it to any
+  subscription. khatru therefore answers a token that it took with
+  `mute: no one was listening for this`.
+- The relay MUST forget the tokens of a connection when it closes.
+
+Rules for the relay transport of a device:
+
+- If the relay lists `arc-delegation`, and the device holds a token that
+  lasts one more hour, the device MUST answer the challenge with its device
+  key, and then send its token on the same connection. It MUST NOT send the
+  token to a relay without the tag.
+- Else, the citizen key answers the challenge, through the signer, as
+  before.
+- A protected event of the citizen (NIP-70) needs a connection on which the
+  citizen key authenticated. If the relay refuses such an event on a
+  connection of the device key, the transport sends it again on a new
+  connection on which the citizen key answers the challenge.
+
+The token rides as an event after the AUTH event, not as a tag of it.
+khatru gives no hook that reads the AUTH event, and its NIP-70 check reads
+only the last key that authenticated.
+
 ## 5. Failures
 
 | Failure | What happens |
@@ -969,7 +1012,8 @@ A public event, such as a capability announcement, is readable by everyone.
 and cap the rate of events from one IP address.
 
 The relay transport answers the NIP-42 challenge of a relay and sends the
-gift wrap again. On the relays of the citizen, the citizen's key answers. On
+gift wrap again. On the relays of the citizen, the citizen's key answers,
+or the device key with a token (section 4.13). On
 the inbox relay of a recipient, a one-time key answers. Thus the relay of the
 recipient does not learn who wrote to them.
 
@@ -1040,7 +1084,17 @@ key file of a key that a seed derived, because the file holds the secret key
 as before. A key from before the seed stays valid. ARC does not move it to a
 seed.
 
-### 7.4 Self data of device keys
+### 7.4 Tokens of a device
+
+A token changes nothing for an older relay or an older client. An older
+relay has no tag `arc-delegation`, so a device never sends it a token, and
+answers its challenge with the citizen key. An older client never sends a
+token, and a new relay serves it as before. An older relay that gets a
+token anyway broadcasts it to the subscriptions of kind 20274. It shows
+that the device key belongs to the citizen, and gives nobody a right
+without the device key.
+
+### 7.5 Self data of device keys
 
 The owner rule of section 3.11 changes the store. An older store names self
 data by its author. It therefore refuses nothing that a device key signed
@@ -1099,6 +1153,16 @@ host.
 `go test -run '^TestRelayPath$' ./sdk/direct/` puts two ends behind
 symmetric NATs on an emulated network: the direct attempt finds no path, and
 the attempt through TURN sends the file.
+
+The token of section 4.13 has these tests:
+`go test -run '^TestADeviceReadsSealedDataWithAToken$' ./adapters/relay/sealed/`
+reads a draft of the citizen with a device key and a token, while the
+citizen signer fails each signature. The relay refuses a token for another
+key, a token that has ended, and the data of a citizen who did not sign the
+token, and keeps and broadcasts no token. `go test -run '^TestDevicePages$'
+./internal/proof/` runs the real `arc` program: with the bunker stopped, the
+phone lists its storage list and syncs in less than 5 seconds, and a desk
+on a relay of v0.26.0 waits for the signer.
 
 ### 8.2 Measurements
 

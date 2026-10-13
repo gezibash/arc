@@ -39,6 +39,7 @@ section 3.7.
 | 10274 | replaceable | ARC | The device list of a citizen, sealed to the citizen key. A relay serves it only to its author. | code, reserved | [devices, section 3.2](devices/SPEC.md) |
 | 10275 | replaceable | ARC | The data roots of a citizen, wrapped to the citizen key and to each device key, sealed to the citizen key. A relay serves it only to its author. | code, reserved | [devices, section 3.5](devices/SPEC.md) |
 | 13194 | replaceable | NIP-47 | Wallet connect. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
+| 20274 | ephemeral | ARC | The token of a device: the citizen key lets one device key read the sealed data of the citizen on a relay, until an end at most 7 days ahead. Ephemeral, because a relay checks it on one connection and never keeps it. | code, reserved | [delivery, section 4.13](delivery/SPEC.md), [devices, section 3.6](devices/SPEC.md) |
 | 21059 | ephemeral | ARC | A live gift wrap. A relay never keeps it. | code | [delivery, section 3.4](delivery/SPEC.md) |
 | 22242 | ephemeral | NIP-42 | Relay authentication. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 23194 | ephemeral | NIP-47 | Wallet connect request. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |

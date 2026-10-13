@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -39,14 +40,45 @@ func (e *SignerError) Error() string {
 
 func (e *SignerError) Unwrap() error { return e.Err }
 
-// SignerOnly returns the signer error inside err, or else err. A message
-// that shows it does not show the transport errors around it.
+// transportWords start the text that a relay transport puts around a
+// signer error: the error of node.Unreached, of the relay transport, and of
+// the NIP-42 authentication of the library.
+var transportWords = []string{"no relay answered: ", "relay ws://", "relay wss://", "error signing auth event: "}
+
+// SignerOnly removes the transport errors around a signer error in err. It
+// keeps the text before them, which says what the command did. If err holds
+// no signer error, it returns err.
 func SignerOnly(err error) error {
-	if signer, ok := errors.AsType[*SignerError](err); ok {
+	signer, ok := errors.AsType[*SignerError](err)
+	if !ok {
+		return err
+	}
+	text := err.Error()
+	at := strings.Index(text, signer.Error())
+	if at < 0 {
 		return signer
 	}
-	return err
+	before := text[:at]
+	for _, word := range transportWords {
+		if i := strings.Index(before, word); i >= 0 {
+			before = before[:i]
+		}
+	}
+	if before == "" {
+		return signer
+	}
+	return &contextError{text: before + signer.Error(), err: err}
 }
+
+// contextError is an error with a shorter text, which still unwraps to the
+// whole error.
+type contextError struct {
+	text string
+	err  error
+}
+
+func (e *contextError) Error() string { return e.text }
+func (e *contextError) Unwrap() error { return e.err }
 
 // DeviceList returns the newest device list of this citizen, from the store
 // and the relays. It returns false when no list exists. It keeps the list on
