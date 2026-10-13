@@ -21,6 +21,7 @@ import (
 	"fiatjaf.com/nostr/nip77"
 	"fiatjaf.com/nostr/nip77/negentropy"
 	"fiatjaf.com/nostr/nip77/negentropy/storage/vector"
+	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/transport"
 )
 
@@ -73,6 +74,9 @@ type Relay struct {
 	// relay accepts a protected event, NIP-70, only from its author after
 	// this authentication.
 	Signer nostr.Signer
+	// Delegation lets a device read the sealed data of its citizen with its
+	// own key, when the relay takes tokens. It can be nil.
+	Delegation Delegation
 	// kept holds the connection of a relay from New.
 	kept *kept
 }
@@ -102,6 +106,18 @@ type kept struct {
 
 	// sessions sends each NIP-77 message on conn to its session.
 	sessions *sessions
+}
+
+// Delegation is the device key and the token of a device. A relay whose
+// NIP-11 document lists devices.TokenTag then serves the sealed data of the
+// citizen to the device key, with no signature of the citizen key.
+type Delegation interface {
+	// Token returns the device key, and a token that lasts for some time
+	// still. It returns false when the device holds no such token.
+	Token(ctx context.Context) (nostr.Signer, nostr.Event, bool)
+	// Answered says that the signer answered the challenge of a relay for
+	// the citizen key. The device can then ask the signer for a new token.
+	Answered(ctx context.Context)
 }
 
 // New returns a relay that keeps one connection for all of its calls. A call
@@ -380,7 +396,10 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 }
 
 // publish sends one event on a connection. If the relay asks for
-// authentication first, publish answers the challenge and sends again.
+// authentication first, publish answers the challenge and sends again. A
+// connection that authenticated with the device key cannot send a protected
+// event of the citizen, NIP-70; publish then sends it on a new connection
+// that authenticates with the citizen key.
 func (r Relay) publish(ctx context.Context, conn *nostr.Relay, event nostr.Event) error {
 	err := conn.Publish(ctx, event)
 	if err != nil && strings.Contains(err.Error(), "auth-required") && r.Signer != nil {
@@ -389,7 +408,27 @@ func (r Relay) publish(ctx context.Context, conn *nostr.Relay, event nostr.Event
 			err = conn.Publish(ctx, event)
 		}
 	}
+	if err != nil && strings.Contains(err.Error(), "must be published by event author") && r.Delegation != nil && r.Signer != nil {
+		err = r.publishAsCitizen(ctx, event)
+	}
 	return err
+}
+
+// publishAsCitizen sends one event on a new connection that authenticates
+// with the citizen key.
+func (r Relay) publishAsCitizen(ctx context.Context, event nostr.Event) error {
+	conn, err := r.connect(ctx, &sessions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := r.challenge(ctx, conn, r.Signer); err != nil {
+		return err
+	}
+	if r.Delegation != nil {
+		r.Delegation.Answered(ctx)
+	}
+	return conn.Publish(ctx, event)
 }
 
 // authenticate answers the relay's challenge. The challenge can arrive just
@@ -403,20 +442,59 @@ func (r Relay) authenticate(ctx context.Context, conn *nostr.Relay) error {
 		if k.authed == conn {
 			return nil
 		}
-		if err := r.challenge(ctx, conn); err != nil {
+		if err := r.answer(ctx, conn); err != nil {
 			return err
 		}
 		k.authed = conn
 		return nil
 	}
-	return r.challenge(ctx, conn)
+	return r.answer(ctx, conn)
 }
 
-// challenge answers the challenge of the relay on conn.
-func (r Relay) challenge(ctx context.Context, conn *nostr.Relay) error {
+// answer answers the challenge of the relay on conn. A device with a token
+// answers with its device key, and gives the token, when the relay takes
+// tokens. Else the citizen key answers through Signer.
+func (r Relay) answer(ctx context.Context, conn *nostr.Relay) error {
+	if r.Delegation != nil {
+		if device, token, ok := r.Delegation.Token(ctx); ok && r.takesTokens(ctx) {
+			if err := r.challenge(ctx, conn, device); err != nil {
+				return err
+			}
+			return r.giveToken(ctx, conn, token)
+		}
+	}
+	if err := r.challenge(ctx, conn, r.Signer); err != nil {
+		return err
+	}
+	if r.Delegation != nil {
+		r.Delegation.Answered(ctx)
+	}
+	return nil
+}
+
+// takesTokens says whether the NIP-11 document of the relay lists
+// devices.TokenTag.
+func (r Relay) takesTokens(ctx context.Context) bool {
+	info, err := r.information(ctx)
+	return err == nil && slices.Contains(info.Tags, devices.TokenTag)
+}
+
+// giveToken sends the token on conn. The relay keeps it for the
+// connection, and broadcasts it to nobody, so khatru answers that nobody
+// listened.
+func (r Relay) giveToken(ctx context.Context, conn *nostr.Relay, token nostr.Event) error {
+	err := conn.Publish(ctx, token)
+	if err != nil && !strings.Contains(err.Error(), "mute: no one was listening") {
+		return fmt.Errorf("the relay refused the token of this device: %w", err)
+	}
+	return nil
+}
+
+// challenge answers the challenge of the relay on conn with signer.
+func (r Relay) challenge(ctx context.Context, conn *nostr.Relay, signer nostr.Signer) error {
 	var err error
 	for range 20 {
-		if err = conn.Auth(ctx, r.Signer.SignEvent); err == nil || !strings.Contains(err.Error(), "no challenge") {
+		if err = conn.Auth(ctx, signer.SignEvent); err == nil || !strings.Contains(err.Error(), "no challenge") {
 			return err
 		}
 		select {

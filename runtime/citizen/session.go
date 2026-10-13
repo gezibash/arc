@@ -45,7 +45,9 @@ type Session struct {
 	receipts kv.Store
 	roots    kv.Store
 	signers  *signers
-	search   *blevesearch.Index
+	// delegation gives the relays of a device its token.
+	delegation *delegation
+	search     *blevesearch.Index
 	// bodies holds the encrypted bodies of drafts, such as large files.
 	bodies bodies.Dir
 	// kept holds the relay of each URL that NewRelay gave.
@@ -75,6 +77,9 @@ func Open(cfg Config) (*Session, error) {
 	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
 	sess.Node = &node.Node{Store: receiptStore{EventStore: s, db: sess.receipts, me: cfg.Signer.PublicKey()}}
 	sess.loadSigners(context.Background())
+	if cfg.Remote {
+		sess.delegation = &delegation{sess: sess}
+	}
 	// Each relay keeps one connection for its sends. One URL gives one relay,
 	// so a long run does not open a connection for each call.
 	sess.NewRelay = func(url string) transport.Transport {
@@ -83,6 +88,9 @@ func Open(cfg Config) (*Session, error) {
 		r, ok := sess.kept[url]
 		if !ok {
 			r = relay.New(url, sess.Signer)
+			if sess.delegation != nil {
+				r.Delegation = sess.delegation
+			}
 			sess.kept[url] = r
 		}
 		return r

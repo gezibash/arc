@@ -432,6 +432,18 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
+			if strings.HasPrefix(text, "bunker://") {
+				// The first token lets this device read the sealed data of
+				// the citizen on a relay with no path to the signer.
+				sess, err := openDir(command, filepath.Join(citizensDir(root), k.Name()))
+				if err != nil {
+					return err
+				}
+				defer sess.Close()
+				if err := sess.RenewToken(command.Context()); err != nil {
+					fmt.Fprintf(os.Stderr, "arc: this device has no token for the relays yet, so it reads sealed data through the signer: %v\n", citizen.SignerOnly(err))
+				}
+			}
 			return nil
 		},
 	}
@@ -798,9 +810,10 @@ type policy struct {
 	admit func(nostr.PubKey) error
 }
 
-// refusal says why the policy refuses a request, or nothing when it allows
-// it. Authentication for relays is always allowed.
-func (p policy) refusal(req nip46.Request, owner nostr.PubKey) error {
+// refusal says why the policy refuses a request of the device key from,
+// or nothing when it allows it. Authentication for relays is always
+// allowed, and so is a token for the device that asks, and for no other key.
+func (p policy) refusal(req nip46.Request, owner, from nostr.PubKey) error {
 	switch req.Method {
 	case "sign_event":
 		if len(req.Params) != 1 {
@@ -821,6 +834,13 @@ func (p policy) refusal(req nip46.Request, owner nostr.PubKey) error {
 		// A device must not change which storage citizens hold the data.
 		if event.Kind == storage.ListKind {
 			return errors.New("the bunker never signs a storage list; run arc keys storage on the signer")
+		}
+		// A token lets one device key read the sealed data on a relay.
+		if event.Kind == devices.TokenKind {
+			if _, err := devices.TokenEnd(event, from, nostr.Now()); err != nil {
+				return fmt.Errorf("the bunker signs a token only for the device that asks, for at most 7 days: %w", err)
+			}
+			return nil
 		}
 		if len(p.kinds) == 0 {
 			return nil
@@ -848,7 +868,7 @@ func answer(ctx context.Context, signer *nip46.StaticKeySigner, secret nostr.Sec
 	}
 	session := nip46.Session{PublicKey: secret.Public(), ConversationKey: conversation}
 	if parsed, err := session.ParseRequest(request); err == nil {
-		reason := p.refusal(parsed, secret.Public())
+		reason := p.refusal(parsed, secret.Public(), request.PubKey)
 		if p.admit != nil {
 			if refused := p.admit(request.PubKey); refused != nil {
 				reason = refused

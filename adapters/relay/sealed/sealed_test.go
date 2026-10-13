@@ -2,13 +2,16 @@ package sealed_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
 	"github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/testrelay"
 )
@@ -169,5 +172,82 @@ func TestARelayRefusesNewDrafts(t *testing.T) {
 	batch, err = anonymous.Fetch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}, Authors: []nostr.PubKey{author.Public()}})
 	if err != nil || len(batch.Events) != 0 {
 		t.Errorf("an anonymous query read %d deletions of drafts: %v", len(batch.Events), err)
+	}
+}
+
+// token is a Delegation with one fixed token.
+type token struct {
+	device nostr.Signer
+	event  nostr.Event
+}
+
+func (d token) Token(context.Context) (nostr.Signer, nostr.Event, bool) {
+	return d.device, d.event, true
+}
+func (d token) Answered(context.Context) {}
+
+// stopped is a citizen signer that never answers.
+type stopped struct{ nostr.Keyer }
+
+func (stopped) SignEvent(context.Context, *nostr.Event) error {
+	return errors.New("the signer is stopped")
+}
+
+// A device reads the sealed data of its citizen with a token, and the
+// citizen key signs nothing. The relay refuses a token for another key, a
+// token that has ended, and the data of a citizen who did not sign the
+// token. It never keeps or broadcasts a token.
+func TestADeviceReadsSealedDataWithAToken(t *testing.T) {
+	citizen, device, other := nostr.Generate(), nostr.Generate(), nostr.Generate()
+	wrap, err := draft.Wrap(ctx, keyer.NewPlainKeySigner(citizen), "x", nostr.Event{Kind: 30023, CreatedAt: 1, Content: "secret"}, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := testrelay.StartHolding(t, wrap)
+	drafts := nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Authors: []nostr.PubKey{citizen.Public()}}
+	signed := func(by nostr.SecretKey, to nostr.PubKey, at nostr.Timestamp) nostr.Event {
+		event := devices.NewToken(to, at)
+		if err := event.Sign(by); err != nil {
+			t.Fatal(err)
+		}
+		return event
+	}
+	reader := func(event nostr.Event) relay.Relay {
+		return relay.Relay{URL: url, Signer: stopped{}, Delegation: token{device: keyer.NewPlainKeySigner(device), event: event}}
+	}
+
+	given := signed(citizen, device.Public(), nostr.Now())
+	everything, err := relay.Relay{URL: url}.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{devices.TokenKind}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := reader(given).Fetch(ctx, drafts)
+	if err != nil || len(batch.Events) != 1 || batch.Events[0].ID != wrap.ID {
+		t.Fatalf("the device read %d drafts with a token: %v", len(batch.Events), err)
+	}
+
+	cases := []struct {
+		name  string
+		event nostr.Event
+		want  string
+	}{
+		{"a token for another key", signed(citizen, other.Public(), nostr.Now()), "another device key"},
+		{"a token that has ended", signed(citizen, device.Public(), nostr.Now()-devices.TokenLife-1), "has ended"},
+		{"a token of another citizen", signed(other, device.Public(), nostr.Now()), "only their own"},
+	}
+	for _, c := range cases {
+		if _, err := reader(c.event).Fetch(ctx, drafts); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
+		}
+	}
+
+	kept, err := relay.Relay{URL: url}.Fetch(ctx, nostr.Filter{Kinds: []nostr.Kind{devices.TokenKind}})
+	if err != nil || len(kept.Events) != 0 {
+		t.Errorf("the relay keeps %d tokens: %v", len(kept.Events), err)
+	}
+	select {
+	case event := <-everything:
+		t.Errorf("a watch of kind %d got a token of %s", devices.TokenKind, event.PubKey.Hex())
+	case <-time.After(200 * time.Millisecond):
 	}
 }

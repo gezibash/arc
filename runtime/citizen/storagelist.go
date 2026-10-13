@@ -2,11 +2,14 @@ package citizen
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
+	"github.com/gezibash/arc/core/kv"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/sdk/storage"
@@ -15,13 +18,18 @@ import (
 // StorageList returns the newest storage list of this citizen, from the
 // store and the relays. It returns false when no list exists. A machine
 // that signs through a remote signer opens it there, because the list is
-// sealed to the citizen key.
+// sealed to the citizen key. It keeps the list on the disk: when no event is
+// newer than the list that this machine opened last, it asks the signer
+// nothing.
 func (sess *Session) StorageList(ctx context.Context) (storage.List, bool, error) {
 	filter := storage.ListFilter(sess.Key.Public)
 	reports, errs := sess.Node.Pull(ctx, filter, sess.Relays)
 	events, err := sess.Node.Store.Query(filter)
 	if err != nil {
 		return storage.List{}, false, err
+	}
+	if cached, ok := sess.keptStorageList(ctx); ok && !slices.ContainsFunc(events, func(e nostr.Event) bool { return e.CreatedAt > cached.At }) {
+		return cached, true, nil
 	}
 	if unreached := node.Unreached(reports, errs); len(events) == 0 && unreached != nil {
 		return storage.List{}, false, fmt.Errorf("this machine holds no storage list, and %w", unreached)
@@ -43,7 +51,73 @@ func (sess *Session) StorageList(ctx context.Context) (storage.List, bool, error
 	if newest == nil && last != nil {
 		return storage.List{}, false, last
 	}
+	if newest != nil {
+		if err := sess.keepStorageList(ctx, list); err != nil {
+			sess.warnf("arc: the storage list is not kept on this disk: %v\n", err)
+		}
+	}
 	return list, newest != nil, nil
+}
+
+// storageListBucket keeps the storage list that this machine last opened,
+// sealed with NIP-44 from the cache key to itself, as the device list is. A
+// device thus reads the list with no path to the signer, until a newer list
+// comes.
+var (
+	storageListBucket = []byte("storage-list")
+	storageListKey    = []byte("list")
+)
+
+// keptStorageList reads the storage list on the disk.
+func (sess *Session) keptStorageList(ctx context.Context) (storage.List, bool) {
+	k, err := sess.cacheKey()
+	if err != nil {
+		return storage.List{}, false
+	}
+	var sealed []byte
+	_ = sess.roots.View(func(tx kv.Tx) error {
+		if b := tx.Bucket(storageListBucket); b != nil {
+			sealed = b.Get(storageListKey)
+		}
+		return nil
+	})
+	if sealed == nil {
+		return storage.List{}, false
+	}
+	text, err := k.Decrypt(ctx, string(sealed), k.Public)
+	if err != nil {
+		sess.warnf("arc: the storage list on this disk does not open: %v\n", err)
+		return storage.List{}, false
+	}
+	var list storage.List
+	if err := json.Unmarshal([]byte(text), &list); err != nil {
+		sess.warnf("arc: the storage list on this disk is not valid: %v\n", err)
+		return storage.List{}, false
+	}
+	return list, true
+}
+
+// keepStorageList keeps a storage list that this machine opened on its disk.
+func (sess *Session) keepStorageList(ctx context.Context, list storage.List) error {
+	k, err := sess.cacheKey()
+	if err != nil {
+		return err
+	}
+	text, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	sealed, err := k.Encrypt(ctx, string(text), k.Public)
+	if err != nil {
+		return err
+	}
+	return sess.roots.Update(func(tx kv.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(storageListBucket)
+		if err != nil {
+			return err
+		}
+		return b.Put(storageListKey, []byte(sealed))
+	})
 }
 
 // PublishStorageList seals the list with the citizen key, keeps it, and
