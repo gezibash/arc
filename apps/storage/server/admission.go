@@ -134,6 +134,88 @@ func (s *store) active(name string) (bool, error) {
 	return s.standing(name, a).active(), nil
 }
 
+// keeps says if the removal of an account keeps its state.json: an account
+// key of STORAGE_OWNERS that the operator closed. Without its record, the
+// account would be admitted again as an owner.
+func (s *store) keeps(name string, v standing) bool {
+	return slices.Contains(s.owners, name) && (v.state == wire.StateClosing || v.state == wire.StateClosed)
+}
+
+// leave removes an account that its account key closes. The account must
+// hold no blob: the citizen moves its data away first, with a drain. The
+// account key is then a stranger, and a later join asks for a new account.
+// The caller holds the account, so no session uses its index.
+func (s *store) leave(name string) error {
+	v, err := s.leaving(name)
+	if err != nil {
+		return err
+	}
+	return s.erase(name, s.keeps(name, v))
+}
+
+// leaving checks that the account key can close its account: the account
+// is admitted, not closed, and holds no blob.
+func (s *store) leaving(name string) (standing, error) {
+	a, err := s.load(name)
+	if err != nil {
+		return standing{}, err
+	}
+	v := s.admission(name, a)
+	if !v.active() {
+		return v, errNoGrant
+	}
+	var count int64
+	if s.exists(s.indexPath(name)) {
+		if err := s.view(name, func(x index) error {
+			count = x.count()
+			return nil
+		}); err != nil {
+			return v, err
+		}
+	}
+	if count > 0 {
+		return v, refusal{wire.ErrRefused, fmt.Sprintf("the account holds %d blobs: drain it, and move them away first", count)}
+	}
+	return v, nil
+}
+
+// closed returns each closed account that still holds an index or bytes.
+func (s *store) closed() ([]string, error) {
+	names, err := s.names()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, name := range names {
+		a, err := s.load(name)
+		if err != nil {
+			return nil, err
+		}
+		if s.admission(name, a).state != wire.StateClosed {
+			continue
+		}
+		if !slices.Contains(s.owners, name) || s.exists(s.indexPath(name)) || s.exists(filepath.Dir(s.blobPath(name, "x"))) {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+// removeClosed removes the bytes, the index and the tombstones of a closed
+// account. It returns false if the account is not closed now. The caller
+// holds the account, so no session uses its index.
+func (s *store) removeClosed(name string) (bool, error) {
+	a, err := s.load(name)
+	if err != nil {
+		return false, err
+	}
+	v := s.admission(name, a)
+	if v.state != wire.StateClosed {
+		return false, nil
+	}
+	return true, s.erase(name, s.keeps(name, v))
+}
+
 // names returns each account that STORAGE_OWNERS names or that has a
 // directory.
 func (s *store) names() ([]string, error) {
@@ -373,16 +455,17 @@ func (o *Operator) Requests() ([]Request, error) {
 }
 
 // Accept admits an account at quota and plan. The account need not have
-// asked: the operator can admit an account key that it got by hand.
+// asked: the operator can admit an account key that it got by hand. It
+// also opens a closing or closed account again, with a new record.
 func (o *Operator) Accept(name string, quota int64, plan string) error {
 	if quota <= 0 {
 		return errors.New("the quota of an account must be more than 0 bytes")
 	}
 	return o.s.change(name, func(a *account) (bool, error) {
-		if a.Record != nil && a.Record.Status == statusAdmitted {
+		if a.Record != nil && a.Record.Status == statusAdmitted && o.s.admission(name, a).state == wire.StateOpen {
 			return false, fmt.Errorf("%s is admitted already; change it with arc-storage account set", name)
 		}
-		a.Record = &record{Status: statusAdmitted, Quota: quota, Plan: plan}
+		a.Record, a.Draining = &record{Status: statusAdmitted, Quota: quota, Plan: plan}, 0
 		return true, nil
 	})
 }

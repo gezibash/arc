@@ -4,7 +4,8 @@
 // An owner is an account key: a key that the signer of a citizen derives
 // for this one storage citizen. The account key asks for an account with
 // wire.JoinCall, and the rule of admission decides. It then sends
-// wire.Grants, the device keys that can use the account. A request is one ARC call,
+// wire.Grants, the device keys that can use the account, and ends an empty
+// account with wire.CloseCall. A request is one ARC call,
 // wire.Open, with a WebRTC offer, from the account key or from a device
 // key with a grant. The reply is wire.Answer, with the
 // WebRTC answer. The two programs then open one pipe of sdk/direct, and
@@ -25,6 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +63,15 @@ type server struct {
 	rtc   direct.Options
 	slots chan struct{}
 	log   io.Writer
+
+	// mu covers pipes and holds.
+	mu sync.Mutex
+	// pipes holds the end of each open pipe, by account, so that the
+	// removal of an account ends its pipes.
+	pipes map[string]map[*func()]struct{}
+	// holds has one lock for each account. Each session holds it to read,
+	// and the removal of the account holds it to write.
+	holds map[string]*sync.RWMutex
 }
 
 // Run serves the storage app through core ARC. The environment gives the
@@ -121,6 +132,7 @@ func Run(ctx context.Context, opts provider.Options) error {
 		log:   log,
 	}
 	defer func() { _ = s.store.close() }()
+	s.sweep()
 	n, err := s.store.openAll()
 	if err != nil {
 		return err
@@ -177,6 +189,10 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 	var fields map[string]json.RawMessage
 	if json.Unmarshal([]byte(request.Message), &fields) != nil {
 		return "", errInvalidRequest
+	}
+	s.sweep()
+	if _, ok := fields["close"]; ok {
+		return s.close(request)
 	}
 	if _, ok := fields["grants"]; ok {
 		return s.grant(request)
@@ -268,6 +284,121 @@ func (s *server) join(request provider.Request) (string, error) {
 	return string(raw), nil
 }
 
+// close ends the account of the author: the citizen leaves. Only an
+// admitted account key closes its account, and only an account that holds
+// no blob. The app ends each pipe of the account, and removes it at once.
+func (s *server) close(request provider.Request) (string, error) {
+	var req wire.CloseCall
+	if json.Unmarshal([]byte(request.Message), &req) != nil || req.Version != 1 {
+		return "", errInvalidRequest
+	}
+	reply := wire.CloseReply{Version: 1, Closed: true}
+	// A refused close leaves the pipes of the account open. The removal
+	// checks again, because a session can put until its pipe ends.
+	_, err := s.store.leaving(request.From)
+	if err == nil {
+		err = s.removing(request.From, func() error { return s.store.leave(request.From) })
+	}
+	if r, ok := errors.AsType[refusal](err); ok {
+		reply = wire.CloseReply{Version: 1, Error: r.code, Message: r.message}
+		err = nil
+	}
+	if errors.Is(err, errNoGrant) {
+		return "", errNotOwner
+	}
+	if err != nil {
+		fmt.Fprintf(s.log, "close of %.8s: %v\n", request.From, err)
+		return "", errFailed
+	}
+	if reply.Closed {
+		fmt.Fprintf(s.log, "close of %.8s: the account is removed\n", request.From)
+	} else {
+		fmt.Fprintf(s.log, "close of %.8s: %s\n", request.From, reply.Message)
+	}
+	raw, err := json.Marshal(reply)
+	if err != nil {
+		return "", errFailed
+	}
+	return string(raw), nil
+}
+
+// sweep removes the bytes of each closed account. It runs at the start of
+// the service and at each call, so a closed account loses its bytes at the
+// first call after its reads end.
+func (s *server) sweep() {
+	names, err := s.store.closed()
+	if err != nil {
+		fmt.Fprintf(s.log, "the sweep of closed accounts: %v\n", err)
+		return
+	}
+	for _, name := range names {
+		var removed bool
+		err := s.removing(name, func() (err error) {
+			removed, err = s.store.removeClosed(name)
+			return err
+		})
+		switch {
+		case err != nil:
+			fmt.Fprintf(s.log, "account %.8s is closed, and its removal failed: %v\n", name, err)
+		case removed:
+			fmt.Fprintf(s.log, "account %.8s is closed: its bytes are removed\n", name)
+		}
+	}
+}
+
+// hold returns the lock of an account.
+func (s *server) hold(account string) *sync.RWMutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.holds == nil {
+		s.holds = map[string]*sync.RWMutex{}
+	}
+	if s.holds[account] == nil {
+		s.holds[account] = &sync.RWMutex{}
+	}
+	return s.holds[account]
+}
+
+// removing ends each pipe of an account, waits until no session holds
+// the account, and then runs remove.
+func (s *server) removing(account string, remove func() error) error {
+	s.mu.Lock()
+	var ends []func()
+	for end := range s.pipes[account] {
+		ends = append(ends, *end)
+	}
+	s.mu.Unlock()
+	for _, end := range ends {
+		end()
+	}
+	hold := s.hold(account)
+	hold.Lock()
+	defer hold.Unlock()
+	return remove()
+}
+
+// track keeps the end of a pipe of an account until the pipe ends.
+func (s *server) track(account string, end *func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pipes == nil {
+		s.pipes = map[string]map[*func()]struct{}{}
+	}
+	if s.pipes[account] == nil {
+		s.pipes[account] = map[*func()]struct{}{}
+	}
+	s.pipes[account][end] = struct{}{}
+}
+
+func (s *server) untrack(account string, end *func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pipes[account], end)
+	if len(s.pipes[account]) == 0 {
+		delete(s.pipes, account)
+	}
+}
+
 // grant sets the grant set of the account of the author. Only an admitted
 // account key sets grants.
 func (s *server) grant(request provider.Request) (string, error) {
@@ -317,13 +448,16 @@ func (s *server) connect(account string, req wire.Session, label string) (string
 	// Close reports the closed state to the callback below, which calls end
 	// again. A sync.Once would wait for itself there.
 	var ended atomic.Bool
-	end := func() {
+	var end func()
+	end = func() {
 		if ended.CompareAndSwap(false, true) {
+			s.untrack(account, &end)
 			close(done)
 			<-s.slots
 			_ = pc.Close()
 		}
 	}
+	s.track(account, &end)
 	hold := time.Duration(req.HoldMS) * time.Millisecond
 	// An end that never connects must not keep its slot.
 	unopened := time.AfterFunc(direct.OpenWait+hold, end)
@@ -348,6 +482,14 @@ func (s *server) connect(account string, req wire.Session, label string) (string
 			fmt.Fprintf(s.log, "%s: a session on %s\n", label, direct.SelectedPath(pc))
 			go func() {
 				defer end()
+				// A removal of the account waits for the session. A
+				// session that starts after the removal finds no account.
+				hold := s.hold(account)
+				hold.RLock()
+				defer hold.RUnlock()
+				if active, err := s.store.active(account); err != nil || !active {
+					return
+				}
 				sess := &session{store: s.store, account: account, dc: dc, messages: messages, done: done}
 				if err := sess.serve(); err != nil {
 					fmt.Fprintf(s.log, "%s: %v\n", label, err)

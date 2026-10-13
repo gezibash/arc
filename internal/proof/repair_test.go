@@ -2,12 +2,15 @@ package proof
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gezibash/arc/sdk/storage"
 )
 
 // TestStorageRepair proves storage network step 7 through the normal CLI,
@@ -125,7 +128,15 @@ func TestStorageRepair(t *testing.T) {
 	has(t, drained.Stdout, fmt.Sprintf("repair rebuilt 0 pieces, moved %d,", n), "the drain")
 	has(t, drained.Stdout, "erin holds no piece now and takes no put, so the storage list marks it gone", "the drain")
 	has(t, drained.Stdout, "storage list: erin is gone", "the end of the drain")
+	has(t, drained.Stdout, "erin: the account is closed, and the storage citizen removed it", "the close of erin")
 	has(t, signer.run("keys", "storage", "ls"), "erin\tgone\t"+keys["erin"], "the storage list after the drain")
+	erinAccount := ifaceTrim(signer.run("keys", "account", keys["erin"]))
+	if _, err := os.Stat(filepath.Join(work, "erin-blobs", "accounts", erinAccount)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the directory of the closed account on erin: %v; want it removed", err)
+	}
+	t.Log("ok: the signer closed the empty account on erin, and erin removed its directory")
+	// erin admits the account key by STORAGE_OWNERS, so a session opens a
+	// new, empty account.
 	if left := listAll(t, signer, "erin"); len(left) != 0 {
 		t.Fatalf("erin still lists %d pieces after the drain", len(left))
 	}
@@ -169,6 +180,33 @@ func TestStorageRepair(t *testing.T) {
 	running["dana"].stop()
 	readsAll("after-gone", "from frank and gina, with charlie gone and dana stopped")
 	t.Log("ok: arc serve rebuilt each piece of charlie on gina, and a new machine reads each page from frank and gina")
+
+	// The close is not a one-way door: the signer adds erin again, and a
+	// sync puts the data back on erin. The usage line of each storage
+	// citizen gives the bytes of its files.
+	running["erin"] = serve["erin"]()
+	has(t, signer.run("keys", "storage", "add", keys["erin"], "--as", "erin"), "storage list: erin is active", "the add of erin after its close")
+	back := signer.try("", "sync", "--repair")
+	t.Logf("arc sync --repair after the add of erin:\n%s\n%s", strings.TrimSpace(back.Stdout), strings.TrimSpace(back.Stderr))
+	if got := len(listAll(t, signer, "erin")); got == 0 {
+		t.Fatalf("erin holds no piece after its add and a sync")
+	}
+	for _, name := range []string{"erin", "frank", "gina"} {
+		var used int64
+		files := pieceFiles(t, filepath.Join(work, name+"-blobs"))
+		for _, file := range files {
+			info, err := os.Stat(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			used += info.Size()
+		}
+		want := fmt.Sprintf("%s: %s of 1 GiB in use, %d blobs, plan owner, open", name, storage.HumanSize(used), len(files))
+		has(t, back.Stdout, want, "the usage line of "+name)
+	}
+	running["frank"].stop()
+	readsAll("after-reopen", "from erin and gina after the add of erin, with frank stopped")
+	t.Log("ok: after the close, arc keys storage add opened a new account on erin, the sync put the data back, and the usage line of each storage citizen gives the bytes of its files")
 }
 
 // TestStorageRepairTURN proves decision 7 of the storage network proposal

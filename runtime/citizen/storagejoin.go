@@ -57,3 +57,41 @@ func (sess *Session) JoinStorage(ctx context.Context, provider nostr.PubKey, joi
 	}
 	return out, nil
 }
+
+// errOlderClose says that a storage citizen answered a close with
+// invalid_request: it runs a storage app from before the close call.
+var errOlderClose = errors.New("it runs an older storage app, which keeps the empty account; update it to close the account")
+
+// CloseStorage ends the account of this citizen on a storage citizen: the
+// citizen leaves it. The account key authors the call. The storage citizen
+// removes an empty account at once, and refuses an account that holds a
+// blob. A later join asks for a new account.
+func (sess *Session) CloseStorage(ctx context.Context, provider nostr.PubKey) (storage.CloseReply, error) {
+	if err := sess.RequireSigner(); err != nil {
+		return storage.CloseReply{}, err
+	}
+	account, err := selfsync.AccountKey(sess.Key.Secret, provider)
+	if err != nil {
+		return storage.CloseReply{}, err
+	}
+	body, err := json.Marshal(storage.CloseCall{Version: 1})
+	if err != nil {
+		return storage.CloseReply{}, err
+	}
+	request := call.Request{Capability: StorageApp, Method: "RAW", Path: "/", Body: string(body)}
+	reply, _, _, err := sess.LiveCallAs(ctx, account, provider, request, call.Timeout)
+	if err != nil {
+		return storage.CloseReply{}, err
+	}
+	if strings.Contains(reply.Err, storage.ErrInvalidRequest) {
+		return storage.CloseReply{}, errOlderClose
+	}
+	if reply.Err != "" {
+		return storage.CloseReply{}, errors.New(reply.Err)
+	}
+	var out storage.CloseReply
+	if json.Unmarshal([]byte(reply.Body), &out) != nil || out.Version != 1 || out.Closed == (out.Error != "") {
+		return storage.CloseReply{}, fmt.Errorf("the storage citizen sent a reply that is not a close reply: %.200s", reply.Body)
+	}
+	return out, nil
+}

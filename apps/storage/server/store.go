@@ -156,6 +156,39 @@ func (s *store) used(name string) (int64, error) {
 	return used, err
 }
 
+func (s *store) exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// erase removes the index, the bytes and the tombstones of an account,
+// and closes its index. With keep, state.json stays with the record;
+// without, the directory of the account goes. The lock of the indexes and
+// the lock of state.json cover the removal, so no index opens and no
+// operator command writes during it.
+func (s *store) erase(name string, keep bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if db := s.dbs[name]; db != nil {
+		delete(s.dbs, name)
+		if err := db.Close(); err != nil {
+			return err
+		}
+	}
+	unlock, err := atomicfile.Lock(s.statePath(name))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if !keep {
+		return os.RemoveAll(s.accountDir(name))
+	}
+	if err := os.Remove(s.indexPath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.RemoveAll(filepath.Dir(s.blobPath(name, "x")))
+}
+
 // granted says if the newest grant set of an account holds a device key.
 func (s *store) granted(name, device string) (bool, error) {
 	a, err := s.load(name)

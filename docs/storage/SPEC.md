@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
-- Remaining: the steps that section 8.2 names: the usage line of `arc sync`, the removal of the bytes of a closed account, set reconciliation, a command that removes the old drafts from a relay, and the close call at the end of a drain.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record. No test puts a file of 63 MiB, the largest body, through the CLI: the proof puts 60 MiB. No test puts a large file on storage citizens on other machines or behind real NATs; the proof uses the loopback address. No test measures the memory of a storage citizen during a put of 64 MiB; a unit test proves that the bytes go to the disk as they come. No test checks the limit of 128 MiB of puts in flight. No test waits one hour for the removal of a body that no draft names: a unit test gives the time. `TestStorageLargeFile` needs commit 9ee6088 in the checkout, so a shallow clone fails it.
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestClosedAccountRemoved|TestCloseCall|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
+- Remaining: the steps that section 8.2 names: set reconciliation, and a command that removes the old drafts from a relay.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record. No test puts a file of 63 MiB, the largest body, through the CLI: the proof puts 60 MiB. No test puts a large file on storage citizens on other machines or behind real NATs; the proof uses the loopback address. No test measures the memory of a storage citizen during a put of 64 MiB; a unit test proves that the bytes go to the disk as they come. No test checks the limit of 128 MiB of puts in flight. No test waits one hour for the removal of a body that no draft names: a unit test gives the time. `TestStorageLargeFile` needs commit 9ee6088 in the checkout, so a shallow clone fails it. No test waits 30 days after a close of the operator: the test moves `closing` back in `state.json`. No test sends a close call to an older storage app; section 7 states its behavior from the code. No test closes an account through the CLI while another device holds a pipe of the account; a unit test ends the pipe.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -176,6 +176,32 @@ nothing for it.
   the app cannot read.
 - A join of an admitted account MUST NOT change the account. The reply
   gives its current record. Thus the signer can send the join again.
+
+**The close.** The signer ends its account on a storage citizen: the
+citizen leaves it.
+
+- The body MUST be `{"v":1,"close":{}}`.
+- The account key MUST author the call. The storage app MUST answer
+  `not_owner` if the author is not an admitted account, or if its account
+  is closed.
+- The storage app MUST refuse the close of an account that holds a blob or
+  a piece, with the body
+  `{"v":1,"error":"refused","message":"the account holds <n> blobs: drain it, and move them away first"}`.
+  A refused close changes nothing, and leaves each pipe open.
+- Else the storage app MUST end each pipe of the account, and then remove
+  the account: its index, its tombstones, its grant set and its record.
+  The reply MUST be `{"v":1,"closed":true}`.
+- After the close, the account key is a stranger. A later join MUST be
+  answered as the join of a new account, under the rule of admission
+  (section 3.7).
+- The storage app MUST keep the record of an account key of
+  `STORAGE_OWNERS` that the operator closed (section 3.7). Then only the
+  operator opens it again.
+
+Reason: the signer closes an account only when it is empty, after a drain
+(section 4.6). The account then holds nothing worth 30 days of reads. A
+close with no record left is not a one-way door: `arc keys storage add`
+asks for a new account, as for a new storage citizen.
 
 ### 3.3 The requests on the pipe
 
@@ -403,6 +429,15 @@ The storage app keeps one record for each account:
 - An account is `closing` from the earlier of the time that the operator
   closed it and `expires`. It is `closed` 30 days later. A closed account
   takes no session.
+- The storage app MUST remove the index, the tombstones and the bytes of a
+  closed account at its start and at the first call after the account is
+  `closed`, and MUST end each pipe of the account first. It removes the
+  directory of the account with its record, unless the account key is in
+  `STORAGE_OWNERS`: then it keeps `state.json` with the record, so that
+  the account stays closed. The quota of a closed account is free: the
+  sum of the rule `open` does not count it.
+- `arc-storage accept` MUST open a `closing` or `closed` account again,
+  with a new record and no drain. Thus the operator can undo a close.
 - An account is `draining` from a `drain` request until a `drain` request
   with `off`, unless it is `closing` or `closed`. Each session of the
   account can send it: the account key or a device key with a grant. The
@@ -418,7 +453,8 @@ Reason: a citizen that drops a storage citizen moves its data away first
 (proposal, section 5.2). A drain stops new data there, and keeps the reads
 for the move. A device can delete each blob, so a drain gives a device no
 new power. The operator closes an account with `account close`, which ends
-the reads after 30 days.
+the reads after 30 days, and then removes the bytes. The signer closes an
+empty account with the close call (section 3.2), at once.
 
 The operator chooses one rule with `STORAGE_ADMIT`. A join of an account
 that is not admitted gets this answer:
@@ -689,9 +725,17 @@ or `relay`:
 
 ```text
 charlie: self data received 0, sent 3, already held 0 in 1.36s; path srflx to srflx
+charlie: 18.4 KiB of 1 GiB in use, 9 blobs, plan owner, open
 dana: self data received 2, sent 0, already held 1 in 950ms; path host to host; draining, so nothing new goes to it
+dana: 6.1 KiB of 1 GiB in use, 3 blobs, plan friend, draining
 self data: took 2 records, already held 0, coded 3 new records into pieces, 2 of 3 rebuild each
 ```
+
+After the line of a storage citizen, the device sends `usage`, and prints
+the usage line: the bytes in use, the quota, the count of blobs and
+pieces, the plan and the state, and `ends <day>` if the account has an
+end. These are the numbers of `arc-storage usage`. An older storage app
+gives no plan and no state, and the line then ends after the count.
 
 A storage citizen that fails gets `<name>: self data: <reason>` on
 standard error, and `arc sync` ends with `some transports failed`. The
@@ -855,10 +899,10 @@ run while the app runs. Each change counts at the next call.
 | --- | --- |
 | `arc-storage invite [-quota 1GiB] [-plan free]` | Makes a token, and prints the invite link. `arc whoami` gives the key, or `-key`. |
 | `arc-storage requests` | Prints each pending request: the account key, `want`, the time, the citizen key or `-`, and the note. |
-| `arc-storage accept <account> [-quota 1GiB] [-plan free]` | Admits the account. It need not have asked. |
+| `arc-storage accept <account> [-quota 1GiB] [-plan free]` | Admits the account. It need not have asked. It opens a closing or closed account again. |
 | `arc-storage refuse <account>` | Refuses the request. The next join gets `refused`. |
 | `arc-storage account set <account> [-quota] [-plan] [-expires]` | Changes the record of an admitted account. |
-| `arc-storage account close <account>` | Makes the account `closing`. |
+| `arc-storage account close <account>` | Makes the account `closing`. After 30 days it is `closed`, and the app removes its bytes (section 3.7). |
 
 ### 4.6 Audits and repair
 
@@ -1028,6 +1072,11 @@ in this sync, and it lists no piece and no blob. The drain request of step
    and `storage list: <name> is gone; each device removes its install at its next sync`.
    If the usage counts blobs, the entry stays `draining`, and the sync
    says so.
+   After the list publishes, the signer ends its pipe to that storage
+   citizen, and sends the close call (section 3.2). It prints
+   `<name>: the account is closed, and the storage citizen removed it; arc keys storage add asks for a new one`.
+   If the close fails or is refused, the entry stays `gone`, and the
+   account stays on the storage citizen, empty and draining.
 2. On another device, the sync prints
    `<name> holds no piece now; the signer marks it gone at its next sync`.
 3. If the app has no `drain`, the sync prints
@@ -1199,6 +1248,9 @@ the deletion.
 | A put on a draining account | The put is refused, as for a closing account. | `the account is draining: it takes no put, and keeps each read, list and delete` |
 | A draining storage citizen runs a storage app from before drain requests | The sync sends no drain request, and goes on. The signer does not set `gone` by itself. | `<name> runs a storage app from before drain requests: it still takes a put from an older device; update it` |
 | The drain request fails on an open pipe | The sync with that storage citizen fails. The next sync sends it again. | `<name>: self data: the drain request failed: <reason>` |
+| The close call fails, or the storage app runs from before the close call | The entry stays `gone`. The account stays on the storage citizen, empty and draining. | `<name>: the account stays, empty and draining: <reason>` |
+| The storage citizen refuses the close: the account holds a blob | The account stays. | `<name>: the account stays: the account holds <n> blobs: drain it, and move them away first` |
+| The usage request fails after a sync | The usage line does not print. On the signer, a draining storage citizen stays `draining`. | `<name>: the usage did not come: <reason>` |
 | The storage list does not publish when the signer sets `gone` | The entry stays `draining`. The next sync of the signer tries again. | `self data: the storage list did not change, so <names> stays draining: <reason>` |
 | An audit fails | `arc-storage audit` prints `fail` or `lost` for the blob, and ends with an error. | `<n> of <m> blobs failed the audit` |
 | The storage citizen runs a storage app from before audits | It answers `invalid_request` to the audit and the drain, and its hello names no `audit` and no `drain`. The client does not send them. | `the storage citizen runs an older storage app; it must update` |
@@ -1566,6 +1618,24 @@ the deletion.
     closing account. Its reads still work.
   - The state `draining` is new in the usage reply and the join reply. An
     older device shows it as text, and does not act on it.
+- The close call and the usage line add the body `close`, its reply, and
+  one line for each storage citizen in `arc sync`:
+  - An older storage app answers the close call with `invalid_request`: it
+    reads the body as a session with no offer. The signer prints
+    `<name>: the account stays, empty and draining: it runs an older storage app, which keeps the empty account; update it to close the account`.
+    The entry is still `gone`. The account stays as before this change.
+  - An older signer sends no close call. The account stays empty and
+    draining, as before. A newer storage app keeps it.
+  - An older storage app removes no bytes of a closed account. The
+    operator removes its directory, as before.
+  - A device of another version that holds a pipe of a closed account loses
+    its pipe. The storage list names the storage citizen `gone`, so the
+    next sync of the device removes its install.
+  - An older storage app gives no plan and no state in its usage reply.
+    The usage line ends after the count of blobs.
+  - A newer storage app removes the record of a closed account, except
+    for an account of `STORAGE_OWNERS`. An operator that read the closed
+    records in `state.json` reads them no more.
 - The end of a drain adds no message, no field and no event kind. A device
   now sends `drain` to a draining storage citizen, and the signer sets
   `gone` and removes old `gone` entries:
@@ -1787,10 +1857,20 @@ storage citizens through the normal CLI. It proves:
   and `arc keys storage ls` names erin `gone`. Nobody runs `rm --gone`.
   With erin stopped, a new machine from the seed reads each page.
   The check failed when the signer did not set `gone`.
+- The same sync sends the close call to erin, and prints
+  `erin: the account is closed, and the storage citizen removed it`. The
+  directory of the account on erin is gone. The check failed when the
+  signer sent no close call.
 - With charlie stopped, its directory deleted, gina added and charlie marked
   gone, `arc serve` of the signer rebuilds each piece of charlie on gina at
   its start. With dana stopped too, a new machine reads each page from
   frank and gina.
+- After the close, `arc keys storage add` of erin admits a new account,
+  and `arc sync --repair` puts 9 pieces on erin. With frank stopped, a new
+  machine reads each page from erin and gina. The usage line of erin,
+  frank and gina gives the sum of the sizes of the piece files in the
+  directory of each storage citizen, and their count. The check failed
+  when the line gave the quota in place of the bytes in use.
 - With a relay that serves TURN on the loopback address, and `arc path
   turn` on the signer, each pipe goes through TURN. `arc sync --repair`
   then rebuilds nothing, and says that the repair waits for a direct path.
@@ -1983,6 +2063,14 @@ runs `arc keys storage add`, and is not in `STORAGE_OWNERS`. It proves:
   the plan and the state of each account. After `arc-storage account set`,
   the put works. After `arc-storage account close`, a put is refused, and a
   list works.
+- `TestClosedAccountRemoved`: an account closed by the operator keeps its
+  index during its reads. With `closing` moved back by 30 days, the next
+  call removes its directory, and a new join gets its quota. The same
+  account key then joins as a new account, with 0 bytes in use. A closed
+  account of `STORAGE_OWNERS` keeps `state.json` and loses its index and
+  bytes; it takes no session until `arc-storage accept` opens it again.
+  The check failed when the app removed no bytes, and when it removed the
+  `state.json` of an account of `STORAGE_OWNERS`.
 
 Each check failed with a temporary break of its behavior.
 
@@ -2077,12 +2165,15 @@ standard library computed. `go test
 ./apps/storage/...` checks that a newer grant set revokes a device key, and
 that an older set is refused.
 
+`go test ./apps/storage/server/ -run TestCloseCall` runs the app and the
+client on the loopback address. The close of an account that holds a blob
+is refused, keeps the blob, and leaves the pipe open. The close of a key
+with no account gets `not_owner`. The close of the empty account ends the
+open pipe, and removes the directory of the account. The check failed when
+the app closed an account that holds a blob.
+
 ### 8.2 Not built
 
-- Not built. `arc sync` does not print the usage of each storage citizen.
-  `arc-storage usage` prints it.
-- Not built. The removal of the bytes of a closed account. The operator
-  removes its directory.
 - Not built. An `offer` in a refused or pending reply, and a `pay` field
   in the join, for a paid service. `plan` and `expires` keep the place.
 - Not built. Set reconciliation over blob IDs. The cursor of section 4.1
@@ -2100,9 +2191,3 @@ that an older set is refused.
   from the store by other means.
 - Not built. A repair for a v0.25.0 device whose store took a moved
   deletion from a relay that served it.
-- Not built. The close call at the end of a drain (section 5.2 of the
-  storage network proposal). When the signer sets `gone`, the account stays
-  `draining` on the storage citizen, with no blob. A close call that the
-  account key authors would close the account. Then a later
-  `arc keys storage add` of the same storage citizen fails until the
-  operator opens the account again, and no command does that today.

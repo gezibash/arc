@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,16 +18,30 @@ import (
 // rule of admission, on the relay of the tests.
 type storageCitizen struct {
 	key, dir string
+	// owners is STORAGE_OWNERS.
+	owners string
 }
 
 // startStorage serves the storage app with arc serve, with no
 // STORAGE_OWNERS and with the settings of extra, such as STORAGE_ADMIT=ask.
 func startStorage(t *testing.T, extra ...string) storageCitizen {
 	t.Helper()
+	return startStorageOf(t, nil, extra...)
+}
+
+// startStorageOf serves the storage app with the account key of each home
+// of owners in STORAGE_OWNERS.
+func startStorageOf(t *testing.T, owners []string, extra ...string) storageCitizen {
+	t.Helper()
 	home := newCitizen(t)
 	sc := storageCitizen{key: whoami(t, home), dir: filepath.Join(t.TempDir(), "blobs")}
+	var accounts []string
+	for _, owner := range owners {
+		accounts = append(accounts, strings.TrimSpace(arc(t, owner, "keys", "account", sc.key)))
+	}
 	serve := exec.Command(env.arc, "--home", home, "serve", env.app)
-	serve.Env = append(append(os.Environ(), "STORAGE_DIR="+sc.dir, "STORAGE_OWNERS=", "STORAGE_STUN=none", "STORAGE_LOOPBACK=1"), extra...)
+	sc.owners = strings.Join(accounts, ",")
+	serve.Env = append(append(os.Environ(), "STORAGE_DIR="+sc.dir, "STORAGE_OWNERS="+sc.owners, "STORAGE_STUN=none", "STORAGE_LOOPBACK=1"), extra...)
 	served := &output{}
 	serve.Stdout, serve.Stderr = served, served
 	if err := serve.Start(); err != nil {
@@ -78,7 +93,7 @@ func arcRun(home string, args ...string) (string, error) {
 func operate(t *testing.T, sc storageCitizen, args ...string) string {
 	t.Helper()
 	command := exec.Command(env.program, args...)
-	command.Env = append(os.Environ(), "STORAGE_DIR="+sc.dir)
+	command.Env = append(os.Environ(), "STORAGE_DIR="+sc.dir, "STORAGE_OWNERS="+sc.owners)
 	var out, errs bytes.Buffer
 	command.Stdout, command.Stderr = &out, &errs
 	if err := command.Run(); err != nil {
@@ -222,4 +237,85 @@ func TestOpenRuleQuotaEachAccount(t *testing.T) {
 	if entries := listAfter(t, frank, "0"); len(entries) != 1 {
 		t.Fatalf("a closing account lists %v, want its one blob", entries)
 	}
+}
+
+// backdateClose moves the close of an account back by the 30 days of its
+// reads, as the app would see it 30 days after the close.
+func backdateClose(t *testing.T, sc storageCitizen, account string) {
+	t.Helper()
+	path := filepath.Join(sc.dir, "accounts", account, "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	record := state["record"].(map[string]any)
+	record["closing"] = record["closing"].(float64) - 30*24*60*60
+	if raw, err = json.Marshal(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestClosedAccountRemoved checks the end of a close by the operator. When
+// the reads of the closed account end, the next call removes its
+// directory, and its quota is free. A join then admits the same account
+// key again, as a new account. An account of STORAGE_OWNERS keeps its
+// state.json, so it does not come back by itself; accept opens it again.
+func TestClosedAccountRemoved(t *testing.T) {
+	owner, frank, gina := newCitizen(t), newCitizen(t), newCitizen(t)
+	sc := startStorageOf(t, []string{owner}, "STORAGE_ADMIT=open", "STORAGE_QUOTA=8KiB", "STORAGE_CAPACITY=16KiB")
+	ownerAccount := strings.TrimSpace(arc(t, owner, "keys", "account", sc.key))
+	frankAccount := strings.TrimSpace(arc(t, frank, "keys", "account", sc.key))
+
+	mustJoin(t, frank, "storage: admitted: 0 B of 8 KiB in use, plan free, open", sc.key)
+	mustRefuse(t, gina, "the storage citizen is full", sc.key)
+	small, _ := file(t, 100)
+	putIDs(t, frank, small)
+	arc(t, owner, "install", sc.key, "storage", "--yes")
+	putIDs(t, owner, small)
+
+	operate(t, sc, "account", "close", frankAccount)
+	operate(t, sc, "account", "close", ownerAccount)
+	if _, err := os.Stat(filepath.Join(sc.dir, "accounts", frankAccount, "index.db")); err != nil {
+		t.Fatalf("a closing account lost its index before its reads end: %v", err)
+	}
+	backdateClose(t, sc, frankAccount)
+	backdateClose(t, sc, ownerAccount)
+
+	// The join of gina is the next call. The quota of frank is free, and
+	// its directory goes.
+	mustJoin(t, gina, "storage: admitted: 0 B of 8 KiB in use, plan free, open", sc.key)
+	if _, err := os.Stat(filepath.Join(sc.dir, "accounts", frankAccount)); !os.IsNotExist(err) {
+		t.Fatalf("the directory of the closed account of frank: %v; want it removed", err)
+	}
+	ownerDir := filepath.Join(sc.dir, "accounts", ownerAccount)
+	for _, gone := range []string{"index.db", "blobs"} {
+		if _, err := os.Stat(filepath.Join(ownerDir, gone)); !os.IsNotExist(err) {
+			t.Fatalf("%s of the closed owner account: %v; want it removed", gone, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(ownerDir, "state.json")); err != nil {
+		t.Fatalf("the closed owner account lost its record: %v", err)
+	}
+	if _, errs, err := run(owner, "usage"); err == nil || !strings.Contains(errs, "not an owner") {
+		t.Fatalf("the closed owner account opened a session: %v\n%s", err, errs)
+	}
+
+	// Frank is a stranger again: a join admits a new, empty account.
+	mustJoin(t, frank, "storage: admitted: 0 B of 8 KiB in use, plan free, open", sc.key)
+	if out := mustRun(t, frank, "usage"); !strings.HasPrefix(out, "0 bytes of 8192 in use, 0 blobs, plan free, open") {
+		t.Fatalf("usage of the new account of frank printed %q", out)
+	}
+
+	operate(t, sc, "accept", ownerAccount, "-quota", "64KiB")
+	if out := mustRun(t, owner, "usage"); !strings.HasPrefix(out, "0 bytes of 65536 in use, 0 blobs, plan free, open") {
+		t.Fatalf("usage of the owner account after accept printed %q", out)
+	}
+	putIDs(t, owner, small)
 }
