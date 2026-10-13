@@ -256,3 +256,45 @@ func TestTheSummaryCountsTheInterval(t *testing.T) {
 		t.Errorf("%d summaries after a quiet second, want none", after-n)
 	}
 }
+
+// A gift wrap before NIP-42 authentication is refused. The refusal is the
+// normal first step of the handshake, so the log has no WARN line for it.
+// The summary still counts it, so that a client that never authenticates
+// shows as a rising count.
+func TestAWrapAuthRefusalHasNoWarningAndCounts(t *testing.T) {
+	address, connections, out := start(t, limits.Policy{WrapAuth: true})
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	go connections.Run(ctx, 300*time.Millisecond)
+
+	relay, err := nostr.RelayConnect(ctx, "ws://"+address, nostr.RelayOptions{NoticeHandler: func(*nostr.Relay, string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+	wrap := nostr.Event{Kind: nostr.KindGiftWrap, CreatedAt: nostr.Now(), Content: "sealed"}
+	wrap.Sign(nostr.Generate())
+	if err := relay.Publish(ctx, wrap); err == nil || !strings.Contains(err.Error(), "auth-required") {
+		t.Fatalf("publish error %v, want auth-required", err)
+	}
+
+	// A tick can fall before the refusal, so the count can be in a later
+	// summary.
+	var refused float64
+	deadline := time.Now().Add(5 * time.Second)
+	for refused == 0 && time.Now().Before(deadline) {
+		for _, line := range out.lines("relay summary") {
+			n, _ := line["refused_wrap-auth"].(float64)
+			refused += n
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if refused != 1 {
+		t.Errorf("refused_wrap-auth = %v over the summaries, want 1:\n%s", refused, out.String())
+	}
+	for _, line := range out.lines("event refused") {
+		if line["level"] == "WARN" {
+			t.Errorf("a wrap-auth refusal has a WARN line: %v", line)
+		}
+	}
+}

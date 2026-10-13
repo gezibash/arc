@@ -6,6 +6,14 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Relay: `arc relay serve` logs a `wrap-auth` refusal at DEBUG, not WARN. A
+  client sends a gift wrap, the relay asks for NIP-42 authentication, and the
+  client sends again, so this refusal is normal. The minute summary still
+  counts it as `refused_wrap-auth`. The other refusals keep a WARN line
+  (#285).
+
 ## [0.30.0] - 2026-10-13
 
 A sync behind a home router no longer waits about 14 s for each storage
