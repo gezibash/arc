@@ -6,6 +6,21 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Relay: `arc relay serve` logs a `wrap-auth` refusal at DEBUG, not WARN. A
+  client sends a gift wrap, the relay asks for NIP-42 authentication, and the
+  client sends again, so this refusal is normal. The minute summary still
+  counts it as `refused_wrap-auth`. The other refusals keep a WARN line
+  (#285).
+
+### Fixed
+
+- A device names the signer when a command needs it and the signer does not
+  answer, also when a relay authentication needed it. The message shows no
+  relay error. After one wait of 15 s, the next commands of the device fail
+  at once for 60 s, through the file `signer-silent` (#244).
+
 ## [0.30.0] - 2026-10-13
 
 A sync behind a home router no longer waits about 14 s for each storage

@@ -3,10 +3,10 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages)$' ./internal/proof/
-- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages.
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp)$' ./internal/proof/ ./runtime/iface/ ./core/draft/
+- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body.
 
-Phases A to E are built, see section 8. `arc` runs them, and
+Phases A to F are built, see section 8. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
 line interfaces of the older stack, versions 1 to 4. Those interfaces needed
 code in core for direct messages, Agora, and files.
@@ -205,7 +205,7 @@ is the capability's name alone. Every command has exactly one action.
 | `integer` | A whole number. |
 | `key` | A citizen. Core resolves 64 hex characters, an `npub` or `nprofile` of NIP-19, a NIP-05 name, a petname of this machine, or an installed name, to a public key. If the text names a list of this command, `arc lists`, core runs the command once for each member. One command takes one list. If a member fails, core runs the other members, and then reports the failures. |
 | `event` | An event. Core resolves 64 hex characters, or a `note`, `nevent` or `naddr` of NIP-19. |
-| `file` | A local path that core reads. |
+| `file` | A local path that core reads. Core reads at most 6 MiB, or 63 MiB for the file of a `body` (section 3.9.5). |
 | `path` | A local path that core writes to. It must not exist. |
 | `address` | Text that must match the argument's `pattern`. |
 | `lines` | A range of lines: `a:b`, `a:`, or `:b`. |
@@ -322,6 +322,7 @@ as section 3.9.2 defines.
 | `tags` | Tags, whose values are templates. A tag whose value is empty is left out. |
 | `revise` | For a sealed kind: `replace` or `append`. See section 3.9.1. |
 | `to` | For a private kind: the recipients, as `key` arguments. |
+| `body` | For a sealed kind: the one file argument whose raw bytes go beside the draft, as `{{file}}`. See section 3.9.5. |
 | `frontmatter_address` | An optional address template. It requires `page` and `notebook` in the kind's front-matter policy, and their combined `notebook/page` must equal the rendered address. |
 
 #### 3.9.1 Revisions of a sealed event
@@ -411,6 +412,41 @@ format:
 A second run finds no draft of the old format, and seals nothing. The old
 checkpoints stay, and open through the signer. The keyed root draft,
 `d` = `arc-keyed-root`, keeps the old format (section 3.7.1).
+
+#### 3.9.5 The body of a draft
+
+A publish with `body` keeps the raw bytes of a file beside the draft, not
+in its content. The content of a draft is a NIP-44 payload, which holds at
+most 65,535 bytes, and a part holds text. A file in parts thus costs base64
+and one event for each 32 KiB.
+
+```json
+"publish": {"kind": "file", "d": "{{file.sha256|keyed:file}}", "revise": "replace",
+            "body": "{{file}}", "tags": [["x", "{{file.sha256}}"]]}
+```
+
+- `body` MUST name one argument of the type `file`, as `{{name}}`. Only a
+  sealed kind has a body. A publish with a body MUST NOT `append`.
+- The body key is
+  `HKDF-SHA256(ikm = content key of the generation, salt = none, info = "arc-body-v1")`,
+  32 bytes. The content key is the key of section 3.9.4.
+- The encrypted body is `nonce (24 bytes) || XChaCha20-Poly1305(body key, nonce, raw bytes, aad = none)`.
+- The raw bytes MUST be at most 63 MiB (66,060,288 bytes).
+- The wrap MUST carry the tag `["body", <SHA-256 of the encrypted body in hex>, <size of the encrypted body>]`.
+  The device key signs the wrap, so its signature covers the body.
+- The device MUST keep the encrypted body before it keeps the wrap. Thus
+  no wrap names a body that the device lacks.
+- The checkpoint of the draft has no `body` tag. The history keeps the
+  tags of each version, not its bytes.
+- A reader MUST check the size and the SHA-256 of the encrypted body
+  against the `body` tag before it opens the body with the key of the
+  generation of the wrap.
+- `save` writes the body of a draft that has one, and ignores its `field`
+  and `decode`. A draft with no body saves its field, as before. Thus the
+  files app reads a file in parts and a file with a body with one manifest.
+
+The [storage spec](../storage/SPEC.md), sections 3.4 and 3.6, says how a
+body travels to the storage citizens and through a directory.
 
 ### 3.10 The action delete
 
@@ -517,7 +553,7 @@ the order in the manifest:
 | 6 | `thread` | Orders records as replies, by a field that names the parent. |
 | 7 | `sort`, `limit` | Orders by a field, and cuts. |
 | 8 | `tail` | In a watch: shows only what each new version adds. See section 3.14.3. |
-| 9 | `save` | Writes a field to a `path` argument, instead of showing it. |
+| 9 | `save` | Writes a field to a `path` argument, instead of showing it. A draft with a body writes its body (section 3.9.5). |
 | 10 | `format` | Shows each record with a named format, see section 3.15. |
 | 11 | `exit` | Sets the exit status of the command from its first record. See section 3.14.4. |
 
@@ -977,6 +1013,12 @@ older client behaves.
   not go to a relay. The user updates each device.
 - A newer client deletes the drafts on its ARC relays after a storage
   citizen holds them (storage spec, section 4.2.1).
+- An older client cannot parse a manifest with `body` (section 3.9.5). Its
+  catalog skips the announcement, so `arc install` of the files app says
+  `no announcement from that provider`. An older client refuses the blob
+  of a file with a body, and gets it after its update
+  ([the storage spec](../storage/SPEC.md), section 7). A newer client
+  reads a file that an older client put in parts.
 - An ARC relay refuses new sealed events, and still serves the old ones to
   their author until 2027-01-10. An older client then gets
   `blocked: this relay keeps no drafts` for each new page. The storage spec,
@@ -996,12 +1038,13 @@ older client behaves.
 
 ## 8. Proof
 
-`mise run interface` proves phases A to D. `TestDevicePages` proves phase E.
+`mise run interface` proves phases A to D. `TestDevicePages` proves phase E, and `TestStorageLargeFile` proves phase F.
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
 | A (built) | The manifest reader, arguments, templates, `call`, and `format`. NIP-19 keys and events. exec, sqlite and releases in version 1. | `arc exec run echo hello` answers through the installed manifest. |
 | B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, parts, `delete`, kept in the local store. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page and a file cross a storage citizen and a USB stick. The `journal` package is gone. |
+| F (built) | The body of a draft (section 3.9.5): a file of up to 63 MiB as one body of raw bytes. | `TestStorageLargeFile`: a file of 60 MiB crosses three storage citizens and a USB stick with the same SHA-256; a file in parts of v0.30.0 still reads. |
 | E (built) | Pages of the data roots: the device key signs, the content key seals, the store names a page by the citizen, the import of old pages. | `TestDevicePages`: with the signer stopped, a device writes and reads its journal; a second device reads the page after a sync; a page of a revoked device after its revocation is refused; old pages are sealed again once. |
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. dm in version 1. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |

@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
+	"github.com/gezibash/arc/core/draft"
 )
 
 // MaxInput bounds a file or the standard input that a command reads. It is
@@ -176,7 +177,14 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 			values[a.Name] = words
 			continue
 		}
-		value, err := convert(ctx, a, words[0], r)
+		var value any
+		var err error
+		if a.Type == "file" && a.Name == bodyArg(c.Action.Publish) {
+			// A body goes beside the draft, so it can be larger.
+			value, err = readFile(words[0], draft.MaxBody)
+		} else {
+			value, err = convert(ctx, a, words[0], r)
+		}
 		if err != nil {
 			return nil, flags, fmt.Errorf("%s: %w", a.Name, err)
 		}
@@ -245,7 +253,7 @@ func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
 		}
 		return text, nil
 	case "file":
-		return readFile(text)
+		return readFile(text, MaxInput)
 	}
 	return nil, fmt.Errorf("the type %q does not exist", a.Type)
 }
@@ -305,18 +313,18 @@ func (f fileValue) String() string { return base64.StdEncoding.EncodeToString(f.
 
 func (f fileValue) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
 
-func readFile(path string) (fileValue, error) {
+func readFile(path string, limit int) (fileValue, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return fileValue{}, err
 	}
 	defer func() { _ = file.Close() }()
-	body, err := io.ReadAll(io.LimitReader(file, MaxInput+1))
+	body, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return fileValue{}, err
 	}
-	if len(body) > MaxInput {
-		return fileValue{}, fmt.Errorf("%s is over %d bytes", path, MaxInput)
+	if len(body) > limit {
+		return fileValue{}, fmt.Errorf("%s is over %d bytes", path, limit)
 	}
 	kind := mime.TypeByExtension(filepath.Ext(path))
 	if kind == "" {

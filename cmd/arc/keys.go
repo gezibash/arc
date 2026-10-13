@@ -94,7 +94,7 @@ func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error
 	if err != nil {
 		return signerIdentity{}, fmt.Errorf("%s holds no public key: %w", publicPath(dir), err)
 	}
-	lazy := &lazySigner{public: pk, now: time.Now, connect: func() (nostr.Keyer, error) {
+	lazy := &lazySigner{public: pk, now: time.Now, silent: filepath.Join(dir, "signer-silent"), connect: func() (nostr.Keyer, error) {
 		signer, got, err := connectSigner(ctx, dir, uri)
 		if err == nil && got != pk {
 			err = fmt.Errorf("the remote signer signs as %s, not as this identity %s", got.Hex(), pk.Hex())
@@ -893,16 +893,19 @@ func bunkerSecret(dir string) (string, error) {
 // command instead of stopping it.
 // signerRetry is the time after a failed connection to the signer in which
 // each use fails at once with the same reason.
-const signerRetry = 15 * time.Second
+const signerRetry = time.Minute
 
 // lazySigner connects to a remote signer at its first use. After a failed
 // connection, each use in the next signerRetry fails at once, so a command
-// waits for the signer only once. A later use connects again, so arc serve
-// finds the signer when it comes back.
+// waits for the signer only once. When the signer did not answer, the file
+// silent keeps the time, so the next commands of this machine fail at once
+// too. A later use connects again, so arc serve finds the signer when it
+// comes back.
 type lazySigner struct {
 	public  nostr.PubKey
 	connect func() (nostr.Keyer, error)
 	now     func() time.Time
+	silent  string
 	mu      sync.Mutex
 	keyer   nostr.Keyer
 	err     error
@@ -918,13 +921,48 @@ func (l *lazySigner) get() (nostr.Keyer, error) {
 	if l.err != nil && l.now().Sub(l.failed) < signerRetry {
 		return nil, l.err
 	}
+	if at, ok := l.silentAt(); ok && l.now().Sub(at) < signerRetry {
+		l.err, l.failed = &citizen.SignerError{Citizen: l.public, Err: context.DeadlineExceeded, Retry: at.Add(signerRetry)}, at
+		return nil, l.err
+	}
 	k, err := l.connect()
 	if err != nil {
-		l.err, l.failed = fmt.Errorf("this needs the signer of the citizen, and %w", err), l.now()
+		l.failed = l.now()
+		signerErr := &citizen.SignerError{Citizen: l.public, Err: err}
+		if errors.Is(err, context.DeadlineExceeded) {
+			signerErr.Retry = l.failed.Add(signerRetry)
+			l.keepSilent(l.failed)
+		}
+		l.err = signerErr
 		return nil, l.err
+	}
+	if l.silent != "" {
+		_ = os.Remove(l.silent)
 	}
 	l.keyer, l.err = k, nil
 	return k, nil
+}
+
+// silentAt reads the time at which the signer last did not answer. A
+// missing or broken file reads as no time.
+func (l *lazySigner) silentAt() (time.Time, bool) {
+	if l.silent == "" {
+		return time.Time{}, false
+	}
+	text, err := os.ReadFile(l.silent)
+	if err != nil {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(text)))
+	return at, err == nil
+}
+
+// keepSilent keeps the time at which the signer did not answer. A failed
+// write only costs the next command one more wait.
+func (l *lazySigner) keepSilent(at time.Time) {
+	if l.silent != "" {
+		_ = os.WriteFile(l.silent, []byte(at.Format(time.RFC3339Nano)+"\n"), 0o600)
+	}
 }
 
 func (l *lazySigner) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {

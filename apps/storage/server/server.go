@@ -417,7 +417,9 @@ type sending struct {
 	id   string
 	size int64
 	tag  []byte
-	data []byte
+	// file takes the bytes as they come; got counts them.
+	file *blobFile
+	got  int64
 }
 
 // errClosed says that the client closed the pipe.
@@ -435,6 +437,14 @@ func (s *session) next() (webrtc.DataChannelMessage, error) {
 }
 
 func (s *session) serve() error {
+	// A put whose bytes did not all come leaves no file.
+	defer func() {
+		for _, p := range s.sends {
+			if p.file != nil {
+				p.file.abort()
+			}
+		}
+	}()
 	for {
 		if len(s.group) > 0 && len(s.messages) == 0 {
 			if err := s.commit(); err != nil {
@@ -627,7 +637,7 @@ func (s *session) put(req wire.Request) error {
 		return s.refuse(req.N, err)
 	}
 	if status == wire.StatusSend {
-		s.sends = append(s.sends, sending{n: req.N, id: req.ID, size: req.Size, tag: tag, data: make([]byte, 0, req.Size)})
+		s.sends = append(s.sends, sending{n: req.N, id: req.ID, size: req.Size, tag: tag})
 	}
 	return s.reply(wire.Reply{N: req.N, Status: status})
 }
@@ -639,16 +649,26 @@ func (s *session) bytes(data []byte) error {
 		return errors.New("the client sent bytes for no put")
 	}
 	p := &s.sends[0]
-	if int64(len(p.data)+len(data)) > p.size {
+	if p.got+int64(len(data)) > p.size {
 		return errors.New("the client sent other bytes than the size of the put")
 	}
-	p.data = append(p.data, data...)
-	if int64(len(p.data)) < p.size {
+	if p.file == nil {
+		f, err := s.store.createBlob(s.account, p.id)
+		if err != nil {
+			return err
+		}
+		p.file = f
+	}
+	if err := p.file.write(data); err != nil {
+		return err
+	}
+	p.got += int64(len(data))
+	if p.got < p.size {
 		return nil
 	}
 	head := s.sends[0]
 	s.sends = s.sends[1:]
-	if err := s.store.writeBlob(s.account, head.id, head.data); err != nil {
+	if err := head.file.finish(); err != nil {
 		return s.refuse(head.n, err)
 	}
 	s.group = append(s.group, written{n: head.n, id: head.id, size: head.size, tag: head.tag})

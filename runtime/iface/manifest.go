@@ -122,6 +122,25 @@ type Publish struct {
 	Revise             string     `json:"revise,omitempty"`
 	To                 []string   `json:"to,omitempty"`
 	FrontmatterAddress string     `json:"frontmatter_address,omitempty"`
+	// Body names a file argument, as "{{file}}". Its raw bytes go beside
+	// the draft as its body, not into the content. Only a sealed kind has
+	// a body.
+	Body string `json:"body,omitempty"`
+}
+
+// bodyPattern is the one form of a body: the name of a file argument.
+var bodyPattern = regexp.MustCompile(`^\{\{\s*([a-z][a-z0-9_]*)\s*\}\}$`)
+
+// bodyArg is the name of the file argument that a publish takes as its
+// body, or "".
+func bodyArg(p *Publish) string {
+	if p == nil {
+		return ""
+	}
+	if m := bodyPattern.FindStringSubmatch(p.Body); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // Content is a template for text, or an object whose values are templates.
@@ -511,6 +530,18 @@ func (m *Manifest) checkCommand(c Command) error {
 		}
 		if a.Publish.Revise != "" && a.Publish.Revise != "replace" && a.Publish.Revise != "append" {
 			return fmt.Errorf("revise %q must be replace or append", a.Publish.Revise)
+		}
+		if a.Publish.Body != "" {
+			name := bodyArg(a.Publish)
+			if m.Kinds[a.Publish.Kind].Visibility != "sealed" {
+				return errors.New("only a publish of a sealed kind has a body")
+			}
+			if !slices.ContainsFunc(c.Args, func(arg Arg) bool { return arg.Name == name && arg.Type == "file" }) {
+				return fmt.Errorf("the body %q must name one file argument, as {{file}}", a.Publish.Body)
+			}
+			if a.Publish.Revise == "append" {
+				return errors.New("a publish with a body replaces the draft: it cannot append")
+			}
 		}
 		if a.Publish.FrontmatterAddress != "" {
 			required := m.Kinds[a.Publish.Kind].Frontmatter

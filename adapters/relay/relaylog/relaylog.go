@@ -4,9 +4,12 @@
 //
 // A healthy relay logs little. The log has a WARN line for each failed
 // WebSocket upgrade, for each connection that closes with an error, such as
-// a reset or a timeout, and for each refused event, and an INFO summary each interval in which something
-// happened. A normal request and a normal close have no line. The log never
-// holds event contents, keys or IP addresses.
+// a reset or a timeout, and for each refused event, and an INFO summary each
+// interval in which something happened. A normal request and a normal close
+// have no line. A gift wrap that comes before NIP-42 authentication is the
+// normal first step of the handshake, so its refusal has a DEBUG line. The
+// summary counts it. The log never holds event contents, keys or IP
+// addresses.
 package relaylog
 
 import (
@@ -22,6 +25,8 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr/khatru"
+
+	"github.com/gezibash/arc/adapters/relay/limits"
 )
 
 // MaxRefusalLines is the number of refusal lines for one reason in one
@@ -125,9 +130,14 @@ func (l *Log) Refused(reason string) {
 	l.refused[reason]++
 	n := l.refused[reason]
 	l.mu.Unlock()
-	if n <= MaxRefusalLines {
-		l.logger.Warn("event refused", "reason", reason)
+	if n > MaxRefusalLines {
+		return
 	}
+	level := slog.LevelWarn
+	if reason == limits.RefusedWrapAuth {
+		level = slog.LevelDebug
+	}
+	l.logger.Log(context.Background(), level, "event refused", "reason", reason)
 }
 
 // Run logs a summary each interval in which something happened, until ctx

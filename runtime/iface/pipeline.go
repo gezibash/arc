@@ -15,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/core/draft"
 )
 
 // pipeline runs the output primitives, in their fixed order. A missing part
@@ -396,7 +399,18 @@ func (r *run) tail(entries []*entry) []*entry {
 	return out
 }
 
-// save writes one field of each record to a file that must not exist.
+// body reads and opens the body of a wrap.
+func (r *run) body(wrap nostr.Event) ([]byte, error) {
+	ref, _ := draft.Body(wrap)
+	data, err := r.env.Body(ref.Sum)
+	if err != nil {
+		return nil, fmt.Errorf("the body of the draft is not on this machine; arc sync brings it: %w", err)
+	}
+	return r.opener().OpenBody(r.ctx, wrap, data)
+}
+
+// save writes one field of each record to a file that must not exist. A
+// record of a draft with a body writes the body.
 func (r *run) save(entries []*entry) error {
 	s := r.command.Output.Save
 	name, err := saveArgument(*r.command)
@@ -409,10 +423,18 @@ func (r *run) save(entries []*entry) error {
 	}
 	for _, e := range entries {
 		recScope := r.recordScope(e.rec)
-		data := []byte(str(field(e.rec, s.Field)))
-		if s.Decode == "base64" {
-			if data, err = base64.StdEncoding.DecodeString(string(data)); err != nil {
-				return fmt.Errorf("the field %s is not base64: %w", s.Field, err)
+		var data []byte
+		if e.wrap != nil {
+			// A draft with a body saves its body, whatever the field.
+			if data, err = r.body(*e.wrap); err != nil {
+				return err
+			}
+		} else {
+			data = []byte(str(field(e.rec, s.Field)))
+			if s.Decode == "base64" {
+				if data, err = base64.StdEncoding.DecodeString(string(data)); err != nil {
+					return fmt.Errorf("the field %s is not base64: %w", s.Field, err)
+				}
 			}
 		}
 		if s.SHA256 != "" {

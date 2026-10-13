@@ -420,14 +420,17 @@ func (r *run) runJobs(ctx context.Context, jobs []*job) error {
 		}
 		// The device seals its own record again for a new seal, and for a
 		// whole copy of k = 1: no download.
-		if j.event != nil && (j.reseal || j.sl.h.K == 1) {
-			blob, err := r.sealRecord(*j.event)
-			if err != nil {
-				return err
-			}
-			if j.reseal || int64(len(blob)) == j.sl.h.Size {
-				j.b = &rebuilding{id: j.id, sl: j.sl, blob: blob}
-				continue
+		// A wrap whose body the device lacks is got and rebuilt.
+		if j.event != nil && (j.reseal || j.sl.h.K == 1) && r.hasBody(*j.event) {
+			if body, ok := r.bodyOf(*j.event); ok {
+				blob, err := r.sealRecord(*j.event, body)
+				if err != nil {
+					return err
+				}
+				if j.reseal || int64(len(blob)) == j.sl.h.Size {
+					j.b = &rebuilding{id: j.id, sl: j.sl, blob: blob}
+					continue
+				}
 			}
 		}
 		j.b = &rebuilding{id: j.id, sl: j.sl, shards: map[int][]byte{}, tried: map[string]bool{}, old: j.whole}
@@ -579,7 +582,7 @@ func (r *run) whole(ctx context.Context, id string, blob []byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = Open(keys, id, blob)
+	_, _, err = Open(keys, id, blob)
 	return err
 }
 
