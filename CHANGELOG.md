@@ -6,6 +6,14 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-13
+
+A device reads its sealed data on a relay with a token, so a sync works
+while the signer is stopped. A file is one encrypted body. A storage
+account can be closed, and `arc sync` prints the usage on each storage
+citizen. Two changes are breaking. Update the relay and the signer first,
+then each storage citizen and each device.
+
 ### Added
 
 - A device reads the sealed data of its citizen on a relay with a token,
@@ -17,9 +25,24 @@ All notable changes to ARC are recorded here. The format follows
   devices (#293).
 - A device keeps the storage list that it opened last, sealed to its device
   key, so it reads the list with no signer until a newer list comes (#293).
+- `arc sync` prints a usage line for each storage citizen, such as
+  `charlie: 312 MiB of 1 GiB, 4,812 pieces` (#299).
+- The signer closes an empty storage account with a close call. The
+  storage citizen deletes the account at once. To come back, the citizen
+  joins again under the admission rules. A close of an account that holds
+  blobs is refused. A storage citizen removes the bytes of an account that
+  its operator closed when the account becomes `closed` (#299).
 
 ### Changed
 
+- **Breaking:** a file is one body of raw bytes beside its draft. The device
+  encrypts it once, and the wrap carries the SHA-256 and the size of the
+  body. A file holds at most 63 MiB. An older arc cannot read the files
+  manifest or the blob of a new file. After the update, each device gets
+  each blob once more (#295).
+- **Breaking:** a relay that takes tokens serves sealed data to a device
+  with a valid token for its citizen. An older relay ignores tokens, and
+  the device authenticates with the citizen key as before (#296).
 - Relay: `arc relay serve` logs a `wrap-auth` refusal at DEBUG, not WARN. A
   client sends a gift wrap, the relay asks for NIP-42 authentication, and the
   client sends again, so this refusal is normal. The minute summary still
@@ -32,6 +55,8 @@ All notable changes to ARC are recorded here. The format follows
   answer, also when a relay authentication needed it. The message shows no
   relay error. After one wait of 15 s, the next commands of the device fail
   at once for 60 s, through the file `signer-silent` (#244).
+- arc-http opens its call endpoint before it chooses the port of the HTTP
+  program, so the two no longer take the same port (#298).
 
 ## [0.30.0] - 2026-10-13
 
