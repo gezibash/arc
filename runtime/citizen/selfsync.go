@@ -364,6 +364,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
 	}
 	var empty []int
+	usages := make([]*storage.Usage, len(opened))
 	for i, o := range opened {
 		as := targets[i].install.As
 		_, _ = cfg.Out.Write(o.said.Bytes())
@@ -401,6 +402,14 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		if side.Suspect {
 			fmt.Fprintf(cfg.Errs, "%s is suspect: %d pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, side.FailedToday, as)
 		}
+		if o.conn != nil {
+			if u, err := o.conn.Usage(ctx); err != nil {
+				fmt.Fprintf(cfg.Errs, "%s: the usage did not come: %v\n", as, err)
+			} else {
+				usages[i] = &u
+				fmt.Fprintf(cfg.Out, "%s: %s\n", as, usageLine(u))
+			}
+		}
 		switch {
 		case side.Empty && o.locked && !sess.Remote && listed:
 			empty = append(empty, i)
@@ -411,7 +420,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		}
 	}
 	if len(empty) > 0 {
-		if err := sess.markGone(ctx, cfg, list, targets, opened, empty); err != nil {
+		if err := sess.markGone(ctx, cfg, list, targets, opened, usages, empty); err != nil {
 			failed = append(failed, err)
 			fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
 		}
@@ -559,16 +568,31 @@ func (sess *Session) setDrain(ctx context.Context, conn *storage.Conn, t target,
 	return false, nil
 }
 
+// usageLine says how much of its quota an account uses: the numbers of
+// arc-storage usage, in units for a person.
+func usageLine(u storage.Usage) string {
+	line := fmt.Sprintf("%s of %s in use, %d blobs", storage.HumanSize(u.Used), storage.HumanSize(u.Quota), u.Blobs)
+	if u.Plan != "" {
+		line += fmt.Sprintf(", plan %s, %s", u.Plan, u.State)
+	}
+	if u.Expires > 0 {
+		line += ", ends " + time.Unix(u.Expires, 0).UTC().Format(time.DateOnly)
+	}
+	return line
+}
+
 // markGone sets gone in the storage list for each draining storage
 // citizen that holds no piece and no blob, and takes no put. Only the
 // signer does this. The usage of the account confirms that it is empty.
-func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.List, targets []target, opened []opening, empty []int) error {
-	var gone []string
+// The signer then closes the account on the storage citizen, which
+// removes it.
+func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.List, targets []target, opened []opening, usages []*storage.Usage, empty []int) error {
+	var gone []int
 	for _, i := range empty {
 		as := targets[i].install.As
-		usage, err := opened[i].conn.Usage(ctx)
-		if err != nil {
-			return fmt.Errorf("%s: the usage did not come, so it stays draining: %w", as, err)
+		usage := usages[i]
+		if usage == nil {
+			return fmt.Errorf("%s: the usage did not come, so it stays draining", as)
 		}
 		if usage.Blobs != 0 {
 			fmt.Fprintf(cfg.Errs, "%s: the listing is empty, but its usage counts %d blobs, so it stays draining\n", as, usage.Blobs)
@@ -579,20 +603,42 @@ func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.Li
 			continue
 		}
 		entry.State, entry.Since = storage.StateGone, nostr.Now()
+		var err error
 		if list, err = list.Put(entry); err != nil {
 			return err
 		}
 		fmt.Fprintf(cfg.Out, "%s holds no piece now and takes no put, so the storage list marks it gone\n", as)
-		gone = append(gone, entry.Name)
+		gone = append(gone, i)
 	}
 	if len(gone) == 0 {
 		return nil
 	}
-	if _, err := sess.PublishStorageList(ctx, list); err != nil {
-		return fmt.Errorf("the storage list did not change, so %s stays draining: %w", strings.Join(gone, ", "), err)
+	names := make([]string, len(gone))
+	for n, i := range gone {
+		names[n] = targets[i].install.As
 	}
-	for _, name := range gone {
-		fmt.Fprintf(cfg.Out, "storage list: %s is gone; each device removes its install at its next sync\n", name)
+	if _, err := sess.PublishStorageList(ctx, list); err != nil {
+		return fmt.Errorf("the storage list did not change, so %s stays draining: %w", strings.Join(names, ", "), err)
+	}
+	for _, i := range gone {
+		as := targets[i].install.As
+		fmt.Fprintf(cfg.Out, "storage list: %s is gone; each device removes its install at its next sync\n", as)
+		// The pipe ends first: the close ends each pipe of the account.
+		opened[i].conn.Close()
+		opened[i].conn = nil
+		provider, err := nostr.PubKeyFromHex(targets[i].install.Provider)
+		if err != nil {
+			return err
+		}
+		reply, err := sess.CloseStorage(ctx, provider)
+		switch {
+		case err != nil:
+			fmt.Fprintf(cfg.Errs, "%s: the account stays, empty and draining: %v\n", as, err)
+		case !reply.Closed:
+			fmt.Fprintf(cfg.Errs, "%s: the account stays: %s\n", as, reply.Message)
+		default:
+			fmt.Fprintf(cfg.Out, "%s: the account is closed, and the storage citizen removed it; arc keys storage add asks for a new one\n", as)
+		}
 	}
 	return nil
 }

@@ -94,6 +94,24 @@ type Account struct {
 	ReadDaysAfterClose int `json:"read_days_after_close,omitempty"`
 }
 
+// CloseCall is the body of the ARC call that ends an account: the
+// citizen leaves the storage citizen. The account key authors the call.
+// The storage app removes an empty account at once, so the account key is
+// a stranger again, and a later join asks for a new account.
+type CloseCall struct {
+	Version int      `json:"v"`
+	Close   struct{} `json:"close"`
+}
+
+// CloseReply is the reply to a close: Closed, or the error ErrRefused
+// with a message for a person.
+type CloseReply struct {
+	Version int    `json:"v"`
+	Closed  bool   `json:"closed,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 // JoinDigest is the message that the citizen key signs to show itself in
 // a join: SHA-256("arc-storage-join-v1" || 0x00 || account key || storage
 // key), with each key as its 32 bytes.

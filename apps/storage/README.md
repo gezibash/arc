@@ -22,8 +22,9 @@ wraps, reconciliation and the sync of the journal.
 | Requests in flight, lists of IDs in `get` and `delete`, and `hello` | Built. Tested: the client keeps at most 32 puts in flight, each reply goes to its own request, the bytes of each put keep their order, and the app ends a pipe with more puts in flight. On an emulated link of 44 ms, 1,000 puts of 4 KiB took 117.1 to 121.3 s before and 7.9 to 8.5 s after (measured). |
 | The index of each account in bbolt | Built. Tested: a stop between the bytes and the entry leaves a consistent index, and the app imports an older `state.json` once. |
 | The quota, plan, end and state of each account | Built. Tested: a put over the quota of one account fails while another account has room. |
-| The usage line of `arc sync` | Not built. `arc-storage usage` prints the usage. |
-| The removal of the bytes of a closed account | Not built. The operator removes the directory of the account. |
+| The usage line of `arc sync` | Built. Tested: the line of each storage citizen gives the bytes of its piece files. |
+| The removal of the bytes of a closed account | Built. Tested: 30 days after a close, the next call removes the directory of the account, and frees its quota. |
+| The close call of the signer, at the end of a drain | Built. Tested: the account goes at once, and `arc keys storage add` asks for a new account. |
 | The account key of the owner | Built. Tested: the two homes of the owner use one account, named by the account key, not by the key of the owner. |
 | Grant sets for device keys, and revocation | Built. Tested with a device behind a bunker, a revoked device, and a second storage citizen. |
 | The owner check, by the key of the caller | Built. Tested. |
@@ -151,7 +152,14 @@ arc-storage account close <account key>
   work.
 - `close`, or the day of `-expires`, makes the account `closing`: it refuses
   each put, and keeps reads, lists and deletes for 30 days. Then it is
-  `closed`, and takes no session.
+  `closed`, and takes no session. At its start and at the first call after
+  that, the app removes the bytes, the index and the directory of the
+  account, and its quota is free. The account key is then a stranger: a
+  join asks for a new account under the rule of admission.
+- An account key of `STORAGE_OWNERS` keeps `state.json` with its record
+  after the removal, so the account stays closed. Without the record it
+  would be an owner again.
+- `accept` opens a `closing` or `closed` account again, with a new record.
 
 The commands of the operator change the files in `STORAGE_DIR` under the
 locks of the app. They run while the app runs, and each change counts at
@@ -257,9 +265,13 @@ With `arc`, you do not run `drain` by hand. Run `arc keys storage rm
 <name>` on the signer. Each sync of each device then sends `drain` to the
 storage citizen, and repair moves the pieces off it. When the storage
 citizen holds no piece, the next sync of the signer marks it `gone` in the
-storage list. The signer removes the `gone` entry after 30 days. If the
-storage list names the storage citizen `active` again, the sync of the
-signer sends `drain -off`.
+storage list. The signer then sends a close call, which the account key
+signs. The app ends each pipe of the account, and removes it: the citizen
+leaves the storage citizen. The app refuses the close of an account that
+holds a blob. After the close, `arc keys storage add` asks for a new
+account, as for a new storage citizen. The signer removes the `gone` entry
+after 30 days. If the storage list names the storage citizen `active`
+again, the sync of the signer sends `drain -off`.
 
 ## Settings
 
@@ -471,6 +483,19 @@ signature.
 A refusal is a reply body with a message, not an error of the call. An
 older storage app answers the join with `invalid_request`.
 
+The signer closes an empty account with a fourth call, which the account
+key signs. The reply is `closed`, or a refusal if the account holds a blob.
+An older storage app answers the close with `invalid_request`.
+
+```json
+{"v":1,"close":{}}
+```
+
+```json
+{"v":1,"closed":true}
+{"v":1,"error":"refused","message":"the account holds 3 blobs: drain it, and move them away first"}
+```
+
 ### The pipe
 
 `arc-storage` opens one data channel. Each request is one text message of
@@ -574,6 +599,11 @@ with the key of one owner, and a stranger. They check these things:
   room. `usage` reports the quota, plan and state of each account.
   `account set` raises a quota, and `account close` refuses puts and keeps
   lists.
+- 30 days after `account close`, the next call removes the directory of
+  the account, and a join of the same key gets a new account. An account
+  of `STORAGE_OWNERS` keeps its record, and `accept` opens it again.
+- The close call refuses an account that holds a blob. It ends the pipe of
+  an empty account, and removes it (`go test ./apps/storage/server/ -run TestCloseCall`).
 - An audit of held blobs passes. After the test changes one byte of one
   blob file and removes another, the audit gives `fail` and `lost`.
 - A draining account refuses a put, and keeps usage, list, get and audit.

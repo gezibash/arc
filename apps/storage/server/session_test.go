@@ -444,3 +444,52 @@ func TestAPutGoesToTheDiskAsItComes(t *testing.T) {
 		t.Fatalf("the put that did not end left its blob: %v", err)
 	}
 }
+
+// TestCloseCall checks the close of an account by its account key. The app
+// refuses the close of an account that holds a blob. The close of an empty
+// account ends the open pipe of the account, and removes its directory. A
+// device key, and a key with no account, get not_owner.
+func TestCloseCall(t *testing.T) {
+	dir := t.TempDir()
+	s := testServer(t, dir)
+	conn := testConn(t, s)
+	ctx := context.Background()
+	closeAs := func(from string) (wire.CloseReply, error) {
+		t.Helper()
+		reply, err := s.HandleRequest(ctx, provider.Request{From: from, Message: `{"v":1,"close":{}}`})
+		var out wire.CloseReply
+		if err == nil && json.Unmarshal([]byte(reply), &out) != nil {
+			t.Fatalf("the close gave %q, not a close reply", reply)
+		}
+		return out, err
+	}
+	blob := testBlobs(1, wire.MinBlob)[0]
+	if status, err := conn.Put(ctx, blob.ID, blob.Data); err != nil || status != wire.StatusStored {
+		t.Fatalf("put gave %q, %v", status, err)
+	}
+
+	reply, err := closeAs(testAccount)
+	if err != nil || reply.Closed || reply.Error != wire.ErrRefused || !strings.Contains(reply.Message, "the account holds 1 blobs") {
+		t.Fatalf("the close of an account with a blob gave %+v, %v; want refused", reply, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "accounts", testAccount, "blobs", blob.ID)); err != nil {
+		t.Fatalf("the refused close removed the blob: %v", err)
+	}
+	if _, err := closeAs(strings.Repeat("d", 64)); err == nil || err.Error() != string(errNotOwner) {
+		t.Fatalf("the close of a key with no account gave %v, want not_owner", err)
+	}
+
+	if _, err := conn.Delete(ctx, blob.ID); err != nil {
+		t.Fatal(err)
+	}
+	reply, err = closeAs(testAccount)
+	if err != nil || !reply.Closed {
+		t.Fatalf("the close of an empty account gave %+v, %v; want closed", reply, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "accounts", testAccount)); !os.IsNotExist(err) {
+		t.Fatalf("the directory of the closed account: %v; want it removed", err)
+	}
+	if _, err := conn.Usage(ctx); err == nil {
+		t.Fatal("the pipe of the account still answers after the close")
+	}
+}
