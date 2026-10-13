@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // A message of the full mail size crosses the relay of arc relay serve, with
 // its Bolt store and no flags. One byte more is refused before it is sent.
 func TestAFullMessageCrossesTheRelay(t *testing.T) {
-	rl, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{})
+	rl, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

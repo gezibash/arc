@@ -99,9 +99,10 @@ func TestModeAndCancellationBoundBlockedWork(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { _, err := server.Write([]byte("waiting")); done <- err }()
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
+	// The cancellation notice is only an attempt. The pending data frame can
+	// reach the closed client first, and this loopback returns the client's
+	// refusal to the server. The server then ends before the notice arrives.
+	_ = client.Close()
 	select {
 	case err := <-done:
 		if err == nil {
@@ -109,6 +110,9 @@ func TestModeAndCancellationBoundBlockedWork(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancellation did not unblock write")
+	}
+	if err := server.Wait(); err == nil {
+		t.Fatal("server ended with success after cancellation")
 	}
 }
 
