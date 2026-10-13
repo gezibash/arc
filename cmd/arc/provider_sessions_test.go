@@ -72,9 +72,7 @@ func serveSessionProvider(t *testing.T, ctx context.Context, home, binary, manif
 			t.Error("provider failed to stop")
 		}
 	})
-	if !waitFor(out, "serves", 10*time.Second) {
-		t.Fatalf("provider not ready: %s", out.String())
-	}
+	waitServes(t, out, done, 10*time.Second)
 }
 func startSessionCLI(t *testing.T, ctx context.Context, home string, args ...string) (*io.PipeWriter, *output, <-chan error) {
 	t.Helper()
