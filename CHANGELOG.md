@@ -6,6 +6,35 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-13
+
+A sync behind a home router no longer waits about 14 s for each storage
+citizen. A process with a shared relay connection no longer stops when the
+relay sends a new authentication challenge. Update each device and each
+storage citizen; the relay needs no update.
+
+### Changed
+
+- **Breaking:** the flag `-hold` of `arc-transfer get`, `arc-transfer put`
+  and `arc-storage` is now `-answerer-first`, with the inverse meaning
+  (#282).
+- The line of each storage citizen in `arc sync` ends with `; path <kinds>`
+  (#282).
+
+### Fixed
+
+- The first direct attempt holds the answerer, so the offerer sends first.
+  Before, a home router blocked the pair, and each sync waited about 14 s
+  for the second attempt. The wire format does not change; an older
+  offerer keeps the old order (#282).
+- A storage attempt ends when ICE fails, instead of 4 s later (#282).
+- A new NIP-42 challenge during an authentication on a shared relay
+  connection no longer stops the process with `fatal error: sync: unlock of
+  unlocked mutex`. The Nostr library fork has the fix (#284).
+- If an older provider refuses the direct pipe before the open is
+  confirmed, an HTTP client in auto mode falls back to session frames, and
+  `--path direct` says to run again with `--path session` (#288).
+
 ## [0.29.0] - 2026-10-13
 
 arc works better on lossy networks, such as a cafe with broken IPv6. A sync
