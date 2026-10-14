@@ -58,8 +58,10 @@ Stage 4 adds an experimental secure direct event adapter. See the
 [adapter guide](../delivery/BLUETOOTH-DIRECT.md) for its API, limits and tests.
 Stage 5 adds normal CLI selection, independent watches and repeated live calls.
 Its two-home test replaces only radio I/O. Status: integrated, verification
-pending. The [device guide](../delivery/BLUETOOTH-CLI.md) defines the remaining
-real-radio acceptance gate. Do not begin mesh on the strength of simulated I/O.
+pending. Two Raspberry Pis passed the real-radio steps of the
+[device guide](../delivery/BLUETOOTH-CLI.md#recorded-results), with conditions
+and open items. A reviewer decides whether that meets the gate. Do not begin
+mesh on the strength of simulated I/O.
 
 ## Small, reviewable PRs
 

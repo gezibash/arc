@@ -1,9 +1,10 @@
 # Test ARC commands over Bluetooth on Linux
 
-Status: **Integrated, verification pending.** These are acceptance instructions,
-not a report of a successful hardware test. The automated CLI test replaces the
-radio only. Two real Linux devices must pass these steps before we claim usable
-Bluetooth support. The earlier Pi/iPhone probe test tested a different profile.
+Status: **Integrated, verification pending.** These are acceptance
+instructions. The automated CLI test replaces the radio only. Two Raspberry Pis
+passed these steps, with the conditions and open items in
+[Recorded results](#recorded-results). The earlier Pi/iPhone probe test tested
+a different profile.
 
 ## What you need
 
@@ -135,7 +136,36 @@ same home at once.
   delivery spec, section 8.3.
 
 Record both device models, OS/kernel, BlueZ version, build commit, commands,
-results and failures in the PR. Hardware results are currently **not recorded**.
+results and failures in the PR.
+
+## Recorded results
+
+Run on 2026-10-14 with build `759de36`.
+
+| Device | Board | OS | Kernel | BlueZ |
+| --- | --- | --- | --- | --- |
+| A, caller | Raspberry Pi 5 Model B Rev 1.1 | Debian 13 | 6.18.50+rpt-rpi-2712 | 5.82 |
+| B, receiver | Raspberry Pi 3 Model B Plus Rev 1.3 | Debian 13 | 6.12.62+rpt-rpi-v8 | 5.82 |
+
+The devices were not paired. Bluetooth MIDI was off on both: `bluetoothd
+--noplugin=midi`, and `monitor.bluez-midi = disabled` in WirePlumber. With
+MIDI on, every connection asked to pair and setup hit its limit; see the open
+problems in the delivery spec, section 8.3.
+
+| Step | Result |
+| --- | --- |
+| `discover` | Passed, about 7 s. |
+| Four calls in a row, one through the installed command `say` | Passed. Round trip 1.3 to 2.3 s; 7 to 15 s for each command. |
+| `message send`, two `sync`, `message outbox` | Passed. The outbox shows `delivered`. B's inbox holds one copy. |
+| Restart B, then call | Passed. |
+| Wrong peer key on A | Passed. A failed in about 9 s. B kept serving, and the correct key worked next. |
+| Stop B during a call | Passed. A reported an unknown outcome, and did not repeat the call. |
+| Ctrl-C on A | Passed. A stopped in about 3 s and left no scan or connection. |
+| B's adapter off, then on | A failed at its limit, with no network connection. B served again without a restart. Open item: a connection that A started as B went off stayed in BlueZ, and the next command found B busy until `bluetoothctl disconnect`. |
+
+Not verified: a run with Wi-Fi and Ethernet physically off. ARC was in
+Bluetooth-only mode, and no ARC process had a network connection, but the
+Pis stayed on Wi-Fi for remote control.
 
 This stage supports one trusted peer at a time. It has no mesh, room relay,
 automatic fallback or bulk/self-data sync. `sync --dir`, repair, TURN and import

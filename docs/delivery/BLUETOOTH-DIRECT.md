@@ -1,9 +1,10 @@
 # Direct Bluetooth event adapter
 
 Status: **Integrated, verification pending.** Stage 5 connects the secure
-adapter to normal ARC commands on Linux. Automated tests use a simulated radio;
-no two-device test has yet proved this profile over BlueZ. See the
-[Linux test guide](BLUETOOTH-CLI.md) and [implementation plan](../proposals/bluetooth.md).
+adapter to normal ARC commands on Linux. Automated tests use a simulated radio.
+Two Raspberry Pis with BlueZ 5.82 passed the device steps, with conditions and
+open items; see the [Linux test guide](BLUETOOTH-CLI.md#recorded-results) and
+[implementation plan](../proposals/bluetooth.md).
 
 ## What this adds
 
