@@ -94,8 +94,12 @@ func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, e
 	if err != nil {
 		return nil, err
 	}
-	if !property[bool](all[l.adapter][adapterIF], "Powered") {
-		return nil, errors.New("bluetooth: adapter missing or powered off")
+	adapter, ok := all[l.adapter][adapterIF]
+	if !ok {
+		return nil, errors.New("bluetooth: adapter " + o.Adapter + " is missing")
+	}
+	if !property[bool](adapter, "Powered") {
+		return nil, errAdapterOff
 	}
 	// Each step names itself in an error, so a timeout says where setup stopped.
 	if o.Peer != "" {

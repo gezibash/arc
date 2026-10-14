@@ -70,9 +70,11 @@ No peer within 30 seconds starts a new bounded admission attempt. A central that
 drops during setup has sent no ARC data, so the listener waits for its next
 connection. A central that proves another identity is refused, and the
 listener waits one second, then accepts the next connection: anyone in radio
-range can send a wrong proof, so it must not stop the listener. Configuration
+range can send a wrong proof, so it must not stop the Configuration
 errors, such as a missing adapter, stop the listener; restart after correcting
-them.
+them. A powered-off adapter is not one: the listener waits for power, because
+airplane mode, sleep and a user switch turn Bluetooth off and on again. A
+central with a powered-off adapter fails at once.
 
 Each side listens for the BlueZ disconnect signal, so a listener is ready for
 the next connection before the central can dial again. A one-second poll stays

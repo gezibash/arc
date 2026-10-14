@@ -125,9 +125,43 @@ func TestListenerKeepsListeningAfterWrongIdentity(t *testing.T) {
 	}
 }
 
+// Seen on the Pis: after Bluetooth went off and on, the listener had stopped.
+func TestListenerWaitsForAdapterPower(t *testing.T) {
+	first, peer, _, key := pair(t)
+	var opens atomic.Int32
+	l := listen(t.Context(), first.config, func(ctx context.Context, _ DirectConfig) (*Direct, error) {
+		switch opens.Add(1) {
+		case 1:
+			return nil, errAdapterOff
+		case 2:
+			return first, nil
+		default:
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+	})
+	defer func() { first.Close(); l.Close() }()
+	ch, err := l.Watch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
+	if err != nil {
+		t.Fatalf("a powered-off adapter stopped the listener: %v", err)
+	}
+	e := signed(t, key, 1, "after power returned")
+	if err = peer.Send(t.Context(), e); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-ch:
+		if got.ID != e.ID {
+			t.Fatal("wrong event")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch not ready")
+	}
+}
+
 func TestListenerStopsOnConfigurationError(t *testing.T) {
 	var opens atomic.Int32
-	bad := errors.New("bluetooth: adapter missing or powered off")
+	bad := errors.New("bluetooth: adapter hci9 is missing")
 	l := listen(t.Context(), DirectConfig{}, func(context.Context, DirectConfig) (*Direct, error) {
 		opens.Add(1)
 		return nil, bad

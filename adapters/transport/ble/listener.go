@@ -57,6 +57,15 @@ func listen(ctx context.Context, c DirectConfig, open func(context.Context, Dire
 				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 					continue
 				}
+				// Bluetooth that was switched off comes back; wait for it.
+				if errors.Is(err, errAdapterOff) && ctx.Err() == nil {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(2 * time.Second):
+					}
+					continue
+				}
 				// A central that dropped during setup sent no ARC data; wait for
 				// its next connection. A central that proved another identity is
 				// refused, and the listener waits for the expected one: anyone in

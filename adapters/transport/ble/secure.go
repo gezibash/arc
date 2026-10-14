@@ -52,6 +52,11 @@ var errIdentity = errors.New("bluetooth: peer identity or channel binding mismat
 var errRejected = errors.New("bluetooth: the peer ended the link after this side's identity proof; " +
 	"check the expected peer key on both devices, or run the command again")
 
+// errAdapterOff means the adapter exists but is powered off. A central fails
+// at once; a listener waits for power, because airplane mode, sleep and a
+// user switch turn it off and on again.
+var errAdapterOff = errors.New("bluetooth: the adapter is powered off; turn Bluetooth on")
+
 // linkError is a setup failure of one radio connection, before the identities
 // are proven and before any ARC data moves. A new connection may succeed, and
 // retrying cannot repeat an operation.

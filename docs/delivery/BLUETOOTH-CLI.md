@@ -127,7 +127,8 @@ same home at once.
   the key. B refuses that connection and keeps waiting for the right peer, so
   a correct command afterwards works without a restart of B.
 - Turn B's adapter off: A fails within its connection/operation deadline, with
-  no internet relay fallback. A missing peer has a 30-second setup limit.
+  no internet relay fallback. A missing peer has a 30-second setup limit. Turn
+  it on again: B serves again within a few seconds, without a restart.
 
 Record both device models, OS/kernel, BlueZ version, build commit, commands,
 results and failures in the PR. Hardware results are currently **not recorded**.
