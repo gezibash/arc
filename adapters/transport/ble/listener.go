@@ -58,12 +58,19 @@ func listen(ctx context.Context, c DirectConfig, open func(context.Context, Dire
 					continue
 				}
 				// A central that dropped during setup sent no ARC data; wait for
-				// its next connection. A wrong identity stays final.
-				if retryable(err) && ctx.Err() == nil {
+				// its next connection. A central that proved another identity is
+				// refused, and the listener waits for the expected one: anyone in
+				// radio range can send a wrong proof, so it must not stop the
+				// listener. The longer pause bounds how often that can repeat.
+				if (retryable(err) || errors.Is(err, errIdentity)) && ctx.Err() == nil {
+					pause := 250 * time.Millisecond
+					if errors.Is(err, errIdentity) {
+						pause = time.Second
+					}
 					select {
 					case <-ctx.Done():
 						return
-					case <-time.After(250 * time.Millisecond):
+					case <-time.After(pause):
 					}
 					continue
 				}

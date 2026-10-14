@@ -90,18 +90,54 @@ func TestListenerWaitsAfterDroppedSetup(t *testing.T) {
 	}
 }
 
-func TestListenerStopsOnWrongIdentity(t *testing.T) {
+// A wrong proof from a stranger in radio range must not stop the listener for
+// the expected peer. Seen on the Pis: one wrong key stopped advertising.
+func TestListenerKeepsListeningAfterWrongIdentity(t *testing.T) {
+	first, peer, _, key := pair(t)
 	var opens atomic.Int32
+	l := listen(t.Context(), first.config, func(ctx context.Context, _ DirectConfig) (*Direct, error) {
+		switch opens.Add(1) {
+		case 1:
+			return nil, errIdentity
+		case 2:
+			return first, nil
+		default:
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+	})
+	defer func() { first.Close(); l.Close() }()
+	ch, err := l.Watch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
+	if err != nil {
+		t.Fatalf("a wrong identity stopped the listener: %v", err)
+	}
+	e := signed(t, key, 1, "after a wrong identity")
+	if err = peer.Send(t.Context(), e); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-ch:
+		if got.ID != e.ID {
+			t.Fatal("wrong event")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("watch not ready")
+	}
+}
+
+func TestListenerStopsOnConfigurationError(t *testing.T) {
+	var opens atomic.Int32
+	bad := errors.New("bluetooth: adapter missing or powered off")
 	l := listen(t.Context(), DirectConfig{}, func(context.Context, DirectConfig) (*Direct, error) {
 		opens.Add(1)
-		return nil, errIdentity
+		return nil, bad
 	})
 	defer l.Close()
-	if _, err := l.Watch(t.Context(), nostr.Filter{}); !errors.Is(err, errIdentity) {
-		t.Fatalf("wrong identity: %v", err)
+	if _, err := l.Watch(t.Context(), nostr.Filter{}); !errors.Is(err, bad) {
+		t.Fatalf("configuration error: %v", err)
 	}
 	if opens.Load() != 1 {
-		t.Fatalf("retried a wrong identity %d times", opens.Load())
+		t.Fatalf("retried a configuration error %d times", opens.Load())
 	}
 }
 

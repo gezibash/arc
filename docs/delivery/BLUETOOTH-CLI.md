@@ -123,8 +123,9 @@ same home at once.
   be uncertain; ARC must not replay it automatically.
 - Restart B: an explicit new command on A can connect again. Old sessions end.
 - Cancel a running command with Ctrl-C: its connection and registrations close.
-- Give the wrong peer key: authentication fails. Correct it and restart B if its
-  admission loop reported a terminal authentication error.
+- Give the wrong peer key on A: A fails within a few seconds and asks to check
+  the key. B refuses that connection and keeps waiting for the right peer, so
+  a correct command afterwards works without a restart of B.
 - Turn B's adapter off: A fails within its connection/operation deadline, with
   no internet relay fallback. A missing peer has a 30-second setup limit.
 
