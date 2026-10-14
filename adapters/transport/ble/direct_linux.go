@@ -412,6 +412,13 @@ func (l *gattLink) connect(ctx context.Context, address string) error {
 				}
 				break
 			}
+			// BlueZ remembers a device that is gone. RSSI is present only for a
+			// device seen in this scan. Connecting to a remembered device left
+			// a connection pending in BlueZ, which completed after this command
+			// ended, when the peer came back: a link that nobody owned.
+			if _, seen := p["RSSI"]; !seen {
+				break
+			}
 			l.mu.Lock()
 			l.device = path
 			l.mu.Unlock()
