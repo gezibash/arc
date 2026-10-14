@@ -118,7 +118,7 @@ func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, e
 	go l.monitor()
 	secure, err := authenticate(setup, l, c, o.Peer != "")
 	if err != nil {
-		if errors.Is(err, errIdentity) {
+		if errors.Is(err, errIdentity) || errors.Is(err, errRejected) {
 			return nil, err
 		}
 		return nil, linkError{step("handshake", err)}

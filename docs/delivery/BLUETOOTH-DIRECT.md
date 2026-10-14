@@ -74,9 +74,11 @@ correcting them.
 Each side listens for the BlueZ disconnect signal, so a listener is ready for
 the next connection before the central can dial again. A one-second poll stays
 as a fallback. Within the 30-second setup limit, a central tries a new
-connection after a radio failure. It never retries a wrong identity: when the
-responder closes the link after the initiator's proof, the initiator reports an
-identity error.
+connection after a radio failure. It never retries a wrong identity. When the
+link ends after the initiator sent its proof, the initiator stops and says so:
+the responder refused the proof, or the radio dropped at that moment. The two
+look the same, so the message asks to check the peer key or run the command
+again.
 
 Mesh, a forwarding relay, self-data/bulk transfers, macOS and automatic fallback
 are not supported. Existing core mail can retain and acknowledge direct mail;

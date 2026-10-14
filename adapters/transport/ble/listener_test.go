@@ -111,6 +111,7 @@ func TestRetryable(t *testing.T) {
 		linkError{errors.New("bus refused")}: true,
 		errIdentity:                          false,
 		linkError{errIdentity}:               false,
+		linkError{errRejected}:               false,
 		linkError{context.DeadlineExceeded}:  false,
 		ErrDisconnected:                      false,
 	} {

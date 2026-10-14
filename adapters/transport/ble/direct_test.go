@@ -218,7 +218,7 @@ func TestDirectWrongIdentity(t *testing.T) {
 	done := make(chan error, 1)
 	// The responder rejects the proof and closes its link, as OpenDirect does.
 	go func() { _, err := authenticate(ctx, lb, cb, false); lb.Close(); done <- err }()
-	if _, err := authenticate(ctx, la, ca, true); !errors.Is(err, errIdentity) {
+	if _, err := authenticate(ctx, la, ca, true); !errors.Is(err, errRejected) {
 		t.Fatalf("wrong expected identity: %v", err)
 	}
 	la.Close()

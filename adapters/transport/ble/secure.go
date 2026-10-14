@@ -46,6 +46,12 @@ func packetSize(mtu int) int {
 // ARC identity. A new connection cannot change that, so nothing retries it.
 var errIdentity = errors.New("bluetooth: peer identity or channel binding mismatch")
 
+// errRejected is final too. The peer ended the link after this side sent its
+// proof. A peer that refuses the proof does this, and so does a radio drop at
+// that moment: the two look the same, so the message names both.
+var errRejected = errors.New("bluetooth: the peer ended the link after this side's identity proof; " +
+	"check the expected peer key on both devices, or run the command again")
+
 // linkError is a setup failure of one radio connection, before the identities
 // are proven and before any ARC data moves. A new connection may succeed, and
 // retrying cannot repeat an operation.
@@ -57,7 +63,7 @@ func (e linkError) Unwrap() error { return e.err }
 // retryable reports whether a failed setup may try a new connection.
 func retryable(err error) bool {
 	var le linkError
-	return errors.As(err, &le) && !errors.Is(err, errIdentity) &&
+	return errors.As(err, &le) && !errors.Is(err, errIdentity) && !errors.Is(err, errRejected) &&
 		!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
 }
 
@@ -251,7 +257,7 @@ func authenticate(ctx context.Context, l packetLink, c DirectConfig, initiator b
 			// closes the link when the proof names another citizen. Report
 			// that as final, so a wrong peer key is not retried.
 			if err != nil && ctx.Err() == nil {
-				err = fmt.Errorf("%w: the peer closed the link after this side's proof: %v", errIdentity, err)
+				err = fmt.Errorf("%w: %v", errRejected, err)
 			}
 		}
 	} else {
