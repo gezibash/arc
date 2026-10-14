@@ -66,6 +66,15 @@ func OpenDirect(ctx context.Context, c DirectConfig) (*Direct, error) {
 	}
 }
 
+// step names the setup step of an error. errors.Is and errors.As still see
+// the cause.
+func step(name string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("bluetooth setup, %s: %w", name, err)
+}
+
 func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, error) {
 	conn, err := dbus.ConnectSystemBus()
 	if err != nil {
@@ -88,16 +97,17 @@ func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, e
 	if !property[bool](all[l.adapter][adapterIF], "Powered") {
 		return nil, errors.New("bluetooth: adapter missing or powered off")
 	}
+	// Each step names itself in an error, so a timeout says where setup stopped.
 	if o.Peer != "" {
 		err = l.connect(setup, o.Peer)
 	} else {
-		err = l.listen(setup)
+		err = step("listen", l.listen(setup))
 	}
 	if err == nil {
-		err = l.watch()
+		err = step("signals", l.watch())
 	}
 	if err == nil && o.Peer != "" {
-		err = l.subscribe(setup)
+		err = step("subscribe", l.subscribe(setup))
 	}
 	if errors.Is(err, errPeerBusy) {
 		return nil, err
@@ -111,7 +121,7 @@ func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, e
 		if errors.Is(err, errIdentity) {
 			return nil, err
 		}
-		return nil, linkError{err}
+		return nil, linkError{step("handshake", err)}
 	}
 	d := newDirect(ctx, secure, c)
 	ok = true
@@ -402,13 +412,13 @@ func (l *gattLink) connect(ctx context.Context, address string) error {
 			l.device = path
 			l.mu.Unlock()
 			if err = l.r.Call(ctx, path, deviceIF+".Connect"); err != nil {
-				return err
+				return step("connect", err)
 			}
-			return l.resolve(ctx)
+			return step("services", l.resolve(ctx))
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return step("scan", ctx.Err())
 		case <-ticker.C:
 		}
 	}
