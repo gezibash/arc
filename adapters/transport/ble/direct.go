@@ -91,6 +91,20 @@ func (d *Direct) stop(err error) {
 	_ = d.conn.Close()
 }
 func (d *Direct) Close() error { d.stop(ErrDisconnected); d.wg.Wait(); return nil }
+
+// disconnected is ErrDisconnected with the cause that ended the link, so a
+// caller can report why. errors.Is(err, ErrDisconnected) still holds.
+func (d *Direct) disconnected() error {
+	d.mu.Lock()
+	cause := d.err
+	d.mu.Unlock()
+	if cause == nil || errors.Is(cause, ErrDisconnected) {
+		return ErrDisconnected
+	}
+	return fmt.Errorf("%w: %v", ErrDisconnected, cause)
+}
+
+// enqueue can run with d.mu held, so it does not read the cause.
 func (d *Direct) enqueue(m message) error {
 	if d.ctx.Err() != nil {
 		return ErrDisconnected
@@ -336,7 +350,7 @@ func (d *Direct) request(ctx context.Context, m message) (transport.Batch, error
 	case <-ctx.Done():
 		return transport.Batch{}, ctx.Err()
 	case <-d.ctx.Done():
-		return transport.Batch{}, ErrDisconnected
+		return transport.Batch{}, d.disconnected()
 	}
 	defer func() { <-d.gate }()
 	if err := ctx.Err(); err != nil {
@@ -359,11 +373,11 @@ func (d *Direct) request(ctx context.Context, m message) (transport.Batch, error
 			d.stop(ctx.Err())
 			return batch, ctx.Err()
 		case <-d.ctx.Done():
-			return batch, ErrDisconnected
+			return batch, d.disconnected()
 		case r := <-d.replies:
 			if r.ID != m.ID {
 				d.stop(errors.New("bluetooth: unexpected reply"))
-				return batch, ErrDisconnected
+				return batch, d.disconnected()
 			}
 			if r.Error != "" {
 				return batch, fmt.Errorf("bluetooth: %s", r.Error)
@@ -373,7 +387,7 @@ func (d *Direct) request(ctx context.Context, m message) (transport.Batch, error
 			}
 			if m.Op != "fetch" || r.Op != "result" {
 				d.stop(errors.New("bluetooth: invalid response operation"))
-				return batch, ErrDisconnected
+				return batch, d.disconnected()
 			}
 			e, err := unpack(r.Frames)
 			if err != nil {
@@ -382,7 +396,7 @@ func (d *Direct) request(ctx context.Context, m message) (transport.Batch, error
 			}
 			if m.Filter == nil || !m.Filter.Matches(e) || len(batch.Events) >= maxResults {
 				d.stop(errors.New("bluetooth: invalid query response"))
-				return batch, ErrDisconnected
+				return batch, d.disconnected()
 			}
 			batch.Events = append(batch.Events, e)
 		}
@@ -417,7 +431,7 @@ func (d *Direct) Watch(ctx context.Context, f nostr.Filter) (<-chan nostr.Event,
 	d.mu.Lock()
 	if d.ctx.Err() != nil {
 		d.mu.Unlock()
-		return nil, ErrDisconnected
+		return nil, d.disconnected()
 	}
 	if len(d.local) >= maxWatches {
 		d.mu.Unlock()
@@ -471,7 +485,7 @@ func (d *Direct) Exchange(ctx context.Context, event nostr.Event, answers nostr.
 			return nostr.Event{}, ctx.Err()
 		case e, ok := <-events:
 			if !ok {
-				return nostr.Event{}, ErrDisconnected
+				return nostr.Event{}, d.disconnected()
 			}
 			if match(e) {
 				return e, nil

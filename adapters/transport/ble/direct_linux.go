@@ -3,6 +3,7 @@ package ble
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +126,29 @@ type gattLink struct {
 	registered, advertised, scanning bool
 	notifying                        bool
 	once, subscribeOnce              sync.Once
+	failMu                           sync.Mutex
+	failure                          error // why the link ended, for reports
+}
+
+// fail ends the link and keeps the first reason. It does not take l.mu,
+// so a D-Bus callback that holds l.mu can call it.
+func (l *gattLink) fail(reason string) {
+	l.failMu.Lock()
+	if l.failure == nil {
+		l.failure = errors.New(reason)
+	}
+	l.failMu.Unlock()
+	l.cancel()
+}
+
+// ended is ErrDisconnected with the reason the link ended, when known.
+func (l *gattLink) ended() error {
+	l.failMu.Lock()
+	defer l.failMu.Unlock()
+	if l.failure == nil {
+		return ErrDisconnected
+	}
+	return fmt.Errorf("%w: %v", ErrDisconnected, l.failure)
 }
 
 func (l *gattLink) payload() int {
@@ -178,8 +202,12 @@ func (l *gattLink) monitor() {
 			l.mu.Lock()
 			device := l.device
 			l.mu.Unlock()
-			if err != nil || !property[bool](all[device][deviceIF], "Connected") {
-				l.cancel()
+			if err != nil {
+				l.fail("BlueZ did not answer the connection poll: " + err.Error())
+				return
+			}
+			if !property[bool](all[device][deviceIF], "Connected") {
+				l.fail("the poll found the device disconnected")
 				return
 			}
 		}
@@ -219,7 +247,7 @@ func (l *gattLink) dispatch(signals chan *dbus.Signal, device dbus.ObjectPath) {
 			return
 		case s, ok := <-signals:
 			if !ok {
-				l.cancel()
+				l.fail("the D-Bus signal channel closed")
 				return
 			}
 			if s.Name != propertiesIF+".PropertiesChanged" || len(s.Body) < 2 {
@@ -231,7 +259,7 @@ func (l *gattLink) dispatch(signals chan *dbus.Signal, device dbus.ObjectPath) {
 			case s.Path == device && iface == deviceIF:
 				if v, ok := changed["Connected"]; ok {
 					if up, _ := v.Value().(bool); !up {
-						l.cancel()
+						l.fail("BlueZ reported the device disconnected")
 						return
 					}
 				}
@@ -242,14 +270,14 @@ func (l *gattLink) dispatch(signals chan *dbus.Signal, device dbus.ObjectPath) {
 				}
 				b, _ := v.Value().([]byte)
 				if len(b) == 0 || len(b) > maxPacket {
-					l.cancel()
+					l.fail("an indication had an invalid length")
 					return
 				}
 				select {
 				case l.in <- b:
 				default:
 					// A full queue ends the link; it never drops a packet.
-					l.cancel()
+					l.fail("the receive queue was full")
 					return
 				}
 			}
@@ -276,7 +304,7 @@ func (l *gattLink) write(ctx context.Context, b []byte) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-l.ctx.Done():
-			return ErrDisconnected
+			return l.ended()
 		case l.out <- append([]byte(nil), b...):
 			return nil
 		}
@@ -289,7 +317,7 @@ func (l *gattLink) read(ctx context.Context) ([]byte, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-l.ctx.Done():
-		return nil, ErrDisconnected
+		return nil, l.ended()
 	case b := <-l.in:
 		return b, nil
 	}
@@ -318,7 +346,7 @@ func (l *gattLink) pump(value *prop.Properties) {
 			case <-l.confirm:
 				timer.Stop()
 			case <-timer.C:
-				l.cancel()
+				l.fail("the central did not confirm an indication")
 				return
 			}
 		}
@@ -501,7 +529,7 @@ func (c *directCharacteristic) WriteValue(sender dbus.Sender, value []byte, opts
 	case c.l.in <- append([]byte(nil), value...):
 		return nil
 	default:
-		c.l.cancel()
+		c.l.fail("the peripheral receive queue was full")
 		return fail("InProgress")
 	}
 }
@@ -521,7 +549,7 @@ func (c *directCharacteristic) StopNotify(sender dbus.Sender) *dbus.Error {
 	if string(sender) != c.l.owner {
 		return fail("NotAuthorized")
 	}
-	c.l.cancel()
+	c.l.fail("the central stopped indications")
 	return nil
 }
 
