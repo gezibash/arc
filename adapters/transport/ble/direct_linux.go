@@ -17,10 +17,19 @@ const directApp dbus.ObjectPath = "/org/arc/direct"
 const directService dbus.ObjectPath = directApp + "/service"
 const directData dbus.ObjectPath = directService + "/data"
 const directAdvert dbus.ObjectPath = "/org/arc/direct_advertisement"
+const propertiesIF = "org.freedesktop.DBus.Properties"
+
+// confirmTimeout bounds the wait for the central to confirm one indication.
+const confirmTimeout = 10 * time.Second
+
+// setupRetry is the pause before a central tries a new connection.
+const setupRetry = 500 * time.Millisecond
 
 // OpenDirect opens one Linux BLE link to an explicitly expected ARC identity.
 // It returns only after Noise and ARC identity authentication. The caller's
 // context owns the connection lifetime. Connection setup has a 30-second cap.
+// Within it, a central tries a new connection after a radio failure, because
+// no ARC data has moved yet. It never retries a wrong identity.
 func OpenDirect(ctx context.Context, c DirectConfig) (*Direct, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -34,12 +43,28 @@ func OpenDirect(ctx context.Context, c DirectConfig) (*Direct, error) {
 	}
 	setup, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
+	for {
+		d, err := openOnce(ctx, setup, c, o)
+		if err == nil || o.Peer == "" || !retryable(err) {
+			return d, err
+		}
+		select {
+		case <-setup.Done():
+			return nil, err
+		case <-time.After(setupRetry):
+		}
+	}
+}
+
+func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, error) {
 	conn, err := dbus.ConnectSystemBus()
 	if err != nil {
 		return nil, err
 	}
 	lctx, stop := context.WithCancel(ctx)
-	l := &gattLink{ctx: lctx, cancel: stop, r: busRadio{conn}, adapter: dbus.ObjectPath("/org/bluez/" + o.Adapter), in: make(chan []byte, 256), out: make(chan []byte, 256), ready: make(chan struct{})}
+	l := &gattLink{ctx: lctx, cancel: stop, r: busRadio{conn}, adapter: dbus.ObjectPath("/org/bluez/" + o.Adapter),
+		in: make(chan []byte, 256), out: make(chan []byte, 256), ready: make(chan struct{}),
+		subscribed: make(chan struct{}), confirm: make(chan struct{}, 1)}
 	ok := false
 	defer func() {
 		if !ok {
@@ -58,19 +83,31 @@ func OpenDirect(ctx context.Context, c DirectConfig) (*Direct, error) {
 	} else {
 		err = l.listen(setup)
 	}
+	if err == nil {
+		err = l.watch()
+	}
+	if err == nil && o.Peer != "" {
+		err = l.subscribe(setup)
+	}
 	if err != nil {
-		return nil, err
+		return nil, linkError{err}
 	}
 	go l.monitor()
 	secure, err := authenticate(setup, l, c, o.Peer != "")
 	if err != nil {
-		return nil, err
+		if errors.Is(err, errIdentity) {
+			return nil, err
+		}
+		return nil, linkError{err}
 	}
 	d := newDirect(ctx, secure, c)
 	ok = true
 	return d, nil
 }
 
+// gattLink carries packets over one GATT characteristic. The central writes
+// with acknowledged requests. The peripheral answers with indications, which
+// the central confirms one at a time, so neither side loses or floods packets.
 type gattLink struct {
 	ctx                              context.Context
 	cancel                           context.CancelFunc
@@ -81,9 +118,22 @@ type gattLink struct {
 	mu                               sync.Mutex
 	in, out                          chan []byte
 	ready                            chan struct{}
+	subscribed                       chan struct{} // peripheral: the central enabled indications
+	confirm                          chan struct{} // peripheral: the central confirmed one indication
+	size                             int           // packet size from the negotiated MTU; 0 until known
 	peripheral                       bool
 	registered, advertised, scanning bool
-	once                             sync.Once
+	notifying                        bool
+	once, subscribeOnce              sync.Once
+}
+
+func (l *gattLink) payload() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.size == 0 {
+		return minPacket
+	}
+	return l.size
 }
 
 func (l *gattLink) Close() error {
@@ -92,6 +142,9 @@ func (l *gattLink) Close() error {
 		l.mu.Lock()
 		device := l.device
 		l.mu.Unlock()
+		if l.notifying {
+			_ = cleanup(l.r, l.characteristic, charIF+".StopNotify")
+		}
 		if device != "" {
 			_ = cleanup(l.r, device, deviceIF+".Disconnect")
 		}
@@ -108,6 +161,8 @@ func (l *gattLink) Close() error {
 	})
 	return nil
 }
+
+// monitor polls the connection as a fallback for a lost signal.
 func (l *gattLink) monitor() {
 	defer func() { _ = l.Close() }()
 	ticker := time.NewTicker(time.Second)
@@ -130,8 +185,90 @@ func (l *gattLink) monitor() {
 		}
 	}
 }
+
+// watch takes BlueZ signals for the device and, on a central, for the
+// characteristic. A disconnect ends the link at once, so a listener is ready
+// for the next connection before the peer can dial again.
+func (l *gattLink) watch() error {
+	l.mu.Lock()
+	paths := []dbus.ObjectPath{l.device}
+	if !l.peripheral {
+		paths = append(paths, l.characteristic)
+	}
+	l.mu.Unlock()
+	for _, path := range paths {
+		if err := l.r.conn.AddMatchSignal(dbus.WithMatchSender(bluez), dbus.WithMatchObjectPath(path),
+			dbus.WithMatchInterface(propertiesIF), dbus.WithMatchMember("PropertiesChanged")); err != nil {
+			return err
+		}
+	}
+	// One indication is in flight at a time, so this buffer does not fill.
+	// D-Bus drops a signal that does not fit; a lost packet then fails
+	// decryption and closes the link, never passes silently.
+	signals := make(chan *dbus.Signal, 512)
+	l.r.conn.Signal(signals)
+	go l.dispatch(signals, paths[0])
+	return nil
+}
+
+func (l *gattLink) dispatch(signals chan *dbus.Signal, device dbus.ObjectPath) {
+	defer l.r.conn.RemoveSignal(signals)
+	for {
+		select {
+		case <-l.ctx.Done():
+			return
+		case s, ok := <-signals:
+			if !ok {
+				l.cancel()
+				return
+			}
+			if s.Name != propertiesIF+".PropertiesChanged" || len(s.Body) < 2 {
+				continue
+			}
+			iface, _ := s.Body[0].(string)
+			changed, _ := s.Body[1].(map[string]dbus.Variant)
+			switch {
+			case s.Path == device && iface == deviceIF:
+				if v, ok := changed["Connected"]; ok {
+					if up, _ := v.Value().(bool); !up {
+						l.cancel()
+						return
+					}
+				}
+			case s.Path != device && iface == charIF && !l.peripheral:
+				v, ok := changed["Value"]
+				if !ok {
+					continue
+				}
+				b, _ := v.Value().([]byte)
+				if len(b) == 0 || len(b) > maxPacket {
+					l.cancel()
+					return
+				}
+				select {
+				case l.in <- b:
+				default:
+					// A full queue ends the link; it never drops a packet.
+					l.cancel()
+					return
+				}
+			}
+		}
+	}
+}
+
+// subscribe asks the peripheral for indications. It runs before the first
+// write, so the peripheral has a subscriber before it answers.
+func (l *gattLink) subscribe(ctx context.Context) error {
+	if err := l.r.Call(ctx, l.characteristic, charIF+".StartNotify"); err != nil {
+		return err
+	}
+	l.notifying = true
+	return nil
+}
+
 func (l *gattLink) write(ctx context.Context, b []byte) error {
-	if len(b) == 0 || len(b) > 20 {
+	if len(b) == 0 || len(b) > l.payload() {
 		return errors.New("bluetooth: invalid packet length")
 	}
 	if l.peripheral {
@@ -146,38 +283,48 @@ func (l *gattLink) write(ctx context.Context, b []byte) error {
 	}
 	return l.r.Call(ctx, l.characteristic, charIF+".WriteValue", b, map[string]dbus.Variant{"type": dbus.MakeVariant("request")})
 }
+
 func (l *gattLink) read(ctx context.Context) ([]byte, error) {
-	if l.peripheral {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-l.ctx.Done():
-			return nil, ErrDisconnected
-		case b := <-l.in:
-			return b, nil
-		}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-l.ctx.Done():
+		return nil, ErrDisconnected
+	case b := <-l.in:
+		return b, nil
 	}
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
+}
+
+// pump sends queued packets to the central as indications, one at a time. It
+// waits for each confirmation, so a slow central slows the link instead of
+// losing packets. A missing confirmation ends the link.
+func (l *gattLink) pump(value *prop.Properties) {
+	select {
+	case <-l.ctx.Done():
+		return
+	case <-l.subscribed:
+	}
 	for {
-		readCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		b, err := l.r.Read(readCtx, l.characteristic)
-		cancel()
-		if err != nil {
-			return nil, err
-		}
-		if len(b) > 0 {
-			return b, nil
-		}
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
 		case <-l.ctx.Done():
-			return nil, ErrDisconnected
-		case <-ticker.C:
+			return
+		case b := <-l.out:
+			value.SetMust(charIF, "Value", b)
+			timer := time.NewTimer(confirmTimeout)
+			select {
+			case <-l.ctx.Done():
+				timer.Stop()
+				return
+			case <-l.confirm:
+				timer.Stop()
+			case <-timer.C:
+				l.cancel()
+				return
+			}
 		}
 	}
 }
+
 func (l *gattLink) connect(ctx context.Context, address string) error {
 	filter := map[string]dbus.Variant{"Transport": dbus.MakeVariant("le"), "UUIDs": dbus.MakeVariant([]string{directServiceUUID})}
 	if err := l.r.Call(ctx, l.adapter, adapterIF+".SetDiscoveryFilter", filter); err != nil {
@@ -202,7 +349,9 @@ func (l *gattLink) connect(ctx context.Context, address string) error {
 			if property[bool](p, "Connected") {
 				return errors.New("bluetooth: peer already connected")
 			}
+			l.mu.Lock()
 			l.device = path
+			l.mu.Unlock()
 			if err = l.r.Call(ctx, path, deviceIF+".Connect"); err != nil {
 				return err
 			}
@@ -215,6 +364,7 @@ func (l *gattLink) connect(ctx context.Context, address string) error {
 		}
 	}
 }
+
 func (l *gattLink) resolve(ctx context.Context) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -232,6 +382,10 @@ func (l *gattLink) resolve(ctx context.Context) error {
 						return errors.New("bluetooth: ambiguous direct service")
 					}
 					l.characteristic = path
+					// BlueZ 5.62 and later report the negotiated MTU here.
+					l.mu.Lock()
+					l.size = packetSize(int(property[uint16](p, "MTU")))
+					l.mu.Unlock()
 				}
 			}
 			if l.characteristic == "" {
@@ -246,6 +400,7 @@ func (l *gattLink) resolve(ctx context.Context) error {
 		}
 	}
 }
+
 func (l *gattLink) listen(ctx context.Context) error {
 	l.peripheral = true
 	if err := l.r.conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.GetNameOwner", 0, bluez).Store(&l.owner); err != nil {
@@ -253,7 +408,7 @@ func (l *gattLink) listen(ctx context.Context) error {
 	}
 	managed := objects{
 		directService: {serviceIF: {"UUID": dbus.MakeVariant(directServiceUUID), "Primary": dbus.MakeVariant(true)}},
-		directData:    {charIF: {"UUID": dbus.MakeVariant(directDataUUID), "Service": dbus.MakeVariant(directService), "Flags": dbus.MakeVariant([]string{"read", "write"})}},
+		directData:    {charIF: {"UUID": dbus.MakeVariant(directDataUUID), "Service": dbus.MakeVariant(directService), "Flags": dbus.MakeVariant([]string{"write", "indicate"})}},
 	}
 	if err := l.r.conn.Export(&objectManager{managed}, directApp, managerIF); err != nil {
 		return err
@@ -261,18 +416,28 @@ func (l *gattLink) listen(ctx context.Context) error {
 	if err := l.r.conn.Export(&directCharacteristic{l}, directData, charIF); err != nil {
 		return err
 	}
+	var value *prop.Properties
 	for path, ifs := range managed {
 		props := prop.Map{}
 		for iface, values := range ifs {
 			props[iface] = map[string]*prop.Prop{}
-			for name, value := range values {
-				props[iface][name] = &prop.Prop{Value: value.Value(), Writable: false, Emit: prop.EmitFalse}
+			for name, v := range values {
+				props[iface][name] = &prop.Prop{Value: v.Value(), Writable: false, Emit: prop.EmitFalse}
 			}
 		}
-		if _, err := prop.Export(l.r.conn, path, props); err != nil {
+		if path == directData {
+			// BlueZ sends each change of Value to the subscribed central.
+			props[charIF]["Value"] = &prop.Prop{Value: []byte{}, Writable: false, Emit: prop.EmitTrue}
+		}
+		p, err := prop.Export(l.r.conn, path, props)
+		if err != nil {
 			return err
 		}
+		if path == directData {
+			value = p
+		}
 	}
+	go l.pump(value)
 	if err := l.r.conn.Export(&advertisement{}, directAdvert, advertIF); err != nil {
 		return err
 	}
@@ -308,12 +473,13 @@ func (c *directCharacteristic) peer(sender dbus.Sender, opts map[string]dbus.Var
 	}
 	return p, nil
 }
+
 func (c *directCharacteristic) WriteValue(sender dbus.Sender, value []byte, opts map[string]dbus.Variant) *dbus.Error {
 	p, e := c.peer(sender, opts)
 	if e != nil {
 		return e
 	}
-	if len(value) == 0 || len(value) > 20 {
+	if len(value) == 0 || len(value) > maxPacket {
 		return fail("InvalidValueLength")
 	}
 	c.l.mu.Lock()
@@ -327,6 +493,10 @@ func (c *directCharacteristic) WriteValue(sender dbus.Sender, value []byte, opts
 	} else if c.l.device != p {
 		return fail("NotAuthorized")
 	}
+	// BlueZ passes the negotiated MTU with each write to a server.
+	if mtu, ok := opts["mtu"].Value().(uint16); ok {
+		c.l.size = packetSize(int(mtu))
+	}
 	select {
 	case c.l.in <- append([]byte(nil), value...):
 		return nil
@@ -335,22 +505,36 @@ func (c *directCharacteristic) WriteValue(sender dbus.Sender, value []byte, opts
 		return fail("InProgress")
 	}
 }
-func (c *directCharacteristic) ReadValue(sender dbus.Sender, opts map[string]dbus.Variant) ([]byte, *dbus.Error) {
-	p, e := c.peer(sender, opts)
-	if e != nil {
-		return nil, e
+
+// StartNotify is BlueZ telling this peripheral that the central enabled
+// indications. BlueZ names no device here, so admission stays with WriteValue.
+func (c *directCharacteristic) StartNotify(sender dbus.Sender) *dbus.Error {
+	if string(sender) != c.l.owner {
+		return fail("NotAuthorized")
 	}
-	c.l.mu.Lock()
-	defer c.l.mu.Unlock()
-	if p != c.l.device || c.l.ctx.Err() != nil {
-		return nil, fail("NotAuthorized")
+	c.l.subscribeOnce.Do(func() { close(c.l.subscribed) })
+	return nil
+}
+
+// StopNotify means the central left; the link ends.
+func (c *directCharacteristic) StopNotify(sender dbus.Sender) *dbus.Error {
+	if string(sender) != c.l.owner {
+		return fail("NotAuthorized")
+	}
+	c.l.cancel()
+	return nil
+}
+
+// Confirm is BlueZ reporting that the central confirmed one indication.
+func (c *directCharacteristic) Confirm(sender dbus.Sender) *dbus.Error {
+	if string(sender) != c.l.owner {
+		return fail("NotAuthorized")
 	}
 	select {
-	case b := <-c.l.out:
-		return b, nil
+	case c.l.confirm <- struct{}{}:
 	default:
-		return []byte{}, nil
 	}
+	return nil
 }
 
 func directSupported() error { return nil }

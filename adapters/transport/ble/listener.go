@@ -57,6 +57,16 @@ func listen(ctx context.Context, c DirectConfig, open func(context.Context, Dire
 				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 					continue
 				}
+				// A central that dropped during setup sent no ARC data; wait for
+				// its next connection. A wrong identity stays final.
+				if retryable(err) && ctx.Err() == nil {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(250 * time.Millisecond):
+					}
+					continue
+				}
 				l.mu.Lock()
 				l.err = err
 				close(l.changed)

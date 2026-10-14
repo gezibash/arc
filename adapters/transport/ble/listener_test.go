@@ -57,6 +57,69 @@ func TestListenerNewConnectionDoesNotResumeOldWatch(t *testing.T) {
 	}
 }
 
+func TestListenerWaitsAfterDroppedSetup(t *testing.T) {
+	first, peer, _, key := pair(t)
+	var opens atomic.Int32
+	l := listen(t.Context(), first.config, func(ctx context.Context, _ DirectConfig) (*Direct, error) {
+		switch opens.Add(1) {
+		case 1:
+			return nil, linkError{ErrDisconnected}
+		case 2:
+			return first, nil
+		default:
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+	})
+	defer func() { first.Close(); l.Close() }()
+	ch, err := l.Watch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
+	if err != nil {
+		t.Fatalf("a dropped setup ended the listener: %v", err)
+	}
+	e := signed(t, key, 1, "after a dropped setup")
+	if err = peer.Send(t.Context(), e); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-ch:
+		if got.ID != e.ID {
+			t.Fatal("wrong event")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watch not ready")
+	}
+}
+
+func TestListenerStopsOnWrongIdentity(t *testing.T) {
+	var opens atomic.Int32
+	l := listen(t.Context(), DirectConfig{}, func(context.Context, DirectConfig) (*Direct, error) {
+		opens.Add(1)
+		return nil, errIdentity
+	})
+	defer l.Close()
+	if _, err := l.Watch(t.Context(), nostr.Filter{}); !errors.Is(err, errIdentity) {
+		t.Fatalf("wrong identity: %v", err)
+	}
+	if opens.Load() != 1 {
+		t.Fatalf("retried a wrong identity %d times", opens.Load())
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	for err, want := range map[error]bool{
+		linkError{ErrDisconnected}:           true,
+		linkError{errors.New("bus refused")}: true,
+		errIdentity:                          false,
+		linkError{errIdentity}:               false,
+		linkError{context.DeadlineExceeded}:  false,
+		ErrDisconnected:                      false,
+	} {
+		if got := retryable(err); got != want {
+			t.Errorf("%v: retryable %v, want %v", err, got, want)
+		}
+	}
+}
+
 func TestListenerDoesNotQueueSendBeforeConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	var opens atomic.Int32

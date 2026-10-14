@@ -24,9 +24,16 @@ type memoryLink struct {
 	done    chan struct{}
 	once    *sync.Once
 	corrupt bool
+	size    int
 }
 
 func (l *memoryLink) Close() error { l.once.Do(func() { close(l.done) }); return nil }
+func (l *memoryLink) payload() int {
+	if l.size == 0 {
+		return minPacket
+	}
+	return l.size
+}
 func (l *memoryLink) write(ctx context.Context, b []byte) error {
 	b = append([]byte(nil), b...)
 	if l.corrupt {
@@ -209,9 +216,10 @@ func TestDirectWrongIdentity(t *testing.T) {
 	la, lb := memoryPair()
 	defer la.Close()
 	done := make(chan error, 1)
-	go func() { _, err := authenticate(ctx, lb, cb, false); done <- err }()
-	if _, err := authenticate(ctx, la, ca, true); err == nil {
-		t.Fatal("wrong expected identity accepted")
+	// The responder rejects the proof and closes its link, as OpenDirect does.
+	go func() { _, err := authenticate(ctx, lb, cb, false); lb.Close(); done <- err }()
+	if _, err := authenticate(ctx, la, ca, true); !errors.Is(err, errIdentity) {
+		t.Fatalf("wrong expected identity: %v", err)
 	}
 	la.Close()
 	<-done
@@ -358,6 +366,70 @@ func TestRecordRejectsOversize(t *testing.T) {
 	}
 	if _, err := readRecord(t.Context(), b); err == nil {
 		t.Fatal("accepted oversized record")
+	}
+}
+
+func TestPacketSize(t *testing.T) {
+	for mtu, want := range map[int]int{0: 20, 23: 20, 185: 182, 247: 244, 515: 512, 517: 512, 2048: 512} {
+		if got := packetSize(mtu); got != want {
+			t.Errorf("MTU %d: packet %d, want %d", mtu, got, want)
+		}
+	}
+}
+
+// Each side sends with its own packet size; a reader takes any size up to
+// maxPacket, so one link can carry large packets one way and small the other.
+func TestRecordsCrossPacketSizes(t *testing.T) {
+	a, b := memoryPair()
+	defer a.Close()
+	a.size, b.size = maxPacket, minPacket
+	record := make([]byte, recordBytes)
+	for i := range record {
+		record[i] = byte(i)
+	}
+	for _, link := range [][2]*memoryLink{{a, b}, {b, a}} {
+		if err := writeRecord(t.Context(), link[0], record); err != nil {
+			t.Fatal(err)
+		}
+		got, err := readRecord(t.Context(), link[1])
+		if err != nil || string(got) != string(record) {
+			t.Fatalf("record from a %d-byte sender: %v", link[0].size, err)
+		}
+	}
+	if err := a.write(t.Context(), make([]byte, maxPacket+1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readRecord(t.Context(), b); err == nil {
+		t.Fatal("accepted a packet larger than maxPacket")
+	}
+}
+
+func TestDirectLargePackets(t *testing.T) {
+	a, b := keys.Generate(), keys.Generate()
+	ca, cb := config(t, a, b), config(t, b, a)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	la, lb := memoryPair()
+	la.size, lb.size = 182, 244
+	ch := make(chan *secureLink, 1)
+	go func() { s, _ := authenticate(ctx, lb, cb, false); ch <- s }()
+	sa, err := authenticate(ctx, la, ca, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := <-ch
+	if sb == nil {
+		t.Fatal("responder did not authenticate")
+	}
+	da, db := newDirect(ctx, sa, ca), newDirect(ctx, sb, cb)
+	defer da.Close()
+	defer db.Close()
+	e := signed(t, a, 1, strings.Repeat("large packets ", 400))
+	if err = da.Send(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := db.config.Store.Query(nostr.Filter{IDs: []nostr.ID{e.ID}}); err != nil || len(got) != 1 {
+		t.Fatalf("event over large packets: %d %v", len(got), err)
 	}
 }
 

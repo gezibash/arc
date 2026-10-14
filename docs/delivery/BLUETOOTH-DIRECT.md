@@ -55,7 +55,7 @@ The existing `arc-ble-probe` remains unchanged and uses a different service.
   A slow consumer or excess queued work closes the connection explicitly.
 - An event's JSON is limited to core's 64 KiB limit. An encoded wire message is
   at most 256 KiB. Record buffers are at most 4,098 bytes. Each GATT direction
-  has at most 256 queued packets of 20 bytes.
+  has at most 256 queued packets of at most 512 bytes.
 
 A canceled established watch closes only its own channel. Connection loss closes
 all watches; core ends the affected sessions. Canceling a pending wire request
@@ -66,8 +66,17 @@ exposes the terminal cause. `Fetch` does not claim reconciliation.
 advertising when the first local watch starts, after `arc serve` has saved its
 announcement. Disconnect ends the old watches. Normal provider/mail loops open
 new watches on a new connection; they do not resume or replay live calls.
-No peer within 30 seconds starts a new bounded admission attempt. Configuration,
-authentication and other setup errors are reported; restart after correcting them.
+No peer within 30 seconds starts a new bounded admission attempt. A central that
+drops during setup has sent no ARC data, so the listener waits for its next
+connection. Configuration and identity errors are reported; restart after
+correcting them.
+
+Each side listens for the BlueZ disconnect signal, so a listener is ready for
+the next connection before the central can dial again. A one-second poll stays
+as a fallback. Within the 30-second setup limit, a central tries a new
+connection after a radio failure. It never retries a wrong identity: when the
+responder closes the link after the initiator's proof, the initiator reports an
+identity error.
 
 Mesh, a forwarding relay, self-data/bulk transfers, macOS and automatic fallback
 are not supported. Existing core mail can retain and acknowledge direct mail;
@@ -75,12 +84,19 @@ Stage 7's broader durable-delivery work remains separate.
 
 ## Experimental wire profile
 
-The service UUID is `8f71c110-5b9a-4cf0-a8d1-3e290da1b301`. Its read/write
-characteristic is `8f71c111-5b9a-4cf0-a8d1-3e290da1b301`. The central writes
-acknowledged GATT requests and polls reads for queued peripheral packets. An
-empty read means no packet is available. Reads consume a packet. Packet loss
-or duplication ends the encrypted link; it does not resume an uncertain stream.
-This conservative profile uses 20-byte packets and needs no larger MTU.
+The service UUID is `8f71c110-5b9a-4cf0-a8d1-3e290da1b301`. Its write/indicate
+characteristic is `8f71c111-5b9a-4cf0-a8d1-3e290da1b301`. The central enables
+indications, then writes acknowledged GATT requests. The peripheral sends its
+packets as indications, one at a time: it waits for the central's confirmation,
+which BlueZ reports through the characteristic's `Confirm` method, before the
+next. Neither side polls. Packet loss or duplication ends the encrypted link; it
+does not resume an uncertain stream.
+
+A packet is at most the negotiated ATT MTU minus 3 bytes, between 20 and 512
+bytes. The central reads the MTU from the characteristic's `MTU` property; the
+peripheral reads it from the `mtu` option of each write. Both need BlueZ 5.62
+or later; an unknown MTU keeps 20-byte packets. Each side chooses the size it
+sends, and a receiver accepts any packet up to 512 bytes.
 
 Each record starts with a two-byte big-endian body length and ends at a GATT
 packet boundary. Its body is at most 4,096 bytes. The first three records carry
@@ -127,7 +143,10 @@ semantics or promise forward secrecy across future intermediate nodes.
 An observer can see Bluetooth addresses, connection timing and packet sizes.
 An authenticated peer sees events explicitly sent or permitted by the share
 policy. An untrusted radio peer can occupy the single admission slot until the
-30-second setup timeout. This profile needs security review before production use.
+30-second setup timeout. BlueZ does not name the device that enables
+indications, so another connected central can receive the same indications.
+It sees only Noise ciphertext, as a radio observer does. This profile needs
+security review before production use.
 
 The profile string stays `v1` while Bluetooth is unreleased. A wire change
 before the first release updates both endpoints together; a change after it

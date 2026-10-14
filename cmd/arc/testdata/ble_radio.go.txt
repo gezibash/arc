@@ -14,6 +14,8 @@ import (
 
 type testRadio struct { net.Conn; stop func()bool }
 func(r *testRadio)Close()error{r.stop();return r.Conn.Close()}
+// payload is a typical negotiated size, so the CLI test sends large packets.
+func(r *testRadio)payload()int{return 182}
 func(r *testRadio)write(ctx context.Context,b []byte)error{
  deadline,_:=ctx.Deadline();_ = r.SetWriteDeadline(deadline)
  data:=make([]byte,len(b)+2);binary.BigEndian.PutUint16(data,uint16(len(b)));copy(data[2:],b)

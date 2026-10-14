@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -16,16 +17,49 @@ import (
 )
 
 // packetLink is the GATT I/O boundary, not an ARC event transport. Writes and
-// reads preserve packet order. Close must unblock both directions.
+// reads preserve packet order. Close must unblock both directions. payload is
+// the largest packet that write accepts now; it can grow once the link learns
+// the negotiated MTU. A reader accepts any packet up to maxPacket.
 type packetLink interface {
 	write(context.Context, []byte) error
 	read(context.Context) ([]byte, error)
+	payload() int
 	Close() error
 }
 
 const maxMessage = 256 << 10
 const recordBytes = 4096
 const linkDomain = "arc-ble-direct-v1"
+
+// minPacket fits the default ATT MTU of 23. maxPacket is the largest ATT
+// attribute value. A link sends packets between the two.
+const minPacket = 20
+const maxPacket = 512
+
+// packetSize turns a negotiated ATT MTU into a packet size. An unknown or
+// small MTU keeps the default.
+func packetSize(mtu int) int {
+	return min(max(mtu-3, minPacket), maxPacket)
+}
+
+// errIdentity ends link setup for good: the peer did not prove the expected
+// ARC identity. A new connection cannot change that, so nothing retries it.
+var errIdentity = errors.New("bluetooth: peer identity or channel binding mismatch")
+
+// linkError is a setup failure of one radio connection, before the identities
+// are proven and before any ARC data moves. A new connection may succeed, and
+// retrying cannot repeat an operation.
+type linkError struct{ err error }
+
+func (e linkError) Error() string { return e.err.Error() }
+func (e linkError) Unwrap() error { return e.err }
+
+// retryable reports whether a failed setup may try a new connection.
+func retryable(err error) bool {
+	var le linkError
+	return errors.As(err, &le) && !errors.Is(err, errIdentity) &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
 
 type secureLink struct {
 	link   packetLink
@@ -41,8 +75,9 @@ func writeRecord(ctx context.Context, l packetLink, b []byte) error {
 	wire := make([]byte, 2+len(b))
 	binary.BigEndian.PutUint16(wire, uint16(len(b)))
 	copy(wire[2:], b)
+	size := min(max(l.payload(), minPacket), maxPacket)
 	for len(wire) > 0 {
-		n := min(20, len(wire))
+		n := min(size, len(wire))
 		if err := l.write(ctx, wire[:n]); err != nil {
 			return err
 		}
@@ -61,7 +96,7 @@ func readRecord(ctx context.Context, l packetLink) ([]byte, error) {
 	packet := first
 	size := 0
 	for {
-		if len(packet) == 0 || len(packet) > 20 {
+		if len(packet) == 0 || len(packet) > maxPacket {
 			return nil, errors.New("bluetooth: invalid GATT packet")
 		}
 		wire = append(wire, packet...)
@@ -212,6 +247,12 @@ func authenticate(ctx context.Context, l packetLink, c DirectConfig, initiator b
 		err = s.send(ctx, b)
 		if err == nil {
 			incoming, err = s.receive(ctx)
+			// The responder checks this proof before it shows its own, and
+			// closes the link when the proof names another citizen. Report
+			// that as final, so a wrong peer key is not retried.
+			if err != nil && ctx.Err() == nil {
+				err = fmt.Errorf("%w: the peer closed the link after this side's proof: %v", errIdentity, err)
+			}
 		}
 	} else {
 		incoming, err = s.receive(ctx)
@@ -224,11 +265,11 @@ func authenticate(ctx context.Context, l packetLink, c DirectConfig, initiator b
 		return nil, err
 	}
 	if err = store.Verify(other); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errIdentity, err)
 	}
 	want := linkDomain + ":" + binding + ":" + peerRole + ":" + c.Signer.PublicKey().Hex()
 	if other.Kind != 1 || len(other.Tags) != 0 || other.PubKey != c.Peer || other.Content != want {
-		return nil, errors.New("bluetooth: peer identity or channel binding mismatch")
+		return nil, errIdentity
 	}
 	if !initiator {
 		if err = s.send(ctx, b); err != nil {
