@@ -26,6 +26,15 @@ const confirmTimeout = 10 * time.Second
 // setupRetry is the pause before a central tries a new connection.
 const setupRetry = 500 * time.Millisecond
 
+// busyWait is how long a central waits for a connection to the peer that it
+// did not make to end.
+const busyWait = 5 * time.Second
+
+// errPeerBusy is final: something other than ARC keeps a connection to the
+// peer, often BlueZ after the two devices were paired.
+var errPeerBusy = errors.New("bluetooth: the peer is connected outside ARC; ARC does not need pairing, " +
+	"so remove a pairing with bluetoothctl remove <address> on both devices, or disconnect the other app")
+
 // OpenDirect opens one Linux BLE link to an explicitly expected ARC identity.
 // It returns only after Noise and ARC identity authentication. The caller's
 // context owns the connection lifetime. Connection setup has a 30-second cap.
@@ -89,6 +98,9 @@ func openOnce(ctx, setup context.Context, c DirectConfig, o Options) (*Direct, e
 	}
 	if err == nil && o.Peer != "" {
 		err = l.subscribe(setup)
+	}
+	if errors.Is(err, errPeerBusy) {
+		return nil, err
 	}
 	if err != nil {
 		return nil, linkError{err}
@@ -364,6 +376,7 @@ func (l *gattLink) connect(ctx context.Context, address string) error {
 	l.scanning = true
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	var busy time.Time
 	for {
 		all, err := l.r.Objects(ctx)
 		if err != nil {
@@ -374,8 +387,16 @@ func (l *gattLink) connect(ctx context.Context, address string) error {
 			if property[dbus.ObjectPath](p, "Adapter") != l.adapter || !strings.EqualFold(property[string](p, "Address"), address) || !hasUUID(p, directServiceUUID) {
 				continue
 			}
+			// The disconnect of an earlier link can take a moment. A link that
+			// stays up belongs to something else; do not take it over.
 			if property[bool](p, "Connected") {
-				return errors.New("bluetooth: peer already connected")
+				if busy.IsZero() {
+					busy = time.Now()
+				}
+				if time.Since(busy) >= busyWait {
+					return errPeerBusy
+				}
+				break
 			}
 			l.mu.Lock()
 			l.device = path

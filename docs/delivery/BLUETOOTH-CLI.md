@@ -17,6 +17,10 @@ Bluetooth support. The earlier Pi/iPhone probe test tested a different profile.
   and `bluetoothctl power on`. If D-Bus refuses registration, use the distribution's
   Bluetooth policy or a dedicated test account with the required permission.
 - A local ARC signing key on each device. Remote signing is refused in this mode.
+- No Bluetooth pairing between the two devices. ARC does not use pairing. If a
+  desktop asks to pair, decline. A bonded device can be connected by BlueZ for
+  another profile, such as MIDI, and ARC then refuses the busy peer. To remove
+  a pairing, run `bluetoothctl remove <other device's address>` on each device.
 
 Build on Linux from the repository root (Go version is in `mise.toml`):
 
