@@ -92,6 +92,41 @@ func TestPipeClosedEarly(t *testing.T) {
 	}
 }
 
+// TestPipeOpenedThenDead gives Wait a pipe that died before its open
+// handler ran, as when the other end opens, writes and closes at once. A
+// channel on a connected SCTP association found a path, so Wait returns nil
+// and Dial makes no second attempt. A channel that dies before the
+// association connects has no path.
+func TestPipeOpenedThenDead(t *testing.T) {
+	local := Options{Loopback: true}
+	open, err := pipePair(t, DialConfig{Policy: DirectOnly, Options: local}, AcceptConfig{Options: local}, func(*Pipe) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer open.Close()
+	opened := newPipe(open.pc, 0)
+	opened.dc.Store(open.dc.Load())
+	opened.die()
+	if err := opened.Wait(t.Context()); err != nil {
+		t.Errorf("opened, then dead: Wait = %v, want nil", err)
+	}
+
+	pc, err := NewConnection(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	never := newPipe(pc, 0)
+	dc, err := pc.CreateDataChannel("pipe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	never.attach(dc)
+	never.die()
+	if err := never.Wait(t.Context()); !errors.Is(err, ErrNoPath) {
+		t.Errorf("dead before the association: Wait = %v, want ErrNoPath", err)
+	}
+}
+
 // TestPipeAnswererRelayOnly gives the answerer the policy turn: its answer
 // holds only an address on the TURN server, and the bytes go through the
 // relay. Both ends are behind symmetric NATs.

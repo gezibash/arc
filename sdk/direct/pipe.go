@@ -150,7 +150,8 @@ func (p *Pipe) die() {
 }
 
 // Wait waits until the data channel opens. It returns ErrNoPath if the
-// channel does not open in OpenWait plus the hold, and then closes the pipe.
+// channel does not open in OpenWait plus the hold, or if the connection
+// fails before the SCTP association connects, and then closes the pipe.
 func (p *Pipe) Wait(ctx context.Context) error {
 	timer := time.NewTimer(OpenWait + p.hold)
 	defer timer.Stop()
@@ -158,6 +159,16 @@ func (p *Pipe) Wait(ctx context.Context) error {
 	case <-p.opened:
 		return nil
 	case <-p.dead:
+		// pion calls the open handler in a goroutine of its own, and this
+		// end can read the close before the acknowledgement of the open. So
+		// a channel that the other end opens, writes and closes at once can
+		// die with no open. The channel has an ID only after the SCTP
+		// association connected: that attempt found a path, and the other
+		// end can have started. The next attempt would be a replay, so the
+		// dead pipe goes to the caller, whose read or write fails.
+		if dc := p.dc.Load(); dc != nil && dc.ID() != nil {
+			return nil
+		}
 		_ = p.Close()
 		return ErrNoPath
 	case <-timer.C:
