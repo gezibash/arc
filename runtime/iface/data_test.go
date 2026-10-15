@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -448,6 +449,27 @@ func TestDirectMessages(t *testing.T) {
 	}
 }
 
+// A private publish to two recipients seals one rumor, with a p tag for
+// each, to each of them.
+func TestAPrivatePublishGoesToEachRecipient(t *testing.T) {
+	alice, bob := pair(t)
+	carol := nostr.Generate().Public()
+	alice.must("dm", "", "group", nip19.EncodeNpub(bob.env.me.Public()), carol.Hex(), "hello", "both")
+
+	want := nostr.Tags{{"p", bob.env.me.Public().Hex()}, {"p", carol.Hex()}}
+	var ids []nostr.ID
+	for _, pk := range []nostr.PubKey{bob.env.me.Public(), carol} {
+		rumors := alice.env.net.inbox[pk]
+		if len(rumors) != 1 || rumors[0].Content != "hello both" || !slices.EqualFunc(rumors[0].Tags, want, slices.Equal) {
+			t.Fatalf("a recipient got %+v, want one message with the tags %v", rumors, want)
+		}
+		ids = append(ids, rumors[0].ID)
+	}
+	if ids[0] != ids[1] {
+		t.Errorf("the recipients got two rumors, %v, want one", ids)
+	}
+}
+
 // TestAGroupBoardPostsRepliesAndThreads proves the group visibility on a
 // test manifest: posts go to the group relay with the h and NIP-70 tags.
 func TestAGroupBoardPostsRepliesAndThreads(t *testing.T) {
@@ -591,8 +613,8 @@ func (l *listEnv) List(name string) ([]nostr.PubKey, error) {
 	return nil, nil
 }
 
-func (l *listEnv) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
-	if to == l.refuse {
+func (l *listEnv) SendPrivate(ctx context.Context, to []nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+	if slices.Contains(to, l.refuse) {
 		return errors.New("no inbox relay")
 	}
 	return l.fakeEnv.SendPrivate(ctx, to, kind, content, tags)

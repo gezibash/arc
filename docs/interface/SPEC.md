@@ -1034,8 +1034,14 @@ older client behaves.
 - **No Nostr client opens a page.** The content key comes from the data
   roots, which only the devices of the citizen hold. ARC keeps the shape of
   NIP-37, so the kinds, the `d` tag and the `k` tag still follow it.
-- **A private event goes to one recipient.** NIP-17 allows a message to
-  several, and this arc refuses it.
+- **A private event goes to at most 9 recipients.** A private publish can
+  name several recipients. The mail layer seals one rumor to each, as
+  [the group messages spec](../groups/SPEC.md) defines. The manifest gives
+  the tags: a manifest that publishes kind 14 to several recipients MUST
+  give a `p` tag for each.
+  NIP-17 advises another scheme past 10 participants, with the author. An
+  arc older than group messages refuses a publish with more than one
+  recipient.
 
 ## 8. Proof
 

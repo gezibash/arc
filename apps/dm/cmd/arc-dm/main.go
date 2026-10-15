@@ -3,7 +3,7 @@
 //
 //	arc-dm [ls]                  the conversations, newest first, with unread counts
 //	arc-dm open <peer>           one conversation; it marks its messages read
-//	arc-dm send <peer> [text...] send a message
+//	arc-dm send <peer> [text...] send a message; peers separated by commas make a group
 //	arc-dm read [peer]           mark a conversation read, or all of them
 //	arc-dm watch                 print and notify each message as it arrives
 //
@@ -36,7 +36,9 @@ const usage = `usage:
   arc-dm read [flags] [peer]           mark a conversation read, or all of them
   arc-dm watch [flags]                 print and notify each message as it arrives
 
-A peer is a public key, a petname, or the start of either.
+A peer is a public key, a petname, or the start of either. Several peers,
+separated by commas, name a group: arc-dm send ada,cy hello sends one
+message that both see, and a reply goes to each member.
 arc-dm <command> -h shows the flags of a command.`
 
 func main() {
@@ -102,8 +104,11 @@ func list(ctx context.Context, args []string) error {
 			status = fmt.Sprintf("  %d unread", n)
 		}
 		who := ""
-		if last.Mine {
+		switch {
+		case last.Mine:
 			who = "you: "
+		case !c.direct():
+			who = last.From + ": "
 		}
 		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, preview(clean(last.Text), 72))
 	}
@@ -137,7 +142,7 @@ func open(ctx context.Context, args []string) error {
 		return err
 	}
 	for _, e := range c.Entries {
-		who, status := c.Name, ""
+		who, status := cmp.Or(e.From, c.Name), ""
 		if e.Mine {
 			who, status = "you", "  "+e.State
 		} else if !read[e.ID] {
@@ -173,10 +178,10 @@ func send(ctx context.Context, args []string) error {
 		}
 		text = strings.TrimRight(string(body), "\n")
 	}
-	if _, err := s.arc.Send(ctx, c.Peer, text); err != nil {
+	if _, err := s.arc.Send(ctx, c.Peers, text); err != nil {
 		return err
 	}
-	fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.Peer))
+	fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key()))
 	return nil
 }
 
@@ -217,7 +222,11 @@ func watch(ctx context.Context, args []string) error {
 	notifier := notifierOf(*notify)
 	return s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
 		text := clean(m.Text)
-		fmt.Printf("%s  %s\n%s\n", stamp(m.At), m.Name, indent(text))
+		group := ""
+		if len(m.Members) > 2 {
+			group = fmt.Sprintf("  in a group of %d", len(m.Members))
+		}
+		fmt.Printf("%s  %s%s\n%s\n", stamp(m.At), m.Name, group, indent(text))
 		if len(notifier) == 0 {
 			return nil
 		}

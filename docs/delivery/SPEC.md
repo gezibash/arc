@@ -164,6 +164,12 @@ passes, the relay stops serving the event and deletes it.
 The author randomizes `created_at` on the seal and the gift wrap, up to two
 days in the past, as NIP-17 describes. The real time stays inside the rumor.
 
+One rumor can go to several recipients. The author seals and wraps it to
+each recipient separately. A message of kind 14 names each recipient with a
+`p` tag, and has at most 10 participants, with the author. The recipient of
+a message MUST refuse it if no `p` tag names the recipient. [The group
+messages spec](../groups/SPEC.md) defines the rules.
+
 #### The size of mail
 
 Mail is one gift wrap of kind 1059. The author MUST NOT split it into parts.
@@ -597,6 +603,9 @@ which path it needs.
 
 The outbox keeps each undelivered event until the recipient acknowledges it.
 
+- It keeps one entry for each recipient of an event. The key of an entry is
+  the rumor id, `:`, and the public key of the recipient. An event to
+  several recipients has one entry for each.
 - It keeps at most 100 events for each recipient.
 - A message lives for 7 days, set in the `expiration` tag of its wraps. After
   that, the outbox shows it as expired. The failure never stays silent.
@@ -609,8 +618,9 @@ The outbox keeps each undelivered event until the recipient acknowledges it.
 
 An acknowledgement is a private event whose rumor has kind 3274. The rumor
 names the delivered rumor with an `e` tag. When the sender receives the
-acknowledgement, the outbox removes the event. A node does not acknowledge an
-acknowledgement.
+acknowledgement, the outbox marks the entry of the author of the
+acknowledgement delivered. The entries of other recipients of the same
+rumor do not change. A node does not acknowledge an acknowledgement.
 
 Queued calls keep a durable `pending`, `processing`, or `completed` state:
 
@@ -1103,6 +1113,22 @@ not open it. An older device that gets such a record from a storage citizen
 refuses it, because the record does not name the citizen as its author. It
 reads the record after its update. [The storage spec](../storage/SPEC.md),
 section 7, says how the newer device fetches it again.
+
+### 7.6 The outbox of group messages
+
+The key of an outbox entry was the rumor id alone. It is now the rumor id
+and the recipient (section 4.2). The first open of the mail database moves
+each older entry, and names the recipient of each own wrap of that entry,
+in the transaction that opens the database.
+
+- An older arc that opens the moved outbox lists each entry. It looks an
+  entry up by the rumor id, so an acknowledgement or a reply that arrives
+  does not find its entry. The message stays pending.
+- An older arc opens a message with several `p` tags as a message from its
+  author, and its reply goes to the author only.
+- `TestAnOldOutboxMovesToTheNewKeys` opens the mail database of a sender
+  of v0.31.0. [The group messages spec](../groups/SPEC.md), section 7,
+  has the details.
 
 ## 8. Proof
 

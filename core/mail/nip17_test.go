@@ -124,7 +124,7 @@ func TestARumorOfTheDMManifestOpensInANIP17Client(t *testing.T) {
 	r := relay.Relay{URL: testrelay.Start(t)}
 	alice, bob := newCitizen(t, r), newCitizen(t)
 
-	if _, err := alice.mail.SendRumor(ctx, bob.key.Public, 14, "from the manifest", nostr.Tags{{"p", bob.key.Public.Hex()}}); err != nil {
+	if _, err := alice.mail.SendRumor(ctx, []nostr.PubKey{bob.key.Public}, 14, "from the manifest", nostr.Tags{{"p", bob.key.Public.Hex()}}); err != nil {
 		t.Fatal(err)
 	}
 	batch, err := r.Fetch(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {bob.key.Public.Hex()}}})
