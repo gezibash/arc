@@ -6,6 +6,29 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The program `arc-dm` of the dm app shows the conversations of a citizen,
+  newest first, with unread counts. `arc-dm open` shows one conversation and
+  marks it read, and `arc-dm watch` posts a notification for each message.
+  The read state stays on the device. `arc-dm` drives `arc message`.
+- `arc message outbox --json` prints one JSON line for each sent message,
+  with its state.
+- The package `sdk/arcprogram` runs the arc program for a client program,
+  and reads the JSON lines of `arc message`. The spec
+  `docs/clients/SPEC.md` defines the lines.
+
+### Changed
+
+- arc-transfer runs arc through `sdk/arcprogram`.
+
+### Removed
+
+- The dm app has no manifest: `arc dm send`, `arc dm inbox` and
+  `arc dm open` are gone from this repository. A citizen that installed the
+  dm manifest from an author keeps it. Use `arc-dm`. The tests of private
+  kinds use the test manifest `runtime/iface/testdata/dm.manifest.json`.
+
 ## [0.31.0] - 2026-10-13
 
 A device reads its sealed data on a relay with a token, so a sync works

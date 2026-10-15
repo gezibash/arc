@@ -19,7 +19,7 @@ section 3.7.
 | 3 | replaceable | NIP-02 | Follows. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 5 | regular | NIP-09 | Deletion. Core makes it for `delete`, through `nostr.KindDeletion`. A device also sends one to a relay for the old drafts that a storage citizen holds, with the tag `["arc", "moved"]`. | reserved | [interface, section 6](interface/SPEC.md), [storage, section 4.2](storage/SPEC.md) |
 | 13 | regular | NIP-59 | A seal inside a gift wrap. | code | [delivery, section 3.4](delivery/SPEC.md) |
-| 14 | regular | NIP-17 | A direct message, as a rumor. | code, manifest | [delivery, section 4.2](delivery/SPEC.md) |
+| 14 | regular | NIP-17 | A direct message, as a rumor. | code | [delivery, section 4.2](delivery/SPEC.md) |
 | 62 | regular | NIP-62 | Request to vanish. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 1059 | regular | NIP-59 | A gift wrap that a relay keeps. | code | [delivery, section 3.4](delivery/SPEC.md) |
 | 1063 | regular | NIP-94 | File metadata: a sealed file. | manifest | [files app](../apps/files/README.md) |

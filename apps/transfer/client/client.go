@@ -12,77 +12,28 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer/files"
+	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/pion/webrtc/v4"
 )
 
-// Arc names the arc program and the arc home of this citizen.
-type Arc struct {
-	// Program is the arc program. The default is "arc" on PATH.
-	Program string
-	// Home is the arc home. The default is the home that arc picks.
-	Home string
-}
-
-// Command makes a command of the arc program, in the arc home.
-func (a Arc) Command(ctx context.Context, args ...string) *exec.Cmd {
-	program := a.Program
-	if program == "" {
-		program = "arc"
+// turn asks the first relay of a citizen for a TURN credential. arc
+// signs the request with the key of the citizen.
+func turn(arc arcprogram.Arc) func(context.Context) (direct.Credential, error) {
+	return func(ctx context.Context) (direct.Credential, error) {
+		return direct.RelayTURN(arc.Command(ctx, "relay", "turn"))
 	}
-	if a.Home != "" {
-		args = append([]string{"--home", a.Home}, args...)
-	}
-	return exec.CommandContext(ctx, program, args...)
-}
-
-// PublicKey asks arc for the public key of this citizen.
-func (a Arc) PublicKey(ctx context.Context) (string, error) {
-	out, err := a.Command(ctx, "whoami").Output()
-	if err != nil {
-		return "", fmt.Errorf("arc whoami: %w", err)
-	}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if key := strings.TrimSpace(line); files.IsHex64(key) {
-			return key, nil
-		}
-	}
-	return "", errors.New("arc whoami printed no public key")
-}
-
-// Relays asks arc for the relay URLs of this citizen. It leaves out the
-// indexers.
-func (a Arc) Relays(ctx context.Context) ([]string, error) {
-	out, err := a.Command(ctx, "relay", "ls").Output()
-	if err != nil {
-		return nil, fmt.Errorf("arc relay ls: %w", err)
-	}
-	var relays []string
-	for line := range strings.SplitSeq(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 1 && (strings.HasPrefix(fields[0], "ws://") || strings.HasPrefix(fields[0], "wss://")) {
-			relays = append(relays, fields[0])
-		}
-	}
-	return relays, nil
-}
-
-// TURN asks the first relay of this citizen for a TURN credential. arc
-// signs the request with the key of this citizen.
-func (a Arc) TURN(ctx context.Context) (direct.Credential, error) {
-	return direct.RelayTURN(a.Command(ctx, "relay", "turn"))
 }
 
 // Get is one request for the file of a link.
 type Get struct {
-	Arc Arc
+	Arc arcprogram.Arc
 	// Link is the link of the offer.
 	Link string
 	// Output is the file to write. The default is the name in the link, in
@@ -159,7 +110,7 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 
 	started := time.Now()
 	err = direct.Attempts{
-		Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: g.Arc.TURN, Notes: g.Notes,
+		Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: turn(g.Arc), Notes: g.Notes,
 		Need: func() int64 { return offer.Size - part.Have() },
 	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
 		result.Path, err = run.attempt(ctx, options, hold)
@@ -311,7 +262,7 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 }
 
 // call makes the ARC call to the transfer app of a citizen.
-func call(ctx context.Context, arc Arc, key, body string) ([]byte, error) {
+func call(ctx context.Context, arc arcprogram.Arc, key, body string) ([]byte, error) {
 	command := arc.Command(ctx, "call", "transfer+arc://"+key+"/", body, "--raw", "--timeout", "30s")
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
@@ -339,7 +290,7 @@ func call(ctx context.Context, arc Arc, key, body string) ([]byte, error) {
 // bytes. The receiver then takes the file with the link, with no second
 // connection.
 type Put struct {
-	Arc Arc
+	Arc arcprogram.Arc
 	// To is the public key of the receiver.
 	To string
 	// File is the file to give.
@@ -397,7 +348,7 @@ func (p Put) Run(ctx context.Context) (PutResult, error) {
 
 	started := time.Now()
 	err = direct.Attempts{
-		Options: p.Options, AnswererFirst: p.AnswererFirst, NoRelay: p.NoRelay, TURN: p.Arc.TURN, Notes: p.Notes,
+		Options: p.Options, AnswererFirst: p.AnswererFirst, NoRelay: p.NoRelay, TURN: turn(p.Arc), Notes: p.Notes,
 		Need: func() int64 { return offer.Size },
 	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
 		result.Path, result.Bytes, err = p.attempt(ctx, options, offer, hold)

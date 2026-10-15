@@ -718,6 +718,9 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON, _ := command.Flags().GetBool("json"); asJSON {
+				return printSent(command, sess.Mail, out)
+			}
 			if len(out) == 0 {
 				fmt.Fprintln(command.OutOrStdout(), "no messages sent")
 			}
@@ -733,6 +736,7 @@ func messageCommand() *cobra.Command {
 
 	send.Flags().Bool("json", false, "print the queued message as one JSON object")
 	inbox.Flags().Bool("json", false, "print one JSON object for each message")
+	outbox.Flags().Bool("json", false, "print one JSON object for each message, and no requests")
 	command.AddCommand(send, inbox, outbox, messageWatchCommand())
 	return command
 }

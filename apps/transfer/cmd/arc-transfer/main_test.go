@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gezibash/arc/apps/transfer/client"
 	"github.com/gezibash/arc/apps/transfer/files"
+	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/direct"
 )
 
@@ -116,7 +116,7 @@ func setup(m *testing.M) int {
 				return fail("arc %v: %v\n%s", args, err, out)
 			}
 		}
-		if keys[name], err = (client.Arc{Program: env.arc, Home: home}).PublicKey(context.Background()); err != nil {
+		if keys[name], err = (arcprogram.Arc{Program: env.arc, Home: home}).PublicKey(context.Background()); err != nil {
 			return fail("%v", err)
 		}
 	}
@@ -208,7 +208,7 @@ func absent(t *testing.T, paths ...string) {
 // With no STUN setting, an end asks the host of its relay. An indexer is
 // not a relay of the citizen.
 func TestTheDefaultSTUNServerIsTheRelay(t *testing.T) {
-	arc := client.Arc{Program: env.arc, Home: t.TempDir()}
+	arc := arcprogram.Arc{Program: env.arc, Home: t.TempDir()}
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", "--index", "ws://127.0.0.1:1"}, {"relay", "add", env.relay}} {
 		if out, err := arc.Command(context.Background(), args...).CombinedOutput(); err != nil {
 			t.Fatalf("arc %v: %v\n%s", args, err, out)

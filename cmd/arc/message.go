@@ -37,6 +37,51 @@ type messageLine struct {
 	Text string `json:"text"`
 }
 
+// sentLine is one sent message in JSON. outbox --json prints it, one object
+// on each line. Programs outside this repository read it, so a change to it
+// is a breaking change.
+type sentLine struct {
+	ID    string `json:"id"`
+	To    string `json:"to"`
+	Name  string `json:"name"`
+	At    string `json:"at"`
+	Text  string `json:"text"`
+	State string `json:"state"`
+}
+
+// printSent prints the sent messages of the outbox as JSON lines. It leaves
+// out requests, and private events of the kinds of apps: the outbox holds
+// them too.
+func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error {
+	rumors, err := m.Rumors(command.Context(), []nostr.Kind{mail.MessageKind})
+	if err != nil {
+		return err
+	}
+	messages := map[string]bool{}
+	for _, rumor := range rumors {
+		messages[rumor.ID.Hex()] = true
+	}
+	encoder := json.NewEncoder(command.OutOrStdout())
+	encoder.SetEscapeHTML(false)
+	now := time.Now()
+	for _, o := range out {
+		if o.Kind != "message" || !messages[o.Rumor] {
+			continue
+		}
+		to, err := nostr.PubKeyFromHex(o.To)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(sentLine{
+			ID: o.Rumor, To: o.To, Name: keys.Name(to[:]),
+			At: o.Created.UTC().Format(time.RFC3339), Text: o.Text, State: o.State(now),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // messagePrinter writes received messages as inbox prints them, or as JSON.
 type messagePrinter struct {
 	out     io.Writer

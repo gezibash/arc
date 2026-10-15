@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/apps/transfer/client"
 	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/apps/transfer/server"
+	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/stdio"
 )
@@ -152,7 +153,7 @@ func put(ctx context.Context, args []string) error {
 
 // stunSetting is the STUN URL of a setting. With no setting, it asks arc for
 // the relays of this citizen.
-func stunSetting(ctx context.Context, arc client.Arc, value string) (string, error) {
+func stunSetting(ctx context.Context, arc arcprogram.Arc, value string) (string, error) {
 	if value != "" {
 		return direct.STUNURL(value, nil), nil
 	}
@@ -164,8 +165,8 @@ func stunSetting(ctx context.Context, arc client.Arc, value string) (string, err
 }
 
 // arcFlags adds the flags that name the arc program and the arc home.
-func arcFlags(flags *flag.FlagSet) *client.Arc {
-	arc := &client.Arc{}
+func arcFlags(flags *flag.FlagSet) *arcprogram.Arc {
+	arc := &arcprogram.Arc{}
 	flags.StringVar(&arc.Program, "arc", "arc", "the arc program")
 	flags.StringVar(&arc.Home, "home", "", "the arc home (default: the home that arc picks)")
 	return arc

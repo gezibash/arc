@@ -25,7 +25,7 @@ func listsCommand() *cobra.Command {
 		Short: "Saved sets of citizens, one for each installed command",
 		Long: "A list names a set of citizens for one installed command. Where the\n" +
 			"command takes a key, the name of a list runs it once for each member:\n" +
-			"arc lists add dm team <key> <key>, then arc dm send team hello.",
+			"arc lists add <command> team <key> <key>, then arc <command> send team hello.",
 	}
 	command.AddCommand(
 		&cobra.Command{
