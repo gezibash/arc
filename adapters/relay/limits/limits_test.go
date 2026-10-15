@@ -137,19 +137,26 @@ func TestTheRelayRefusesAWrapLargerThanMail(t *testing.T) {
 func TestAGiftWrapNeedsAuthenticationOrWork(t *testing.T) {
 	url := start(t, limits.Policy{WrapAuth: true, WrapPoW: 8})
 	recipient := nostr.Generate().Public()
+	// wrap with pow 0 has too little work: a random id has 8 leading zero
+	// bits with probability 1 in 256, so the id is drawn again until it has
+	// fewer than the 8 bits that the policy asks.
 	wrap := func(kind nostr.Kind, pow int) nostr.Event {
-		one := nostr.Generate()
-		e := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), PubKey: one.Public(), Content: "sealed",
-			Tags: nostr.Tags{{"p", recipient.Hex()}}}
-		if pow > 0 {
-			tag, err := nip13.DoWork(ctx, e, pow)
-			if err != nil {
-				t.Fatal(err)
+		for {
+			one := nostr.Generate()
+			e := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), PubKey: one.Public(), Content: "sealed",
+				Tags: nostr.Tags{{"p", recipient.Hex()}}}
+			if pow > 0 {
+				tag, err := nip13.DoWork(ctx, e, pow)
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.Tags = append(e.Tags, tag)
 			}
-			e.Tags = append(e.Tags, tag)
+			e.Sign(one)
+			if pow > 0 || nip13.Difficulty(e.ID) < 8 {
+				return e
+			}
 		}
-		e.Sign(one)
-		return e
 	}
 
 	if err := publish(t, url, nil, wrap(1059, 0)); err == nil || !strings.Contains(err.Error(), "auth-required") {

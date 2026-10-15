@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer"
-	"github.com/gezibash/arc/apps/transfer/client"
 	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/apps/transfer/server"
+	"github.com/gezibash/arc/sdk/arcprogram"
 )
 
 // send gives files to one citizen in one command. It records an offer for
@@ -98,7 +98,7 @@ func send(ctx context.Context, args []string) error {
 
 // serveFor runs arc serve with the transfer app for one caller, and returns
 // when the service answers. The returned function stops the service.
-func serveFor(ctx context.Context, arc client.Arc, state, caller string) (stop func(), err error) {
+func serveFor(ctx context.Context, arc arcprogram.Arc, state, caller string) (stop func(), err error) {
 	program, err := os.Executable()
 	if err != nil {
 		return nil, err

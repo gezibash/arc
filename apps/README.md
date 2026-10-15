@@ -12,7 +12,7 @@ service program. Apps compose through core ARC calls, sessions and events.
 | [Releases](releases/README.md) | Reads signed update channels and serves archive chunks or streams. |
 | [Transfer](transfer/README.md) | Gives files on a direct connection; one call carries the WebRTC offer and answer, and its program gets a file. |
 | [Storage](storage/README.md) | Holds encrypted blobs for its owners; one call opens a direct connection, and the program `arc-storage` puts, lists, gets and deletes blobs. |
-| [Direct messages](dm/manifest.json) | Local commands that send and read private events. |
+| [Direct messages](dm/README.md) | Conversations, unread messages and notifications; its program `arc-dm` drives `arc message`. |
 | [Files](files/manifest.json) | Local commands that store and read sealed files. |
 
 ## Terms
@@ -21,7 +21,7 @@ service program. Apps compose through core ARC calls, sessions and events.
 | --- | --- |
 | App | A named package of commands, interface definitions and optional programs. |
 | Command | An operation invoked through `arc <installed-name> <command>`. |
-| Program | Executable code; the release includes `arc-exec`, `arc-sqlite`, `arc-http`, `arc-releases`, `arc-transfer` and `arc-storage`. |
+| Program | Executable code; the release includes `arc-exec`, `arc-sqlite`, `arc-http`, `arc-releases`, `arc-transfer`, `arc-storage` and `arc-dm`. |
 | Instance | A running program with an operating identity and configuration. |
 | Service | An interface that an instance makes available to callers. |
 | Session | One request/reply, server stream or duplex interaction. |
