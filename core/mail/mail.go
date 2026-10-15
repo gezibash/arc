@@ -158,7 +158,7 @@ type Mail struct {
 func New(db kv.Store, k keys.Signer, n *node.Node, relays []transport.Transport) (*Mail, error) {
 	m := &Mail{key: k, node: n, db: db, relays: relays, now: time.Now, work: private.Work, maxHeld: MaxHeld}
 	if err := m.update(func(tx kv.Tx) error {
-		for _, name := range [][]byte{outboxBucket, carryBucket, inboxBucket, heldBucket, wroteBucket} {
+		for _, name := range [][]byte{outboxBucket, carryBucket, inboxBucket, heldBucket, droppedBucket, wroteBucket} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
@@ -1063,7 +1063,7 @@ func (m *Mail) expire() error {
 				}
 			}
 		}
-		return nil
+		return m.expireDropped(tx)
 	})
 }
 

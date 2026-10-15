@@ -25,6 +25,10 @@ const MaxHeld = 200
 
 var (
 	heldBucket = []byte("held")
+	// droppedBucket names each held seal that the cap pushed out, until its
+	// wrap expires. A relay serves the wrap again on each sync, and a
+	// dropped seal must not come back and push out another.
+	droppedBucket = []byte("dropped")
 	// wroteBucket names each key that wrote this citizen a message, or
 	// that the scan of stranger looked for.
 	wroteBucket = []byte("wrote")
@@ -142,7 +146,7 @@ func (m *Mail) hold(opened private.Opened, wrap nostr.Event, report *Report) err
 	}
 	return m.update(func(tx kv.Tx) error {
 		bucket := tx.Bucket(heldBucket)
-		if bucket.Get([]byte(id)) != nil {
+		if bucket.Get([]byte(id)) != nil || tx.Bucket(droppedBucket).Get([]byte(id)) != nil {
 			return nil
 		}
 		if err := put(tx, heldBucket, id, entry); err != nil {
@@ -170,9 +174,56 @@ func (m *Mail) hold(opened private.Opened, wrap nostr.Event, report *Report) err
 			if err := bucket.Delete([]byte(ids[i])); err != nil {
 				return err
 			}
+			if err := put(tx, droppedBucket, ids[i], all[i].Expires); err != nil {
+				return err
+			}
 		}
-		return nil
+		return m.capDropped(tx)
 	})
+}
+
+// capDropped keeps at most 10 × maxHeld dropped seals (estimated), and
+// forgets the ones that expire first. A forgotten seal can be held again.
+func (m *Mail) capDropped(tx kv.Tx) error {
+	type gone struct {
+		id      string
+		expires time.Time
+	}
+	var all []gone
+	if err := tx.Bucket(droppedBucket).ForEach(func(k, v []byte) error {
+		var at time.Time
+		if err := json.Unmarshal(v, &at); err != nil {
+			return err
+		}
+		all = append(all, gone{string(k), at})
+		return nil
+	}); err != nil || len(all) <= 10*m.maxHeld {
+		return err
+	}
+	sort.Slice(all, func(a, b int) bool { return all[a].expires.Before(all[b].expires) })
+	for _, g := range all[:len(all)-10*m.maxHeld] {
+		if err := tx.Bucket(droppedBucket).Delete([]byte(g.id)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expireDropped forgets each dropped seal whose wrap expired.
+func (m *Mail) expireDropped(tx kv.Tx) error {
+	cursor := tx.Bucket(droppedBucket).Cursor()
+	for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+		var at time.Time
+		if err := json.Unmarshal(v, &at); err != nil {
+			return err
+		}
+		if m.now().After(at) {
+			if err := cursor.Delete(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // unhold removes a held seal, when a wrap of it with work arrives.

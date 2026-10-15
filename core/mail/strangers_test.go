@@ -289,6 +289,9 @@ func TestTheHeldMailHasALimit(t *testing.T) {
 	}
 	alice.sync(t, courier)
 	bob.sync(t, courier)
+	// The stick still holds each wrap. A second sync must not bring the
+	// dropped seal back.
+	bob.sync(t, courier)
 	held := heldText(t, bob)
 	if len(held) != limit || slices.Contains(held, "the first") {
 		t.Errorf("bob holds %d messages; the first is still there: %v", len(held), slices.Contains(held, "the first"))
