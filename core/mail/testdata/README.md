@@ -145,3 +145,21 @@ the recipient, and compares the acknowledgement that the recipient makes
 with the first vector. Then the sender opens it, and the message shows as
 delivered. `TestAckWrapVectors` gives each recorded wrap to the sender, and
 checks `delivers`. A test fails if a file is missing or holds no vectors.
+
+## outbox-v0.31.0
+
+This directory holds the mail of a sender of arc v0.31.0, in the on-disk
+layout of that version. In that layout, the rumor id alone names an outbox
+entry. `TestAnOldOutboxMovesToTheNewKeys` opens it, and checks that the
+first open moves each entry to the key of its rumor and its recipient.
+
+| File | Meaning |
+| --- | --- |
+| `events.db.gz` | The event store of the sender, compressed with gzip. It holds the seals and the wraps. |
+| `mail.db.gz` | The mail database of the sender, compressed with gzip. It holds the outbox and the carried wraps. |
+| `keys.json` | The secret keys of the sender `alice` and of the recipients `bob` and `carol`. They are test values. |
+
+The code of v0.31.0 made the files over a relay on this machine, with a
+clock of 2100-01-01T00:00:00Z, so the wraps do not expire. Alice sent one
+message to bob and one to carol. Bob acknowledged his message, so it is
+delivered. Carol did not sync, so her message is pending.

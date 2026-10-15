@@ -35,6 +35,11 @@ type citizen struct {
 
 func newCitizen(t *testing.T, relays ...transport.Transport) citizen {
 	t.Helper()
+	return newCitizenWithKey(t, keys.Generate(), relays...)
+}
+
+func newCitizenWithKey(t *testing.T, k keys.Key, relays ...transport.Transport) citizen {
+	t.Helper()
 	dir := t.TempDir()
 	s, err := boltstore.Open(dir)
 	if err != nil {
@@ -42,7 +47,6 @@ func newCitizen(t *testing.T, relays ...transport.Transport) citizen {
 	}
 	t.Cleanup(s.Close)
 
-	k := keys.Generate()
 	n := &node.Node{Store: s}
 	m, err := mailbox.Open(dir, k, n, relays)
 	if err != nil {
@@ -66,7 +70,7 @@ func (c citizen) sync(t *testing.T, tr transport.Transport) mail.Report {
 
 func (c citizen) send(t *testing.T, to citizen, text string) {
 	t.Helper()
-	if _, err := c.mail.Send(context.Background(), to.key.Public, text); err != nil {
+	if _, err := c.mail.Send(context.Background(), []nostr.PubKey{to.key.Public}, text); err != nil {
 		t.Fatal(err)
 	}
 }

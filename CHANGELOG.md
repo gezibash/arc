@@ -18,9 +18,26 @@ All notable changes to ARC are recorded here. The format follows
   and reads the JSON lines of `arc message`. The spec
   `docs/clients/SPEC.md` defines the lines.
 
+- Group messages: `arc message send <key>,<key>` sends one NIP-17 message
+  to several citizens, at most 10 participants with the sender. Each member
+  sees the others. The message line and the sent line of `arc message` get
+  the field `members`. `arc-dm` keys a conversation by its members, and
+  replies to each member. A private publish of a manifest can name several
+  recipients. See `docs/groups/SPEC.md`.
+
 ### Changed
 
 - arc-transfer runs arc through `sdk/arcprogram`.
+- **Breaking:** the outbox keeps one entry for each recipient, under the
+  rumor id and the recipient. The first open moves the entries of an older
+  arc. An older arc that opens the moved outbox lists the entries, but its
+  acknowledgements do not find them, so its messages stay pending.
+- **Breaking:** an acknowledgement marks only the entry of its author.
+  `arc message outbox` shows `delivered to 1 of 2` for a group.
+- **Breaking:** a receiver refuses a message of kind 14 that names it in no
+  `p` tag.
+- **Breaking:** `arcprogram.Arc.Send` and `mail.Mail.Send` take a list of
+  recipients.
 
 ### Removed
 

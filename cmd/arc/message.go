@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -28,25 +29,106 @@ import (
 
 // messageLine is one received message in JSON. inbox --json and watch --json
 // print it, one object on each line. Programs outside this repository read
-// it, so a change to it is a breaking change.
+// it, so a change to it is a breaking change. docs/clients/SPEC.md defines
+// it.
 type messageLine struct {
 	ID   string `json:"id"`
 	From string `json:"from"`
 	Name string `json:"name"`
 	At   string `json:"at"`
 	Text string `json:"text"`
+	// Members are the sender, then each member that a p tag names.
+	Members []string `json:"members"`
 }
 
 // sentLine is one sent message in JSON. outbox --json prints it, one object
-// on each line. Programs outside this repository read it, so a change to it
-// is a breaking change.
+// on each line, and one line for each member of a group message. Programs
+// outside this repository read it, so a change to it is a breaking change.
 type sentLine struct {
-	ID    string `json:"id"`
-	To    string `json:"to"`
-	Name  string `json:"name"`
-	At    string `json:"at"`
-	Text  string `json:"text"`
-	State string `json:"state"`
+	ID      string   `json:"id"`
+	To      string   `json:"to"`
+	Name    string   `json:"name"`
+	At      string   `json:"at"`
+	Text    string   `json:"text"`
+	State   string   `json:"state"`
+	Members []string `json:"members"`
+}
+
+// queuedLine is the message that send --json put in the outbox. To is the
+// first recipient.
+type queuedLine struct {
+	ID      string   `json:"id"`
+	To      string   `json:"to"`
+	State   string   `json:"state"`
+	Members []string `json:"members"`
+}
+
+// recipients reads the public keys of a send, separated by commas.
+func recipients(text string) ([]nostr.PubKey, error) {
+	var out []nostr.PubKey
+	for part := range strings.SplitSeq(text, ",") {
+		pk, err := nostr.PubKeyFromHex(strings.TrimSpace(part))
+		if err != nil {
+			return nil, errors.New("a recipient is 64 characters of hex, as arc whoami prints it; separate the recipients of a group with commas")
+		}
+		out = append(out, pk)
+	}
+	return out, nil
+}
+
+func hexKeys(pks []nostr.PubKey) []string {
+	out := make([]string, len(pks))
+	for i, pk := range pks {
+		out[i] = pk.Hex()
+	}
+	return out
+}
+
+// petnames names some keys, separated by commas.
+func petnames(pks []nostr.PubKey) string {
+	names := make([]string, len(pks))
+	for i, pk := range pks {
+		names[i] = keys.Name(pk[:])
+	}
+	return strings.Join(names, ", ")
+}
+
+// printOutbox prints each sent message once. A group message says to how
+// many of its members it was delivered.
+func printOutbox(w io.Writer, out []mail.Outgoing, now time.Time) {
+	var order []string
+	byRumor := map[string][]mail.Outgoing{}
+	for _, o := range out {
+		if byRumor[o.Rumor] == nil {
+			order = append(order, o.Rumor)
+		}
+		byRumor[o.Rumor] = append(byRumor[o.Rumor], o)
+	}
+	for _, rumor := range order {
+		entries := byRumor[rumor]
+		var to []nostr.PubKey
+		delivered, expired, attempts := 0, 0, 0
+		for _, o := range entries {
+			pk, _ := nostr.PubKeyFromHex(o.To)
+			to = append(to, pk)
+			switch o.State(now) {
+			case "delivered":
+				delivered++
+			case "expired":
+				expired++
+			}
+			attempts = max(attempts, o.Attempts)
+		}
+		state := entries[0].State(now)
+		if len(entries) > 1 && delivered < len(entries) && (delivered > 0 || expired > 0) {
+			state = fmt.Sprintf("delivered to %d of %d", delivered, len(entries))
+			if expired > 0 {
+				state += fmt.Sprintf(", %d expired", expired)
+			}
+		}
+		fmt.Fprintf(w, "%s  to %s  %s, sent %d times\n  %s\n",
+			entries[0].Created.Local().Format("2006-01-02 15:04"), petnames(to), state, attempts, entries[0].Text)
+	}
 }
 
 // printSent prints the sent messages of the outbox as JSON lines. It leaves
@@ -57,15 +139,15 @@ func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error 
 	if err != nil {
 		return err
 	}
-	messages := map[string]bool{}
+	members := map[string][]string{}
 	for _, rumor := range rumors {
-		messages[rumor.ID.Hex()] = true
+		members[rumor.ID.Hex()] = hexKeys(mail.Members(rumor))
 	}
 	encoder := json.NewEncoder(command.OutOrStdout())
 	encoder.SetEscapeHTML(false)
 	now := time.Now()
 	for _, o := range out {
-		if o.Kind != "message" || !messages[o.Rumor] {
+		if o.Kind != "message" || members[o.Rumor] == nil {
 			continue
 		}
 		to, err := nostr.PubKeyFromHex(o.To)
@@ -75,6 +157,7 @@ func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error 
 		if err := encoder.Encode(sentLine{
 			ID: o.Rumor, To: o.To, Name: keys.Name(to[:]),
 			At: o.Created.UTC().Format(time.RFC3339), Text: o.Text, State: o.State(now),
+			Members: members[o.Rumor],
 		}); err != nil {
 			return err
 		}
@@ -85,11 +168,12 @@ func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error 
 // messagePrinter writes received messages as inbox prints them, or as JSON.
 type messagePrinter struct {
 	out     io.Writer
+	me      nostr.PubKey
 	encoder *json.Encoder
 }
 
-func newMessagePrinter(out io.Writer, asJSON bool) messagePrinter {
-	p := messagePrinter{out: out}
+func newMessagePrinter(out io.Writer, me nostr.PubKey, asJSON bool) messagePrinter {
+	p := messagePrinter{out: out, me: me}
 	if asJSON {
 		p.encoder = json.NewEncoder(out)
 		p.encoder.SetEscapeHTML(false)
@@ -99,12 +183,17 @@ func newMessagePrinter(out io.Writer, asJSON bool) messagePrinter {
 
 func (p messagePrinter) print(m mail.Message) error {
 	if p.encoder == nil {
-		_, err := fmt.Fprintf(p.out, "%s  %s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), m.Text)
+		group := ""
+		if len(m.Members) > 2 {
+			others := slices.DeleteFunc(slices.Clone(m.Members[1:]), func(pk nostr.PubKey) bool { return pk == p.me })
+			group = "  to you, " + petnames(others)
+		}
+		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, m.Text)
 		return err
 	}
 	return p.encoder.Encode(messageLine{
 		ID: m.ID, From: m.From.Hex(), Name: keys.Name(m.From[:]),
-		At: m.At.UTC().Format(time.RFC3339), Text: m.Text,
+		At: m.At.UTC().Format(time.RFC3339), Text: m.Text, Members: hexKeys(m.Members),
 	})
 }
 
@@ -160,7 +249,7 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	saved := make(chan struct{}, 1)
 	sess.Node.Store = sealNotice{EventStore: sess.Node.Store, saved: saved}
 
-	printer := newMessagePrinter(command.OutOrStdout(), asJSON)
+	printer := newMessagePrinter(command.OutOrStdout(), sess.Signer.PublicKey(), asJSON)
 	show := func(m mail.Message) error {
 		if len(senders) > 0 && !senders[m.From] {
 			return nil

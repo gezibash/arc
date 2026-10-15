@@ -79,11 +79,11 @@ func TestMessageRumorVectors(t *testing.T) {
 			m := openMail(t, sender)
 			mail.SetNow(m, func() time.Time { return time.Unix(v.Unix, 0) })
 
-			out, err := m.Send(context.Background(), recipient, v.Text)
+			sent, err := m.Send(context.Background(), []nostr.PubKey{recipient}, v.Text)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out.Rumor != v.Rumor.ID {
+			if out := sent[0]; out.Rumor != v.Rumor.ID {
 				t.Errorf("the outbox names rumor %s, want %s", out.Rumor, v.Rumor.ID)
 			}
 
@@ -215,9 +215,9 @@ func sendMessage(t *testing.T, acks ackVectors) (*mail.Mail, keys.Key) {
 	alice, bob := mustKey(t, acks.Message.SenderSecret), mustKey(t, acks.Message.RecipientSecret)
 	m := openMail(t, alice)
 	mail.SetNow(m, func() time.Time { return time.Unix(acks.Message.Unix, 0) })
-	out, err := m.Send(context.Background(), bob.Public, acks.Message.Text)
-	if err != nil || out.Rumor != acks.Message.ID {
-		t.Fatalf("the outbox names rumor %s, want %s (%v)", out.Rumor, acks.Message.ID, err)
+	sent, err := m.Send(context.Background(), []nostr.PubKey{bob.Public}, acks.Message.Text)
+	if err != nil || sent[0].Rumor != acks.Message.ID {
+		t.Fatalf("the outbox names rumor %v, want %s (%v)", sent, acks.Message.ID, err)
 	}
 	return m, alice
 }

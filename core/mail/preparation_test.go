@@ -164,7 +164,7 @@ func TestConcurrentPreparationExecutesOnce(t *testing.T) {
 func TestIncomingMailReadErrorsAreReturned(t *testing.T) {
 	m, _, key, n := openMail(t, nil)
 	sender := keys.Generate()
-	rumor := private.Rumor(sender, MessageKind, "received text", nostr.Tags{}, time.Now())
+	rumor := private.Rumor(sender, MessageKind, "received text", nostr.Tags{{"p", key.Public.Hex()}}, time.Now())
 	seal, err := private.Seal(context.Background(), sender, key.Public, rumor)
 	if err != nil {
 		t.Fatal(err)

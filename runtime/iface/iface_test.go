@@ -257,10 +257,12 @@ func (f *fakeEnv) Watch(ctx context.Context, _ nostr.Filter, _ []string) (<-chan
 	}()
 	return out, nil
 }
-func (f *fakeEnv) SendPrivate(_ context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+func (f *fakeEnv) SendPrivate(_ context.Context, to []nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
 	rumor := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), Content: content, Tags: tags, PubKey: f.me.Public()}
 	rumor.ID = rumor.GetID()
-	f.net.inbox[to] = append(f.net.inbox[to], rumor)
+	for _, pk := range to {
+		f.net.inbox[pk] = append(f.net.inbox[pk], rumor)
+	}
 	f.net.inbox[f.me.Public()] = append(f.net.inbox[f.me.Public()], rumor)
 	return nil
 }

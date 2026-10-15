@@ -6,6 +6,10 @@
 // for anything that a person carries. Both wraps hold the same seal, so a
 // recipient who gets both keeps one.
 //
+// A group message is one rumor with a p tag for each member. The author
+// seals it to each member separately, and the outbox keeps one entry for
+// each member, so each member acknowledges it separately.
+//
 // The outbox keeps each message until the recipient acknowledges it. A node
 // that syncs with a directory also carries the courier form of other
 // citizens' mail, which it cannot read: it knows only a route tag. A hop limit
@@ -47,6 +51,10 @@ const (
 	MaxCarried = 40
 	// MaxCarryBytes caps one carried event.
 	MaxCarryBytes = 64 * 1024
+	// MaxParticipants caps the members of a group message, with its
+	// author, as NIP-17 advises: each member costs two wraps and one
+	// acknowledgement.
+	MaxParticipants = 10
 )
 
 var (
@@ -97,8 +105,15 @@ type carried struct {
 	Received time.Time `json:"received"`
 	Expires  time.Time `json:"expires"`
 	Rumor    string    `json:"rumor,omitempty"`
-	SentTo   []string  `json:"sent_to,omitempty"`
+	// To is the recipient of the wrap. With Rumor, it names the outbox
+	// entry.
+	To     string   `json:"to,omitempty"`
+	SentTo []string `json:"sent_to,omitempty"`
 }
+
+// outboxKey names the outbox entry of a rumor to one recipient. A group
+// message has one entry for each member.
+func outboxKey(rumor, to string) string { return rumor + ":" + to }
 
 // Mail is the mail of one citizen on one machine.
 type Mail struct {
@@ -137,7 +152,7 @@ func New(db kv.Store, k keys.Signer, n *node.Node, relays []transport.Transport)
 				return err
 			}
 		}
-		return nil
+		return migrateOutbox(tx)
 	}); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("mail: %w", err)
@@ -145,27 +160,85 @@ func New(db kv.Store, k keys.Signer, n *node.Node, relays []transport.Transport)
 	return m, nil
 }
 
+// migrateOutbox moves each outbox entry of an older arc, which the rumor id
+// alone names, to the key of its rumor and its recipient. It also names the
+// recipient of each own wrap of those entries. It runs in the transaction
+// that opens the mail, so a failure leaves the older layout whole.
+func migrateOutbox(tx kv.Tx) error {
+	outbox := tx.Bucket(outboxBucket)
+	moved := map[string]string{}
+	if err := outbox.ForEach(func(k, v []byte) error {
+		if len(k) != 64 {
+			return nil
+		}
+		var out Outgoing
+		if err := json.Unmarshal(v, &out); err != nil {
+			return err
+		}
+		moved[string(k)] = out.To
+		return nil
+	}); err != nil || len(moved) == 0 {
+		return err
+	}
+	for rumor, to := range moved {
+		body := append([]byte(nil), outbox.Get([]byte(rumor))...)
+		if err := outbox.Put([]byte(outboxKey(rumor, to)), body); err != nil {
+			return err
+		}
+		if err := outbox.Delete([]byte(rumor)); err != nil {
+			return err
+		}
+	}
+	carry := tx.Bucket(carryBucket)
+	var named []carried
+	if err := carry.ForEach(func(_, v []byte) error {
+		var c carried
+		if err := json.Unmarshal(v, &c); err != nil {
+			return err
+		}
+		if to, ok := moved[c.Rumor]; ok && c.Own && c.To == "" {
+			c.To = to
+			named = append(named, c)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, c := range named {
+		if err := put(tx, carryBucket, c.Wrap, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Close releases the mail state.
 func (m *Mail) Close() error                      { m.db.Close(); return nil }
 func (m *Mail) update(fn func(kv.Tx) error) error { return m.db.Update(fn) }
 func (m *Mail) view(fn func(kv.Tx) error) error   { return m.db.View(fn) }
 
-// Send seals a message to a citizen, puts it in the outbox, and sends it to
-// the relays at once. A relay that fails does not fail the send: the outbox
-// sends the message again on the next sync.
-func (m *Mail) Send(ctx context.Context, to nostr.PubKey, text string) (Outgoing, error) {
-	return m.SendRumor(ctx, to, MessageKind, text, nostr.Tags{{"p", to.Hex()}})
+// Send seals a message to each recipient, puts it in the outbox, and sends
+// it to the relays at once. With more than one recipient, it is a group
+// message: one rumor with a p tag for each recipient. A relay that fails
+// does not fail the send: the outbox sends the message again on the next
+// sync. Send returns one outbox entry for each recipient.
+func (m *Mail) Send(ctx context.Context, to []nostr.PubKey, text string) ([]Outgoing, error) {
+	tags := make(nostr.Tags, 0, len(to))
+	for _, pk := range to {
+		tags = append(tags, nostr.Tag{"p", pk.Hex()})
+	}
+	return m.SendRumor(ctx, to, MessageKind, text, tags)
 }
 
-// SendRumor seals a private event of any kind to a citizen, as Send does
-// with a message.
-func (m *Mail) SendRumor(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) (Outgoing, error) {
-	if to == m.key.PublicKey() {
-		return Outgoing{}, errors.New("mail: a message to yourself belongs in the journal")
+// SendRumor seals one private event of any kind to each recipient, as Send
+// does with a message. The caller gives the tags.
+func (m *Mail) SendRumor(ctx context.Context, to []nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) ([]Outgoing, error) {
+	if err := m.checkRecipients(to); err != nil {
+		return nil, err
 	}
 	switch kind {
 	case AckKind, call.RequestKind, call.ReplyKind:
-		return Outgoing{}, fmt.Errorf("mail: kind %d belongs to the mail layer", kind)
+		return nil, fmt.Errorf("mail: kind %d belongs to the mail layer", kind)
 	}
 
 	now := m.now()
@@ -173,34 +246,74 @@ func (m *Mail) SendRumor(ctx context.Context, to nostr.PubKey, kind nostr.Kind, 
 	return m.queue(ctx, to, rumor, "message")
 }
 
+// checkRecipients refuses no recipient, this citizen, a recipient named
+// twice, and more than MaxParticipants with this citizen.
+func (m *Mail) checkRecipients(to []nostr.PubKey) error {
+	if len(to) == 0 {
+		return errors.New("mail: a message needs a recipient")
+	}
+	if len(to)+1 > MaxParticipants {
+		return fmt.Errorf("mail: a group message has at most %d participants, with you; this one has %d", MaxParticipants, len(to)+1)
+	}
+	seen := map[nostr.PubKey]bool{}
+	for _, pk := range to {
+		if pk == m.key.PublicKey() {
+			return errors.New("mail: a message to yourself belongs in the journal")
+		}
+		if seen[pk] {
+			return fmt.Errorf("mail: %s is a recipient twice", pk.Hex())
+		}
+		seen[pk] = true
+	}
+	return nil
+}
+
 // Request commits a call to the outbox before attempting any network send.
 func (m *Mail) Request(ctx context.Context, provider nostr.PubKey, r call.Request) (Outgoing, error) {
 	r.DeadlineMS = 0 // A deferred request's execution budget starts when served.
-	return m.queue(ctx, provider, call.RequestRumor(m.key, provider, r, m.now()), "request")
+	out, err := m.queue(ctx, []nostr.PubKey{provider}, call.RequestRumor(m.key, provider, r, m.now()), "request")
+	if err != nil {
+		return Outgoing{}, err
+	}
+	return out[0], nil
 }
 
-func (m *Mail) queue(ctx context.Context, to nostr.PubKey, rumor nostr.Event, kind string) (Outgoing, error) {
+// queue seals one rumor to each recipient, and commits each outbox entry
+// and wrap in one transaction before any network send.
+func (m *Mail) queue(ctx context.Context, to []nostr.PubKey, rumor nostr.Event, kind string) ([]Outgoing, error) {
 	if err := private.CheckMail(rumor); err != nil {
-		return Outgoing{}, err
+		return nil, err
 	}
 	expires := m.now().Add(private.MaxAge)
-	seal, entries, err := m.prepare(ctx, to, rumor, expires)
-	if err != nil {
-		return Outgoing{}, err
-	}
-	out := Outgoing{Kind: kind, Rumor: rumor.ID.Hex(), To: to.Hex(), Seal: seal.ID.Hex(), Created: m.now().UTC(), Expires: expires.UTC(), Text: rumor.Content}
-	err = m.update(func(tx kv.Tx) error {
-		if err := put(tx, outboxBucket, out.Rumor, out); err != nil {
-			return err
+	outs := make([]Outgoing, len(to))
+	wraps := make([][]carried, len(to))
+	for i, pk := range to {
+		seal, entries, err := m.prepare(ctx, pk, rumor, expires)
+		if err != nil {
+			return nil, err
 		}
-		return putCarried(tx, entries)
+		outs[i] = Outgoing{Kind: kind, Rumor: rumor.ID.Hex(), To: pk.Hex(), Seal: seal.ID.Hex(), Created: m.now().UTC(), Expires: expires.UTC(), Text: rumor.Content}
+		wraps[i] = entries
+	}
+	err := m.update(func(tx kv.Tx) error {
+		for i, out := range outs {
+			if err := put(tx, outboxBucket, outboxKey(out.Rumor, out.To), out); err != nil {
+				return err
+			}
+			if err := putCarried(tx, wraps[i]); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		return Outgoing{}, err
+		return nil, err
 	}
 	// Transmission is best effort. Durable state survives every failed send.
-	m.sendPrepared(ctx, to, entries)
-	return out, nil
+	for i, pk := range to {
+		m.sendPrepared(ctx, pk, wraps[i])
+	}
+	return outs, nil
 }
 
 // prepare persists encrypted events, without exposing anything to a transport.
@@ -222,7 +335,7 @@ func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, 
 		if result, err := m.node.Store.Save(wrap); err != nil || result.Outcome == store.Refused {
 			return nostr.Event{}, nil, fmt.Errorf("mail: wrap not saved: %v %s", err, result.Reason)
 		}
-		entries = append(entries, carried{Wrap: wrap.ID.Hex(), Own: true, Courier: form == private.CourierForm, Hops: StartHops, Received: m.now().UTC(), Expires: expires.UTC(), Rumor: rumor.ID.Hex()})
+		entries = append(entries, carried{Wrap: wrap.ID.Hex(), Own: true, Courier: form == private.CourierForm, Hops: StartHops, Received: m.now().UTC(), Expires: expires.UTC(), Rumor: rumor.ID.Hex(), To: to.Hex()})
 	}
 	return seal, entries, nil
 }
@@ -468,6 +581,10 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 		}
 		return m.receiveRequest(ctx, opened, previouslyReceived, report)
 	}
+	if opened.Rumor.Kind == MessageKind && !names(opened.Rumor, m.key.PublicKey()) {
+		report.Refused = append(report.Refused, wrap.ID.Hex()+": the message names this citizen in no p tag")
+		return nil
+	}
 
 	result, err := m.node.Store.Save(opened.Seal)
 	if err != nil {
@@ -684,41 +801,44 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 func (m *Mail) replied(opened private.Opened, report *Report) error {
 	id, _ := call.ReadReply(opened.Rumor)
 
+	key := outboxKey(id, opened.Author().Hex())
 	var out Outgoing
-	found, err := m.get(outboxBucket, id, &out)
+	found, err := m.get(outboxBucket, key, &out)
 	if err != nil || !found {
 		return err
 	}
-	if out.Kind != "request" || out.To != opened.Author().Hex() || out.ReplySeal != "" {
+	if out.Kind != "request" || out.ReplySeal != "" {
 		return nil
 	}
 
 	out.Delivered = m.now().UTC()
 	out.ReplySeal = opened.Seal.ID.Hex()
 	report.Replies++
-	return m.put(outboxBucket, out.Rumor, out)
+	return m.put(outboxBucket, key, out)
 }
 
-// acknowledged marks a message delivered, if its recipient sent the
-// acknowledgement.
+// acknowledged marks a message delivered to the author of the
+// acknowledgement. The entries of the other members of a group message
+// stay as they are.
 func (m *Mail) acknowledged(opened private.Opened, report *Report) error {
 	tag := opened.Rumor.Tags.Find("e")
 	if len(tag) < 2 {
 		return nil
 	}
 
+	key := outboxKey(tag[1], opened.Author().Hex())
 	var out Outgoing
-	found, err := m.get(outboxBucket, tag[1], &out)
+	found, err := m.get(outboxBucket, key, &out)
 	if err != nil || !found {
 		return err
 	}
-	if out.To != opened.Author().Hex() || !out.Delivered.IsZero() {
+	if !out.Delivered.IsZero() {
 		return nil
 	}
 
 	out.Delivered = m.now().UTC()
 	report.Delivered++
-	return m.put(outboxBucket, out.Rumor, out)
+	return m.put(outboxBucket, key, out)
 }
 
 // carry takes on another citizen's courier-form wrap, if the hop limit
@@ -842,7 +962,7 @@ func (m *Mail) give(ctx context.Context, t transport.Transport, carrier transpor
 			}
 		}
 		if entry.Own && entry.Rumor != "" {
-			if err := m.attempted(entry.Rumor); err != nil {
+			if err := m.attempted(outboxKey(entry.Rumor, entry.To)); err != nil {
 				return err
 			}
 		}
@@ -850,9 +970,9 @@ func (m *Mail) give(ctx context.Context, t transport.Transport, carrier transpor
 	return nil
 }
 
-func (m *Mail) attempted(rumor string) error {
+func (m *Mail) attempted(key string) error {
 	return m.update(func(tx kv.Tx) error {
-		data := tx.Bucket(outboxBucket).Get([]byte(rumor))
+		data := tx.Bucket(outboxBucket).Get([]byte(key))
 		if data == nil {
 			return nil
 		}
@@ -864,7 +984,7 @@ func (m *Mail) attempted(rumor string) error {
 			return nil
 		}
 		out.Attempts++
-		return put(tx, outboxBucket, rumor, out)
+		return put(tx, outboxBucket, key, out)
 	})
 }
 
@@ -890,12 +1010,33 @@ func (m *Mail) expire() error {
 type Message struct {
 	ID   string
 	From nostr.PubKey
-	At   time.Time
-	Text string
+	// Members are the sender, then each member that a p tag names. A
+	// direct message has two: the sender and this citizen.
+	Members []nostr.PubKey
+	At      time.Time
+	Text    string
+}
+
+// Members returns the members of a message: its author, then each key that
+// a p tag names, once each.
+func Members(rumor nostr.Event) []nostr.PubKey {
+	members := []nostr.PubKey{rumor.PubKey}
+	for tag := range rumor.Tags.FindAll("p") {
+		if pk, err := nostr.PubKeyFromHex(tag[1]); err == nil && !slices.Contains(members, pk) {
+			members = append(members, pk)
+		}
+	}
+	return members
+}
+
+// names says whether a p tag of a rumor names a key.
+func names(rumor nostr.Event, pk nostr.PubKey) bool {
+	return rumor.Tags.FindWithValue("p", pk.Hex()) != nil
 }
 
 // Inbox returns the messages that this citizen received, oldest first. It
-// opens each seal from the store, and stores no text.
+// opens each seal from the store, and stores no text. It leaves out a
+// message that names this citizen in no p tag.
 func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -915,12 +1056,12 @@ func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 		if err != nil {
 			return nil, fmt.Errorf("mail: open received seal %s: %w", seal.ID.Hex(), err)
 		}
-		if rumor.Kind != MessageKind || seen[rumor.ID.Hex()] {
+		if rumor.Kind != MessageKind || seen[rumor.ID.Hex()] || !names(rumor, m.key.PublicKey()) {
 			continue
 		}
 		seen[rumor.ID.Hex()] = true
 		out = append(out, Message{
-			ID: rumor.ID.Hex(), From: rumor.PubKey,
+			ID: rumor.ID.Hex(), From: rumor.PubKey, Members: Members(rumor),
 			At: time.Unix(int64(rumor.CreatedAt), 0).UTC(), Text: rumor.Content,
 		})
 	}
@@ -956,6 +1097,9 @@ func (m *Mail) Rumors(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, e
 		rumor, err := private.OpenSeal(ctx, m.key, seal)
 		if err != nil {
 			return nil, fmt.Errorf("mail: open received seal %s: %w", seal.ID.Hex(), err)
+		}
+		if rumor.Kind == MessageKind && !names(rumor, m.key.PublicKey()) {
+			continue
 		}
 		keep(rumor)
 	}

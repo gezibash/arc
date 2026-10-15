@@ -20,7 +20,7 @@ func TestMailOverTheLimitIsRefusedBeforeItIsQueued(t *testing.T) {
 	ctx := context.Background()
 	big := strings.Repeat("x", private.MaxMailContent+1)
 
-	if _, err := alice.mail.Send(ctx, bob.key.Public, big); !errors.Is(err, private.ErrTooLarge) {
+	if _, err := alice.mail.Send(ctx, []nostr.PubKey{bob.key.Public}, big); !errors.Is(err, private.ErrTooLarge) {
 		t.Errorf("a message of 24 KiB + 1: %v", err)
 	}
 	if _, err := alice.mail.Request(ctx, bob.key.Public, call.Request{Capability: "echo", Body: big}); !errors.Is(err, private.ErrTooLarge) {

@@ -21,19 +21,29 @@ type entry struct {
 	ID   string
 	At   time.Time
 	Text string
+	// From is the petname of the sender of a received message.
+	From string
 	// Mine is true for a message that this citizen sent. State is then
-	// pending, delivered or expired.
+	// pending, delivered or expired, or for a group "delivered to 1 of 2".
 	Mine  bool
 	State string
 }
 
-// conversation is the messages between this citizen and one peer, oldest
-// first.
+// conversation is the messages between this citizen and a set of peers,
+// oldest first. A direct conversation has one peer. A change of members
+// makes a new conversation, as NIP-17 says.
 type conversation struct {
-	Peer    string
+	// Peers are the public keys of the other members, sorted, and Names
+	// their petnames, in the same order.
+	Peers []string
+	Names []string
+	// Name is the petnames, separated by commas.
 	Name    string
 	Entries []entry
 }
+
+func (c conversation) key() string  { return strings.Join(c.Peers, ",") }
+func (c conversation) direct() bool { return len(c.Peers) == 1 }
 
 // last is the newest message of the conversation.
 func (c conversation) last() entry { return c.Entries[len(c.Entries)-1] }
@@ -50,8 +60,13 @@ func (c conversation) unread(read readSet) int {
 }
 
 // conversations asks arc for the inbox and the outbox, and groups the
-// messages by peer. The conversation with the newest message comes first.
+// messages by the set of their members. The conversation with the newest
+// message comes first.
 func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, error) {
+	me, err := arc.PublicKey(ctx)
+	if err != nil {
+		return nil, err
+	}
 	inbox, err := arc.Inbox(ctx)
 	if err != nil {
 		return nil, err
@@ -60,23 +75,60 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 	if err != nil {
 		return nil, err
 	}
-	byPeer := map[string]*conversation{}
-	add := func(peer, name string, e entry) {
-		c := byPeer[peer]
+	// arc prints the petname of the sender and of each recipient. A member
+	// with no message to or from this citizen gets the start of its key.
+	names := map[string]string{}
+	for _, m := range inbox {
+		names[m.From] = m.Name
+	}
+	for _, s := range outbox {
+		names[s.To] = s.Name
+	}
+
+	byKey := map[string]*conversation{}
+	add := func(members []string, e entry) {
+		peers := peersOf(me, members)
+		c := byKey[strings.Join(peers, ",")]
 		if c == nil {
-			c = &conversation{Peer: peer, Name: name}
-			byPeer[peer] = c
+			c = newConversation(peers, names)
+			byKey[c.key()] = c
 		}
 		c.Entries = append(c.Entries, e)
 	}
 	for _, m := range inbox {
-		add(m.From, m.Name, entry{ID: m.ID, At: m.At, Text: m.Text})
+		members := m.Members
+		if members == nil {
+			// An arc older than group messages prints no members.
+			members = []string{m.From}
+		}
+		add(members, entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name})
 	}
+	// A group message has one sent line for each recipient, with one id.
+	var sentOrder []string
+	sent := map[string][]arcprogram.Sent{}
 	for _, s := range outbox {
-		add(s.To, s.Name, entry{ID: s.ID, At: s.At, Text: s.Text, Mine: true, State: s.State})
+		if sent[s.ID] == nil {
+			sentOrder = append(sentOrder, s.ID)
+		}
+		sent[s.ID] = append(sent[s.ID], s)
 	}
+	for _, id := range sentOrder {
+		lines := sent[id]
+		members := lines[0].Members
+		if members == nil {
+			for _, s := range lines {
+				members = append(members, s.To)
+			}
+		}
+		states := make([]string, len(lines))
+		for i, s := range lines {
+			states[i] = s.State
+		}
+		add(members, entry{ID: id, At: lines[0].At, Text: lines[0].Text, Mine: true, State: combined(states)})
+	}
+
 	var out []conversation
-	for _, c := range byPeer {
+	for _, c := range byKey {
 		// The inbox comes before the outbox, so a reply in the same second
 		// as the message comes after it.
 		slices.SortStableFunc(c.Entries, func(a, b entry) int { return a.At.Compare(b.At) })
@@ -88,15 +140,70 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 	return out, nil
 }
 
-// find selects the conversation of a peer: a public key, a petname, or the
-// start of either. A public key with no conversation gives a new one.
+// peersOf is the members other than me, sorted, once each.
+func peersOf(me string, members []string) []string {
+	var peers []string
+	for _, key := range members {
+		if key != me && !slices.Contains(peers, key) {
+			peers = append(peers, key)
+		}
+	}
+	slices.Sort(peers)
+	return peers
+}
+
+func newConversation(peers []string, names map[string]string) *conversation {
+	c := &conversation{Peers: peers}
+	for _, key := range peers {
+		c.Names = append(c.Names, cmp.Or(names[key], key[:min(8, len(key))]))
+	}
+	c.Name = strings.Join(c.Names, ", ")
+	return c
+}
+
+// combined is the state of a sent message from the state of each
+// recipient.
+func combined(states []string) string {
+	if len(states) == 1 {
+		return states[0]
+	}
+	delivered, expired := 0, 0
+	for _, s := range states {
+		switch s {
+		case "delivered":
+			delivered++
+		case "expired":
+			expired++
+		}
+	}
+	switch {
+	case delivered == len(states):
+		return "delivered"
+	case expired == len(states):
+		return "expired"
+	case delivered == 0 && expired == 0:
+		return "pending"
+	}
+	return fmt.Sprintf("delivered to %d of %d", delivered, len(states))
+}
+
+// find selects a conversation. A peer is a public key, a petname, or the
+// start of either, and selects a direct conversation. Several peers,
+// separated by commas, select the group of those members. A set of keys
+// with no conversation gives a new one.
 func find(all []conversation, peer string) (conversation, error) {
+	if strings.Contains(peer, ",") {
+		return findGroup(all, peer)
+	}
 	var matches []conversation
 	for _, c := range all {
-		if c.Peer == peer || c.Name == peer {
+		if !c.direct() {
+			continue
+		}
+		if c.Peers[0] == peer || c.Name == peer {
 			return c, nil
 		}
-		if strings.HasPrefix(c.Peer, peer) || strings.HasPrefix(c.Name, peer) {
+		if strings.HasPrefix(c.Peers[0], peer) || strings.HasPrefix(c.Name, peer) {
 			matches = append(matches, c)
 		}
 	}
@@ -110,9 +217,65 @@ func find(all []conversation, peer string) (conversation, error) {
 		}
 		return conversation{}, fmt.Errorf("%q names %d conversations: %s", peer, len(matches), strings.Join(names, ", "))
 	case arcprogram.IsKey(peer):
-		return conversation{Peer: peer}, nil
+		return conversation{Peers: []string{peer}}, nil
 	default:
 		return conversation{}, fmt.Errorf("no conversation with %q: give the public key of 64 hex digits", peer)
+	}
+}
+
+// findGroup selects the conversation of several peers. Each peer is a
+// public key, or the petname or the start of a member of a known
+// conversation.
+func findGroup(all []conversation, text string) (conversation, error) {
+	names := map[string]string{}
+	for _, c := range all {
+		for i, key := range c.Peers {
+			names[key] = c.Names[i]
+		}
+	}
+	var peers []string
+	for part := range strings.SplitSeq(text, ",") {
+		part = strings.TrimSpace(part)
+		key, err := resolve(names, part)
+		if err != nil {
+			return conversation{}, err
+		}
+		if !slices.Contains(peers, key) {
+			peers = append(peers, key)
+		}
+	}
+	slices.Sort(peers)
+	for _, c := range all {
+		if slices.Equal(c.Peers, peers) {
+			return c, nil
+		}
+	}
+	return *newConversation(peers, names), nil
+}
+
+// resolve finds the key of one peer among known names.
+func resolve(names map[string]string, peer string) (string, error) {
+	if peer == "" {
+		return "", errors.New("a group names each peer: an empty peer is not one")
+	}
+	var matches []string
+	for key, name := range names {
+		if key == peer || name == peer {
+			return key, nil
+		}
+		if strings.HasPrefix(key, peer) || strings.HasPrefix(name, peer) {
+			matches = append(matches, key)
+		}
+	}
+	switch {
+	case len(matches) == 1:
+		return matches[0], nil
+	case len(matches) > 1:
+		return "", fmt.Errorf("%q names %d peers", peer, len(matches))
+	case arcprogram.IsKey(peer):
+		return peer, nil
+	default:
+		return "", fmt.Errorf("no peer %q: give the public key of 64 hex digits", peer)
 	}
 }
 

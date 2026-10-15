@@ -81,9 +81,14 @@ type Message struct {
 	Name string    `json:"name"`
 	At   time.Time `json:"at"`
 	Text string    `json:"text"`
+	// Members are the public keys of the sender, then of each recipient.
+	// A direct message has two. An arc older than group messages prints
+	// none.
+	Members []string `json:"members"`
 }
 
-// Sent is one message that this citizen sent.
+// Sent is one message that this citizen sent. A group message has one Sent
+// for each recipient, with the same ID.
 type Sent struct {
 	ID string `json:"id"`
 	// To is the public key of the recipient, and Name is its petname.
@@ -93,13 +98,18 @@ type Sent struct {
 	Text string    `json:"text"`
 	// State is pending, delivered or expired.
 	State string `json:"state"`
+	// Members are the public keys of this citizen, then of each
+	// recipient.
+	Members []string `json:"members"`
 }
 
-// Queued is a message that arc put in the outbox.
+// Queued is a message that arc put in the outbox. To is the first
+// recipient.
 type Queued struct {
-	ID    string `json:"id"`
-	To    string `json:"to"`
-	State string `json:"state"`
+	ID      string   `json:"id"`
+	To      string   `json:"to"`
+	State   string   `json:"state"`
+	Members []string `json:"members"`
 }
 
 // Inbox returns the messages that this citizen received, oldest first. It
@@ -114,15 +124,21 @@ func (a Arc) Outbox(ctx context.Context) ([]Sent, error) {
 	return lines[Sent](a.output(ctx, nil, "message", "outbox", "--json"))
 }
 
-// Send puts a message to a citizen in the outbox, and sends it to the
-// relays at once.
-func (a Arc) Send(ctx context.Context, to, text string) (Queued, error) {
-	if !IsKey(to) {
-		return Queued{}, errors.New("a recipient is a public key of 64 hex digits")
+// Send puts a message to each recipient in the outbox, and sends it to the
+// relays at once. With more than one recipient, it is one group message:
+// each recipient sees the others.
+func (a Arc) Send(ctx context.Context, to []string, text string) (Queued, error) {
+	if len(to) == 0 {
+		return Queued{}, errors.New("a message needs a recipient")
+	}
+	for _, key := range to {
+		if !IsKey(key) {
+			return Queued{}, errors.New("a recipient is a public key of 64 hex digits")
+		}
 	}
 	// The text goes on standard input, so a text that starts with a dash
 	// is not a flag.
-	out, err := a.output(ctx, strings.NewReader(text), "message", "send", "--json", to)
+	out, err := a.output(ctx, strings.NewReader(text), "message", "send", "--json", strings.Join(to, ","))
 	if err != nil {
 		return Queued{}, err
 	}

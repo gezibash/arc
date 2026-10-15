@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -135,7 +136,7 @@ func TestConversations(t *testing.T) {
 	nextSecond()
 	ada.dm("send", bob.key, "bring the map")
 	// A message that arc message sent, and not arc-dm, is in the conversation too.
-	if _, err := cy.arc.Send(context.Background(), bob.key, "hello bob"); err != nil {
+	if _, err := cy.arc.Send(context.Background(), []string{bob.key}, "hello bob"); err != nil {
 		t.Fatal(err)
 	}
 	nextSecond()
@@ -188,6 +189,80 @@ func TestConversations(t *testing.T) {
 			t.Errorf("after arc-dm read, %q is still unread", b.header)
 		}
 	}
+}
+
+// groupName is the name of the conversation of some peers, as one member
+// sees it: the names in the order of the keys.
+func groupName(peers ...person) string {
+	slices.SortFunc(peers, func(a, b person) int { return strings.Compare(a.key, b.key) })
+	names := make([]string, len(peers))
+	for i, p := range peers {
+		names[i] = p.name
+	}
+	return strings.Join(names, ", ")
+}
+
+// TestGroups sends one message to two peers. Each member sees one
+// conversation of the three, a reply goes to each member, and the sender
+// sees to how many members the message was delivered. A direct
+// conversation between two of them stays apart.
+func TestGroups(t *testing.T) {
+	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
+
+	ada.dm("send", bob.key+","+cy.key, "hello, both of you")
+	nextSecond()
+	ada.dm("send", bob.key, "just for bob")
+	bob.sync()
+	ada.sync()
+
+	// Bob acknowledged; cy did not sync yet.
+	if out := string(must(ada.arc.Command(context.Background(), "message", "outbox").Output())); !strings.Contains(out, "delivered to 1 of 2") {
+		t.Errorf("arc message outbox of ada:\n%s\nwant delivered to 1 of 2", out)
+	}
+	if conv := ada.dm("open", bob.name+","+cy.name); !strings.Contains(conv, "you  delivered to 1 of 2\n  hello, both of you\n") || strings.Contains(conv, "just for bob") {
+		t.Errorf("ada's group conversation:\n%s", conv)
+	}
+
+	// Bob has never seen a message of cy, so the name of cy is the start
+	// of its key.
+	cyForBob := person{key: cy.key, name: cy.key[:8]}
+	got := bob.list()
+	want := []block{
+		{"  " + ada.name + "  1 unread", "just for bob"},
+		{"  " + groupName(ada, cyForBob) + "  1 unread", ada.name + ": hello, both of you"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("bob has %d conversations, want %d: %q", len(got), len(want), got)
+	}
+	for i := range want {
+		if !strings.HasSuffix(got[i].header, want[i].header) || got[i].preview != want[i].preview {
+			t.Errorf("bob's conversation %d is %q, want %q after the time", i, got[i], want[i])
+		}
+	}
+
+	nextSecond()
+	bob.dm("send", groupName(ada, cyForBob), "a reply to all")
+	ada.sync()
+	cy.sync()
+
+	if got := cy.list(); len(got) != 1 || !strings.HasSuffix(got[0].header, groupName(ada, bob)+"  2 unread") {
+		t.Errorf("cy's conversations are %q, want one group with 2 unread", got)
+	}
+	assertInOrder(t, cy.dm("open", ada.name+","+bob.name), []string{
+		ada.name + "  new\n  hello, both of you\n",
+		bob.name + "  new\n  a reply to all\n",
+	})
+	got = ada.list()
+	if len(got) != 2 || !strings.HasSuffix(got[0].header, groupName(bob, cy)+"  1 unread") || got[0].preview != bob.name+": a reply to all" {
+		t.Errorf("ada's conversations are %q, want the group first, with the reply of bob", got)
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 // TestPeers selects a conversation by the start of a key, and refuses a

@@ -29,7 +29,7 @@ func (d deniedDecrypt) Decrypt(context.Context, string, nostr.PubKey) (string, e
 
 func TestRecordedMailReadFailureIsNotAnEmptyResult(t *testing.T) {
 	m, _, key, _ := openMail(t, nil)
-	if _, err := m.Send(context.Background(), keys.Generate().Public, "recorded message"); err != nil {
+	if _, err := m.Send(context.Background(), []nostr.PubKey{keys.Generate().Public}, "recorded message"); err != nil {
 		t.Fatal(err)
 	}
 	denied := errors.New("the signer refuses decryption")

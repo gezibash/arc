@@ -198,7 +198,7 @@ so its mail is held only when the work is missing.
 
 ### 3.7 Group messages
 
-[The group messages proposal](dm-groups.md) seals one rumor with several
+[The group messages spec](../groups/SPEC.md) seals one rumor with several
 `p` tags to each member.
 
 - The author of the seal decides the check. The `p` tags MUST NOT make a
