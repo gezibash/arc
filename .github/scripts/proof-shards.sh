@@ -17,12 +17,17 @@
 set -euo pipefail
 
 # Each line is a shard name and its pattern. The shard other is not here.
+# The shards devices and storage-files came out of other, which took 11.6
+# minutes on 2026-10-15. Their tests took about 30 and 34 seconds with the
+# race detector on an M3 Max; the tests left in other took about 36.
 shards='
 delivery ^TestDelivery$
 interface ^TestInterface$
 storage-pieces ^Test(StoragePieces|StorageFormat1)$
 storage-repair ^Test(StorageRepair|StorageRepairTURN|StorageSealsWithDataRoots)$
 storage-sync ^Test(StorageNetworkSync|StorageJournalSync|StorageList)$
+devices ^Test(DevicePages|Devices|DataRoots|Seed)$
+storage-files ^Test(StorageDeletesReplaced|StorageLargeFile)$
 '
 
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
