@@ -38,13 +38,17 @@ func TestMessageWatch(t *testing.T) {
 	send := func(from machine, text string) string {
 		t.Helper()
 		out := from.run("message", "send", "--json", bobKey, text)
-		var sent map[string]string
+		var sent struct {
+			ID, To, State string
+			Members       []string
+		}
 		want(strings.Count(out, "\n") == 1 && json.Unmarshal([]byte(out), &sent) == nil, "send --json printed %q", out)
-		want(len(sent) == 3 && len(sent["id"]) == 64 && sent["to"] == bobKey && sent["state"] == "pending",
+		want(len(sent.ID) == 64 && sent.To == bobKey && sent.State == "pending" && slices.Equal(sent.Members, []string{from.key(), bobKey}),
 			"send --json printed %q", out)
-		return sent["id"]
+		return sent.ID
 	}
-	// lines parses JSON lines. Each line holds exactly the five fields.
+	// lines parses JSON lines. Each line holds the five text fields, and
+	// the two members of a direct message: the sender, then the recipient.
 	lines := func(text string) []map[string]string {
 		t.Helper()
 		var parsed []map[string]string
@@ -52,11 +56,14 @@ func TestMessageWatch(t *testing.T) {
 			if raw == "" {
 				continue
 			}
-			var fields map[string]string
-			want(json.Unmarshal([]byte(raw), &fields) == nil, "a line is not a JSON object of strings: %q", raw)
-			want(len(fields) == 5 && fields["id"] != "" && fields["from"] != "" && fields["name"] != "" && fields["at"] != "",
-				"a line does not hold id, from, name, at and text: %q", raw)
-			parsed = append(parsed, fields)
+			var line struct {
+				ID, From, Name, At, Text string
+				Members                  []string
+			}
+			want(json.Unmarshal([]byte(raw), &line) == nil, "a line is not a message line: %q", raw)
+			want(line.ID != "" && line.From != "" && line.Name != "" && line.At != "" && len(line.Members) == 2 && line.Members[0] == line.From,
+				"a line does not hold id, from, name, at, text and the members: %q", raw)
+			parsed = append(parsed, map[string]string{"id": line.ID, "from": line.From, "name": line.Name, "at": line.At, "text": line.Text})
 		}
 		return parsed
 	}
