@@ -117,6 +117,10 @@ func printHolding(command *cobra.Command, sess *citizen.Session) error {
 	if err != nil || n == 0 {
 		return err
 	}
+	if n == 1 {
+		fmt.Fprintln(command.ErrOrStderr(), "1 message from a stranger waits: arc message held")
+		return nil
+	}
 	fmt.Fprintf(command.ErrOrStderr(), "%d messages from strangers wait: arc message held\n", n)
 	return nil
 }

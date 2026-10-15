@@ -53,7 +53,7 @@ func TestContactsReleaseHeldMail(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "1 messages from strangers wait") {
+	if !strings.Contains(stderr.String(), "1 message from a stranger waits") {
 		t.Errorf("the inbox said nothing of the held message on standard error: %q", stderr.String())
 	}
 	if inbox := ok(t, bob, "", "message", "inbox", "--json"); inbox != "" {

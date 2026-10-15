@@ -566,6 +566,9 @@ func (m *Mail) settle(ctx context.Context, report *Report) error {
 	if err := m.expire(); err != nil {
 		return err
 	}
+	if err := m.seed(ctx); err != nil {
+		return err
+	}
 	if err := m.release(ctx, report); err != nil {
 		return err
 	}

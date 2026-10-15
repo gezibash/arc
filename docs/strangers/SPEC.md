@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, runtime
 - Owns: none
-- Proof: go test -count=1 -run '^(TestTheWrapLimitsAgreeWithTheMeasurement|TestTheLargestMailFitsTheWrapLimit|TestAWrapWithWorkHasTheWorkInItsID|TestAMessageFromAStrangerWithoutWorkIsHeld|TestAMessageFromAStrangerWithWorkReachesTheInbox|TestAWrapThatClaimsWorkItDoesNotHaveIsHeld|TestAcceptingAStrangerReleasesItsHeldMail|TestASyncReleasesTheHeldMailOfANewContact|TestTheReplyOfARecipientNeedsNoWork|TestACallFromAStrangerIsNotHeld|TestAGroupMessageFromAStrangerIsHeld|TestTheHeldMailHasALimit|TestHeldMailExpiresWithItsWrap|TestAMessageFromAStrangerCrossesAStick|TestAHeldSealMovesWhenAWrapWithWorkArrives|TestAnOlderMessageFromTheRecipientCountsOnce|TestContactsReleaseHeldMail|TestASendAddsAContact)$' ./core/private/ ./core/mail/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestTheWrapLimitsAgreeWithTheMeasurement|TestTheLargestMailFitsTheWrapLimit|TestAWrapWithWorkHasTheWorkInItsID|TestAMessageFromAStrangerWithoutWorkIsHeld|TestAMessageFromAStrangerWithWorkReachesTheInbox|TestAWrapThatClaimsWorkItDoesNotHaveIsHeld|TestAcceptingAStrangerReleasesItsHeldMail|TestASyncReleasesTheHeldMailOfANewContact|TestTheReplyOfARecipientNeedsNoWork|TestACallFromAStrangerIsNotHeld|TestAGroupMessageFromAStrangerIsHeld|TestTheHeldMailHasALimit|TestHeldMailExpiresWithItsWrap|TestAMessageFromAStrangerCrossesAStick|TestAHeldSealMovesWhenAWrapWithWorkArrives|TestAnOlderMessageFromTheRecipientCountsOnce|TestAnOldOutboxSeedsTheContacts|TestContactsReleaseHeldMail|TestASendAddsAContact)$' ./core/private/ ./core/mail/ ./cmd/arc/
 - Remaining: the stamps of sections 3.8 to 3.13, and the steps of section 3.6 that use them
 - Unverified: No test syncs the contact list between two devices through a storage citizen, or adds a contact on two devices at once. No test runs the program of an older arc as a sender or as a recipient. No run measures proof of work on a phone. `TestTheHeldMailHasALimit` fills a cap of 3, not of 200.
 
@@ -109,6 +109,11 @@ The contact list:
   NOT add a key. A device sends these without a person. A call to a
   provider is not consent to its mail.
 - The citizen can add and remove a key by hand.
+- The first sync with a contact list MUST put each recipient of a message
+  in the outbox on the list, once, and record that it did. Before this
+  spec, a send added no key. Without the seed, each correspondent would be
+  a stranger after an update. A key that the citizen removes later stays
+  off.
 
 ARC does not use the NIP-02 follow list (kind 3). It is public, so it
 would show each relay who the citizen talks to.
@@ -531,7 +536,7 @@ which the Bolt event store holds.
    bits.
 3. It keeps the seal in `held`, and sends no acknowledgement.
 4. `arc message inbox` does not show it, and prints
-   `1 messages from strangers wait: arc message held` on standard error.
+   `1 message from a stranger waits: arc message held` on standard error.
 5. `arc message held` lists it.
 6. Bob runs `arc contacts add <carol>`. arc adds the key, moves the seal to
    the store, and acknowledges it. Carol's next sync marks it delivered.
@@ -652,6 +657,9 @@ citizen with 50 contacts that each use the full limit (arithmetic:
   to an ARC citizen is held.
 - An older device of a citizen shows each message, held or not, because
   it has no filter. It ignores the contact drafts.
+- A device that updates puts each recipient of its outbox on the contact
+  list at its first sync (section 3.1). A key that wrote to the citizen,
+  and that the citizen never answered, is a stranger after the update.
 - A newer device that updates has no record of who wrote to it. Its first
   send to each key opens the seals of that key in its store, once
   (section 3.6). On a device, each seal is a request to the signer.
@@ -691,6 +699,7 @@ signs the stamp key). They do not change `MaxWrap` again.
 | `TestAMessageFromAStrangerCrossesAStick` | A stranger's message crosses a stick with no relay: the courier form carries work, and reaches the inbox. |
 | `TestAHeldSealMovesWhenAWrapWithWorkArrives` | A courier form without work is held, and the relay form of the same seal with work moves it to the inbox. |
 | `TestAnOlderMessageFromTheRecipientCountsOnce` | A message that the recipient sent before the filter counts: the next send to it makes no work. |
+| `TestAnOldOutboxSeedsTheContacts` | The mail of arc v0.31.0, in `core/mail/testdata/outbox-v0.31.0`, puts both recipients of its outbox on the contact list at the first sync, and a second sync does not seed again. |
 | `TestContactsReleaseHeldMail` | Through the CLI: `arc message inbox` reports the held message on standard error, `arc message held --json` lists it, `arc contacts add` moves it to the inbox, and `arc contacts rm` removes the key. |
 | `TestASendAddsAContact` | Through the CLI: `arc message send` puts the recipient on `arc contacts`, and the message reaches the recipient. |
 

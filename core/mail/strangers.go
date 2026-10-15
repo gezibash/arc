@@ -30,10 +30,12 @@ var (
 	wroteBucket = []byte("wrote")
 )
 
-// The values of wroteBucket.
+// The values of wroteBucket. seededKey is not a key: it marks that the
+// contact list holds the recipients of the outbox.
 const (
 	wroteYes     = "wrote"
 	wroteScanned = "scanned"
+	seededKey    = "seeded"
 )
 
 // ContactList is the contact list of a citizen. Runtime code keeps it as
@@ -66,6 +68,45 @@ func filtered(kind nostr.Kind) bool {
 		return false
 	}
 	return true
+}
+
+// seed puts each recipient of the outbox on the contact list, once. Before
+// the filter, a send added no contact, so without the seed each
+// correspondent would be a stranger after an update. A key that the citizen
+// removes later stays off.
+func (m *Mail) seed(ctx context.Context) error {
+	if m.Contacts == nil {
+		return nil
+	}
+	var mark string
+	if _, err := m.get(wroteBucket, seededKey, &mark); err != nil || mark != "" {
+		return err
+	}
+	seen := map[nostr.PubKey]bool{}
+	var pks []nostr.PubKey
+	if err := m.view(func(tx kv.Tx) error {
+		return tx.Bucket(outboxBucket).ForEach(func(_, v []byte) error {
+			var out Outgoing
+			if err := json.Unmarshal(v, &out); err != nil {
+				return err
+			}
+			pk, err := nostr.PubKeyFromHex(out.To)
+			if err != nil || out.Kind != "message" || seen[pk] {
+				return err
+			}
+			seen[pk] = true
+			pks = append(pks, pk)
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+	if len(pks) > 0 {
+		if err := m.Contacts.AddContacts(ctx, pks); err != nil {
+			return err
+		}
+	}
+	return m.put(wroteBucket, seededKey, seededKey)
 }
 
 // contacts returns the contacts of this citizen as a set, with its own key.
@@ -157,6 +198,9 @@ func (m *Mail) Release(ctx context.Context) (Report, error) {
 	report := Report{}
 	m.receiving.Lock()
 	defer m.receiving.Unlock()
+	if err := m.seed(ctx); err != nil {
+		return report, err
+	}
 	return report, m.release(ctx, &report)
 }
 

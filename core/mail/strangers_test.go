@@ -2,6 +2,9 @@ package mail_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -10,9 +13,12 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip44"
+	"github.com/gezibash/arc/adapters/mailbox"
+	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/mail"
+	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/internal/testrelay"
 	"github.com/gezibash/arc/internal/testutil"
@@ -368,5 +374,46 @@ func TestAnOlderMessageFromTheRecipientCountsOnce(t *testing.T) {
 	alice.send(t, bob, "and after it")
 	if slices.ContainsFunc(ownWraps(t, alice, bob.key.Public), func(e nostr.Event) bool { return e.Tags.Find("nonce") != nil }) {
 		t.Error("alice made work for a recipient that wrote to her before the filter")
+	}
+}
+
+// An update must not make each correspondent a stranger. The first sync
+// with a contact list puts each recipient of the outbox on it, once: the
+// mail of arc v0.31.0 in testdata/outbox-v0.31.0 wrote to bob and carol. A
+// key that the citizen removes after that stays off.
+func TestAnOldOutboxSeedsTheContacts(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"events.db", "mail.db"} {
+		unzip(t, filepath.Join("testdata", "outbox-v0.31.0", name+".gz"), filepath.Join(dir, name))
+	}
+	var secrets map[string]string
+	if err := json.Unmarshal(testutil.Must(os.ReadFile(filepath.Join("testdata", "outbox-v0.31.0", "keys.json"))), &secrets); err != nil {
+		t.Fatal(err)
+	}
+	aliceKey, bobKey, carolKey := mustKey(t, secrets["alice"]), mustKey(t, secrets["bob"]), mustKey(t, secrets["carol"])
+	s, err := boltstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	m, err := mailbox.Open(dir, aliceKey, &node.Node{Store: s}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Close() })
+	list := &contactList{}
+	m.Contacts = list
+
+	alice := citizen{dir: dir, key: aliceKey, mail: m}
+	alice.sync(t, stick(t))
+	if !list.has(bobKey.Public) || !list.has(carolKey.Public) {
+		t.Fatalf("the contacts after the first sync: %v", list.keys)
+	}
+	list.mu.Lock()
+	list.keys = nil
+	list.mu.Unlock()
+	alice.sync(t, stick(t))
+	if len(list.keys) != 0 {
+		t.Errorf("a second sync seeded the contacts again: %v", list.keys)
 	}
 }

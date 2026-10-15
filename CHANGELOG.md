@@ -29,7 +29,8 @@ All notable changes to ARC are recorded here. The format follows
   inbox, with no acknowledgement. `arc message held` lists it, and
   `arc message inbox` counts it on standard error. `arc contacts`,
   `arc contacts add` and `arc contacts rm` keep the contact list, which is
-  self data. A send adds each recipient. A sender makes the work for a
+  self data. A send adds each recipient, and the first sync after the
+  update adds each recipient of the outbox. A sender makes the work for a
   recipient that never wrote to it. See `docs/strangers/SPEC.md`.
 
 ### Changed
