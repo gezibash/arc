@@ -5,7 +5,7 @@
 - Owns: none
 - Proof: go test -count=1 -run '^(TestTheWrapLimitsAgreeWithTheMeasurement|TestTheLargestMailFitsTheWrapLimit|TestAWrapWithWorkHasTheWorkInItsID|TestAMessageFromAStrangerWithoutWorkIsHeld|TestAMessageFromAStrangerWithWorkReachesTheInbox|TestAWrapThatClaimsWorkItDoesNotHaveIsHeld|TestAcceptingAStrangerReleasesItsHeldMail|TestASyncReleasesTheHeldMailOfANewContact|TestTheReplyOfARecipientNeedsNoWork|TestACallFromAStrangerIsNotHeld|TestAGroupMessageFromAStrangerIsHeld|TestTheHeldMailHasALimit|TestHeldMailExpiresWithItsWrap|TestAMessageFromAStrangerCrossesAStick|TestAHeldSealMovesWhenAWrapWithWorkArrives|TestAnOlderMessageFromTheRecipientCountsOnce|TestAnOldOutboxSeedsTheContacts|TestContactsReleaseHeldMail|TestASendAddsAContact)$' ./core/private/ ./core/mail/ ./cmd/arc/
 - Remaining: the stamps of sections 3.8 to 3.13, and the steps of section 3.6 that use them
-- Unverified: No test of an app runs the work at 20 bits: they build arc with the tag arctest, which makes it 8. No test syncs the contact list between two devices through a storage citizen, or adds a contact on two devices at once. No test runs the program of an older arc as a sender or as a recipient. No run measures proof of work on a phone. `TestTheHeldMailHasALimit` fills a cap of 3, not of 200.
+- Unverified: No test of an app runs the work at 16 bits: they build arc with the tag arctest, which makes it 8. No test syncs the contact list between two devices through a storage citizen, or adds a contact on two devices at once. No test runs the program of an older arc as a sender or as a recipient. No run measures proof of work on a phone. `TestTheHeldMailHasALimit` fills a cap of 3, not of 200.
 
 A citizen takes mail from its contacts. Mail from a stranger reaches the
 inbox only with proof of work. Without it, the device holds the mail apart,
@@ -141,8 +141,8 @@ app.
 | Author | Work of the wrap | Result |
 | --- | --- | --- |
 | contact | any | The seal goes to the store and the inbox. The device acknowledges it. |
-| stranger | at least 20 bits | The seal goes to the store and the inbox. The device acknowledges it. |
-| stranger | less than 20 bits | The mail is held (section 3.4). The device sends no acknowledgement and no refusal. |
+| stranger | at least 16 bits | The seal goes to the store and the inbox. The device acknowledges it. |
+| stranger | less than 16 bits | The mail is held (section 3.4). The device sends no acknowledgement and no refusal. |
 
 - A wrap of a seal that the store holds already is a duplicate. The filter
   does not hold it. The courier form of a message that the relay form
@@ -193,7 +193,7 @@ expired after 7 days ([the delivery spec](../delivery/SPEC.md), section
 
 - Work follows NIP-13: a `nonce` tag on the gift wrap, and leading zero
   bits in its ID.
-- The difficulty is 20 bits. It is a protocol constant, not a setting, so
+- The difficulty is 16 bits. It is a protocol constant, not a setting, so
   that each sender knows it. `core/private` holds it as `Work`. A build
   with the tag `arctest` makes it 8 bits: the tests of the apps build the
   arc program that way, because they run many first messages. A release
@@ -223,7 +223,8 @@ For each recipient of a rumor of kind 14 or of an app kind, a sender:
    to the sender, so the sender is a contact of the recipient (section
    3.1).
 3. Not built: else, it MUST make work when every inbox relay of the
-   recipient lists `arc-stamps-enforce`.
+   recipient lists `arc-stamps-enforce`, at the highest price that one of
+   them asked (section 3.12).
 4. Else, it sends the wrap with neither.
 
 More rules for the sender:
@@ -467,13 +468,60 @@ An ARC relay has a mode for gift wraps of kind 1059, set by
 The rule, for a wrap of kind 1059:
 
 1. A relay-form wrap whose `p` tag names a citizen with a kind 10276 on
-   this relay: a valid unused stamp admits it; else 20 bits of work admit
-   it; else, in `enforce`, the relay refuses it with
-   `pow: this citizen takes mail with a stamp, or with 20 bits of work`.
-2. A courier-form wrap: a stamp cannot apply. In `enforce`, the relay
-   takes it only with 20 bits of work.
+   this relay: a valid unused stamp admits it; else work of at least the
+   price of that citizen (below) admits it; else, in `enforce`, the relay
+   refuses it with
+   `pow: this citizen takes mail with a stamp, or with <n> bits of work`.
+2. A courier-form wrap: a stamp cannot apply, and the relay cannot see the
+   recipient to price it. In `enforce`, the relay takes it only with work
+   of the highest price, 24 bits. A sender does not post its courier form
+   to an enforcing relay (section 3.6).
 3. A relay-form wrap to a key with no kind 10276 on this relay: the relay
    takes it as before.
+
+**The price.** The work that a relay asks of a stranger follows the mail
+that waits for the recipient. A quiet inbox asks the floor of the device;
+a flooded inbox asks more.
+
+- `u` is the number of wraps for the recipient that the relay took by
+  work, not by a stamp, that have not expired, and that arrived after the
+  last read of the recipient.
+- The price is `16 + floor(log2(1 + u / 64))` bits, at most 24
+  (estimated). Below 64 waiting wraps it is 16, the constant of section
+  3.5, so each wrap that the relay admits by work also passes the filter
+  of the device. Each doubling of the waiting wraps adds one bit, and each
+  bit doubles the work.
+- A read is a query with a `p` tag that names the recipient, on a
+  connection on which the citizen key, or a device key with a token of
+  the citizen ([the delivery spec](../delivery/SPEC.md), section 4.13),
+  authenticated. A read sets `u` to 0.
+- Stamps do not count in `u`, and do not pay the price. A flood thus
+  raises the price only for strangers.
+- The relay names the price in its refusal. A sender reads `<n>`, makes
+  the work again for the highest price that one of the inbox relays
+  asked, keeps that one wrap, and sends it again once. It keeps the price
+  of each relay and recipient for one hour (estimated), and pays it at
+  once the next time.
+
+What the price costs:
+
+| Case | Cost on one core of this laptop | Tag |
+| --- | --- | --- |
+| A short message to a quiet inbox | 86 ms | arithmetic: 1.32 µs × 2^16 |
+| A short message at the highest price | 22 s | arithmetic: 86 ms × 2^8 |
+| A spammer fills one inbox to the highest price, 16,320 waiting wraps | about 33 hours | arithmetic: the sum of 64 × 2^k wraps at 86 ms × 2^k, for k = 0 to 7 |
+| The same 16,320 wraps at a fixed 16 bits | about 23 minutes | arithmetic: 16,320 × 86 ms |
+
+The costs of the price:
+
+- A spammer can raise the price for honest strangers to one inbox. The
+  highest price bounds this at about 22 s for a short message on this
+  laptop.
+- The price shows how much mail from strangers waits for a citizen, in
+  steps that double, and when the citizen read last. A reader of the relay
+  can count the wraps of a citizen already, because an ARC relay serves a
+  gift wrap to any reader. The time of the last read is new.
+- A sender that a relay refuses pays the work twice for that message.
 
 Authentication MUST NOT admit a wrap in cases 1 and 2. Today the relay
 checks work only when no key authenticated on the connection
@@ -551,7 +599,7 @@ which the Bolt event store holds.
 3. The mail layer finds no record that Bob wrote, opens the seals of Bob
    in the store once, and finds none of kind 14. Alice is a stranger to
    Bob.
-4. It seals the rumor, and makes 20 bits of work on the relay form and on
+4. It seals the rumor, and makes 16 bits of work on the relay form and on
    the courier form.
 5. Bob's device admits the wrap by its work, and acknowledges it.
 6. Bob answers. Alice wrote to Bob, so Bob makes no work. Alice's device
@@ -618,18 +666,26 @@ Measured on an Apple M3 Max with `nip13.DoWork` of `fiatjaf.com/nostr`
 The arithmetic is one attempt times 2^16 or 2^20, the expected number of
 attempts.
 
-- At 20 bits, one core makes about 2,600 short messages to strangers each
-  hour (arithmetic: 3,600 s / 1.38 s). The work raises the cost of bulk
-  mail; it does not stop a sender who pays.
-- A phone is slower than this laptop. No run on a phone exists.
-- 16 bits costs a sender 86 ms for each short message, which does not slow
-  bulk mail (estimated). That is why the constant is 20.
-- The largest mail to a stranger costs about 40 s of one core. A first
-  message to a stranger is usually short (estimated).
+Why the constant is 16, not 20:
+
+- The filter on the device keeps the inbox clean. Held mail costs the
+  recipient no signature and no notification. The work only decides which
+  strangers reach the inbox, so it must be cheap for a person on a phone
+  more than it must hurt a spammer.
 - A sender pays the work for each message to a recipient that has not
-  written to it, not only for the first one, and pays it twice: once for
-  each form. A short message to a stranger thus costs about 2.8 s of one
-  core (arithmetic: 2 × 1.38 s).
+  written to it, and pays it twice: once for each form. At 16 bits, a short
+  message to a stranger costs about 0.17 s of one core on this laptop
+  (arithmetic: 2 × 86 ms). At 20 bits it cost about 2.8 s.
+- One 20-bit search took 6.4 s with 4 CPUs under the race detector
+  (measured, `GOMAXPROCS=4`, on 2026-10-15). A phone is slower than this
+  laptop. No run on a phone exists.
+- 20 bits did not stop a spammer either: one rented core makes about
+  60,000 short messages a day (arithmetic: 24 × 3,600 s / 1.38 s). At 16
+  bits, one core makes about 40,000 an hour (arithmetic: 3,600 s / 86 ms).
+  The price of a flood belongs on the relay, which can see it: section
+  3.12.
+- The largest mail to a stranger costs about 2.5 s of one core for each
+  form. A first message to a stranger is usually short (estimated).
 
 ### 6.3 Cost of a stamp
 
@@ -688,10 +744,10 @@ signs the stamp key). They do not change `MaxWrap` again.
 | --- | --- |
 | `TestTheWrapLimitsAgreeWithTheMeasurement` | `MaxWrap` is the measured 55,149 bytes plus the 485 bytes of a stamp tag. |
 | `TestTheLargestMailFitsTheWrapLimit` | The largest mail, sealed and wrapped with the real code, is 55,149 bytes, and fits `MaxWrap` with the largest `nonce` tag and with a `stamp` tag. |
-| `TestAWrapWithWorkHasTheWorkInItsID` | A wrap made with `Work` has at least 20 bits in its ID, with a real search, and still verifies and opens. |
+| `TestAWrapWithWorkHasTheWorkInItsID` | A wrap made with `Work` has at least 16 bits in its ID, with a real search, and still verifies and opens. |
 | `TestAMessageFromAStrangerWithoutWorkIsHeld` | A message of an older sender to a citizen with the filter is held, is not in the inbox, and gets no acknowledgement. |
-| `TestAMessageFromAStrangerWithWorkReachesTheInbox` | A newer sender makes 20 bits of work, with a real search, for a recipient that never wrote to it. The message reaches the inbox and is acknowledged. |
-| `TestAWrapThatClaimsWorkItDoesNotHaveIsHeld` | A wrap whose `nonce` tag claims 20 bits, and whose ID has fewer, is held. |
+| `TestAMessageFromAStrangerWithWorkReachesTheInbox` | A newer sender makes 16 bits of work, with a real search, for a recipient that never wrote to it. The message reaches the inbox and is acknowledged. |
+| `TestAWrapThatClaimsWorkItDoesNotHaveIsHeld` | A wrap whose `nonce` tag claims 16 bits, and whose ID has fewer, is held. |
 | `TestAcceptingAStrangerReleasesItsHeldMail` | A key added to the contacts releases its held mail to the inbox, and the sender's outbox shows it as delivered. |
 | `TestASyncReleasesTheHeldMailOfANewContact` | A sync that reads no wrap releases the held mail of a key that joined the contacts. |
 | `TestTheReplyOfARecipientNeedsNoWork` | A send adds the recipient to the contacts. The reply and the acknowledgement of the recipient carry no work, and reach the inbox. Only the first message of the sender carries work. |
@@ -710,7 +766,7 @@ signs the stamp key). They do not change `MaxWrap` again.
 stick that a courier carries names neither citizen, after a send that wrote
 a contact draft.
 
-Unverified: no test of an app runs the work at 20 bits, because the apps
+Unverified: no test of an app runs the work at 16 bits, because the apps
 build arc with the tag `arctest`. No test syncs the contact list between
 two devices through a storage citizen, or adds one key on two devices at once. No test runs an
 older arc. No run measures work on a phone. Stamps (sections 3.8 to 3.13)

@@ -25,7 +25,7 @@ All notable changes to ARC are recorded here. The format follows
   replies to each member. A private publish of a manifest can name several
   recipients. See `docs/groups/SPEC.md`.
 - A filter for mail from strangers. A message from a key that is not a
-  contact, without 20 bits of NIP-13 proof of work, waits apart from the
+  contact, without 16 bits of NIP-13 proof of work, waits apart from the
   inbox, with no acknowledgement. `arc message held` lists it, and
   `arc message inbox` counts it on standard error. `arc contacts`,
   `arc contacts add` and `arc contacts rm` keep the contact list, which is

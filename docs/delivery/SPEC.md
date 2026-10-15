@@ -1011,7 +1011,7 @@ A public event, such as a capability announcement, is readable by everyone.
 - Couriers limit deposits for each node, and keep room for contacts. The
   contacts of a node are the contacts of
   [the strangers spec](../strangers/SPEC.md), section 3.1.
-- A recipient's device holds mail from a stranger without 20 bits of
+- A recipient's device holds mail from a stranger without 16 bits of
   NIP-13 work apart from the inbox, and does not acknowledge it. A sender
   makes that work for a recipient that never wrote to it. See
   [the strangers spec](../strangers/SPEC.md).

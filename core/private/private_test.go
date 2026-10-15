@@ -150,10 +150,10 @@ func TestAWrapWithWorkHasTheWorkInItsID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := private.WorkOf(w); got < 20 {
-		t.Errorf("the ID has %d bits of work; the constant is 20", got)
+	if got := private.WorkOf(w); got < 16 {
+		t.Errorf("the ID has %d bits of work; the constant is 16", got)
 	}
-	if tag := w.Tags.Find("nonce"); tag == nil || len(tag) != 3 || tag[2] != "20" {
+	if tag := w.Tags.Find("nonce"); tag == nil || len(tag) != 3 || tag[2] != "16" {
 		t.Errorf("the nonce tag is %v", tag)
 	}
 	if !w.VerifySignature() {

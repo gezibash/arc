@@ -115,7 +115,7 @@ func TestAMessageFromAStrangerWithWorkReachesTheInbox(t *testing.T) {
 
 	alice.send(t, bob, "hello, we met at the market")
 	wraps := ownWraps(t, alice, bob.key.Public)
-	if len(wraps) != 1 || private.WorkOf(wraps[0]) < 20 {
+	if len(wraps) != 1 || private.WorkOf(wraps[0]) < 16 {
 		t.Fatalf("alice's relay-form wraps: %d, the first with %d bits", len(wraps), private.WorkOf(wraps[0]))
 	}
 	if got := bob.sync(t, r); got.Received != 1 || got.Held != 0 {
@@ -140,13 +140,13 @@ func TestAWrapThatClaimsWorkItDoesNotHaveIsHeld(t *testing.T) {
 	conv := testutil.Must(nip44.GenerateConversationKey(bob.key.Public, once))
 	wrap := nostr.Event{
 		Kind: private.WrapKind, CreatedAt: nostr.Now(), Content: testutil.Must(nip44.Encrypt(seal.String(), conv)),
-		Tags: nostr.Tags{{"p", bob.key.Public.Hex()}, {"expiration", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)}, {"nonce", "1", "20"}},
+		Tags: nostr.Tags{{"p", bob.key.Public.Hex()}, {"expiration", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)}, {"nonce", "1", "16"}},
 	}
 	if err := wrap.Sign(once); err != nil {
 		t.Fatal(err)
 	}
-	if private.WorkOf(wrap) >= 20 {
-		t.Skip("the ID has 20 bits by chance")
+	if private.WorkOf(wrap) >= 16 {
+		t.Skip("the ID has 16 bits by chance")
 	}
 	if err := r.Send(ctx, wrap); err != nil {
 		t.Fatal(err)
