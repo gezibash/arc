@@ -18,8 +18,8 @@ set -euo pipefail
 
 # Each line is a shard name and its pattern. The shard other is not here.
 # The shards devices and storage-files came out of other, which took 11.6
-# minutes on 2026-10-15. Their tests took about 30 and 34 seconds with the
-# race detector on an M3 Max; the tests left in other took about 36.
+# minutes on 2026-10-15. With the race detector on an M3 Max, devices took
+# 34 seconds, storage-files 35, and the tests left in other 43.
 shards='
 delivery ^TestDelivery$
 interface ^TestInterface$
