@@ -52,7 +52,7 @@ func specManifests(t *testing.T) map[string]*Manifest {
 
 func TestEveryManifestOfTheAppsParses(t *testing.T) {
 	got := specManifests(t)
-	for _, id := range []string{"exec", "sqlite", "releases", "journal", "dm", "files"} {
+	for _, id := range []string{"exec", "sqlite", "releases", "journal", "files"} {
 		if got[id] == nil {
 			t.Errorf("no app has a manifest %s that parses", id)
 		}

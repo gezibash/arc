@@ -409,8 +409,8 @@ func TestInterface(t *testing.T) {
 
 	t.Log("phase B holds: drafts, checkpoints, parts, delete, the journal and the files")
 
-	// Phase C: private kinds through the mail layer. Direct messages are a
-	// manifest.
+	// Phase C: private kinds through the mail layer. The test manifest dm
+	// sends and reads NIP-17 direct messages.
 	laptop.run("relay", "add", url)
 	bob := home("bob")
 	carol := home("carol")
@@ -421,7 +421,7 @@ func TestInterface(t *testing.T) {
 	carol.run("relay", "add", url)
 	carolKey := carol.key()
 
-	laptop.run("announce", filepath.Join(repo, "apps/dm/manifest.json"))
+	laptop.run("announce", filepath.Join(repo, "runtime/iface/testdata/dm.manifest.json"))
 	for _, one := range []machine{laptop, bob, carol} {
 		one.run("install", callerKey, "dm", "--yes")
 	}
@@ -454,7 +454,7 @@ func TestInterface(t *testing.T) {
 
 	// Phase D: what a capability can do stays what the citizen agreed to, and
 	// a key can be sealed, or held by a remote signer.
-	dm := read(t, filepath.Join(repo, "apps/dm/manifest.json"))
+	dm := read(t, filepath.Join(repo, "runtime/iface/testdata/dm.manifest.json"))
 	const message = `"kind": 14, "visibility": "private"}`
 	profile := filepath.Join(work, "dm-profile.json")
 	write(t, profile, strings.ReplaceAll(dm, message, message+`, "profile": {"kind": 0, "visibility": "public"}`), 0o644)

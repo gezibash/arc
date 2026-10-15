@@ -57,7 +57,7 @@ delivery layer does both for every event.
 | Shape | What answers | Example |
 | --- | --- | --- |
 | service | An app service program answers calls. | exec, sqlite, releases |
-| data | Nobody answers. The citizen writes events and reads them. | journal, direct messages, Agora, files |
+| data | Nobody answers. The citizen writes events and reads them. | journal, Agora, files |
 
 A data app needs no service program. Its manifest still comes from an author,
 who signs its announcement. A citizen installs the manifest by trusting that
@@ -973,7 +973,7 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 | Today | In version 1 |
 | --- | --- |
 | The `journal` package | The journal manifest: NIP-37 drafts of NIP-23 articles. |
-| The direct-message renderers and cache in `toolbox` | The dm manifest: NIP-17. |
+| The direct-message renderers and cache in `toolbox` | The program `arc-dm` of the dm app, over `arc message`: NIP-17. |
 | The `agora` input source | No manifest. The Agora app was removed, because its relay kept its data. |
 | The `private_file` and `sealed_file` inputs | The files manifest: NIP-37 drafts of NIP-94 file metadata. |
 | The `seal`, `pubkey` and `shell` filters | `key` arguments, private kinds, and `json`. |
@@ -983,8 +983,9 @@ meaning, comes in a new version. The older stack's interfaces, versions 1 to
 Each app of version 1 documents itself, and its `manifest.json` is its
 interface. See [the apps](../../apps/README.md): [exec](../../apps/exec/README.md),
 [sqlite](../../apps/sqlite/README.md), [releases](../../apps/releases/README.md),
-[journal](../../apps/journal/README.md), [dm](../../apps/dm/README.md)
-and [files](../../apps/files/README.md).
+[journal](../../apps/journal/README.md) and [files](../../apps/files/README.md).
+The [dm app](../../apps/dm/README.md) has no manifest: its program `arc-dm`
+drives `arc message`.
 
 ### 7.4 Sealed data moved off the relays
 
@@ -1046,5 +1047,5 @@ older client behaves.
 | B (built) | Sealed kinds: NIP-37 drafts, checkpoints, NIP-70, parts, `delete`, kept in the local store. `open`, `join`, `where`, `sort`, `tail`, `save`. The journal and files in version 1. | A journal page and a file cross a storage citizen and a USB stick. The `journal` package is gone. |
 | F (built) | The body of a draft (section 3.9.5): a file of up to 63 MiB as one body of raw bytes. | `TestStorageLargeFile`: a file of 60 MiB crosses three storage citizens and a USB stick with the same SHA-256; a file in parts of v0.30.0 still reads. |
 | E (built) | Pages of the data roots: the device key signs, the content key seals, the store names a page by the citizen, the import of old pages. | `TestDevicePages`: with the signer stopped, a device writes and reads its journal; a second device reads the page after a sync; a page of a revoked device after its revocation is refused; old pages are sealed again once. |
-| C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. dm in version 1. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
+| C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. The test manifest `runtime/iface/testdata/dm.manifest.json`. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
