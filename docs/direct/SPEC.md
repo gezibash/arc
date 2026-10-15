@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
+- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
 - Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` and a consumer with `--path turn` gave a path between two machines behind NAT through the production relay in 6 of 6 runs, with the relay of v0.27.0 (section 8.2).
 
@@ -136,7 +136,11 @@ no direct path; trying the TURN server of the relay, so the bytes go through the
 ```
 
 Each attempt is a new ARC call and a new connection. An attempt that fails
-transferred no bytes, so the next attempt is not a replay.
+transferred no bytes, so the next attempt is not a replay. An attempt whose
+SCTP association connected found a path, also if the data channel closes
+before this end sees it open. The other end can have started, so the
+offerer MUST NOT make the next attempt. The read or the write of the pipe
+then fails.
 
 ### 3.6 The relay attempt
 
@@ -349,6 +353,10 @@ An answerer that does not see the data channel open closes its end after
   each byte and then the end, and the writer gets `ok`.
 - `TestPipeClosedEarly` closes the writer during the bytes. The reader gets
   an error, not the end.
+- `TestPipeOpenedThenDead` closes a channel on a connected SCTP association
+  before its open handler runs. Wait returns nil, so Dial makes no next
+  attempt. A channel that closes before the association connects has no
+  path.
 - `TestPipeAnswererRelayOnly` gives the answerer the policy `turn`, behind a
   symmetric NAT. The path is `turn (relay)`.
 - `TestParsePolicy` checks the names of section 3.7.
