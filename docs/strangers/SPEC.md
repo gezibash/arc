@@ -5,7 +5,7 @@
 - Owns: none
 - Proof: go test -count=1 -run '^(TestTheWrapLimitsAgreeWithTheMeasurement|TestTheLargestMailFitsTheWrapLimit|TestAWrapWithWorkHasTheWorkInItsID|TestAMessageFromAStrangerWithoutWorkIsHeld|TestAMessageFromAStrangerWithWorkReachesTheInbox|TestAWrapThatClaimsWorkItDoesNotHaveIsHeld|TestAcceptingAStrangerReleasesItsHeldMail|TestASyncReleasesTheHeldMailOfANewContact|TestTheReplyOfARecipientNeedsNoWork|TestACallFromAStrangerIsNotHeld|TestAGroupMessageFromAStrangerIsHeld|TestTheHeldMailHasALimit|TestHeldMailExpiresWithItsWrap|TestAMessageFromAStrangerCrossesAStick|TestAHeldSealMovesWhenAWrapWithWorkArrives|TestAnOlderMessageFromTheRecipientCountsOnce|TestAnOldOutboxSeedsTheContacts|TestContactsReleaseHeldMail|TestASendAddsAContact)$' ./core/private/ ./core/mail/ ./cmd/arc/
 - Remaining: the stamps of sections 3.8 to 3.13, and the steps of section 3.6 that use them
-- Unverified: No test syncs the contact list between two devices through a storage citizen, or adds a contact on two devices at once. No test runs the program of an older arc as a sender or as a recipient. No run measures proof of work on a phone. `TestTheHeldMailHasALimit` fills a cap of 3, not of 200.
+- Unverified: No test of an app runs the work at 20 bits: they build arc with the tag arctest, which makes it 8. No test syncs the contact list between two devices through a storage citizen, or adds a contact on two devices at once. No test runs the program of an older arc as a sender or as a recipient. No run measures proof of work on a phone. `TestTheHeldMailHasALimit` fills a cap of 3, not of 200.
 
 A citizen takes mail from its contacts. Mail from a stranger reaches the
 inbox only with proof of work. Without it, the device holds the mail apart,
@@ -194,7 +194,10 @@ expired after 7 days ([the delivery spec](../delivery/SPEC.md), section
 - Work follows NIP-13: a `nonce` tag on the gift wrap, and leading zero
   bits in its ID.
 - The difficulty is 20 bits. It is a protocol constant, not a setting, so
-  that each sender knows it. `core/private` holds it as `Work`.
+  that each sender knows it. `core/private` holds it as `Work`. A build
+  with the tag `arctest` makes it 8 bits: the tests of the apps build the
+  arc program that way, because they run many first messages. A release
+  build has no tag, and no flag or variable changes the constant.
 - The recipient MUST count the work that the ID has, not the target in the
   `nonce` tag.
 - A sender that makes work makes it on both forms of the wrap. A stick
@@ -707,7 +710,8 @@ signs the stamp key). They do not change `MaxWrap` again.
 stick that a courier carries names neither citizen, after a send that wrote
 a contact draft.
 
-Unverified: no test syncs the contact list between two devices through a
-storage citizen, or adds one key on two devices at once. No test runs an
+Unverified: no test of an app runs the work at 20 bits, because the apps
+build arc with the tag `arctest`. No test syncs the contact list between
+two devices through a storage citizen, or adds one key on two devices at once. No test runs an
 older arc. No run measures work on a phone. Stamps (sections 3.8 to 3.13)
 have no test, because they are not built.

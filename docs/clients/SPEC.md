@@ -135,8 +135,11 @@ recipient.
 ### 3.8 The test relay
 
 - `arcprogramtest.Start` builds `github.com/gezibash/arc/cmd/arc` with
-  `go build`, and runs `arc relay serve` on a free port of `127.0.0.1`,
-  with no STUN server.
+  `go build -tags arctest`, and runs `arc relay serve` on a free port of
+  `127.0.0.1`, with no STUN server. With the tag, a first message to a
+  stranger makes 8 bits of proof of work, not 20
+  ([the strangers spec](../strangers/SPEC.md), section 3.5). A release
+  build has no tag.
 - `Citizen` makes a new arc home, a new key, and adds the relay.
 
 ## 4. Behavior

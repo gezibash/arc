@@ -79,11 +79,6 @@ const (
 	hex64        = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
-// Work is the NIP-13 difficulty, in bits, that admits a wrap without a
-// stamp: from a stranger, on the recipient's device, and on an inbox relay
-// that asks for it. It is a protocol constant, so each sender knows it.
-const Work = 20
-
 // ErrTooLarge says that a rumor is too large for mail.
 var ErrTooLarge = errors.New("private: the content is too large for mail")
 

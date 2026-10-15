@@ -26,10 +26,12 @@ type Net struct {
 }
 
 // Start builds the arc program into dir, and starts a relay on a free port
-// of this machine. Close stops the relay.
+// of this machine. Close stops the relay. The build has the tag arctest,
+// so a first message to a stranger makes 8 bits of work, not 20: see
+// core/private/work_arctest.go.
 func Start(dir string) (*Net, error) {
 	n := &Net{Arc: filepath.Join(dir, "arc"), dir: dir}
-	if out, err := exec.Command("go", "build", "-o", n.Arc, "github.com/gezibash/arc/cmd/arc").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-tags", "arctest", "-o", n.Arc, "github.com/gezibash/arc/cmd/arc").CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("go build arc: %v\n%s", err, out)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
