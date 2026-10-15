@@ -140,14 +140,25 @@ type Mail struct {
 	// does not serve remains pending, for another program of this citizen
 	// that serves its capability. Nil serves each request.
 	Serves func(rumor nostr.Event) bool
+
+	// Contacts is the contact list of this citizen. With it, mail from a
+	// stranger reaches the inbox only with proof of work, and a message to
+	// a recipient that never wrote to this citizen carries work. Nil takes
+	// all mail, and makes no work.
+	Contacts ContactList
+	// work is the difficulty that admits mail from a stranger, and that a
+	// sender makes: private.Work.
+	work int
+	// maxHeld caps the held mail: MaxHeld.
+	maxHeld int
 }
 
 // New initializes durable mail using an injected transactional key-value store.
 // The relays are where new mail is sent at once.
 func New(db kv.Store, k keys.Signer, n *node.Node, relays []transport.Transport) (*Mail, error) {
-	m := &Mail{key: k, node: n, db: db, relays: relays, now: time.Now}
+	m := &Mail{key: k, node: n, db: db, relays: relays, now: time.Now, work: private.Work, maxHeld: MaxHeld}
 	if err := m.update(func(tx kv.Tx) error {
-		for _, name := range [][]byte{outboxBucket, carryBucket, inboxBucket} {
+		for _, name := range [][]byte{outboxBucket, carryBucket, inboxBucket, heldBucket, droppedBucket, wroteBucket} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
@@ -241,6 +252,11 @@ func (m *Mail) SendRumor(ctx context.Context, to []nostr.PubKey, kind nostr.Kind
 		return nil, fmt.Errorf("mail: kind %d belongs to the mail layer", kind)
 	}
 
+	if m.Contacts != nil {
+		if err := m.Contacts.AddContacts(ctx, to); err != nil {
+			return nil, err
+		}
+	}
 	now := m.now()
 	rumor := private.Rumor(m.key, kind, content, tags, now)
 	return m.queue(ctx, to, rumor, "message")
@@ -288,7 +304,17 @@ func (m *Mail) queue(ctx context.Context, to []nostr.PubKey, rumor nostr.Event, 
 	outs := make([]Outgoing, len(to))
 	wraps := make([][]carried, len(to))
 	for i, pk := range to {
-		seal, entries, err := m.prepare(ctx, pk, rumor, expires)
+		work := 0
+		if kind == "message" && m.Contacts != nil {
+			stranger, err := m.stranger(ctx, pk)
+			if err != nil {
+				return nil, err
+			}
+			if stranger {
+				work = m.work
+			}
+		}
+		seal, entries, err := m.prepare(ctx, pk, rumor, expires, work)
 		if err != nil {
 			return nil, err
 		}
@@ -317,8 +343,10 @@ func (m *Mail) queue(ctx context.Context, to []nostr.PubKey, rumor nostr.Event, 
 }
 
 // prepare persists encrypted events, without exposing anything to a transport.
-// Orphaned events are harmless if the following mail transaction fails.
-func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, expires time.Time) (nostr.Event, []carried, error) {
+// Orphaned events are harmless if the following mail transaction fails. With
+// work, each form carries NIP-13 proof of work of that many bits: a stick
+// carries only the courier form.
+func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, expires time.Time, work int) (nostr.Event, []carried, error) {
 	seal, err := private.Seal(ctx, m.key, to, rumor)
 	if err != nil {
 		return nostr.Event{}, nil, err
@@ -328,7 +356,7 @@ func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, 
 	}
 	var entries []carried
 	for _, form := range []private.Form{private.CourierForm, private.RelayForm} {
-		wrap, err := private.WrapSeal(seal, to, form, private.WrapKind, expires)
+		wrap, err := private.WrapSealWork(ctx, seal, to, form, private.WrapKind, expires, work)
 		if err != nil {
 			return nostr.Event{}, nil, err
 		}
@@ -373,7 +401,7 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 
 // post durably queues an acknowledgement or reply before transmitting it.
 func (m *Mail) post(ctx context.Context, to nostr.PubKey, rumor nostr.Event, expires time.Time) (nostr.Event, error) {
-	seal, entries, err := m.prepare(ctx, to, rumor, expires)
+	seal, entries, err := m.prepare(ctx, to, rumor, expires, 0)
 	if err != nil {
 		return nostr.Event{}, err
 	}
@@ -398,6 +426,9 @@ type Report struct {
 	Delivered int
 	// Carried counts wraps for other citizens that this node took on.
 	Carried int
+	// Held counts messages from strangers, without work, that this node
+	// held apart from the inbox.
+	Held int
 	// Sent counts wraps that this node gave to the transport.
 	Sent    int
 	Refused []string
@@ -529,10 +560,16 @@ func (m *Mail) filters(mine []string) []nostr.Filter {
 	}
 }
 
-// settle ends expired mail, and answers each pending call. The caller holds
-// the receiving lock.
+// settle ends expired mail, releases the held mail of contacts, and answers
+// each pending call. The caller holds the receiving lock.
 func (m *Mail) settle(ctx context.Context, report *Report) error {
 	if err := m.expire(); err != nil {
+		return err
+	}
+	if err := m.seed(ctx); err != nil {
+		return err
+	}
+	if err := m.release(ctx, report); err != nil {
 		return err
 	}
 	return m.pending(ctx, report)
@@ -584,6 +621,30 @@ func (m *Mail) open(ctx context.Context, wrap nostr.Event, report *Report) error
 	if opened.Rumor.Kind == MessageKind && !names(opened.Rumor, m.key.PublicKey()) {
 		report.Refused = append(report.Refused, wrap.ID.Hex()+": the message names this citizen in no p tag")
 		return nil
+	}
+	if filtered(opened.Rumor.Kind) && m.Contacts != nil {
+		if err := m.wrote(opened.Author()); err != nil {
+			return err
+		}
+		// Another wrap of a seal in the store, such as its courier form, is
+		// a duplicate below.
+		stored, err := m.node.Store.Has(opened.Seal.ID)
+		if err != nil {
+			return err
+		}
+		admitted := stored
+		if !stored {
+			admitted, err = m.admits(ctx, opened.Author(), wrap)
+		}
+		if err != nil {
+			return err
+		}
+		if !admitted {
+			return m.hold(opened, wrap, report)
+		}
+		if err := m.unhold(opened.Seal.ID); err != nil {
+			return err
+		}
 	}
 
 	result, err := m.node.Store.Save(opened.Seal)
@@ -777,7 +838,7 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		// The caller gets an error in place of a reply that mail cannot carry.
 		rumor = call.ReplyRumor(m.key, request, call.Reply{Err: TooLargeReply}, m.now())
 	}
-	seal, entries, err := m.prepare(ctx, request.PubKey, rumor, m.now().Add(private.MaxAge))
+	seal, entries, err := m.prepare(ctx, request.PubKey, rumor, m.now().Add(private.MaxAge), 0)
 	if err != nil {
 		return err
 	}
@@ -1002,7 +1063,7 @@ func (m *Mail) expire() error {
 				}
 			}
 		}
-		return nil
+		return m.expireDropped(tx)
 	})
 }
 

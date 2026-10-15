@@ -81,7 +81,7 @@ func root() *cobra.Command {
 	}
 	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc)")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
-	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(),
+	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(), contactsCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
 		appsCommand(), infoCommand(), resolveCommand(), versionCommand(), listsCommand(), updateCommand(), releaseCommand(), pathCommand())
 	command.SetHelpCommand(helpCommand(command))
@@ -679,6 +679,9 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := printHolding(command, sess); err != nil {
+				return err
+			}
 			asJSON, _ := command.Flags().GetBool("json")
 			printer := newMessagePrinter(command.OutOrStdout(), sess.Signer.PublicKey(), asJSON)
 			if asJSON {
@@ -703,6 +706,38 @@ func messageCommand() *cobra.Command {
 			}
 			if n > 0 {
 				fmt.Fprintf(command.OutOrStdout(), "\ncarrying %d sealed messages for other citizens\n", n)
+			}
+			return nil
+		},
+	}
+
+	held := &cobra.Command{
+		Use: "held", Short: "List the messages from strangers that arc held apart",
+		Long: "A message from a key that is not a contact, without proof of work,\n" +
+			"waits here, with no acknowledgement to its sender. It goes when its\n" +
+			"wrap expires, after 7 days. arc contacts add <key> moves the messages\n" +
+			"of that key to the inbox, and acknowledges them.",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.Close()
+
+			msgs, err := sess.Mail.Held(command.Context())
+			if err != nil {
+				return err
+			}
+			asJSON, _ := command.Flags().GetBool("json")
+			if len(msgs) == 0 && !asJSON {
+				fmt.Fprintln(command.OutOrStdout(), "no held messages")
+			}
+			printer := newMessagePrinter(command.OutOrStdout(), sess.Signer.PublicKey(), asJSON)
+			for _, m := range msgs {
+				if err := printer.print(m); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -734,8 +769,9 @@ func messageCommand() *cobra.Command {
 
 	send.Flags().Bool("json", false, "print the queued message as one JSON object")
 	inbox.Flags().Bool("json", false, "print one JSON object for each message")
+	held.Flags().Bool("json", false, "print one JSON object for each message")
 	outbox.Flags().Bool("json", false, "print one JSON object for each message, and no requests")
-	command.AddCommand(send, inbox, outbox, messageWatchCommand())
+	command.AddCommand(send, inbox, held, outbox, messageWatchCommand())
 	return command
 }
 
@@ -780,7 +816,7 @@ func syncCommand() *cobra.Command {
 				// Self data goes to a directory that the citizen carries,
 				// but never to a relay.
 				if dir != "" {
-					report, err := syncSealed(command.Context(), sess.Node, sealed, t)
+					report, err := syncSealed(command.Context(), sess.Node, sealed, noContacts{t})
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
 						failed = true
@@ -877,7 +913,25 @@ func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t tra
 		sum.Refused = append(sum.Refused, report.Refused...)
 		sum.Unreadable += report.Unreadable
 		sum.Sent += report.Sent
-		sum.SendFailed = append(sum.SendFailed, report.SendFailed...)
+		for _, err := range report.SendFailed {
+			if !errors.Is(err, errContactDraft) {
+				sum.SendFailed = append(sum.SendFailed, err)
+			}
+		}
 	}
 	return sum, nil
+}
+
+// errContactDraft says that a directory gets no draft of the contact list.
+var errContactDraft = errors.New("a draft of the contact list stays off a directory")
+
+// noContacts gives a directory each event but the drafts of the contact
+// list. A stick can reach a courier, and such a draft names the citizen.
+type noContacts struct{ transport.Transport }
+
+func (t noContacts) Send(ctx context.Context, event nostr.Event) error {
+	if citizen.ContactDraft(event) {
+		return errContactDraft
+	}
+	return t.Transport.Send(ctx, event)
 }
