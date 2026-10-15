@@ -6,6 +6,16 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-15
+
+A citizen holds mail from strangers that comes without proof of work. One
+message can go to a group of up to 10 citizens. The dm app is the program
+`arc-dm`, with conversations, unread counts and notifications. Seven changes
+are breaking: the six under Changed, and the dm commands under Removed.
+Update the relay first, because an older relay refuses the
+largest mail with work. Then update the signer, each storage citizen and
+each device.
+
 ### Added
 
 - The program `arc-dm` of the dm app shows the conversations of a citizen,
@@ -17,7 +27,6 @@ All notable changes to ARC are recorded here. The format follows
 - The package `sdk/arcprogram` runs the arc program for a client program,
   and reads the JSON lines of `arc message`. The spec
   `docs/clients/SPEC.md` defines the lines.
-
 - Group messages: `arc message send <key>,<key>` sends one NIP-17 message
   to several citizens, at most 10 participants with the sender. Each member
   sees the others. The message line and the sent line of `arc message` get
@@ -52,6 +61,14 @@ All notable changes to ARC are recorded here. The format follows
 - **Breaking:** a relay takes a gift wrap of up to 55,634 bytes, not
   55,149: room for one `nonce` tag or one stamp. An older relay refuses the
   largest mail with work.
+
+### Fixed
+
+- A session open that the provider refuses returns the refusal, not
+  `outcome may be unknown`, when the refusal arrives before the accept
+  (#302).
+- A direct pipe that opened and then died makes no second attempt, so a
+  receiver no longer gets a second offer (#308).
 
 ### Removed
 
