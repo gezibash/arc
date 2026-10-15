@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest
-- Proof: go test -count=1 -run '^(TestMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince)$' ./sdk/arcprogram/
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince)$' ./sdk/arcprogram/
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -47,6 +47,9 @@ does not give a client program a way to read the keys of the arc home.
   put in the outbox.
 - **Message**: a NIP-17 private message, kind 14, as
   [the delivery spec](../delivery/SPEC.md), section 4.2, defines it.
+- **Members**: the sender of a message, then each recipient, as
+  [the group messages spec](../groups/SPEC.md) defines them. A direct
+  message has two members.
 
 ## 3. Rules
 
@@ -72,11 +75,13 @@ for each message as it arrives.
 | `name` | The petname of the sender, that arc makes from the key. |
 | `at` | The `created_at` of the rumor, in RFC 3339, in UTC. It is the clock of the sender. |
 | `text` | The content of the message. |
+| `members` | The public keys of the members: the sender first, then the recipients in the order of the sender. |
 
 ### 3.3 The sent line
 
-`arc message outbox --json` prints one sent line for each message that this
-citizen sent from this machine, oldest first.
+`arc message outbox --json` prints one sent line for each recipient of each
+message that this citizen sent from this machine, oldest first. A group
+message has one sent line for each recipient, with the same `id`.
 
 | Field | Value |
 | --- | --- |
@@ -85,7 +90,8 @@ citizen sent from this machine, oldest first.
 | `name` | The petname of the recipient. |
 | `at` | The time when arc put the message in the outbox, in RFC 3339, in UTC. |
 | `text` | The content of the message. |
-| `state` | `pending`, `delivered` or `expired`. |
+| `state` | `pending`, `delivered` or `expired`, for this recipient. |
+| `members` | The public keys of the members: this citizen first, then each recipient. |
 
 The outbox also holds requests, and private events of the kinds of apps.
 `arc message outbox --json` MUST NOT print them. It prints kind 14 only.
@@ -93,7 +99,8 @@ The outbox also holds requests, and private events of the kinds of apps.
 ### 3.4 The queued line
 
 `arc message send --json` prints one queued line, with the fields `id`,
-`to` and `state`.
+`to`, `state` and `members`. For a group message, `to` is the first
+recipient.
 
 ### 3.5 Changes to a line
 
@@ -106,8 +113,10 @@ The outbox also holds requests, and private events of the kinds of apps.
 
 ### 3.6 Sending
 
-- The recipient MUST be a public key: 64 lowercase hex digits. The package
+- Each recipient MUST be a public key: 64 lowercase hex digits. The package
   refuses a name before it runs arc.
+- With more than one recipient, the package sends one group message. arc
+  gets the keys separated by commas.
 - The text MUST go on standard input, so a text that starts with `-` is
   not a flag. arc removes the newlines at the end of the text.
 
@@ -140,9 +149,9 @@ The outbox also holds requests, and private events of the kinds of apps.
 
 ### 4.2 Sending a message
 
-1. The client program calls `Send` with a public key and a text.
-2. The package runs `arc message send --json <key>`, with the text on
-   standard input.
+1. The client program calls `Send` with a list of public keys and a text.
+2. The package runs `arc message send --json <key>,<key>`, with the text
+   on standard input.
 3. arc seals the message, puts it in the outbox, and sends it to the
    relays at once. A relay that fails does not fail the send.
 4. The package returns the queued line.
@@ -189,6 +198,13 @@ The outbox also holds requests, and private events of the kinds of apps.
   this spec, with the same fields.
 - `arc message outbox --json` is new. A client program that reads the
   outbox needs an arc of this version or newer.
+- `members` is a new field of each line. An older arc prints none, so the
+  package gives an empty list. A client program then takes the sender and
+  this citizen, or this citizen and the recipient, as the members.
+- An older arc refuses a send to several keys: `a recipient is 64
+  characters of hex`.
+- `Send` took one key. It takes a list now, a breaking change for a client
+  program in another repository.
 - The code that runs arc was `client.Arc` in the transfer app. The transfer
   app now uses this package.
 
@@ -197,6 +213,7 @@ The outbox also holds requests, and private events of the kinds of apps.
 | Test | What it proves |
 | --- | --- |
 | `TestMessages` | Two messages cross a relay. The inbox of the recipient and the outbox of the sender hold both, with the keys, names, times and states. A text that starts with `-` arrives whole. A citizen that sent nothing has an empty outbox. |
+| `TestGroupMessages` | A send to two keys gives a queued line, message lines and sent lines that name the three members, and one sent line for each recipient. |
 | `TestSendRefusesANameAsTheRecipient` | `Send` refuses a recipient that is not a key. |
 | `TestWatch` | A watch gives a message that arrives while it runs, and returns with no error at the end of the context. |
 | `TestWatchFailsWithABadSince` | A watch returns what arc says about a bad `--since`. |

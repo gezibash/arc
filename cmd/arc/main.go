@@ -613,11 +613,15 @@ func messageCommand() *cobra.Command {
 	}
 
 	send := &cobra.Command{
-		Use: "send <public key> [text...]", Short: "Send a message", Args: cobra.MinimumNArgs(1),
+		Use: "send <public key>[,<public key>...] [text...]", Short: "Send a message, to one citizen or to a group",
+		Long: "With several public keys, separated by commas, arc sends one group\n" +
+			"message: each member sees the others, and a reply goes to all of them.\n" +
+			"A group has at most 10 participants, with you.",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			to, err := nostr.PubKeyFromHex(args[0])
+			to, err := recipients(args[0])
 			if err != nil {
-				return errors.New("a recipient is 64 characters of hex, as arc whoami prints it")
+				return err
 			}
 
 			text := strings.Join(args[1:], " ")
@@ -649,13 +653,12 @@ func messageCommand() *cobra.Command {
 				if len(sess.Relays) == 0 {
 					fmt.Fprintln(os.Stderr, "no relays: run arc sync --dir <path> to hand it to a courier")
 				}
-				return json.NewEncoder(command.OutOrStdout()).Encode(struct {
-					ID    string `json:"id"`
-					To    string `json:"to"`
-					State string `json:"state"`
-				}{out.Rumor, out.To, out.State(time.Now())})
+				return json.NewEncoder(command.OutOrStdout()).Encode(queuedLine{
+					ID: out[0].Rumor, To: out[0].To, State: out[0].State(time.Now()),
+					Members: hexKeys(append([]nostr.PubKey{sess.Signer.PublicKey()}, to...)),
+				})
 			}
-			fmt.Fprintf(command.OutOrStdout(), "queued for %s until %s\n", keys.Name(to[:]), out.Expires.Local().Format("2006-01-02 15:04"))
+			fmt.Fprintf(command.OutOrStdout(), "queued for %s until %s\n", petnames(to), out[0].Expires.Local().Format("2006-01-02 15:04"))
 			if len(sess.Relays) == 0 {
 				fmt.Fprintln(command.OutOrStdout(), "no relays: run arc sync --dir <path> to hand it to a courier")
 			}
@@ -677,7 +680,7 @@ func messageCommand() *cobra.Command {
 				return err
 			}
 			asJSON, _ := command.Flags().GetBool("json")
-			printer := newMessagePrinter(command.OutOrStdout(), asJSON)
+			printer := newMessagePrinter(command.OutOrStdout(), sess.Signer.PublicKey(), asJSON)
 			if asJSON {
 				for _, m := range msgs {
 					if err := printer.print(m); err != nil {
@@ -724,12 +727,7 @@ func messageCommand() *cobra.Command {
 			if len(out) == 0 {
 				fmt.Fprintln(command.OutOrStdout(), "no messages sent")
 			}
-			now := time.Now()
-			for _, o := range out {
-				to, _ := nostr.PubKeyFromHex(o.To)
-				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s, sent %d times\n  %s\n",
-					o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Attempts, o.Text)
-			}
+			printOutbox(command.OutOrStdout(), out, time.Now())
 			return nil
 		},
 	}

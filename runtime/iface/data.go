@@ -38,9 +38,9 @@ type Store interface {
 	// Watch passes on each new event that matches, as it arrives, from the
 	// citizen's relays or from the relays named.
 	Watch(ctx context.Context, filter nostr.Filter, relays []string) (<-chan transport.Received, error)
-	// SendPrivate seals a private event to a citizen, and sends it through
-	// the mail layer: relays, couriers and the outbox.
-	SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error
+	// SendPrivate seals one private event to each recipient, and sends it
+	// through the mail layer: relays, couriers and the outbox.
+	SendPrivate(ctx context.Context, to []nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error
 	// Private syncs the mail, and returns the private events of these kinds
 	// that the citizen received and sent, oldest first.
 	Private(ctx context.Context, kinds []nostr.Kind) ([]nostr.Event, error)
@@ -883,26 +883,30 @@ func (r *run) publishPrivate(p *Publish) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(p.To) != 1 {
-		return nil, errors.New("a private event goes to one recipient in this arc")
-	}
-	to, err := r.template(p.To[0])
-	if err != nil {
-		return nil, err
-	}
-	pk, err := nostr.PubKeyFromHex(to)
-	if err != nil {
-		return nil, errors.New("a recipient must come from a key argument")
+	var pks []nostr.PubKey
+	var names, recipients []string
+	for _, text := range p.To {
+		to, err := r.template(text)
+		if err != nil {
+			return nil, err
+		}
+		pk, err := nostr.PubKeyFromHex(to)
+		if err != nil {
+			return nil, errors.New("a recipient must come from a key argument")
+		}
+		pks = append(pks, pk)
+		names = append(names, r.env.Name(pk))
+		recipients = append(recipients, pk.Hex())
 	}
 	kind := nostr.Kind(r.kindOf(p.Kind).Kind)
 	if r.flags.DryRun {
 		rumor := nostr.Event{Kind: kind, CreatedAt: nostr.Now(), Content: content, Tags: tags, PubKey: r.env.Me()}
-		return nil, r.dryRun(map[string]any{"to": pk.Hex(), "sealed": true, "event": unsignedOf(rumor)})
+		return nil, r.dryRun(map[string]any{"to": recipients[0], "recipients": recipients, "sealed": true, "event": unsignedOf(rumor)})
 	}
-	if err := r.env.SendPrivate(r.ctx, pk, kind, content, tags); err != nil {
+	if err := r.env.SendPrivate(r.ctx, pks, kind, content, tags); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(r.stdio.Err, "sealed for %s; it travels with the next sync if no relay took it\n", r.env.Name(pk))
+	fmt.Fprintf(r.stdio.Err, "sealed for %s; it travels with the next sync if no relay took it\n", strings.Join(names, ", "))
 	return nil, nil
 }
 

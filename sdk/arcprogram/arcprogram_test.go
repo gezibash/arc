@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func TestMessages(t *testing.T) {
 	bob, bobKey := citizen(t, "bob")
 	texts := []string{"meet at noon", "-v is not a flag"}
 	for _, text := range texts {
-		queued, err := ada.Send(ctx, bobKey, text)
+		queued, err := ada.Send(ctx, []string{bobKey}, text)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,9 +103,54 @@ func TestMessages(t *testing.T) {
 	}
 }
 
+// TestGroupMessages sends one message to two citizens. Each line names the
+// three members, and the outbox has one line for each recipient.
+func TestGroupMessages(t *testing.T) {
+	ctx := context.Background()
+	ada, adaKey := citizen(t, "ada")
+	bob, bobKey := citizen(t, "bob")
+	cy, cyKey := citizen(t, "cy")
+	members := []string{adaKey, bobKey, cyKey}
+
+	queued, err := ada.Send(ctx, []string{bobKey, cyKey}, "hello, you two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.To != bobKey || !slices.Equal(queued.Members, members) {
+		t.Fatalf("queued %+v, want a message to %s with members %v", queued, bobKey, members)
+	}
+	for _, member := range []arcprogram.Arc{bob, cy} {
+		if out, err := member.Command(ctx, "sync").CombinedOutput(); err != nil {
+			t.Fatalf("arc sync: %v\n%s", err, out)
+		}
+		inbox, err := member.Inbox(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(inbox) != 1 || inbox[0].ID != queued.ID || !slices.Equal(inbox[0].Members, members) {
+			t.Errorf("the inbox of a member: %+v, want message %s with members %v", inbox, queued.ID, members)
+		}
+	}
+
+	outbox, err := ada.Outbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var to []string
+	for _, s := range outbox {
+		if s.ID != queued.ID || !slices.Equal(s.Members, members) {
+			t.Errorf("sent %+v, want message %s with members %v", s, queued.ID, members)
+		}
+		to = append(to, s.To)
+	}
+	if !sameSet(to, []string{bobKey, cyKey}) {
+		t.Errorf("the outbox has lines to %v, want one to each of bob and cy", to)
+	}
+}
+
 func TestSendRefusesANameAsTheRecipient(t *testing.T) {
 	ada, _ := citizen(t, "ada")
-	if _, err := ada.Send(context.Background(), "bob", "hello"); err == nil {
+	if _, err := ada.Send(context.Background(), []string{"bob"}, "hello"); err == nil {
 		t.Fatal("Send to a name did not fail")
 	}
 }
@@ -129,7 +175,7 @@ func TestWatch(t *testing.T) {
 	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
 		t.Fatalf("the watch did not start:\n%s", notes.String())
 	}
-	if _, err := ada.Send(context.Background(), bobKey, "are you there"); err != nil {
+	if _, err := ada.Send(context.Background(), []string{bobKey}, "are you there"); err != nil {
 		t.Fatal(err)
 	}
 	select {

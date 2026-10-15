@@ -308,8 +308,9 @@ func (e *Environment) Watch(ctx context.Context, filter nostr.Filter, urls []str
 	return out, nil
 }
 
-// SendPrivate seals a private event through the mail layer.
-func (e *Environment) SendPrivate(ctx context.Context, to nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
+// SendPrivate seals one private event to each recipient through the mail
+// layer.
+func (e *Environment) SendPrivate(ctx context.Context, to []nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
 	_, err := e.Session.Mail.SendRumor(ctx, to, kind, content, tags)
 	return err
 }
