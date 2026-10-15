@@ -66,7 +66,9 @@ does not give a client program a way to read the keys of the arc home.
 
 `arc message inbox --json` prints one message line for each received
 message, oldest first. `arc message watch --json` prints one message line
-for each message as it arrives.
+for each message as it arrives. `arc message held --json` prints one
+message line for each message that arc holds from a stranger
+([the strangers spec](../strangers/SPEC.md), section 3.4).
 
 | Field | Value |
 | --- | --- |

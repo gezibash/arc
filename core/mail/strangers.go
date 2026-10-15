@@ -14,7 +14,7 @@ import (
 	"github.com/gezibash/arc/core/store"
 )
 
-// The filter for mail from strangers, as docs/stranger-filter/SPEC.md
+// The filter for mail from strangers, as docs/strangers/SPEC.md
 // defines. A contact's mail reaches the inbox. A stranger's mail reaches it
 // only with proof of work; without, the device holds it apart, and sends no
 // acknowledgement.
@@ -225,6 +225,18 @@ func (m *Mail) heldEntries() (map[string]held, error) {
 		})
 	})
 	return entries, err
+}
+
+// Holding counts the held mail that has not expired. It opens no seal.
+func (m *Mail) Holding() (int, error) {
+	entries, err := m.heldEntries()
+	count := 0
+	for _, h := range entries {
+		if !m.now().After(h.Expires) {
+			count++
+		}
+	}
+	return count, err
 }
 
 // Held returns the held mail that has not expired, oldest first. It opens

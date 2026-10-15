@@ -24,6 +24,13 @@ All notable changes to ARC are recorded here. The format follows
   the field `members`. `arc-dm` keys a conversation by its members, and
   replies to each member. A private publish of a manifest can name several
   recipients. See `docs/groups/SPEC.md`.
+- A filter for mail from strangers. A message from a key that is not a
+  contact, without 20 bits of NIP-13 proof of work, waits apart from the
+  inbox, with no acknowledgement. `arc message held` lists it, and
+  `arc message inbox` counts it on standard error. `arc contacts`,
+  `arc contacts add` and `arc contacts rm` keep the contact list, which is
+  self data. A send adds each recipient. A sender makes the work for a
+  recipient that never wrote to it. See `docs/strangers/SPEC.md`.
 
 ### Changed
 
@@ -38,6 +45,12 @@ All notable changes to ARC are recorded here. The format follows
   `p` tag.
 - **Breaking:** `arcprogram.Arc.Send` and `mail.Mail.Send` take a list of
   recipients.
+- **Breaking:** a message from a stranger without proof of work gets no
+  acknowledgement until the recipient accepts the stranger. An older
+  sender sees it as pending, then expired after 7 days.
+- **Breaking:** a relay takes a gift wrap of up to 55,634 bytes, not
+  55,149: room for one `nonce` tag or one stamp. An older relay refuses the
+  largest mail with work.
 
 ### Removed
 

@@ -307,27 +307,51 @@ func TestHeldMailExpiresWithItsWrap(t *testing.T) {
 	}
 }
 
-// The courier form never carries work. A stranger's courier-form wrap is
-// held until the relay form of the same seal arrives with work.
-func TestACourierWrapFromAStrangerWaitsForTheRelayForm(t *testing.T) {
-	r := relay.Relay{URL: testrelay.Start(t)}
-	alice, bob := newCitizen(t, r), newCitizen(t, r)
+// A stranger's message crosses a stick, with no relay: the courier form
+// carries the work too.
+func TestAMessageFromAStrangerCrossesAStick(t *testing.T) {
+	alice, bob := newCitizen(t), newCitizen(t)
 	filtering(alice, 8)
 	filtering(bob, 8)
 	courier := stick(t)
 
-	alice.send(t, bob, "by hand and by relay")
+	alice.send(t, bob, "by hand")
 	alice.sync(t, courier)
+	if got := bob.sync(t, courier); got.Received != 1 || got.Held != 0 {
+		t.Errorf("bob received %d and held %d; want 1 and 0", got.Received, got.Held)
+	}
+}
+
+// A held seal moves to the inbox when another wrap of it arrives with
+// work: here a courier form without work, then the relay form with work.
+func TestAHeldSealMovesWhenAWrapWithWorkArrives(t *testing.T) {
+	r := relay.Relay{URL: testrelay.Start(t)}
+	alice, bob := newCitizen(t, r), newCitizen(t, r)
+	filtering(bob, 8)
+	courier := stick(t)
+	ctx := context.Background()
+
+	rumor := private.Rumor(alice.key, mail.MessageKind, "twice", nostr.Tags{{"p", bob.key.Public.Hex()}}, time.Now())
+	seal := testutil.Must(private.Seal(ctx, alice.key, bob.key.Public, rumor))
+	expires := time.Now().Add(time.Hour)
+	bare := testutil.Must(private.WrapSeal(seal, bob.key.Public, private.CourierForm, private.WrapKind, expires))
+	worked := testutil.Must(private.WrapSealWork(ctx, seal, bob.key.Public, private.RelayForm, private.WrapKind, expires, 8))
+	if err := courier.Send(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Send(ctx, worked); err != nil {
+		t.Fatal(err)
+	}
 	if got := bob.sync(t, courier); got.Held != 1 {
-		t.Fatalf("bob held %d courier wraps, want 1", got.Held)
+		t.Fatalf("bob held %d wraps, want 1", got.Held)
 	}
 	if got := bob.sync(t, r); got.Received != 1 {
-		t.Errorf("the relay form moved %d messages, want 1", got.Received)
+		t.Errorf("the wrap with work moved %d messages, want 1", got.Received)
 	}
 	if held := heldText(t, bob); len(held) != 0 {
 		t.Errorf("bob still holds %v", held)
 	}
-	if inbox := inboxText(bob); !slices.Equal(inbox, []string{"by hand and by relay"}) {
+	if inbox := inboxText(bob); !slices.Equal(inbox, []string{"twice"}) {
 		t.Errorf("bob's inbox: %v", inbox)
 	}
 }

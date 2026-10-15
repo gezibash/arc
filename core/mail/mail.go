@@ -344,8 +344,8 @@ func (m *Mail) queue(ctx context.Context, to []nostr.PubKey, rumor nostr.Event, 
 
 // prepare persists encrypted events, without exposing anything to a transport.
 // Orphaned events are harmless if the following mail transaction fails. With
-// work, the relay form carries NIP-13 proof of work of that many bits; the
-// courier form never does.
+// work, each form carries NIP-13 proof of work of that many bits: a stick
+// carries only the courier form.
 func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, expires time.Time, work int) (nostr.Event, []carried, error) {
 	seal, err := private.Seal(ctx, m.key, to, rumor)
 	if err != nil {
@@ -356,11 +356,7 @@ func (m *Mail) prepare(ctx context.Context, to nostr.PubKey, rumor nostr.Event, 
 	}
 	var entries []carried
 	for _, form := range []private.Form{private.CourierForm, private.RelayForm} {
-		bits := work
-		if form == private.CourierForm {
-			bits = 0
-		}
-		wrap, err := private.WrapSealWork(ctx, seal, to, form, private.WrapKind, expires, bits)
+		wrap, err := private.WrapSealWork(ctx, seal, to, form, private.WrapKind, expires, work)
 		if err != nil {
 			return nostr.Event{}, nil, err
 		}

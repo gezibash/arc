@@ -62,7 +62,7 @@ const (
 	// in the relay form. NIP-44 pads a seal of MaxSeal bytes to 40,960
 	// bytes: 5 chunks of 8,192 bytes. The wrap also has room for one tag
 	// that admits it to an inbox relay: a NIP-13 nonce, or a stamp of
-	// docs/stranger-filter/SPEC.md, the larger. A relay refuses a larger
+	// docs/strangers/SPEC.md, the larger. A relay refuses a larger
 	// wrap.
 	MaxWrap = len(wrapEnvelope) + 4*((67+sealPadded+2)/3) + max(nonceTag, stampTag)
 
