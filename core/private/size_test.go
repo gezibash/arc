@@ -3,6 +3,7 @@ package private_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,15 +35,23 @@ func fullRumor(t *testing.T, from keys.Key, to nostr.PubKey, extra int) nostr.Ev
 
 // The 2026-10-11 measurement: 28,394 bytes of plain text was the largest
 // message whose relay-form wrap fit 65,536 bytes, and that wrap held 55,149
-// bytes. The limits must agree with it.
+// bytes. A stamp tag adds 485 bytes: 354 bytes are 472 characters of
+// base64, in `,["stamp","…"]`. The limits must agree with both.
 func TestTheWrapLimitsAgreeWithTheMeasurement(t *testing.T) {
-	if private.MaxWrap != 55_149 {
-		t.Errorf("MaxWrap %d; measured 55,149", private.MaxWrap)
+	if private.MaxWrap != 55_149+485 {
+		t.Errorf("MaxWrap %d; measured 55,149, and a stamp tag adds 485", private.MaxWrap)
 	}
 }
 
+// The tags that admit a wrap to an inbox relay, at their largest.
+var admitTags = map[string]nostr.Tag{
+	"nonce": {"nonce", "18446744073709551615", "20"},
+	"stamp": {"stamp", strings.Repeat("A", 472)},
+}
+
 // The largest rumor that mail takes, sealed and wrapped with the real code,
-// gives a wrap of exactly MaxWrap bytes. The seal stays under the NIP-44
+// gives a wrap of 55,149 bytes, and of at most MaxWrap bytes with the
+// largest tag that admits it to an inbox relay. The seal stays under the NIP-44
 // plaintext limit of 65,535 bytes, and the content of the wrap under the
 // 65,535 bytes that the Bolt event store holds.
 func TestTheLargestMailFitsTheWrapLimit(t *testing.T) {
@@ -74,8 +83,17 @@ func TestTheLargestMailFitsTheWrapLimit(t *testing.T) {
 			if n > private.MaxWrap {
 				t.Errorf("form %d: the wrap holds %d bytes, more than %d", form, n, private.MaxWrap)
 			}
-			if form == private.RelayForm && n != private.MaxWrap {
-				t.Errorf("the relay-form wrap holds %d bytes; the computed limit is %d", n, private.MaxWrap)
+			if form == private.RelayForm && rumor.Content != strings.Repeat("x", private.MaxMailContent) && n != 55_149 {
+				t.Errorf("the relay-form wrap holds %d bytes; measured 55,149", n)
+			}
+			for name, tag := range admitTags {
+				tagged := w
+				tagged.Tags = append(slices.Clone(w.Tags), tag)
+				if n := len(tagged.String()); n > private.MaxWrap {
+					t.Errorf("form %d with a %s tag: the wrap holds %d bytes, more than %d", form, name, n, private.MaxWrap)
+				} else if form == private.RelayForm && name == "stamp" && rumor.Content != strings.Repeat("x", private.MaxMailContent) && n != private.MaxWrap {
+					t.Errorf("the relay-form wrap with a stamp holds %d bytes; the computed limit is %d", n, private.MaxWrap)
+				}
 			}
 		}
 	}

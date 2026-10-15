@@ -135,3 +135,31 @@ func TestRouteTagsCoverTheLifeOfAWrap(t *testing.T) {
 		}
 	}
 }
+
+// A wrap with proof of work has the work in its ID, with a real search at
+// the protocol constant. It still verifies, and opens for the recipient.
+func TestAWrapWithWorkHasTheWorkInItsID(t *testing.T) {
+	alice, bob := keys.Generate(), keys.Generate()
+	ctx := context.Background()
+	rumor := private.Rumor(alice, 14, "hello bob", nostr.Tags{{"p", bob.Public.Hex()}}, time.Now())
+	seal, err := private.Seal(ctx, alice, bob.Public, rumor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := private.WrapSealWork(ctx, seal, bob.Public, private.RelayForm, private.WrapKind, time.Now().Add(time.Hour), private.Work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := private.WorkOf(w); got < 16 {
+		t.Errorf("the ID has %d bits of work; the constant is 16", got)
+	}
+	if tag := w.Tags.Find("nonce"); tag == nil || len(tag) != 3 || tag[2] != "16" {
+		t.Errorf("the nonce tag is %v", tag)
+	}
+	if !w.VerifySignature() {
+		t.Error("the wrap does not verify")
+	}
+	if opened, err := private.Unwrap(ctx, bob, w); err != nil || opened.Rumor.Content != "hello bob" {
+		t.Errorf("opened %q: %v", opened.Rumor.Content, err)
+	}
+}

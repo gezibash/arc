@@ -110,6 +110,7 @@ func Open(cfg Config) (*Session, error) {
 		return nil, err
 	}
 	sess.Mail.Indexers = sess.Indexers
+	sess.Mail.Contacts = sess.Contacts()
 	sess.Mail.InboxRelay = func(url string) transport.Transport {
 		return relay.Relay{URL: url, Signer: keyer.NewPlainKeySigner(nostr.Generate())}
 	}

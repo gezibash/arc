@@ -201,6 +201,7 @@ each 3. A `created_at` and an `expiration` have 10 digits until the year
 | Seal JSON, padded | 40,960 |
 | Gift wrap content, base64 of 67 + 40,960 | 54,704 |
 | Gift wrap JSON, relay form, with 445 bytes of fields | 55,149 |
+| With room for one tag that admits the wrap: a stamp tag of 485 bytes, larger than a `nonce` tag of 38 | 55,634 |
 
 The courier form is 32 bytes smaller. The content of the gift wrap stays
 below 65,535 bytes. The Bolt event store holds at most that much content,
@@ -208,7 +209,9 @@ and so do common relays that cap an event at 64 KiB. The next padding step,
 a rumor of 32,768 bytes, gives 65,628 bytes of content.
 
 A relay MUST refuse a gift wrap of kind 1059 whose JSON holds more than
-55,149 bytes. A relay setting can make this limit smaller, and never
+55,634 bytes. The room above 55,149 bytes holds the one tag that admits a
+wrap from a stranger: a NIP-13 `nonce` tag, or a stamp
+([the strangers spec](../strangers/SPEC.md), section 3.5). A relay setting can make this limit smaller, and never
 larger. `core/private` holds these limits as `MaxMailContent`, `MaxRumor`
 and `MaxWrap`.
 
@@ -620,7 +623,10 @@ An acknowledgement is a private event whose rumor has kind 3274. The rumor
 names the delivered rumor with an `e` tag. When the sender receives the
 acknowledgement, the outbox marks the entry of the author of the
 acknowledgement delivered. The entries of other recipients of the same
-rumor do not change. A node does not acknowledge an acknowledgement.
+rumor do not change. A node does not acknowledge an acknowledgement. A node
+does not acknowledge mail that it holds from a stranger
+([the strangers spec](../strangers/SPEC.md), section 3.4), until the
+citizen accepts the stranger.
 
 Queued calls keep a durable `pending`, `processing`, or `completed` state:
 
@@ -1002,7 +1008,13 @@ A public event, such as a capability announcement, is readable by everyone.
 
 - Copy budgets are capped, so one event cannot amplify itself through
   couriers.
-- Couriers limit deposits for each node, and keep room for contacts.
+- Couriers limit deposits for each node, and keep room for contacts. The
+  contacts of a node are the contacts of
+  [the strangers spec](../strangers/SPEC.md), section 3.1.
+- A recipient's device holds mail from a stranger without 16 bits of
+  NIP-13 work apart from the inbox, and does not acknowledge it. A sender
+  makes that work for a recipient that never wrote to it. See
+  [the strangers spec](../strangers/SPEC.md).
 - The hop limit caps the reach of a flood.
 - Each store has a quota for public events.
 - A one-time key signs each gift wrap, so a relay cannot limit abuse by

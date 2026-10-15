@@ -23,8 +23,12 @@ func TestAFullMessageCrossesTheRelay(t *testing.T) {
 	t.Cleanup(server.Close)
 	url := "ws" + strings.TrimPrefix(server.URL, "http")
 
-	alice, _ := providerHome(t, url)
+	alice, aliceKey := providerHome(t, url)
 	bob, bobKey := providerHome(t, url)
+	// Bob writes first, so Alice is no stranger to him, and her full
+	// message needs no proof of work: this test is about the size.
+	ok(t, bob, "", "message", "send", aliceKey, "hello")
+	ok(t, alice, "", "sync")
 
 	if out, err := run(t, alice, "", "message", "send", bobKey, strings.Repeat("x", private.MaxMailContent+1)); err == nil || !strings.Contains(err.Error(), "transfer") {
 		t.Errorf("a message of 24 KiB + 1: %v\n%s", err, out)

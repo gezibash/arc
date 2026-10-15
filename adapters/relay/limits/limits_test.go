@@ -75,8 +75,8 @@ func TestTheSizeCapTakesAFullEvent(t *testing.T) {
 }
 
 // largestWrap seals and wraps the largest rumor that mail takes: 24 KiB of
-// content, with quotes that make its JSON MaxRumor bytes. The real Bolt store
-// of the relay must keep it.
+// content, with quotes that make its JSON MaxRumor bytes, and the largest
+// tag that admits a wrap. The real Bolt store of the relay must keep it.
 func largestWrap(t *testing.T) nostr.Event {
 	t.Helper()
 	alice, bob := keys.Generate(), keys.Generate()
@@ -92,6 +92,10 @@ func largestWrap(t *testing.T) nostr.Event {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The largest tag that admits a wrap: a stamp, 354 bytes in base64.
+	// The relay does not read it; it only counts its bytes.
+	w.Tags = append(w.Tags, nostr.Tag{"stamp", strings.Repeat("A", 472)})
+	w.Sign(nostr.Generate())
 	if n := len(w.String()); n != private.MaxWrap {
 		t.Fatalf("the largest wrap holds %d bytes, not %d", n, private.MaxWrap)
 	}

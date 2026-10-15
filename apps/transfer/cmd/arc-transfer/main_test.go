@@ -69,7 +69,7 @@ func setup(m *testing.M) int {
 	env.program = filepath.Join(root, "arc-transfer")
 	env.state = filepath.Join(root, "state")
 	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", env.program: "."} {
-		if out, err := exec.Command("go", "build", "-o", binary, pkg).CombinedOutput(); err != nil {
+		if out, err := exec.Command("go", "build", "-tags", "arctest", "-o", binary, pkg).CombinedOutput(); err != nil {
 			return fail("go build %s: %v\n%s", pkg, err, out)
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip13"
 	"fiatjaf.com/nostr/nip44"
 	"github.com/gezibash/arc/core/keys"
 )
@@ -59,10 +60,18 @@ const (
 	MaxSeal = len(sealEnvelope) + 4*((67+MaxRumor+2)/3)
 	// MaxWrap is the most bytes that the JSON of a wrap of WrapKind holds,
 	// in the relay form. NIP-44 pads a seal of MaxSeal bytes to 40,960
-	// bytes: 5 chunks of 8,192 bytes. A relay refuses a larger wrap.
-	MaxWrap = len(wrapEnvelope) + 4*((67+sealPadded+2)/3)
+	// bytes: 5 chunks of 8,192 bytes. The wrap also has room for one tag
+	// that admits it to an inbox relay: a NIP-13 nonce, or a stamp of
+	// docs/strangers/SPEC.md, the larger. A relay refuses a larger
+	// wrap.
+	MaxWrap = len(wrapEnvelope) + 4*((67+sealPadded+2)/3) + max(nonceTag, stampTag)
 
 	sealPadded = 5 << 13
+	// The tags that admit a wrap, with the comma before them. The largest
+	// nonce has 20 digits. A stamp holds 354 bytes, which base64 writes in
+	// 472 characters.
+	nonceTag = len(`,["nonce","18446744073709551615","20"]`)
+	stampTag = len(`,["stamp",""]`) + 4*354/3
 	// The JSON of a seal and of a relay-form wrap without their content.
 	// A created_at and an expiration have 10 digits until the year 2286.
 	sealEnvelope = `{"kind":13,"id":"` + hex64 + `","pubkey":"` + hex64 + `","created_at":1234567890,"tags":[],"content":"","sig":"` + hex64 + hex64 + `"}`
@@ -154,6 +163,21 @@ func Seal(ctx context.Context, author keys.Signer, recipient nostr.PubKey, rumor
 // WrapSeal encrypts a seal to the recipient under a one-time key. The wrap
 // expires at the given time, and names the recipient in the given form.
 func WrapSeal(seal nostr.Event, recipient nostr.PubKey, form Form, kind nostr.Kind, expires time.Time) (nostr.Event, error) {
+	return wrapSeal(context.Background(), seal, recipient, form, kind, expires, 0)
+}
+
+// WrapSealWork wraps a seal as WrapSeal does, with NIP-13 proof of work of
+// at least the given bits in the ID of the wrap. It searches on each CPU
+// until it finds a nonce, or the context ends.
+func WrapSealWork(ctx context.Context, seal nostr.Event, recipient nostr.PubKey, form Form, kind nostr.Kind, expires time.Time, bits int) (nostr.Event, error) {
+	return wrapSeal(ctx, seal, recipient, form, kind, expires, bits)
+}
+
+// WorkOf is the proof of work of a wrap: the leading zero bits of its ID.
+// The target that a nonce tag claims does not count.
+func WorkOf(wrap nostr.Event) int { return nip13.Difficulty(wrap.ID) }
+
+func wrapSeal(ctx context.Context, seal nostr.Event, recipient nostr.PubKey, form Form, kind nostr.Kind, expires time.Time, bits int) (nostr.Event, error) {
 	if kind != WrapKind && kind != LiveWrapKind {
 		return nostr.Event{}, fmt.Errorf("private: kind %d is not a gift wrap", kind)
 	}
@@ -178,6 +202,14 @@ func WrapSeal(seal nostr.Event, recipient nostr.PubKey, form Form, kind nostr.Ki
 		CreatedAt: pastTime(),
 		Tags:      nostr.Tags{route, {"expiration", strconv.FormatInt(expires.Unix(), 10)}},
 		Content:   content,
+	}
+	if bits > 0 {
+		wrap.PubKey = nostr.GetPublicKey(once)
+		nonce, err := nip13.DoWork(ctx, wrap, bits)
+		if err != nil {
+			return nostr.Event{}, fmt.Errorf("private: proof of work: %w", err)
+		}
+		wrap.Tags = append(wrap.Tags, nonce)
 	}
 	if err := wrap.Sign(once); err != nil {
 		return nostr.Event{}, err
