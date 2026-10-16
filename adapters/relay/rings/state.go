@@ -3,6 +3,7 @@ package rings
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"time"
 )
@@ -65,8 +66,9 @@ type state struct {
 	LastRing   int64 `json:"last_ring"`
 	LastStatus int   `json:"last_status"`
 	// Failing is the time of the first failed try since the last 2xx
-	// answer, or zero.
-	Failing int64 `json:"failing"`
+	// answer, or zero, and Failures counts the failed tries since then.
+	Failing  int64 `json:"failing"`
+	Failures int   `json:"failures,omitempty"`
 
 	Day  string `json:"day"`
 	Used int    `json:"used"`
@@ -200,25 +202,47 @@ func (s *state) count(now time.Time) {
 }
 
 // finish notes the HTTP status of a try, zero for no answer. A failed try
-// plans a retry with backoff and jitter, while tries are left. jitter is in
-// [0, 1).
+// plans a retry with backoff and jitter, while tries are left, unless the
+// answer says that a retry cannot help. jitter is in [0, 1).
 func (s *state) finish(status int, now time.Time, jitter float64) {
 	s.LastStatus = status
 	if status >= 200 && status < 300 {
-		s.Failing, s.Job = 0, nil
+		s.Failing, s.Failures, s.Job = 0, 0, nil
 		return
 	}
 	if s.Failing == 0 {
 		s.Failing = now.Unix()
 	}
+	s.Failures++
 	if s.Job == nil {
 		return
 	}
-	if s.Job.Attempt >= MaxAttempts {
+	if s.Job.Attempt >= MaxAttempts || final(status) {
 		s.Job = nil
 		return
 	}
 	s.Job.Next = now.Add(backoff(s.Job.Attempt, jitter)).UnixMilli()
+}
+
+// final says whether an answer refuses the ring for good: a 4xx answer,
+// such as 401 for a key that the platform no longer takes. 408 and 429 ask
+// to try again.
+func final(status int) bool {
+	return status >= 400 && status < 500 && status != 408 && status != 429
+}
+
+// failure is the text that tells a citizen that its rings fail, or empty
+// when they do not.
+func (s *state) failure(host string) string {
+	if s.Failing == 0 {
+		return ""
+	}
+	answer := "no answer"
+	if s.LastStatus != 0 {
+		answer = fmt.Sprintf("answer %d", s.LastStatus)
+	}
+	return fmt.Sprintf("arc-ring: the rings to %s fail since %s UTC: last %s, %d failed tries; check the key, then run arc relay ring set",
+		host, time.Unix(s.Failing, 0).UTC().Format("2006-01-02 15:04"), answer, s.Failures)
 }
 
 // backoff is the wait after a failed try: half the base wait, plus a random

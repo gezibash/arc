@@ -989,3 +989,60 @@ func TestTwoRelaysRingWithOneID(t *testing.T) {
 		t.Fatalf("the body names another ID: %s", first[0].body)
 	}
 }
+
+// TestAReadOfACitizenWithFailingRingsGetsANotice rings a URL that answers
+// 401, as a platform does after its key changed. The relay tries once, and
+// tells the citizen on its next authenticated read, once on that
+// connection. A stranger's read gets nothing.
+func TestAReadOfACitizenWithFailingRingsGetsANotice(t *testing.T) {
+	h := start(t, Config{})
+	bob, stranger := keys.Generate(), keys.Generate()
+	h.mustRegister(bob)
+	h.status.Store(401)
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.rings.sends.Wait()
+	h.advance(time.Hour)
+	h.tick()
+	if n := len(h.calls()); n != 1 {
+		t.Fatalf("a ring answered 401 made %d calls, want 1: a retry cannot fix the key", n)
+	}
+
+	read := func(as keys.Key, times int) []string {
+		var mu sync.Mutex
+		var notices []string
+		ctx := context.Background()
+		conn, err := nostr.RelayConnect(ctx, h.ws, nostr.RelayOptions{NoticeHandler: func(_ *nostr.Relay, text string) {
+			mu.Lock()
+			notices = append(notices, text)
+			mu.Unlock()
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close() }()
+		authenticate(t, conn, as)
+		for range times {
+			sub, err := conn.Subscribe(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {bob.Public.Hex()}}}, nostr.SubscriptionOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitStored(t, sub)
+			sub.Unsub()
+		}
+		time.Sleep(100 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		return notices
+	}
+
+	if got := read(stranger, 1); len(got) != 0 {
+		t.Fatalf("a stranger's read got %q", got)
+	}
+	got := read(bob, 3)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "arc-ring: the rings to example.com fail since ") || !strings.Contains(got[0], "last answer 401, 1 failed tries") {
+		t.Fatalf("bob's three reads on one connection got %q, want one notice of the 401", got)
+	}
+	if strings.Contains(got[0], "/hook") {
+		t.Fatalf("the notice names the path of the URL: %s", got[0])
+	}
+}

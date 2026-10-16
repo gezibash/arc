@@ -191,8 +191,11 @@ type Rings struct {
 	by       map[nostr.PubKey]*state
 	watching map[nostr.PubKey]int
 	subs     map[*khatru.WebSocket]map[int][]nostr.PubKey
-	busy     map[nostr.PubKey]bool
-	timers   map[nostr.PubKey]*time.Timer
+	// told holds the citizens that each connection was told of failing
+	// rings, so that a sync of many queries gets the notice once.
+	told   map[*khatru.WebSocket]map[nostr.PubKey]bool
+	busy   map[nostr.PubKey]bool
+	timers map[nostr.PubKey]*time.Timer
 	// relay is the bucket of the whole relay: PerMinute tokens, which come
 	// back over one minute.
 	relayTokens   float64
@@ -247,6 +250,7 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, cfg Config) (*Rings, error) {
 		cfg: cfg, db: db, aead: aead, own: ownAddrs(cfg.Own),
 		by: map[nostr.PubKey]*state{}, watching: map[nostr.PubKey]int{},
 		subs: map[*khatru.WebSocket]map[int][]nostr.PubKey{}, busy: map[nostr.PubKey]bool{},
+		told:        map[*khatru.WebSocket]map[nostr.PubKey]bool{},
 		timers:      map[nostr.PubKey]*time.Timer{},
 		relayTokens: float64(cfg.PerMinute), relayRefilled: cfg.Now(),
 	}
@@ -351,6 +355,17 @@ func (r *Rings) hook(rl *khatru.Relay) {
 			added(ws, ssid, id, filter)
 		}
 	}
+	disconnect := rl.OnDisconnect
+	rl.OnDisconnect = func(ctx context.Context) {
+		if ws := khatru.GetConnection(ctx); ws != nil {
+			r.mu.Lock()
+			delete(r.told, ws)
+			r.mu.Unlock()
+		}
+		if disconnect != nil {
+			disconnect(ctx)
+		}
+	}
 	removed := rl.OnListenerRemoved
 	rl.OnListenerRemoved = func(ws *khatru.WebSocket, ssid int, id string, filter nostr.Filter) {
 		r.unlisten(ws, ssid)
@@ -405,8 +420,8 @@ func (r *Rings) listen(ws *khatru.WebSocket, ssid int, filter nostr.Filter) {
 		return
 	}
 	now := r.cfg.Now()
+	var notices []string
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.subs[ws] == nil {
 		r.subs[ws] = map[int][]nostr.PubKey{}
 	}
@@ -418,8 +433,36 @@ func (r *Rings) listen(ws *khatru.WebSocket, ssid int, filter nostr.Filter) {
 			s.renew(now, r.cfg.TTL)
 			r.save(pk, s)
 			r.stop(pk)
+			if text := r.notice(ws, pk, s); text != "" {
+				notices = append(notices, text)
+			}
 		}
 	}
+	r.mu.Unlock()
+	// A slow connection must not hold the lock of every ring.
+	for _, text := range notices {
+		// A closed connection loses the notice; the next read gets it.
+		_ = ws.WriteJSON(nostr.NoticeEnvelope(text))
+	}
+}
+
+// notice is the NOTICE for a connection that reads for a citizen whose
+// rings fail, once for each connection, or empty. Only the citizen, or its
+// device, reads it. The caller holds r.mu.
+func (r *Rings) notice(ws *khatru.WebSocket, pk nostr.PubKey, s *state) string {
+	host := s.URL
+	if u, err := url.Parse(s.URL); err == nil {
+		host = u.Host
+	}
+	text := s.failure(host)
+	if text == "" || r.told[ws][pk] {
+		return ""
+	}
+	if r.told[ws] == nil {
+		r.told[ws] = map[nostr.PubKey]bool{}
+	}
+	r.told[ws][pk] = true
+	return text
 }
 
 func (r *Rings) unlisten(ws *khatru.WebSocket, ssid int) {
