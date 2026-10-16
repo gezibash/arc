@@ -6,6 +6,22 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.6] - 2026-10-16
+
+One mail gives the same ring ID on every relay, so an agent with two relays
+can drop the second ring. One change is breaking, under Changed. Update
+each relay; clients need no change.
+
+### Changed
+
+- **Breaking:** the `id` of a ring, in the body and in `Webhook-Id`, is the
+  first 16 bytes in hex of SHA-256 of `arc-ring-v1`, a zero byte, the key
+  of the citizen in hex, and the ID of the first wrap of the unread period
+  in hex. A sender gives the same wrap to each relay of the citizen, so
+  each relay rings with the same `id`. A test ring keeps a random `id`.
+  The body and the header keep their form. Anyone who holds the public
+  wraps of a citizen can find which wrap started a ring.
+
 ## [0.33.5] - 2026-10-16
 
 Direct transfers use every relay of a citizen, not only the first. Found
