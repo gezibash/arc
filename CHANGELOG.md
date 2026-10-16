@@ -6,6 +6,41 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-10-16
+
+A relay rings at once when it saves mail: 31 to 46 ms from the publish to
+the ring at a local URL, measured in the tests. In v0.33.0 a ring waited
+for a loop that ran once a second, and any ring, a test ring too, held the
+next one for up to 5 minutes. One change is breaking, under Changed.
+Update the relay first. An arc v0.33.0 CLI still registers.
+
+### Fixed
+
+- A relay decides on a ring in the step that saves the wrap, and rings in
+  that step. It knows whether a read subscription of the citizen is open,
+  because it counts them when they open. No loop polls; a ring that must
+  wait has one timer.
+- A test ring takes nothing from the bucket of the citizen, so it delays
+  no ring of mail.
+
+### Changed
+
+- **Breaking:** the body of a ring gains the field `id`, after `type`:
+  16 random bytes in hex, the same on each try of one ring. The header
+  `Webhook-Id` carries it too. A receiver can drop a ring whose ID it saw.
+- A token bucket for each citizen replaces the wait between two rings.
+  `burst` (default 3, at most 10) rings go at once after a quiet time,
+  and one comes back each `min_interval` (default 300 s).
+  `arc relay ring set --burst` sets it. The cap of the whole relay is a
+  bucket too.
+- The relay keeps each ring that started in its store, so a restart does
+  not lose it. A failed ring makes 4 tries in all, with waits of 30 s,
+  2 min and 8 min, halved plus a random part.
+- A registration ends 30 days after its last `PUT`. `arc relay ring set`
+  renews it, and `arc relay ring show` says when it ends. A registration
+  of v0.33.0 gets burst 3 and ends 30 days after it was made. The relay
+  removes expired and abandoned registrations once an hour.
+
 ## [0.33.0] - 2026-10-16
 
 A relay can ring a citizen: one HTTPS call to a URL that the citizen
