@@ -6,6 +6,20 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-10-16
+
+A ring registration renews itself while its citizen reads. Nothing is
+breaking. Update the relay; clients need no change.
+
+### Changed
+
+- A registration lives 30 days after the last read of its citizen, or
+  after its last `arc relay ring set`, whichever is later. A read is an
+  authenticated subscription for the citizen's mail, so each `arc sync`
+  renews it, and the relay renews it once an hour while
+  `arc message watch` runs. A citizen that stops reading for 30 days
+  stops being rung.
+
 ## [0.33.1] - 2026-10-16
 
 A relay rings at once when it saves mail: 31 to 46 ms from the publish to
