@@ -6,6 +6,42 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-16
+
+A relay can ring a citizen: one HTTPS call to a URL that the citizen
+registered, when mail waits unread. It starts an agent that does not run
+all the time, such as a webhook routine. Nothing is breaking. Update the
+relay first, then each device of a citizen that registers a ring: an older
+arc reads without authentication, so its reads do not end an unread
+period, and the relay rings once and then waits.
+
+### Added
+
+- `arc relay serve --rings` offers rings. It needs the environment
+  variable `RINGS_SECRET`, which encrypts the stored ring keys.
+  `--rings-daily-cap` (default 48), `--rings-per-minute` (default 600) and
+  `--rings-ports` (default 443) set the limits. The NIP-11 document lists
+  the tag `arc-rings`.
+- `arc relay ring set <url> --key-env NAME` registers an HTTPS URL, and
+  the key in the environment variable `NAME`, with each relay that offers
+  rings. `arc relay ring show`, `test` and `clear` show, try and remove it.
+  The relay POSTs `{"type":"arc.mail","citizen","relay","since"}` with the
+  key as a Bearer token: once until the next read, within `min_interval`
+  (default 300 s) and `daily_cap`, with retries after 1 and 5 minutes. A
+  ring carries no mail, no author and no count. The relay refuses a URL
+  that is not public `https`, and checks the address again before each
+  ring. See `docs/rings/SPEC.md`.
+
+### Changed
+
+- A relay with rings sends a NIP-42 challenge on each connection. arc
+  authenticates before it reads its mail from such a relay, so that the
+  read ends the unread period.
+- A NIP-98 request with a body names the hash of the body in a `payload`
+  tag.
+- The wake spec and `AGENTS.md` allow the ring key as the one secret that
+  a relay holds for a citizen.
+
 ## [0.32.0] - 2026-10-15
 
 A citizen holds mail from strangers that comes without proof of work. One
