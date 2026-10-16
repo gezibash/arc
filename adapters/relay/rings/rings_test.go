@@ -880,3 +880,63 @@ func TestARegistrationOfVersion0330Rings(t *testing.T) {
 		t.Fatalf("an old registration with a recent ring does not ring at once: %v", what)
 	}
 }
+
+// expiresIn is how long the registration of a citizen still lives on the
+// clock of the relay.
+func (h *harness) expiresIn(pk nostr.PubKey) time.Duration {
+	h.rings.mu.Lock()
+	defer h.rings.mu.Unlock()
+	s := h.rings.by[pk]
+	if s == nil {
+		return 0
+	}
+	return time.Unix(s.Expires, 0).Sub(h.rings.cfg.Now())
+}
+
+func TestAReadRenewsTheRegistration(t *testing.T) {
+	h := start(t, Config{TTL: time.Hour})
+	bob, stranger := keys.Generate(), keys.Generate()
+	h.mustRegister(bob)
+
+	// 50 minutes on, bob reads: his registration lives an hour from then.
+	h.advance(50 * time.Minute)
+	h.read(bob)
+	if left := h.expiresIn(bob.Public); left < 59*time.Minute {
+		t.Fatalf("after a read the registration lives %s, want an hour", left)
+	}
+
+	// A query that did not authenticate as bob renews nothing.
+	h.advance(50 * time.Minute)
+	_ = h.subscribe(bob.Public, &stranger).Close()
+	time.Sleep(50 * time.Millisecond)
+	if left := h.expiresIn(bob.Public); left > 11*time.Minute {
+		t.Fatalf("a query by another key renewed the registration: %s left", left)
+	}
+
+	// 100 minutes after the PUT, a wrap still rings, because bob read.
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.tick()
+	if n := len(h.calls()); n != 1 {
+		t.Fatalf("a wrap 100 minutes after the PUT, 50 after a read, made %d rings, want 1", n)
+	}
+
+	// An open watch keeps the registration alive: the sweep renews it.
+	watch := h.subscribe(bob.Public, &bob)
+	h.advance(50 * time.Minute)
+	h.rings.mu.Lock()
+	h.rings.sweep()
+	h.rings.mu.Unlock()
+	if left := h.expiresIn(bob.Public); left < 59*time.Minute {
+		t.Fatalf("the sweep left a watching citizen %s, want an hour", left)
+	}
+	_ = watch.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	// With no read for longer than the TTL, the registration ends.
+	h.advance(2 * time.Hour)
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.tick()
+	if n := len(h.calls()); n != 0 {
+		t.Fatalf("a citizen that stopped reading for 2 hours got %d rings", n)
+	}
+}

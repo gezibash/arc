@@ -39,8 +39,8 @@ type state struct {
 	// Relay is the wss URL of this relay, as the citizen named it.
 	Relay   string `json:"relay"`
 	Created int64  `json:"created"`
-	// Expires is when the registration ends, unless the citizen sets it
-	// again.
+	// Expires is when the registration ends, unless the citizen reads or
+	// sets it again.
 	Expires int64 `json:"expires"`
 
 	// LastRead is the time of the last read.
@@ -128,6 +128,12 @@ func (s *state) left(now time.Time) int {
 }
 
 func (s *state) expired(now time.Time) bool { return s.Expires != 0 && now.Unix() >= s.Expires }
+
+// renew moves the end of the registration to ttl after now: a citizen that
+// reads keeps its rings, and one that stops reading loses them after ttl.
+func (s *state) renew(now time.Time, ttl time.Duration) {
+	s.Expires = max(s.Expires, now.Add(ttl).Unix())
+}
 
 // next says what the relay does next, and when, for a wait.
 func (s *state) next(now time.Time) (step, time.Time) {

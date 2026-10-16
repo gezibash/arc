@@ -30,7 +30,8 @@ func ringCommand() *cobra.Command {
 			"for this citizen waits unread: at once, then not again until the next\n" +
 			"read, within the limits that you set. The call carries no mail, no\n" +
 			"author and no count. Use it to start an agent that does not run all\n" +
-			"the time. A registration lasts 30 days; set it again to renew it.",
+			"the time. A registration lasts 30 days after the last read of this\n" +
+			"citizen, so an agent that syncs or watches keeps it.",
 	}
 
 	set := &cobra.Command{

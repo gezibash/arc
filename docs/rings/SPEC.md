@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -82,7 +82,12 @@ one ring for each read, and a cap for each day.
 - Rings are off unless the operator turns them on:
   `arc relay serve --rings`. The relay then needs the environment variable
   `RINGS_SECRET`, as TURN needs `TURN_SECRET`.
-- A registration lives 30 days after its last `PUT`.
+- A registration lives 30 days after the last read of its citizen
+  (section 3.3), or after its last `PUT`, whichever is later. While a
+  read subscription of the citizen is open, the relay renews it at least
+  once an hour. A citizen that reads keeps its rings; one that stops
+  reading for 30 days loses them, so the relay does not call the URL of
+  a dead agent forever.
 - The operator sets `--rings-daily-cap` (default 48, estimated), the
   largest `daily_cap` that a citizen can ask for; `--rings-per-minute`
   (default 600, estimated), the cap of the whole relay; and
@@ -254,6 +259,8 @@ to once more.
   status until then. A registration that never rang is never removed for
   this reason.
 - The relay removes an expired registration within one hour.
+- A read renews the registration (section 3.1). A query that did not
+  authenticate as the citizen renews nothing.
 
 ## 4. Behavior
 
@@ -272,7 +279,9 @@ arc relay ring clear
   shell history and `ps` show. It signs the NIP-98 request with the
   citizen key, and sends `PUT /ring` to each relay of the citizen that
   lists `arc-rings`. `--burst`, `--min-interval` and `--daily-cap` set
-  the limits. Each `set` renews the registration for 30 days.
+  the limits. Each `set` renews the registration for 30 days, and so does
+  each read: an agent that runs `arc sync` or keeps `arc message watch`
+  open never needs to set it again.
 - Each command prints one line for each relay. A relay without
   `arc-rings` is skipped, and the line says so. A line names only the host
   of the URL, because a path can hold a secret.
@@ -329,7 +338,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | The ring key changed at the platform | Each ring gets 401 or 403. After 7 days the relay removes the registration. The citizen sets the new key. |
 | The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. |
 | The bucket is empty | The ring waits until one ring comes back, at most `min_interval`. |
-| The registration expired | No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
+| The registration expired | The citizen read nothing for 30 days. No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
 | A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
 | Several inbox relays ring at once | The agent runs more than once. Each run reads the same inbox: the store keeps one copy of each message, by ID, so no run answers a message twice that an earlier run answered. |
 | An older arc reads the mail | It does not authenticate, so the read does not count. The unread period goes on, and the relay rings no more until an arc that authenticates reads. |
@@ -412,6 +421,10 @@ and khatru:
   restart of the relay, waits for its backoff, and makes 4 tries in all
   with one ID.
 - `TestARegistrationExpires` and `TestARegistrationOfVersion0330Rings`.
+- `TestAReadRenewsTheRegistration`: a read by the citizen moves the end
+  to one TTL later, a query by another key does not, the sweep renews a
+  citizen with an open watch, and with no read for longer than the TTL
+  the registration rings no more.
 - `TestARelayRingsOnceForEachUnreadPeriod`: the exact body and header.
 - `TestCourierAndLiveWrapsNeverRing`.
 - `TestAReadNeedsAuthentication`: a query with no authentication, or by
