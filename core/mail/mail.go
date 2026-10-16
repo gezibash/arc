@@ -379,6 +379,9 @@ func putCarried(tx kv.Tx, entries []carried) error {
 
 func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carried) {
 	inbox, _ := m.inboxRelays(ctx, to)
+	// A message has a wrap in each form. The send of a message is one
+	// attempt, however many of its wraps went out.
+	counted := map[string]bool{}
 	for _, entry := range entries {
 		targets := m.relays
 		if !entry.Courier {
@@ -389,13 +392,21 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 		if err != nil || len(events) == 0 {
 			continue
 		}
+		sent := false
 		for _, t := range targets {
 			if !slices.Contains(entry.SentTo, t.Name()) && t.Send(ctx, events[0]) == nil {
 				entry.SentTo = append(entry.SentTo, t.Name())
+				sent = true
 			}
 		}
 		// Failure to record a receipt can only repeat a wrap, never lose a call.
 		_ = m.put(carryBucket, entry.Wrap, entry)
+		// The outbox counts this send as an attempt, as a sync counts its
+		// own. A failure to count it changes only the number that it shows.
+		if key := outboxKey(entry.Rumor, entry.To); sent && entry.Own && entry.Rumor != "" && !counted[key] {
+			counted[key] = true
+			_ = m.attempted(key)
+		}
 	}
 }
 

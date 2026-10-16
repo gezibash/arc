@@ -108,6 +108,30 @@ func TestAMessageCrossesARelayAndIsAcknowledged(t *testing.T) {
 	}
 }
 
+// A send gives the wraps to the relays at once. The outbox counts that as
+// an attempt, so a message that the relay took does not show "sent 0
+// times" (issue #314). A sync that has nothing new to give counts none.
+func TestASendCountsItsFirstAttempt(t *testing.T) {
+	r := relay.Relay{URL: testrelay.Start(t)}
+	alice, bob := newCitizen(t, r), newCitizen(t, r)
+
+	alice.send(t, bob, "counted at once")
+	attempts := func() int {
+		out := testutil.Must(alice.mail.Outbox(context.Background()))
+		if len(out) != 1 {
+			t.Fatalf("alice's outbox holds %d entries", len(out))
+		}
+		return out[0].Attempts
+	}
+	if got := attempts(); got != 1 {
+		t.Fatalf("after the send, the outbox counts %d attempts, want 1", got)
+	}
+	alice.sync(t, r)
+	if got := attempts(); got != 1 {
+		t.Fatalf("a sync that gave nothing new counts %d attempts, want 1", got)
+	}
+}
+
 // The proof of phase 2: no relay, and a third machine carries the mail.
 func TestAMessageReachesAnOfflineRecipientThroughACourier(t *testing.T) {
 	alice, carol, bob := newCitizen(t), newCitizen(t), newCitizen(t)

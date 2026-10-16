@@ -612,7 +612,8 @@ The outbox keeps each undelivered event until the recipient acknowledges it.
 - It keeps at most 100 events for each recipient.
 - A message lives for 7 days, set in the `expiration` tag of its wraps. After
   that, the outbox shows it as expired. The failure never stays silent.
-- Each sync gives the wraps to the transport again, and counts the attempt.
+- A send gives the wraps to the relays at once, and counts the attempt.
+  Each sync gives the wraps to the transport again, and counts the attempt.
   A relay gets each wrap once. On a live transport, the outbox tries at most
   8 times.
 - The outbox holds wraps and the sender's own seal, which are ciphertext. The
