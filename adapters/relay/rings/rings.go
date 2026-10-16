@@ -114,7 +114,8 @@ type Request struct {
 type Status struct {
 	Settings
 	Citizen string `json:"citizen"`
-	// Expires is the Unix time at which the registration ends.
+	// Expires is the Unix time at which the registration ends, unless the
+	// citizen reads or sets it again.
 	Expires int64 `json:"expires"`
 	// LastRing is the Unix time of the last ring, or zero.
 	LastRing int64 `json:"last_ring"`
@@ -149,8 +150,8 @@ type Config struct {
 	// PerMinute caps the rings of the whole relay in each minute. Zero is
 	// DefaultPerMinute.
 	PerMinute int
-	// TTL is how long a registration lives after its PUT. Zero is
-	// DefaultTTL.
+	// TTL is how long a registration lives after the last read of its
+	// citizen, or its last PUT. Zero is DefaultTTL.
 	TTL time.Duration
 	// Ports are the ports that a ring URL can name. Empty is 443 only.
 	Ports []int
@@ -374,7 +375,11 @@ func (r *Rings) wrap(event nostr.Event) {
 			continue
 		}
 		if s := r.by[pk]; s != nil {
-			s.wrap(now, r.watching[pk] > 0)
+			watching := r.watching[pk] > 0
+			s.wrap(now, watching)
+			if watching {
+				s.renew(now, r.cfg.TTL)
+			}
 			r.save(pk, s)
 			r.schedule(pk)
 		}
@@ -410,6 +415,7 @@ func (r *Rings) listen(ws *khatru.WebSocket, ssid int, filter nostr.Filter) {
 		r.watching[pk]++
 		if s := r.by[pk]; s != nil {
 			s.read(now)
+			s.renew(now, r.cfg.TTL)
 			r.save(pk, s)
 			r.stop(pk)
 		}
@@ -434,8 +440,8 @@ func (r *Rings) unlisten(ws *khatru.WebSocket, ssid int) {
 	}
 }
 
-// Run removes expired and abandoned registrations once an hour, until ctx
-// ends. Rings do not wait for it.
+// Run sweeps the registrations once an hour, until ctx ends. Rings do not
+// wait for it.
 func (r *Rings) Run(ctx context.Context) {
 	ticker := time.NewTicker(sweepEvery)
 	defer ticker.Stop()
@@ -456,11 +462,16 @@ func (r *Rings) Run(ctx context.Context) {
 	}
 }
 
-// sweep removes each registration that expired, or that got no 2xx answer
-// for 7 days. The caller holds r.mu.
+// sweep renews each registration whose citizen has a read subscription
+// open, and removes each registration that expired, or that got no 2xx
+// answer for 7 days. The caller holds r.mu.
 func (r *Rings) sweep() {
 	now := r.cfg.Now()
 	for pk, s := range r.by {
+		if r.watching[pk] > 0 {
+			s.renew(now, r.cfg.TTL)
+			r.save(pk, s)
+		}
 		switch {
 		case s.expired(now):
 			r.remove(pk)
