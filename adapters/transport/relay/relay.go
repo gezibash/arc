@@ -54,6 +54,16 @@ func sealedKinds(filter nostr.Filter) bool {
 	return false
 }
 
+// ringsTag is the NIP-11 tag of a relay that rings a citizen when mail
+// waits unread (docs/rings/SPEC.md). Such a relay counts a read only on a
+// connection that authenticated.
+const ringsTag = "arc-rings"
+
+// readsMail says whether a filter reads the gift wraps of a recipient.
+func readsMail(filter nostr.Filter) bool {
+	return len(filter.Tags["p"]) > 0 && (len(filter.Kinds) == 0 || slices.Contains(filter.Kinds, 1059))
+}
+
 // reuseWait bounds the wait for an answer on a connection that a call used
 // before. A connection can end without notice, for example while the machine
 // sleeps. Send then opens a new connection, and sends the event again.
@@ -506,6 +516,19 @@ func (r Relay) challenge(ctx context.Context, conn *nostr.Relay, signer nostr.Si
 	return err
 }
 
+// beforeRead authenticates on conn before a read of mail, when the relay
+// rings: the read then ends the unread period of the citizen. A read that
+// cannot authenticate still reads.
+func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) {
+	if r.Signer == nil || !readsMail(filter) {
+		return
+	}
+	if info, err := r.information(ctx); err != nil || !slices.Contains(info.Tags, ringsTag) {
+		return
+	}
+	_ = r.authenticate(ctx, conn)
+}
+
 // Fetch returns every stored event that matches the filter. A relay caps how
 // many events one query returns, so Fetch asks again for older events until a
 // page brings nothing new.
@@ -517,6 +540,7 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 	if err != nil {
 		return transport.Batch{}, err
 	}
+	r.beforeRead(ctx, conn, filter)
 	batch, err := r.fetch(ctx, conn, filter)
 	done(err)
 	return batch, err
@@ -854,6 +878,8 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 	if err != nil {
 		return nil, err
 	}
+
+	r.beforeRead(ctx, conn, filter)
 
 	// A relay that serves sealed data only to its author asks for
 	// authentication first. A query of stored events finds that out, and

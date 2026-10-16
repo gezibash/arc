@@ -164,13 +164,18 @@ func (g *grants) drop(ws *khatru.WebSocket) {
 	g.mu.Unlock()
 }
 
+// Readers returns the keys that a connection reads for: each key that
+// authenticated on it, and each citizen of a token that it gave and that
+// has not ended.
+type Readers func(ws *khatru.WebSocket) []nostr.PubKey
+
 // Protect makes a relay serve sealed events only to their author, and
 // refuse the retired kinds. Call it after the relay has its event store.
-func Protect(rl *khatru.Relay) {
-	protect(rl, func() nostr.Timestamp { return nostr.Timestamp(time.Now().Unix()) })
+func Protect(rl *khatru.Relay) Readers {
+	return protect(rl, func() nostr.Timestamp { return nostr.Timestamp(time.Now().Unix()) })
 }
 
-func protect(rl *khatru.Relay, now func() nostr.Timestamp) {
+func protect(rl *khatru.Relay, now func() nostr.Timestamp) Readers {
 	rl.Info.Tags = append(rl.Info.Tags, draft.RetiredTag, devices.TokenTag)
 	g := &grants{by: map[*khatru.WebSocket][]grant{}}
 	readers := func(ctx context.Context) []nostr.PubKey {
@@ -243,6 +248,12 @@ func protect(rl *khatru.Relay, now func() nostr.Timestamp) {
 			return true
 		}
 		return prevent != nil && prevent(ws, filter, event)
+	}
+	return func(ws *khatru.WebSocket) []nostr.PubKey {
+		if ws == nil {
+			return nil
+		}
+		return g.readers(ws, ws.AuthedPublicKeys, now())
 	}
 }
 

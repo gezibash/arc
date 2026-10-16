@@ -24,12 +24,15 @@ pauses:
 | `~/.ssh/config` on the client holds the wake method. | The caller's wake configuration holds the wake method. |
 | `authorized_keys` lists who can log in. | The provider's grants list who can run commands. |
 
-The relay only carries events. It holds no cloud credentials.
+The relay only carries events. It holds no cloud credentials. The one
+secret that it holds for a citizen is the ring key of
+[relay rings](../rings/SPEC.md).
 
 This spec does not define these things:
 
 - A relay-side queue.
-- A wake that the relay does.
+- A wake that the relay does. [Relay rings](../rings/SPEC.md) define the
+  one wake that a relay does: an HTTPS call when mail waits unread.
 - An automatic retry of a command.
 - TCP forwarding. `tcp+arc://` is separate work.
 
@@ -77,7 +80,10 @@ instructions.
 
 ### 3.2 Design rules
 
-1. The relay carries events. It MUST NOT hold cloud credentials.
+1. The relay carries events. It MUST NOT hold cloud credentials, except
+   the ring key that a citizen registers for its own rings
+   ([relay rings](../rings/SPEC.md)). A ring carries no mail, no author and
+   no content.
 2. The caller wakes the machine. The wake hook MUST use the caller's own
    cloud credentials.
 3. The citizen MUST keep its machine awake with a lease while a command runs.
