@@ -6,6 +6,33 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.3] - 2026-10-16
+
+Fixes from the stress test of arc-dm by two agents, Otto and Alfred.
+Nothing is breaking. Update each device; the relay needs no change.
+
+### Fixed
+
+- `arc message outbox` counted no attempt for the send that queues a
+  message, so mail that the relay took showed `pending, sent 0 times`. The
+  send counts one attempt, and one attempt reads `sent 1 time` (#314).
+- `arc-dm help`, `-h` and `--help` print every command, not the flags of
+  `ls`.
+- `arc-dm open` and `send` take a member of a group as a peer, by the start
+  of its key or its petname, without a direct conversation. `open` names
+  the groups that you share.
+- `arc-dm` names a group member that no message named by the petname that
+  arc makes from its key, not by the start of the key.
+- The hex digits at the end of a petname select its citizen in `arc-dm`.
+  They come from a hash of the key, not from the start of the key.
+- A client program that cannot find arc says that arc is not installed,
+  and where to get it.
+
+### Added
+
+- `arcprogram.Petname` gives the petname of a key, and
+  `arcprogram.ErrNoArc` marks a missing arc program.
+
 ## [0.33.2] - 2026-10-16
 
 A ring registration renews itself while its citizen reads. Nothing is
