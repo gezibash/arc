@@ -404,7 +404,7 @@ and khatru:
   it. With the call that authenticates before a read removed, the test
   fails at "no ring: mail after bob read".
 - `TestAWrapRingsWithinMilliseconds`: five rings, each within 200 ms of
-  the publish. Measured on the Mac on 2026-10-16: 31 to 46 ms, with a new
+  the publish, or 1 s under the race detector. Measured on the Mac on 2026-10-16: 31 to 46 ms, with a new
   connection and a TLS handshake for each. With the call to ring on save
   removed, the test fails at "ring 1 did not come".
 - `TestATestRingDelaysNoMail`: mail just after `ring test` rings at once.

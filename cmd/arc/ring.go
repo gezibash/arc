@@ -219,8 +219,12 @@ func describeRing(s rings.Status) string {
 	if u, err := url.Parse(s.URL); err == nil {
 		host = u.Host
 	}
-	return fmt.Sprintf("%s, %d at once then one each %d s, %d of %d left today, until %s",
-		host, s.Burst, s.MinInterval, s.Left, s.DailyCap, time.Unix(s.Expires, 0).Format(time.DateOnly))
+	line := fmt.Sprintf("%s, %d at once then one each %d s, %d of %d left today", host, s.Burst, s.MinInterval, s.Left, s.DailyCap)
+	// A relay of v0.33.0 sends no expiry.
+	if s.Expires != 0 {
+		line += ", until " + time.Unix(s.Expires, 0).Format(time.DateOnly)
+	}
+	return line
 }
 
 func describeAnswer(status int) string {
