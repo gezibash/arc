@@ -406,11 +406,15 @@ func Accept(ctx context.Context, c AcceptConfig, o Offer) (*Pipe, string, error)
 
 // EnvOptions are the options of an end from the environment:
 //
-//	ARC_STUN      the STUN server, or "none"; unset asks the first relay on
+//	ARC_STUN      the STUN server, or "none"; unset asks each relay on
 //	              port 3478
 //	ARC_LOOPBACK  if set, use the loopback address too
 func EnvOptions(relays []string) Options {
-	return Options{STUN: STUNURL(os.Getenv("ARC_STUN"), relays), Loopback: os.Getenv("ARC_LOOPBACK") != ""}
+	options := Options{Loopback: os.Getenv("ARC_LOOPBACK") != ""}
+	if urls := STUNURLs(os.Getenv("ARC_STUN"), relays); len(urls) > 0 {
+		options.STUN, options.MoreSTUN = urls[0], urls[1:]
+	}
+	return options
 }
 
 // ProviderConfig is the config of a provider program from the environment

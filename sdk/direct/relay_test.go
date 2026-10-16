@@ -237,3 +237,29 @@ func TestRelayPathWithoutSTUN(t *testing.T) {
 		t.Errorf("path %q, want relay", path)
 	}
 }
+
+// TestADeadFirstSTUNServerDoesNotStopAnEnd gives an end a first STUN
+// server that does not answer, as the first relay of a citizen that is
+// down, and the STUN server of a second relay. The end still gets its
+// public address, after the gather timeout at most.
+func TestADeadFirstSTUNServerDoesNotStopAnEnd(t *testing.T) {
+	a, _, _ := natPair(t)
+	pc, err := NewConnection(Options{STUN: "stun:1.2.3.99:3478", MoreSTUN: []string{"stun:1.2.3.4:3478"}, Net: a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pc.Close() }()
+	if _, err := pc.CreateDataChannel("probe", nil); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err == nil {
+		offer, err = Describe(pc, offer)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(offer.SDP, "typ srflx raddr") || !strings.Contains(offer.SDP, "1.2.3.10") {
+		t.Fatalf("an end with a dead first STUN server got no public address from the second:\n%s", offer.SDP)
+	}
+}

@@ -277,26 +277,19 @@ func relayCommand() *cobra.Command {
 // direct path.
 func turnCommand() *cobra.Command {
 	return &cobra.Command{
-		Use: "turn [url]", Short: "Get a TURN credential from a relay (default: the first relay)", Args: cobra.MaximumNArgs(1),
+		Use: "turn [url]", Short: "Get a TURN credential from a relay (default: the first relay that answers)", Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			dir, err := home(command)
 			if err != nil {
 				return err
 			}
-			relay := ""
-			if len(args) == 1 {
-				relay = args[0]
-			} else {
-				relays, err := readRelays(dir)
-				if err != nil {
+			relays := args
+			if len(relays) == 0 {
+				if relays, err = readRelays(dir); err != nil {
 					return err
 				}
-				if len(relays) == 0 {
-					return errors.New("no relays: add one with arc relay add <url>")
-				}
-				relay = relays[0]
 			}
-			body, err := fetchTURN(command.Context(), dir, relay)
+			body, err := fetchAnyTURN(command.Context(), dir, relays)
 			if err != nil {
 				return err
 			}
@@ -304,6 +297,27 @@ func turnCommand() *cobra.Command {
 			return err
 		},
 	}
+}
+
+// fetchAnyTURN asks each relay in turn for a TURN credential, and returns
+// the first reply. A relay that does not answer, or serves no TURN, does not
+// stop the others.
+func fetchAnyTURN(ctx context.Context, dir string, relays []string) ([]byte, error) {
+	if len(relays) == 0 {
+		return nil, errors.New("no relays: add one with arc relay add <url>")
+	}
+	var problems []error
+	for _, relay := range relays {
+		body, err := fetchTURN(ctx, dir, relay)
+		if err == nil {
+			return body, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		problems = append(problems, err)
+	}
+	return nil, errors.Join(problems...)
 }
 
 // fetchTURN asks a relay for a TURN credential, signed with the key of the

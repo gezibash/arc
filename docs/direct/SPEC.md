@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
+- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestSTUNURLs|TestADeadFirstSTUNServerDoesNotStopAnEnd|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
 - Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` and a consumer with `--path turn` gave a path between two machines behind NAT through the production relay in 6 of 6 runs, with the relay of v0.27.0 (section 8.2).
 
@@ -46,7 +46,8 @@ of `cmd/arc` could not use it.
 - **Direct attempt**: an attempt in which each end uses the addresses of its
   machine and the addresses that its STUN servers give.
 - **Relay attempt**: an attempt in which the offerer uses only an address on
-  the TURN server of its first relay.
+  the TURN server of a relay: the first of its relays that serves one
+  (section 3.6).
 - **Hold**: the time that the answerer waits before it gives the addresses
   of the offerer to ICE. While it holds them, it sends no packet, so the
   offerer sends first.
@@ -61,9 +62,12 @@ of `cmd/arc` could not use it.
 
 ### 3.1 The STUN server
 
-- The default STUN server of an end MUST be the host of its first relay, on
-  UDP port 3478: `stun:<host>:3478`. A relay URL that is not `ws://` or
-  `wss://` gives no server.
+- The default STUN servers of an end MUST be the host of each of its
+  relays, on UDP port 3478: `stun:<host>:3478`, in the order of the relays,
+  once each. A relay URL that is not `ws://` or `wss://` gives no server.
+- An end MUST ask each of its STUN servers at once. A relay that is down
+  delays the gathering of addresses until the gather timeout, and does not
+  stop it while another server answers.
 - The value `none` MUST give no STUN server. Another value is the STUN URL.
 - With no STUN server and no relay, an end uses the addresses of its machine
   only.
@@ -144,9 +148,11 @@ then fails.
 
 ### 3.6 The relay attempt
 
-1. The offerer gets a TURN credential and its quota from its first relay.
-   An app program runs `arc relay turn`. arc signs a NIP-98 request with the
-   key of the citizen.
+1. The offerer gets a TURN credential and its quota from the first of its
+   relays, in their order, that answers with one. A relay that is down, or
+   serves no TURN, does not stop the others. An app program runs
+   `arc relay turn`. arc signs a NIP-98 request with the key of the
+   citizen.
 2. If the quota is smaller than the bytes that remain plus a tenth, the
    offerer MUST stop before the attempt, with an error that names the two
    numbers in MiB. The tenth is for SCTP, DTLS and acknowledgements.
@@ -175,7 +181,7 @@ The policy is the choice of an end for one session:
 | --- | --- | --- |
 | `auto` | The order of section 3.5 | Answers with all its addresses |
 | `direct` | The two direct attempts only | Answers with all its addresses |
-| `turn` | The relay attempt only | Answers with only an address on the TURN server of its first relay |
+| `turn` | The relay attempt only | Answers with only an address on the TURN server of the first relay that serves one |
 | `session` | Makes no offer | Refuses each offer |
 
 - The default policy MUST be `auto`.

@@ -90,10 +90,7 @@ func dialConfig(command *cobra.Command) (direct.DialConfig, error) {
 		Options: direct.EnvOptions(relays),
 		Notes:   command.ErrOrStderr(),
 		TURN: func(ctx context.Context) (direct.Credential, error) {
-			if len(relays) == 0 {
-				return direct.Credential{}, errors.New("arc relay turn: no relays")
-			}
-			body, err := fetchTURN(ctx, dir, relays[0])
+			body, err := fetchAnyTURN(ctx, dir, relays)
 			if err != nil {
 				return direct.Credential{}, fmt.Errorf("arc relay turn: %w", err)
 			}

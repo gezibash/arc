@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ const (
 	BufferLow  = 2 << 20
 
 	// RelaySTUNPort is the port on which a relay answers STUN. An end that
-	// names no STUN server asks the host of its first relay on this port.
+	// names no STUN server asks the host of each of its relays on this port.
 	RelaySTUNPort = "3478"
 
 	// OpenWait bounds the wait for the data channel of one attempt.
@@ -38,9 +39,14 @@ const (
 
 // Options are the settings of one end of a connection.
 type Options struct {
-	// STUN is the URL of the STUN server. If it is empty, the end uses the
-	// addresses of the machine only.
+	// STUN is the URL of the STUN server. If it and MoreSTUN are empty,
+	// the end uses the addresses of the machine only.
 	STUN string
+	// MoreSTUN are more STUN servers, such as those of the other relays of
+	// the citizen. The end asks each server at once. A server that does not
+	// answer delays the setup until the gather timeout, and does not stop
+	// it while another one answers.
+	MoreSTUN []string
 	// TURN is the TURN server of a relay. If it is set, the end uses only
 	// an address on that server, and the bytes go through the relay. An
 	// end sets it only after the direct attempts failed.
@@ -66,20 +72,32 @@ type Options struct {
 // docs/direct/SPEC.md, section 3.3.
 var sctpCAStep uint32 = 8 << 10
 
-// STUNURL is the URL of a STUN setting. The value "none" gives no server.
-// An empty value gives the STUN server of the first relay, or no server if
-// there is no relay.
-func STUNURL(value string, relays []string) string {
+// STUNURLs are the URLs of a STUN setting. The value "none" gives no
+// server. An empty value gives the STUN server of each relay, in the order
+// of the relays. Another value is the one STUN URL.
+func STUNURLs(value string, relays []string) []string {
 	switch value {
-	case "":
-		if len(relays) == 0 {
-			return ""
-		}
-		return RelaySTUN(relays[0])
 	case "none":
+		return nil
+	case "":
+		var urls []string
+		for _, relay := range relays {
+			if stun := RelaySTUN(relay); stun != "" && !slices.Contains(urls, stun) {
+				urls = append(urls, stun)
+			}
+		}
+		return urls
+	}
+	return []string{value}
+}
+
+// STUNURL is the first of STUNURLs, or empty.
+func STUNURL(value string, relays []string) string {
+	urls := STUNURLs(value, relays)
+	if len(urls) == 0 {
 		return ""
 	}
-	return value
+	return urls[0]
 }
 
 // RelaySTUN is the STUN URL of the host of a relay URL, or empty if the
@@ -168,8 +186,10 @@ func NewConnection(o Options) (*webrtc.PeerConnection, error) {
 		config.ICEServers = []webrtc.ICEServer{*o.TURN}
 		config.ICETransportPolicy = webrtc.ICETransportPolicyRelay
 	} else {
-		for _, stun := range []string{o.STUN, o.PeerSTUN} {
-			if stun != "" {
+		var servers []string
+		for _, stun := range slices.Concat([]string{o.STUN}, o.MoreSTUN, []string{o.PeerSTUN}) {
+			if stun != "" && !slices.Contains(servers, stun) {
+				servers = append(servers, stun)
 				config.ICEServers = append(config.ICEServers, webrtc.ICEServer{URLs: []string{stun}})
 			}
 		}
