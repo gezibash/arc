@@ -26,8 +26,9 @@ A peer is a public key or a petname, the start of either, or the end of a
 petname. The eight hex digits at the end of a petname come from a hash of
 the key, not from the start of the key, so `tidal-picard-c614cd5b` is found
 by `c614cd5b` and by the start of its key alike. A member of a group is a
-peer too: `arc-dm open <member>` with no direct messages names the groups
-that you share. A name that selects more than one conversation is refused.
+peer too: `arc-dm open <member>` with no direct messages opens the one
+group that you share, or names the groups when you share several. Flags
+can come before or after the command. A name that selects more than one conversation is refused.
 To write to a citizen for the first time, give its public key, as
 `arc whoami` prints it. `arc-dm help` lists the commands.
 

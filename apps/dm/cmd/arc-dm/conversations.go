@@ -249,6 +249,24 @@ func known(all []conversation) map[string]string {
 	return names
 }
 
+// sharedGroup is the group that the peer of an empty direct conversation
+// shares with this citizen, when there is exactly one. Else it is c.
+func sharedGroup(all []conversation, c conversation) conversation {
+	if !c.direct() || len(c.Entries) > 0 {
+		return c
+	}
+	var groups []conversation
+	for _, g := range all {
+		if !g.direct() && slices.Contains(g.Peers, c.Peers[0]) {
+			groups = append(groups, g)
+		}
+	}
+	if len(groups) == 1 {
+		return groups[0]
+	}
+	return c
+}
+
 // noMessages says that a conversation has no messages yet, and names the
 // groups that its peer shares with this citizen.
 func noMessages(all []conversation, c conversation) string {

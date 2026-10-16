@@ -394,22 +394,53 @@ func TestHelp(t *testing.T) {
 }
 
 // TestAGroupMemberIsAPeer opens and writes to a citizen whom this citizen
-// knows only from a group, by the start of its key.
+// knows only from a group, by the start of its key. With one shared group,
+// open opens that group and marks it read; with two, it lists them.
 func TestAGroupMemberIsAPeer(t *testing.T) {
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 	ada.dm("send", bob.key+","+cy.key, "hello, both of you")
 	bob.sync()
 
-	out := bob.dm("open", cy.key[:8])
-	if !strings.Contains(out, "no direct messages with "+cy.name) || !strings.Contains(out, "arc-dm open "+groupNames(ada, cy)) {
-		t.Errorf("bob opens cy by the start of its key:\n%s", out)
+	if out := bob.dm("open", cy.key[:8]); !strings.Contains(out, "hello, both of you") {
+		t.Errorf("bob opens cy, with whom he shares one group, by the start of its key:\n%s", out)
 	}
+	if got := bob.list(); len(got) != 1 || strings.Contains(got[0].header, "unread") {
+		t.Errorf("after open, bob's conversations are %q, want the group read", got)
+	}
+
+	dee := newPerson(t, "dee")
+	ada.dm("send", bob.key+","+cy.key+","+dee.key, "a second group")
+	bob.sync()
+	out := bob.dm("open", cy.key[:8])
+	if !strings.Contains(out, "no direct messages with "+cy.name) || !strings.Contains(out, "arc-dm open "+groupNames(ada, cy)) || !strings.Contains(out, "arc-dm open "+groupNames(ada, cy, dee)) {
+		t.Errorf("bob opens cy, with whom he shares two groups:\n%s", out)
+	}
+
 	if out := bob.dm("send", cy.key[:8], "just for you, cy"); !strings.Contains(out, "queued for "+cy.name) {
 		t.Errorf("bob sends to cy by the start of its key: %s", out)
 	}
 	cy.sync()
 	if conv := cy.dm("open", bob.name); !strings.Contains(conv, "just for you, cy") {
 		t.Errorf("cy's direct conversation with bob:\n%s", conv)
+	}
+}
+
+// TestFlagsBeforeTheCommand takes the flags before or after the command.
+func TestFlagsBeforeTheCommand(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "flags first")
+	bob.sync()
+	flags := []string{"-arc", bob.arc.Program, "-home", bob.arc.Home, "-state", bob.state}
+	out, err := exec.Command(env.program, append(flags, "open", ada.key[:8])...).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "flags first") {
+		t.Fatalf("arc-dm <flags> open: %v\n%s", err, out)
+	}
+	if got := bob.list(); len(got) != 1 || strings.Contains(got[0].header, "unread") {
+		t.Errorf("the open with flags first used another state: %q", got)
+	}
+	out, err = exec.Command(env.program, append(flags, "-h", "open")...).CombinedOutput()
+	if !strings.Contains(string(out), "Usage of arc-dm open") {
+		t.Errorf("arc-dm <flags> -h open: %v\n%s", err, out)
 	}
 }
 
