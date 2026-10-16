@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.5] - 2026-10-16
+
+Direct transfers use every relay of a citizen, not only the first. Found
+during the Fly host outage of 2026-10-16, which took the one relay down for
+about 15 minutes. Nothing is breaking. Update each device.
+
+### Fixed
+
+- A direct transfer gathers its public address from the STUN server of
+  each relay at once. A relay that is down delays the setup until the
+  gather timeout of 2 s, and no longer stops it.
+- `arc relay turn`, the TURN of direct transfers and the TURN of storage
+  sync take the credential from the first relay that serves one.
+
+### Added
+
+- `direct.Options.MoreSTUN` and `direct.STUNURLs`, for the STUN servers of
+  every relay.
+
 ## [0.33.4] - 2026-10-16
 
 Two more fixes to arc-dm, from Alfred's second stress test. Nothing is
