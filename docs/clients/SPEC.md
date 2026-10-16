@@ -175,7 +175,7 @@ recipient.
 
 | Cause | What happens | What the user sees |
 | --- | --- | --- |
-| arc is not on `PATH` | The process does not start. | The error of the process. |
+| arc is not on `PATH` | The process does not start. The error wraps `arcprogram.ErrNoArc`. | `the arc program is not installed: no "arc" on PATH`, and where to get arc. |
 | The arc home has no key | arc fails. | What arc wrote, such as how to make a key. |
 | The citizen has no relay, at a watch | arc fails. | `arc message watch needs a relay: run arc relay add <url>`. |
 | A bad `--since` | arc fails. | What arc wrote. |
@@ -194,6 +194,9 @@ recipient.
 - The petname comes from the key, not from the sender. Two keys can have
   the same petname. A client program that selects a peer by name MUST
   refuse a name that selects more than one peer.
+- `arcprogram.Petname` gives the petname of a key that no line named, as
+  arc makes it. The eight hex digits at the end of a petname come from a
+  hash of the key, not from the start of the key.
 - Each call runs one arc process. A watch holds one arc process and one
   connection to each relay of the citizen.
 

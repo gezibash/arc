@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -36,14 +37,20 @@ const usage = `usage:
   arc-dm read [flags] [peer]           mark a conversation read, or all of them
   arc-dm watch [flags]                 print and notify each message as it arrives
 
-A peer is a public key, a petname, or the start of either. Several peers,
-separated by commas, name a group: arc-dm send ada,cy hello sends one
-message that both see, and a reply goes to each member.
+A peer is a public key or a petname, the start of either, or the end of a
+petname: the eight hex digits at the end of a petname come from a hash of
+the key, not from its start. Several peers, separated by commas, name a
+group: arc-dm send ada,cy hello sends one message that both see, and a
+reply goes to each member. The command is ls when none is given.
 arc-dm <command> -h shows the flags of a command.`
 
 func main() {
 	commands := map[string]func(context.Context, []string) error{"ls": list, "open": open, "send": send, "read": read, "watch": watch}
 	name, args := "ls", os.Args[1:]
+	if len(args) > 0 && slices.Contains([]string{"help", "-h", "-help", "--help"}, args[0]) {
+		fmt.Println(usage)
+		return
+	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		name, args = args[0], args[1:]
 	}
@@ -133,7 +140,7 @@ func open(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(c.Entries) == 0 {
-		fmt.Println("no messages")
+		fmt.Println(noMessages(all, c))
 		return nil
 	}
 	dir := stateDir(s.state)

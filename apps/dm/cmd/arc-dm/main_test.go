@@ -223,9 +223,9 @@ func TestGroups(t *testing.T) {
 		t.Errorf("ada's group conversation:\n%s", conv)
 	}
 
-	// Bob has never seen a message of cy, so the name of cy is the start
-	// of its key.
-	cyForBob := person{key: cy.key, name: cy.key[:8]}
+	// Bob has never seen a message of cy. arc-dm still names cy by its
+	// petname, the one that arc whoami prints for cy.
+	cyForBob := cy
 	got := bob.list()
 	want := []block{
 		{"  " + ada.name + "  1 unread", "just for bob"},
@@ -376,4 +376,73 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// TestHelp lists every command, for each way to ask, and exits with 0.
+func TestHelp(t *testing.T) {
+	for _, ask := range []string{"help", "-h", "-help", "--help"} {
+		out, err := exec.Command(env.program, ask).CombinedOutput()
+		if err != nil {
+			t.Errorf("arc-dm %s failed: %v", ask, err)
+		}
+		for _, command := range []string{"arc-dm [ls]", "arc-dm open", "arc-dm send", "arc-dm read", "arc-dm watch"} {
+			if !strings.Contains(string(out), command) {
+				t.Errorf("arc-dm %s does not list %q:\n%s", ask, command, out)
+			}
+		}
+	}
+}
+
+// TestAGroupMemberIsAPeer opens and writes to a citizen whom this citizen
+// knows only from a group, by the start of its key.
+func TestAGroupMemberIsAPeer(t *testing.T) {
+	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
+	ada.dm("send", bob.key+","+cy.key, "hello, both of you")
+	bob.sync()
+
+	out := bob.dm("open", cy.key[:8])
+	if !strings.Contains(out, "no direct messages with "+cy.name) || !strings.Contains(out, "arc-dm open "+groupNames(ada, cy)) {
+		t.Errorf("bob opens cy by the start of its key:\n%s", out)
+	}
+	if out := bob.dm("send", cy.key[:8], "just for you, cy"); !strings.Contains(out, "queued for "+cy.name) {
+		t.Errorf("bob sends to cy by the start of its key: %s", out)
+	}
+	cy.sync()
+	if conv := cy.dm("open", bob.name); !strings.Contains(conv, "just for you, cy") {
+		t.Errorf("cy's direct conversation with bob:\n%s", conv)
+	}
+}
+
+// groupNames is the names of the peers, sorted by key and separated by
+// commas, as arc-dm open takes them.
+func groupNames(peers ...person) string {
+	return strings.ReplaceAll(groupName(peers...), ", ", ",")
+}
+
+// TestTheEndOfAPetnameNamesACitizen opens a conversation by the hex digits
+// at the end of a petname, which do not start the key.
+func TestTheEndOfAPetnameNamesACitizen(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "find me by my suffix")
+	bob.sync()
+	suffix := ada.name[strings.LastIndex(ada.name, "-")+1:]
+	if strings.HasPrefix(ada.key, suffix) {
+		t.Skip("this key starts with the suffix of its petname")
+	}
+	if conv := bob.dm("open", suffix); !strings.Contains(conv, "find me by my suffix") {
+		t.Errorf("bob opens %s by %q:\n%s", ada.name, suffix, conv)
+	}
+}
+
+// TestNoArc says how to get arc when it is not on PATH.
+func TestNoArc(t *testing.T) {
+	command := exec.Command(env.program, "ls")
+	command.Env = append(os.Environ(), "PATH="+t.TempDir())
+	out, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("arc-dm ls with no arc did not fail:\n%s", out)
+	}
+	if !strings.Contains(string(out), "the arc program is not installed") || !strings.Contains(string(out), "https://republic.sh/join.md") {
+		t.Errorf("arc-dm ls with no arc said:\n%s", out)
+	}
 }

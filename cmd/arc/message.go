@@ -126,8 +126,12 @@ func printOutbox(w io.Writer, out []mail.Outgoing, now time.Time) {
 				state += fmt.Sprintf(", %d expired", expired)
 			}
 		}
-		fmt.Fprintf(w, "%s  to %s  %s, sent %d times\n  %s\n",
-			entries[0].Created.Local().Format("2006-01-02 15:04"), petnames(to), state, attempts, entries[0].Text)
+		times := "times"
+		if attempts == 1 {
+			times = "time"
+		}
+		fmt.Fprintf(w, "%s  to %s  %s, sent %d %s\n  %s\n",
+			entries[0].Created.Local().Format("2006-01-02 15:04"), petnames(to), state, attempts, times, entries[0].Text)
 	}
 }
 

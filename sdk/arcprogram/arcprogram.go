@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/gezibash/arc/core/keys"
 )
 
 // MaxLine is the longest JSON line that this package reads from arc. A
@@ -180,7 +183,7 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 		return err
 	}
 	if err := command.Start(); err != nil {
-		return fmt.Errorf("arc message watch: %w", err)
+		return fmt.Errorf("arc message watch: %w", a.missing(err))
 	}
 
 	seen := map[string]bool{}
@@ -243,10 +246,39 @@ func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byt
 	problems := &tail{}
 	command.Stderr = problems
 	out, err := command.Output()
+	if errors.Is(err, exec.ErrNotFound) {
+		return nil, fmt.Errorf("arc %s: %w", strings.Join(args[:min(2, len(args))], " "), a.missing(err))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("arc %s: %s", strings.Join(args[:min(2, len(args))], " "), problems.reason(err))
 	}
 	return out, nil
+}
+
+// ErrNoArc is the error when the arc program cannot be found.
+var ErrNoArc = errors.New("the arc program is not installed")
+
+// missing explains an error that says the arc program cannot be found.
+func (a Arc) missing(err error) error {
+	if !errors.Is(err, exec.ErrNotFound) {
+		return err
+	}
+	program := a.Program
+	if program == "" {
+		program = "arc"
+	}
+	return fmt.Errorf("%w: no %q on PATH; install arc with the steps at https://republic.sh/join.md, or give the path of arc", ErrNoArc, program)
+}
+
+// Petname is the petname of a public key in hex, as arc prints it, for
+// example "bold-einstein-3a7f0bc1", or "" for text that is not a key. The
+// suffix comes from a hash of the key, not from the start of the key.
+func Petname(key string) string {
+	if !IsKey(key) {
+		return ""
+	}
+	b, _ := hex.DecodeString(key)
+	return keys.Name(b)
 }
 
 // lines reads one JSON object from each line of out.
