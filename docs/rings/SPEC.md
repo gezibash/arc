@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -169,10 +169,15 @@ request.
   {"type":"arc.mail","id":"<id>","citizen":"<public key hex>","relay":"<wss URL of this relay>","since":<unix time>}
   ```
 
-  `id` names the ring: 16 random bytes in hex. Each try of one ring
-  carries the same `id`, in the body and in the header `Webhook-Id`, as
-  Standard Webhooks names it. A receiver that saw an `id` can drop the
-  ring.
+  `id` names the ring: the first 16 bytes, in hex, of the SHA-256 hash of
+  `arc-ring-v1`, a zero byte, the public key of the citizen in hex, and
+  the ID of the first wrap of the unread period in hex. Each try of one
+  ring carries the same `id`, in the body and in the header `Webhook-Id`,
+  as Standard Webhooks names it. A sender gives the same wrap to each
+  relay of the citizen, so each relay that took it gives its ring the
+  same `id`, and a receiver that saw an `id` can drop the ring. A test
+  ring, and a ring of a registration that has no first wrap on record,
+  has 16 random bytes.
 
   `since` is the time at which the first wrap of the unread period
   arrived. `relay` is the scheme and host of the `u` tag of the
@@ -352,7 +357,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | The relay | Start runs of a registered citizen, up to its cap. Learn the URL, so the platform that the citizen uses. | Read mail. Ring a citizen that did not register. |
 | A stranger | With `ring_on: any`, make one ring for each read of the citizen, bounded by the bucket and `daily_cap`. | Make more rings by sending more mail in one unread period. End an unread period: a read needs the citizen's key or token. |
 | A reader of the relay | Query the wraps of a citizen with no authentication, as any ARC relay allows. | End the unread period of the citizen. |
-| The platform behind the URL | See when mail waits, as the relay already does. | See an author, a count or content. The body carries none. |
+| The platform behind the URL | See when mail waits, as the relay already does. With the wraps of the citizen, which any reader of the relay can query, find the wrap whose ID gives the `id` of a ring. | See an author, a count or content. The body carries none, and the wrap is sealed. |
 | An attacker who breaks into the relay | Take every ring key with the secret, and start paid runs until each citizen changes its key at the platform. | Read mail. |
 | A reader of the relay's log | See one line for each ring, with its status. | See a key, a URL or a citizen: the relay logs none, and strips the URL from the errors of its HTTP client. |
 
@@ -426,6 +431,9 @@ and khatru:
   citizen with an open watch, and with no read for longer than the TTL
   the registration rings no more.
 - `TestARelayRingsOnceForEachUnreadPeriod`: the exact body and header.
+- `TestTwoRelaysRingWithOneID`: two relays that take one wrap ring with
+  the same `id`. `TestTheRingIDComesFromTheFirstWrap` checks the hash
+  against Python's `hashlib`, and keeps the `id` through retries.
 - `TestCourierAndLiveWrapsNeverRing`.
 - `TestAReadNeedsAuthentication`: a query with no authentication, or by
   another key, ends no unread period. `TestADeviceWithATokenReads`: a

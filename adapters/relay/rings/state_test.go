@@ -1,6 +1,7 @@
 package rings
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,14 +23,14 @@ func ring(t *testing.T, s *state, now time.Time, status int) job {
 	if what, _ := s.next(now); what != send {
 		t.Fatalf("no ring goes at %s", now.Format(time.TimeOnly))
 	}
-	try := s.begin(now, "ring-id")
+	try := s.begin(now, "", "ring-id")
 	s.finish(status, now, 0.5)
 	return try
 }
 
 func TestAWrapRingsAtOnce(t *testing.T) {
 	s := fresh()
-	s.wrap(t0, false)
+	s.wrap(t0, false, "")
 	if what, _ := s.next(t0); what != send {
 		t.Fatal("the first wrap after a read does not ring at once")
 	}
@@ -37,10 +38,10 @@ func TestAWrapRingsAtOnce(t *testing.T) {
 
 func TestOneRingForEachUnreadPeriod(t *testing.T) {
 	s := fresh()
-	s.wrap(t0, false)
+	s.wrap(t0, false, "")
 	ring(t, s, t0, 200)
 
-	s.wrap(t0.Add(time.Minute), false)
+	s.wrap(t0.Add(time.Minute), false, "")
 	if what, _ := s.next(t0.Add(time.Hour)); what != idle {
 		t.Fatal("a second wrap of one unread period rang")
 	}
@@ -49,14 +50,14 @@ func TestOneRingForEachUnreadPeriod(t *testing.T) {
 	if what, _ := s.next(t0.Add(2 * time.Hour)); what != idle {
 		t.Fatal("a read with no new wrap rang")
 	}
-	s.wrap(t0.Add(3*time.Hour), false)
+	s.wrap(t0.Add(3*time.Hour), false, "")
 	ring(t, s, t0.Add(3*time.Hour), 200)
 }
 
 func TestTheSinceIsTheFirstUnreadWrap(t *testing.T) {
 	s := fresh()
-	s.wrap(t0, false)
-	s.wrap(t0.Add(time.Minute), false)
+	s.wrap(t0, false, "")
+	s.wrap(t0.Add(time.Minute), false, "")
 	if try := ring(t, s, t0.Add(time.Minute), 200); try.Since != t0.Unix() {
 		t.Fatalf("since is %d, want the first wrap %d", try.Since, t0.Unix())
 	}
@@ -66,7 +67,7 @@ func TestTheBucketLetsABurstGoAndThenPaces(t *testing.T) {
 	s := fresh()
 	at := t0
 	for range 3 {
-		s.wrap(at, false)
+		s.wrap(at, false, "")
 		ring(t, s, at, 200)
 		at = at.Add(time.Second)
 		s.read(at)
@@ -74,7 +75,7 @@ func TestTheBucketLetsABurstGoAndThenPaces(t *testing.T) {
 	// Three rings in three seconds used the bucket. The fourth waits until
 	// one ring comes back: 300 s after the bucket was full, less the 2 s
 	// that passed.
-	s.wrap(at, false)
+	s.wrap(at, false, "")
 	what, when := s.next(at)
 	if what != wait {
 		t.Fatalf("a fourth ring in a burst of 3 does not wait: %v", what)
@@ -87,7 +88,7 @@ func TestTheBucketLetsABurstGoAndThenPaces(t *testing.T) {
 
 func TestAWrapInAWatchIsRead(t *testing.T) {
 	s := fresh()
-	s.wrap(t0, true)
+	s.wrap(t0, true, "")
 	if what, _ := s.next(t0); what != idle {
 		t.Fatal("a wrap that a watching citizen got rang")
 	}
@@ -98,12 +99,12 @@ func TestTheDailyCapHoldsUntilMidnight(t *testing.T) {
 	s.DailyCap = 2
 	at := t0
 	for range 2 {
-		s.wrap(at, false)
+		s.wrap(at, false, "")
 		ring(t, s, at, 200)
 		at = at.Add(time.Hour)
 		s.read(at)
 	}
-	s.wrap(at, false)
+	s.wrap(at, false, "")
 	what, when := s.next(at)
 	midnight := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	if what != wait || !when.Equal(midnight) {
@@ -114,7 +115,7 @@ func TestTheDailyCapHoldsUntilMidnight(t *testing.T) {
 
 func TestAFailedRingTriesFourTimesWithBackoff(t *testing.T) {
 	s := fresh()
-	s.wrap(t0, false)
+	s.wrap(t0, false, "")
 	at := t0
 	first := ring(t, s, at, 500)
 	// With jitter 0.5, each wait is three quarters of 30 s, 2 min, 8 min.
@@ -149,7 +150,7 @@ func TestTheJitterStaysInItsBounds(t *testing.T) {
 
 func TestAReadCancelsARetry(t *testing.T) {
 	s := fresh()
-	s.wrap(t0, false)
+	s.wrap(t0, false, "")
 	ring(t, s, t0, 500)
 	s.read(t0.Add(time.Second))
 	if what, _ := s.next(t0.Add(time.Hour)); what != idle {
@@ -160,7 +161,7 @@ func TestAReadCancelsARetry(t *testing.T) {
 func TestAnExpiredRegistrationRingsNoMore(t *testing.T) {
 	s := fresh()
 	s.Expires = t0.Add(time.Hour).Unix()
-	s.wrap(t0.Add(time.Hour), false)
+	s.wrap(t0.Add(time.Hour), false, "")
 	if what, _ := s.next(t0.Add(time.Hour)); what != idle {
 		t.Fatal("an expired registration rang")
 	}
@@ -171,7 +172,7 @@ func TestSevenDaysWithNo2xxRemoveTheRegistration(t *testing.T) {
 	if s.abandoned(t0.Add(30 * 24 * time.Hour)) {
 		t.Fatal("a registration that never rang was removed")
 	}
-	s.wrap(t0, false)
+	s.wrap(t0, false, "")
 	ring(t, s, t0, 401)
 	if s.abandoned(t0.Add(Abandon - time.Second)) {
 		t.Fatal("a registration was removed before 7 days")
@@ -182,5 +183,30 @@ func TestSevenDaysWithNo2xxRemoveTheRegistration(t *testing.T) {
 	s.finish(200, t0.Add(time.Hour), 0)
 	if s.abandoned(t0.Add(8 * 24 * time.Hour)) {
 		t.Fatal("a registration that got a 2xx answer was removed")
+	}
+}
+
+// TestTheRingIDComesFromTheFirstWrap gives every relay the same ID for the
+// ring of one wrap. The expected ID is from Python's hashlib:
+// sha256(b"arc-ring-v1\x00" + citizen + wrap).hexdigest()[:32].
+func TestTheRingIDComesFromTheFirstWrap(t *testing.T) {
+	citizen, wrapID := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	if got := RingID(citizen, wrapID); got != "2ab621d8a5d5fc5169f98d345dc73af4" {
+		t.Fatalf("RingID = %s, want 2ab621d8a5d5fc5169f98d345dc73af4", got)
+	}
+	s := fresh()
+	s.wrap(t0, false, wrapID)
+	s.wrap(t0.Add(time.Second), false, strings.Repeat("c", 64))
+	if try := s.begin(t0.Add(time.Second), citizen, "random"); try.ID != "2ab621d8a5d5fc5169f98d345dc73af4" {
+		t.Fatalf("the ring of the period has ID %s, want the one of its first wrap", try.ID)
+	}
+	s.finish(503, t0.Add(time.Second), 0.5)
+	if try := s.begin(t0.Add(time.Hour), citizen, "another random"); try.ID != "2ab621d8a5d5fc5169f98d345dc73af4" {
+		t.Fatalf("a retry has ID %s, want the same", try.ID)
+	}
+	s.read(t0.Add(2 * time.Hour))
+	s.wrap(t0.Add(3*time.Hour), false, strings.Repeat("c", 64))
+	if try := s.begin(t0.Add(3*time.Hour), citizen, "random"); try.ID == "2ab621d8a5d5fc5169f98d345dc73af4" || try.ID != RingID(citizen, strings.Repeat("c", 64)) {
+		t.Fatalf("the next period has ID %s, want the one of its own first wrap", try.ID)
 	}
 }

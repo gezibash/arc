@@ -873,7 +873,7 @@ func TestARegistrationOfVersion0330Rings(t *testing.T) {
 	}
 	// A ring a minute ago does not hold back the next one.
 	again.mu.Lock()
-	s.wrap(again.cfg.Now(), false)
+	s.wrap(again.cfg.Now(), false, "")
 	what, _ := s.next(again.cfg.Now())
 	again.mu.Unlock()
 	if what != send {
@@ -938,5 +938,54 @@ func TestAReadRenewsTheRegistration(t *testing.T) {
 	h.tick()
 	if n := len(h.calls()); n != 0 {
 		t.Fatalf("a citizen that stopped reading for 2 hours got %d rings", n)
+	}
+}
+
+// publish sends one wrap to the relay, on a connection with no
+// authentication.
+func (h *harness) publish(wrap nostr.Event) {
+	h.t.Helper()
+	ctx := context.Background()
+	conn, err := nostr.RelayConnect(ctx, h.ws, nostr.RelayOptions{})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.Publish(ctx, wrap); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// TestTwoRelaysRingWithOneID gives the same wrap to two relays of one
+// citizen, as a sender does. Both ring with the same ID, the one that
+// RingID gives for the wrap, so the URL can drop the second ring.
+func TestTwoRelaysRingWithOneID(t *testing.T) {
+	one, two := start(t, Config{}), start(t, Config{})
+	bob := keys.Generate()
+	one.mustRegister(bob)
+	two.mustRegister(bob)
+
+	ctx := context.Background()
+	author := keys.Generate()
+	rumor := private.Rumor(author, 14, "to both relays", nil, time.Now())
+	wrap, err := private.Wrap(ctx, author, bob.Public, rumor, private.RelayForm, private.WrapKind, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	one.publish(wrap)
+	two.publish(wrap)
+	one.rings.sends.Wait()
+	two.rings.sends.Wait()
+
+	first, second := one.calls(), two.calls()
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("the relays made %d and %d rings, want 1 each", len(first), len(second))
+	}
+	want := RingID(bob.Public.Hex(), wrap.ID.Hex())
+	if first[0].id != want || second[0].id != want {
+		t.Fatalf("the rings have IDs %s and %s, want %s on both", first[0].id, second[0].id, want)
+	}
+	if !strings.Contains(first[0].body, `"id":"`+want+`"`) {
+		t.Fatalf("the body names another ID: %s", first[0].body)
 	}
 }

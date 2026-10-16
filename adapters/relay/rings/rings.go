@@ -376,7 +376,7 @@ func (r *Rings) wrap(event nostr.Event) {
 		}
 		if s := r.by[pk]; s != nil {
 			watching := r.watching[pk] > 0
-			s.wrap(now, watching)
+			s.wrap(now, watching, event.ID.Hex())
 			if watching {
 				s.renew(now, r.cfg.TTL)
 			}
@@ -539,7 +539,7 @@ func (r *Rings) relayToken(now time.Time) (time.Duration, bool) {
 // start begins a try, keeps it in the store, and sends it. The caller holds
 // r.mu.
 func (r *Rings) start(pk nostr.PubKey, s *state, now time.Time) {
-	try := s.begin(now, ringID())
+	try := s.begin(now, pk.Hex(), ringID())
 	r.save(pk, s)
 	r.busy[pk] = true
 	snapshot := *s
