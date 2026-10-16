@@ -21,11 +21,14 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -65,8 +68,11 @@ const (
 	MinInterval        = 60
 	MaxInterval        = 86400
 	DefaultInterval    = 300
+	MaxBurst           = 10
+	DefaultBurst       = 3
 	DefaultDailyCap    = 48
 	DefaultPerMinute   = 600
+	DefaultTTL         = 30 * 24 * time.Hour
 	RingOnAny          = "any"
 	RingOnStamped      = "stamped"
 	maxURL             = 2048
@@ -76,17 +82,26 @@ const (
 	defaultPort        = 443
 	bucketName         = "rings"
 	keyInfo            = "arc-rings-key-v1\x00"
-	tickEvery          = time.Second
+	sweepEvery         = time.Hour
 	errNoRegistration  = "no registration"
 	errStampedNotBuilt = "ring_on stamped needs the stamp rule of the relay, which this relay does not have"
 )
 
+// IDHeader is the HTTP header that names a ring, as in Standard Webhooks.
+// Each try of one ring carries the same ID.
+const IDHeader = "Webhook-Id"
+
 // Settings are the parts of a registration that the relay shows.
 type Settings struct {
-	URL         string `json:"url"`
-	MinInterval int    `json:"min_interval"`
-	DailyCap    int    `json:"daily_cap"`
-	RingOn      string `json:"ring_on"`
+	URL string `json:"url"`
+	// MinInterval is the seconds in which one ring comes back to the
+	// bucket of the citizen.
+	MinInterval int `json:"min_interval"`
+	// Burst is the most rings that the bucket holds: the rings that can go
+	// one after the other after a quiet time.
+	Burst    int    `json:"burst"`
+	DailyCap int    `json:"daily_cap"`
+	RingOn   string `json:"ring_on"`
 }
 
 // Request is the body of PUT /ring.
@@ -99,6 +114,8 @@ type Request struct {
 type Status struct {
 	Settings
 	Citizen string `json:"citizen"`
+	// Expires is the Unix time at which the registration ends.
+	Expires int64 `json:"expires"`
 	// LastRing is the Unix time of the last ring, or zero.
 	LastRing int64 `json:"last_ring"`
 	// LastStatus is the HTTP status of the last ring, zero for no answer.
@@ -116,6 +133,7 @@ type TestAnswer struct {
 // call is the body of a ring. Its fields keep this order.
 type call struct {
 	Type    string `json:"type"`
+	ID      string `json:"id"`
 	Citizen string `json:"citizen"`
 	Relay   string `json:"relay"`
 	Since   int64  `json:"since"`
@@ -131,6 +149,9 @@ type Config struct {
 	// PerMinute caps the rings of the whole relay in each minute. Zero is
 	// DefaultPerMinute.
 	PerMinute int
+	// TTL is how long a registration lives after its PUT. Zero is
+	// DefaultTTL.
+	TTL time.Duration
 	// Ports are the ports that a ring URL can name. Empty is 443 only.
 	Ports []int
 	// Own are the public addresses of the relay, which a ring URL must not
@@ -154,6 +175,10 @@ type Config struct {
 }
 
 // Rings holds the registrations of a relay and rings them.
+//
+// A ring starts on the save of a wrap, in the hook of khatru. A ring that
+// must wait, for a token of the bucket, the cap of the relay, the next day
+// or a retry, has one timer. No loop polls.
 type Rings struct {
 	cfg    Config
 	db     *bbolt.DB
@@ -166,12 +191,18 @@ type Rings struct {
 	watching map[nostr.PubKey]int
 	subs     map[*khatru.WebSocket]map[int][]nostr.PubKey
 	busy     map[nostr.PubKey]bool
-	minute   int64
-	inMinute int
+	timers   map[nostr.PubKey]*time.Timer
+	// relay is the bucket of the whole relay: PerMinute tokens, which come
+	// back over one minute.
+	relayTokens   float64
+	relayRefilled time.Time
+	// sends counts the tries in flight, so that a test can wait for them.
+	sends sync.WaitGroup
 }
 
 // Apply makes the relay offer rings, with the registrations in db. Call it
-// after the relay has its event store. Run must run for the relay to ring.
+// after the relay has its event store. Each ring that the store holds
+// starts again.
 func Apply(rl *khatru.Relay, db *bbolt.DB, cfg Config) (*Rings, error) {
 	if cfg.Secret == "" {
 		return nil, errors.New("rings need a secret")
@@ -181,6 +212,9 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, cfg Config) (*Rings, error) {
 	}
 	if cfg.PerMinute <= 0 {
 		cfg.PerMinute = DefaultPerMinute
+	}
+	if cfg.TTL <= 0 {
+		cfg.TTL = DefaultTTL
 	}
 	if len(cfg.Ports) == 0 {
 		cfg.Ports = []int{defaultPort}
@@ -212,16 +246,26 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, cfg Config) (*Rings, error) {
 		cfg: cfg, db: db, aead: aead, own: ownAddrs(cfg.Own),
 		by: map[nostr.PubKey]*state{}, watching: map[nostr.PubKey]int{},
 		subs: map[*khatru.WebSocket]map[int][]nostr.PubKey{}, busy: map[nostr.PubKey]bool{},
+		timers:      map[nostr.PubKey]*time.Timer{},
+		relayTokens: float64(cfg.PerMinute), relayRefilled: cfg.Now(),
 	}
 	r.client = r.newClient()
 	if err := r.load(); err != nil {
 		return nil, err
 	}
 	r.hook(rl)
+	r.mu.Lock()
+	r.sweep()
+	for pk := range r.by {
+		r.schedule(pk)
+	}
+	r.mu.Unlock()
 	return r, nil
 }
 
-// load reads the registrations from the store.
+// load reads the registrations from the store. A registration of v0.33.0
+// has no burst and no expiry: it gets the default burst, and lives for the
+// TTL from its creation.
 func (r *Rings) load() error {
 	return r.db.Update(func(tx *bbolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(bucketName))
@@ -234,9 +278,16 @@ func (r *Rings) load() error {
 				return nil
 			}
 			var s state
-			if json.Unmarshal(v, &s) == nil {
-				r.by[pk] = &s
+			if json.Unmarshal(v, &s) != nil {
+				return nil
 			}
+			if s.Burst == 0 {
+				s.Burst = DefaultBurst
+			}
+			if s.Expires == 0 {
+				s.Expires = time.Unix(s.Created, 0).Add(r.cfg.TTL).Unix()
+			}
+			r.by[pk] = &s
 			return nil
 		})
 	})
@@ -259,6 +310,13 @@ func (r *Rings) save(pk nostr.PubKey, s *state) {
 	if err != nil {
 		r.cfg.Logger.Warn("rings: the store refused a write", "error", err)
 	}
+}
+
+// remove ends the registration of a citizen. The caller holds r.mu.
+func (r *Rings) remove(pk nostr.PubKey) {
+	delete(r.by, pk)
+	r.stop(pk)
+	r.save(pk, nil)
 }
 
 // hook adds the NIP-11 tag, and watches the wraps and the reads. It sends
@@ -301,8 +359,11 @@ func (r *Rings) hook(rl *khatru.Relay) {
 	}
 }
 
-// wrap notes a relay-form wrap. A courier-form wrap has no p tag, and a
-// live wrap is ephemeral and never saved, so neither rings.
+// wrap notes a relay-form wrap, and rings at once when a ring is due. A
+// courier-form wrap has no p tag, and a live wrap is ephemeral and never
+// saved, so neither rings. The relay counts the subscriptions of a citizen
+// when they open, so it knows before the broadcast whether the citizen
+// reads the wrap live.
 func (r *Rings) wrap(event nostr.Event) {
 	now := r.cfg.Now()
 	r.mu.Lock()
@@ -315,6 +376,7 @@ func (r *Rings) wrap(event nostr.Event) {
 		if s := r.by[pk]; s != nil {
 			s.wrap(now, r.watching[pk] > 0)
 			r.save(pk, s)
+			r.schedule(pk)
 		}
 	}
 }
@@ -349,6 +411,7 @@ func (r *Rings) listen(ws *khatru.WebSocket, ssid int, filter nostr.Filter) {
 		if s := r.by[pk]; s != nil {
 			s.read(now)
 			r.save(pk, s)
+			r.stop(pk)
 		}
 	}
 }
@@ -371,80 +434,134 @@ func (r *Rings) unlisten(ws *khatru.WebSocket, ssid int) {
 	}
 }
 
-// Run rings the citizens that are due, until ctx ends.
+// Run removes expired and abandoned registrations once an hour, until ctx
+// ends. Rings do not wait for it.
 func (r *Rings) Run(ctx context.Context) {
-	ticker := time.NewTicker(tickEvery)
+	ticker := time.NewTicker(sweepEvery)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			r.tick(ctx)
+			r.mu.Lock()
+			r.sweep()
+			r.mu.Unlock()
 		case <-ctx.Done():
+			r.mu.Lock()
+			for pk := range r.timers {
+				r.stop(pk)
+			}
+			r.mu.Unlock()
 			return
 		}
 	}
 }
 
-// tick starts each ring that is due, and removes each abandoned
-// registration. The returned group ends when the rings end.
-func (r *Rings) tick(ctx context.Context) *sync.WaitGroup {
+// sweep removes each registration that expired, or that got no 2xx answer
+// for 7 days. The caller holds r.mu.
+func (r *Rings) sweep() {
 	now := r.cfg.Now()
-	var wg sync.WaitGroup
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for pk, s := range r.by {
-		if s.abandoned(now) {
-			delete(r.by, pk)
-			r.save(pk, nil)
+		switch {
+		case s.expired(now):
+			r.remove(pk)
+		case s.abandoned(now):
+			r.remove(pk)
 			r.cfg.Logger.Info("rings: removed a registration after 7 days with no 2xx answer")
-			continue
 		}
-		if r.busy[pk] || !s.due(now) || !r.spend(now) {
-			continue
-		}
-		s.try(now)
-		r.save(pk, s)
-		r.busy[pk] = true
-		snapshot := *s
-		wg.Go(func() {
-			status, err := r.ring(ctx, pk, snapshot, snapshot.Since)
-			// An error can name the host of the URL, so the log says only
-			// that the ring failed.
-			r.cfg.Logger.Info("ring", "status", status, "failed", err != nil)
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			delete(r.busy, pk)
-			if s := r.by[pk]; s != nil {
-				s.answer(status, r.cfg.Now())
-				r.save(pk, s)
-			}
-		})
 	}
-	return &wg
 }
 
-// spend takes one ring from the cap of the relay for this minute. The
-// caller holds r.mu.
-func (r *Rings) spend(now time.Time) bool {
-	minute := now.Unix() / 60
-	if minute != r.minute {
-		r.minute, r.inMinute = minute, 0
+// schedule does what is next for a citizen: it starts a try now, sets one
+// timer for a ring that must wait, or does nothing. The caller holds r.mu.
+func (r *Rings) schedule(pk nostr.PubKey) {
+	s := r.by[pk]
+	if s == nil || r.busy[pk] {
+		return
 	}
-	if r.inMinute >= r.cfg.PerMinute {
-		return false
+	r.stop(pk)
+	now := r.cfg.Now()
+	what, at := s.next(now)
+	if what == send {
+		if delay, ok := r.relayToken(now); !ok {
+			what, at = wait, now.Add(delay)
+		}
 	}
-	r.inMinute++
-	return true
+	switch what {
+	case send:
+		r.start(pk, s, now)
+	case wait:
+		r.timers[pk] = time.AfterFunc(max(at.Sub(now), 0), func() { r.wake(pk) })
+	}
+}
+
+// wake runs when the timer of a citizen fires.
+func (r *Rings) wake(pk nostr.PubKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.timers, pk)
+	r.schedule(pk)
+}
+
+// stop ends the timer of a citizen. The caller holds r.mu.
+func (r *Rings) stop(pk nostr.PubKey) {
+	if t := r.timers[pk]; t != nil {
+		t.Stop()
+		delete(r.timers, pk)
+	}
+}
+
+// relayToken takes one token of the bucket of the whole relay, or says how
+// long until one comes back. The caller holds r.mu.
+func (r *Rings) relayToken(now time.Time) (time.Duration, bool) {
+	perSecond := float64(r.cfg.PerMinute) / 60
+	if elapsed := now.Sub(r.relayRefilled).Seconds(); elapsed > 0 {
+		r.relayTokens = math.Min(float64(r.cfg.PerMinute), r.relayTokens+elapsed*perSecond)
+		r.relayRefilled = now
+	}
+	if r.relayTokens < 1 {
+		return time.Duration((1 - r.relayTokens) / perSecond * float64(time.Second)), false
+	}
+	r.relayTokens--
+	return 0, true
+}
+
+// start begins a try, keeps it in the store, and sends it. The caller holds
+// r.mu.
+func (r *Rings) start(pk nostr.PubKey, s *state, now time.Time) {
+	try := s.begin(now, ringID())
+	r.save(pk, s)
+	r.busy[pk] = true
+	snapshot := *s
+	r.sends.Go(func() {
+		status, err := r.ring(context.Background(), pk, snapshot, try)
+		// An error can name the host of the URL, so the log says only that
+		// the ring failed.
+		r.cfg.Logger.Info("ring", "status", status, "failed", err != nil, "attempt", try.Attempt)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.busy, pk)
+		s := r.by[pk]
+		if s == nil {
+			return
+		}
+		if s.Job != nil && s.Job.ID == try.ID {
+			s.finish(status, r.cfg.Now(), randFloat())
+		} else {
+			s.LastStatus = status
+		}
+		r.save(pk, s)
+		r.schedule(pk)
+	})
 }
 
 // ring makes one call to the ring URL of a citizen, and returns the HTTP
 // status, zero for no answer.
-func (r *Rings) ring(ctx context.Context, pk nostr.PubKey, s state, since int64) (int, error) {
+func (r *Rings) ring(ctx context.Context, pk nostr.PubKey, s state, try job) (int, error) {
 	key, err := r.open(s.SealedKey)
 	if err != nil {
 		return 0, err
 	}
-	body, err := json.Marshal(call{Type: "arc.mail", Citizen: pk.Hex(), Relay: s.Relay, Since: since})
+	body, err := json.Marshal(call{Type: "arc.mail", ID: try.ID, Citizen: pk.Hex(), Relay: s.Relay, Since: try.Since})
 	if err != nil {
 		return 0, err
 	}
@@ -457,6 +574,7 @@ func (r *Rings) ring(ctx context.Context, pk nostr.PubKey, s state, since int64)
 	request.Header.Set("Authorization", "Bearer "+string(key))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "arc-relay-rings")
+	request.Header.Set(IDHeader, try.ID)
 	response, err := r.client.Do(request)
 	if err != nil {
 		// The error of the client names the URL, which can hold a secret.
@@ -468,6 +586,20 @@ func (r *Rings) ring(ctx context.Context, pk nostr.PubKey, s state, since int64)
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, answerBytes))
 	_ = response.Body.Close()
 	return response.StatusCode, nil
+}
+
+// ringID is a random ID of 16 bytes, in hex.
+func ringID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// randFloat is a random number in [0, 1), for the jitter of a retry.
+func randFloat() float64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return float64(binary.BigEndian.Uint64(b[:])>>11) / (1 << 53)
 }
 
 // newClient makes the HTTP client of the rings. It follows no redirect,
@@ -651,8 +783,7 @@ func (r *Rings) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.register(w, req.Context(), citizen, relay, body)
 	case http.MethodDelete:
 		r.mu.Lock()
-		delete(r.by, citizen)
-		r.save(citizen, nil)
+		r.remove(citizen)
 		r.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -707,12 +838,12 @@ func (r *Rings) show(w http.ResponseWriter, citizen nostr.PubKey) {
 
 // status is the registration as GET shows it. The caller holds r.mu.
 func (r *Rings) status(citizen nostr.PubKey, s *state) Status {
-	return Status{Settings: s.Settings, Citizen: citizen.Hex(), LastRing: s.LastRing, LastStatus: s.LastStatus, Left: s.left(r.cfg.Now())}
+	return Status{Settings: s.Settings, Citizen: citizen.Hex(), Expires: s.Expires, LastRing: s.LastRing, LastStatus: s.LastStatus, Left: s.left(r.cfg.Now())}
 }
 
-// register checks and keeps a registration. A new registration keeps the
-// count of the day and the time of the last ring, so that it cannot reset
-// the caps.
+// register checks and keeps a registration, until the TTL ends. A new
+// registration keeps the count of the day and the bucket, so that it
+// cannot reset the caps.
 func (r *Rings) register(w http.ResponseWriter, ctx context.Context, citizen nostr.PubKey, relay string, body []byte) {
 	var request Request
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -731,11 +862,13 @@ func (r *Rings) register(w http.ResponseWriter, ctx context.Context, citizen nos
 		return
 	}
 	now := r.cfg.Now()
-	s := &state{Settings: request.Settings, SealedKey: sealed, Relay: relay, Created: now.Unix(), LastRead: now.Unix()}
+	s := &state{Settings: request.Settings, SealedKey: sealed, Relay: relay, Created: now.Unix(), Expires: now.Add(r.cfg.TTL).Unix(), LastRead: now.Unix()}
 	r.mu.Lock()
 	if old := r.by[citizen]; old != nil {
 		s.LastRing, s.LastStatus, s.Day, s.Used = old.LastRing, old.LastStatus, old.Day, old.Used
+		s.Tokens, s.Refilled = old.Tokens, old.Refilled
 	}
+	r.stop(citizen)
 	r.by[citizen] = s
 	r.save(citizen, s)
 	status := r.status(citizen, s)
@@ -753,6 +886,12 @@ func (r *Rings) check(ctx context.Context, request *Request) error {
 		request.MinInterval = DefaultInterval
 	case interval < MinInterval || interval > MaxInterval:
 		return fmt.Errorf("min_interval is %d; it must be %d to %d seconds", interval, MinInterval, MaxInterval)
+	}
+	switch b := request.Burst; {
+	case b == 0:
+		request.Burst = DefaultBurst
+	case b < 1 || b > MaxBurst:
+		return fmt.Errorf("burst is %d; it must be 1 to %d", b, MaxBurst)
 	}
 	switch c := request.DailyCap; {
 	case c == 0:
@@ -795,7 +934,8 @@ func (r *Rings) checkURL(ctx context.Context, raw string) error {
 }
 
 // test rings once now. It counts against the cap of the day and of the
-// relay, and plans no retry.
+// relay, takes no token from the bucket of the citizen, so that it delays
+// no ring of mail, and plans no retry.
 func (r *Rings) test(w http.ResponseWriter, ctx context.Context, citizen nostr.PubKey) {
 	now := r.cfg.Now()
 	r.mu.Lock()
@@ -809,31 +949,33 @@ func (r *Rings) test(w http.ResponseWriter, ctx context.Context, citizen nostr.P
 		r.mu.Unlock()
 		fail(w, http.StatusTooManyRequests, "the rings of today are used")
 		return
-	case r.busy[citizen] || !r.spend(now):
+	case r.busy[citizen]:
+		r.mu.Unlock()
+		fail(w, http.StatusTooManyRequests, "a ring of this citizen is on the way; try again in a few seconds")
+		return
+	}
+	if _, ok := r.relayToken(now); !ok {
 		r.mu.Unlock()
 		fail(w, http.StatusTooManyRequests, "the relay rings too much now; try again in a minute")
 		return
 	}
-	if s.Day != day(now) {
-		s.Day, s.Used = day(now), 0
-	}
-	s.Used++
-	s.LastRing = now.Unix()
+	s.count(now)
 	r.save(citizen, s)
 	r.busy[citizen] = true
 	snapshot := *s
 	r.mu.Unlock()
 
-	since := snapshot.Since
-	if since == 0 {
-		since = now.Unix()
+	try := job{ID: ringID(), Since: snapshot.Since, Attempt: 1}
+	if try.Since == 0 {
+		try.Since = now.Unix()
 	}
-	status, err := r.ring(ctx, citizen, snapshot, since)
+	status, err := r.ring(ctx, citizen, snapshot, try)
 	r.mu.Lock()
 	delete(r.busy, citizen)
 	if s := r.by[citizen]; s != nil {
 		s.LastStatus = status
 		r.save(citizen, s)
+		r.schedule(citizen)
 	}
 	r.mu.Unlock()
 	answer(w, http.StatusOK, TestAnswer{Status: status, Error: errString(err)})

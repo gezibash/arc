@@ -3,8 +3,8 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
-- Unverified: No test has run an agent of a hosted platform, such as a Grok Bot, with arc on its machine (section 4.3). The tests ring a local TLS server through an injected resolver and dialer; no test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
+- Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
 registered, when mail for the citizen waits unread. The package
@@ -82,6 +82,7 @@ one ring for each read, and a cap for each day.
 - Rings are off unless the operator turns them on:
   `arc relay serve --rings`. The relay then needs the environment variable
   `RINGS_SECRET`, as TURN needs `TURN_SECRET`.
+- A registration lives 30 days after its last `PUT`.
 - The operator sets `--rings-daily-cap` (default 48, estimated), the
   largest `daily_cap` that a citizen can ask for; `--rings-per-minute`
   (default 600, estimated), the cap of the whole relay; and
@@ -112,19 +113,21 @@ request.
   | --- | --- |
   | `url` | Required. An `https` URL, with no user and no fragment, of at most 2,048 bytes. Section 3.6 lists the URLs that the relay refuses. |
   | `key` | Required. 16 to 512 bytes. |
-  | `min_interval` | Seconds between two rings. 60 to 86,400. Zero or absent is 300 (estimated). |
+  | `min_interval` | Seconds in which one ring comes back to the bucket of the citizen (section 3.5). 60 to 86,400. Zero or absent is 300 (estimated). |
+  | `burst` | Rings that the bucket holds: the rings that can go one after the other after a quiet time. 1 to 10. Zero or absent is 3 (estimated). |
   | `daily_cap` | Rings in a UTC day. 1 to the operator's cap. Zero or absent is 48 (estimated), or the operator's cap if that is smaller. |
   | `ring_on` | `any` or `stamped`. Absent is `any`. `stamped` needs section 3.5, case 2. |
 
   The relay MUST refuse a value outside these rules with 422, and keep the
   registration that it had.
 - The answer to `PUT` and `GET` is JSON: the fields of the registration
-  without `key`, and `citizen`, `last_ring` (Unix time, zero for none),
+  without `key`, and `citizen`, `expires` (the Unix time at which the
+  registration ends), `last_ring` (Unix time, zero for none),
   `last_status` (the HTTP status of the last ring, zero for no answer) and
   `left_today`.
-- A new `PUT` replaces the registration. It keeps the count of rings of the
-  day and the time of the last ring, so that a citizen cannot reset the
-  caps with it.
+- A new `PUT` replaces the registration, and renews it for 30 days. It
+  keeps the count of rings of the day and the content of the bucket, so
+  that a citizen cannot reset the caps with it.
 - `GET /ring` with no registration answers 404. `DELETE /ring` removes the
   registration, and answers 204.
 - The relay MUST keep the key encrypted at rest with a key from
@@ -153,13 +156,18 @@ request.
 
 ### 3.4 The call
 
-- A ring is `POST <url>` with `Authorization: Bearer <key>` and
-  `Content-Type: application/json`.
+- A ring is `POST <url>` with `Authorization: Bearer <key>`,
+  `Content-Type: application/json` and `Webhook-Id: <id>`.
 - The body MUST be exactly:
 
   ```json
-  {"type":"arc.mail","citizen":"<public key hex>","relay":"<wss URL of this relay>","since":<unix time>}
+  {"type":"arc.mail","id":"<id>","citizen":"<public key hex>","relay":"<wss URL of this relay>","since":<unix time>}
   ```
+
+  `id` names the ring: 16 random bytes in hex. Each try of one ring
+  carries the same `id`, in the body and in the header `Webhook-Id`, as
+  Standard Webhooks names it. A receiver that saw an `id` can drop the
+  ring.
 
   `since` is the time at which the first wrap of the unread period
   arrived. `relay` is the scheme and host of the `u` tag of the
@@ -173,19 +181,21 @@ request.
 
 ### 3.5 When the relay rings
 
-The relay rings a citizen when all of these hold:
+The relay decides when it saves a wrap, in the same step. It rings at once
+when all of these hold:
 
-1. The citizen has a registration on this relay.
+1. The citizen has a registration on this relay, and it has not expired.
 2. The relay saved a relay-form wrap of kind 1059 whose `p` tag names the
    citizen. A courier-form wrap has no `p` tag, and a live wrap of kind
    21059 is never saved, so neither rings.
-3. The wrap arrived after the last read of the citizen, and the relay rang
-   no other time since that read. One unread period makes at most one
+3. No read subscription of the citizen is open. The relay counts these
+   subscriptions when they open (section 3.3), so it knows before it
+   sends the wrap to them.
+4. The wrap arrived after the last read of the citizen, and the relay
+   started no ring since that read. One unread period makes at most one
    ring, and its retries.
-4. One second passed since the wrap arrived, so that an open read
-   subscription takes it first.
-5. `min_interval` passed since the last ring, and the day has rings left.
-6. The relay rang fewer than `--rings-per-minute` times in this minute.
+5. The bucket of the citizen holds a ring, and the day has rings left.
+6. The bucket of the relay holds a ring.
 7. Case 1, `ring_on` is `any`: each wrap that the relay took counts.
    Case 2, `ring_on` is `stamped`: only a wrap that a stamp admitted, or
    that work at the price of the citizen admitted
@@ -193,14 +203,23 @@ The relay rings a citizen when all of these hold:
    2 needs that rule to be built. Until then the relay MUST refuse
    `ring_on: stamped` with 422.
 
-If condition 4, 5 or 6 alone fails, the relay rings when it holds, if the
-period is still unread. The relay checks once a second.
+The bucket of a citizen holds `burst` rings when it is full. A ring takes
+one. One ring comes back in each `min_interval`, up to `burst`. So after a
+quiet time the first rings go at once, and a burst of mail cannot make
+more than one ring each `min_interval`. The bucket of the relay holds
+`--rings-per-minute` rings, which come back over one minute.
+
+If condition 5 or 6 alone fails, the ring waits until the bucket holds a
+ring, or until 00:00 UTC for the cap of the day, if the period is still
+unread then. The relay sets one timer for a ring that waits. No loop polls.
 
 `POST /ring/test` rings once now, with `since` the time of the request when
-no wrap waits. It needs the conditions 1 and 6, and a ring left in the day.
-It counts against `daily_cap`, sets the time of the last ring, and plans no
+no wrap waits. It needs condition 1 and the bucket of the relay, and a ring
+left in the day. It counts against `daily_cap`, takes no ring from the
+bucket of the citizen, so that it delays no ring of mail, and plans no
 retry. It answers 200 with `{"status":<HTTP status of the URL, zero for no
-answer>}`, 404 with no registration, and 429 when a cap holds.
+answer>}`, 404 with no registration, and 429 when a cap holds or a ring of
+the citizen is on the way.
 
 ### 3.6 Limits on the URL
 
@@ -223,12 +242,18 @@ to once more.
 
 ### 3.7 Failures of the URL
 
-- A ring that gets no 2xx answer is tried again 1 minute after the first
-  try, and 5 minutes after the second. Each try counts against
-  `daily_cap`. A read stops the retries.
+- The relay keeps each ring that it started in its store until the ring
+  ends, so a restart of the relay does not lose it.
+- A ring that gets no 2xx answer is tried again, at most 4 tries in all.
+  The wait before a retry is half of 30 s, 2 min or 8 min, plus a random
+  part of the other half, so that the retries of many citizens spread out.
+  Each try counts against `daily_cap`, and takes no ring from the bucket.
+  A read stops the retries.
 - After 7 days of tries with no 2xx answer, counted from the first failed
   try, the relay MUST remove the registration. `GET /ring` shows the last
-  status until then. A registration that never rang is never removed.
+  status until then. A registration that never rang is never removed for
+  this reason.
+- The relay removes an expired registration within one hour.
 
 ## 4. Behavior
 
@@ -246,7 +271,8 @@ arc relay ring clear
   `--key-env` names. It MUST NOT read the key from its arguments, which the
   shell history and `ps` show. It signs the NIP-98 request with the
   citizen key, and sends `PUT /ring` to each relay of the citizen that
-  lists `arc-rings`. `--min-interval` and `--daily-cap` set the limits.
+  lists `arc-rings`. `--burst`, `--min-interval` and `--daily-cap` set
+  the limits. Each `set` renews the registration for 30 days.
 - Each command prints one line for each relay. A relay without
   `arc-rings` is skipped, and the line says so. A line names only the host
   of the URL, because a path can hold a secret.
@@ -256,8 +282,8 @@ arc relay ring clear
 ### 4.2 A ring, step by step
 
 1. Alice sends Bob mail. The relay saves the relay-form wrap.
-2. Bob read last at 06:00. The relay rang no time since then. The interval
-   passed. The relay rings Bob's URL.
+2. Bob read since the last ring, no watch of Bob is open, and his bucket
+   holds a ring. In the same step, the relay rings Bob's URL.
 3. The platform starts a run of Bob's agent.
 4. The run calls `arc sync` and `arc message inbox --json`. arc
    authenticates before the sync reads, so the sync is a read: the relay
@@ -297,10 +323,13 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | The URL is not public `https` on an allowed port, or a field breaks a rule | 422 with the reason. Nothing changes. |
 | The relay runs with `--rings` and no `RINGS_SECRET` | The relay does not start, and says why. |
 | `RINGS_SECRET` changed | The stored keys do not open. Each ring fails with no answer, and after 7 days the relay removes the registration. The citizen sets the key again. |
-| The platform answers 5xx or does not answer | Two more tries, at 1 and 5 minutes. The mail waits on the relay as it would without rings. |
+| The platform answers 5xx or does not answer | Up to three more tries, after about 30 s, 2 min and 8 min, with one ID. The mail waits on the relay as it would without rings. |
+| The relay restarts while a ring waits | The relay reads the ring from its store, and tries it at its time. |
 | The host resolves to an address that is not public after registration | The ring fails with no answer; `last_status` is 0. |
 | The ring key changed at the platform | Each ring gets 401 or 403. After 7 days the relay removes the registration. The citizen sets the new key. |
-| The day's cap is used | No ring until 00:00 UTC. Mail waits as it would without rings. `ring test` gets 429. |
+| The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. |
+| The bucket is empty | The ring waits until one ring comes back, at most `min_interval`. |
+| The registration expired | No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
 | A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
 | Several inbox relays ring at once | The agent runs more than once. Each run reads the same inbox: the store keeps one copy of each message, by ID, so no run answers a message twice that an earlier run answered. |
 | An older arc reads the mail | It does not authenticate, so the read does not count. The unread period goes on, and the relay rings no more until an arc that authenticates reads. |
@@ -312,7 +341,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | Party | Can | Cannot |
 | --- | --- | --- |
 | The relay | Start runs of a registered citizen, up to its cap. Learn the URL, so the platform that the citizen uses. | Read mail. Ring a citizen that did not register. |
-| A stranger | With `ring_on: any`, make one ring for each read of the citizen, bounded by `min_interval` and `daily_cap`. | Make more rings by sending more mail in one unread period. End an unread period: a read needs the citizen's key or token. |
+| A stranger | With `ring_on: any`, make one ring for each read of the citizen, bounded by the bucket and `daily_cap`. | Make more rings by sending more mail in one unread period. End an unread period: a read needs the citizen's key or token. |
 | A reader of the relay | Query the wraps of a citizen with no authentication, as any ARC relay allows. | End the unread period of the citizen. |
 | The platform behind the URL | See when mail waits, as the relay already does. | See an author, a count or content. The body carries none. |
 | An attacker who breaks into the relay | Take every ring key with the secret, and start paid runs until each citizen changes its key at the platform. | Read mail. |
@@ -325,7 +354,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
   (estimated).
 - The citizen pays each run that a ring starts. With the defaults, at most
   48 runs a day (arithmetic: the default `daily_cap`), and at most one ring
-  and two retries for each read.
+  and three retries for each read.
 - The relay's cap for each minute bounds what all its registrations can
   send to one target: 600 calls a minute with the default (estimated).
 
@@ -350,6 +379,11 @@ a relay that does not offer rings.
 - An older arc reads its mail without authentication. Its reads do not end
   the unread period, so a citizen whose devices all run an older arc gets
   one ring, and then none until it updates (section 5).
+- A registration that arc v0.33.0 kept loads with `burst` 3, and ends 30
+  days after it was made. A v0.33.0 relay read `min_interval` as the least
+  time between two rings, and checked once a second; the field keeps its
+  name. An arc v0.33.0 CLI sends no `burst`, gets the default, and shows no
+  expiry.
 - The wake spec's caller-side wake of a live call stays as it is. A ring
   covers mail and queued calls, which travel in wraps of kind 1059.
 - Removal: an operator turns `--rings` off. The relay then answers 404 on
@@ -369,6 +403,15 @@ and khatru:
   again. The body names no author and carries no mail. `ring clear` ends
   it. With the call that authenticates before a read removed, the test
   fails at "no ring: mail after bob read".
+- `TestAWrapRingsWithinMilliseconds`: five rings, each within 200 ms of
+  the publish. Measured on the Mac on 2026-10-16: 31 to 46 ms, with a new
+  connection and a TLS handshake for each. With the call to ring on save
+  removed, the test fails at "ring 1 did not come".
+- `TestATestRingDelaysNoMail`: mail just after `ring test` rings at once.
+- `TestARingTriesAgainWithOneIDAcrossARestart`: a failed ring survives a
+  restart of the relay, waits for its backoff, and makes 4 tries in all
+  with one ID.
+- `TestARegistrationExpires` and `TestARegistrationOfVersion0330Rings`.
 - `TestARelayRingsOnceForEachUnreadPeriod`: the exact body and header.
 - `TestCourierAndLiveWrapsNeverRing`.
 - `TestAReadNeedsAuthentication`: a query with no authentication, or by
@@ -388,9 +431,10 @@ and khatru:
 - `TestANewRegistrationKeepsTheCountOfTheDay`,
   `TestTheRelayCapsItsRingsInEachMinute`, `TestADeleteEndsTheRings`,
   `TestADeviceRegistersForItsCitizen`, `TestRegistrationsOutliveARestart`.
-- The rules of sections 3.5 and 3.7, as units in `state_test.go`: the
-  interval, the daily cap and the next day, retries at 1 and 5 minutes,
-  a read that ends a retry, and removal after 7 days.
+- The rules of sections 3.5 and 3.7, as units in `state_test.go`: a ring
+  at once, the bucket that lets 3 go and then waits about 300 s, the daily
+  cap until 00:00 UTC, 4 tries with backoff and the bounds of the jitter,
+  a read that ends a retry, expiry, and removal after 7 days.
 
 Unverified: a Grok Bot run with arc (section 4.3), a ring from a deployed
 relay to a URL on the Internet, and `ring_on: stamped`, which waits for the

@@ -27,9 +27,10 @@ func ringCommand() *cobra.Command {
 		Use:   "ring",
 		Short: "Let the relays call a URL when mail waits unread",
 		Long: "A relay that offers rings makes one HTTPS POST to the URL when mail\n" +
-			"for this citizen waits unread: at most once until the next read, and\n" +
-			"within the limits that you set. The call carries no mail, no author\n" +
-			"and no count. Use it to start an agent that does not run all the time.",
+			"for this citizen waits unread: at once, then not again until the next\n" +
+			"read, within the limits that you set. The call carries no mail, no\n" +
+			"author and no count. Use it to start an agent that does not run all\n" +
+			"the time. A registration lasts 30 days; set it again to renew it.",
 	}
 
 	set := &cobra.Command{
@@ -43,6 +44,7 @@ func ringCommand() *cobra.Command {
 			var request rings.Request
 			request.URL, request.Key = args[0], key
 			request.MinInterval, _ = command.Flags().GetInt("min-interval")
+			request.Burst, _ = command.Flags().GetInt("burst")
 			request.DailyCap, _ = command.Flags().GetInt("daily-cap")
 			body, err := json.Marshal(request)
 			if err != nil {
@@ -58,7 +60,8 @@ func ringCommand() *cobra.Command {
 		},
 	}
 	set.Flags().String("key-env", "", "the environment variable that holds the key that the URL asks for, as a Bearer token (required)")
-	set.Flags().Int("min-interval", 0, "the seconds between two rings, 60 to 86400 (default 300)")
+	set.Flags().Int("min-interval", 0, "the seconds in which one ring comes back after it is used, 60 to 86400 (default 300)")
+	set.Flags().Int("burst", 0, "the rings that can go one after the other after a quiet time, 1 to 10 (default 3)")
 	set.Flags().Int("daily-cap", 0, "the most rings in one UTC day (default 48, or the cap of the relay)")
 	_ = set.MarkFlagRequired("key-env")
 
@@ -209,14 +212,15 @@ func ringCall(ctx context.Context, id signerIdentity, method, relay, path string
 	return json.Unmarshal(data, result)
 }
 
-// describeRing says where and how often a relay rings. It names only the
-// host of the URL, because a path can hold a secret.
+// describeRing says where and how often a relay rings, and until when. It
+// names only the host of the URL, because a path can hold a secret.
 func describeRing(s rings.Status) string {
 	host := s.URL
 	if u, err := url.Parse(s.URL); err == nil {
 		host = u.Host
 	}
-	return fmt.Sprintf("%s at most every %d s, %d of %d left today", host, s.MinInterval, s.Left, s.DailyCap)
+	return fmt.Sprintf("%s, %d at once then one each %d s, %d of %d left today, until %s",
+		host, s.Burst, s.MinInterval, s.Left, s.DailyCap, time.Unix(s.Expires, 0).Format(time.DateOnly))
 }
 
 func describeAnswer(status int) string {
