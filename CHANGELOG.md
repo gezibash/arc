@@ -6,6 +6,24 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.4] - 2026-10-16
+
+Two more fixes to arc-dm, from Alfred's second stress test. Nothing is
+breaking. Update each device.
+
+### Fixed
+
+- `arc-dm open <peer>` with no direct conversation opens the one group
+  that you share with the peer, and marks it read. `arc-dm read <peer>`
+  marks it read. With several shared groups, `open` lists them.
+- Flags of `arc-dm` can come before the command:
+  `arc-dm -state <dir> open <peer>`.
+
+### Added
+
+- A proposal for opt-in read receipts, `docs/proposals/read-receipts.md`.
+  Nothing is built.
+
 ## [0.33.3] - 2026-10-16
 
 Fixes from the stress test of arc-dm by two agents, Otto and Alfred.
