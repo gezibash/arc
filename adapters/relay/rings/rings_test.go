@@ -39,7 +39,8 @@ import (
 var publicIP = netip.MustParseAddr("203.0.113.10")
 
 type hit struct {
-	auth, body string
+	auth, id, body string
+	at             time.Time
 }
 
 type safeBuffer struct {
@@ -81,7 +82,7 @@ func start(t *testing.T, cfg Config) *harness {
 
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		h.hits <- hit{auth: r.Header.Get("Authorization"), body: string(body)}
+		h.hits <- hit{auth: r.Header.Get("Authorization"), id: r.Header.Get(IDHeader), body: string(body), at: time.Now()}
 		w.WriteHeader(int(h.status.Load()))
 	}))
 	target.StartTLS()
@@ -140,8 +141,22 @@ func start(t *testing.T, cfg Config) *harness {
 
 func (h *harness) advance(d time.Duration) { h.offset.Add(int64(d)) }
 
-// tick runs one round of the ringer, and waits for its rings.
-func (h *harness) tick() { h.rings.tick(context.Background()).Wait() }
+// tick waits for the rings on the way, fires each timer now, as if its
+// time came on the clock of the test, and waits for the rings that it
+// started.
+func (h *harness) tick() {
+	h.rings.sends.Wait()
+	h.rings.mu.Lock()
+	var due []nostr.PubKey
+	for pk := range h.rings.timers {
+		due = append(due, pk)
+	}
+	h.rings.mu.Unlock()
+	for _, pk := range due {
+		h.rings.wake(pk)
+	}
+	h.rings.sends.Wait()
+}
 
 func (h *harness) calls() []hit {
 	var out []hit
@@ -292,7 +307,10 @@ func TestARelayRingsOnceForEachUnreadPeriod(t *testing.T) {
 	if calls[0].auth != "Bearer "+ringKey {
 		t.Fatalf("the ring sent Authorization %q", calls[0].auth)
 	}
-	want := fmt.Sprintf(`{"type":"arc.mail","citizen":"%s","relay":"%s","since":%d}`, bob.Public.Hex(), h.ws, arrived)
+	if len(calls[0].id) != 32 {
+		t.Fatalf("the ring has the ID %q, want 32 hex characters", calls[0].id)
+	}
+	want := fmt.Sprintf(`{"type":"arc.mail","id":"%s","citizen":"%s","relay":"%s","since":%d}`, calls[0].id, bob.Public.Hex(), h.ws, arrived)
 	if calls[0].body != want {
 		t.Fatalf("the body is\n%s\nwant\n%s", calls[0].body, want)
 	}
@@ -709,5 +727,156 @@ func TestTheDialerChecksTheAddressItConnectsTo(t *testing.T) {
 	}
 	if err := r.control("tcp", "203.0.113.10:443", nil); err != nil {
 		t.Errorf("the dialer refuses a public address: %v", err)
+	}
+}
+
+func TestAWrapRingsWithinMilliseconds(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	h.mustRegister(bob)
+	for i := range 5 {
+		sent := time.Now()
+		h.mail(bob.Public, private.RelayForm, private.WrapKind)
+		select {
+		case hit := <-h.hits:
+			took := hit.at.Sub(sent)
+			if took > latencyBudget {
+				t.Fatalf("ring %d came %s after the publish, want under %s", i+1, took, latencyBudget)
+			}
+			t.Logf("ring %d came %s after the publish", i+1, took.Round(100*time.Microsecond))
+		case <-time.After(5 * time.Second):
+			t.Fatalf("ring %d did not come: the relay waits for something", i+1)
+		}
+		h.rings.sends.Wait()
+		h.read(bob)
+		// The bucket holds 3 rings, and gets one back each 300 s.
+		h.advance(5 * time.Minute)
+	}
+}
+
+func TestATestRingDelaysNoMail(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	h.mustRegister(bob)
+	if code, body := h.do(http.MethodPost, TestPath, bob, nil, nil); code != http.StatusOK {
+		t.Fatalf("test ring: %d %s", code, body)
+	}
+	h.calls()
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	select {
+	case <-h.hits:
+	case <-time.After(time.Second):
+		t.Fatal("mail after a test ring did not ring at once")
+	}
+}
+
+func TestARingTriesAgainWithOneIDAcrossARestart(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	h.mustRegister(bob)
+	h.status.Store(503)
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.rings.sends.Wait()
+	first := h.calls()
+	if len(first) != 1 {
+		t.Fatalf("the first try made %d calls", len(first))
+	}
+
+	// The relay restarts. The store holds the job, and the new relay tries
+	// it again with the same ID, after the backoff.
+	again, err := Apply(khatru.NewRelay(), h.db, h.rings.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.rings = again
+	h.tick()
+	if n := len(h.calls()); n != 0 {
+		t.Fatalf("the retry came before its backoff: %d calls", n)
+	}
+	var ids []string
+	for range MaxAttempts - 1 {
+		h.advance(10 * time.Minute)
+		h.tick()
+		for _, c := range h.calls() {
+			ids = append(ids, c.id)
+		}
+	}
+	if len(ids) != MaxAttempts-1 {
+		t.Fatalf("the retries made %d calls, want %d", len(ids), MaxAttempts-1)
+	}
+	for _, id := range ids {
+		if id != first[0].id {
+			t.Fatalf("a retry has the ID %s, want %s", id, first[0].id)
+		}
+	}
+	h.advance(time.Hour)
+	h.tick()
+	if n := len(h.calls()); n != 0 {
+		t.Fatalf("a try came after %d tries", MaxAttempts)
+	}
+}
+
+func TestARegistrationExpires(t *testing.T) {
+	h := start(t, Config{TTL: time.Hour})
+	bob := keys.Generate()
+	h.mustRegister(bob)
+	_, body := h.do(http.MethodGet, Path, bob, nil, nil)
+	var status Status
+	if err := json.Unmarshal([]byte(body), &status); err != nil {
+		t.Fatal(err)
+	}
+	if want := h.rings.cfg.Now().Add(time.Hour).Unix(); status.Expires < want-2 || status.Expires > want {
+		t.Fatalf("the registration expires at %d, want about %d", status.Expires, want)
+	}
+
+	h.advance(2 * time.Hour)
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.tick()
+	if n := len(h.calls()); n != 0 {
+		t.Fatalf("an expired registration got %d rings", n)
+	}
+	h.rings.mu.Lock()
+	h.rings.sweep()
+	_, kept := h.rings.by[bob.Public]
+	h.rings.mu.Unlock()
+	if kept {
+		t.Fatal("the sweep kept an expired registration")
+	}
+}
+
+func TestARegistrationOfVersion0330Rings(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	sealed, err := h.rings.seal(ringKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A record as v0.33.0 wrote it: no burst, no expiry, no bucket.
+	old := map[string]any{
+		"url": "https://example.com/hook", "min_interval": 300, "daily_cap": 48, "ring_on": "any",
+		"sealed_key": sealed, "relay": h.ws, "created": h.rings.cfg.Now().Add(-time.Hour).Unix(),
+		"last_read": h.rings.cfg.Now().Add(-time.Hour).Unix(), "last_ring": h.rings.cfg.Now().Add(-time.Minute).Unix(),
+	}
+	data, _ := json.Marshal(old)
+	if err := h.db.Update(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(bucketName)).Put([]byte(bob.Public.Hex()), data)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Apply(khatru.NewRelay(), h.db, h.rings.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := again.by[bob.Public]
+	if s.Burst != DefaultBurst || s.Expires != time.Unix(s.Created, 0).Add(DefaultTTL).Unix() {
+		t.Fatalf("the old record loads with burst %d and expiry %d", s.Burst, s.Expires)
+	}
+	// A ring a minute ago does not hold back the next one.
+	again.mu.Lock()
+	s.wrap(again.cfg.Now(), false)
+	what, _ := s.next(again.cfg.Now())
+	again.mu.Unlock()
+	if what != send {
+		t.Fatalf("an old registration with a recent ring does not ring at once: %v", what)
 	}
 }

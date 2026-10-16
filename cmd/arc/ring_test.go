@@ -12,7 +12,6 @@ import (
 	"net/netip"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,9 +22,9 @@ import (
 type ringHit struct{ auth, body string }
 
 // ringRelay runs a relay that rings, and a TLS server that stands for the
-// ring URL https://example.com/hook. It returns the relay URL, the calls
-// to the ring URL, and the offset of the clock of the relay.
-func ringRelay(t *testing.T) (string, chan ringHit, *atomic.Int64) {
+// ring URL https://example.com/hook. It returns the relay URL and the calls
+// to the ring URL.
+func ringRelay(t *testing.T) (string, chan ringHit) {
 	t.Helper()
 	hits := make(chan ringHit, 20)
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,10 +35,8 @@ func ringRelay(t *testing.T) (string, chan ringHit, *atomic.Int64) {
 	t.Cleanup(target.Close)
 	public := netip.MustParseAddr("203.0.113.10")
 
-	offset := &atomic.Int64{}
 	config := &rings.Config{
 		Secret: "a secret of the relay",
-		Now:    func() time.Time { return time.Now().Add(time.Duration(offset.Load())) },
 		Lookup: func(_ context.Context, host string) ([]netip.Addr, error) {
 			if host != "example.com" {
 				return nil, fmt.Errorf("no host %s", host)
@@ -65,7 +62,7 @@ func ringRelay(t *testing.T) (string, chan ringHit, *atomic.Int64) {
 	go ringer.Run(ctx)
 	server := httptest.NewServer(relayHandler(rl, nil, ringer))
 	t.Cleanup(server.Close)
-	return "ws" + strings.TrimPrefix(server.URL, "http"), hits, offset
+	return "ws" + strings.TrimPrefix(server.URL, "http"), hits
 }
 
 func waitRing(t *testing.T, hits chan ringHit, what string) ringHit {
@@ -93,7 +90,7 @@ func noRing(t *testing.T, hits chan ringHit, what string) {
 // alice rings it once; more mail before bob reads does not; arc sync is a
 // read, and the next mail rings again.
 func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
-	url, hits, offset := ringRelay(t)
+	url, hits := ringRelay(t)
 
 	// A second relay offers no rings: it answers 404 on /ring, and ring set
 	// skips it.
@@ -124,7 +121,7 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 		t.Fatal("ring set took an empty environment variable")
 	}
 	set := ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY")
-	if !strings.Contains(set, url+": rings example.com at most every 300 s, 48 of 48 left today") || !strings.Contains(set, plainURL+": offers no rings, skipped") {
+	if !strings.Contains(set, url+": rings example.com, 3 at once then one each 300 s, 48 of 48 left today, until ") || !strings.Contains(set, plainURL+": offers no rings, skipped") {
 		t.Fatalf("arc relay ring set:\n%s", set)
 	}
 	if strings.Contains(set, key) {
@@ -138,16 +135,15 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	if hit := waitRing(t, hits, "the test ring"); hit.auth != "Bearer "+key {
 		t.Fatalf("the test ring sent Authorization %q", hit.auth)
 	}
-	if out := ok(t, bob, "", "relay", "ring", "show"); !strings.Contains(out, "47 of 48 left today; last ring") {
+	if out := ok(t, bob, "", "relay", "ring", "show"); !strings.Contains(out, "47 of 48 left today, until ") || !strings.Contains(out, "; last ring ") {
 		t.Fatalf("arc relay ring show:\n%s", out)
 	}
 
-	// The interval of the test ring passes. Mail from alice rings once.
-	offset.Add(int64(10 * time.Minute))
+	// Mail from alice rings at once: the test ring holds nothing back.
 	ok(t, alice, "", "message", "send", bobHex, "are you awake?")
 	ok(t, alice, "", "sync")
 	hit := waitRing(t, hits, "the first mail")
-	if !strings.HasPrefix(hit.body, `{"type":"arc.mail","citizen":"`+bobHex+`","relay":"`+url+`","since":`) {
+	if !strings.HasPrefix(hit.body, `{"type":"arc.mail","id":"`) || !strings.Contains(hit.body, `","citizen":"`+bobHex+`","relay":"`+url+`","since":`) {
 		t.Fatalf("the ring body is %s", hit.body)
 	}
 	if strings.Contains(hit.body, "awake") {
@@ -158,16 +154,12 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	ok(t, alice, "", "sync")
 	noRing(t, hits, "a second mail before bob read")
 
-	// arc sync reads. The next mail, after the interval, rings again.
-	offset.Add(int64(10 * time.Minute))
+	// arc sync reads. The next mail rings again.
 	ok(t, bob, "", "sync")
 	ok(t, alice, "", "message", "send", bobHex, "one more")
 	ok(t, alice, "", "sync")
 	waitRing(t, hits, "mail after bob read")
 
-	// The clock of the relay comes back, so that it takes the signatures
-	// of the CLI, and bob clears the registration.
-	offset.Store(0)
 	if out := ok(t, bob, "", "relay", "ring", "clear"); !strings.Contains(out, url+": rings no more") {
 		t.Fatalf("arc relay ring clear:\n%s", out)
 	}
