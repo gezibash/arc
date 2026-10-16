@@ -1,6 +1,8 @@
 package rings
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"time"
 )
@@ -46,8 +48,9 @@ type state struct {
 	// LastRead is the time of the last read.
 	LastRead int64 `json:"last_read"`
 	// Since is when the first wrap of the unread period arrived, or zero
-	// when no wrap waits unread.
-	Since int64 `json:"since"`
+	// when no wrap waits unread, and SinceWrap is the ID of that wrap.
+	Since     int64  `json:"since"`
+	SinceWrap string `json:"since_wrap,omitempty"`
 	// Rang says that the relay started a ring in this unread period.
 	Rang bool `json:"rang"`
 	// Job is the ring that has not ended, or nil.
@@ -104,19 +107,29 @@ func (s *state) tokenAt(now time.Time) time.Time {
 // needed: the citizen has the mail.
 func (s *state) read(now time.Time) {
 	s.LastRead = now.Unix()
-	s.Since, s.Rang, s.Job = 0, false, nil
+	s.Since, s.SinceWrap, s.Rang, s.Job = 0, "", false, nil
 }
 
 // wrap notes a relay-form wrap for the citizen. A wrap that arrives while
 // a subscription of the citizen is open is read at once.
-func (s *state) wrap(now time.Time, watching bool) {
+func (s *state) wrap(now time.Time, watching bool, wrapID string) {
 	if watching {
 		s.read(now)
 		return
 	}
 	if s.Since == 0 {
-		s.Since = now.Unix()
+		s.Since, s.SinceWrap = now.Unix(), wrapID
 	}
+}
+
+// RingID is the ID of the ring for the unread period that a wrap started:
+// the first 16 bytes of SHA-256 of "arc-ring-v1", a zero byte, the public
+// key of the citizen in hex, and the ID of the wrap in hex. Each relay that
+// took the wrap gives the ring the same ID, so a URL can drop the rings of
+// the other relays.
+func RingID(citizen, wrapID string) string {
+	sum := sha256.Sum256([]byte("arc-ring-v1\x00" + citizen + wrapID))
+	return hex.EncodeToString(sum[:16])
 }
 
 // left is the number of rings that the day has left.
@@ -159,9 +172,13 @@ func (s *state) next(now time.Time) (step, time.Time) {
 }
 
 // begin starts a try. The first try of a ring takes a token and makes the
-// job. Each try counts against the day.
-func (s *state) begin(now time.Time, id string) job {
+// job, with the ID that the first wrap gives, or else id. Each try counts
+// against the day.
+func (s *state) begin(now time.Time, citizen, id string) job {
 	if s.Job == nil {
+		if s.SinceWrap != "" {
+			id = RingID(citizen, s.SinceWrap)
+		}
 		s.fill(now)
 		s.Tokens--
 		s.Rang = true
