@@ -48,10 +48,7 @@ func selfSyncConfig(command *cobra.Command, sess *citizen.Session) (citizen.Self
 		Device:   device,
 		Dir:      filepath.Join(dir, "selfsync"),
 		TURN: func(ctx context.Context) (direct.Credential, error) {
-			if len(sess.URLs) == 0 {
-				return direct.Credential{}, errors.New("no relays: add one with arc relay add <url>")
-			}
-			body, err := fetchTURN(ctx, dir, sess.URLs[0])
+			body, err := fetchAnyTURN(ctx, dir, sess.URLs)
 			if err != nil {
 				return direct.Credential{}, err
 			}
