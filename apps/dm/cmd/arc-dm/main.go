@@ -41,7 +41,9 @@ A peer is a public key or a petname, the start of either, or the end of a
 petname: the eight hex digits at the end of a petname come from a hash of
 the key, not from its start. Several peers, separated by commas, name a
 group: arc-dm send ada,cy hello sends one message that both see, and a
-reply goes to each member. The command is ls when none is given.
+reply goes to each member. The command is ls when none is given. A peer
+with no direct conversation that shares one group with you opens that
+group. Flags can come before or after the command.
 arc-dm <command> -h shows the flags of a command.`
 
 func main() {
@@ -51,8 +53,8 @@ func main() {
 		fmt.Println(usage)
 		return
 	}
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name, args = args[0], args[1:]
+	if i := commandAt(args); i >= 0 {
+		name, args = args[i], slices.Concat(args[:i], args[i+1:])
 	}
 	run, ok := commands[name]
 	if !ok {
@@ -66,6 +68,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, "arc-dm:", err)
 		os.Exit(1)
 	}
+}
+
+// commandAt is the index of the command in args, or -1 for none. The flags
+// can come before the command; each flag but -h takes a value, in the next
+// argument unless it holds "=".
+func commandAt(args []string) int {
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--":
+			return -1
+		case slices.Contains([]string{"-h", "-help", "--help"}, arg):
+		case strings.HasPrefix(arg, "-"):
+			if !strings.Contains(arg, "=") {
+				i++
+			}
+		default:
+			return i
+		}
+	}
+	return -1
 }
 
 // settings are the flags that each command takes.
@@ -139,6 +161,7 @@ func open(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	c = sharedGroup(all, c)
 	if len(c.Entries) == 0 {
 		fmt.Println(noMessages(all, c))
 		return nil
@@ -210,7 +233,7 @@ func read(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		all = []conversation{c}
+		all = []conversation{sharedGroup(all, c)}
 	}
 	return markRead(stateDir(s.state), all...)
 }
