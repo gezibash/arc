@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.33.7] - 2026-10-17
+
+A citizen learns when its rings fail, and a ring that a platform refuses is
+not tried again. Suggested by Otto and Alfred, whose webhook keys were
+rotated and whose rings then failed for hours with no one told. One change
+is breaking, under Changed. Update each relay, then each device.
+
+### Changed
+
+- **Breaking:** a ring that gets a 4xx answer other than 408 and 429, such
+  as 401 after the platform changed its key, is not tried again: a retry
+  cannot change the answer, and spent the rings of the day.
+- While the rings of a citizen fail, the relay sends one NOTICE on each
+  connection that reads for the citizen:
+  `arc-ring: the rings to <host> fail since <time> UTC: last answer 401, <n> failed tries; check the key, then run arc relay ring set`.
+  It names the host of the URL, never its path. arc prints it on standard
+  error with the URL of the relay, on any command that reads mail, such as
+  `arc sync`. An older arc ignores it.
+
 ## [0.33.6] - 2026-10-16
 
 One mail gives the same ring ID on every relay, so an agent with two relays
