@@ -76,7 +76,7 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 		return nil, err
 	}
 	// arc prints the petname of the sender and of each recipient. A member
-	// with no message to or from this citizen gets the start of its key.
+	// with no message to or from this citizen gets the petname of its key.
 	names := map[string]string{}
 	for _, m := range inbox {
 		names[m.From] = m.Name
@@ -155,7 +155,7 @@ func peersOf(me string, members []string) []string {
 func newConversation(peers []string, names map[string]string) *conversation {
 	c := &conversation{Peers: peers}
 	for _, key := range peers {
-		c.Names = append(c.Names, cmp.Or(names[key], key[:min(8, len(key))]))
+		c.Names = append(c.Names, cmp.Or(names[key], arcprogram.Petname(key), key[:min(8, len(key))]))
 	}
 	c.Name = strings.Join(c.Names, ", ")
 	return c
@@ -187,10 +187,12 @@ func combined(states []string) string {
 	return fmt.Sprintf("delivered to %d of %d", delivered, len(states))
 }
 
-// find selects a conversation. A peer is a public key, a petname, or the
-// start of either, and selects a direct conversation. Several peers,
-// separated by commas, select the group of those members. A set of keys
-// with no conversation gives a new one.
+// find selects a conversation. A peer is a public key or a petname, the
+// start of either, or the end of a petname, and selects the direct
+// conversation with that citizen. A member of a group with no direct
+// conversation selects a new one. Several peers, separated by commas,
+// select the group of those members. A set of keys with no conversation
+// gives a new one.
 func find(all []conversation, peer string) (conversation, error) {
 	if strings.Contains(peer, ",") {
 		return findGroup(all, peer)
@@ -203,7 +205,7 @@ func find(all []conversation, peer string) (conversation, error) {
 		if c.Peers[0] == peer || c.Name == peer {
 			return c, nil
 		}
-		if strings.HasPrefix(c.Peers[0], peer) || strings.HasPrefix(c.Name, peer) {
+		if partial(c.Peers[0], c.Name, peer) {
 			matches = append(matches, c)
 		}
 	}
@@ -216,23 +218,60 @@ func find(all []conversation, peer string) (conversation, error) {
 			names[i] = c.Name
 		}
 		return conversation{}, fmt.Errorf("%q names %d conversations: %s", peer, len(matches), strings.Join(names, ", "))
-	case arcprogram.IsKey(peer):
-		return conversation{Peers: []string{peer}}, nil
-	default:
-		return conversation{}, fmt.Errorf("no conversation with %q: give the public key of 64 hex digits", peer)
 	}
+	// No direct conversation: the peer can be a member of a group.
+	names := known(all)
+	key, err := resolve(names, peer)
+	if err != nil {
+		return conversation{}, fmt.Errorf("no conversation with %q: give a petname or key from arc-dm ls, or the public key of 64 hex digits", peer)
+	}
+	return *newConversation([]string{key}, names), nil
 }
 
-// findGroup selects the conversation of several peers. Each peer is a
-// public key, or the petname or the start of a member of a known
-// conversation.
-func findGroup(all []conversation, text string) (conversation, error) {
+// partial says whether peer is the start of a key or a petname, or the
+// start of the hex digits at the end of a petname.
+func partial(key, name, peer string) bool {
+	if strings.HasPrefix(key, peer) || strings.HasPrefix(name, peer) {
+		return true
+	}
+	i := strings.LastIndex(name, "-")
+	return i >= 0 && strings.HasPrefix(name[i+1:], peer)
+}
+
+// known maps the key of each peer of each conversation to its petname.
+func known(all []conversation) map[string]string {
 	names := map[string]string{}
 	for _, c := range all {
 		for i, key := range c.Peers {
 			names[key] = c.Names[i]
 		}
 	}
+	return names
+}
+
+// noMessages says that a conversation has no messages yet, and names the
+// groups that its peer shares with this citizen.
+func noMessages(all []conversation, c conversation) string {
+	if !c.direct() {
+		return "no messages"
+	}
+	var groups []string
+	for _, g := range all {
+		if !g.direct() && slices.Contains(g.Peers, c.Peers[0]) {
+			groups = append(groups, "  arc-dm open "+strings.Join(g.Names, ","))
+		}
+	}
+	if len(groups) == 0 {
+		return "no messages with " + c.Name
+	}
+	return fmt.Sprintf("no direct messages with %s; you share %d group(s) with them:\n%s", c.Name, len(groups), strings.Join(groups, "\n"))
+}
+
+// findGroup selects the conversation of several peers. Each peer is a
+// public key, or the petname or the start of a member of a known
+// conversation.
+func findGroup(all []conversation, text string) (conversation, error) {
+	names := known(all)
 	var peers []string
 	for part := range strings.SplitSeq(text, ",") {
 		part = strings.TrimSpace(part)
@@ -263,7 +302,7 @@ func resolve(names map[string]string, peer string) (string, error) {
 		if key == peer || name == peer {
 			return key, nil
 		}
-		if strings.HasPrefix(key, peer) || strings.HasPrefix(name, peer) {
+		if partial(key, name, peer) {
 			matches = append(matches, key)
 		}
 	}

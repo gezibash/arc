@@ -22,9 +22,14 @@ arc-dm read [peer]             # mark a conversation read, or all of them
 arc-dm watch                   # print and notify each message as it arrives
 ```
 
-A peer is a public key, a petname, or the start of either. A name that
-selects more than one conversation is refused. To write to a citizen for
-the first time, give its public key, as `arc whoami` prints it.
+A peer is a public key or a petname, the start of either, or the end of a
+petname. The eight hex digits at the end of a petname come from a hash of
+the key, not from the start of the key, so `tidal-picard-c614cd5b` is found
+by `c614cd5b` and by the start of its key alike. A member of a group is a
+peer too: `arc-dm open <member>` with no direct messages names the groups
+that you share. A name that selects more than one conversation is refused.
+To write to a citizen for the first time, give its public key, as
+`arc whoami` prints it. `arc-dm help` lists the commands.
 
 ```text
 $ arc-dm
@@ -103,8 +108,8 @@ arc sends one message that each member sees, with the keys of all members
   message. A sent message shows `delivered to 1 of 2` until each member
   acknowledged it.
 - arc prints the petname of each sender and recipient. A member that never
-  sent you a message, and that you never wrote to, shows as the
-  start of its key.
+  sent you a message, and that you never wrote to, gets the petname that
+  arc makes from its key.
 - A member on an older arc sees a direct message from the sender. A reply
   from that member goes to the sender only.
 
