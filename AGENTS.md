@@ -63,6 +63,10 @@ ARC has only citizens and the relay. Model each feature on that spine.
 - The relay only coordinates. It keeps mail until it expires, carries live
   calls, announcements and rendezvous, and answers STUN. It carries bulk
   bytes through TURN only as the last resort.
+- The relay holds no cloud credentials. The one exception is the ring key
+  that a citizen registers for its own rings
+  ([relay rings](docs/rings/SPEC.md)). A ring carries no mail, no author
+  and no content.
 - The relay does not keep self data or bulk bytes. Bulk bytes go over the
   direct pipe of `sdk/direct`.
 - Storage and compute are roles that a citizen serves. Do not add a party

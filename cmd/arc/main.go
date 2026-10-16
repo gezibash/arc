@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -40,6 +41,7 @@ import (
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/relaylog"
+	"github.com/gezibash/arc/adapters/relay/rings"
 	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
 	"github.com/gezibash/arc/adapters/relay/turn"
@@ -264,6 +266,7 @@ func relayCommand() *cobra.Command {
 			},
 		},
 		turnCommand(),
+		ringCommand(),
 		serveCommand(),
 	)
 	return command
@@ -347,7 +350,10 @@ func fetchTURN(ctx context.Context, dir, relay string) ([]byte, error) {
 }
 
 // turnURL is the HTTP URL of the TURN credential of a relay URL.
-func turnURL(relay string) (string, error) {
+func turnURL(relay string) (string, error) { return relayHTTP(relay, turn.Path) }
+
+// relayHTTP is the HTTP URL of a path on the listener of a relay.
+func relayHTTP(relay, path string) (string, error) {
 	u, err := url.Parse(relay)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("%q is not a relay URL", relay)
@@ -360,7 +366,7 @@ func turnURL(relay string) (string, error) {
 	default:
 		return "", errors.New("a relay is a ws:// or wss:// URL")
 	}
-	u.Path, u.RawQuery, u.Fragment = turn.Path, "", ""
+	u.Path, u.RawQuery, u.Fragment = path, "", ""
 	return u.String(), nil
 }
 
@@ -378,12 +384,12 @@ func announceRelays(command *cobra.Command) {
 }
 
 // newRelay makes the relay of arc relay serve, with its store in the file at
-// path. The relay logs its connections to logger. Call the returned function
-// to close the store.
-func newRelay(path string, p limits.Policy, logger *slog.Logger) (*khatru.Relay, *relaylog.Log, func(), error) {
+// path. The relay logs its connections to logger. If ring is not nil, the
+// relay offers rings. Call the returned function to close the store.
+func newRelay(path string, p limits.Policy, ring *rings.Config, logger *slog.Logger) (*khatru.Relay, *relaylog.Log, *rings.Rings, func(), error) {
 	db := &boltdb.BoltBackend{Path: path}
 	if err := db.Init(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	connections := relaylog.New(logger)
 	p.Refused = connections.Refused
@@ -391,10 +397,21 @@ func newRelay(path string, p limits.Policy, logger *slog.Logger) (*khatru.Relay,
 	rl.UseEventstore(db, 500)
 	rl.Negentropy = true
 	rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
-	sealed.Protect(rl)
+	readers := sealed.Protect(rl)
 	limits.Apply(rl, db.DB, p)
 	connections.Watch(rl)
-	return rl, connections, db.Close, nil
+	var ringer *rings.Rings
+	if ring != nil {
+		config := *ring
+		config.Readers = readers
+		config.Logger = logger
+		var err error
+		if ringer, err = rings.Apply(rl, db.DB, config); err != nil {
+			db.Close()
+			return nil, nil, nil, nil, err
+		}
+	}
+	return rl, connections, ringer, db.Close, nil
 }
 
 func serveCommand() *cobra.Command {
@@ -415,7 +432,11 @@ func serveCommand() *cobra.Command {
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			rl, connections, closeDB, err := newRelay(path, writePolicy(command), logger)
+			ring, err := ringSetting(command)
+			if err != nil {
+				return err
+			}
+			rl, connections, ringer, closeDB, err := newRelay(path, writePolicy(command), ring, logger)
 			if err != nil {
 				return err
 			}
@@ -468,14 +489,11 @@ func serveCommand() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			var handler http.Handler = rl
-			if turnServer != nil {
-				mux := http.NewServeMux()
-				mux.Handle("/", rl)
-				mux.Handle(turn.Path, turnServer)
-				handler = mux
+			if ringer != nil {
+				go ringer.Run(ctx)
+				fmt.Fprintf(command.OutOrStdout(), "relay rings citizens, at most %d rings each minute\n", ring.PerMinute)
 			}
-			server := &http.Server{Handler: handler, ConnContext: connections.ConnContext}
+			server := &http.Server{Handler: relayHandler(rl, turnServer, ringer), ConnContext: connections.ConnContext}
 			go func() { <-ctx.Done(); _ = server.Close() }()
 			go connections.Run(ctx, time.Minute)
 			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
@@ -497,7 +515,55 @@ func serveCommand() *cobra.Command {
 	command.Flags().String("turn-ports", "", "serve TURN on the STUN port, with relay sockets on this UDP port range, such as 49152-49251 (needs TURN_SECRET)")
 	command.Flags().String("turn-ip", "", "the public IP address of the TURN relay sockets (default: the host of --listen)")
 	command.Flags().Int64("turn-quota", 1024, "the MiB that one citizen can relay through TURN in 24 hours (0: refuse every allocation)")
+	command.Flags().Bool("rings", false, "ring a registered citizen at its URL when mail waits unread (needs RINGS_SECRET)")
+	command.Flags().Int("rings-daily-cap", rings.DefaultDailyCap, "the most rings that a citizen can ask for in one UTC day")
+	command.Flags().Int("rings-per-minute", rings.DefaultPerMinute, "the most rings of the whole relay in one minute")
+	command.Flags().IntSlice("rings-ports", []int{443}, "the ports that a ring URL can name")
 	return command
+}
+
+// ringSetting reads the ring flags of a relay. It returns nil if the relay
+// offers no rings. The secret that encrypts the ring keys comes from the
+// environment variable RINGS_SECRET, so it is not in the process list.
+func ringSetting(command *cobra.Command) (*rings.Config, error) {
+	flags := command.Flags()
+	if on, _ := flags.GetBool("rings"); !on {
+		return nil, nil
+	}
+	secret := os.Getenv("RINGS_SECRET")
+	if secret == "" {
+		return nil, errors.New("--rings needs the environment variable RINGS_SECRET")
+	}
+	var config rings.Config
+	config.Secret = secret
+	config.DailyCap, _ = flags.GetInt("rings-daily-cap")
+	config.PerMinute, _ = flags.GetInt("rings-per-minute")
+	config.Ports, _ = flags.GetIntSlice("rings-ports")
+	if config.DailyCap < 1 || config.PerMinute < 1 {
+		return nil, errors.New("--rings-daily-cap and --rings-per-minute must be at least 1")
+	}
+	if address, _ := flags.GetString("turn-ip"); address != "" {
+		if ip, err := netip.ParseAddr(address); err == nil {
+			config.Own = append(config.Own, ip)
+		}
+	}
+	return &config, nil
+}
+
+// relayHandler serves the relay, and the HTTP paths of TURN and rings when
+// the relay offers them. Every other path is the relay's: khatru answers
+// 404 on a path that it does not know.
+func relayHandler(rl *khatru.Relay, turnServer *turn.Server, ringer *rings.Rings) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", rl)
+	if turnServer != nil {
+		mux.Handle(turn.Path, turnServer)
+	}
+	if ringer != nil {
+		mux.Handle(rings.Path, ringer)
+		mux.Handle(rings.TestPath, ringer)
+	}
+	return mux
 }
 
 // turnSetting reads the TURN flags of a relay. It returns nil if the relay

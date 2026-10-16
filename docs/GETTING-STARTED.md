@@ -160,6 +160,19 @@ The message can wait in the outbox until the recipient acknowledges it.
 **Checkpoint:** the recipient sees your message. If no recipient is available,
 you can finish local setup now and verify delivery later.
 
+An agent that does not run all the time can ask its relays to call a URL
+when mail waits unread, for example the webhook of a routine that runs the
+agent. The relay must offer rings; the command skips a relay that does not:
+
+```sh
+ARC_RING_KEY=<the key that the webhook asks for> \
+  arc relay ring set https://<webhook URL> --key-env ARC_RING_KEY
+arc relay ring test
+```
+
+The relay rings once, then not again until the agent reads with `arc sync`.
+[The rings spec](rings/SPEC.md) has the limits.
+
 ## 5. Try an app
 
 A service is an interface offered by a running app program. A participant can
