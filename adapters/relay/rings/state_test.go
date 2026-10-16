@@ -210,3 +210,40 @@ func TestTheRingIDComesFromTheFirstWrap(t *testing.T) {
 		t.Fatalf("the next period has ID %s, want the one of its own first wrap", try.ID)
 	}
 }
+
+// TestARefusedRingIsNotTriedAgain stops at a 4xx answer, which a retry
+// cannot change, and retries 408, 429, 5xx and no answer
+// (docs/rings/SPEC.md, section 3.7).
+func TestARefusedRingIsNotTriedAgain(t *testing.T) {
+	for status, retried := range map[int]bool{401: false, 403: false, 404: false, 410: false, 408: true, 429: true, 500: true, 503: true, 0: true} {
+		s := fresh()
+		s.wrap(t0, false, "")
+		ring(t, s, t0, status)
+		what, _ := s.next(t0.Add(time.Hour))
+		if got := what != idle; got != retried {
+			t.Errorf("after an answer %d, a retry is planned: %v, want %v", status, got, retried)
+		}
+	}
+}
+
+// TestTheFailureTextNamesHostTimeAnswerAndTries is the notice that the
+// relay sends to the citizen.
+func TestTheFailureTextNamesHostTimeAnswerAndTries(t *testing.T) {
+	s := fresh()
+	if s.failure("example.com") != "" {
+		t.Fatal("a registration with no failure has a notice")
+	}
+	s.wrap(t0, false, "")
+	ring(t, s, t0, 503)
+	ring(t, s, t0.Add(time.Minute), 401)
+	want := "arc-ring: the rings to example.com fail since 2026-10-16 06:00 UTC: last answer 401, 2 failed tries; check the key, then run arc relay ring set"
+	if got := s.failure("example.com"); got != want {
+		t.Fatalf("the notice is\n%s\nwant\n%s", got, want)
+	}
+	s.read(t0.Add(2 * time.Minute))
+	s.wrap(t0.Add(3*time.Minute), false, "")
+	ring(t, s, t0.Add(time.Hour), 200)
+	if got := s.failure("example.com"); got != "" {
+		t.Fatalf("a 2xx answer left the notice %q", got)
+	}
+}

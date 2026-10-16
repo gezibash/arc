@@ -675,7 +675,7 @@ func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
 			return nil, err
 		}
 	}
-	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: os.Stderr})
+	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: command.ErrOrStderr()})
 }
 
 func errRemote(what string) error {

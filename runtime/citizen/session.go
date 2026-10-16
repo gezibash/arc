@@ -91,6 +91,9 @@ func Open(cfg Config) (*Session, error) {
 			if sess.delegation != nil {
 				r.Delegation = sess.delegation
 			}
+			if sess.Errors != nil {
+				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, text) })
+			}
 			sess.kept[url] = r
 		}
 		return r

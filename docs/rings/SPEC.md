@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -254,11 +254,22 @@ to once more.
 
 - The relay keeps each ring that it started in its store until the ring
   ends, so a restart of the relay does not lose it.
-- A ring that gets no 2xx answer is tried again, at most 4 tries in all.
-  The wait before a retry is half of 30 s, 2 min or 8 min, plus a random
-  part of the other half, so that the retries of many citizens spread out.
-  Each try counts against `daily_cap`, and takes no ring from the bucket.
-  A read stops the retries.
+- A ring that gets no answer, a 5xx answer, 408 or 429 is tried again, at
+  most 4 tries in all. The wait before a retry is half of 30 s, 2 min or
+  8 min, plus a random part of the other half, so that the retries of many
+  citizens spread out. Each try counts against `daily_cap`, and takes no
+  ring from the bucket. A read stops the retries.
+- A ring that gets another 4xx answer, such as 401 after the platform
+  changed its key, MUST NOT be tried again: a retry cannot change the
+  answer, and would spend the rings of the day.
+- While the rings of a citizen fail, from the first failed try until a 2xx
+  answer, the relay MUST tell the citizen on its next read: one NOTICE on
+  each connection that reads for the citizen (section 3.3), and only on
+  such a connection. The NOTICE is
+  `arc-ring: the rings to <host> fail since <date> <time> UTC: last answer <status>, <n> failed tries; check the key, then run arc relay ring set`,
+  with `last no answer` when no answer came. It names the host of the URL,
+  never its path, which can hold a secret. arc prints each NOTICE that
+  starts with `arc-ring:` on standard error, after the URL of the relay.
 - After 7 days of tries with no 2xx answer, counted from the first failed
   try, the relay MUST remove the registration. `GET /ring` shows the last
   status until then. A registration that never rang is never removed for
@@ -340,7 +351,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | The platform answers 5xx or does not answer | Up to three more tries, after about 30 s, 2 min and 8 min, with one ID. The mail waits on the relay as it would without rings. |
 | The relay restarts while a ring waits | The relay reads the ring from its store, and tries it at its time. |
 | The host resolves to an address that is not public after registration | The ring fails with no answer; `last_status` is 0. |
-| The ring key changed at the platform | Each ring gets 401 or 403. After 7 days the relay removes the registration. The citizen sets the new key. |
+| The ring key changed at the platform | The ring gets 401 or 403, and the relay does not try it again. The next `arc sync` or `arc message watch` prints the NOTICE of each relay. The citizen sets the new key with `arc relay ring set`. Without that, after 7 days the relay removes the registration. |
 | The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. |
 | The bucket is empty | The ring waits until one ring comes back, at most `min_interval`. |
 | The registration expired | The citizen read nothing for 30 days. No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
@@ -431,6 +442,14 @@ and khatru:
   citizen with an open watch, and with no read for longer than the TTL
   the registration rings no more.
 - `TestARelayRingsOnceForEachUnreadPeriod`: the exact body and header.
+- `TestARefusedRingIsNotTriedAgain` and
+  `TestTheFailureTextNamesHostTimeAnswerAndTries`: the rules of a 4xx
+  answer, and the exact NOTICE.
+- `TestAReadOfACitizenWithFailingRingsGetsANotice`: a ring answered 401
+  makes one call; three reads of the citizen on one connection get one
+  NOTICE; a stranger's read gets none.
+- `TestSyncSaysThatRingsFail` (`cmd/arc`): `arc sync` prints the NOTICE
+  with the URL of the relay.
 - `TestTwoRelaysRingWithOneID`: two relays that take one wrap ring with
   the same `id`. `TestTheRingIDComesFromTheFirstWrap` checks the hash
   against Python's `hashlib`, and keeps the `id` through retries.

@@ -59,6 +59,10 @@ func sealedKinds(filter nostr.Filter) bool {
 // connection that authenticated.
 const ringsTag = "arc-rings"
 
+// ringNotice starts each NOTICE of a relay about the rings of the citizen
+// (docs/rings/SPEC.md, section 3.7).
+const ringNotice = "arc-ring:"
+
 // readsMail says whether a filter reads the gift wraps of a recipient.
 func readsMail(filter nostr.Filter) bool {
 	return len(filter.Tags["p"]) > 0 && (len(filter.Kinds) == 0 || slices.Contains(filter.Kinds, 1059))
@@ -99,6 +103,10 @@ type kept struct {
 	// turn holds one token. The Send that put it there sends next.
 	turn chan struct{}
 
+	// notice gets each NOTICE that starts with "arc-ring:". It lives here,
+	// not in Relay, so that a Relay stays comparable.
+	notice func(text string)
+
 	// mu guards conn and used. A call holds it while it connects.
 	mu   sync.Mutex
 	conn *nostr.Relay
@@ -135,6 +143,15 @@ type Delegation interface {
 // opens the connection, and opens it again after it ended. Close ends it.
 func New(url string, signer nostr.Signer) Relay {
 	return Relay{URL: url, Signer: signer, kept: &kept{turn: make(chan struct{}, 1), sessions: &sessions{}}}
+}
+
+// OnNotice makes a Relay from New give each NOTICE that starts with
+// "arc-ring:", such as the warning that the rings of the citizen fail, to
+// notice. Call it before the first call to the relay.
+func (r Relay) OnNotice(notice func(text string)) {
+	if r.kept != nil {
+		r.kept.notice = notice
+	}
 }
 
 // Tags returns the tags of the NIP-11 document of the relay.
@@ -319,7 +336,11 @@ func (r Relay) connect(ctx context.Context, s *sessions) (*nostr.Relay, error) {
 	var conn *nostr.Relay
 	err := reach(ctx, r.URL, func(ctx context.Context, client *http.Client) error {
 		conn = nostr.NewRelay(context.Background(), r.URL, nostr.RelayOptions{
-			NoticeHandler: func(*nostr.Relay, string) {},
+			NoticeHandler: func(_ *nostr.Relay, text string) {
+				if r.kept != nil && r.kept.notice != nil && strings.HasPrefix(text, ringNotice) {
+					r.kept.notice(text)
+				}
+			},
 			CustomHandler: s.dispatch,
 		})
 		if err := conn.ConnectWithClient(ctx, client); err != nil {

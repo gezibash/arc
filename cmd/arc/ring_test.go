@@ -24,12 +24,13 @@ type ringHit struct{ auth, body string }
 // ringRelay runs a relay that rings, and a TLS server that stands for the
 // ring URL https://example.com/hook. It returns the relay URL and the calls
 // to the ring URL.
-func ringRelay(t *testing.T) (string, chan ringHit) {
+func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 	t.Helper()
 	hits := make(chan ringHit, 20)
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		hits <- ringHit{auth: r.Header.Get("Authorization"), body: string(body)}
+		w.WriteHeader(status)
 	}))
 	target.StartTLS()
 	t.Cleanup(target.Close)
@@ -90,7 +91,7 @@ func noRing(t *testing.T, hits chan ringHit, what string) {
 // alice rings it once; more mail before bob reads does not; arc sync is a
 // read, and the next mail rings again.
 func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
-	url, hits := ringRelay(t)
+	url, hits := ringRelay(t, http.StatusOK)
 
 	// A second relay offers no rings: it answers 404 on /ring, and ring set
 	// skips it.
@@ -165,5 +166,33 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	}
 	if _, err := run(t, bob, "", "relay", "ring", "show"); err == nil {
 		t.Fatal("ring show found a registration after clear")
+	}
+}
+
+// TestSyncSaysThatRingsFail registers a URL that answers 401, as a
+// platform does after its key changed. The next arc sync prints the notice
+// of the relay on standard error, with the relay.
+func TestSyncSaysThatRingsFail(t *testing.T) {
+	url, hits := ringRelay(t, http.StatusUnauthorized)
+	bob, bobHex := providerHome(t, url)
+	alice, _ := providerHome(t, url)
+	t.Setenv("ARC_RING_KEY", "a key that the platform no longer takes")
+	ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY")
+
+	ok(t, alice, "", "message", "send", bobHex, "are you there?")
+	ok(t, alice, "", "sync")
+	waitRing(t, hits, "the ring that gets 401")
+
+	var stderr strings.Builder
+	command := root()
+	command.SetOut(&strings.Builder{})
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"--home", bob, "sync"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	want := url + ": arc-ring: the rings to example.com fail since "
+	if !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), "last answer 401") {
+		t.Fatalf("arc sync said on standard error:\n%s\nwant a line starting %q", stderr.String(), want)
 	}
 }
