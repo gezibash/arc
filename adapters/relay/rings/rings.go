@@ -232,7 +232,7 @@ func Apply(rl *khatru.Relay, db *bbolt.DB, cfg Config) (*Rings, error) {
 		}
 	}
 	if cfg.Readers == nil {
-		cfg.Readers = func(ws *khatru.WebSocket) []nostr.PubKey { return ws.Authed() }
+		cfg.Readers = func(ws *khatru.WebSocket) []nostr.PubKey { return ws.AuthedPublicKeys }
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)

@@ -244,7 +244,7 @@ func protect(rl *khatru.Relay, now func() nostr.Timestamp) Readers {
 
 	prevent := rl.PreventBroadcast
 	rl.PreventBroadcast = func(ws *khatru.WebSocket, filter nostr.Filter, event nostr.Event) bool {
-		if event.Kind == devices.TokenKind || draft.IsMoved(event) || isSealed(event) && !slices.Contains(g.readers(ws, ws.Authed(), now()), event.PubKey) {
+		if event.Kind == devices.TokenKind || draft.IsMoved(event) || isSealed(event) && !slices.Contains(g.readers(ws, ws.AuthedPublicKeys, now()), event.PubKey) {
 			return true
 		}
 		return prevent != nil && prevent(ws, filter, event)
@@ -253,7 +253,7 @@ func protect(rl *khatru.Relay, now func() nostr.Timestamp) Readers {
 		if ws == nil {
 			return nil
 		}
-		return g.readers(ws, ws.Authed(), now())
+		return g.readers(ws, ws.AuthedPublicKeys, now())
 	}
 }
 
