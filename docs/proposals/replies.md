@@ -27,8 +27,7 @@ is for the terminal only, and groups get it from day one.
 - By [the spec template](../SPEC-TEMPLATE.md), section 3, a change to a
   normative section of a built spec ships as a breaking commit. The wire
   change is additive and no older client fails (section 7). It still ships
-  with a `BREAKING CHANGE` footer unless the reviewers decide otherwise
-  (section 9).
+  with a `BREAKING CHANGE` footer (section 10).
 
 ## 1. Purpose
 
@@ -322,7 +321,7 @@ for one run, before the PR is ready.
 | `TestAnOlderArcReadsAReplyAsAMessage` (`core/mail`) | A copy of the inbox rule of v0.34.0 reads a reply as a plain message, as `TestAnOlderArcReadsAGroupMessageAsADirectMessage` does for groups. |
 
 The hostile cases need a reply that arc would refuse to send (section
-3.3). Two ways exist (section 9): tests in `cmd/arc` that call
+3.3). Two ways exist (section 10): tests in `cmd/arc` that call
 `mail.SendRumor` with their own tags, or a flag that only the `arctest`
 build of arc has, as it already has an easier proof of work
 ([the clients spec](../clients/SPEC.md), section 3.8).
@@ -336,11 +335,7 @@ another NIP-17 client.
 
 ## 9. Open questions
 
-1. Breaking footer: should an additive, optional tag that no older client
-   fails on still ship as a breaking commit, as the template says? Otto
-   proposes `feat` with no footer, and a line in the template that an
-   additive field which the spec already requires readers to ignore is not
-   breaking. That changes the rule of the repository, so it waits for Zim.
+None. Section 10 records the answers.
 
 ## 10. Decisions of the review
 
@@ -352,3 +347,8 @@ Otto reviewed this proposal at `52fd5c0`:
 - arc keeps the refusal of a parent with other members (section 3.3).
 - `reply_to` carries the id only. The local store is the one source of
   the parent text.
+- Zim kept the rule of the template: a change to a normative section of a
+  built spec ships as a breaking commit. The new `reply_to` field of the
+  clients spec is such a change, so the feature ships with `!` and a
+  `BREAKING CHANGE` footer that says how an older client behaves. The
+  template does not change.
