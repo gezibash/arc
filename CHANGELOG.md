@@ -6,6 +6,54 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-17
+
+Text that another party chooses can no longer change your terminal, reorder
+a line, forge a line, or hide text that an agent reads and a person does
+not see. That covers a message, a reply, a refusal, a relay notice, an
+offer, a file name and a storage answer. Found and reviewed in five rounds
+by Otto and Alfred, with Zim's rules for the characters. Several changes
+are breaking, under Changed. Update each device; relays need no change.
+
+### Changed
+
+- **Breaking:** arc and each client program show the text of another party
+  as `sdk/terminal` escapes it (docs/clients/SPEC.md, section 3.9):
+  - ESC and the other control characters show as `\x1b`.
+  - U+0080 to U+009F, the bidi embeddings, overrides and isolates, the
+    line and paragraph separators, and invisible characters such as
+    U+200B show as `\u202e`.
+  - Tag characters show as `\U000e0068`, except in the flags of England,
+    Scotland and Wales.
+  - A backslash shows as `\\`.
+  - A variation selector stays only after a character it can select.
+  - The joiners and the marks U+200E, U+200F and U+061C stay.
+  - Each line of a message is indented under its header. Titles, ids,
+    reasons, notices and error lines stay on one line.
+  - The JSON lines of `arc message` do not change.
+- **Breaking:** a live reply of `arc call` is escaped wherever it goes,
+  because an agent that reads a pipe has no terminal either. Piped JSON
+  stays valid JSON with the same value. `--raw` gives the bytes as they
+  came, and warns on a terminal.
+- **Breaking:** `arc message send` and `arc-dm send` refuse a text that a
+  person cannot see, such as only spaces or U+200B.
+- **Breaking:** the storage client refuses a list reply that names an ID
+  that is not a blob ID of 64 hex digits (docs/storage/SPEC.md, section
+  3.3). A correct storage citizen does not notice.
+- The values that an app shows lose the characters above, but keep their
+  backslashes, so a program that reads them through a pipe gets the rest
+  as it was. arc says on standard error when it removed any.
+- `arc-transfer get` removes those characters, newlines and tabs from the
+  file name of a link before it writes the file. A name that starts with a
+  dash gets a leading `_`.
+
+### Fixed
+
+- `arc-dm send <peer> ""` no longer waits for standard input forever, and
+  SIGTERM stops a read of standard input (#334).
+- `arc-dm` escapes control characters instead of showing U+FFFD, so
+  nothing of the text is lost.
+
 ## [0.33.7] - 2026-10-17
 
 A citizen learns when its rings fail, and a ring that a platform refuses is
