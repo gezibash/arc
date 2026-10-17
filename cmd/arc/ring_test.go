@@ -3,18 +3,24 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/netip"
+	neturl "net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"fiatjaf.com/nostr"
+	"github.com/coder/websocket"
 	"github.com/gezibash/arc/adapters/relay/limits"
 	"github.com/gezibash/arc/adapters/relay/rings"
 )
@@ -194,5 +200,129 @@ func TestSyncSaysThatRingsFail(t *testing.T) {
 	want := url + ": arc-ring: the rings to example.com fail since "
 	if !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), "last answer 401") {
 		t.Fatalf("arc sync said on standard error:\n%s\nwant a line starting %q", stderr.String(), want)
+	}
+}
+
+// refuseAuth runs a proxy in front of the relay at url, and returns its
+// URL. The proxy passes each message on, but answers each AUTH itself with
+// a refusal that gives reason, a text that the relay chose. Each other HTTP
+// request, such as the one for the NIP-11 document, goes to the relay.
+func refuseAuth(t *testing.T, url, reason string) string {
+	t.Helper()
+	target, err := neturl.Parse("http" + strings.TrimPrefix(url, "ws"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := httputil.NewSingleHostReverseProxy(target)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			plain.ServeHTTP(w, r)
+			return
+		}
+		client, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = client.CloseNow() }()
+		ctx := r.Context()
+		// The proxy sends its own challenge at once: on a loaded machine
+		// the challenge of the relay can come after arc stops waiting.
+		if client.Write(ctx, websocket.MessageText, []byte(`["AUTH","a challenge of the proxy"]`)) != nil {
+			return
+		}
+		upstream, response, err := websocket.Dial(ctx, url, nil)
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if err != nil {
+			return
+		}
+		defer func() { _ = upstream.CloseNow() }()
+		client.SetReadLimit(-1)
+		upstream.SetReadLimit(-1)
+		var mu sync.Mutex
+		write := func(kind websocket.MessageType, data []byte) error {
+			mu.Lock()
+			defer mu.Unlock()
+			return client.Write(ctx, kind, data)
+		}
+		go func() {
+			defer func() { _ = client.CloseNow() }()
+			for {
+				kind, data, err := upstream.Read(ctx)
+				if err != nil || write(kind, data) != nil {
+					return
+				}
+			}
+		}()
+		for {
+			kind, data, err := client.Read(ctx)
+			if err != nil {
+				return
+			}
+			var message []json.RawMessage
+			var label string
+			var event nostr.Event
+			if json.Unmarshal(data, &message) == nil && len(message) == 2 && json.Unmarshal(message[0], &label) == nil &&
+				label == "AUTH" && json.Unmarshal(message[1], &event) == nil {
+				refusal, _ := json.Marshal([]any{"OK", event.ID.Hex(), false, reason})
+				if write(websocket.MessageText, refusal) != nil {
+					return
+				}
+				continue
+			}
+			if upstream.Write(ctx, kind, data) != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http")
+}
+
+// TestSyncSaysThatARelayRefusedTheAuthentication: a relay that rings
+// counts a read only on a connection that authenticated (docs/rings/SPEC.md,
+// section 3.3). Two relays that ring refuse the authentication of bob, with
+// a text that holds terminal controls. arc sync still reads the mail, and
+// prints one line for each relay, with the text escaped. The self data of
+// bob needs the authentication too, so the sync ends with an error.
+func TestSyncSaysThatARelayRefusedTheAuthentication(t *testing.T) {
+	url, _ := ringRelay(t, http.StatusOK)
+	const reason = "restricted: \x1b[31mno\u202e\nforged line"
+	first, second := refuseAuth(t, url, reason), refuseAuth(t, url, reason)
+	bob, bobHex := providerHome(t, first)
+	ok(t, bob, "", "relay", "add", second)
+	alice, _ := providerHome(t, url)
+	ok(t, alice, "", "message", "send", bobHex, "are you there?")
+	ok(t, alice, "", "sync")
+
+	var stderr strings.Builder
+	command := root()
+	command.SetOut(&strings.Builder{})
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"--home", bob, "sync"})
+	_ = command.Execute()
+	for _, relay := range []string{first, second} {
+		start := relay + ": could not authenticate before it read mail, so the relay does not count the read for rings: "
+		var lines []string
+		for line := range strings.Lines(stderr.String()) {
+			if strings.HasPrefix(line, start) {
+				lines = append(lines, line)
+			}
+		}
+		if len(lines) != 1 {
+			t.Errorf("arc sync printed %d lines that start %q, want 1", len(lines), start)
+		} else if want := `restricted: \x1b[31mno\u202e\nforged line` + "\n"; !strings.HasSuffix(lines[0], want) {
+			t.Errorf("the line of %s does not end with the text of the relay escaped, %q", relay, want)
+		}
+	}
+	if strings.ContainsAny(stderr.String(), "\x1b\u202e") || strings.Contains(stderr.String(), "\nforged") {
+		t.Errorf("arc sync printed the text of a relay raw")
+	}
+	if t.Failed() {
+		t.Fatalf("arc sync said on standard error:\n%s", stderr.String())
+	}
+	if inbox := ok(t, bob, "", "message", "inbox", "--json"); !strings.Contains(inbox, "are you there?") {
+		t.Fatalf("bob did not read the mail of alice:\n%s", inbox)
 	}
 }

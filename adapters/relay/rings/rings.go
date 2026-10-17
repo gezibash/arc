@@ -170,8 +170,10 @@ type Config struct {
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
 	// TLS is the TLS configuration of a ring. Nil is the default.
 	TLS *tls.Config
-	// Logger gets one line for each ring, with no key, URL, host or
-	// citizen.
+	// Logger gets one line for each try of a ring, and one for each wrap
+	// that rings no one now, with its reason. A line names a citizen only
+	// by the first 8 hex digits of its key, and holds no ring key, URL,
+	// host or wrap.
 	Logger *slog.Logger
 }
 
@@ -389,17 +391,35 @@ func (r *Rings) wrap(event nostr.Event) {
 		if err != nil {
 			continue
 		}
-		if s := r.by[pk]; s != nil {
-			watching := r.watching[pk] > 0
-			s.wrap(now, watching, event.ID.Hex())
-			if watching {
-				s.renew(now, r.cfg.TTL)
-			}
-			r.save(pk, s)
-			r.schedule(pk)
+		s := r.by[pk]
+		if s == nil {
+			// Most wraps are for citizens with no registration, so this
+			// line is for debugging only.
+			r.cfg.Logger.Debug("no ring", "citizen", short(pk), "reason", whyNoRegistration)
+			continue
+		}
+		watching := r.watching[pk] > 0
+		s.wrap(now, watching, event.ID.Hex())
+		if watching {
+			s.renew(now, r.cfg.TTL)
+		}
+		r.save(pk, s)
+		why, wait := r.schedule(pk)
+		if watching {
+			why, wait = whyWatching, 0
+		}
+		switch {
+		case why == "":
+		case wait > 0:
+			r.cfg.Logger.Info("no ring", "citizen", short(pk), "reason", why, "wait", wait.Round(time.Second))
+		default:
+			r.cfg.Logger.Info("no ring", "citizen", short(pk), "reason", why)
 		}
 	}
 }
+
+// short names a citizen in the log: the first 8 hex digits of its key.
+func short(pk nostr.PubKey) string { return pk.Hex()[:8] }
 
 // listen notes a subscription. A subscription for the wraps of a citizen,
 // on a connection that reads for the citizen, is a read, and it reads each
@@ -518,26 +538,32 @@ func (r *Rings) sweep() {
 		switch {
 		case s.expired(now):
 			r.remove(pk)
+			r.cfg.Logger.Info("rings: removed a registration that expired", "citizen", short(pk))
 		case s.abandoned(now):
 			r.remove(pk)
-			r.cfg.Logger.Info("rings: removed a registration after 7 days with no 2xx answer")
+			r.cfg.Logger.Info("rings: removed a registration after 7 days with no 2xx answer", "citizen", short(pk))
 		}
 	}
 }
 
 // schedule does what is next for a citizen: it starts a try now, sets one
-// timer for a ring that must wait, or does nothing. The caller holds r.mu.
-func (r *Rings) schedule(pk nostr.PubKey) {
+// timer for a ring that must wait, or does nothing. It returns the reason
+// that no try starts now, empty when one starts or no wrap waits, and the
+// wait of a ring that waits. The caller holds r.mu.
+func (r *Rings) schedule(pk nostr.PubKey) (string, time.Duration) {
 	s := r.by[pk]
-	if s == nil || r.busy[pk] {
-		return
+	if s == nil {
+		return whyNoRegistration, 0
+	}
+	if r.busy[pk] {
+		return whyOnTheWay, 0
 	}
 	r.stop(pk)
 	now := r.cfg.Now()
-	what, at := s.next(now)
+	what, at, why := s.plan(now)
 	if what == send {
 		if delay, ok := r.relayToken(now); !ok {
-			what, at = wait, now.Add(delay)
+			what, at, why = wait, now.Add(delay), whyRelayBucket
 		}
 	}
 	switch what {
@@ -545,7 +571,9 @@ func (r *Rings) schedule(pk nostr.PubKey) {
 		r.start(pk, s, now)
 	case wait:
 		r.timers[pk] = time.AfterFunc(max(at.Sub(now), 0), func() { r.wake(pk) })
+		return why, max(at.Sub(now), 0)
 	}
+	return why, 0
 }
 
 // wake runs when the timer of a citizen fires.
@@ -590,7 +618,7 @@ func (r *Rings) start(pk nostr.PubKey, s *state, now time.Time) {
 		status, err := r.ring(context.Background(), pk, snapshot, try)
 		// An error can name the host of the URL, so the log says only that
 		// the ring failed.
-		r.cfg.Logger.Info("ring", "status", status, "failed", err != nil, "attempt", try.Attempt)
+		r.cfg.Logger.Info("ring", "citizen", short(pk), "status", status, "failed", err != nil, "attempt", try.Attempt)
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		delete(r.busy, pk)
