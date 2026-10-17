@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gezibash/arc/apps/storage/server"
+	wire "github.com/gezibash/arc/sdk/storage"
 )
 
 // The tests build the arc program and this program, and run them as a
@@ -390,5 +393,23 @@ func TestTheErrorLineIsEscaped(t *testing.T) {
 	want := `arc-storage: the storage citizen refused: P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`
 	if got := errorLine(refusal); got != want {
 		t.Errorf("errorLine = %q, want %q", got, want)
+	}
+}
+
+// Each line that shows what a storage citizen answered, or what a joining
+// citizen wrote, escapes those fields on one line. The values are worked
+// out from docs/clients/SPEC.md, section 3.9.
+func TestTheLinesOfAStorageCitizenAreEscaped(t *testing.T) {
+	for _, c := range []struct{ got, want string }{
+		{putLine("id1", "stored\x1b[2J\narc: forged", "f.bin"), "id1\t" + `stored\x1b[2J\narc: forged` + "\tf.bin"},
+		{deleteLine("id1", "gone\u202e"), "id1\t" + `gone\u202e`},
+		{usageLine(wire.Usage{Used: 1, Quota: 2, Blobs: 3, Plan: "free\u200b", State: "open\nx"}), `1 bytes of 2 in use, 3 blobs, plan free\u200b, open\nx`},
+		{auditLine("id1", "fail\x07", "f"), "id1\t" + `fail\x07` + "\tf"},
+		{drainLine(wire.Usage{State: "draining\U000e0068", Blobs: 4, Used: 5}), `draining\U000e0068: 4 blobs of 5 bytes remain`},
+		{requestLine(server.Request{Account: "acc", Want: 7, Asked: time.Unix(0, 0), Note: "hi\narc: forged"}, "-"), "acc\t7\t1970-01-01 00:00:00\t-\t" + `hi\narc: forged`},
+	} {
+		if c.got != c.want {
+			t.Errorf("the line is %q, want %q", c.got, c.want)
+		}
 	}
 }

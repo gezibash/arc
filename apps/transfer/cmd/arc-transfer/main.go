@@ -112,7 +112,7 @@ func get(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(result.Output)
+	fmt.Println(terminal.EscapeLine(result.Output))
 	if result.Path == "put" {
 		fmt.Fprintln(os.Stderr, "the sender gave the file before, with put")
 		return nil

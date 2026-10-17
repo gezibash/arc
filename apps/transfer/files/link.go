@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -28,6 +30,9 @@ type Offer struct {
 	// To holds the public keys that can get the file. If it is empty, each
 	// caller that reaches the app can get the file.
 	To []string `json:"to,omitempty"`
+	// Renamed is true when ParseLink removed characters from the name of
+	// the link.
+	Renamed bool `json:"-"`
 }
 
 // Link is the text that the sender gives to the receiver:
@@ -53,7 +58,12 @@ func ParseLink(text string) (sender string, o Offer, err error) {
 	if err != nil || o.Size < 0 {
 		return "", o, errors.New("the link has no size")
 	}
-	o.Name = filepath.Base(filepath.FromSlash(strings.ReplaceAll(u.Query().Get("name"), `\`, "/")))
+	name := filepath.Base(filepath.FromSlash(strings.ReplaceAll(u.Query().Get("name"), `\`, "/")))
+	// The sender chose the name, and the receiver writes a file with it:
+	// it loses each character that could change a terminal or hide text,
+	// and newlines and tabs (docs/clients/SPEC.md, section 3.9).
+	o.Name = strings.NewReplacer("\n", "", "\t", "").Replace(terminal.Strip(name))
+	o.Renamed = o.Name != name
 	if o.Name == "." || o.Name == ".." || o.Name == string(filepath.Separator) || o.Name == "" {
 		o.Name = o.SHA256[:16]
 	}

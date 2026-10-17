@@ -319,3 +319,19 @@ func TestClosedAccountRemoved(t *testing.T) {
 	}
 	putIDs(t, owner, small)
 }
+
+// A joining citizen that writes a hostile note cannot change the terminal
+// of the operator or forge a line of arc-storage requests.
+func TestAHostileNoteIsEscaped(t *testing.T) {
+	sc := startStorage(t, "STORAGE_ADMIT=ask")
+	carol := newCitizen(t)
+	note := "P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\narc-storage: forged"
+	if _, err := join(carol, sc.key, "--note", note); err != nil {
+		t.Fatal(err)
+	}
+	listed := operate(t, sc, "requests")
+	want := `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\narc-storage: forged`
+	if !strings.Contains(listed, want) || strings.Contains(listed, "\narc-storage: forged") || strings.ContainsAny(listed, "\x1b\x07\u202e") {
+		t.Errorf("requests printed %q, want the note as %q", listed, want)
+	}
+}

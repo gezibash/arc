@@ -87,6 +87,9 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 	}
 	if g.Output == "" {
 		g.Output = offer.Name
+		if offer.Renamed && g.Notes != nil {
+			fmt.Fprintln(g.Notes, "arc-transfer: the name of the file held characters that could change the terminal or hide text; arc-transfer removed them")
+		}
 	}
 	if _, err := os.Stat(g.Output); err == nil {
 		return result, fmt.Errorf("%s is there already", g.Output)
