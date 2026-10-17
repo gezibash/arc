@@ -69,7 +69,8 @@ func ParseLink(text string) (sender string, o Offer, err error) {
 		o.Name = o.SHA256[:16]
 	case strings.HasPrefix(o.Name, ".") && !strings.HasPrefix(name, "."):
 		// Only hidden characters stood before the dot: the file would be
-		// a dot file, such as ".tar.gz".
+		// a dot file, such as ".tar.gz". A dot file that the sender
+		// really named, such as ".bashrc" or ".tar.gz", stays one.
 		o.Name = o.SHA256[:16] + o.Name
 	case strings.HasPrefix(o.Name, "-"):
 		// A name that starts with a dash reads as a flag in a later

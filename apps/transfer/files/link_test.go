@@ -46,6 +46,7 @@ func TestTheNameOfALinkCannotReachTheTerminal(t *testing.T) {
 		{"\u200b.tar.gz", strings.Repeat("b", 16) + ".tar.gz", true},
 		{"\x1b.ssh.authorized_keys", strings.Repeat("b", 16) + ".ssh.authorized_keys", true},
 		{".bashrc", ".bashrc", false},
+		{".tar.gz", ".tar.gz", false},
 		{"bird.png", "bird.png", false},
 		{"caf\u00e9.txt", "caf\u00e9.txt", false},
 		{england + ".png", england + ".png", false},
