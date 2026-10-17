@@ -24,6 +24,7 @@ import (
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -131,7 +132,7 @@ func printOutbox(w io.Writer, out []mail.Outgoing, now time.Time) {
 			times = "time"
 		}
 		fmt.Fprintf(w, "%s  to %s  %s, sent %d %s\n  %s\n",
-			entries[0].Created.Local().Format("2006-01-02 15:04"), petnames(to), state, attempts, times, entries[0].Text)
+			entries[0].Created.Local().Format("2006-01-02 15:04"), petnames(to), state, attempts, times, shown(entries[0].Text))
 	}
 }
 
@@ -169,6 +170,13 @@ func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error 
 	return nil
 }
 
+// shown is the text of a message as a terminal can show it under its
+// header: escaped, and with each line indented, so no line of the text
+// looks like the header of another message.
+func shown(text string) string {
+	return strings.ReplaceAll(terminal.Escape(text), "\n", "\n  ")
+}
+
 // messagePrinter writes received messages as inbox prints them, or as JSON.
 type messagePrinter struct {
 	out     io.Writer
@@ -192,7 +200,7 @@ func (p messagePrinter) print(m mail.Message) error {
 			others := slices.DeleteFunc(slices.Clone(m.Members[1:]), func(pk nostr.PubKey) bool { return pk == p.me })
 			group = "  to you, " + petnames(others)
 		}
-		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, m.Text)
+		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, shown(m.Text))
 		return err
 	}
 	return p.encoder.Encode(messageLine{
