@@ -735,7 +735,7 @@ func messageCommand() *cobra.Command {
 			}
 			defer sess.Close()
 
-			out, err := sess.Mail.Send(command.Context(), to, text)
+			out, err := sendMessage(command, sess, to, text)
 			if err != nil {
 				return err
 			}
@@ -743,9 +743,11 @@ func messageCommand() *cobra.Command {
 				if len(sess.Relays) == 0 {
 					fmt.Fprintln(os.Stderr, "no relays: run arc sync --dir <path> to hand it to a courier")
 				}
+				reply, _ := command.Flags().GetString("reply")
 				return json.NewEncoder(command.OutOrStdout()).Encode(queuedLine{
 					ID: out[0].Rumor, To: out[0].To, State: out[0].State(time.Now()),
 					Members: hexKeys(append([]nostr.PubKey{sess.Signer.PublicKey()}, to...)),
+					ReplyTo: reply,
 				})
 			}
 			fmt.Fprintf(command.OutOrStdout(), "queued for %s until %s\n", petnames(to), out[0].Expires.Local().Format("2006-01-02 15:04"))
@@ -858,6 +860,8 @@ func messageCommand() *cobra.Command {
 	}
 
 	send.Flags().Bool("json", false, "print the queued message as one JSON object")
+	send.Flags().String("reply", "", "reply to the message with this id, 64 hex digits; the recipients are its members")
+	addTestTags(send)
 	inbox.Flags().Bool("json", false, "print one JSON object for each message")
 	held.Flags().Bool("json", false, "print one JSON object for each message")
 	outbox.Flags().Bool("json", false, "print one JSON object for each message, and no requests")

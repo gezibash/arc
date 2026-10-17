@@ -243,3 +243,47 @@ func (b *lockedBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestReplies sends a reply with SendReply. The queued line, the message
+// line of the recipient and the sent line of the sender name the parent;
+// the plain parent names none. SendReply refuses a parent that is not an
+// id before it runs arc.
+func TestReplies(t *testing.T) {
+	ctx := context.Background()
+	ada, adaKey := citizen(t, "ada")
+	bob, bobKey := citizen(t, "bob")
+	if _, err := ada.Send(ctx, []string{bobKey}, "bring the map"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := bob.Command(ctx, "sync").CombinedOutput(); err != nil {
+		t.Fatalf("arc sync: %v\n%s", err, out)
+	}
+	inbox, err := bob.Inbox(ctx)
+	if err != nil || len(inbox) != 1 || inbox[0].ReplyTo != "" {
+		t.Fatalf("bob's inbox is %+v, %v, want one plain message", inbox, err)
+	}
+	parent := inbox[0].ID
+
+	if _, err := bob.SendReply(ctx, []string{adaKey}, parent[:8], "yes"); err == nil || !strings.Contains(err.Error(), "64 lowercase hex digits") {
+		t.Errorf("SendReply with a short id: %v", err)
+	}
+	queued, err := bob.SendReply(ctx, []string{adaKey}, parent, "yes")
+	if err != nil || queued.ReplyTo != parent {
+		t.Fatalf("SendReply queued %+v, %v, want the parent %s", queued, err, parent)
+	}
+	if out, err := ada.Command(ctx, "sync").CombinedOutput(); err != nil {
+		t.Fatalf("arc sync: %v\n%s", err, out)
+	}
+	got, err := ada.Inbox(ctx)
+	if err != nil || len(got) != 1 || got[0].Text != "yes" || got[0].ReplyTo != parent {
+		t.Errorf("ada's inbox is %+v, %v, want the reply to %s", got, err, parent)
+	}
+	sent, err := bob.Outbox(ctx)
+	if err != nil || len(sent) != 1 || sent[0].ReplyTo != parent {
+		t.Errorf("bob's outbox is %+v, %v, want the reply to %s", sent, err, parent)
+	}
+	plain, err := ada.Outbox(ctx)
+	if err != nil || len(plain) != 1 || plain[0].ReplyTo != "" {
+		t.Errorf("ada's outbox is %+v, %v, want one plain message", plain, err)
+	}
+}
