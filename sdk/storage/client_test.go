@@ -25,7 +25,8 @@ type fakeApp struct {
 	// older answers hello with invalid_request, as an app before
 	// FeatureBatch.
 	older bool
-	// badID is the ID that the app names in each list and delete reply.
+	// badID is the ID that the app names in each list reply, and in each
+	// reply to a get, delete or audit with ids.
 	badID string
 
 	mu       sync.Mutex
@@ -101,7 +102,7 @@ func (f *fakeApp) serve(dc *webrtc.DataChannel, messages <-chan webrtc.DataChann
 		case req.Op == OpHello && f.older:
 			reply(Reply{Error: ErrInvalidRequest, Message: "a blob ID is 64 lower-case hex digits"})
 		case req.Op == OpHello:
-			reply(Reply{N: req.N, Version: 2, Features: []string{FeatureBatch}, Window: Window})
+			reply(Reply{N: req.N, Version: 2, Features: []string{FeatureBatch, FeatureAudit}, Window: Window})
 		case req.Op == OpPut:
 			if f.older && req.N != 0 {
 				f.fail("a numbered request to an older app")
@@ -128,6 +129,14 @@ func (f *fakeApp) serve(dc *webrtc.DataChannel, messages <-chan webrtc.DataChann
 			items := make([]Item, len(req.IDs))
 			for i, id := range req.IDs {
 				items[i] = Item{ID: id, Status: StatusDeleted}
+			}
+			items[len(items)-1].ID = f.badID
+			reply(Reply{N: req.N, Items: items})
+		case req.Op == OpGet || req.Op == OpAudit:
+			// The app holds no blob; the last item is named badID.
+			items := make([]Item, len(req.IDs))
+			for i, id := range req.IDs {
+				items[i] = Item{ID: id, Error: ErrNotFound}
 			}
 			items[len(items)-1].ID = f.badID
 			reply(Reply{N: req.N, Items: items})
@@ -311,6 +320,18 @@ func TestAReplyWithABadIDIsRefused(t *testing.T) {
 	items, err := conn.DeleteMany(context.Background(), []string{strings.Repeat("b", 64)})
 	if err == nil || len(items) != 0 || !strings.Contains(err.Error(), shown) || strings.ContainsAny(err.Error(), "\x1b\n") {
 		t.Errorf("DeleteMany gave %v, %v; want no items and an error that names %q", items, err, shown)
+	}
+	called := 0
+	err = conn.GetMany(context.Background(), []string{strings.Repeat("b", 64)}, func(string, []byte, error) error {
+		called++
+		return nil
+	})
+	if err == nil || called != 0 || !strings.Contains(err.Error(), shown) || strings.ContainsAny(err.Error(), "\x1b\n") {
+		t.Errorf("GetMany gave %v after %d items; want no items and an error that names %q", err, called, shown)
+	}
+	items, err = conn.Audit(context.Background(), []string{strings.Repeat("b", 64)}, NewNonce())
+	if err == nil || len(items) != 0 || !strings.Contains(err.Error(), shown) || strings.ContainsAny(err.Error(), "\x1b\n") {
+		t.Errorf("Audit gave %v, %v; want no items and an error that names %q", items, err, shown)
 	}
 	good := pipe(t, &fakeApp{badID: strings.Repeat("c", 64)})
 	if entries, _, err := good.List(context.Background(), 0); err != nil || len(entries) != 2 {
