@@ -150,27 +150,51 @@ func (s *state) renew(now time.Time, ttl time.Duration) {
 	s.Expires = max(s.Expires, now.Add(ttl).Unix())
 }
 
+// The reasons that the log gives when a ring does not go now
+// (docs/rings/SPEC.md, sections 3.5 and 3.7).
+const (
+	whyNoRegistration = "no registration"
+	whyExpired        = "expired"
+	whyWatching       = "a read subscription is open"
+	whyRang           = "already rang in this unread period"
+	whyOnTheWay       = "a try is on the way"
+	whyRetry          = "a retry waits"
+	whyDailyCap       = "daily cap reached, waits"
+	whyCitizenBucket  = "citizen bucket empty, waits"
+	whyRelayBucket    = "relay bucket empty, waits"
+)
+
 // next says what the relay does next, and when, for a wait.
 func (s *state) next(now time.Time) (step, time.Time) {
-	if s.Since == 0 || s.expired(now) {
-		return idle, time.Time{}
+	what, at, _ := s.plan(now)
+	return what, at
+}
+
+// plan is next, with the reason that no ring goes now. The reason is
+// empty when a ring goes, or when no wrap waits unread.
+func (s *state) plan(now time.Time) (step, time.Time, string) {
+	if s.Since == 0 {
+		return idle, time.Time{}, ""
+	}
+	if s.expired(now) {
+		return idle, time.Time{}, whyExpired
 	}
 	if s.Job == nil && s.Rang {
-		return idle, time.Time{}
+		return idle, time.Time{}, whyRang
 	}
 	if s.Job != nil && s.Job.Next > now.UnixMilli() {
-		return wait, time.UnixMilli(s.Job.Next)
+		return wait, time.UnixMilli(s.Job.Next), whyRetry
 	}
 	if s.left(now) == 0 {
-		return wait, midnight(now)
+		return wait, midnight(now), whyDailyCap
 	}
 	if s.Job == nil {
 		s.fill(now)
 		if s.Tokens < 1 {
-			return wait, s.tokenAt(now)
+			return wait, s.tokenAt(now), whyCitizenBucket
 		}
 	}
-	return send, time.Time{}
+	return send, time.Time{}, ""
 }
 
 // begin starts a try. The first try of a ring takes a token and makes the

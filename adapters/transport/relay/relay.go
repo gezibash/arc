@@ -113,6 +113,11 @@ type kept struct {
 	// notice gets each NOTICE that starts with "arc-ring:". It lives here,
 	// not in Relay, so that a Relay stays comparable.
 	notice func(text string)
+	// authFailed gets the first error of each streak of failed
+	// authentications before a read of mail. told says that the current
+	// streak was told.
+	authFailed func(err error)
+	told       bool
 
 	// mu guards conn and used. A call holds it while it connects.
 	mu   sync.Mutex
@@ -158,6 +163,18 @@ func New(url string, signer nostr.Signer) Relay {
 func (r Relay) OnNotice(notice func(text string)) {
 	if r.kept != nil {
 		r.kept.notice = notice
+	}
+}
+
+// OnAuthFailure makes a Relay from New give the first error of an
+// authentication before a read of mail to failed, once for each streak of
+// failures: after an authentication that works, the next failure is told. Such
+// a read still reads, but the relay does not count it for the rings of the
+// citizen. The error can hold text that the relay chose. Call it before the
+// first call to the relay.
+func (r Relay) OnAuthFailure(failed func(err error)) {
+	if r.kept != nil {
+		r.kept.authFailed = failed
 	}
 }
 
@@ -549,7 +566,8 @@ func (r Relay) challenge(ctx context.Context, conn *nostr.Relay, signer nostr.Si
 
 // beforeRead authenticates on conn before a read of mail, when the relay
 // rings: the read then ends the unread period of the citizen. A read that
-// cannot authenticate still reads.
+// cannot authenticate still reads, and the first error of each streak goes
+// to the function of OnAuthFailure.
 func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.Filter) {
 	if r.Signer == nil || !readsMail(filter) {
 		return
@@ -557,7 +575,18 @@ func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.F
 	if info, err := r.information(ctx); err != nil || !slices.Contains(info.Tags, ringsTag) {
 		return
 	}
-	_ = r.authenticate(ctx, conn)
+	err := r.authenticate(ctx, conn)
+	if r.kept == nil {
+		return
+	}
+	// A success ends a streak of failures, so the next failure is told.
+	r.kept.auth.Lock()
+	first := err != nil && !r.kept.told
+	r.kept.told = err != nil
+	r.kept.auth.Unlock()
+	if first && r.kept.authFailed != nil {
+		r.kept.authFailed(err)
+	}
 }
 
 // Fetch returns every stored event that matches the filter. A relay caps how
