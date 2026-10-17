@@ -185,7 +185,10 @@ already gets the members (`cmd/arc/message.go:143-152`). `mail.Message`
   looks in the whole local store. It refuses an id that names no message,
   and an id that names more than one: `"3f" names 2 messages: give more
   digits`. It sends to the members of the parent, without this citizen. It
-  needs no peer.
+  needs no peer. A mistyped short id could answer into another
+  conversation, such as a group of 10, so the confirmation line MUST name
+  the conversation that the reply went to: `replied to 1c77da in ada, cy`,
+  with the petnames of the members.
 - `arc-dm send -reply <id> <peer> [text]` refuses an id whose conversation
   is not the conversation of the peer: `3f9a2c is in another conversation`.
 - With no text, both read standard input, as `send` does now.
@@ -267,7 +270,7 @@ The sender **cannot**:
 | An id that names a request, an acknowledgement or a private event of an app | The local store of section 2 holds kind 14 only. `(not on this device)`. |
 | A very long parent, or a parent whose first line is 5 KB | One quote line, at most 72 characters of output. |
 | A parent with ESC, U+202E, U+200B or tag characters | `terminal.EscapeLineCut` shows each as an escape, on one line. |
-| A parent whose first line holds only hidden characters | The line is not empty, so it shows, as escapes such as `​`. |
+| A parent whose first line holds only hidden characters | The line is not empty, so it shows, as escapes such as `\u200b`. |
 | A forged short id: a sender makes a message whose id starts as the id of another message | The short id grows past 6 digits when two held messages share them. `arc-dm reply` refuses an ambiguous prefix. Making a 6-digit collision costs about 2^24 hashes *(arithmetic)*, so it is cheap. That is why arc-dm refuses ambiguity and never picks one. |
 
 ### 6.3 Who pays
@@ -284,7 +287,9 @@ message of the local store.
   The kind registry needs no new row. An older arc reads only the author,
   the `p` tags, the time and the content (`core/mail/mail.go:1131-1138`),
   so it shows a reply as a plain message. Nothing fails.
-- **Other NIP-17 clients** read the same tag and show a reply as a reply.
+- **Other NIP-17 clients** read the same tag, so they should show a reply
+  as a reply. Unverified: no test or run uses another NIP-17 client
+  (section 8).
 - **JSON.** An older arc-dm ignores `reply_to`, as the clients spec,
   section 3.5, requires. It shows a reply as a plain message.
 - **A newer arc-dm with an older arc** shows no quotes, because the lines
@@ -306,7 +311,7 @@ for one run, before the PR is ready.
 | Test | What it proves |
 | --- | --- |
 | `TestAReplyQuotesItsParent` | Ada writes, bob replies with `arc-dm reply <short id>`. Ada's `open` shows the quote line at column 0 with `you:` and her text, then the reply at column 2. `send -reply` gives the same. |
-| `TestAReplyInAGroup` | Three citizens. Cy replies to a group message of ada. Each member gets it in the group conversation, and bob sees `ada:` in the quote. |
+| `TestAReplyInAGroup` | Three citizens. Cy replies to a group message of ada. Each member gets it in the group conversation, and bob sees `ada:` in the quote. The confirmation line of `arc-dm reply` names each member of the group. |
 | `TestAQuoteComesFromTheStore` | The text of a reply holds a fake quote line. It shows at column 2. The one line at column 0 is the real parent. |
 | `TestAHostileParentIsOneEscapedLine` | A parent with ESC, U+202E, U+200B, a first line of 5 KB, and an empty first line gives one quote line of at most 72 characters of output, with escapes. |
 | `TestAReplyToAnUnheldMessageShowsTheIdOnly` | A reply whose parent the reader never got shows `(not on this device)` and no text. |
@@ -332,13 +337,18 @@ another NIP-17 client.
 ## 9. Open questions
 
 1. Breaking footer: should an additive, optional tag that no older client
-   fails on still ship as a breaking commit, as the template says?
-2. Hostile tests: `mail.SendRumor` in `cmd/arc` tests only, or also an
-   `arctest`-only flag such as `--reply-unchecked`, so the arc-dm tests can
-   send a hostile reply through the CLI?
-3. Should arc refuse a parent of other members (section 3.3), or allow it
-   so that a later "reply privately" can use it? The reader rule of
-   section 3.2 holds either way.
-4. Should `reply_to` carry the parent's text and author for agents that
-   read `arc message inbox --json`? This proposal says no: one source, the
-   store, and a program can look the id up itself.
+   fails on still ship as a breaking commit, as the template says? Otto
+   proposes `feat` with no footer, and a line in the template that an
+   additive field which the spec already requires readers to ignore is not
+   breaking. That changes the rule of the repository, so it waits for Zim.
+
+## 10. Decisions of the review
+
+Otto reviewed this proposal at `52fd5c0`:
+
+- Hostile tests send their replies with `mail.SendRumor` from test code.
+  An `arctest`-only flag comes only if the arc-dm tests cannot reach
+  `SendRumor`, and then with a test that the release build refuses it.
+- arc keeps the refusal of a parent with other members (section 3.3).
+- `reply_to` carries the id only. The local store is the one source of
+  the parent text.
