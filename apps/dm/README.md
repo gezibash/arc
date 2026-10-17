@@ -86,9 +86,11 @@ A notifier that fails does not stop the watch.
 
 ## Safety
 
-`arc-dm` replaces each control character of a message, except a newline
-and a tab, before it prints the message. A sender cannot move the cursor
-or change the terminal.
+`arc-dm` escapes each control character of a message, except a newline
+and a tab, each embedding, override and isolate of right-to-left text, and
+each backslash, before it prints the message: ESC shows as `\x1b`. A sender
+cannot move the cursor, change the terminal or reorder a line, and nothing
+of the text is lost.
 
 ## Groups
 

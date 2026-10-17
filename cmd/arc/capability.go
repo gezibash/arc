@@ -613,7 +613,7 @@ func callCmd() *cobra.Command {
 				}
 				found = true
 				to, _ := nostr.PubKeyFromHex(o.To)
-				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), o.Text)
+				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), shown(o.Text))
 				switch {
 				case o.Reply.Err != "":
 					fmt.Fprintf(command.OutOrStdout(), "  error: %s\n", o.Reply.Err)

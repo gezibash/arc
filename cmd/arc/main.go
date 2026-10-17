@@ -712,8 +712,8 @@ func messageCommand() *cobra.Command {
 				}
 				text = strings.TrimRight(string(body), "\n")
 			}
-			if text == "" {
-				return errors.New("a message holds at least 1 byte")
+			if strings.TrimSpace(text) == "" {
+				return errors.New("a message holds at least one character that is not a space")
 			}
 			if len(text) > private.MaxMailContent {
 				return fmt.Errorf("the message is too large for mail, which holds at most %d bytes: send it over a direct path, such as the transfer app", private.MaxMailContent)

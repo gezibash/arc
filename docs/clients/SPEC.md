@@ -2,14 +2,15 @@
 
 - Status: built
 - Layers: sdk
-- Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince)$' ./sdk/arcprogram/
+- Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestATerminalShowsNoEscapeOfASender)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
 reads the JSON lines that `arc message` prints. The package
 `sdk/arcprogram/arcprogramtest` runs a relay on this machine for the tests
-of a client program.
+of a client program. The package `sdk/terminal` makes the text of a sender
+safe to show on a terminal.
 
 ## 1. Purpose
 
@@ -23,7 +24,8 @@ This spec defines:
 - the JSON lines of `arc message`: the received messages, the sent
   messages, and the queued message,
 - how a client program sends a message and watches for messages,
-- the relay on this machine that the tests of a client program use.
+- the relay on this machine that the tests of a client program use,
+- how arc and a client program show the text of a sender on a terminal.
 
 Programs outside this repository read the JSON lines. Without a rule, a
 change of a field in arc breaks them with no error. Before this spec, each
@@ -121,6 +123,8 @@ recipient.
   gets the keys separated by commas.
 - The text MUST go on standard input, so a text that starts with `-` is
   not a flag. arc removes the newlines at the end of the text.
+- arc refuses a text that holds only spaces, tabs and newlines:
+  `a message holds at least one character that is not a space`.
 
 ### 3.7 Watching
 
@@ -141,6 +145,31 @@ recipient.
   ([the strangers spec](../strangers/SPEC.md), section 3.5). A release
   build has no tag.
 - `Citizen` makes a new arc home, a new key, and adds the relay.
+
+### 3.9 Showing text on a terminal
+
+The text of a message comes from its sender. A terminal acts on some
+characters: it moves the cursor, clears the screen, changes the title, or
+reorders a line. So a sender could forge a line, hide a part of the text,
+or make `file.exe` look like `file.png`.
+
+- arc, and each client program that shows the text of a sender on a
+  terminal, MUST show it as `terminal.Escape` gives it:
+
+  | Character | Shown as |
+  | --- | --- |
+  | A newline or a tab | itself |
+  | Each other control character (Unicode class Cc: U+0000 to U+001F, U+007F, U+0080 to U+009F) | `\x` and two lowercase hex digits, such as `\x1b` for ESC |
+  | An embedding, override or isolate (U+202A to U+202E, U+2066 to U+2069) | `\u` and four lowercase hex digits, such as `\u202e` |
+  | A backslash | two backslashes, so a typed `\x1b` shows as `\\x1b` |
+  | Each other character, including the marks U+200E and U+200F | itself |
+
+- The marks U+200E and U+200F stay, because Arabic and Hebrew text uses
+  them, and they cannot reorder a line.
+- Under a header line, each line of the text MUST start with at least two
+  spaces, so no line of the text looks like a header.
+- The JSON lines hold the text as the sender sent it. A program that reads
+  them and shows the text on a terminal applies this section.
 
 ## 4. Behavior
 
@@ -182,6 +211,7 @@ recipient.
 | An arc older than this spec, at `Outbox` | arc refuses the flag `--json`. | `unknown flag: --json`. |
 | A line that is not JSON | The package stops. | A failure that names the command. |
 | A recipient that is not a key | The package refuses it before it runs arc. | `a recipient is a public key of 64 hex digits`. |
+| A text of only spaces, tabs and newlines | arc refuses it, and sends nothing. | `a message holds at least one character that is not a space`. |
 
 ## 6. Security
 
@@ -189,8 +219,8 @@ recipient.
   its commands do, with the consent rules of arc. The client program gets
   no key.
 - The text of a message comes from its sender. A client program that shows
-  it on a terminal MUST remove control characters, so a sender cannot move
-  the cursor or change the terminal.
+  it on a terminal MUST escape it as section 3.9 says, so a sender cannot
+  move the cursor, change the terminal, reorder a line, or forge a line.
 - The petname comes from the key, not from the sender. Two keys can have
   the same petname. A client program that selects a peer by name MUST
   refuse a name that selects more than one peer.
@@ -215,6 +245,11 @@ recipient.
   program in another repository.
 - The code that runs arc was `client.Arc` in the transfer app. The transfer
   app now uses this package.
+- An arc older than section 3.9 prints the text of a message as the sender
+  sent it, with only its first line indented, and sends a text of only
+  spaces. An `arc-dm` older than section 3.9 shows each control character
+  as U+FFFD, and shows embeddings, overrides and isolates as they are.
+  Update arc and each client program; the JSON lines do not change.
 
 ## 8. Proof
 
@@ -225,6 +260,8 @@ recipient.
 | `TestSendRefusesANameAsTheRecipient` | `Send` refuses a recipient that is not a key. |
 | `TestWatch` | A watch gives a message that arrives while it runs, and returns with no error at the end of the context. |
 | `TestWatchFailsWithABadSince` | A watch returns what arc says about a bad `--since`. |
+| `TestEscape` | `terminal.Escape` escapes each control character, embedding, override, isolate and backslash, and keeps a newline, a tab, the marks U+200E and U+200F, and other text. |
+| `TestATerminalShowsNoEscapeOfASender` | A message with ESC, U+202E, a typed `\x1b` and a forged header crosses a relay. The inbox and the outbox of arc show it escaped, with each line indented. The JSON line holds the text as sent. arc refuses a text of only spaces. |
 
 The tests of the dm app, `go test ./apps/dm/...`, use this package and the
 test relay. No test runs a client program against a relay on another

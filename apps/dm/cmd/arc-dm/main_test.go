@@ -286,7 +286,7 @@ func TestPeers(t *testing.T) {
 }
 
 // TestControlCharacters shows no control character of a sender on the
-// terminal.
+// terminal: it shows each one escaped, so nothing of the text is lost.
 func TestControlCharacters(t *testing.T) {
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "\x1b[2Jcleared\x07\nline two\tend")
@@ -296,8 +296,8 @@ func TestControlCharacters(t *testing.T) {
 			t.Errorf("arc-dm printed a control character, or lost the text: %q", out)
 		}
 	}
-	if out := bob.dm("open", ada.name); !strings.Contains(out, "  \ufffd[2Jcleared\ufffd\n  line two\tend\n") {
-		t.Errorf("open printed %q, want each control character replaced, and the newline and tab kept", out)
+	if out := bob.dm("open", ada.name); !strings.Contains(out, "  \\x1b[2Jcleared\\x07\n  line two\tend\n") {
+		t.Errorf("open printed %q, want each control character escaped, and the newline and tab kept", out)
 	}
 }
 

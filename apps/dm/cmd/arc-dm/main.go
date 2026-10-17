@@ -25,9 +25,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 
 	"github.com/gezibash/arc/sdk/arcprogram"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 const usage = `usage:
@@ -139,7 +139,7 @@ func list(ctx context.Context, args []string) error {
 		case !c.direct():
 			who = last.From + ": "
 		}
-		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, preview(clean(last.Text), 72))
+		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, preview(terminal.Escape(last.Text), 72))
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func open(ctx context.Context, args []string) error {
 		} else if !read[e.ID] {
 			status = "  new"
 		}
-		fmt.Printf("%s  %s%s\n%s\n", stamp(e.At), who, status, indent(clean(e.Text)))
+		fmt.Printf("%s  %s%s\n%s\n", stamp(e.At), who, status, indent(terminal.Escape(e.Text)))
 	}
 	return markRead(dir, c)
 }
@@ -251,7 +251,7 @@ func watch(ctx context.Context, args []string) error {
 	}
 	notifier := notifierOf(*notify)
 	return s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
-		text := clean(m.Text)
+		text := terminal.Escape(m.Text)
 		group := ""
 		if len(m.Members) > 2 {
 			group = fmt.Sprintf("  in a group of %d", len(m.Members))
@@ -291,18 +291,6 @@ func notifierOf(setting string) []string {
 }
 
 func stamp(at time.Time) string { return at.Local().Format("2006-01-02 15:04") }
-
-// clean replaces each control character of a text, except a newline and
-// a tab, so the sender of a message cannot move the cursor or change the
-// terminal.
-func clean(text string) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\n' && r != '\t' && unicode.IsControl(r) {
-			return '\uFFFD'
-		}
-		return r
-	}, text)
-}
 
 // indent puts two spaces before each line of text.
 func indent(text string) string { return "  " + strings.ReplaceAll(text, "\n", "\n  ") }
