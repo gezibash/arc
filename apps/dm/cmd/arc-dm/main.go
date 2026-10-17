@@ -139,7 +139,7 @@ func list(ctx context.Context, args []string) error {
 		case !c.direct():
 			who = last.From + ": "
 		}
-		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, preview(terminal.Escape(last.Text), 72))
+		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, terminal.Escape(preview(last.Text, 72)))
 	}
 	return nil
 }
@@ -200,8 +200,8 @@ func send(ctx context.Context, args []string) error {
 		}
 		text = strings.TrimRight(string(body), "\n")
 	}
-	if strings.TrimSpace(text) == "" {
-		return errors.New("a message holds at least one character that is not a space")
+	if terminal.Blank(text) {
+		return errors.New("a message holds at least one character that a person can see")
 	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {

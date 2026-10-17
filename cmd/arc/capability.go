@@ -30,6 +30,7 @@ import (
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/gate"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -494,7 +495,7 @@ func discoverCmd() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no apps found: add a relay, or sync with a directory")
 			}
 			for _, o := range offers {
-				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), o.ID, o.Title, o.Summary, o.Provider.Hex())
+				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), terminal.Escape(o.ID), terminal.Escape(o.Title), shown(o.Summary), o.Provider.Hex())
 			}
 			return nil
 		},
@@ -532,10 +533,7 @@ func installCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(command.OutOrStdout(), "%s offers %s (%s)\n  %s\n  %s\n", offer.Name(), offer.Title, offer.ID, offer.Summary, offer.Provider.Hex())
-			if m := offer.Manifest; m != nil {
-				fmt.Fprint(command.OutOrStdout(), iface.Describe(m))
-			}
+			showOffer(command.OutOrStdout(), offer)
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
 				fmt.Fprint(command.OutOrStdout(), "Trust this app and its signing identity? [y/N] ")
 				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -616,9 +614,9 @@ func callCmd() *cobra.Command {
 				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), shown(o.Text))
 				switch {
 				case o.Reply.Err != "":
-					fmt.Fprintf(command.OutOrStdout(), "  error: %s\n", o.Reply.Err)
+					fmt.Fprintf(command.OutOrStdout(), "  error: %s\n", shown(o.Reply.Err))
 				case o.ReplySeal != "":
-					fmt.Fprintf(command.OutOrStdout(), "  reply: %s\n", o.Reply.Body)
+					fmt.Fprintf(command.OutOrStdout(), "  reply: %s\n", shown(o.Reply.Body))
 				}
 			}
 			if !found {
@@ -696,7 +694,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "round trip %s via %s\n", rtt.Round(100*time.Microsecond), via)
 	if reply.Err != "" {
-		return fmt.Errorf("the provider refused: %s", reply.Err)
+		return fmt.Errorf("the provider refused: %s", terminal.Escape(reply.Err))
 	}
 	// The manifest can say how to show a reply. --raw writes it as it came.
 	raw, _ := command.Flags().GetBool("raw")

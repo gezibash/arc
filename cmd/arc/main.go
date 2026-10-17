@@ -53,6 +53,7 @@ import (
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -712,8 +713,8 @@ func messageCommand() *cobra.Command {
 				}
 				text = strings.TrimRight(string(body), "\n")
 			}
-			if strings.TrimSpace(text) == "" {
-				return errors.New("a message holds at least one character that is not a space")
+			if terminal.Blank(text) {
+				return errors.New("a message holds at least one character that a person can see")
 			}
 			if len(text) > private.MaxMailContent {
 				return fmt.Errorf("the message is too large for mail, which holds at most %d bytes: send it over a direct path, such as the transfer app", private.MaxMailContent)
@@ -905,13 +906,13 @@ func syncCommand() *cobra.Command {
 					fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
 						report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
 					for _, reason := range report.Refused {
-						fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
+						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.Escape(reason))
 					}
 					if report.Unreadable > 0 {
 						fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
 					}
 					for _, err := range report.SendFailed {
-						fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
+						fmt.Fprintf(os.Stderr, "  not sent: %s\n", terminal.Escape(err.Error()))
 					}
 					bodies, err := sess.SyncBodies(dir)
 					if err != nil {
@@ -931,14 +932,14 @@ func syncCommand() *cobra.Command {
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
+					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.Escape(err.Error()))
 					failed = true
 					continue
 				}
 				fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
 					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
 				for _, reason := range mails.Refused {
-					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
+					fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.Escape(reason))
 				}
 			}
 			if dir == "" {

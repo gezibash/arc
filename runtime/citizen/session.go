@@ -22,6 +22,7 @@ import (
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/wake"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // Session is a citizen's application state. Cobra supplies configuration;
@@ -92,7 +93,7 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, text) })
+				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
 			}
 			sess.kept[url] = r
 		}
@@ -146,4 +147,17 @@ func (s *Session) warnf(format string, args ...any) {
 	if s.Errors != nil {
 		fmt.Fprintf(s.Errors, format, args...)
 	}
+}
+
+// noticeLimit is the most characters of a relay NOTICE that arc prints. A
+// notice that rings fail has about 150.
+const noticeLimit = 300
+
+// notice is the text of a relay NOTICE as a terminal can show it: cut to
+// noticeLimit characters, then escaped. The relay chooses the text.
+func notice(text string) string {
+	if runes := []rune(text); len(runes) > noticeLimit {
+		text = string(runes[:noticeLimit]) + "\u2026"
+	}
+	return terminal.Escape(text)
 }

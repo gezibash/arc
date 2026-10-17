@@ -14,6 +14,7 @@ import (
 	"github.com/gezibash/arc/runtime/bundle"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -125,9 +126,9 @@ func installed(installs catalog.Installs, name string) (catalog.Install, error) 
 }
 
 func showOffer(out io.Writer, o catalog.Offer) {
-	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), o.Title, o.ID, o.Summary, o.Provider.Hex())
+	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), terminal.Escape(o.Title), terminal.Escape(o.ID), shown(o.Summary), o.Provider.Hex())
 	if o.Manifest != nil {
-		fmt.Fprint(out, iface.Describe(o.Manifest))
+		fmt.Fprint(out, terminal.Escape(iface.Describe(o.Manifest)))
 	}
 }
 
