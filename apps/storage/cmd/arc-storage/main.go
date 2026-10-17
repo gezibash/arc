@@ -166,9 +166,9 @@ func list(ctx context.Context, args []string) error {
 	}
 	for _, e := range entries {
 		if e.Deleted {
-			fmt.Printf("%d\t%s\tdeleted\n", e.Seq, e.ID)
+			fmt.Printf("%d\t%s\tdeleted\n", e.Seq, e.ID) //arc:raw-ok List refuses an ID that is not 64 hex digits
 		} else {
-			fmt.Printf("%d\t%s\t%d\n", e.Seq, e.ID, e.Size)
+			fmt.Printf("%d\t%s\t%d\n", e.Seq, e.ID, e.Size) //arc:raw-ok List refuses an ID that is not 64 hex digits
 		}
 	}
 	fmt.Fprintf(os.Stderr, "cursor %d\n", next)

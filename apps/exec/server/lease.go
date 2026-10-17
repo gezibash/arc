@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // leaseTimeout bounds one lease command. A command that hangs must not hold
@@ -104,7 +106,7 @@ func (l *lease) runCommand(argv []string) {
 	output, err := process.CombinedOutput()
 
 	if err != nil {
-		fmt.Fprintf(l.log, "the lease command failed: %v: %s\n", err, trimOutput(output))
+		fmt.Fprintf(l.log, "the lease command failed: %s: %s\n", terminal.EscapeLine(err.Error()), trimOutput(output))
 	}
 }
 

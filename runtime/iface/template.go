@@ -141,12 +141,21 @@ func (s scope) lookup(name string) any {
 	return value
 }
 
-// render writes the template as text.
+// render writes the template as text. With clean, it cleans each part,
+// and the result can be shown. Without clean, the result is data, such as
+// the content of an event: a caller that shows it must clean it first
+// (docs/clients/SPEC.md, section 3.9).
 func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 	var out strings.Builder
 	for _, p := range t.parts {
 		if p.name == "" {
-			out.WriteString(p.text)
+			// The author of the app wrote this text: it is another
+			// party's text too (docs/clients/SPEC.md, section 3.9).
+			text := p.text
+			if clean {
+				text = h.sanitize(text)
+			}
+			out.WriteString(text) //arc:raw-ok render cleans each part that it shows; a template that builds an event stays as it is
 			continue
 		}
 		value, err := p.value(s, h)
@@ -157,7 +166,7 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 		if clean {
 			text = h.sanitize(text)
 		}
-		out.WriteString(text)
+		out.WriteString(text) //arc:raw-ok render cleans each part that it shows; a template that builds an event stays as it is
 	}
 	return out.String(), nil
 }

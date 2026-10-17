@@ -207,7 +207,7 @@ func (p messagePrinter) print(m mail.Message) error {
 			others := slices.DeleteFunc(slices.Clone(m.Members[1:]), func(pk nostr.PubKey) bool { return pk == p.me })
 			group = "  to you, " + petnames(others)
 		}
-		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, shown(m.Text))
+		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, shown(m.Text)) //arc:raw-ok a petname that arc makes from the key
 		return err
 	}
 	return p.encoder.Encode(messageLine{

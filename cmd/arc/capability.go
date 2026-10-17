@@ -223,7 +223,7 @@ func serve(command *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.Key.Name(), id, sess.Key.Public.Hex())
+	fmt.Fprintf(command.OutOrStdout(), "%s serves %s\n%s\n", sess.Key.Name(), id, sess.Key.Public.Hex()) //arc:raw-ok the name of a key of this machine
 
 	// Self data syncs with the storage citizens now, and each
 	// selfSyncEvery while the service runs.
@@ -496,7 +496,7 @@ func discoverCmd() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no apps found: add a relay, or sync with a directory")
 			}
 			for _, o := range offers {
-				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), terminal.EscapeLine(o.ID), terminal.EscapeLine(o.Title), shown(o.Summary), o.Provider.Hex())
+				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), terminal.EscapeLine(o.ID), terminal.EscapeLine(o.Title), shown(o.Summary), o.Provider.Hex()) //arc:raw-ok a petname that arc makes from the key
 			}
 			return nil
 		},
@@ -546,7 +546,7 @@ func installCmd() *cobra.Command {
 				if err := installs.Add(offer, ""); err != nil {
 					return err
 				}
-				fmt.Fprintf(command.OutOrStdout(), "installed %s: call it with arc call %s\n", offer.ID, offer.Name())
+				fmt.Fprintf(command.OutOrStdout(), "installed %s: call it with arc call %s\n", terminal.EscapeLine(offer.ID), offer.Name()) //arc:raw-ok a petname
 				return nil
 			}
 			as, _ := command.Flags().GetString("as")
@@ -612,7 +612,7 @@ func callCmd() *cobra.Command {
 				}
 				found = true
 				to, _ := nostr.PubKeyFromHex(o.To)
-				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), shown(o.Text))
+				fmt.Fprintf(command.OutOrStdout(), "%s  to %s  %s\n  %s\n", o.Created.Local().Format("2006-01-02 15:04"), keys.Name(to[:]), o.State(now), shown(o.Text)) //arc:raw-ok a petname that arc makes from the key; a state of the outbox
 				switch {
 				case o.Reply.Err != "":
 					fmt.Fprintf(command.OutOrStdout(), "  error: %s\n", shown(o.Reply.Err))
@@ -684,7 +684,7 @@ func callCapability(command *cobra.Command, args []string) error {
 		if _, err := sess.Mail.Request(command.Context(), provider, request); err != nil {
 			return err
 		}
-		fmt.Fprintf(command.OutOrStdout(), "queued for %s: the reply arrives with a sync; see arc call results\n", offer.Name())
+		fmt.Fprintf(command.OutOrStdout(), "queued for %s: the reply arrives with a sync; see arc call results\n", offer.Name()) //arc:raw-ok a petname that arc makes from the key
 		return nil
 	}
 
@@ -721,7 +721,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	default:
 		text = terminal.EscapeData(text)
 	}
-	fmt.Fprint(command.OutOrStdout(), text)
+	fmt.Fprint(command.OutOrStdout(), text) //arc:raw-ok --raw writes the reply as it came; each other case escapes it
 	if !strings.HasSuffix(text, "\n") {
 		fmt.Fprintln(command.OutOrStdout())
 	}
@@ -798,7 +798,7 @@ func announceCmd() *cobra.Command {
 					}
 				}
 			}
-			fmt.Fprintf(command.OutOrStdout(), "announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.Key.Name(), sess.Key.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "announced %s as %s\n%s\n", announcement.Tags.GetD(), sess.Key.Name(), sess.Key.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
 		},
 	}

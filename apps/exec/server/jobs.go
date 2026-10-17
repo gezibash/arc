@@ -14,6 +14,7 @@ import (
 
 	"github.com/gezibash/arc/sdk/atomicfile"
 	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // lostGrace is how long a job may hold no result after its process ended. The
@@ -96,7 +97,7 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 		status.Exit = &exit
 		status.TimedOut = &timedOut
 		if err := writeStatus(dir, status); err != nil {
-			fmt.Fprintf(s.log, "the status of job %s did not save: %v\n", id, err)
+			fmt.Fprintf(s.log, "the status of job %s did not save: %s\n", id, terminal.EscapeLine(err.Error()))
 		}
 
 		// The notify command runs before the lease ends, so the machine stays
@@ -104,7 +105,7 @@ func (s *server) startJob(caller string, cmd *command) (map[string]any, error) {
 		if s.config.Notify != nil {
 			reply, err := s.jobStatus(caller, id)
 			if err != nil {
-				fmt.Fprintf(s.log, "the result of job %s is not readable: %v\n", id, err)
+				fmt.Fprintf(s.log, "the result of job %s is not readable: %s\n", id, terminal.EscapeLine(err.Error()))
 				return
 			}
 			s.notify(caller, reply)

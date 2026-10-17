@@ -246,7 +246,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 		one[listed] = member
 		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
 			pk, _ := nostr.PubKeyFromHex(member)
-			fmt.Fprintf(stdio.Err, "%s: %s\n", env.Name(pk), terminal.EscapeLine(err.Error()))
+			fmt.Fprintf(stdio.Err, "%s: %s\n", env.Name(pk), terminal.EscapeLine(err.Error())) //arc:raw-ok a petname that arc makes from the key
 			failed++
 		}
 	}
@@ -340,7 +340,7 @@ func (r *run) call(c *Call) ([]*entry, error) {
 		return nil, err
 	}
 	if result.Queued {
-		fmt.Fprintf(r.stdio.Err, "queued for %s: the reply arrives with a sync; see arc call results\n", r.env.Name(r.in.Author))
+		fmt.Fprintf(r.stdio.Err, "queued for %s: the reply arrives with a sync; see arc call results\n", r.env.Name(r.in.Author)) //arc:raw-ok a petname that arc makes from the key
 		return nil, nil
 	}
 	if result.Err != "" {
@@ -500,13 +500,16 @@ func (r *run) table(w io.Writer, columns, rows any) error {
 	return tw.Flush()
 }
 
-// line writes text and ends it with a newline, when it has none.
+// line writes text and ends it with a newline, when it has none. It writes
+// the text as it is: each caller must clean another party's text first,
+// with sanitize or a template rendered with clean (docs/clients/SPEC.md,
+// section 3.9).
 func line(w io.Writer, text string) error {
 	// Text that renders to nothing shows nothing, not an empty line.
 	if text == "" {
 		return nil
 	}
-	if _, err := io.WriteString(w, text); err != nil {
+	if _, err := io.WriteString(w, text); err != nil { //arc:raw-ok each caller passes text through sanitize, or a template that cleans it
 		return err
 	}
 	if !strings.HasSuffix(text, "\n") {
@@ -520,7 +523,7 @@ func line(w io.Writer, text string) error {
 // Help lists the commands of a capability.
 func Help(in Installed) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s\n", in.Name, terminal.EscapeLine(in.Manifest.Title))
+	fmt.Fprintf(&b, "%s: %s\n", in.Name, terminal.EscapeLine(in.Manifest.Title)) //arc:raw-ok the name of an install on this machine
 	if in.Manifest.Summary != "" {
 		fmt.Fprintf(&b, "%s\n", terminal.Escape(in.Manifest.Summary))
 	}

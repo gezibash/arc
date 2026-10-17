@@ -99,7 +99,7 @@ func websocketCLI(cmd *cobra.Command, stream *session.Stream) error {
 			if toTerminal(cmd.OutOrStdout()) {
 				text = terminal.Escape(record.Text)
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), text)
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), text) //arc:raw-ok text is escaped above, for a terminal or a pipe
 		case "binary":
 			if !opened || closed {
 				return fmt.Errorf("WebSocket data outside open connection")

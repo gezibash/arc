@@ -262,8 +262,9 @@ answers with text messages of JSON, in the order of the requests.
   the ID could change the terminal of the person who reads it
   ([the clients spec](../clients/SPEC.md), section 3.9). The error names
   the ID escaped, and the client keeps no entry of that reply. The reply to
-  a delete with `ids` MUST name the IDs of the request, in order; the
-  client refuses another reply, and names the ID escaped.
+  a get, delete or audit with `ids` MUST name the IDs of the request, in
+  order. The client refuses another reply with the same check, and names
+  the ID escaped. It reads no bytes of that reply and keeps no item of it.
 
 **Pieces.**
 

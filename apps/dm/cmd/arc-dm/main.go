@@ -143,7 +143,7 @@ func list(ctx context.Context, args []string) error {
 		case !c.direct():
 			who = last.From + ": "
 		}
-		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, terminal.Escape(preview(last.Text, 72)))
+		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, terminal.Escape(preview(last.Text, 72))) //arc:raw-ok c.Name holds petnames; status is arc-dm's own
 	}
 	return nil
 }
@@ -182,7 +182,7 @@ func open(ctx context.Context, args []string) error {
 		} else if !read[e.ID] {
 			status = "  new"
 		}
-		fmt.Printf("%s  %s%s\n%s\n", stamp(e.At), who, status, indent(terminal.Escape(e.Text)))
+		fmt.Printf("%s  %s%s\n%s\n", stamp(e.At), who, status, indent(terminal.Escape(e.Text))) //arc:raw-ok status is a delivery state of arc, or new
 	}
 	return markRead(dir, c)
 }
@@ -218,7 +218,7 @@ func send(ctx context.Context, args []string) error {
 	if _, err := s.arc.Send(ctx, c.Peers, text); err != nil {
 		return err
 	}
-	fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key()))
+	fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key())) //arc:raw-ok c.Name holds petnames, or a key
 	return nil
 }
 
@@ -278,12 +278,11 @@ func watch(ctx context.Context, args []string) error {
 	}
 	notifier := notifierOf(*notify)
 	return s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
-		text := terminal.Escape(m.Text)
 		group := ""
 		if len(m.Members) > 2 {
 			group = fmt.Sprintf("  in a group of %d", len(m.Members))
 		}
-		fmt.Printf("%s  %s%s\n%s\n", stamp(m.At), m.Name, group, indent(text))
+		fmt.Printf("%s  %s%s\n%s\n", stamp(m.At), m.Name, group, indent(terminal.Escape(m.Text))) //arc:raw-ok m.Name is a petname
 		if len(notifier) == 0 {
 			return nil
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -721,6 +722,24 @@ func TestTheOutputOfAServiceCannotSave(t *testing.T) {
 	  "kinds": {}, "commands": [{"path": ["x"], "summary": "X", "action": {"call": {"class": "live", "body": "{}"}}}]}`
 	if _, err := Parse([]byte(m)); err == nil || !strings.Contains(err.Error(), "cannot save") {
 		t.Errorf("the output of a service saved to a file: %v", err)
+	}
+}
+
+// The text of a format template comes from the author of the app, and
+// loses the same characters as a value.
+func TestTheTextOfAFormatCannotReachTheTerminal(t *testing.T) {
+	m := *specManifests(t)["exec"]
+	m.Formats = maps.Clone(m.Formats)
+	m.Formats["reply"] = Format{Record: "\x1b[2J{{job}}\u200b"}
+	var out, errs bytes.Buffer
+	err := ShowReply(context.Background(), &fakeEnv{me: nostr.Generate()},
+		Installed{Manifest: &m, Author: nostr.Generate().Public(), Name: "exec"}, `{"job":"j1","state":"running"}`,
+		Stdio{In: strings.NewReader(""), Out: &out, Err: &errs})
+	if out.String() != "[2Jj1\n" || exitCode(err) != 75 {
+		t.Errorf("the reply shows %q, %v", out.String(), err)
+	}
+	if strings.Count(errs.String(), removedNote) != 1 {
+		t.Errorf("standard error is %q, want one note that arc removed characters", errs.String())
 	}
 }
 

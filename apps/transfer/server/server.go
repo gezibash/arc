@@ -25,6 +25,7 @@ import (
 	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -144,7 +145,7 @@ func (s *server) fetch(from string, req files.Fetch) (string, error) {
 				started := time.Now()
 				label := fmt.Sprintf("%.12s to %.8s", offer.SHA256, from)
 				if err := files.Send(dc, offer.Path, req.Offset, offer.Size); err != nil {
-					fmt.Fprintf(s.log, "%s stopped: %v\n", label, err)
+					fmt.Fprintf(s.log, "%s stopped: %s\n", label, terminal.EscapeLine(err.Error()))
 					return
 				}
 				select {
@@ -152,7 +153,7 @@ func (s *server) fetch(from string, req files.Fetch) (string, error) {
 					path := direct.SelectedPath(pc)
 					fmt.Fprintf(s.log, "%s: %d bytes in %.1f s on %s\n", label, offer.Size-req.Offset, time.Since(started).Seconds(), path)
 					if err := recordDelivery(s.state, offer.SHA256, from, path); err != nil {
-						fmt.Fprintf(s.log, "%s: the delivery is not recorded: %v\n", label, err)
+						fmt.Fprintf(s.log, "%s: the delivery is not recorded: %s\n", label, terminal.EscapeLine(err.Error()))
 					}
 				case <-time.After(30 * time.Second):
 					fmt.Fprintf(s.log, "%s: the receiver did not confirm\n", label)
@@ -205,7 +206,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
 			if !m.IsString {
 				if err := part.Write(m.Data); err != nil {
-					fmt.Fprintf(s.log, "%s stopped: %v\n", label, err)
+					fmt.Fprintf(s.log, "%s stopped: %s\n", label, terminal.EscapeLine(err.Error()))
 					if errors.Is(err, files.ErrTooManyBytes) {
 						part.Discard()
 					}
@@ -220,7 +221,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 			}
 			// The caller closes the connection when it has the answer.
 			if err := part.Finish(); err != nil {
-				fmt.Fprintf(s.log, "%s: %v\n", label, err)
+				fmt.Fprintf(s.log, "%s: %s\n", label, terminal.EscapeLine(err.Error()))
 				_ = dc.SendText(err.Error())
 			} else {
 				fmt.Fprintf(s.log, "%s: %d bytes in %.1f s on %s\n", label, req.Size-have, time.Since(started).Seconds(), direct.SelectedPath(pc))

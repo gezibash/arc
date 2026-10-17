@@ -195,7 +195,7 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 			if err := installs.Add(offer, entry.Name); err != nil {
 				return list, true, err
 			}
-			fmt.Fprintf(out, "installed %s from the storage list\n", entry.Name)
+			fmt.Fprintf(out, "installed %s from the storage list\n", entry.Name) //arc:raw-ok an entry of the storage list that this citizen signed
 		}
 	}
 	for _, install := range all {

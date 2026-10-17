@@ -325,7 +325,13 @@ A refused request has one of these errors:
 
 - `get` does not replace a file. If the output file is there, it stops.
 - The name in a link comes from another citizen. `get` uses only its last
-  part, with no directory.
+  part, with no directory. It removes each character that could change the
+  terminal or hide text, and newlines and tabs. If only removed characters
+  stood before the first dot, the name gets the first 16 hex digits of the
+  SHA-256 in front, so `<U+200B>.tar.gz` does not become the dot file
+  `.tar.gz`. A dot file that the sender really named, such as `.bashrc` or
+  `.tar.gz`, stays a dot file. A name that starts with `-` gets `_` in
+  front.
 - If the bytes do not have the SHA-256 of the link, `get` removes the part
   file, and writes no file.
 - If the sender writes more bytes than the size in the link, `get` does not
