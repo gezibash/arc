@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxOncePerMissingParent)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -270,7 +270,9 @@ are not on the wire.
 - `arc-dm` shows the parent on one quote line, between the header and the
   text of the reply: `↳`, the short id, the author, and the first line of
   the parent that is not empty, as `terminal.EscapeLineCut` gives it, with
-  the line at most 72 characters. The quote line starts at column 0, where
+  the line at most 72 characters. The short id of a quote line is at most
+  12 digits, then `…`: a sender can name an id that matches a held id in
+  63 digits. The quote line starts at column 0, where
   no line of a text starts (section 3.9), so a quote typed into a text
   never looks like a quote. Its other forms are
   `↳ <id>  (not on this device)` and `↳ <id>  (in another conversation)`.
@@ -409,12 +411,15 @@ are not on the wire.
 | `TestAReplyQuotesItsParent` | `arc-dm reply` with 4 digits of a short id, and `arc-dm send -reply`, send a reply; the confirmation names the conversation. The other side shows the quote line at column 0 from its own sent text. `arc message inbox` names the parent. |
 | `TestAReplyInAGroup` | A reply to a group message goes to each member of the group, and not to a direct conversation. The confirmation names each member. |
 | `TestAQuoteComesFromTheStore` | A quote line typed into a text shows inside the text, at column 2. The one line at column 0 is the parent from the store. |
-| `TestAHostileParentIsOneEscapedLine` | A parent with ESC, U+202E, U+200B and a first line of 5,000 characters gives one escaped quote line of at most 72 characters. A parent that starts with empty lines quotes its first line with text. |
+| `TestAHostileParentIsOneEscapedLine` | A parent with ESC, U+202E, U+200B and a first line of 5,000 characters gives one escaped quote line of at most 72 characters. A parent that starts with empty lines quotes its first line with text. An id that matches a held id in 63 digits shows 12 digits and `…`, inside 72 characters. |
 | `TestAReplyToAnUnheldMessageShowsTheIdOnly` | A reply to an id that the reader does not hold shows `(not on this device)`. |
 | `TestAReplyAcrossConversationsShowsNoText` | A direct reply that names a group message shows `(in another conversation)` and no text of the group. arc refuses to send such a reply. |
 | `TestATagThatIsNoReplyShowsAPlainMessage` | Two `e` tags, or an id in capitals, give a plain message. A relay hint after the id still gives a reply. |
 | `TestReplyRefusals` | arc-dm refuses an id that is not one, an id of no message, and `send -reply` into another conversation. arc refuses an unheld parent and an id in capitals. Nothing is sent. |
 | `TestAWatchQuotesTheParent` | `arc-dm watch` shows the quote of a reply to a message sent after the watch started, and the id only for an unheld parent. |
+| `TestAReplyToYourOwnMessage` | A reply to a message that the citizen sent quotes it on both sides: arc finds the parent in the outbox. |
+| `TestSendReplyChecksTheIdBeforeTheText` | `arc-dm send -reply` with a wrong id fails at once, with standard input open. |
+| `TestAWatchReadsTheOutboxOncePerMissingParent` | Four replies to two ids that no message has make a watch read the outbox twice, and the inbox not at all, after its start. |
 | `TestShortIDs` | A short id grows past 6 digits where two ids share them, and a prefix of two messages is refused. |
 | `TestSlogTextHandlerQuotesHostileText` | `slog.TextHandler` writes ESC, an override, an invisible character, a tag, a newline and U+2028 of a message, a value and an error as escapes. |
 
