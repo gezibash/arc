@@ -19,7 +19,6 @@ import (
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/release"
 	"github.com/gezibash/arc/sdk/direct"
-	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +71,7 @@ func (r releaseCaller) Request(ctx context.Context, body []byte) ([]byte, error)
 		return nil, err
 	}
 	if reply.Err != "" {
-		return nil, fmt.Errorf("the releases provider refused: %s", terminal.Escape(reply.Err))
+		return nil, fmt.Errorf("the releases provider refused: %s", reply.Err)
 	}
 	return []byte(reply.Body), nil
 }

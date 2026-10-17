@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // SearchIndex is the full-text search effect consumed by application commands.
@@ -516,15 +517,15 @@ func line(w io.Writer, text string) error {
 // Help lists the commands of a capability.
 func Help(in Installed) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s\n", in.Name, in.Manifest.Title)
+	fmt.Fprintf(&b, "%s: %s\n", in.Name, terminal.EscapeLine(in.Manifest.Title))
 	if in.Manifest.Summary != "" {
-		fmt.Fprintf(&b, "%s\n", in.Manifest.Summary)
+		fmt.Fprintf(&b, "%s\n", terminal.Escape(in.Manifest.Summary))
 	}
 	b.WriteString("\ncommands:\n")
 	tw := tabwriter.NewWriter(&b, 0, 0, 3, ' ', 0)
 	for i := range in.Manifest.Commands {
 		c := &in.Manifest.Commands[i]
-		fmt.Fprintf(tw, "  %s\t%s\n", usage(in, c), c.Summary)
+		fmt.Fprintf(tw, "  %s\t%s\n", usage(in, c), terminal.EscapeLine(c.Summary))
 	}
 	_ = tw.Flush()
 	return b.String()
@@ -532,7 +533,7 @@ func Help(in Installed) string {
 
 func commandHelp(in Installed, c *Command) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\nusage: %s\n", c.Summary, usage(in, c))
+	fmt.Fprintf(&b, "%s\n\nusage: %s\n", terminal.Escape(c.Summary), usage(in, c))
 	if len(c.Args) > 0 {
 		b.WriteString("\narguments:\n")
 		tw := tabwriter.NewWriter(&b, 0, 0, 3, ' ', 0)
@@ -544,7 +545,7 @@ func commandHelp(in Installed, c *Command) string {
 			if a.Default != "" {
 				note += ", default " + a.Default
 			}
-			fmt.Fprintf(tw, "  %s\t%s\n", usageOf(a), note)
+			fmt.Fprintf(tw, "  %s\t%s\n", terminal.EscapeLine(usageOf(a)), terminal.EscapeLine(note))
 		}
 		_ = tw.Flush()
 	}
@@ -561,7 +562,7 @@ func usage(in Installed, c *Command) string {
 		}
 		words = append(words, text)
 	}
-	return strings.Join(words, " ")
+	return terminal.EscapeLine(strings.Join(words, " "))
 }
 
 // ShowReply shows the reply of a call by address, with the output of the
@@ -576,7 +577,7 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {
-		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, body))
+		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, sanitize(body)))
 	}
 	if err := r.write(entries, stdio.Out); err != nil {
 		return err

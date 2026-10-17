@@ -126,9 +126,9 @@ func installed(installs catalog.Installs, name string) (catalog.Install, error) 
 }
 
 func showOffer(out io.Writer, o catalog.Offer) {
-	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), terminal.Escape(o.Title), terminal.Escape(o.ID), shown(o.Summary), o.Provider.Hex())
+	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), terminal.EscapeLine(o.Title), terminal.EscapeLine(o.ID), shown(o.Summary), o.Provider.Hex())
 	if o.Manifest != nil {
-		fmt.Fprint(out, terminal.Escape(iface.Describe(o.Manifest)))
+		fmt.Fprint(out, iface.Describe(o.Manifest))
 	}
 }
 

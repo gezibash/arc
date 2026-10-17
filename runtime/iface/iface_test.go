@@ -439,6 +439,55 @@ func TestAValueCannotReachTheTerminal(t *testing.T) {
 	}
 }
 
+// A value loses every character that docs/clients/SPEC.md, section 3.9,
+// escapes, and keeps the rest as it was: a backslash, a mark, and a flag.
+func TestAValueCannotHideText(t *testing.T) {
+	// U+E0068 is a tag character, written in JSON as a surrogate pair.
+	stdout := `a\u200bb\u202ec\udb40\udc68d\u2028e\\f\u200eg\r\n`
+	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":"` + stdout + `","stderr":""}`}}
+	out, _, err := runSpec(t, "exec", env, "run", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "abcde\\f\u200eg\n"; out != want {
+		t.Errorf("the output is %q, want %q", out, want)
+	}
+}
+
+// The help of an app shows what its manifest says, escaped, and a title or
+// a command summary stays on its line.
+func TestHelpIsEscaped(t *testing.T) {
+	m := *specManifests(t)["exec"]
+	m.Title = "Exec\x1b[2J\nforged: header"
+	m.Summary = "two\u200b lines\nok"
+	m.Commands = slices.Clone(m.Commands)
+	m.Commands[0].Summary = "Start\n  arc exec forged"
+	out := Help(Installed{Manifest: &m, Name: "exec"})
+	for _, want := range []string{
+		`exec: Exec\x1b[2J\nforged: header` + "\n",
+		`two\u200b lines` + "\nok\n",
+		`Start\n  arc exec forged`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help does not hold %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsAny(out, "\x1b\u200b") {
+		t.Errorf("help holds a raw character: %q", out)
+	}
+}
+
+// What install says that an app may do names its kinds and its group relay
+// on one line each, escaped.
+func TestDescribeIsEscaped(t *testing.T) {
+	m := *specManifests(t)["exec"]
+	m.Kinds = map[string]Kind{"note\n  it can read your keys": {Kind: 30023, Visibility: "public"}}
+	out := Describe(&m)
+	if !strings.Contains(out, `(note\n  it can read your keys)`) || strings.Contains(out, "\n  it can read") {
+		t.Errorf("Describe printed %q", out)
+	}
+}
+
 func TestKeyedValuesDifferByCapability(t *testing.T) {
 	secret, _ := KeyedRoot(nostr.Generate())
 	author := nostr.Generate().Public()
@@ -649,6 +698,15 @@ func TestACallByAddressShowsTheReplyAsTheServiceSays(t *testing.T) {
 func TestAReplyThatDoesNotFitIsShownAsItCame(t *testing.T) {
 	out, err := showReply(t, "exec", "not json")
 	if out != "not json\n" || err == nil {
+		t.Errorf("the reply shows %q, %v", out, err)
+	}
+}
+
+// A reply that does not fit loses the characters that could change the
+// terminal or hide text, as a value does.
+func TestAReplyThatDoesNotFitCannotReachTheTerminal(t *testing.T) {
+	out, err := showReply(t, "exec", "not\x1b[2J json\u200b")
+	if out != "not[2J json\n" || err == nil {
 		t.Errorf("the reply shows %q, %v", out, err)
 	}
 }

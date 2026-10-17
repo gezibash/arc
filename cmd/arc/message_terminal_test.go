@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
+	"github.com/gezibash/arc/internal/testrelay"
 )
 
 // A message that tries to change the terminal, reorder a line and forge
@@ -150,4 +152,39 @@ func (l *lockedBuilder) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.String()
+}
+
+// A live reply goes as it came through a pipe, so a program gets its bytes,
+// and shows escaped on a terminal (docs/clients/SPEC.md, section 3.9).
+func TestALiveReplyIsEscapedOnATerminal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	relay := testrelay.Start(t)
+	echo := providerBinary(t, "../../adapters/provider/host/testdata/echo")
+	provider, providerKey := providerHome(t, relay)
+	serveDir(t, ctx, provider, app(t, "echo", fmt.Sprintf("version = 2\n[serve]\ncommand = %q\nmanifest = \"./manifest.json\"\n", echo)), "--interval", "1h")
+	caller, _ := providerHome(t, relay)
+	ok(t, caller, "", "install", providerKey, "--yes")
+	address := "echo+arc://" + providerKey + "/"
+
+	if out := ok(t, caller, "", "call", address, "piped "+hostile); !strings.Contains(out, "piped "+hostile) {
+		t.Errorf("through a pipe, the reply is %q, want the text as it came", out)
+	}
+
+	tty := startTTY(t, ctx, providerBinary(t, "."), "--home", caller, "call", address, "shown "+hostile)
+	if !waitFor(tty.out, "arc-exit-", 30*time.Second) {
+		t.Fatalf("arc call did not end: %q", tty.out.String())
+	}
+	if out := tty.out.String(); !strings.Contains(out, "shown "+shownHostile) || strings.ContainsAny(out, "\x1b\u2028\U000e0068") {
+		t.Errorf("on a terminal, the reply is %q, want %q", out, "shown "+shownHostile)
+	}
+}
+
+// The line of an error loses what could change the terminal or hide text,
+// and keeps a value that arc quoted as it was quoted.
+func TestAnErrorLineCannotReachTheTerminal(t *testing.T) {
+	err := fmt.Errorf("the provider refused: %s; the scheme %q", "no\x1b[2J way\u200b\U000e0068", "x\x1b")
+	if got, want := errorLine(err), `arc: the provider refused: no[2J way; the scheme "x\x1b"`; got != want {
+		t.Errorf("errorLine = %q, want %q", got, want)
+	}
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // A template is text with placeholders: {{name}}, or {{name|filter|filter}}.
@@ -301,23 +301,8 @@ func str(value any) string {
 	return string(body)
 }
 
-// sanitize removes every control character except newline and tab, so a
-// value from an event cannot move the cursor or change the terminal.
-func sanitize(text string) string {
-	if !strings.ContainsFunc(text, isControl) {
-		return text
-	}
-	return strings.Map(func(r rune) rune {
-		if isControl(r) {
-			return -1
-		}
-		return r
-	}, text)
-}
-
-func isControl(r rune) bool {
-	if r == '\n' || r == '\t' {
-		return false
-	}
-	return r < 0x20 || (r >= 0x7f && r < 0xa0) || slices.Contains([]rune{0x2028, 0x2029, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069}, r)
-}
+// sanitize removes from a value each character that docs/clients/SPEC.md,
+// section 3.9, escapes, except a backslash: a value cannot move the
+// cursor, change the terminal, reorder a line, or hide text, and a program
+// that reads the output gets the rest of the value as it was.
+func sanitize(text string) string { return terminal.Strip(text) }

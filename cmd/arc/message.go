@@ -26,6 +26,7 @@ import (
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // messageLine is one received message in JSON. inbox --json and watch --json
@@ -175,6 +176,12 @@ func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error 
 // looks like the header of another message.
 func shown(text string) string {
 	return strings.ReplaceAll(terminal.Escape(text), "\n", "\n  ")
+}
+
+// toTerminal reports whether w is a terminal.
+func toTerminal(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
 }
 
 // messagePrinter writes received messages as inbox prints them, or as JSON.

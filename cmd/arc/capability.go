@@ -495,7 +495,7 @@ func discoverCmd() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no apps found: add a relay, or sync with a directory")
 			}
 			for _, o := range offers {
-				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), terminal.Escape(o.ID), terminal.Escape(o.Title), shown(o.Summary), o.Provider.Hex())
+				fmt.Fprintf(command.OutOrStdout(), "%s/%s  %s\n  %s\n  %s\n", o.Name(), terminal.EscapeLine(o.ID), terminal.EscapeLine(o.Title), shown(o.Summary), o.Provider.Hex())
 			}
 			return nil
 		},
@@ -694,7 +694,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "round trip %s via %s\n", rtt.Round(100*time.Microsecond), via)
 	if reply.Err != "" {
-		return fmt.Errorf("the provider refused: %s", terminal.Escape(reply.Err))
+		return fmt.Errorf("the provider refused: %s", reply.Err)
 	}
 	// The manifest can say how to show a reply. --raw writes it as it came.
 	raw, _ := command.Flags().GetBool("raw")
@@ -703,8 +703,14 @@ func callCapability(command *cobra.Command, args []string) error {
 		in := iface.Installed{Manifest: m, Author: provider, Name: offer.ID}
 		return iface.ShowReply(command.Context(), env, in, reply.Body, iface.Stdio{In: os.Stdin, Out: command.OutOrStdout(), Err: os.Stderr})
 	}
-	fmt.Fprint(command.OutOrStdout(), reply.Body)
-	if !strings.HasSuffix(reply.Body, "\n") {
+	// On a terminal the reply shows escaped. Through a pipe, or with --raw,
+	// it goes as it came, so a program that reads it gets its bytes.
+	text := reply.Body
+	if !raw && toTerminal(command.OutOrStdout()) {
+		text = terminal.Escape(text)
+	}
+	fmt.Fprint(command.OutOrStdout(), text)
+	if !strings.HasSuffix(text, "\n") {
 		fmt.Fprintln(command.OutOrStdout())
 	}
 	return nil

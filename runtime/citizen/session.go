@@ -149,15 +149,11 @@ func (s *Session) warnf(format string, args ...any) {
 	}
 }
 
-// noticeLimit is the most characters of a relay NOTICE that arc prints. A
-// notice that rings fail has about 150.
+// noticeLimit is the most characters of a relay NOTICE that arc prints,
+// after it escapes the text. A notice that rings fail has about 150.
 const noticeLimit = 300
 
-// notice is the text of a relay NOTICE as a terminal can show it: cut to
-// noticeLimit characters, then escaped. The relay chooses the text.
-func notice(text string) string {
-	if runes := []rune(text); len(runes) > noticeLimit {
-		text = string(runes[:noticeLimit]) + "\u2026"
-	}
-	return terminal.Escape(text)
-}
+// notice is the text of a relay NOTICE as a terminal can show it: on one
+// line, escaped, and cut to noticeLimit characters. The relay chooses the
+// text.
+func notice(text string) string { return terminal.EscapeLineCut(text, noticeLimit) }
