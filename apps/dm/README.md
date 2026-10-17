@@ -87,12 +87,16 @@ A reply shows a quote line between its header and its text:
 - The quote is the first line of the parent that is not empty, escaped as
   `sdk/terminal` does, and cut so that the line holds at most 72
   characters.
+- The id on a quote line is at most 12 digits, then `…`.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
 - A parent of another conversation shows
   `↳ 5e0c12  (in another conversation)`, and no text of it.
 - A reply shows the direct parent only, one level.
+- `arc-dm watch` adds each message that it receives. When a reply names a
+  parent that the watch does not hold, it reads the outbox once for that
+  id, in case you sent the parent after the watch started.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

@@ -107,28 +107,8 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 		}
 		add(members, entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name, ReplyTo: m.ReplyTo})
 	}
-	// A group message has one sent line for each recipient, with one id.
-	var sentOrder []string
-	sent := map[string][]arcprogram.Sent{}
-	for _, s := range outbox {
-		if sent[s.ID] == nil {
-			sentOrder = append(sentOrder, s.ID)
-		}
-		sent[s.ID] = append(sent[s.ID], s)
-	}
-	for _, id := range sentOrder {
-		lines := sent[id]
-		members := lines[0].Members
-		if members == nil {
-			for _, s := range lines {
-				members = append(members, s.To)
-			}
-		}
-		states := make([]string, len(lines))
-		for i, s := range lines {
-			states[i] = s.State
-		}
-		add(members, entry{ID: id, At: lines[0].At, Text: lines[0].Text, Mine: true, State: combined(states), ReplyTo: lines[0].ReplyTo})
+	for _, m := range sentMessages(outbox) {
+		add(m.members, m.entry)
 	}
 
 	var out []conversation
@@ -142,6 +122,41 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 		return cmp.Or(b.last().At.Compare(a.last().At), cmp.Compare(a.Name, b.Name))
 	})
 	return out, nil
+}
+
+// sentMessage is one message that this citizen sent, and its members.
+type sentMessage struct {
+	members []string
+	entry   entry
+}
+
+// sentMessages joins the sent lines of the outbox into messages. A group
+// message has one sent line for each recipient, with one id.
+func sentMessages(outbox []arcprogram.Sent) []sentMessage {
+	var order []string
+	sent := map[string][]arcprogram.Sent{}
+	for _, s := range outbox {
+		if sent[s.ID] == nil {
+			order = append(order, s.ID)
+		}
+		sent[s.ID] = append(sent[s.ID], s)
+	}
+	out := make([]sentMessage, 0, len(order))
+	for _, id := range order {
+		lines := sent[id]
+		members := lines[0].Members
+		if members == nil {
+			for _, s := range lines {
+				members = append(members, s.To)
+			}
+		}
+		states := make([]string, len(lines))
+		for i, s := range lines {
+			states[i] = s.State
+		}
+		out = append(out, sentMessage{members, entry{ID: id, At: lines[0].At, Text: lines[0].Text, Mine: true, State: combined(states), ReplyTo: lines[0].ReplyTo}})
+	}
+	return out
 }
 
 // peersOf is the members other than me, sorted, once each.
@@ -513,7 +528,7 @@ func (s *store) quote(e entry, c conversation) string {
 	if e.ReplyTo == "" {
 		return ""
 	}
-	head := "↳ " + s.short(e.ReplyTo) + "  "
+	head := "↳ " + s.quoted(e.ReplyTo) + "  "
 	parent, ok := s.byID[e.ReplyTo]
 	switch {
 	case !ok:
@@ -526,7 +541,23 @@ func (s *store) quote(e entry, c conversation) string {
 		who = "you"
 	}
 	head += who + ": "
-	return head + terminal.EscapeLineCut(firstLine(parent.Text), max(20, quoteWidth-utf8.RuneCountInString(head)))
+	// A petname holds at most 32 characters, and a quoted id at most 13,
+	// so the text gets at least 21.
+	return head + terminal.EscapeLineCut(firstLine(parent.Text), max(1, quoteWidth-utf8.RuneCountInString(head)))
+}
+
+// quotedID is the most hex digits of an id on a quote line.
+const quotedID = 12
+
+// quoted is the short id of a parent on a quote line: at most 12 digits,
+// then an ellipsis. A sender can name an id that matches a held id in 63
+// digits, and its short id would fill the line. The ellipsis keeps it
+// apart from each short id of a header, which has none.
+func (s *store) quoted(id string) string {
+	if short := s.short(id); len(short) <= quotedID {
+		return short
+	}
+	return id[:quotedID] + "…"
 }
 
 // firstLine is the first line of text that is not empty, and " …" when

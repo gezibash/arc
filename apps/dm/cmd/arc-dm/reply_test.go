@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +152,8 @@ func TestAQuoteComesFromTheStore(t *testing.T) {
 // A parent with control characters, an override, an invisible character
 // and a first line of 5,000 characters gives one escaped quote line of at
 // most 72 characters. A parent that starts with empty lines quotes its
-// first line with text.
+// first line with text. An id that matches a held id in 63 digits shows
+// 12 digits and an ellipsis, so its line stays inside 72 characters too.
 func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	parents := []string{
@@ -164,13 +167,30 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 	for i, parent := range parents {
 		bob.dm("reply", bob.inboxID(parent)[:6], "reply "+string(rune('a'+i)))
 	}
+	held := bob.inboxID(parents[0])
+	near := held[:63] + map[bool]string{true: "1", false: "0"}[held[63] == '0']
+	mallory.arcSend(bob.key, "near miss", "--arctest-tag", "e,"+near)
+	bob.sync()
 	conv := bob.dm("open", mallory.name)
 	if strings.ContainsAny(conv, "\x1b\u202e\u200b\u2060") {
 		t.Errorf("the conversation holds a raw control or hidden character: %q", conv)
 	}
-	got := quotes(conv)
+	var got, nearQuote []string
+	for _, line := range quotes(conv) {
+		if n := utf8.RuneCountInString(line); n > 72 {
+			t.Errorf("a quote line holds %d characters, want at most 72: %q", n, line)
+		}
+		if strings.Contains(line, "(not on this device)") {
+			nearQuote = append(nearQuote, line)
+		} else {
+			got = append(got, line)
+		}
+	}
 	if len(got) != 2 {
 		t.Fatalf("the quote lines are %q, want two", got)
+	}
+	if want := "↳ " + held[:12] + "…  (not on this device)"; len(nearQuote) != 1 || nearQuote[0] != want {
+		t.Errorf("the quote of the near id is %q, want %q", nearQuote, want)
 	}
 	if n := utf8.RuneCountInString(got[0]); n > 72 || !strings.Contains(got[0], `: \x1b[2Jred\u202eevil\u200bxxx`) || !strings.HasSuffix(got[0], "…") {
 		t.Errorf("the quote of the long parent is %q (%d characters), want it escaped and cut to 72", got[0], n)
@@ -327,4 +347,102 @@ func TestShortIDs(t *testing.T) {
 	if got, err := s.lookup("abcdef02"); err != nil || got.ID != b {
 		t.Errorf("lookup abcdef02 is %v, %v", got.ID, err)
 	}
+}
+
+// A reply to a message that you sent yourself quotes your own text, on
+// both sides: arc finds the parent in its outbox.
+func TestAReplyToYourOwnMessage(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "bring the map")
+	short := shortID(t, ada.dm("open", bob.key), "bring the map")
+	if got, want := ada.dm("reply", short, "and the torch"), "replied to "+short+" in "+bob.name+"\n"; got != want {
+		t.Errorf("arc-dm reply printed %q, want %q", got, want)
+	}
+	bob.sync()
+	if conv := bob.dm("open", ada.name); !strings.Contains(conv, "\n↳ "+short+"  "+ada.name+": bring the map\n  and the torch\n") {
+		t.Errorf("bob's conversation:\n%s", conv)
+	}
+	if conv := ada.dm("open", bob.name); !strings.Contains(conv, "\n↳ "+short+"  you: bring the map\n  and the torch\n") {
+		t.Errorf("ada's conversation:\n%s", conv)
+	}
+}
+
+// send -reply checks the id before it reads the text, so a wrong id fails
+// at once, with standard input still open.
+func TestSendReplyChecksTheIdBeforeTheText(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "hello")
+	bob.sync()
+	for _, c := range []struct {
+		reply string
+		want  string
+	}{
+		{"ffffffff", "no message ffffffff"},
+		{"zz", "is not a message id"},
+	} {
+		command := bob.command("send", "-reply", c.reply, ada.name)
+		stdin, open, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out lockedBuffer
+		command.Stdin, command.Stdout, command.Stderr = stdin, &out, &out
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if !finish(t, command) {
+			t.Errorf("send -reply %s waited for standard input:\n%s", c.reply, out.String())
+		} else if !strings.Contains(out.String(), c.want) {
+			t.Errorf("send -reply %s printed %q, want %q", c.reply, out.String(), c.want)
+		}
+		open.Close()
+		stdin.Close()
+	}
+}
+
+// A watch reads the outbox at most once for each parent that it does not
+// hold, however many replies name that parent: a sender can name many
+// ids that no message has.
+func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
+	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
+	mallory.dm("send", bob.key, "hello")
+	bob.sync()
+
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	wrapper := filepath.Join(dir, "arc")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + runs + "\nexec " + bob.arc.Program + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	watch := exec.Command(env.program, "watch", "-arc", wrapper, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+
+	one, two := strings.Repeat("7a", 32), strings.Repeat("7b", 32)
+	for i, junk := range []string{one, one, one, two} {
+		mallory.arcSend(bob.key, "junk "+string(rune('a'+i)), "--arctest-tag", "e,"+junk)
+	}
+	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Count(stdout.String(), "(not on this device)") == 4 }) {
+		t.Fatalf("the watch printed:\n%s", stdout.String())
+	}
+	data, _ := os.ReadFile(runs)
+	// One read of the outbox at the start, then one for each missing id.
+	if n := strings.Count(string(data), "message outbox"); n != 3 {
+		t.Errorf("the watch read the outbox %d times, want 3:\n%s", n, data)
+	}
+	if n := strings.Count(string(data), "message inbox"); n != 1 {
+		t.Errorf("the watch read the inbox %d times, want 1:\n%s", n, data)
+	}
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
 }

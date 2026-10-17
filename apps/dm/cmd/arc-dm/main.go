@@ -206,10 +206,6 @@ func send(ctx context.Context, args []string) error {
 	if flags.NArg() < 1 {
 		return errors.New("usage: arc-dm send [flags] <peer> [text...]")
 	}
-	text, err := messageText(ctx, flags.Args()[1:])
-	if err != nil {
-		return err
-	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
 		return err
@@ -219,12 +215,18 @@ func send(ctx context.Context, args []string) error {
 		return err
 	}
 	if *replyTo == "" {
+		text, err := messageText(ctx, flags.Args()[1:])
+		if err != nil {
+			return err
+		}
 		if _, err := s.arc.Send(ctx, c.Peers, text); err != nil {
 			return err
 		}
 		fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key())) //arc:raw-ok c.Name holds petnames, or a key
 		return nil
 	}
+	// The id is checked before the text, so a wrong id does not wait for
+	// standard input.
 	messages := index(all)
 	parent, err := messages.lookup(*replyTo)
 	if err != nil {
@@ -232,6 +234,10 @@ func send(ctx context.Context, args []string) error {
 	}
 	if parent.conv.key() != c.key() {
 		return fmt.Errorf("%s is in another conversation: arc-dm reply %s sends to its members", messages.short(parent.ID), messages.short(parent.ID))
+	}
+	text, err := messageText(ctx, flags.Args()[1:])
+	if err != nil {
+		return err
 	}
 	return sendReply(ctx, s.arc, messages, parent, text)
 }
@@ -352,6 +358,7 @@ func watch(ctx context.Context, args []string) error {
 		return err
 	}
 	messages := index(all)
+	missed := map[string]bool{}
 	return s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
 		group := ""
 		if len(m.Members) > 2 {
@@ -363,11 +370,16 @@ func watch(ctx context.Context, args []string) error {
 			members = []string{m.From}
 		}
 		c := conversation{Peers: peersOf(me, members)}
-		if _, ok := messages.byID[m.ReplyTo]; m.ReplyTo != "" && !ok {
+		if _, ok := messages.byID[m.ReplyTo]; m.ReplyTo != "" && !ok && !missed[m.ReplyTo] {
 			// The parent can be a message that this citizen sent since the
-			// watch started.
-			if all, err := conversations(ctx, s.arc); err == nil {
-				messages = index(all)
+			// watch started: the watch adds each message that it receives.
+			// A sender can name many ids that no message has, so the watch
+			// reads the outbox at most once for each id.
+			missed[m.ReplyTo] = true
+			if outbox, err := s.arc.Outbox(ctx); err == nil {
+				for _, sent := range sentMessages(outbox) {
+					messages.add(sent.entry, conversation{Peers: peersOf(me, sent.members)})
+				}
 			}
 		}
 		e := entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name, ReplyTo: m.ReplyTo}
