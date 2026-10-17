@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -377,7 +377,8 @@ new.
   whose registration expired is still visible.
 - A read of a relay that lists `arc-rings` authenticates first (section
   3.3). When the relay refuses, arc still reads, and prints one line on
-  standard error, once for each relay in one command:
+  standard error, once for each relay and each streak of refusals (after
+  an authentication that works, the next refusal prints again):
   `<relay URL>: could not authenticate before it read mail, so the relay does not count the read for rings: <error>`.
   The relay chooses the text of the error, so arc escapes it on one line
   with `terminal.EscapeLine` ([the clients spec](../clients/SPEC.md),
@@ -401,7 +402,7 @@ new.
 | A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
 | Several inbox relays ring at once | The agent runs more than once. Each run reads the same inbox: the store keeps one copy of each message, by ID, so no run answers a message twice that an earlier run answered. |
 | An older arc reads the mail | It does not authenticate, so the read does not count. The unread period goes on, and the relay rings no more until an arc that authenticates reads. |
-| The relay refuses the authentication of arc | arc reads the mail, and prints the error once for each relay (section 4.4). The read does not count, so the unread period goes on. |
+| The relay refuses the authentication of arc | arc reads the mail, and prints the error once for each relay and each streak of refusals (section 4.4). The read does not count, so the unread period goes on. |
 
 ## 6. Security
 
@@ -507,6 +508,8 @@ and khatru:
   relay. `TestARefusedAuthenticationBeforeAReadIsToldOnce`
   (`adapters/transport/relay`): three reads, one on a new connection, try
   to authenticate three times and report the error once.
+  `TestARefusalAfterAnAuthenticationThatWorkedIsToldAgain`: refused,
+  taken, refused again reports the error twice, once for each streak.
 - `TestTwoRelaysRingWithOneID`: two relays that take one wrap ring with
   the same `id`. `TestTheRingIDComesFromTheFirstWrap` checks the hash
   against Python's `hashlib`, and keeps the `id` through retries.
