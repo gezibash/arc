@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // SearchIndex is the full-text search effect consumed by application commands.
@@ -117,6 +118,9 @@ type run struct {
 	missing error
 	// seen is the last text that tail showed, by draft.
 	seen map[string]string
+	// told is true once sanitize said that it removed characters. A copy
+	// of the run shares it, so a command says it once.
+	told *bool
 }
 
 func (r *run) keyed(purpose, input string) (string, error) {
@@ -242,7 +246,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 		one[listed] = member
 		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
 			pk, _ := nostr.PubKeyFromHex(member)
-			fmt.Fprintf(stdio.Err, "%s: %v\n", env.Name(pk), err)
+			fmt.Fprintf(stdio.Err, "%s: %s\n", env.Name(pk), terminal.EscapeLine(err.Error()))
 			failed++
 		}
 	}
@@ -254,7 +258,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 
 // runOnce runs a command with its values.
 func runOnce(ctx context.Context, env Env, in Installed, command *Command, values Values, flags Flags, stdio Stdio) error {
-	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio}
+	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio, told: new(bool)}
 	if command.Action.Watch != nil {
 		return r.watch(command.Action.Watch)
 	}
@@ -424,7 +428,7 @@ func (r *run) write(entries []*entry, out io.Writer) (err error) {
 			if !ok {
 				text = record["content"]
 			}
-			if err := line(w, sanitize(str(text))); err != nil {
+			if err := line(w, r.sanitize(str(text))); err != nil {
 				return err
 			}
 		}
@@ -458,7 +462,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 	for _, record := range records {
 		s := r.recordScope(record)
 		if f.Table != nil {
-			if err := table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows)); err != nil {
+			if err := r.table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows)); err != nil {
 				return err
 			}
 			continue
@@ -471,9 +475,9 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 }
 
 // table writes rows as aligned columns, under a line of column names.
-func table(w io.Writer, columns, rows any) error {
+func (r *run) table(w io.Writer, columns, rows any) error {
 	cell := func(v any) string {
-		text := sanitize(str(v))
+		text := r.sanitize(str(v))
 		return strings.NewReplacer("\t", " ", "\n", " ").Replace(text)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -516,15 +520,15 @@ func line(w io.Writer, text string) error {
 // Help lists the commands of a capability.
 func Help(in Installed) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s\n", in.Name, in.Manifest.Title)
+	fmt.Fprintf(&b, "%s: %s\n", in.Name, terminal.EscapeLine(in.Manifest.Title))
 	if in.Manifest.Summary != "" {
-		fmt.Fprintf(&b, "%s\n", in.Manifest.Summary)
+		fmt.Fprintf(&b, "%s\n", terminal.Escape(in.Manifest.Summary))
 	}
 	b.WriteString("\ncommands:\n")
 	tw := tabwriter.NewWriter(&b, 0, 0, 3, ' ', 0)
 	for i := range in.Manifest.Commands {
 		c := &in.Manifest.Commands[i]
-		fmt.Fprintf(tw, "  %s\t%s\n", usage(in, c), c.Summary)
+		fmt.Fprintf(tw, "  %s\t%s\n", usage(in, c), terminal.EscapeLine(c.Summary))
 	}
 	_ = tw.Flush()
 	return b.String()
@@ -532,7 +536,7 @@ func Help(in Installed) string {
 
 func commandHelp(in Installed, c *Command) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\nusage: %s\n", c.Summary, usage(in, c))
+	fmt.Fprintf(&b, "%s\n\nusage: %s\n", terminal.Escape(c.Summary), usage(in, c))
 	if len(c.Args) > 0 {
 		b.WriteString("\narguments:\n")
 		tw := tabwriter.NewWriter(&b, 0, 0, 3, ' ', 0)
@@ -544,7 +548,7 @@ func commandHelp(in Installed, c *Command) string {
 			if a.Default != "" {
 				note += ", default " + a.Default
 			}
-			fmt.Fprintf(tw, "  %s\t%s\n", usageOf(a), note)
+			fmt.Fprintf(tw, "  %s\t%s\n", terminal.EscapeLine(usageOf(a)), terminal.EscapeLine(note))
 		}
 		_ = tw.Flush()
 	}
@@ -561,7 +565,7 @@ func usage(in Installed, c *Command) string {
 		}
 		words = append(words, text)
 	}
-	return strings.Join(words, " ")
+	return terminal.EscapeLine(strings.Join(words, " "))
 }
 
 // ShowReply shows the reply of a call by address, with the output of the
@@ -573,10 +577,10 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 		return errors.New("the service has no output")
 	}
 	command := &Command{Output: *service.Output}
-	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio}
+	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio, told: new(bool)}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {
-		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, body))
+		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, r.sanitize(body)))
 	}
 	if err := r.write(entries, stdio.Out); err != nil {
 		return err

@@ -22,6 +22,7 @@ import (
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/wake"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // Session is a citizen's application state. Cobra supplies configuration;
@@ -92,7 +93,7 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, text) })
+				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
 			}
 			sess.kept[url] = r
 		}
@@ -142,8 +143,36 @@ func (s *Session) Close() {
 		s.store.Close()
 	}
 }
+
+// warnf writes a warning on the errors of the session. An argument can
+// carry text that a relay or a peer chose, so each string, error or
+// Stringer argument is escaped on one line (docs/clients/SPEC.md, section
+// 3.9). The format is arc's own, and keeps its lines.
 func (s *Session) warnf(format string, args ...any) {
-	if s.Errors != nil {
-		fmt.Fprintf(s.Errors, format, args...)
+	if s.Errors == nil {
+		return
 	}
+	safe := make([]any, len(args))
+	for i, arg := range args {
+		switch v := arg.(type) {
+		case error:
+			safe[i] = terminal.EscapeLine(v.Error())
+		case string:
+			safe[i] = terminal.EscapeLine(v)
+		case fmt.Stringer:
+			safe[i] = terminal.EscapeLine(v.String())
+		default:
+			safe[i] = arg
+		}
+	}
+	fmt.Fprintf(s.Errors, format, safe...)
 }
+
+// noticeLimit is the most characters of a relay NOTICE that arc prints,
+// after it escapes the text. A notice that rings fail has about 150.
+const noticeLimit = 300
+
+// notice is the text of a relay NOTICE as a terminal can show it: on one
+// line, escaped, and cut to noticeLimit characters. The relay chooses the
+// text.
+func notice(text string) string { return terminal.EscapeLineCut(text, noticeLimit) }

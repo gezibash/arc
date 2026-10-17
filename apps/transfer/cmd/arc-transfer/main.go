@@ -24,6 +24,7 @@ import (
 	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/stdio"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 const usage = `usage:
@@ -50,7 +51,10 @@ func main() {
 	err := run(ctx, os.Args[2:])
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, "arc-transfer:", err)
+		// An error can hold text that a peer or arc chose, such as the
+		// refusal of a receiver: escaped on one line (docs/clients/SPEC.md,
+		// section 3.9).
+		fmt.Fprintln(os.Stderr, "arc-transfer:", terminal.EscapeLine(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -108,7 +112,7 @@ func get(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(result.Output)
+	fmt.Println(terminal.EscapeLine(result.Output))
 	if result.Path == "put" {
 		fmt.Fprintln(os.Stderr, "the sender gave the file before, with put")
 		return nil

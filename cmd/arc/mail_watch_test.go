@@ -34,13 +34,19 @@ func TestServeTakesMailFromAWatch(t *testing.T) {
 	}
 
 	// A store-and-forward call: the provider answers it from its watch.
-	ok(t, caller, "", "call", "--later", "echo+arc://"+providerKey+"/", "carried call")
+	// Its text is hostile, and the echo provider sends it back, so the
+	// reply reaches the terminal escaped too.
+	ok(t, caller, "", "call", "--later", "echo+arc://"+providerKey+"/", "carried call "+hostile)
 	answered := func() bool {
 		ok(t, caller, "", "sync")
-		return strings.Contains(ok(t, caller, "", "call", "results"), "carried call")
+		return strings.Contains(ok(t, caller, "", "call", "results"), "reply: ")
 	}
 	if !within(10*time.Second, answered) {
 		t.Fatalf("the carried call was not answered: %s", ok(t, caller, "", "call", "results"))
+	}
+	results := ok(t, caller, "", "call", "results")
+	if strings.ContainsAny(results, "\x1b\u2028\U000e0068") || !strings.Contains(results, "reply: ") || strings.Count(results, shownHostile) != 2 {
+		t.Errorf("arc call results printed %q, want the text and the reply, each as %q", results, shownHostile)
 	}
 }
 

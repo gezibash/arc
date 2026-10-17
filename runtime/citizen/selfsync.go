@@ -25,6 +25,7 @@ import (
 	"github.com/gezibash/arc/runtime/selfsync"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // StorageApp is the manifest ID of the storage app. Each install of it is
@@ -263,7 +264,7 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	list, listed, err := sess.FollowStorageList(ctx, cfg.Installs, cfg.Out, cfg.Errs)
 	if err != nil {
-		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 	}
 	if listed && !sess.Remote {
 		list = sess.pruneStorageList(ctx, list, cfg)
@@ -301,10 +302,10 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	// each storage citizen even when the signer was offline at the revoke.
 	if !sess.Remote {
 		if list, ok, err := sess.DeviceList(ctx); err != nil {
-			fmt.Fprintf(cfg.Errs, "self data: the device list did not come, so no grants went: %v\n", err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: the device list did not come, so no grants went: %v", err)))
 		} else if ok {
 			if _, err := sess.PushGrants(ctx, cfg.Installs, list); err != nil {
-				fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 			}
 		}
 	}
@@ -312,7 +313,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	// a phone each one is a question to the signer.
 	newest, err := sess.newestSelfKeys(ctx)
 	if err != nil {
-		fmt.Fprintf(cfg.Errs, "self data: the keys of the blobs did not come, so no storage citizen synced: %v\n", err)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: the keys of the blobs did not come, so no storage citizen synced: %v", err)))
 		return err
 	}
 	syncer := &selfsync.Syncer{
@@ -361,7 +362,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	var failed []error
 	if err != nil {
 		failed = append(failed, err)
-		fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 	}
 	var empty []int
 	usages := make([]*storage.Usage, len(opened))
@@ -375,9 +376,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		}
 		if o.err != nil {
 			failed = append(failed, fmt.Errorf("%s: %w", as, o.err))
-			fmt.Fprintf(cfg.Errs, "%s: self data: %v\n", as, o.err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: self data: %v", as, o.err)))
 			if o.silent >= selfsync.SilentWarning {
-				fmt.Fprintf(cfg.Errs, "%s: no answer for %d days; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, int(o.silent/(24*time.Hour)), as)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: no answer for %d days; if it is gone, run arc keys storage rm %s --gone on the signer", as, int(o.silent/(24*time.Hour)), as)))
 			}
 			continue
 		}
@@ -394,17 +395,17 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		}
 		fmt.Fprintln(cfg.Out)
 		if side.Old {
-			fmt.Fprintf(cfg.Errs, "%s runs an older storage app: it holds full copies; update it for erasure coding\n", as)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s runs an older storage app: it holds full copies; update it for erasure coding", as)))
 		}
 		if side.Audited > 0 {
 			fmt.Fprintf(cfg.Out, "%s: audit checked %d pieces, %d failed\n", as, side.Audited, side.AuditFailed)
 		}
 		if side.Suspect {
-			fmt.Fprintf(cfg.Errs, "%s is suspect: %d pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm %s --gone on the signer\n", as, side.FailedToday, as)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s is suspect: %d pieces failed the audits of today; repair replaces them; if it is gone, run arc keys storage rm %s --gone on the signer", as, side.FailedToday, as)))
 		}
 		if o.conn != nil {
 			if u, err := o.conn.Usage(ctx); err != nil {
-				fmt.Fprintf(cfg.Errs, "%s: the usage did not come: %v\n", as, err)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the usage did not come: %v", as, err)))
 			} else {
 				usages[i] = &u
 				fmt.Fprintf(cfg.Out, "%s: %s\n", as, usageLine(u))
@@ -422,7 +423,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	if len(empty) > 0 {
 		if err := sess.markGone(ctx, cfg, list, targets, opened, usages, empty); err != nil {
 			failed = append(failed, err)
-			fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 		}
 	}
 	fmt.Fprintf(cfg.Out, "self data: took %d records, already held %d", report.Received, report.Held)
@@ -431,10 +432,10 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	}
 	fmt.Fprintln(cfg.Out)
 	for _, reason := range report.Refused {
-		fmt.Fprintf(cfg.Errs, "  refused %s\n", reason)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("  refused %s", reason)))
 	}
 	if n, err := sess.PruneBodies(); err != nil {
-		fmt.Fprintf(cfg.Errs, "self data: the bodies of deleted drafts stay: %v\n", err)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: the bodies of deleted drafts stay: %v", err)))
 	} else if n > 0 {
 		fmt.Fprintf(cfg.Out, "self data: removed %d bodies of deleted or replaced drafts\n", n)
 	}
@@ -474,7 +475,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		failed = append(failed, fmt.Errorf("%d blobs cannot be read now", n))
 		fmt.Fprintf(cfg.Errs, "self data: %d blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again\n", n)
 		for _, reason := range report.Unreadable {
-			fmt.Fprintf(cfg.Errs, "  unreadable %s\n", reason)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("  unreadable %s", reason)))
 		}
 	}
 	if report.Kept != nil {
@@ -560,7 +561,7 @@ func (sess *Session) setDrain(ctx context.Context, conn *storage.Conn, t target,
 			return false, err
 		}
 		if _, err := conn.Drain(ctx, true); err != nil {
-			fmt.Fprintf(notes, "%s: the storage list names it active, but the end of its drain failed, so it takes no put: %v\n", as, err)
+			fmt.Fprintf(notes, "%s: the storage list names it active, but the end of its drain failed, so it takes no put: %s\n", as, terminal.EscapeLine(err.Error()))
 			return false, nil
 		}
 		fmt.Fprintf(out, "%s: the storage list names it active, so its drain ended\n", as)
@@ -595,7 +596,7 @@ func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.Li
 			return fmt.Errorf("%s: the usage did not come, so it stays draining", as)
 		}
 		if usage.Blobs != 0 {
-			fmt.Fprintf(cfg.Errs, "%s: the listing is empty, but its usage counts %d blobs, so it stays draining\n", as, usage.Blobs)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the listing is empty, but its usage counts %d blobs, so it stays draining", as, usage.Blobs)))
 			continue
 		}
 		entry, ok := list.Find(targets[i].install.Provider)
@@ -633,9 +634,9 @@ func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.Li
 		reply, err := sess.CloseStorage(ctx, provider)
 		switch {
 		case err != nil:
-			fmt.Fprintf(cfg.Errs, "%s: the account stays, empty and draining: %v\n", as, err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the account stays, empty and draining: %v", as, err)))
 		case !reply.Closed:
-			fmt.Fprintf(cfg.Errs, "%s: the account stays: %s\n", as, reply.Message)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the account stays: %s", as, reply.Message)))
 		default:
 			fmt.Fprintf(cfg.Out, "%s: the account is closed, and the storage citizen removed it; arc keys storage add asks for a new one\n", as)
 		}
@@ -652,7 +653,7 @@ func (sess *Session) pruneStorageList(ctx context.Context, list storage.List, cf
 		return list
 	}
 	if _, err := sess.PublishStorageList(ctx, pruned); err != nil {
-		fmt.Fprintf(cfg.Errs, "self data: the storage list keeps its old gone entries: %v\n", err)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: the storage list keeps its old gone entries: %v", err)))
 		return list
 	}
 	for _, e := range removed {

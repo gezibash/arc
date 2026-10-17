@@ -29,6 +29,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -441,7 +442,7 @@ func keysCommand() *cobra.Command {
 				}
 				defer sess.Close()
 				if err := sess.RenewToken(command.Context()); err != nil {
-					fmt.Fprintf(os.Stderr, "arc: this device has no token for the relays yet, so it reads sealed data through the signer: %v\n", citizen.SignerOnly(err))
+					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("arc: this device has no token for the relays yet, so it reads sealed data through the signer: %v", citizen.SignerOnly(err))))
 				}
 			}
 			return nil
@@ -732,7 +733,7 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	}
 	rootRelay := relay.Relay{URL: url, Signer: sess.Signer}
 	if !slices.Contains(sess.URLs, url) {
-		fmt.Fprintf(os.Stderr, "%s is not a relay of this citizen: a new device list reaches the bunker only after a restart; add it with arc relay add\n", url)
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s is not a relay of this citizen: a new device list reaches the bunker only after a restart; add it with arc relay add", url)))
 	}
 	g := &guard{secret: secret, authorized: map[nostr.PubKey]bool{}}
 	if err := startDevices(command.Context(), sess, rootRelay, g); err != nil {
@@ -750,7 +751,7 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	}
 	for _, wrap := range wraps {
 		if err := rootRelay.Send(command.Context(), wrap); err != nil {
-			fmt.Fprintf(os.Stderr, "the keyed root did not reach %s: %v\n", url, err)
+			fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the keyed root did not reach %s: %v", url, err)))
 		}
 	}
 	sess.Close()

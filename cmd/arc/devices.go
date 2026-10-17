@@ -20,6 +20,7 @@ import (
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -271,7 +272,7 @@ func rootsCommand() *cobra.Command {
 				return err
 			}
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "arc: the newest data roots did not come: %v\n", err)
+				fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("arc: the newest data roots did not come: %v", err)))
 			}
 			gens := slices.Sorted(maps.Keys(held))
 			slices.Reverse(gens)
@@ -447,7 +448,7 @@ func startDevices(ctx context.Context, sess *citizen.Session, r relay.Relay, g *
 	if batch, err := r.Fetch(ctx, filter); err == nil {
 		held = append(held, batch.Events...)
 	} else {
-		fmt.Fprintf(os.Stderr, "the device list did not come from %s: %v\n", r.URL, err)
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the device list did not come from %s: %v", r.URL, err)))
 	}
 	if l, ok, err := citizen.NewestDeviceList(ctx, sess.Signer, sess.Key.Public, held); err != nil {
 		return err

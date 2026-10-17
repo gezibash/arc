@@ -38,6 +38,7 @@ import (
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/stdio"
 	wire "github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 const usage = `usage:
@@ -78,10 +79,16 @@ func main() {
 	err := run(ctx, os.Args[2:])
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, "arc-storage:", err)
+		fmt.Fprintln(os.Stderr, errorLine(err))
 		os.Exit(1)
 	}
 }
+
+// errorLine is the line that arc-storage prints for an error. An error can
+// hold text that a storage citizen chose, such as the message of a refusal,
+// so the line is escaped and stays one line (docs/clients/SPEC.md, section
+// 3.9).
+func errorLine(err error) string { return "arc-storage: " + terminal.EscapeLine(err.Error()) }
 
 // put pads each file to a blob, and gives it. The ID of a blob is the
 // SHA-256 of the blob, so a second put of a file sends no bytes. It prints
@@ -129,7 +136,7 @@ func put(ctx context.Context, args []string) error {
 			return fmt.Errorf("%s: the storage citizen refused the put: %w", items[i].file, r.Err)
 		}
 		if r.Status != "" {
-			fmt.Printf("%s\t%s\t%s\n", items[i].id, r.Status, items[i].file)
+			fmt.Println(putLine(items[i].id, r.Status, items[i].file))
 		}
 	}
 	return err
@@ -234,7 +241,7 @@ func remove(ctx context.Context, args []string) error {
 		if item.Error != "" {
 			return fmt.Errorf("%s: the storage citizen refused the delete: %s", item.ID, item.Error)
 		}
-		fmt.Printf("%s\t%s\n", item.ID, item.Status)
+		fmt.Println(deleteLine(item.ID, item.Status))
 	}
 	return err
 }
@@ -255,14 +262,7 @@ func showUsage(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	line := fmt.Sprintf("%d bytes of %d in use, %d blobs", u.Used, u.Quota, u.Blobs)
-	if u.Plan != "" {
-		line += fmt.Sprintf(", plan %s, %s", u.Plan, u.State)
-	}
-	if u.Expires > 0 {
-		line += ", ends " + time.Unix(u.Expires, 0).UTC().Format(time.DateOnly)
-	}
-	fmt.Println(line)
+	fmt.Println(usageLine(u))
 	return nil
 }
 
@@ -319,7 +319,7 @@ func audit(ctx context.Context, args []string) error {
 		if result != "pass" {
 			failed++
 		}
-		fmt.Printf("%s\t%s\t%s\n", ids[i], result, files[i])
+		fmt.Println(auditLine(ids[i], result, files[i]))
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d blobs failed the audit", failed, len(items))
@@ -348,7 +348,7 @@ func drain(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s: %d blobs of %d bytes remain\n", u.State, u.Blobs, u.Used)
+	fmt.Println(drainLine(u))
 	return nil
 }
 
@@ -471,7 +471,7 @@ func requests(_ context.Context, args []string) error {
 		if citizen == "" {
 			citizen = "-"
 		}
-		fmt.Printf("%s\t%d\t%s\t%s\t%s\n", r.Account, r.Want, r.Asked.UTC().Format(time.DateTime), citizen, r.Note)
+		fmt.Println(requestLine(r, citizen))
 	}
 	return nil
 }
@@ -641,4 +641,40 @@ func open(ctx context.Context, s *settings, need int64) (*wire.Conn, error) {
 	}
 	fmt.Fprintf(os.Stderr, "path %s\n", session.Path)
 	return session, nil
+}
+
+// The lines below show what a storage citizen answered, or what a joining
+// citizen wrote to the operator. Each field that the other party chose is
+// escaped on one line (docs/clients/SPEC.md, section 3.9), so it cannot
+// change the terminal or forge a line.
+
+func putLine(id, status, file string) string {
+	return fmt.Sprintf("%s\t%s\t%s", id, terminal.EscapeLine(status), file)
+}
+
+func deleteLine(id, status string) string {
+	return fmt.Sprintf("%s\t%s", id, terminal.EscapeLine(status))
+}
+
+func usageLine(u wire.Usage) string {
+	line := fmt.Sprintf("%d bytes of %d in use, %d blobs", u.Used, u.Quota, u.Blobs)
+	if u.Plan != "" {
+		line += fmt.Sprintf(", plan %s, %s", terminal.EscapeLine(u.Plan), terminal.EscapeLine(u.State))
+	}
+	if u.Expires > 0 {
+		line += ", ends " + time.Unix(u.Expires, 0).UTC().Format(time.DateOnly)
+	}
+	return line
+}
+
+func auditLine(id, result, file string) string {
+	return fmt.Sprintf("%s\t%s\t%s", id, terminal.EscapeLine(result), file)
+}
+
+func drainLine(u wire.Usage) string {
+	return fmt.Sprintf("%s: %d blobs of %d bytes remain", terminal.EscapeLine(u.State), u.Blobs, u.Used)
+}
+
+func requestLine(r server.Request, citizen string) string {
+	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s", r.Account, r.Want, r.Asked.UTC().Format(time.DateTime), citizen, terminal.EscapeLine(r.Note))
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // StorageList returns the newest storage list of this citizen, from the
@@ -183,12 +184,12 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 			fmt.Fprintf(out, "removed %s: the storage list says it is gone\n", install.As)
 		case entry.Used() && !have:
 			if other, taken := names[entry.Name]; taken {
-				fmt.Fprintf(errs, "%s: the storage list names it, but this machine uses the name for %s of %s; remove that install to sync with it\n", entry.Name, other.ID, other.Provider)
+				fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("%s: the storage list names it, but this machine uses the name for %s of %s; remove that install to sync with it", entry.Name, other.ID, other.Provider)))
 				continue
 			}
 			offer, err := sess.FindOffer(ctx, entry.Key, StorageApp)
 			if err != nil {
-				fmt.Fprintf(errs, "%s: the storage list names it, but its storage app was not found: %v\n", entry.Name, err)
+				fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("%s: the storage list names it, but its storage app was not found: %v", entry.Name, err)))
 				continue
 			}
 			if err := installs.Add(offer, entry.Name); err != nil {
@@ -199,7 +200,7 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 	}
 	for _, install := range all {
 		if install.ID == StorageApp && !listed[install.Provider] {
-			fmt.Fprintf(errs, "%s is not in the storage list; run arc keys storage add on the signer\n", install.As)
+			fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("%s is not in the storage list; run arc keys storage add on the signer", install.As)))
 		}
 	}
 	return list, true, nil

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // A template is text with placeholders: {{name}}, or {{name|filter|filter}}.
@@ -109,6 +109,7 @@ type helpers interface {
 	keyed(purpose, input string) (string, error)
 	eventAuthor(ref string) (string, error)
 	name(key string) string
+	sanitize(text string) string
 }
 
 // scope finds the value of a name.
@@ -154,7 +155,7 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 		}
 		text := str(value)
 		if clean {
-			text = sanitize(text)
+			text = h.sanitize(text)
 		}
 		out.WriteString(text)
 	}
@@ -301,23 +302,20 @@ func str(value any) string {
 	return string(body)
 }
 
-// sanitize removes every control character except newline and tab, so a
-// value from an event cannot move the cursor or change the terminal.
-func sanitize(text string) string {
-	if !strings.ContainsFunc(text, isControl) {
-		return text
-	}
-	return strings.Map(func(r rune) rune {
-		if isControl(r) {
-			return -1
-		}
-		return r
-	}, text)
-}
+// removedNote is what arc says, once for each run, when it removed
+// characters from what an app shows.
+const removedNote = "arc: the output held characters that could change the terminal or hide text; arc removed them"
 
-func isControl(r rune) bool {
-	if r == '\n' || r == '\t' {
-		return false
+// sanitize removes from a value each character that docs/clients/SPEC.md,
+// section 3.9, escapes, except a backslash: a value cannot move the
+// cursor, change the terminal, reorder a line, or hide text, and a program
+// that reads the output gets the rest of the value as it was. The first
+// time that it removes a character in a run, it says so on standard error.
+func (r *run) sanitize(text string) string {
+	clean := terminal.Strip(text)
+	if clean != text && !*r.told {
+		*r.told = true
+		fmt.Fprintln(r.stdio.Err, removedNote)
 	}
-	return r < 0x20 || (r >= 0x7f && r < 0xa0) || slices.Contains([]rune{0x2028, 0x2029, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069}, r)
+	return clean
 }

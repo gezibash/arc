@@ -16,10 +16,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -65,7 +67,9 @@ func main() {
 	err := run(ctx, args)
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, "arc-dm:", err)
+		// An error can hold what arc wrote, which can hold text that a
+		// relay chose.
+		fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -139,7 +143,7 @@ func list(ctx context.Context, args []string) error {
 		case !c.direct():
 			who = last.From + ": "
 		}
-		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, preview(terminal.Escape(last.Text), 72))
+		fmt.Printf("%s  %s%s\n  %s%s\n", stamp(last.At), c.Name, status, who, terminal.Escape(preview(last.Text, 72)))
 	}
 	return nil
 }
@@ -200,8 +204,8 @@ func send(ctx context.Context, args []string) error {
 		}
 		text = strings.TrimRight(string(body), "\n")
 	}
-	if strings.TrimSpace(text) == "" {
-		return errors.New("a message holds at least one character that is not a space")
+	if terminal.Blank(text) {
+		return errors.New("a message holds at least one character that a person can see")
 	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
@@ -283,10 +287,15 @@ func watch(ctx context.Context, args []string) error {
 		if len(notifier) == 0 {
 			return nil
 		}
-		command := exec.CommandContext(ctx, notifier[0], append(notifier[1:], m.Name, preview(text, 200))...)
+		body := terminal.Escape(preview(m.Text, 200))
+		if filepath.Base(notifier[0]) == "notify-send" {
+			// Many notification servers read the body as markup.
+			body = html.EscapeString(body)
+		}
+		command := exec.CommandContext(ctx, notifier[0], append(notifier[1:], m.Name, body)...)
 		if out, err := command.CombinedOutput(); err != nil && ctx.Err() == nil {
 			// A failed notification does not stop the watch.
-			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %v %s\n", err, strings.TrimSpace(string(out)))
+			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %s\n", terminal.EscapeLine(err.Error()+" "+strings.TrimSpace(string(out))))
 		}
 		return nil
 	})

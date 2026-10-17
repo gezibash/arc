@@ -518,7 +518,7 @@ func TestSendText(t *testing.T) {
 			t.Errorf("arc-dm send with the text %q waited for standard input", text)
 			continue
 		}
-		if command.ProcessState.Success() || !strings.Contains(out.String(), "not a space") {
+		if command.ProcessState.Success() || !strings.Contains(out.String(), "a person can see") {
 			t.Errorf("arc-dm send with the text %q: %s", text, out.String())
 		}
 	}

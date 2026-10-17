@@ -13,6 +13,7 @@ import (
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/direct"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +75,7 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 		fmt.Fprintf(cfg.Out, "imported %d drafts from the relays into this machine\n", n)
 	}
 	if err != nil {
-		fmt.Fprintf(cfg.Errs, "%v\nthe next arc sync tries again\n", err)
+		fmt.Fprintf(cfg.Errs, "%s\nthe next arc sync tries again\n", terminal.EscapeLine(err.Error()))
 	}
 	refreshDevices(ctx, sess, cfg.Errs)
 	// Pages of the format before the data roots open only through the
@@ -84,7 +85,7 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 		fmt.Fprintf(cfg.Out, "sealed %d pages again under the data roots\n", pages)
 	}
 	if perr != nil {
-		fmt.Fprintf(cfg.Errs, "pages of the old format: %v\nthe next arc sync with the signer tries again\n", perr)
+		fmt.Fprintf(cfg.Errs, "pages of the old format: %s\nthe next arc sync with the signer tries again\n", terminal.EscapeLine(perr.Error()))
 	}
 	return errors.Join(err, sess.SyncStorage(ctx, cfg))
 }
@@ -94,7 +95,7 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 // data. Without the signer, the kept list serves.
 func refreshDevices(ctx context.Context, sess *citizen.Session, errs io.Writer) {
 	if _, _, err := sess.DeviceList(ctx); err != nil {
-		fmt.Fprintf(errs, "the device list did not come, so the list on this machine serves: %v\n", err)
+		fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("the device list did not come, so the list on this machine serves: %v", err)))
 	}
 }
 

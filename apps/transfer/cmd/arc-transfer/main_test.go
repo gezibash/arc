@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -590,4 +591,75 @@ func TestTheAppRefusesAPutLargerThanItsLimit(t *testing.T) {
 		t.Fatalf("put of a file over the limit: %v\n%s", err, log)
 	}
 	absent(t, filepath.Join(env.state, "received", env.receiverKey, "large.bin"))
+}
+
+// hostileArc is an arc program that fails with a hostile text on standard
+// error: a title change, a clear, an override, and a forged line.
+func hostileArc(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	text := filepath.Join(dir, "text")
+	if err := os.WriteFile(text, []byte("P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "arc")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat '"+text+"' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+// The error line of arc-transfer stays one line, escaped, when it holds what
+// another program wrote (docs/clients/SPEC.md, section 3.9).
+func TestTheErrorLineIsEscaped(t *testing.T) {
+	var stderr bytes.Buffer
+	command := exec.Command(env.program, append([]string{"get"}, "-arc", hostileArc(t), "-home", t.TempDir(), "transfer+arc://"+strings.Repeat("a", 64)+"/x")...)
+	command.Stderr = &stderr
+	if command.Run() == nil {
+		t.Fatal("arc-transfer did not fail")
+	}
+	out := stderr.String()
+	if strings.Count(out, "\n") != 1 || strings.Contains(out, "\narc: forged") || strings.ContainsAny(out, "\x1b\x07\u202e\U000e0068") ||
+		!strings.Contains(out, `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`) {
+		t.Errorf("arc-transfer printed %q, want one escaped line", out)
+	}
+}
+
+// A sender that names its file to change the terminal or hide text gets a
+// file on disk without those characters, and the receiver sees an escaped
+// line and a note (docs/clients/SPEC.md, section 3.9).
+func TestGetCleansAHostileName(t *testing.T) {
+	data := random(t, 4<<10)
+	_, link := offered(t, data)
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := u.Query()
+	query.Set("name", "a\x1b[2Jb\u202ec\u200bd\nx.txt")
+	u.RawQuery = query.Encode()
+
+	dir := t.TempDir()
+	command := exec.Command(env.program, "get", "-arc", env.arc, "-home", env.receiver, "-stun", "none", u.String())
+	command.Dir = dir
+	command.Env = append(os.Environ(), "TRANSFER_LOOPBACK=1")
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("get: %v\n%s", err, stderr.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "a[2Jbcdx.txt"))
+	if err != nil || !bytes.Equal(got, data) {
+		entries, _ := os.ReadDir(dir)
+		t.Fatalf("the file a[2Jbcdx.txt: %v; the directory holds %v", err, entries)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("the directory holds %d entries, want the one file", len(entries))
+	}
+	if stdout.String() != "a[2Jbcdx.txt\n" {
+		t.Errorf("get printed %q, want the clean name", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "the name of the file held characters") {
+		t.Errorf("get said nothing of the name on standard error: %q", stderr.String())
+	}
 }

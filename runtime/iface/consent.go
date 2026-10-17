@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // reserved are the kinds that no manifest can name. They speak for the
@@ -70,13 +72,13 @@ func (c Consent) Changes(m *Manifest) []string {
 		was, ok := c.Kinds[strconv.Itoa(k.Kind)]
 		switch {
 		case !ok:
-			out = append(out, fmt.Sprintf("it uses kind %d (%s) now, %s", k.Kind, name, k.Visibility))
+			out = append(out, fmt.Sprintf("it uses kind %d (%s) now, %s", k.Kind, terminal.EscapeLine(name), k.Visibility))
 		case slices.Index(visibleness, k.Visibility) > slices.Index(visibleness, was):
-			out = append(out, fmt.Sprintf("kind %d (%s) is %s now, not %s", k.Kind, name, k.Visibility, was))
+			out = append(out, fmt.Sprintf("kind %d (%s) is %s now, not %s", k.Kind, terminal.EscapeLine(name), k.Visibility, was))
 		}
 	}
 	if m.Group != nil && m.Group.Relay != c.Group {
-		out = append(out, "it uses the group relay "+m.Group.Relay+" now")
+		out = append(out, "it uses the group relay "+terminal.EscapeLine(m.Group.Relay)+" now")
 	}
 	sort.Strings(out)
 	return out
@@ -94,11 +96,11 @@ func Describe(m *Manifest) string {
 	speaks := false
 	for _, name := range names {
 		k := m.Kinds[name]
-		fmt.Fprintf(&b, "  kind %d (%s): %s\n", k.Kind, name, visibilityText[k.Visibility])
+		fmt.Fprintf(&b, "  kind %d (%s): %s\n", k.Kind, terminal.EscapeLine(name), visibilityText[k.Visibility])
 		speaks = speaks || k.Visibility == "public" || k.Visibility == "group"
 	}
 	if m.Group != nil {
-		fmt.Fprintf(&b, "  group %s on %s\n", m.Group.ID, m.Group.Relay)
+		fmt.Fprintf(&b, "  group %s on %s\n", terminal.EscapeLine(m.Group.ID), terminal.EscapeLine(m.Group.Relay))
 	}
 	if speaks {
 		b.WriteString("  it can post under your name, where others read it\n")

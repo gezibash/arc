@@ -53,6 +53,7 @@ import (
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -63,9 +64,17 @@ func main() {
 		if status, ok := errors.AsType[iface.ExitError](err); ok {
 			os.Exit(status.Code)
 		}
-		fmt.Fprintln(os.Stderr, "arc:", citizen.SignerOnly(err))
+		fmt.Fprintln(os.Stderr, errorLine(err))
 		os.Exit(1)
 	}
+}
+
+// errorLine is the line that arc prints for an error. An error can carry
+// text that another party chose, such as the refusal of a provider or of a
+// relay, so the line is escaped and stays one line, as docs/clients/SPEC.md,
+// section 3.9, says: a refusal cannot forge a second line.
+func errorLine(err error) string {
+	return "arc: " + terminal.EscapeLine(citizen.SignerOnly(err).Error())
 }
 
 func root() *cobra.Command {
@@ -476,7 +485,7 @@ func serveCommand() *cobra.Command {
 				case err != nil && (command.Flags().Changed("stun") || turnConfig != nil):
 					return fmt.Errorf("STUN: %w", err)
 				case err != nil:
-					fmt.Fprintf(os.Stderr, "relay answers no STUN: %v (set --stun)\n", err)
+					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("relay answers no STUN: %v (set --stun)", err)))
 				case turnConfig != nil:
 					// The TURN server answers STUN binding requests too.
 					host, _, _ := net.SplitHostPort(stunAddress)
@@ -712,8 +721,8 @@ func messageCommand() *cobra.Command {
 				}
 				text = strings.TrimRight(string(body), "\n")
 			}
-			if strings.TrimSpace(text) == "" {
-				return errors.New("a message holds at least one character that is not a space")
+			if terminal.Blank(text) {
+				return errors.New("a message holds at least one character that a person can see")
 			}
 			if len(text) > private.MaxMailContent {
 				return fmt.Errorf("the message is too large for mail, which holds at most %d bytes: send it over a direct path, such as the transfer app", private.MaxMailContent)
@@ -898,29 +907,29 @@ func syncCommand() *cobra.Command {
 				if dir != "" {
 					report, err := syncSealed(command.Context(), sess.Node, sealed, noContacts{t})
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
+						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: %v", t.Name(), err)))
 						failed = true
 						continue
 					}
 					fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
 						report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
 					for _, reason := range report.Refused {
-						fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
+						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 					}
 					if report.Unreadable > 0 {
 						fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
 					}
 					for _, err := range report.SendFailed {
-						fmt.Fprintf(os.Stderr, "  not sent: %v\n", err)
+						fmt.Fprintf(os.Stderr, "  not sent: %s\n", terminal.EscapeLine(err.Error()))
 					}
 					bodies, err := sess.SyncBodies(dir)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: bodies: %v\n", t.Name(), err)
+						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", t.Name(), terminal.EscapeLine(err.Error()))
 						failed = true
 					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
 						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
 						for _, sum := range bodies.Missing {
-							fmt.Fprintf(os.Stderr, "  the body %s is on neither side; the device that wrote it holds it\n", sum)
+							fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("  the body %s is on neither side; the device that wrote it holds it", sum)))
 						}
 					}
 				}
@@ -931,14 +940,14 @@ func syncCommand() *cobra.Command {
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %v\n", t.Name(), err)
+					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error()))
 					failed = true
 					continue
 				}
 				fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
 					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
 				for _, reason := range mails.Refused {
-					fmt.Fprintf(os.Stderr, "  refused %s\n", reason)
+					fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 				}
 			}
 			if dir == "" {
