@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ type fakeApp struct {
 	// older answers hello with invalid_request, as an app before
 	// FeatureBatch.
 	older bool
+	// badID is the ID that the app names in each list and delete reply.
+	badID string
 
 	mu       sync.Mutex
 	inFlight int
@@ -116,6 +119,18 @@ func (f *fakeApp) serve(dc *webrtc.DataChannel, messages <-chan webrtc.DataChann
 			}
 			sends = append(sends, sending{n: req.N, id: req.ID, size: req.Size})
 			reply(Reply{N: req.N, Status: StatusSend})
+		case req.Op == OpList && req.After >= 2:
+			reply(Reply{N: req.N, Next: req.After})
+		case req.Op == OpList:
+			reply(Reply{N: req.N, Entries: []Entry{{Seq: 1, ID: strings.Repeat("a", 64), Size: 1}, {Seq: 2, ID: f.badID, Deleted: true}}, Next: 2})
+		case req.Op == OpDelete:
+			// One item for each ID of the request, the last named badID.
+			items := make([]Item, len(req.IDs))
+			for i, id := range req.IDs {
+				items[i] = Item{ID: id, Status: StatusDeleted}
+			}
+			items[len(items)-1].ID = f.badID
+			reply(Reply{N: req.N, Items: items})
 		default:
 			f.fail("unknown operation %q", req.Op)
 		}
@@ -279,5 +294,26 @@ func TestAttemptEndsWhenICEFails(t *testing.T) {
 	}
 	if took >= direct.OpenWait-time.Second {
 		t.Errorf("the attempt ended after %s, want about 8 s", took.Round(100*time.Millisecond))
+	}
+}
+
+// A storage citizen that names an ID that is not a blob ID, in a list or in
+// a delete, gets its reply refused; the error names the ID escaped, on one
+// line.
+func TestAReplyWithABadIDIsRefused(t *testing.T) {
+	bad := "P\x1b]0;pwned\x07\x1b[2J\u202egnp\narc-storage: forged"
+	shown := `P\x1b]0;pwned\x07\x1b[2J\u202egnp\narc-storage: forged`
+	conn := pipe(t, &fakeApp{badID: bad})
+	entries, _, err := conn.List(context.Background(), 0)
+	if err == nil || len(entries) != 0 || !strings.Contains(err.Error(), shown) || strings.ContainsAny(err.Error(), "\x1b\n") {
+		t.Errorf("List gave %v, %v; want no entries and an error that names %q", entries, err, shown)
+	}
+	items, err := conn.DeleteMany(context.Background(), []string{strings.Repeat("b", 64)})
+	if err == nil || len(items) != 0 || !strings.Contains(err.Error(), shown) || strings.ContainsAny(err.Error(), "\x1b\n") {
+		t.Errorf("DeleteMany gave %v, %v; want no items and an error that names %q", items, err, shown)
+	}
+	good := pipe(t, &fakeApp{badID: strings.Repeat("c", 64)})
+	if entries, _, err := good.List(context.Background(), 0); err != nil || len(entries) != 2 {
+		t.Errorf("a list of good IDs gave %v, %v", entries, err)
 	}
 }

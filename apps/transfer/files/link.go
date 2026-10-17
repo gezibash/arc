@@ -64,8 +64,18 @@ func ParseLink(text string) (sender string, o Offer, err error) {
 	// and newlines and tabs (docs/clients/SPEC.md, section 3.9).
 	o.Name = strings.NewReplacer("\n", "", "\t", "").Replace(terminal.Strip(name))
 	o.Renamed = o.Name != name
-	if o.Name == "." || o.Name == ".." || o.Name == string(filepath.Separator) || o.Name == "" {
+	switch {
+	case o.Name == "." || o.Name == ".." || o.Name == string(filepath.Separator) || o.Name == "":
 		o.Name = o.SHA256[:16]
+	case o.Renamed && strings.TrimSuffix(o.Name, filepath.Ext(o.Name)) == "":
+		// Only hidden characters stood before the extension: the file
+		// would be a dot file.
+		o.Name = o.SHA256[:16] + o.Name
+	case strings.HasPrefix(o.Name, "-"):
+		// A name that starts with a dash reads as a flag in a later
+		// command, such as rm *.
+		o.Name = "_" + o.Name
+		o.Renamed = true
 	}
 	return sender, o, nil
 }

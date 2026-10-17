@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/sdk/direct"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -259,6 +260,9 @@ func (s *Conn) List(ctx context.Context, after uint64) ([]Entry, uint64, error) 
 	for {
 		r, err := s.do(ctx, Request{Op: OpList, After: after, Limit: MaxList})
 		if err != nil {
+			return all, after, err
+		}
+		if err := checkIDs(r.Entries); err != nil {
 			return all, after, err
 		}
 		all = append(all, r.Entries...)
@@ -598,8 +602,22 @@ func (s *Conn) batch(ctx context.Context, req Request) (Reply, error) {
 	}
 	for i, item := range r.Items {
 		if item.ID != ids[i] {
-			return r, fmt.Errorf("the storage citizen answered %s in place of %s", item.ID, ids[i])
+			return r, fmt.Errorf("the storage citizen answered %s in place of %s", terminal.EscapeLine(item.ID), ids[i])
 		}
 	}
 	return r, nil
+}
+
+// checkIDs refuses a list reply that names an ID that is not a blob ID: the
+// storage citizen misbehaves, and the ID could change the terminal of the
+// person who reads it (docs/storage/SPEC.md, section 3.3). The error names
+// the ID escaped. A delete needs no check: its reply must name the IDs of
+// the request.
+func checkIDs(entries []Entry) error {
+	for _, e := range entries {
+		if !IsID(e.ID) {
+			return fmt.Errorf("the storage citizen answered with %s, which is not a blob ID", terminal.EscapeLine(e.ID))
+		}
+	}
+	return nil
 }
