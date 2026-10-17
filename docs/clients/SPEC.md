@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxOncePerMissingParent|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxRarely|TestRefreshIsRareAndBounded|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -272,8 +272,16 @@ are not on the wire.
   text of the reply: `↳`, the short id, the author, and the first line of
   the parent that is not empty, as `terminal.EscapeLineFit` gives it, with
   the line at most 72 columns of a terminal, as `terminal.Width` counts
-  them: a wide character, such as a CJK ideograph or an emoji, takes two.
-  A parent of only spaces shows `(blank)`. The short id of a quote line is at most
+  them, and at most 3 characters for each column. `terminal.Width` counts
+  one cluster at a time: a character with its marks, selectors and skin
+  tone, pictographs joined by U+200D, or a flag. A cluster takes two
+  columns when it is a flag or a lone regional indicator, when it holds
+  U+FE0F, or when its first character is wide or fullwidth, such as a CJK
+  ideograph or most emoji. A cluster that starts with a mark or a format
+  character takes none, each other one, and each spacing mark adds one,
+  so Width never counts fewer columns than a terminal shows. The cut keeps
+  each cluster whole, and the limit of characters cuts a pile of marks
+  that takes no column. A parent of only spaces shows `(blank)`. The short id of a quote line is at most
   12 digits, then `…`: a sender can name an id that matches a held id in
   63 digits. The quote line starts at column 0, where
   no line of a text starts (section 3.9), so a quote typed into a text
@@ -426,12 +434,15 @@ are not on the wire.
 | `TestAWatchQuotesTheParent` | `arc-dm watch` shows the quote of a reply to a message sent after the watch started, and the id only for an unheld parent. |
 | `TestAReplyToYourOwnMessage` | A reply to a message that the citizen sent quotes it on both sides: arc finds the parent in the outbox. |
 | `TestSendReplyChecksTheIdBeforeTheText` | `arc-dm send -reply` with a wrong id fails at once, with standard input open. |
-| `TestAWatchReadsTheOutboxOncePerMissingParent` | Four replies to two ids that no message has make a watch read the outbox twice, and the inbox not at all, after its start. |
-| `TestWidth` | `terminal.Width` counts two columns for a CJK ideograph, a fullwidth letter and an emoji, none for a mark, a selector and a joiner. |
-| `TestEscapeLineFit` | 100 CJK ideographs fit in 72 columns as 35 and an ellipsis; an escape is never cut. |
-| `TestFlagsAfterThePeer` | `arc-dm send <peer> -reply <id> text` sends a reply, not the text `-reply <id> text`. A text that starts with `-reply` is refused; a dash later in a text stays. |
+| `TestAWatchReadsTheOutboxRarely` | 20 replies to ids that no message has make a watch read the outbox at most once each 5 s, and the inbox not at all, after its start. |
+| `TestRefreshIsRareAndBounded` | A watch reads the outbox for an id once, at most once each 5 s, and remembers at most 1,024 ids. |
+| `TestAddIsNotQuadratic` | 4 times the messages added to a watch take less than 9 times as long. |
+| `TestAnIdIsCheckedBeforeArcRuns` | `arc-dm reply zz`, `send -reply zz` and `send -reply=` fail on the id with no arc program. |
+| `TestWidth` | `terminal.Width` counts two columns for a CJK ideograph, a fullwidth letter, an emoji, a heart with U+FE0F, a family joined by U+200D, a skin tone, a flag and a lone regional indicator; two for Devanagari ka with a spacing vowel sign; none for marks; one for a heart alone; two for letters around a joiner. |
+| `TestEscapeLineFit` | 100 CJK ideographs, or 100 hearts with U+FE0F, fit in 72 columns as 35 and an ellipsis. A letter with 300 marks is left out. A cut keeps flags and letters with their marks whole, and never cuts an escape. |
+| `TestFlagsAfterThePeer` | `arc-dm send <peer> -reply <id> text` sends a reply, not the text `-reply <id> text`. After the peer, `-5 degrees` stays text, after `--` each word is text, `-h` shows help, and an empty `-reply=` is refused. |
 | `TestArcChecksAReplyBeforeTheText` | `arc message send --reply` with a bad or unheld id fails at once, with standard input open. |
-| `TestIndexIsNotQuadratic` | The index of 200,000 messages takes one sort. |
+| `TestIndexIsNotQuadratic` | 4 times the messages take less than 9 times as long to index: one sort. |
 | `TestABlankParentQuotesAsBlank` | A parent of only spaces, such as U+3000, quotes as `(blank)`. |
 | `TestShortIDs` | A short id grows past 6 digits where two ids share them, and a prefix of two messages is refused. |
 | `TestSlogTextHandlerQuotesHostileText` | `slog.TextHandler` writes ESC, an override, an invisible character, a tag, a newline and U+2028 of a message, a value and an error as escapes. |
