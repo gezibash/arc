@@ -143,10 +143,29 @@ func (s *Session) Close() {
 		s.store.Close()
 	}
 }
+
+// warnf writes a warning on the errors of the session. An argument can
+// carry text that a relay or a peer chose, so each string, error or
+// Stringer argument is escaped on one line (docs/clients/SPEC.md, section
+// 3.9). The format is arc's own, and keeps its lines.
 func (s *Session) warnf(format string, args ...any) {
-	if s.Errors != nil {
-		fmt.Fprintf(s.Errors, format, args...)
+	if s.Errors == nil {
+		return
 	}
+	safe := make([]any, len(args))
+	for i, arg := range args {
+		switch v := arg.(type) {
+		case error:
+			safe[i] = terminal.EscapeLine(v.Error())
+		case string:
+			safe[i] = terminal.EscapeLine(v)
+		case fmt.Stringer:
+			safe[i] = terminal.EscapeLine(v.String())
+		default:
+			safe[i] = arg
+		}
+	}
+	fmt.Fprintf(s.Errors, format, safe...)
 }
 
 // noticeLimit is the most characters of a relay NOTICE that arc prints,

@@ -94,8 +94,10 @@ the three subdivision flags, and each backslash. ESC shows as `\x1b`. A
 sender cannot move the cursor, change the terminal, reorder a line, or
 hide text. A byte that is not UTF-8 is already U+FFFD when arc-dm gets
 the message, so that byte is lost; each other character shows. A
-notification through `notify-send` also escapes `&`, `<` and `>`, because
-many notification servers read the body as markup.
+notification through `notify-send`, by that name or by a path to it, also
+escapes `&`, `<` and `>`, because many notification servers read the body
+as markup. `arc-dm` escapes its own error line too, because it can hold
+what arc wrote about a relay.
 
 ## Groups
 

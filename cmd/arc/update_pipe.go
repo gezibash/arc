@@ -13,6 +13,7 @@ import (
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/release"
 	"github.com/gezibash/arc/sdk/direct"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // An archive goes over a pipe of sdk/direct. The session on the relay keeps
@@ -78,7 +79,7 @@ func (r *pipeReleaseCaller) OpenArchive(ctx context.Context, digest string) (rel
 		}
 		if errors.Is(err, errProviderHasNoPipe) && r.dial.Policy == direct.Auto {
 			if r.dial.Notes != nil {
-				fmt.Fprintf(r.dial.Notes, "%v; using chunks over the relay\n", err)
+				fmt.Fprintf(r.dial.Notes, "%s; using chunks over the relay\n", terminal.EscapeLine(err.Error()))
 			}
 			r.path = chunkPath
 			return nil, release.ErrUseChunks

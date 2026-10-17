@@ -12,6 +12,7 @@ import (
 
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/sdk/direct"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // ErrProviderHasNoPipe says that the provider refused the offer of a pipe:
@@ -118,7 +119,7 @@ func OpenSession(ctx context.Context, c direct.DialConfig, request string, open 
 			_ = current.Stream.Close()
 		}
 		if errors.Is(err, ErrProviderHasNoPipe) && c.Policy == direct.Auto {
-			fmt.Fprintf(notes, "%v; using session frames over the relay\n", err)
+			fmt.Fprintf(notes, "%s; using session frames over the relay\n", terminal.EscapeLine(err.Error()))
 			return openFrames(ctx, request, open, in.StreamBody)
 		}
 		if errors.Is(err, ErrProviderHasNoPipe) {

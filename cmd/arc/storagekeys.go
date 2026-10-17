@@ -12,6 +12,7 @@ import (
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -177,10 +178,10 @@ func addStorage(command *cobra.Command, args []string) error {
 	}
 	account := reply.Account
 	if account.Status == storage.StatusPending {
-		fmt.Fprintf(command.OutOrStdout(), "%s: pending: %s\nrun arc keys storage add again later; the operator lists the request with arc-storage requests\n", as, account.Message)
+		fmt.Fprint(command.OutOrStdout(), accountPending(as, account))
 		return nil
 	}
-	fmt.Fprintf(command.OutOrStdout(), "%s: admitted: %s of %s in use, plan %s, %s\n", as, storage.HumanSize(account.Used), storage.HumanSize(account.Quota), account.Plan, account.State)
+	fmt.Fprint(command.OutOrStdout(), accountAdmitted(as, account))
 
 	installs, err := installsOf(command)
 	if err != nil {
@@ -243,4 +244,17 @@ func installStorage(command *cobra.Command, sess *citizen.Session, installs cata
 	}
 	fmt.Fprintf(command.OutOrStdout(), "installed %s\n", as)
 	return as, nil
+}
+
+// accountPending and accountAdmitted are the lines that arc keys storage add
+// prints for the answer of a storage citizen. The message, the plan and the
+// state come from the storage citizen, so each is escaped on one line
+// (docs/clients/SPEC.md, section 3.9).
+func accountPending(as string, account *storage.Account) string {
+	return fmt.Sprintf("%s: pending: %s\nrun arc keys storage add again later; the operator lists the request with arc-storage requests\n", as, terminal.EscapeLine(account.Message))
+}
+
+func accountAdmitted(as string, account *storage.Account) string {
+	return fmt.Sprintf("%s: admitted: %s of %s in use, plan %s, %s\n", as, storage.HumanSize(account.Used), storage.HumanSize(account.Quota),
+		terminal.EscapeLine(account.Plan), terminal.EscapeLine(account.State))
 }

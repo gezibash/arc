@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -66,7 +67,9 @@ func main() {
 	err := run(ctx, args)
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, "arc-dm:", err)
+		// An error can hold what arc wrote, which can hold text that a
+		// relay chose.
+		fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -285,7 +288,7 @@ func watch(ctx context.Context, args []string) error {
 			return nil
 		}
 		body := terminal.Escape(preview(m.Text, 200))
-		if notifier[0] == "notify-send" {
+		if filepath.Base(notifier[0]) == "notify-send" {
 			// Many notification servers read the body as markup.
 			body = html.EscapeString(body)
 		}

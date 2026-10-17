@@ -11,6 +11,7 @@ import (
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/sdk/direct"
 	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -91,7 +92,14 @@ func websocketCLI(cmd *cobra.Command, stream *session.Stream) error {
 			if !opened || closed {
 				return fmt.Errorf("WebSocket data outside open connection")
 			}
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), record.Text)
+			// A text record comes from the provider: escaped on a terminal,
+			// and through a pipe with one backslash (docs/clients/SPEC.md,
+			// section 3.9).
+			text := terminal.EscapeData(record.Text)
+			if toTerminal(cmd.OutOrStdout()) {
+				text = terminal.Escape(record.Text)
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), text)
 		case "binary":
 			if !opened || closed {
 				return fmt.Errorf("WebSocket data outside open connection")

@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestNoticeIsCutAndEscaped)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -173,14 +173,16 @@ agent, or make `file.exe` look like `file.png`.
   | An invisible character: U+200B, U+FEFF, U+00AD, U+2060 to U+2064, U+206A to U+206F, the interlinear annotation characters U+FFF9 to U+FFFB, the Mongolian vowel separator U+180E, and the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 | `\u` and four lowercase hex digits, such as `\u200b` |
   | A tag character (U+E0000 to U+E007F), except in the flags of England, Scotland and Wales | `\U` and eight lowercase hex digits, such as `\U000e0068` |
   | A variation selector (U+FE00 to U+FE0F) that does not follow a visible character that is not a mark, or that follows another selector | `\u` and four lowercase hex digits, such as `\ufe0f` |
-  | A variation selector of U+E0100 to U+E01EF that does not follow a CJK ideograph | `\U` and eight lowercase hex digits, such as `\U000e0100` |
+  | A variation selector of U+E0100 to U+E01EF that does not follow an ideograph (Unicode property Ideographic) | `\U` and eight lowercase hex digits, such as `\U000e0100` |
   | A backslash | two backslashes, so a typed `\x1b` shows as `\\x1b` |
   | Each other character, including the joiners U+200C and U+200D, and the marks U+200E, U+200F and U+061C | itself |
 
 - One variation selector after a visible character stays, because emoji
-  use it, and one of U+E0100 to U+E01EF after a CJK ideograph, because
-  names use it. Any other selector selects nothing, and a sender could use
-  it to hide text.
+  use it, and one of U+E0100 to U+E01EF after an ideograph, because names
+  use it. A backslash counts as a visible character, whether it is written
+  as one backslash or as two, so Escape and Strip keep the same selectors.
+  Any other selector selects nothing, and a sender could use it to hide
+  text.
 - The marks U+200E, U+200F and U+061C stay, because Arabic and Hebrew
   text uses them, and they cannot reorder a line. The joiners U+200C and
   U+200D stay, because emoji and many scripts use them.
@@ -205,10 +207,15 @@ agent, or make `file.exe` look like `file.png`.
     line;
   - the reasons why a relay refused mail or sealed data;
   - the text of a relay NOTICE: on one line, and cut to 300 characters of
-    output, never inside an escape or a flag, by `terminal.EscapeLineCut`.
+    output, the ellipsis included, never inside an escape or a flag, by
+    `terminal.EscapeLineCut`;
+  - the lines of `arc relay ring`, which hold what a relay answered;
+  - the message, the plan and the state that a storage citizen gives
+    `arc keys storage add`;
   - each line that arc writes on standard error with text from another
-    party, such as the reason of a relay or the error of a member of a
-    list: on one line;
+    party, such as the reason of a relay, the reason why a relay closed a
+    subscription, or the error of a member of a list: each such value on
+    one line;
   - the line that arc prints for an error, `arc: ` and the error: on one
     line, so a refusal cannot forge a second line.
 - A live reply of `arc call` is escaped wherever it goes, because a
@@ -221,6 +228,9 @@ agent, or make `file.exe` look like `file.png`.
     gives it: as the table says, but a backslash stays one backslash;
   - with `--raw`, as it came. On a terminal, arc then says on standard
     error that the reply can change the terminal.
+- A text record of `arc session` over HTTP comes from the provider: on a
+  terminal as `terminal.Escape` gives it, and through a pipe as
+  `terminal.EscapeData` gives it.
 - A value that an app shows ([the interface spec](../interface/SPEC.md),
   section 3.15), and a reply that does not fit the output of its app, are
   data that a program can read through a pipe. arc removes from them each
@@ -328,12 +338,17 @@ agent, or make `file.exe` look like `file.png`.
 | `TestStrip` | `terminal.Strip` removes what the table escapes, and keeps a backslash, a mark, a joiner and a flag. |
 | `TestStripCases` | The cases of a probe by Alfred: CRLF, BOM, bad UTF-8, NUL, selectors, annotation characters, an override, and the marks. |
 | `TestStripKeepsOneSelector` | Strip keeps one selector after a visible character, and `Stripped` counts what it removes. |
+| `TestStripAndEscapeAgreeAfterABackslash` | After a backslash, Strip and Escape keep the same selector. |
+| `TestEscapeLineCutNeverPassesTheLimit` | For each limit from 1 to 40, a cut is at most the limit, the ellipsis included. |
 | `TestBlank` | `terminal.Blank` finds a text of only spaces, control and format characters, and no other. |
 | `TestATerminalShowsNoEscapeOfASender` | A message with ESC, U+202E, a typed `\x1b` and a forged header crosses a relay. The inbox and the outbox of arc show it escaped, with each line indented. The JSON line holds the text as sent. arc refuses a text of only spaces, of U+200B and U+2060, or of tags. |
 | `TestHeldAndWatchedTextIsEscaped` | A held message of a stranger, and a message that `arc message watch` prints, show ESC, U+2028 and tags escaped. |
 | `TestServeTakesMailFromAWatch` | The text and the reply of a store-and-forward call show escaped in `arc call results`. |
 | `TestALiveReplyIsEscapedWhereverItGoes` | A live reply shows escaped through a pipe, on a terminal, through `| cat` and `| tee`, and in a file. `--raw` writes it as it came, and warns on a terminal. |
 | `TestAnErrorLineCannotReachTheTerminal` | The error line stays one line and shows ESC, an override, a tag, selectors and a typed escape as escapes. |
+| `TestARelayRefusalIsEscapedOnOneLine` | A relay that refuses the wrap and closes each subscription with a hostile reason cannot change the terminal or forge a line through `arc message send`. |
+| `TestARingRefusalIsEscapedOnOneLine` | A relay that answers `arc relay ring show` and `clear` with a hostile refusal cannot change the terminal or forge a line. |
+| `TestAStorageAnswerIsEscaped` | The message, plan and state of a storage citizen show escaped, each on its line. |
 | `TestNoticeIsCutAndEscaped` | arc shows a relay NOTICE on one line, escaped, and cut to 300 characters of output. |
 
 The tests of the dm app, `go test ./apps/dm/...`, use this package and the

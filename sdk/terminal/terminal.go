@@ -134,13 +134,15 @@ type mode struct {
 	limit     int  // the most characters of output, or -1 for no limit
 }
 
-// apply writes text as the mode says. With a limit of 0 or more, it stops
-// before the piece that would make the output longer than limit
-// characters, and writes an ellipsis.
+// apply writes text as the mode says. With a limit of 0 or more, an output
+// longer than limit characters ends with an ellipsis after the pieces that
+// fit in limit - 1 characters, so the output is never longer than limit.
 func (m mode) apply(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
-	written := 0
+	// written counts the characters of output; keep is the length in bytes
+	// of the output that fits in limit - 1 characters.
+	written, keep := 0, 0
 	// prev is the last character written as itself, or -1: a variation
 	// selector stays only after a character that it can select.
 	prev := rune(-1)
@@ -154,16 +156,20 @@ func (m mode) apply(text string) string {
 		case m.strip && !shown:
 			piece = ""
 		}
+		b.WriteString(piece)
 		if m.limit >= 0 {
 			written += utf8.RuneCountInString(piece)
+			if written < m.limit {
+				keep = b.Len()
+			}
 			if written > m.limit {
-				b.WriteString("\u2026")
-				break
+				return b.String()[:keep] + "\u2026"
 			}
 		}
-		b.WriteString(piece)
+		// A backslash is a visible character, written as one backslash or
+		// as two, so Escape and Strip treat what follows it alike.
 		prev = -1
-		if shown {
+		if shown || original == `\` {
 			prev, _ = utf8.DecodeLastRuneInString(original)
 		}
 		i += size
@@ -200,7 +206,7 @@ func next(text string, oneLine bool, prev rune) (string, int) {
 		}
 		return fmt.Sprintf(`\u%04x`, r), size
 	case r >= '\U000e0100' && r <= '\U000e01ef':
-		if prev >= 0 && unicode.Is(unicode.Han, prev) {
+		if prev >= 0 && unicode.Is(unicode.Ideographic, prev) {
 			return text[:size], size
 		}
 		return fmt.Sprintf(`\U%08x`, r), size

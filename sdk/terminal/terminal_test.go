@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"unicode/utf8"
 )
 
 // Each expected value applies the rules of docs/clients/SPEC.md, section
@@ -42,6 +43,9 @@ func TestEscape(t *testing.T) {
 		{"a selector after a space", "a \ufe0f", "a " + `\ufe0f`},
 		{"a selector after an escaped character", "\u200b\ufe0f", `\u200b\ufe0f`},
 		{"an ideographic selector after a CJK ideograph stays", "\u845b\U000e0100", "\u845b\U000e0100"},
+		{"an ideographic selector after U+3007, an ideograph", "\u3007\U000e0100", "\u3007\U000e0100"},
+		{"an ideographic selector after U+3005, a Han mark that is not an ideograph", "\u3005\U000e0100", "\u3005" + `\U000e0100`},
+		{"an emoji selector after a backslash", "\\\ufe0f", `\\` + "\ufe0f"},
 		{"an ideographic selector after a letter", "a\U000e0100", "a" + `\U000e0100`},
 		{"a second ideographic selector", "\u845b\U000e0100\U000e0101", "\u845b\U000e0100" + `\U000e0101`},
 		{"emoji and accents stay", "\u00ebmoji \U0001f989", "\u00ebmoji \U0001f989"},
@@ -82,7 +86,7 @@ func TestEscapeLineCut(t *testing.T) {
 	}{
 		{"short text stays whole", "ring failed", 20, "ring failed"},
 		{"a text of exactly the limit", "abcde", 5, "abcde"},
-		{"one character more", "abcdef", 5, "abcde\u2026"},
+		{"one character more", "abcdef", 5, "abcd\u2026"},
 		{"an escape that does not fit is left out whole", "abc\x1b", 5, "abc\u2026"},
 		{"an escape that fits", "ab\x1b", 6, `ab\x1b`},
 		{"tags count as their escapes", "a\U000e0068", 5, "a\u2026"},
@@ -156,6 +160,28 @@ func TestStripCases(t *testing.T) {
 	} {
 		if got := Strip(c.in); got != c.want {
 			t.Errorf("Strip(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Strip keeps what Escape writes as itself: after a backslash, one
+// selector stays in both.
+func TestStripAndEscapeAgreeAfterABackslash(t *testing.T) {
+	in := "\\\ufe0f"
+	if got, want := Strip(in), in; got != want {
+		t.Errorf("Strip(%q) = %q, want %q", in, got, want)
+	}
+	if got, want := Escape(in), `\\`+"\ufe0f"; got != want {
+		t.Errorf("Escape(%q) = %q, want %q", in, got, want)
+	}
+}
+
+// No cut is longer than its limit, the ellipsis included.
+func TestEscapeLineCutNeverPassesTheLimit(t *testing.T) {
+	text := "ab\x1bcd\U000e0068ef\u202egh"
+	for limit := 1; limit <= 40; limit++ {
+		if got := EscapeLineCut(text, limit); utf8.RuneCountInString(got) > limit {
+			t.Errorf("EscapeLineCut(%q, %d) = %q: %d characters", text, limit, got, utf8.RuneCountInString(got))
 		}
 	}
 }

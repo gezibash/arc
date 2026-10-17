@@ -561,7 +561,7 @@ func (sess *Session) setDrain(ctx context.Context, conn *storage.Conn, t target,
 			return false, err
 		}
 		if _, err := conn.Drain(ctx, true); err != nil {
-			fmt.Fprintf(notes, "%s: the storage list names it active, but the end of its drain failed, so it takes no put: %v\n", as, err)
+			fmt.Fprintf(notes, "%s: the storage list names it active, but the end of its drain failed, so it takes no put: %s\n", as, terminal.EscapeLine(err.Error()))
 			return false, nil
 		}
 		fmt.Fprintf(out, "%s: the storage list names it active, so its drain ended\n", as)

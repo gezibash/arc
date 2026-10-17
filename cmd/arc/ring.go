@@ -17,6 +17,7 @@ import (
 	"github.com/gezibash/arc/adapters/relay/rings"
 	"github.com/gezibash/arc/adapters/relay/turn"
 	relaytransport "github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -142,7 +143,7 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 	for _, relay := range relays {
 		tags, err := relaytransport.Relay{URL: relay}.Tags(ctx)
 		if err != nil {
-			fmt.Fprintf(out, "%s: %v\n", relay, err)
+			fmt.Fprintf(out, "%s: %s\n", relay, terminal.EscapeLine(err.Error()))
 			failed++
 			continue
 		}
@@ -153,11 +154,11 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 		offered++
 		line, err := do(ctx, relay, id)
 		if err != nil {
-			fmt.Fprintf(out, "%s: %v\n", relay, err)
+			fmt.Fprintf(out, "%s: %s\n", relay, terminal.EscapeLine(err.Error()))
 			failed++
 			continue
 		}
-		fmt.Fprintf(out, "%s: %s\n", relay, line)
+		fmt.Fprintf(out, "%s: %s\n", relay, terminal.EscapeLine(line))
 	}
 	switch {
 	case offered == 0 && failed == 0:

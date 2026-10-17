@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/internal/testrelay"
+	"github.com/gezibash/arc/sdk/storage"
 )
 
 // A message that tries to change the terminal, reorder a line and forge
@@ -224,5 +227,98 @@ func TestAnErrorLineCannotReachTheTerminal(t *testing.T) {
 		if got := errorLine(fmt.Errorf("the provider refused: %s", c.reason)); got != c.want {
 			t.Errorf("errorLine = %q, want %q", got, c.want)
 		}
+	}
+}
+
+// hostileReason is a refusal that tries to forge a line of arc after the
+// probe. shownReason is how a line of standard error shows it: escaped, on
+// one line.
+const (
+	hostileReason = "blocked: " + probe + "\narc: forged line"
+	shownReason   = "blocked: " + shownProbe + `\narc: forged line`
+)
+
+// forged reports a line of out that starts as arc's own lines start.
+func forged(out string) bool { return strings.Contains("\n"+out, "\narc: forged") }
+
+// A relay that refuses a message cannot change the terminal or forge a
+// line through the warning of arc message send.
+func TestARelayRefusalIsEscapedOnOneLine(t *testing.T) {
+	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeDB)
+	saved := rl.OnEvent
+	rl.OnEvent = func(ctx context.Context, event nostr.Event) (bool, string) {
+		if event.Kind == private.WrapKind {
+			return true, hostileReason
+		}
+		return saved(ctx, event)
+	}
+	// It closes each subscription with the same reason.
+	rl.OnRequest = func(context.Context, nostr.Filter) (bool, string) { return true, hostileReason }
+	server := httptest.NewServer(rl)
+	t.Cleanup(server.Close)
+	alice, _ := providerHome(t, "ws"+strings.TrimPrefix(server.URL, "http"))
+	_, bobKey := providerHome(t, "ws"+strings.TrimPrefix(server.URL, "http"))
+
+	var stdout, stderr strings.Builder
+	command := root()
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"--home", alice, "message", "send", bobKey, "hello"})
+	_ = command.Execute()
+	out := stdout.String() + stderr.String()
+	if !strings.Contains(out, shownReason) || forged(out) || strings.ContainsAny(out, "\x1b\u202e\U000e0068") {
+		t.Errorf("arc message send printed %q, want the refusal as %q", out, shownReason)
+	}
+}
+
+// A relay that answers arc relay ring with a hostile refusal cannot change
+// the terminal or forge a line.
+func TestARingRefusalIsEscapedOnOneLine(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") == "application/nostr+json" {
+			w.Header().Set("Content-Type", "application/nostr+json")
+			fmt.Fprint(w, `{"name":"hostile","tags":["arc-rings"]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		body, _ := json.Marshal(map[string]string{"error": hostileReason})
+		w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	// The relay list does not reach this relay, which speaks no websocket;
+	// the relay is added all the same.
+	_, _ = run(t, home, "", "relay", "add", "ws"+strings.TrimPrefix(server.URL, "http"))
+	if relays := ok(t, home, "", "relay", "ls"); !strings.Contains(relays, strings.TrimPrefix(server.URL, "http://")) {
+		t.Fatalf("the relay was not added: %q", relays)
+	}
+
+	for _, words := range [][]string{{"relay", "ring", "show"}, {"relay", "ring", "clear"}} {
+		out, _ := run(t, home, "", words...)
+		if !strings.Contains(out, shownReason) || forged(out) || strings.ContainsAny(out, "\x1b\u202e\U000e0068") {
+			t.Errorf("arc %s printed %q, want the refusal as %q", strings.Join(words, " "), out, shownReason)
+		}
+	}
+}
+
+// The answer of a storage citizen shows escaped, each field on its line.
+func TestAStorageAnswerIsEscaped(t *testing.T) {
+	account := &storage.Account{Message: hostileReason, Plan: "free\x1b[2J\narc: forged plan", State: "ok\u202e"}
+	for _, out := range []string{accountPending("storage-1", account), accountAdmitted("storage-1", account)} {
+		if forged(out) || strings.ContainsAny(out, "\x1b\u202e\U000e0068") {
+			t.Errorf("the answer printed %q", out)
+		}
+	}
+	if out := accountPending("storage-1", account); !strings.HasPrefix(out, "storage-1: pending: "+shownReason+"\n") {
+		t.Errorf("pending printed %q", out)
+	}
+	if out := accountAdmitted("storage-1", account); !strings.Contains(out, `plan free\x1b[2J\narc: forged plan, ok\u202e`) {
+		t.Errorf("admitted printed %q", out)
 	}
 }
