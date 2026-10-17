@@ -296,8 +296,11 @@ func TestARelayRingsOnceForEachUnreadPeriod(t *testing.T) {
 	bob := keys.Generate()
 	h.mustRegister(bob)
 
+	// The relay stamps the arrival inside h.mail, so a second can start
+	// between the stamp and a read of the clock: read it on each side.
+	before := h.rings.cfg.Now().Unix()
 	h.mail(bob.Public, private.RelayForm, private.WrapKind)
-	arrived := h.rings.cfg.Now().Unix()
+	after := h.rings.cfg.Now().Unix()
 	h.advance(2 * time.Second)
 	h.tick()
 	calls := h.calls()
@@ -310,7 +313,14 @@ func TestARelayRingsOnceForEachUnreadPeriod(t *testing.T) {
 	if len(calls[0].id) != 32 {
 		t.Fatalf("the ring has the ID %q, want 32 hex characters", calls[0].id)
 	}
-	want := fmt.Sprintf(`{"type":"arc.mail","id":"%s","citizen":"%s","relay":"%s","since":%d}`, calls[0].id, bob.Public.Hex(), h.ws, arrived)
+	var got call
+	if err := json.Unmarshal([]byte(calls[0].body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Since < before || got.Since > after {
+		t.Fatalf("the ring has since %d, want the arrival of the wrap, %d to %d", got.Since, before, after)
+	}
+	want := fmt.Sprintf(`{"type":"arc.mail","id":"%s","citizen":"%s","relay":"%s","since":%d}`, calls[0].id, bob.Public.Hex(), h.ws, got.Since)
 	if calls[0].body != want {
 		t.Fatalf("the body is\n%s\nwant\n%s", calls[0].body, want)
 	}
