@@ -68,6 +68,10 @@ var arcText = map[string][]string{
 	// Each caller of line passes text through sanitize or a template
 	// that sanitizes.
 	"runtime/iface/run.go": {"text"},
+	// render cleans each part of a template that it shows; a template
+	// that builds an event stays as it is.
+	// TestTheTextOfAFormatCannotReachTheTerminal proves the shown case.
+	"runtime/iface/template.go": {"text"},
 }
 
 // printers are the functions that write text for a person: the fmt, log and
@@ -126,7 +130,7 @@ func rawPrints(t *testing.T, dir string) []rawPrint {
 				return true
 			}
 			args := call.Args
-			if name := calledName(call); len(args) > 0 && (strings.HasPrefix(name, "Fprint") || name == "WriteString") {
+			if len(args) > 0 && (strings.HasPrefix(calledName(call), "Fprint") || isCall(call, "io", "WriteString")) {
 				args = args[1:] // the writer
 			}
 			for _, arg := range args {
@@ -196,6 +200,16 @@ func testFatal(call *ast.CallExpr) bool {
 	}
 	pkg, ok := selector.X.(*ast.Ident)
 	return !ok || pkg.Name != "log"
+}
+
+// isCall says whether call is pkg.name.
+func isCall(call *ast.CallExpr, pkg, name string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != name {
+		return false
+	}
+	x, ok := selector.X.(*ast.Ident)
+	return ok && x.Name == pkg
 }
 
 // calledName gives the name of the called function or method.

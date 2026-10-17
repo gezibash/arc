@@ -237,7 +237,7 @@ agent, or make `file.exe` look like `file.png`.
   terminal as `terminal.Escape` gives it, and through a pipe as
   `terminal.EscapeData` gives it.
 - A value that an app shows ([the interface spec](../interface/SPEC.md),
-  section 3.15), and a reply that does not fit the output of its app, are
+  section 3.15), the text of its format templates, and a reply that does not fit the output of its app, are
   data that a program can read through a pipe. arc removes from them each
   character that the table escapes, except a backslash, as `terminal.Strip`
   does, and keeps the rest as it was. The first time that it removes a

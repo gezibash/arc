@@ -146,7 +146,13 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 	var out strings.Builder
 	for _, p := range t.parts {
 		if p.name == "" {
-			out.WriteString(p.text)
+			// The author of the app wrote this text: it is another
+			// party's text too (docs/clients/SPEC.md, section 3.9).
+			text := p.text
+			if clean {
+				text = h.sanitize(text)
+			}
+			out.WriteString(text)
 			continue
 		}
 		value, err := p.value(s, h)
