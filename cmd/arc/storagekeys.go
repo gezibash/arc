@@ -83,7 +83,7 @@ func listStorage(command *cobra.Command, _ []string) error {
 	}
 	for _, entry := range list.Entries {
 		since := time.Unix(int64(entry.Since), 0).UTC().Format("2006-01-02 15:04")
-		fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\tsince %s\t%s\n", entry.Name, entry.State, entry.Key.Hex(), since, strings.Join(entry.Relays, " "))
+		fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\tsince %s\t%s\n", entry.Name, entry.State, entry.Key.Hex(), since, strings.Join(entry.Relays, " ")) //arc:raw-ok an entry of the storage list that this citizen signed
 	}
 	return nil
 }
@@ -130,7 +130,7 @@ func putStorage(ctx context.Context, out io.Writer, sess *citizen.Session, list 
 		return fmt.Errorf("the storage list did not change: %w", err)
 	}
 	for _, e := range removed {
-		fmt.Fprintf(out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02"))
+		fmt.Fprintf(out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02")) //arc:raw-ok an entry of the storage list that this citizen signed
 	}
 	fmt.Fprintf(out, "storage list: %s is %s\n", name, state)
 	if state == storage.StateDraining {

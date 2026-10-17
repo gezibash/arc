@@ -246,7 +246,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 		one[listed] = member
 		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
 			pk, _ := nostr.PubKeyFromHex(member)
-			fmt.Fprintf(stdio.Err, "%s: %s\n", env.Name(pk), terminal.EscapeLine(err.Error()))
+			fmt.Fprintf(stdio.Err, "%s: %s\n", env.Name(pk), terminal.EscapeLine(err.Error())) //arc:raw-ok a petname that arc makes from the key
 			failed++
 		}
 	}
@@ -340,7 +340,7 @@ func (r *run) call(c *Call) ([]*entry, error) {
 		return nil, err
 	}
 	if result.Queued {
-		fmt.Fprintf(r.stdio.Err, "queued for %s: the reply arrives with a sync; see arc call results\n", r.env.Name(r.in.Author))
+		fmt.Fprintf(r.stdio.Err, "queued for %s: the reply arrives with a sync; see arc call results\n", r.env.Name(r.in.Author)) //arc:raw-ok a petname that arc makes from the key
 		return nil, nil
 	}
 	if result.Err != "" {
@@ -506,7 +506,7 @@ func line(w io.Writer, text string) error {
 	if text == "" {
 		return nil
 	}
-	if _, err := io.WriteString(w, text); err != nil {
+	if _, err := io.WriteString(w, text); err != nil { //arc:raw-ok each caller passes text through sanitize, or a template that cleans it
 		return err
 	}
 	if !strings.HasSuffix(text, "\n") {
@@ -520,7 +520,7 @@ func line(w io.Writer, text string) error {
 // Help lists the commands of a capability.
 func Help(in Installed) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s\n", in.Name, terminal.EscapeLine(in.Manifest.Title))
+	fmt.Fprintf(&b, "%s: %s\n", in.Name, terminal.EscapeLine(in.Manifest.Title)) //arc:raw-ok the name of an install on this machine
 	if in.Manifest.Summary != "" {
 		fmt.Fprintf(&b, "%s\n", terminal.Escape(in.Manifest.Summary))
 	}

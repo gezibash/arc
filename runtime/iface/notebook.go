@@ -441,7 +441,7 @@ func (r *run) notebookIndex(book string, pages []notebookPage, table bool) strin
 			if created == "" {
 				created = "unknown"
 			}
-			fmt.Fprintf(&out, "| %s | %s | %s | %s | [%s](%s) |\n", number, tableText(p.title), created, stamp(p.updated), p.address, r.pageReference(p))
+			fmt.Fprintf(&out, "| %s | %s | %s | %s | [%s](%s) |\n", number, tableText(p.title), created, stamp(p.updated), p.address, r.pageReference(p)) //arc:raw-ok the index goes to a buffer; the record that holds it goes through sanitize
 		}
 		out.WriteString("\n")
 	}
@@ -457,7 +457,7 @@ func (r *run) notebookIndex(book string, pages []notebookPage, table bool) strin
 			body = p.text
 		}
 		for _, h := range markdownHeadings(body) {
-			fmt.Fprintf(&out, "%s- [%s](%s#%s)\n", strings.Repeat("  ", h.level), tableText(h.title), r.pageReference(p), url.PathEscape(h.anchor))
+			fmt.Fprintf(&out, "%s- [%s](%s#%s)\n", strings.Repeat("  ", h.level), tableText(h.title), r.pageReference(p), url.PathEscape(h.anchor)) //arc:raw-ok the index goes to a buffer; the record that holds it goes through sanitize
 		}
 	}
 	return out.String()

@@ -187,7 +187,7 @@ func (r *runtime) handleSession(ctx context.Context, handler SessionHandler, req
 		if err != nil {
 			return err
 		}
-		_, err = stream.Write([]byte(reply))
+		_, err = stream.Write([]byte(reply)) //arc:raw-ok a frame of a session stream, not a terminal
 		return err
 	}
 	return handler.HandleSession(ctx, req, stream)

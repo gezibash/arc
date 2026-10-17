@@ -277,7 +277,7 @@ func (s *server) join(request provider.Request) (string, error) {
 	if reply.Account != nil {
 		status = reply.Account.Status
 	}
-	fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, status)
+	fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, status) //arc:raw-ok an error code or an account state of this app
 	raw, err := json.Marshal(reply)
 	if err != nil {
 		return "", errFailed

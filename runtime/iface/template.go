@@ -152,7 +152,7 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 			if clean {
 				text = h.sanitize(text)
 			}
-			out.WriteString(text)
+			out.WriteString(text) //arc:raw-ok render cleans each part that it shows; a template that builds an event stays as it is
 			continue
 		}
 		value, err := p.value(s, h)
@@ -163,7 +163,7 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 		if clean {
 			text = h.sanitize(text)
 		}
-		out.WriteString(text)
+		out.WriteString(text) //arc:raw-ok render cleans each part that it shows; a template that builds an event stays as it is
 	}
 	return out.String(), nil
 }

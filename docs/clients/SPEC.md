@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -355,7 +355,9 @@ agent, or make `file.exe` look like `file.png`.
 | `TestARingRefusalIsEscapedOnOneLine` | A relay that answers `arc relay ring show` and `clear` with a hostile refusal cannot change the terminal or forge a line. |
 | `TestAStorageAnswerIsEscaped` | The message, plan and state of a storage citizen show escaped, each on its line. |
 | `TestNoticeIsCutAndEscaped` | arc shows a relay NOTICE on one line, escaped, and cut to 300 characters of output. |
-| `TestTextOfOtherPartiesIsEscapedAtThePrint` | A check of the source of arc, the SDK and the apps: each print of an error, or of a field that another party fills, such as `Message` or `Status`, goes through `sdk/terminal` or a function that calls it. A short list names the prints of text that arc writes itself. |
+| `TestTextOfOtherPartiesIsEscapedAtThePrint` | A check of the source of arc, the SDK and the apps: each print or write of an error, or of a field that another party fills, such as `Message`, `ID` or `State`, goes through `sdk/terminal` or a function that returns the result of an escape. A print of text that arc writes itself carries `//arc:raw-ok` and a reason. Each slog logger uses `slog.TextHandler`. |
+| `TestTheEscapeCheckFindsRawPrints` | The check finds each print of a package of hostile prints, and no escaped print. |
+| `TestSlogTextHandlerQuotesHostileText` | `slog.TextHandler` writes ESC, an override, an invisible character, a tag, a newline and U+2028 of a message, a value and an error as escapes. |
 
 The tests of the dm app, `go test ./apps/dm/...`, use this package and the
 test relay. No test runs a client program against a relay on another

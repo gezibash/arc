@@ -39,7 +39,7 @@ func contactsCommand() *cobra.Command {
 			}
 			slices.SortFunc(listed, func(a, b nostr.PubKey) int { return strings.Compare(a.Hex(), b.Hex()) })
 			for _, pk := range listed {
-				fmt.Fprintf(command.OutOrStdout(), "%s  %s\n", pk.Hex(), keys.Name(pk[:]))
+				fmt.Fprintf(command.OutOrStdout(), "%s  %s\n", pk.Hex(), keys.Name(pk[:])) //arc:raw-ok a petname that arc makes from the key
 			}
 			return nil
 		},
