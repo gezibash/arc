@@ -3,6 +3,7 @@ package terminal
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -29,6 +30,9 @@ func TestEscape(t *testing.T) {
 		{"invisible characters", "\u200b\ufeff\u00ad\u2060\u2064\u206a\u206f", `\u200b\ufeff\u00ad\u2060\u2064\u206a\u206f`},
 		{"annotation characters and the Mongolian vowel separator", "a\ufff9b\ufffac\ufffbd\u180e", `a\ufff9b\ufffac\ufffbd\u180e`},
 		{"Hangul fillers", "\u115f\u1160\u3164\uffa0", `\u115f\u1160\u3164\uffa0`},
+		{"the combining grapheme joiner", "a\u034fb", `a\u034fb`},
+		{"a Mongolian free variation selector", "\u1820\u180b", "\u1820" + `\u180b`},
+		{"the musical format characters", "a\U0001d173b\U0001d17a", `a\U0001d173b\U0001d17a`},
 		{"tags that hide text", "hi\U000e0068\U000e0069", `hi\U000e0068\U000e0069`},
 		{"the flag of England stays", "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"},
 		{"the flag of Scotland stays", "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f", "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"},
@@ -157,6 +161,7 @@ func TestStripCases(t *testing.T) {
 		{"pay \ufff9alice\ufffabob\ufffb", "pay alicebob"},
 		{"\u202egnp.exe", "gnp.exe"},
 		{"x\u061c\u200f(1)\u200fy", "x\u061c\u200f(1)\u200fy"},
+		{"hi\u034fd\u180be\U0001d173\U0001d174\U0001d175\U0001d176\U0001d177\U0001d178\U0001d179\U0001d17an", "hiden"},
 	} {
 		if got := Strip(c.in); got != c.want {
 			t.Errorf("Strip(%q) = %q, want %q", c.in, got, c.want)
@@ -183,5 +188,43 @@ func TestEscapeLineCutNeverPassesTheLimit(t *testing.T) {
 		if got := EscapeLineCut(text, limit); utf8.RuneCountInString(got) > limit {
 			t.Errorf("EscapeLineCut(%q, %d) = %q: %d characters", text, limit, got, utf8.RuneCountInString(got))
 		}
+	}
+}
+
+// Width counts two columns for a wide character, none for a mark or a
+// format character, and one for each other character.
+func TestWidth(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want int
+	}{
+		{"hello", 5},
+		{"\u6f22\u5b57", 4}, // two CJK ideographs
+		{"\uff21", 2},       // a fullwidth A
+		{"\U0001f600", 2},   // an emoji
+		{"e\u0301", 1},      // a combining acute accent
+		{"\u2764\ufe0f", 1}, // a selector takes no column
+		{"a\u200db", 2},     // a joiner takes no column
+		{"\u2026", 1},       // the ellipsis
+		{`\u200b`, 6},       // an escape
+	} {
+		if got := Width(c.in); got != c.want {
+			t.Errorf("Width(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// EscapeLineFit cuts by columns: 100 CJK ideographs fit in 72 columns as
+// 35 of them and an ellipsis, and an escape is never cut.
+func TestEscapeLineFit(t *testing.T) {
+	cjk := strings.Repeat("\u6f22", 100)
+	if got, want := EscapeLineFit(cjk, 72), strings.Repeat("\u6f22", 35)+"\u2026"; got != want {
+		t.Errorf("EscapeLineFit of 100 ideographs is %q, want %q", got, want)
+	}
+	if got, want := EscapeLineFit("ab\u200bcd", 5), "ab\u2026"; got != want {
+		t.Errorf("EscapeLineFit cut an escape: %q, want %q", got, want)
+	}
+	if got := EscapeLineFit("short", 72); got != "short" {
+		t.Errorf("EscapeLineFit changed a short line: %q", got)
 	}
 }

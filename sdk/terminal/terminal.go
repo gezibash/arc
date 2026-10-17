@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"golang.org/x/text/width"
 )
 
 // flags are the three subdivision flags that the tag characters may spell:
@@ -30,7 +32,8 @@ var flags = []string{
 //     selects nothing becomes \uHHHH;
 //   - a tag character becomes \UHHHHHHHH, except in the flags of England,
 //     Scotland and Wales, and so does a variation selector of U+E0100 to
-//     U+E01EF that selects nothing;
+//     U+E01EF that selects nothing, and a musical format character of
+//     U+1D173 to U+1D17A;
 //   - a backslash becomes \\.
 //
 // So a sender cannot move the cursor, change the terminal, reorder a line,
@@ -51,6 +54,37 @@ func EscapeLine(text string) string { return mode{oneLine: true, limit: -1}.appl
 // and then an ellipsis. It never cuts an escape or a flag.
 func EscapeLineCut(text string, limit int) string {
 	return mode{oneLine: true, limit: limit}.apply(text)
+}
+
+// EscapeLineFit is EscapeLineCut for a line that must fit in a number of
+// columns of a terminal: it counts each character of output as Width does.
+func EscapeLineFit(text string, columns int) string {
+	return mode{oneLine: true, limit: columns, columns: true}.apply(text)
+}
+
+// Width is the number of columns that a terminal gives text: two for a
+// wide or fullwidth character of East Asian Width, such as a CJK ideograph
+// or most emoji; none for a mark or a format character, such as a
+// variation selector or a joiner; one for each other character. An emoji
+// joined of several gets two columns for each of its parts, so Width can
+// count more columns than a terminal shows, and never fewer.
+func Width(text string) int {
+	n := 0
+	for _, r := range text {
+		n += runeWidth(r)
+	}
+	return n
+}
+
+func runeWidth(r rune) int {
+	if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf) {
+		return 0
+	}
+	switch width.LookupRune(r).Kind() {
+	case width.EastAsianWide, width.EastAsianFullwidth:
+		return 2
+	}
+	return 1
 }
 
 // EscapeData is Escape for text that a program reads through a pipe, such
@@ -132,6 +166,7 @@ type mode struct {
 	backslash bool // a backslash stays one backslash
 	strip     bool // a character that would be escaped is removed
 	limit     int  // the most characters of output, or -1 for no limit
+	columns   bool // the limit counts columns, as Width does
 }
 
 // apply writes text as the mode says. With a limit of 0 or more, an output
@@ -158,7 +193,11 @@ func (m mode) apply(text string) string {
 		}
 		b.WriteString(piece)
 		if m.limit >= 0 {
-			written += utf8.RuneCountInString(piece)
+			if m.columns {
+				written += Width(piece)
+			} else {
+				written += utf8.RuneCountInString(piece)
+			}
 			if written < m.limit {
 				keep = b.Len()
 			}
@@ -212,6 +251,8 @@ func next(text string, oneLine bool, prev rune) (string, int) {
 		return fmt.Sprintf(`\U%08x`, r), size
 	case unicode.IsControl(r), hidden(r):
 		return fmt.Sprintf(`\u%04x`, r), size
+	case r >= '\U0001d173' && r <= '\U0001d17a':
+		return fmt.Sprintf(`\U%08x`, r), size // musical format characters
 	case r >= '\U000e0000' && r <= '\U000e007f':
 		return fmt.Sprintf(`\U%08x`, r), size
 	}
@@ -236,8 +277,10 @@ func hidden(r rune) bool {
 	case r == '\u200b', r == '\ufeff', r == '\u00ad',
 		r >= '\u2060' && r <= '\u2064', r >= '\u206a' && r <= '\u206f':
 		return true // invisible characters
-	case r >= '\ufff9' && r <= '\ufffb', r == '\u180e':
-		return true // interlinear annotation, and the Mongolian vowel separator
+	case r >= '\ufff9' && r <= '\ufffb', r == '\u180e', r == '\u180b':
+		return true // interlinear annotation, the Mongolian vowel separator, and free variation selector one
+	case r == '\u034f':
+		return true // the combining grapheme joiner
 	case r == '\u115f', r == '\u1160', r == '\u3164', r == '\uffa0':
 		return true // Hangul fillers
 	}
