@@ -591,3 +591,35 @@ func TestTheAppRefusesAPutLargerThanItsLimit(t *testing.T) {
 	}
 	absent(t, filepath.Join(env.state, "received", env.receiverKey, "large.bin"))
 }
+
+// hostileArc is an arc program that fails with a hostile text on standard
+// error: a title change, a clear, an override, and a forged line.
+func hostileArc(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	text := filepath.Join(dir, "text")
+	if err := os.WriteFile(text, []byte("P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "arc")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat '"+text+"' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+// The error line of arc-transfer stays one line, escaped, when it holds what
+// another program wrote (docs/clients/SPEC.md, section 3.9).
+func TestTheErrorLineIsEscaped(t *testing.T) {
+	var stderr bytes.Buffer
+	command := exec.Command(env.program, append([]string{"get"}, "-arc", hostileArc(t), "-home", t.TempDir(), "transfer+arc://"+strings.Repeat("a", 64)+"/x")...)
+	command.Stderr = &stderr
+	if command.Run() == nil {
+		t.Fatal("arc-transfer did not fail")
+	}
+	out := stderr.String()
+	if strings.Count(out, "\n") != 1 || strings.Contains(out, "\narc: forged") || strings.ContainsAny(out, "\x1b\x07\u202e\U000e0068") ||
+		!strings.Contains(out, `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`) {
+		t.Errorf("arc-transfer printed %q, want one escaped line", out)
+	}
+}

@@ -38,6 +38,7 @@ import (
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/stdio"
 	wire "github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 const usage = `usage:
@@ -78,10 +79,16 @@ func main() {
 	err := run(ctx, os.Args[2:])
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(os.Stderr, "arc-storage:", err)
+		fmt.Fprintln(os.Stderr, errorLine(err))
 		os.Exit(1)
 	}
 }
+
+// errorLine is the line that arc-storage prints for an error. An error can
+// hold text that a storage citizen chose, such as the message of a refusal,
+// so the line is escaped and stays one line (docs/clients/SPEC.md, section
+// 3.9).
+func errorLine(err error) string { return "arc-storage: " + terminal.EscapeLine(err.Error()) }
 
 // put pads each file to a blob, and gives it. The ID of a blob is the
 // SHA-256 of the blob, so a second put of a file sends no bytes. It prints

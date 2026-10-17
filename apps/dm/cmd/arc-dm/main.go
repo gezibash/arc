@@ -295,7 +295,7 @@ func watch(ctx context.Context, args []string) error {
 		command := exec.CommandContext(ctx, notifier[0], append(notifier[1:], m.Name, body)...)
 		if out, err := command.CombinedOutput(); err != nil && ctx.Err() == nil {
 			// A failed notification does not stop the watch.
-			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %v %s\n", err, strings.TrimSpace(string(out)))
+			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %s\n", terminal.EscapeLine(err.Error()+" "+strings.TrimSpace(string(out))))
 		}
 		return nil
 	})

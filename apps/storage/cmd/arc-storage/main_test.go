@@ -380,3 +380,15 @@ func cleanup(t *testing.T, home string, ids ...string) {
 	t.Helper()
 	mustRun(t, home, append([]string{"delete"}, ids...)...)
 }
+
+// The error line of arc-storage stays one line, escaped, when it holds the
+// message of a refusal that a storage citizen chose (docs/clients/SPEC.md,
+// section 3.9). No test runs a hostile storage citizen, so this checks the
+// line itself.
+func TestTheErrorLineIsEscaped(t *testing.T) {
+	refusal := fmt.Errorf("the storage citizen refused: %s", "P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line")
+	want := `arc-storage: the storage citizen refused: P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`
+	if got := errorLine(refusal); got != want {
+		t.Errorf("errorLine = %q, want %q", got, want)
+	}
+}
