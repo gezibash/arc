@@ -70,6 +70,7 @@ func (p person) inboxID(text string) string {
 // its own store, on a quote line at column 0, under the header of the
 // reply. The confirmation names the conversation.
 func TestAReplyQuotesItsParent(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "bring the map")
 	bob.sync()
@@ -108,6 +109,7 @@ func TestAReplyQuotesItsParent(t *testing.T) {
 // A reply in a group goes to each member of the group of its parent, and
 // the confirmation names each member.
 func TestAReplyInAGroup(t *testing.T) {
+	t.Parallel()
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 	ada.dm("send", bob.key+","+cy.key, "hello, both of you")
 	ada.dm("send", cy.key, "just for cy")
@@ -133,6 +135,7 @@ func TestAReplyInAGroup(t *testing.T) {
 // The quote comes from the store, not from the text: a quote line typed
 // into a text shows at column 2, inside the text.
 func TestAQuoteComesFromTheStore(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "bring the map")
 	bob.sync()
@@ -158,6 +161,7 @@ func TestAQuoteComesFromTheStore(t *testing.T) {
 // first line with text. An id that matches a held id in 63 digits shows
 // 12 digits and an ellipsis, so its line stays inside 72 characters too.
 func TestAHostileParentIsOneEscapedLine(t *testing.T) {
+	t.Parallel()
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	parents := []string{
 		"\x1b[2Jred\u202eevil\u200b" + strings.Repeat("x", 5000) + "\nsecond line",
@@ -215,6 +219,7 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 
 // A reply to a message that the reader does not hold shows the id only.
 func TestAReplyToAnUnheldMessageShowsTheIdOnly(t *testing.T) {
+	t.Parallel()
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	unknown := strings.Repeat("7a", 32)
 	mallory.arcSend(bob.key, "you said so", "--arctest-tag", "e,"+unknown)
@@ -228,6 +233,7 @@ func TestAReplyToAnUnheldMessageShowsTheIdOnly(t *testing.T) {
 // it: a member of a group cannot move the words of the group into a direct
 // conversation, and an honest arc refuses to send such a reply.
 func TestAReplyAcrossConversationsShowsNoText(t *testing.T) {
+	t.Parallel()
 	ada, bob, mallory := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "mallory")
 	ada.dm("send", bob.key+","+mallory.key, "the group secret")
 	mallory.sync()
@@ -248,6 +254,7 @@ func TestAReplyAcrossConversationsShowsNoText(t *testing.T) {
 // plain message. A relay hint after the id, as other NIP-17 clients write
 // it, still makes a reply.
 func TestATagThatIsNoReplyShowsAPlainMessage(t *testing.T) {
+	t.Parallel()
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	mallory.dm("send", bob.key, "first")
 	bob.sync()
@@ -269,6 +276,7 @@ func TestATagThatIsNoReplyShowsAPlainMessage(t *testing.T) {
 // reply that send would put into another conversation. arc refuses a
 // parent that it does not hold, and an id in capitals. Nothing is sent.
 func TestReplyRefusals(t *testing.T) {
+	t.Parallel()
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 	ada.dm("send", bob.key, "from ada")
 	cy.dm("send", bob.key, "from cy")
@@ -308,6 +316,7 @@ func TestReplyRefusals(t *testing.T) {
 // parent is a message that this citizen sent after the watch started. A
 // reply whose parent is not here shows the id only.
 func TestAWatchQuotesTheParent(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "hello")
 	bob.sync()
@@ -319,7 +328,7 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer watch.Process.Kill()
-	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 
@@ -329,7 +338,7 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 	ada.dm("reply", short, "yes")
 	ada.arcSend(bob.key, "and that", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
 	want := []string{"\n↳ " + short + "  you: bring the map\n  yes\n", "\n↳ 7a7a7a  (not on this device)\n  and that\n"}
-	if !arcprogramtest.WaitUntil(15*time.Second, func() bool {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool {
 		return strings.Contains(stdout.String(), want[0]) && strings.Contains(stdout.String(), want[1])
 	}) {
 		t.Errorf("the watch printed:\n%s\nwant\n%s", stdout.String(), strings.Join(want, ""))
@@ -345,6 +354,7 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 // collision of six digits costs about 2^24 hashes, too slow for a test run
 // through the relay, so this test builds the store.
 func TestShortIDs(t *testing.T) {
+	t.Parallel()
 	a := "abcdef01" + strings.Repeat("0", 56)
 	b := "abcdef02" + strings.Repeat("0", 56)
 	c := "123456" + strings.Repeat("0", 58)
@@ -365,6 +375,7 @@ func TestShortIDs(t *testing.T) {
 // A reply to a message that you sent yourself quotes your own text, on
 // both sides: arc finds the parent in its outbox.
 func TestAReplyToYourOwnMessage(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "bring the map")
 	short := shortID(t, ada.dm("open", bob.key), "bring the map")
@@ -383,6 +394,7 @@ func TestAReplyToYourOwnMessage(t *testing.T) {
 // send -reply checks the id before it reads the text, so a wrong id fails
 // at once, with standard input still open.
 func TestSendReplyChecksTheIdBeforeTheText(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "hello")
 	bob.sync()
@@ -417,6 +429,7 @@ func TestSendReplyChecksTheIdBeforeTheText(t *testing.T) {
 // hold, however many replies name that parent: a sender can name many
 // ids that no message has.
 func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
+	t.Parallel()
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	mallory.dm("send", bob.key, "hello")
 	bob.sync()
@@ -435,7 +448,7 @@ func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer watch.Process.Kill()
-	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 
@@ -443,7 +456,7 @@ func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
 	for i, junk := range []string{one, one, one, two} {
 		mallory.arcSend(bob.key, "junk "+string(rune('a'+i)), "--arctest-tag", "e,"+junk)
 	}
-	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Count(stdout.String(), "(not on this device)") == 4 }) {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Count(stdout.String(), "(not on this device)") == 4 }) {
 		t.Fatalf("the watch printed:\n%s", stdout.String())
 	}
 	data, _ := os.ReadFile(runs)
@@ -464,6 +477,7 @@ func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
 // first argument that is not a flag. A text that still starts with -reply
 // is refused, and a word with a dash later in a text stays text.
 func TestFlagsAfterThePeer(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "bring the map")
 	bob.sync()
@@ -485,6 +499,7 @@ func TestFlagsAfterThePeer(t *testing.T) {
 // arc message send --reply checks the id, and that this machine holds it,
 // before it reads standard input.
 func TestArcChecksAReplyBeforeTheText(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	for _, c := range []struct{ reply, want string }{
 		{"zz", "64 lowercase hex digits"},
@@ -530,6 +545,7 @@ func TestIndexIsNotQuadratic(t *testing.T) {
 // A parent of only spaces, such as U+3000, quotes as (blank). arc refuses
 // to send one, so no relay test can make it; another client can.
 func TestABlankParentQuotesAsBlank(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"\u3000\u3000\u3000": "(blank)",
 		" \n\t\n":            "(blank)",

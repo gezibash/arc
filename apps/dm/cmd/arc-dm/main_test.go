@@ -124,6 +124,12 @@ func (p person) list() []block {
 	return blocks
 }
 
+// waitLimit bounds each wait for a watch. The tests run in parallel, and
+// under the race detector each arc program starts slowly, so a wait can
+// take far longer than on an idle machine. A wait ends as soon as it sees
+// what it waits for.
+const waitLimit = 90 * time.Second
+
 // The time of a message has a resolution of one second, so a test waits
 // a second where the order of two messages matters.
 func nextSecond() { time.Sleep(1100 * time.Millisecond) }
@@ -131,6 +137,7 @@ func nextSecond() { time.Sleep(1100 * time.Millisecond) }
 // TestConversations groups the messages by peer, with the replies of this
 // citizen, and counts the unread messages until the citizen opens them.
 func TestConversations(t *testing.T) {
+	t.Parallel()
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 
 	ada.dm("send", bob.key, "meet at noon")
@@ -208,6 +215,7 @@ func groupName(peers ...person) string {
 // sees to how many members the message was delivered. A direct
 // conversation between two of them stays apart.
 func TestGroups(t *testing.T) {
+	t.Parallel()
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 
 	ada.dm("send", bob.key+","+cy.key, "hello, both of you")
@@ -269,6 +277,7 @@ func must[T any](v T, err error) T {
 // TestPeers selects a conversation by the start of a key, and refuses a
 // name that selects no conversation or more than one.
 func TestPeers(t *testing.T) {
+	t.Parallel()
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 	ada.dm("send", bob.key, "from ada")
 	cy.dm("send", bob.key, "from cy")
@@ -289,6 +298,7 @@ func TestPeers(t *testing.T) {
 // TestControlCharacters shows no control character of a sender on the
 // terminal: it shows each one escaped, so nothing of the text is lost.
 func TestControlCharacters(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "\x1b[2Jcleared\x07\nline two\tend")
 	bob.sync()
@@ -305,6 +315,7 @@ func TestControlCharacters(t *testing.T) {
 // TestWatch prints and notifies a message that arrives while the watch
 // runs. The watch keeps the message on this machine, and leaves it unread.
 func TestWatch(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	notes := filepath.Join(t.TempDir(), "notifications")
 	notifier := filepath.Join(t.TempDir(), "notify")
@@ -320,13 +331,13 @@ func TestWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer watch.Process.Kill()
-	if !arcprogramtest.WaitUntil(15*time.Second, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 
 	ada.dm("send", bob.key, "are you there")
 	want := ada.name + "|are you there\n"
-	if !arcprogramtest.WaitUntil(15*time.Second, func() bool {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool {
 		data, _ := os.ReadFile(notes)
 		return string(data) == want
 	}) {
@@ -381,6 +392,7 @@ func (b *lockedBuffer) String() string {
 
 // TestHelp lists every command, for each way to ask, and exits with 0.
 func TestHelp(t *testing.T) {
+	t.Parallel()
 	for _, ask := range []string{"help", "-h", "-help", "--help"} {
 		out, err := exec.Command(env.program, ask).CombinedOutput()
 		if err != nil {
@@ -398,6 +410,7 @@ func TestHelp(t *testing.T) {
 // knows only from a group, by the start of its key. With one shared group,
 // open opens that group and marks it read; with two, it lists them.
 func TestAGroupMemberIsAPeer(t *testing.T) {
+	t.Parallel()
 	ada, bob, cy := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "cy")
 	ada.dm("send", bob.key+","+cy.key, "hello, both of you")
 	bob.sync()
@@ -428,6 +441,7 @@ func TestAGroupMemberIsAPeer(t *testing.T) {
 
 // TestFlagsBeforeTheCommand takes the flags before or after the command.
 func TestFlagsBeforeTheCommand(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "flags first")
 	bob.sync()
@@ -454,6 +468,7 @@ func groupNames(peers ...person) string {
 // TestTheEndOfAPetnameNamesACitizen opens a conversation by the hex digits
 // at the end of a petname, which do not start the key.
 func TestTheEndOfAPetnameNamesACitizen(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 	ada.dm("send", bob.key, "find me by my suffix")
 	bob.sync()
@@ -468,6 +483,7 @@ func TestTheEndOfAPetnameNamesACitizen(t *testing.T) {
 
 // TestNoArc says how to get arc when it is not on PATH.
 func TestNoArc(t *testing.T) {
+	t.Parallel()
 	command := exec.Command(env.program, "ls")
 	command.Env = append(os.Environ(), "PATH="+t.TempDir())
 	out, err := command.CombinedOutput()
@@ -488,7 +504,7 @@ func finish(t *testing.T, command *exec.Cmd) (ended bool) {
 	select {
 	case <-done:
 		return true
-	case <-time.After(10 * time.Second):
+	case <-time.After(waitLimit):
 		_ = command.Process.Kill()
 		<-done
 		return false
@@ -498,6 +514,7 @@ func finish(t *testing.T, command *exec.Cmd) (ended bool) {
 // TestSendText reads standard input only when no text follows the peer,
 // refuses a text of only spaces, and stops on a signal while it reads.
 func TestSendText(t *testing.T) {
+	t.Parallel()
 	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
 
 	for _, text := range []string{"", " ", "\t\n"} {
