@@ -90,8 +90,9 @@ A reply shows a quote line between its header and its text:
   `(blank)`.
 - The id on a quote line is at most 12 digits, then `…`.
 - Flags can also come after the peer or the id, before the text:
-  `arc-dm send ada -reply 1c77 yes`. A text that starts with `-reply` is
-  refused, so a misplaced flag never goes out as text.
+  `arc-dm send ada -reply 1c77 yes`. After the peer, only a flag of the
+  command counts, so `arc-dm send ada -5 degrees` sends "-5 degrees".
+  After `--`, each word is text. An empty `-reply=` is refused.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
@@ -99,8 +100,9 @@ A reply shows a quote line between its header and its text:
   `↳ 5e0c12  (in another conversation)`, and no text of it.
 - A reply shows the direct parent only, one level.
 - `arc-dm watch` adds each message that it receives. When a reply names a
-  parent that the watch does not hold, it reads the outbox once for that
-  id, in case you sent the parent after the watch started.
+  parent that the watch does not hold, it reads the outbox, in case you
+  sent the parent after the watch started: at most once for that id, and
+  at most once each 5 s, because a sender can name many ids.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer
