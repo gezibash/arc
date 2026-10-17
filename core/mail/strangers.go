@@ -357,6 +357,7 @@ func (m *Mail) Held(ctx context.Context) ([]Message, error) {
 		out = append(out, Message{
 			ID: rumor.ID.Hex(), From: rumor.PubKey, Members: Members(rumor),
 			At: time.Unix(int64(rumor.CreatedAt), 0).UTC(), Text: rumor.Content,
+			ReplyTo: ReplyTo(rumor),
 		})
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].At.Before(out[b].At) })

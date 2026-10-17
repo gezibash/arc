@@ -4,6 +4,7 @@
 //	arc-dm [ls]                  the conversations, newest first, with unread counts
 //	arc-dm open <peer>           one conversation; it marks its messages read
 //	arc-dm send <peer> [text...] send a message; peers separated by commas make a group
+//	arc-dm reply <id> [text...]  reply to a message, to each member of its conversation
 //	arc-dm read [peer]           mark a conversation read, or all of them
 //	arc-dm watch                 print and notify each message as it arrives
 //
@@ -36,6 +37,7 @@ const usage = `usage:
   arc-dm [ls] [flags]                  the conversations, newest first
   arc-dm open [flags] <peer>           one conversation; marks it read
   arc-dm send [flags] <peer> [text...] send a message (no text: read standard input)
+  arc-dm reply [flags] <id> [text...]  reply to a message, to its conversation
   arc-dm read [flags] [peer]           mark a conversation read, or all of them
   arc-dm watch [flags]                 print and notify each message as it arrives
 
@@ -45,11 +47,13 @@ the key, not from its start. Several peers, separated by commas, name a
 group: arc-dm send ada,cy hello sends one message that both see, and a
 reply goes to each member. The command is ls when none is given. A peer
 with no direct conversation that shares one group with you opens that
-group. Flags can come before or after the command.
+group. An id is the start of the id of a message, as arc-dm open shows
+it beside each message: at least 4 hex digits. Flags can come before or
+after the command.
 arc-dm <command> -h shows the flags of a command.`
 
 func main() {
-	commands := map[string]func(context.Context, []string) error{"ls": list, "open": open, "send": send, "read": read, "watch": watch}
+	commands := map[string]func(context.Context, []string) error{"ls": list, "open": open, "send": send, "reply": reply, "read": read, "watch": watch}
 	name, args := "ls", os.Args[1:]
 	if len(args) > 0 && slices.Contains([]string{"help", "-h", "-help", "--help"}, args[0]) {
 		fmt.Println(usage)
@@ -175,6 +179,7 @@ func open(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	messages := index(all)
 	for _, e := range c.Entries {
 		who, status := cmp.Or(e.From, c.Name), ""
 		if e.Mine {
@@ -182,7 +187,11 @@ func open(ctx context.Context, args []string) error {
 		} else if !read[e.ID] {
 			status = "  new"
 		}
-		fmt.Printf("%s  %s%s\n%s\n", stamp(e.At), who, status, indent(terminal.Escape(e.Text))) //arc:raw-ok status is a delivery state of arc, or new
+		fmt.Printf("%s  %s  %s%s\n", stamp(e.At), messages.short(e.ID), who, status) //arc:raw-ok status is a delivery state of arc, or new; the id is hex
+		if q := messages.quote(e, c); q != "" {
+			fmt.Println(q)
+		}
+		fmt.Println(indent(terminal.Escape(e.Text)))
 	}
 	return markRead(dir, c)
 }
@@ -190,22 +199,16 @@ func open(ctx context.Context, args []string) error {
 // send sends a message to a peer.
 func send(ctx context.Context, args []string) error {
 	flags, s := newFlags("send")
+	replyTo := flags.String("reply", "", "reply to the message with this id, or the start of it")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() < 1 {
 		return errors.New("usage: arc-dm send [flags] <peer> [text...]")
 	}
-	text := strings.Join(flags.Args()[1:], " ")
-	if flags.NArg() == 1 {
-		body, err := readAll(ctx, os.Stdin)
-		if err != nil {
-			return err
-		}
-		text = strings.TrimRight(string(body), "\n")
-	}
-	if terminal.Blank(text) {
-		return errors.New("a message holds at least one character that a person can see")
+	text, err := messageText(ctx, flags.Args()[1:])
+	if err != nil {
+		return err
 	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
@@ -215,11 +218,74 @@ func send(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.arc.Send(ctx, c.Peers, text); err != nil {
+	if *replyTo == "" {
+		if _, err := s.arc.Send(ctx, c.Peers, text); err != nil {
+			return err
+		}
+		fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key())) //arc:raw-ok c.Name holds petnames, or a key
+		return nil
+	}
+	messages := index(all)
+	parent, err := messages.lookup(*replyTo)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key())) //arc:raw-ok c.Name holds petnames, or a key
+	if parent.conv.key() != c.key() {
+		return fmt.Errorf("%s is in another conversation: arc-dm reply %s sends to its members", messages.short(parent.ID), messages.short(parent.ID))
+	}
+	return sendReply(ctx, s.arc, messages, parent, text)
+}
+
+// reply sends a reply to a message, to each member of its conversation.
+func reply(ctx context.Context, args []string) error {
+	flags, s := newFlags("reply")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() < 1 {
+		return errors.New("usage: arc-dm reply [flags] <id> [text...]")
+	}
+	all, err := conversations(ctx, s.arc)
+	if err != nil {
+		return err
+	}
+	messages := index(all)
+	parent, err := messages.lookup(flags.Arg(0))
+	if err != nil {
+		return err
+	}
+	text, err := messageText(ctx, flags.Args()[1:])
+	if err != nil {
+		return err
+	}
+	return sendReply(ctx, s.arc, messages, parent, text)
+}
+
+// sendReply sends text to the members of the parent, and names them: a
+// mistyped id could answer in another conversation.
+func sendReply(ctx context.Context, arc arcprogram.Arc, messages *store, parent held, text string) error {
+	if _, err := arc.SendReply(ctx, parent.conv.Peers, parent.ID, text); err != nil {
+		return err
+	}
+	fmt.Printf("replied to %s in %s\n", messages.short(parent.ID), parent.conv.Name) //arc:raw-ok the id is hex; the name holds petnames
 	return nil
+}
+
+// messageText is the words of a command, or standard input when there are
+// none.
+func messageText(ctx context.Context, words []string) (string, error) {
+	text := strings.Join(words, " ")
+	if len(words) == 0 {
+		body, err := readAll(ctx, os.Stdin)
+		if err != nil {
+			return "", err
+		}
+		text = strings.TrimRight(string(body), "\n")
+	}
+	if terminal.Blank(text) {
+		return "", errors.New("a message holds at least one character that a person can see")
+	}
+	return text, nil
 }
 
 // readAll reads r to its end, or returns at the end of ctx: a read of
@@ -277,12 +343,40 @@ func watch(ctx context.Context, args []string) error {
 		return errors.New("usage: arc-dm watch [flags]")
 	}
 	notifier := notifierOf(*notify)
+	me, err := s.arc.PublicKey(ctx)
+	if err != nil {
+		return err
+	}
+	all, err := conversations(ctx, s.arc)
+	if err != nil {
+		return err
+	}
+	messages := index(all)
 	return s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
 		group := ""
 		if len(m.Members) > 2 {
 			group = fmt.Sprintf("  in a group of %d", len(m.Members))
 		}
-		fmt.Printf("%s  %s%s\n%s\n", stamp(m.At), m.Name, group, indent(terminal.Escape(m.Text))) //arc:raw-ok m.Name is a petname
+		members := m.Members
+		if members == nil {
+			// An arc older than group messages prints no members.
+			members = []string{m.From}
+		}
+		c := conversation{Peers: peersOf(me, members)}
+		if _, ok := messages.byID[m.ReplyTo]; m.ReplyTo != "" && !ok {
+			// The parent can be a message that this citizen sent since the
+			// watch started.
+			if all, err := conversations(ctx, s.arc); err == nil {
+				messages = index(all)
+			}
+		}
+		e := entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name, ReplyTo: m.ReplyTo}
+		messages.add(e, c)
+		fmt.Printf("%s  %s  %s%s\n", stamp(m.At), messages.short(m.ID), m.Name, group) //arc:raw-ok m.Name is a petname; the id is hex
+		if q := messages.quote(e, c); q != "" {
+			fmt.Println(q)
+		}
+		fmt.Println(indent(terminal.Escape(m.Text)))
 		if len(notifier) == 0 {
 			return nil
 		}

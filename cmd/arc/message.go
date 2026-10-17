@@ -41,6 +41,8 @@ type messageLine struct {
 	Text string `json:"text"`
 	// Members are the sender, then each member that a p tag names.
 	Members []string `json:"members"`
+	// ReplyTo is the id of the parent of a reply.
+	ReplyTo string `json:"reply_to,omitempty"`
 }
 
 // sentLine is one sent message in JSON. outbox --json prints it, one object
@@ -54,6 +56,7 @@ type sentLine struct {
 	Text    string   `json:"text"`
 	State   string   `json:"state"`
 	Members []string `json:"members"`
+	ReplyTo string   `json:"reply_to,omitempty"`
 }
 
 // queuedLine is the message that send --json put in the outbox. To is the
@@ -63,6 +66,24 @@ type queuedLine struct {
 	To      string   `json:"to"`
 	State   string   `json:"state"`
 	Members []string `json:"members"`
+	ReplyTo string   `json:"reply_to,omitempty"`
+}
+
+// sendMessage sends a message, or with --reply a reply to a message of
+// this machine.
+func sendMessage(command *cobra.Command, sess *citizen.Session, to []nostr.PubKey, text string) ([]mail.Outgoing, error) {
+	if tags := testTags(command, to); tags != nil {
+		return sess.Mail.SendRumor(command.Context(), to, mail.MessageKind, text, tags)
+	}
+	reply, _ := command.Flags().GetString("reply")
+	if reply == "" {
+		return sess.Mail.Send(command.Context(), to, text)
+	}
+	parent, err := nostr.IDFromHex(reply)
+	if err != nil || strings.ToLower(reply) != reply {
+		return nil, errors.New("--reply takes the id of a message: 64 lowercase hex digits, as arc message inbox --json prints it")
+	}
+	return sess.Mail.SendReply(command.Context(), to, parent, text)
 }
 
 // recipients reads the public keys of a send, separated by commas.
@@ -163,7 +184,7 @@ func printSent(command *cobra.Command, m *mail.Mail, out []mail.Outgoing) error 
 		if err := encoder.Encode(sentLine{
 			ID: o.Rumor, To: o.To, Name: keys.Name(to[:]),
 			At: o.Created.UTC().Format(time.RFC3339), Text: o.Text, State: o.State(now),
-			Members: members[o.Rumor],
+			Members: members[o.Rumor], ReplyTo: o.ReplyTo,
 		}); err != nil {
 			return err
 		}
@@ -207,12 +228,16 @@ func (p messagePrinter) print(m mail.Message) error {
 			others := slices.DeleteFunc(slices.Clone(m.Members[1:]), func(pk nostr.PubKey) bool { return pk == p.me })
 			group = "  to you, " + petnames(others)
 		}
-		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, shown(m.Text)) //arc:raw-ok a petname that arc makes from the key
+		if m.ReplyTo != "" {
+			group += "  reply to " + m.ReplyTo[:6]
+		}
+		_, err := fmt.Fprintf(p.out, "%s  %s%s\n  %s\n", m.At.Local().Format("2006-01-02 15:04"), keys.Name(m.From[:]), group, shown(m.Text)) //arc:raw-ok a petname that arc makes from the key; ReplyTo is 64 hex digits
 		return err
 	}
 	return p.encoder.Encode(messageLine{
 		ID: m.ID, From: m.From.Hex(), Name: keys.Name(m.From[:]),
 		At: m.At.UTC().Format(time.RFC3339), Text: m.Text, Members: hexKeys(m.Members),
+		ReplyTo: m.ReplyTo,
 	})
 }
 
