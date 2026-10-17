@@ -87,6 +87,9 @@ The change is one more tag in the list that `Send` gives `SendRumor`.
 - A reader takes the first `e` tag. If its value is 64 lowercase hex
   digits and no other `e` tag exists, the message is a reply. Otherwise it
   is a plain message. A reader MUST NOT refuse it: the text still counts.
+- A reader uses the second element of the tag only, and ignores any
+  further elements, such as the relay hint that other NIP-17 clients
+  write.
 - arc puts the parent id in `reply_to` (section 3.5). arc does not look
   the parent up. The client program does.
 - A client program MUST show the text of a parent only from a message of
@@ -270,7 +273,8 @@ The sender **cannot**:
 ### 6.3 Who pays
 
 A reply costs about 73 more bytes in each seal and each wrap, before padding *(arithmetic,
-section 3.1)*. arc-dm reads the local store once for `open` and `reply`,
+section 3.1)*. The check of section 3.3 makes `arc message send --reply`
+open each seal of the store once, as `arc message inbox` does. arc-dm reads the local store once for `open` and `reply`,
 as it does now. The index of `watch` holds one id and one line for each
 message of the local store.
 
