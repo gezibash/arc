@@ -713,6 +713,22 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A reply is checked before the text, so a wrong id does not
+			// wait for standard input.
+			parent, err := replyParent(command)
+			if err != nil {
+				return err
+			}
+			sess, err := open(command)
+			if err != nil {
+				return err
+			}
+			defer sess.Close()
+			if parent != (nostr.ID{}) && testTags(command, to) == nil {
+				if err := sess.Mail.CheckReply(command.Context(), to, parent); err != nil {
+					return err
+				}
+			}
 
 			text := strings.Join(args[1:], " ")
 			if text == "" {
@@ -728,12 +744,6 @@ func messageCommand() *cobra.Command {
 			if len(text) > private.MaxMailContent {
 				return fmt.Errorf("the message is too large for mail, which holds at most %d bytes: send it over a direct path, such as the transfer app", private.MaxMailContent)
 			}
-
-			sess, err := open(command)
-			if err != nil {
-				return err
-			}
-			defer sess.Close()
 
 			out, err := sendMessage(command, sess, to, text)
 			if err != nil {

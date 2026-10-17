@@ -75,15 +75,27 @@ func sendMessage(command *cobra.Command, sess *citizen.Session, to []nostr.PubKe
 	if tags := testTags(command, to); tags != nil {
 		return sess.Mail.SendRumor(command.Context(), to, mail.MessageKind, text, tags)
 	}
+	parent, err := replyParent(command)
+	if err != nil {
+		return nil, err
+	}
+	if parent == (nostr.ID{}) {
+		return sess.Mail.Send(command.Context(), to, text)
+	}
+	return sess.Mail.SendReply(command.Context(), to, parent, text)
+}
+
+// replyParent is the id of --reply, or a zero id for no reply.
+func replyParent(command *cobra.Command) (nostr.ID, error) {
 	reply, _ := command.Flags().GetString("reply")
 	if reply == "" {
-		return sess.Mail.Send(command.Context(), to, text)
+		return nostr.ID{}, nil
 	}
 	parent, err := nostr.IDFromHex(reply)
 	if err != nil || strings.ToLower(reply) != reply {
-		return nil, errors.New("--reply takes the id of a message: 64 lowercase hex digits, as arc message inbox --json prints it")
+		return nostr.ID{}, errors.New("--reply takes the id of a message: 64 lowercase hex digits, as arc message inbox --json prints it")
 	}
-	return sess.Mail.SendReply(command.Context(), to, parent, text)
+	return parent, nil
 }
 
 // recipients reads the public keys of a send, separated by commas.

@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/atomicfile"
@@ -461,9 +460,15 @@ func index(all []conversation) *store {
 	s := &store{byID: map[string]held{}}
 	for _, c := range all {
 		for _, e := range c.Entries {
-			s.add(e, c)
+			if _, ok := s.byID[e.ID]; !ok {
+				s.byID[e.ID] = held{entry: e, conv: c}
+				s.ids = append(s.ids, e.ID)
+			}
 		}
 	}
+	// One sort: an insert for each id would take time in the square of
+	// the number of messages.
+	slices.Sort(s.ids)
 	return s
 }
 
@@ -517,7 +522,7 @@ func (s *store) lookup(prefix string) (held, error) {
 	return held{}, fmt.Errorf("%q names %d messages: give more digits", prefix, len(matches))
 }
 
-// quoteWidth is the most characters of a quote line.
+// quoteWidth is the most columns of a quote line.
 const quoteWidth = 72
 
 // quote is the line that shows the parent of a reply in the conversation
@@ -540,10 +545,10 @@ func (s *store) quote(e entry, c conversation) string {
 	if parent.Mine {
 		who = "you"
 	}
-	head += who + ": "
-	// A petname holds at most 32 characters, and a quoted id at most 13,
-	// so the text gets at least 21.
-	return head + terminal.EscapeLineCut(firstLine(parent.Text), max(1, quoteWidth-utf8.RuneCountInString(head)))
+	// The cut counts columns, so wide text and a long name fit too. A
+	// petname holds at most 32 characters, and a quoted id at most 13, so
+	// the text gets at least 21 columns.
+	return head + terminal.EscapeLineFit(who+": "+firstLine(parent.Text), quoteWidth-terminal.Width(head))
 }
 
 // quotedID is the most hex digits of an id on a quote line.
@@ -561,7 +566,8 @@ func (s *store) quoted(id string) string {
 }
 
 // firstLine is the first line of text that is not empty, and " …" when
-// text after it is left out.
+// text after it is left out. A text of only spaces, such as U+3000, is
+// "(blank)": arc refuses to send one, but another client can.
 func firstLine(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
@@ -573,5 +579,5 @@ func firstLine(text string) string {
 		}
 		return line
 	}
-	return ""
+	return "(blank)"
 }

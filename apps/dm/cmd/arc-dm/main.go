@@ -49,7 +49,7 @@ reply goes to each member. The command is ls when none is given. A peer
 with no direct conversation that shares one group with you opens that
 group. An id is the start of the id of a message, as arc-dm open shows
 it beside each message: at least 4 hex digits. Flags can come before or
-after the command.
+after the command, and after the peer or the id, before the text.
 arc-dm <command> -h shows the flags of a command.`
 
 func main() {
@@ -98,6 +98,27 @@ func commandAt(args []string) int {
 	return -1
 }
 
+// parse parses the flags of a command before and between its first n
+// arguments, and returns the arguments. The flag package stops at the first
+// argument that is not a flag, so without this arc-dm send ada -reply 3f9a
+// hi would send "-reply 3f9a hi" as text. The words after the n arguments
+// are text, and a word of a text can start with a dash.
+func parse(flags *flag.FlagSet, args []string, n int) ([]string, error) {
+	var out []string
+	for {
+		if err := flags.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := flags.Args()
+		ended := len(rest) < len(args) && args[len(args)-len(rest)-1] == "--"
+		if ended || len(out) == n || len(rest) == 0 {
+			return append(out, rest...), nil
+		}
+		out = append(out, rest[0])
+		args = rest[1:]
+	}
+}
+
 // settings are the flags that each command takes.
 type settings struct {
 	arc   arcprogram.Arc
@@ -116,10 +137,11 @@ func newFlags(name string) (*flag.FlagSet, *settings) {
 // list prints the conversations, newest first.
 func list(ctx context.Context, args []string) error {
 	flags, s := newFlags("ls")
-	if err := flags.Parse(args); err != nil {
+	args, err := parse(flags, args, 0)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() != 0 {
+	if len(args) != 0 {
 		return errors.New("usage: arc-dm ls [flags]")
 	}
 	all, err := conversations(ctx, s.arc)
@@ -155,17 +177,18 @@ func list(ctx context.Context, args []string) error {
 // open prints one conversation, and marks its messages read.
 func open(ctx context.Context, args []string) error {
 	flags, s := newFlags("open")
-	if err := flags.Parse(args); err != nil {
+	args, err := parse(flags, args, 1)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() != 1 {
+	if len(args) != 1 {
 		return errors.New("usage: arc-dm open [flags] <peer>")
 	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
 		return err
 	}
-	c, err := find(all, flags.Arg(0))
+	c, err := find(all, args[0])
 	if err != nil {
 		return err
 	}
@@ -200,22 +223,23 @@ func open(ctx context.Context, args []string) error {
 func send(ctx context.Context, args []string) error {
 	flags, s := newFlags("send")
 	replyTo := flags.String("reply", "", "reply to the message with this id, or the start of it")
-	if err := flags.Parse(args); err != nil {
+	args, err := parse(flags, args, 1)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() < 1 {
+	if len(args) < 1 {
 		return errors.New("usage: arc-dm send [flags] <peer> [text...]")
 	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
 		return err
 	}
-	c, err := find(all, flags.Arg(0))
+	c, err := find(all, args[0])
 	if err != nil {
 		return err
 	}
 	if *replyTo == "" {
-		text, err := messageText(ctx, flags.Args()[1:])
+		text, err := messageText(ctx, args[1:])
 		if err != nil {
 			return err
 		}
@@ -235,7 +259,7 @@ func send(ctx context.Context, args []string) error {
 	if parent.conv.key() != c.key() {
 		return fmt.Errorf("%s is in another conversation: arc-dm reply %s sends to its members", messages.short(parent.ID), messages.short(parent.ID))
 	}
-	text, err := messageText(ctx, flags.Args()[1:])
+	text, err := messageText(ctx, args[1:])
 	if err != nil {
 		return err
 	}
@@ -245,10 +269,11 @@ func send(ctx context.Context, args []string) error {
 // reply sends a reply to a message, to each member of its conversation.
 func reply(ctx context.Context, args []string) error {
 	flags, s := newFlags("reply")
-	if err := flags.Parse(args); err != nil {
+	args, err := parse(flags, args, 1)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() < 1 {
+	if len(args) < 1 {
 		return errors.New("usage: arc-dm reply [flags] <id> [text...]")
 	}
 	all, err := conversations(ctx, s.arc)
@@ -256,11 +281,11 @@ func reply(ctx context.Context, args []string) error {
 		return err
 	}
 	messages := index(all)
-	parent, err := messages.lookup(flags.Arg(0))
+	parent, err := messages.lookup(args[0])
 	if err != nil {
 		return err
 	}
-	text, err := messageText(ctx, flags.Args()[1:])
+	text, err := messageText(ctx, args[1:])
 	if err != nil {
 		return err
 	}
@@ -280,6 +305,12 @@ func sendReply(ctx context.Context, arc arcprogram.Arc, messages *store, parent 
 // messageText is the words of a command, or standard input when there are
 // none.
 func messageText(ctx context.Context, words []string) (string, error) {
+	if len(words) > 0 && slices.ContainsFunc([]string{"-reply", "--reply"}, func(flag string) bool {
+		return words[0] == flag || strings.HasPrefix(words[0], flag+"=")
+	}) {
+		// A flag that came too late would go out as text.
+		return "", errors.New("the text starts with -reply: give the flag before the text, or the text on standard input")
+	}
 	text := strings.Join(words, " ")
 	if len(words) == 0 {
 		body, err := readAll(ctx, os.Stdin)
@@ -317,18 +348,19 @@ func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
 // read marks the messages of one conversation, or of all, read.
 func read(ctx context.Context, args []string) error {
 	flags, s := newFlags("read")
-	if err := flags.Parse(args); err != nil {
+	args, err := parse(flags, args, 1)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() > 1 {
+	if len(args) > 1 {
 		return errors.New("usage: arc-dm read [flags] [peer]")
 	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
 		return err
 	}
-	if flags.NArg() == 1 {
-		c, err := find(all, flags.Arg(0))
+	if len(args) == 1 {
+		c, err := find(all, args[0])
 		if err != nil {
 			return err
 		}
@@ -342,10 +374,11 @@ func read(ctx context.Context, args []string) error {
 func watch(ctx context.Context, args []string) error {
 	flags, s := newFlags("watch")
 	notify := flags.String("notify", "", "a program to run for each message, as <program> <sender> <text>; none for no notification (default: the notifications of this system)")
-	if err := flags.Parse(args); err != nil {
+	args, err := parse(flags, args, 0)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() != 0 {
+	if len(args) != 0 {
 		return errors.New("usage: arc-dm watch [flags]")
 	}
 	notifier := notifierOf(*notify)

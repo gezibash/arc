@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gezibash/arc/sdk/arcprogram/arcprogramtest"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // shortID is the short id that a conversation of arc-dm open shows in the
@@ -159,6 +162,7 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 	parents := []string{
 		"\x1b[2Jred\u202eevil\u200b" + strings.Repeat("x", 5000) + "\nsecond line",
 		"\n\n\u200b\u2060\nlast",
+		strings.Repeat("\u6f22", 100),
 	}
 	for _, parent := range parents {
 		mallory.dm("send", bob.key, parent)
@@ -177,8 +181,8 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 	}
 	var got, nearQuote []string
 	for _, line := range quotes(conv) {
-		if n := utf8.RuneCountInString(line); n > 72 {
-			t.Errorf("a quote line holds %d characters, want at most 72: %q", n, line)
+		if n := terminal.Width(line); n > 72 {
+			t.Errorf("a quote line takes %d columns, want at most 72: %q", n, line)
 		}
 		if strings.Contains(line, "(not on this device)") {
 			nearQuote = append(nearQuote, line)
@@ -186,8 +190,17 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 			got = append(got, line)
 		}
 	}
-	if len(got) != 2 {
-		t.Fatalf("the quote lines are %q, want two", got)
+	if len(got) != 3 {
+		t.Fatalf("the quote lines are %q, want three", got)
+	}
+	// Each ideograph takes two columns. The head and the name take one for
+	// each character, and the cut leaves one column for the ellipsis.
+	head := "\u21b3 " + bob.inboxID(parents[2])[:6] + "  "
+	prefix := mallory.name + ": "
+	n := (72 - utf8.RuneCountInString(head) - len(prefix) - 1) / 2
+	want := head + prefix + strings.Repeat("\u6f22", n) + "\u2026"
+	if !slices.Contains(got, want) {
+		t.Errorf("the quote lines are %q, want %q for 100 ideographs", got, want)
 	}
 	if want := "↳ " + held[:12] + "…  (not on this device)"; len(nearQuote) != 1 || nearQuote[0] != want {
 		t.Errorf("the quote of the near id is %q, want %q", nearQuote, want)
@@ -445,4 +458,86 @@ func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = watch.Wait()
+}
+
+// A flag after the peer is a flag, not text: Go's flag package stops at the
+// first argument that is not a flag. A text that still starts with -reply
+// is refused, and a word with a dash later in a text stays text.
+func TestFlagsAfterThePeer(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "bring the map")
+	bob.sync()
+	short := shortID(t, bob.dm("open", ada.name), "bring the map")
+	if got, want := bob.dm("send", ada.name, "-reply", short, "yes"), "replied to "+short+" in "+ada.name+"\n"; got != want {
+		t.Errorf("send <peer> -reply printed %q, want %q", got, want)
+	}
+	if out := bob.refused("send", ada.name, "--", "-reply", short, "no"); !strings.Contains(out, "the text starts with -reply") {
+		t.Errorf("a text that starts with -reply: %s", out)
+	}
+	bob.dm("send", ada.name, "I", "think", "-v", "is", "fine")
+	ada.sync()
+	conv := ada.dm("open", bob.name)
+	if !strings.Contains(conv, "\n\u21b3 "+short+"  you: bring the map\n  yes\n") || strings.Contains(conv, "-reply") || !strings.Contains(conv, "\n  I think -v is fine\n") {
+		t.Errorf("ada's conversation:\n%s", conv)
+	}
+}
+
+// arc message send --reply checks the id, and that this machine holds it,
+// before it reads standard input.
+func TestArcChecksAReplyBeforeTheText(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	for _, c := range []struct{ reply, want string }{
+		{"zz", "64 lowercase hex digits"},
+		{strings.Repeat("7a", 32), "no message " + strings.Repeat("7a", 32) + " on this device"},
+	} {
+		command := bob.arc.Command(context.Background(), "message", "send", "--reply", c.reply, ada.key)
+		stdin, open, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out lockedBuffer
+		command.Stdin, command.Stdout, command.Stderr = stdin, &out, &out
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if !finish(t, command) {
+			t.Errorf("arc message send --reply %s waited for standard input:\n%s", c.reply, out.String())
+		} else if !strings.Contains(out.String(), c.want) {
+			t.Errorf("arc message send --reply %s printed %q, want %q", c.reply, out.String(), c.want)
+		}
+		open.Close()
+		stdin.Close()
+	}
+}
+
+// The index of 200,000 messages takes one sort, not an insert for each
+// id, whose time grows with the square of the number of messages.
+func TestIndexIsNotQuadratic(t *testing.T) {
+	entries := make([]entry, 200000)
+	for i := range entries {
+		entries[i].ID = fmt.Sprintf("%064x", uint64(len(entries)-i)*2654435761)
+	}
+	start := time.Now()
+	s := index([]conversation{{Peers: []string{"k"}, Entries: entries}})
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("the index of %d messages took %v", len(entries), took)
+	}
+	if len(s.ids) != len(entries) || !slices.IsSorted(s.ids) {
+		t.Errorf("the index holds %d ids, sorted %v", len(s.ids), slices.IsSorted(s.ids))
+	}
+}
+
+// A parent of only spaces, such as U+3000, quotes as (blank). arc refuses
+// to send one, so no relay test can make it; another client can.
+func TestABlankParentQuotesAsBlank(t *testing.T) {
+	for in, want := range map[string]string{
+		"\u3000\u3000\u3000": "(blank)",
+		" \n\t\n":            "(blank)",
+		"\u3000\u3000\nreal": "real",
+		"real\nmore":         "real \u2026",
+	} {
+		if got := firstLine(in); got != want {
+			t.Errorf("firstLine(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
