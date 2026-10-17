@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/gezibash/arc/sdk/provider"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // Main runs an app service program on the process streams. An interrupt or
@@ -20,7 +21,7 @@ func Main(name string, run func(context.Context, provider.Options) error) {
 	stopped := ctx.Err() != nil
 	stop()
 	if err != nil && !stopped {
-		fmt.Fprintln(os.Stderr, name+":", err)
+		fmt.Fprintln(os.Stderr, name+":", terminal.EscapeLine(err.Error()))
 		os.Exit(1)
 	}
 }

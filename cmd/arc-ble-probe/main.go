@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/adapters/transport/ble"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 func main() {
@@ -28,7 +29,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := ble.Run(ctx, o); err != nil {
-		fmt.Fprintln(os.Stderr, "arc-ble-probe:", err)
+		fmt.Fprintln(os.Stderr, "arc-ble-probe:", terminal.EscapeLine(err.Error()))
 		os.Exit(1)
 	}
 }

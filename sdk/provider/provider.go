@@ -56,6 +56,7 @@ import (
 
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/wire"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // DefaultMaxLineBytes caps one input line. A JSON string grows about six
@@ -517,13 +518,13 @@ func (r *runtime) answer(requestID any, reply string, err error) {
 
 	line, marshalErr := json.Marshal(response)
 	if marshalErr != nil {
-		fmt.Fprintf(r.options.Log, "provider: the answer does not encode: %v\n", marshalErr)
+		fmt.Fprintf(r.options.Log, "provider: the answer does not encode: %s\n", terminal.EscapeLine(marshalErr.Error()))
 		return
 	}
 	ctx, cancel := wire.Budget(r.out.ctx, 0)
 	defer cancel()
 	if err := r.out.write(ctx, line); err != nil {
-		fmt.Fprintf(r.options.Log, "provider: the answer did not reach ARC: %v\n", err)
+		fmt.Fprintf(r.options.Log, "provider: the answer did not reach ARC: %s\n", terminal.EscapeLine(err.Error()))
 	}
 }
 
@@ -539,7 +540,7 @@ func safeError(log io.Writer, err error) string {
 	if safe, ok := errors.AsType[Error](err); ok {
 		return string(safe)
 	}
-	fmt.Fprintf(log, "provider: %v\n", err)
+	fmt.Fprintf(log, "provider: %s\n", terminal.EscapeLine(fmt.Sprint(err)))
 	return string(ErrInternal)
 }
 

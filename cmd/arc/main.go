@@ -500,7 +500,7 @@ func serveCommand() *cobra.Command {
 					defer func() { _ = conn.Close() }()
 					go func() {
 						if err := stun.Serve(conn); err != nil {
-							fmt.Fprintln(os.Stderr, "the STUN server stopped:", err)
+							fmt.Fprintln(os.Stderr, "the STUN server stopped:", terminal.EscapeLine(err.Error()))
 						}
 					}()
 					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN on udp://%s\n", conn.LocalAddr())
