@@ -11,9 +11,11 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/atomicfile"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // entry is one message of a conversation, received or sent.
@@ -27,6 +29,8 @@ type entry struct {
 	// pending, delivered or expired, or for a group "delivered to 1 of 2".
 	Mine  bool
 	State string
+	// ReplyTo is the id of the parent of a reply, as its sender chose it.
+	ReplyTo string
 }
 
 // conversation is the messages between this citizen and a set of peers,
@@ -101,7 +105,7 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 			// An arc older than group messages prints no members.
 			members = []string{m.From}
 		}
-		add(members, entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name})
+		add(members, entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name, ReplyTo: m.ReplyTo})
 	}
 	// A group message has one sent line for each recipient, with one id.
 	var sentOrder []string
@@ -124,7 +128,7 @@ func conversations(ctx context.Context, arc arcprogram.Arc) ([]conversation, err
 		for i, s := range lines {
 			states[i] = s.State
 		}
-		add(members, entry{ID: id, At: lines[0].At, Text: lines[0].Text, Mine: true, State: combined(states)})
+		add(members, entry{ID: id, At: lines[0].At, Text: lines[0].Text, Mine: true, State: combined(states), ReplyTo: lines[0].ReplyTo})
 	}
 
 	var out []conversation
@@ -421,4 +425,122 @@ func markRead(dir string, convs ...conversation) error {
 		return err
 	}
 	return atomicfile.Write(readPath(dir), data, 0o600)
+}
+
+// held is one message of this machine, and the conversation that holds it.
+type held struct {
+	entry
+	conv conversation
+}
+
+// store holds the messages of this machine by id: each conversation, sent
+// and received. A reply shows the text of its parent only from here, never
+// from the reply.
+type store struct {
+	byID map[string]held
+	// ids are the ids, sorted, for the short ids.
+	ids []string
+}
+
+func index(all []conversation) *store {
+	s := &store{byID: map[string]held{}}
+	for _, c := range all {
+		for _, e := range c.Entries {
+			s.add(e, c)
+		}
+	}
+	return s
+}
+
+func (s *store) add(e entry, c conversation) {
+	if _, ok := s.byID[e.ID]; ok {
+		return
+	}
+	s.byID[e.ID] = held{entry: e, conv: c}
+	i, _ := slices.BinarySearch(s.ids, e.ID)
+	s.ids = slices.Insert(s.ids, i, e.ID)
+}
+
+// short is the start of an id that names one message of the store: six hex
+// digits, or more when another message starts with the same six.
+func (s *store) short(id string) string {
+	n := 0
+	i, _ := slices.BinarySearch(s.ids, id)
+	for _, j := range []int{i - 1, i, i + 1} {
+		if j >= 0 && j < len(s.ids) && s.ids[j] != id {
+			n = max(n, commonPrefix(id, s.ids[j]))
+		}
+	}
+	return id[:min(len(id), max(6, n+1))]
+}
+
+func commonPrefix(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
+// lookup finds the message whose id starts with prefix: at least four hex
+// digits. It refuses a prefix that names more than one message.
+func (s *store) lookup(prefix string) (held, error) {
+	if len(prefix) < 4 || len(prefix) > 64 || strings.Trim(prefix, "0123456789abcdef") != "" {
+		return held{}, fmt.Errorf("%q is not a message id: give at least 4 of its hex digits, as arc-dm open shows them", prefix)
+	}
+	i, _ := slices.BinarySearch(s.ids, prefix)
+	var matches []string
+	for ; i < len(s.ids) && strings.HasPrefix(s.ids[i], prefix); i++ {
+		matches = append(matches, s.ids[i])
+	}
+	switch len(matches) {
+	case 0:
+		return held{}, fmt.Errorf("no message %s: run arc-dm open to see the ids", prefix)
+	case 1:
+		return s.byID[matches[0]], nil
+	}
+	return held{}, fmt.Errorf("%q names %d messages: give more digits", prefix, len(matches))
+}
+
+// quoteWidth is the most characters of a quote line.
+const quoteWidth = 72
+
+// quote is the line that shows the parent of a reply in the conversation
+// c, or "" for a message that is no reply. The text comes from the store,
+// and only from the same conversation: a sender can name any id. The line
+// starts at column 0, where no line of the text of a message can start.
+func (s *store) quote(e entry, c conversation) string {
+	if e.ReplyTo == "" {
+		return ""
+	}
+	head := "↳ " + s.short(e.ReplyTo) + "  "
+	parent, ok := s.byID[e.ReplyTo]
+	switch {
+	case !ok:
+		return head + "(not on this device)"
+	case parent.conv.key() != c.key():
+		return head + "(in another conversation)"
+	}
+	who := cmp.Or(parent.From, parent.conv.Name)
+	if parent.Mine {
+		who = "you"
+	}
+	head += who + ": "
+	return head + terminal.EscapeLineCut(firstLine(parent.Text), max(20, quoteWidth-utf8.RuneCountInString(head)))
+}
+
+// firstLine is the first line of text that is not empty, and " …" when
+// text after it is left out.
+func firstLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.TrimSpace(strings.Join(lines[i+1:], "\n")) != "" {
+			return line + " …"
+		}
+		return line
+	}
+	return ""
 }

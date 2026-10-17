@@ -3,8 +3,8 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/
-- Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
 reads the JSON lines that `arc message` prints. The package
@@ -24,6 +24,7 @@ This spec defines:
 - the JSON lines of `arc message`: the received messages, the sent
   messages, and the queued message,
 - how a client program sends a message and watches for messages,
+- how a client program sends a reply, and shows the parent of a reply,
 - the relay on this machine that the tests of a client program use,
 - how arc and a client program show the text of a sender on a terminal.
 
@@ -80,6 +81,7 @@ message line for each message that arc holds from a stranger
 | `at` | The `created_at` of the rumor, in RFC 3339, in UTC. It is the clock of the sender. |
 | `text` | The content of the message. |
 | `members` | The public keys of the members: the sender first, then the recipients in the order of the sender. |
+| `reply_to` | The id of the parent of a reply: 64 hex digits, as the sender chose it. Absent for a plain message. |
 
 ### 3.3 The sent line
 
@@ -96,6 +98,7 @@ message has one sent line for each recipient, with the same `id`.
 | `text` | The content of the message. |
 | `state` | `pending`, `delivered` or `expired`, for this recipient. |
 | `members` | The public keys of the members: this citizen first, then each recipient. |
+| `reply_to` | The id of the parent of a reply. Absent for a plain message. |
 
 The outbox also holds requests, and private events of the kinds of apps.
 `arc message outbox --json` MUST NOT print them. It prints kind 14 only.
@@ -103,8 +106,8 @@ The outbox also holds requests, and private events of the kinds of apps.
 ### 3.4 The queued line
 
 `arc message send --json` prints one queued line, with the fields `id`,
-`to`, `state` and `members`. For a group message, `to` is the first
-recipient.
+`to`, `state` and `members`, and `reply_to` for a reply. For a group
+message, `to` is the first recipient.
 
 ### 3.5 Changes to a line
 
@@ -129,6 +132,12 @@ recipient.
   marks (classes Mn and Me), the Hangul fillers U+115F, U+1160, U+3164 and
   U+FFA0, and the blank Braille pattern U+2800:
   `a message holds at least one character that a person can see`.
+- `SendReply` sends a reply: `arc message send --json --reply <id>`. The
+  id MUST be 64 lowercase hex digits; the package refuses another id
+  before it runs arc. arc refuses a parent that this machine does not
+  hold, and recipients that are not the members of the parent, without
+  this citizen ([the delivery spec](../delivery/SPEC.md), section 3.4,
+  "Replies").
 
 ### 3.7 Watching
 
@@ -245,6 +254,33 @@ agent, or make `file.exe` look like `file.png`.
   `arc: the output held characters that could change the terminal or hide
   text; arc removed them`.
 
+### 3.10 Showing a reply
+
+A sender chooses the `reply_to` of its message, and can name any id: a
+message that does not exist, a message that the reader never got, or a
+message of another conversation. The text and the author of the parent
+are not on the wire.
+
+- A client program MUST take the text and the author of a parent only
+  from a message of its own store: the received and the sent messages of
+  this machine. It MUST NOT take a quote from the text of the reply.
+- It MUST show the text of the parent only when the parent has the same
+  members as the reply. Otherwise it shows the id of the parent only.
+- A parent that the store does not hold shows its id only.
+- `arc-dm` shows the parent on one quote line, between the header and the
+  text of the reply: `↳`, the short id, the author, and the first line of
+  the parent that is not empty, as `terminal.EscapeLineCut` gives it, with
+  the line at most 72 characters. The quote line starts at column 0, where
+  no line of a text starts (section 3.9), so a quote typed into a text
+  never looks like a quote. Its other forms are
+  `↳ <id>  (not on this device)` and `↳ <id>  (in another conversation)`.
+- `arc message inbox` and `arc message watch` add `reply to` and the first
+  6 digits of the parent to the header of a reply. They show no quote.
+- A build of arc with the tag `arctest` has the flag
+  `arc message send --arctest-tag`, which adds a tag and skips the checks
+  of a reply, so the tests of a client program can send a hostile reply. A
+  release build refuses the flag.
+
 ## 4. Behavior
 
 ### 4.1 Reading the mail of this machine
@@ -286,6 +322,9 @@ agent, or make `file.exe` look like `file.png`.
 | A line that is not JSON | The package stops. | A failure that names the command. |
 | A recipient that is not a key | The package refuses it before it runs arc. | `a recipient is a public key of 64 hex digits`. |
 | A text that a person cannot see, such as only spaces or U+200B | arc refuses it, and sends nothing. | `a message holds at least one character that a person can see`. |
+| A reply to a message that this machine does not hold | arc refuses it, and sends nothing. | `mail: no message <id> on this device`. |
+| A reply to other members than the members of the parent | arc refuses it, and sends nothing. | `mail: the reply goes to the members of its parent`. |
+| A reply, with an arc older than replies | arc refuses the flag. | `unknown flag: --reply`. |
 
 ## 6. Security
 
@@ -295,6 +334,10 @@ agent, or make `file.exe` look like `file.png`.
 - The text of a message comes from its sender. A client program that shows
   it on a terminal MUST escape it as section 3.9 says, so a sender cannot
   move the cursor, change the terminal, reorder a line, or forge a line.
+- The `reply_to` of a line comes from the sender, and can name any id. A
+  client program that shows the parent MUST follow section 3.10, so a
+  sender cannot put words in the mouth of another member, or move the
+  text of one conversation into another.
 - The petname comes from the key, not from the sender. Two keys can have
   the same petname. A client program that selects a peer by name MUST
   refuse a name that selects more than one peer.
@@ -310,6 +353,10 @@ agent, or make `file.exe` look like `file.png`.
   this spec, with the same fields.
 - `arc message outbox --json` is new. A client program that reads the
   outbox needs an arc of this version or newer.
+- `reply_to` is a new field of each line. An older arc prints none, so a
+  client program shows no quote. An older client program ignores it, as
+  section 3.5 requires, and shows a reply as a plain message. `SendReply`
+  needs an arc with `--reply`. `Send` does not change.
 - `members` is a new field of each line. An older arc prints none, so the
   package gives an empty list. A client program then takes the sender and
   this citizen, or this citizen and the recipient, as the members.
@@ -357,6 +404,18 @@ agent, or make `file.exe` look like `file.png`.
 | `TestNoticeIsCutAndEscaped` | arc shows a relay NOTICE on one line, escaped, and cut to 300 characters of output. |
 | `TestTextOfOtherPartiesIsEscapedAtThePrint` | A check of the source of arc, the SDK and the apps: each print or write of an error, or of a field that another party fills, such as `Message`, `ID` or `State`, goes through `sdk/terminal` or a function that returns the result of an escape. A print of text that arc writes itself carries `//arc:raw-ok` and a reason. Each slog logger uses `slog.TextHandler`, inline or held in a variable; no code logs with the default slog logger or imports `log` or `log/slog` under another name. |
 | `TestTheEscapeCheckFindsRawPrints` | The check finds each print of a package of hostile prints, and no escaped print. |
+| `TestReplies` | `SendReply` sends a reply across a relay. The queued line, the message line and the sent line name the parent; a plain message names none. A parent that is not an id is refused before arc runs. |
+| `TestAReleaseBuildHasNoTestTags` | A release build of arc refuses `--arctest-tag`. |
+| `TestAReplyQuotesItsParent` | `arc-dm reply` with 4 digits of a short id, and `arc-dm send -reply`, send a reply; the confirmation names the conversation. The other side shows the quote line at column 0 from its own sent text. `arc message inbox` names the parent. |
+| `TestAReplyInAGroup` | A reply to a group message goes to each member of the group, and not to a direct conversation. The confirmation names each member. |
+| `TestAQuoteComesFromTheStore` | A quote line typed into a text shows inside the text, at column 2. The one line at column 0 is the parent from the store. |
+| `TestAHostileParentIsOneEscapedLine` | A parent with ESC, U+202E, U+200B and a first line of 5,000 characters gives one escaped quote line of at most 72 characters. A parent that starts with empty lines quotes its first line with text. |
+| `TestAReplyToAnUnheldMessageShowsTheIdOnly` | A reply to an id that the reader does not hold shows `(not on this device)`. |
+| `TestAReplyAcrossConversationsShowsNoText` | A direct reply that names a group message shows `(in another conversation)` and no text of the group. arc refuses to send such a reply. |
+| `TestATagThatIsNoReplyShowsAPlainMessage` | Two `e` tags, or an id in capitals, give a plain message. A relay hint after the id still gives a reply. |
+| `TestReplyRefusals` | arc-dm refuses an id that is not one, an id of no message, and `send -reply` into another conversation. arc refuses an unheld parent and an id in capitals. Nothing is sent. |
+| `TestAWatchQuotesTheParent` | `arc-dm watch` shows the quote of a reply to a message sent after the watch started, and the id only for an unheld parent. |
+| `TestShortIDs` | A short id grows past 6 digits where two ids share them, and a prefix of two messages is refused. |
 | `TestSlogTextHandlerQuotesHostileText` | `slog.TextHandler` writes ESC, an override, an invisible character, a tag, a newline and U+2028 of a message, a value and an error as escapes. |
 
 The tests of the dm app, `go test ./apps/dm/...`, use this package and the

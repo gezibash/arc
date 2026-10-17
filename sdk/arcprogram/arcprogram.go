@@ -88,6 +88,10 @@ type Message struct {
 	// A direct message has two. An arc older than group messages prints
 	// none.
 	Members []string `json:"members"`
+	// ReplyTo is the id of the message that this one replies to, or empty.
+	// The sender chose it: it can name any id. Show the text of the parent
+	// only from a message of this machine, in the same conversation.
+	ReplyTo string `json:"reply_to"`
 }
 
 // Sent is one message that this citizen sent. A group message has one Sent
@@ -104,6 +108,8 @@ type Sent struct {
 	// Members are the public keys of this citizen, then of each
 	// recipient.
 	Members []string `json:"members"`
+	// ReplyTo is the id of the message that this one replies to, or empty.
+	ReplyTo string `json:"reply_to"`
 }
 
 // Queued is a message that arc put in the outbox. To is the first
@@ -113,6 +119,7 @@ type Queued struct {
 	To      string   `json:"to"`
 	State   string   `json:"state"`
 	Members []string `json:"members"`
+	ReplyTo string   `json:"reply_to"`
 }
 
 // Inbox returns the messages that this citizen received, oldest first. It
@@ -131,6 +138,21 @@ func (a Arc) Outbox(ctx context.Context) ([]Sent, error) {
 // relays at once. With more than one recipient, it is one group message:
 // each recipient sees the others.
 func (a Arc) Send(ctx context.Context, to []string, text string) (Queued, error) {
+	return a.send(ctx, to, text)
+}
+
+// SendReply sends a message that replies to the message with the id
+// parent, as Send does. The parent must be a message of this machine, and
+// to must be its members other than this citizen. An arc older than
+// replies refuses the flag --reply.
+func (a Arc) SendReply(ctx context.Context, to []string, parent, text string) (Queued, error) {
+	if !IsKey(parent) {
+		return Queued{}, errors.New("the id of a message is 64 lowercase hex digits")
+	}
+	return a.send(ctx, to, text, "--reply", parent)
+}
+
+func (a Arc) send(ctx context.Context, to []string, text string, flags ...string) (Queued, error) {
 	if len(to) == 0 {
 		return Queued{}, errors.New("a message needs a recipient")
 	}
@@ -141,7 +163,8 @@ func (a Arc) Send(ctx context.Context, to []string, text string) (Queued, error)
 	}
 	// The text goes on standard input, so a text that starts with a dash
 	// is not a flag.
-	out, err := a.output(ctx, strings.NewReader(text), "message", "send", "--json", strings.Join(to, ","))
+	args := append([]string{"message", "send", "--json"}, flags...)
+	out, err := a.output(ctx, strings.NewReader(text), append(args, strings.Join(to, ","))...)
 	if err != nil {
 		return Queued{}, err
 	}

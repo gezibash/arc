@@ -20,6 +20,7 @@
 package mail
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,6 +82,9 @@ type Outgoing struct {
 	// the reply to a request, opened from its seal. Neither is stored.
 	Text  string     `json:"-"`
 	Reply call.Reply `json:"-"`
+	// ReplyTo is the parent of a message that replies to one, from the
+	// sender's own seal. It is not stored.
+	ReplyTo string `json:"-"`
 }
 
 // State says where a message is.
@@ -239,6 +243,41 @@ func (m *Mail) Send(ctx context.Context, to []nostr.PubKey, text string) ([]Outg
 		tags = append(tags, nostr.Tag{"p", pk.Hex()})
 	}
 	return m.SendRumor(ctx, to, MessageKind, text, tags)
+}
+
+// SendReply sends a message that replies to a parent, as Send does. The
+// rumor holds an e tag that names the parent. The parent must be a message
+// that this citizen received or sent, and the reply must have its members.
+func (m *Mail) SendReply(ctx context.Context, to []nostr.PubKey, parent nostr.ID, text string) ([]Outgoing, error) {
+	if err := m.checkRecipients(to); err != nil {
+		return nil, err
+	}
+	rumors, err := m.Rumors(ctx, []nostr.Kind{MessageKind})
+	if err != nil {
+		return nil, err
+	}
+	i := slices.IndexFunc(rumors, func(r nostr.Event) bool { return r.ID == parent })
+	if i < 0 {
+		return nil, fmt.Errorf("mail: no message %s on this device", parent.Hex())
+	}
+	if !sameMembers(Members(rumors[i]), append([]nostr.PubKey{m.key.PublicKey()}, to...)) {
+		return nil, errors.New("mail: the reply goes to the members of its parent")
+	}
+	tags := make(nostr.Tags, 0, len(to)+1)
+	for _, pk := range to {
+		tags = append(tags, nostr.Tag{"p", pk.Hex()})
+	}
+	tags = append(tags, nostr.Tag{"e", parent.Hex()})
+	return m.SendRumor(ctx, to, MessageKind, text, tags)
+}
+
+// sameMembers says whether two lists hold the same keys, in any order.
+func sameMembers(a, b []nostr.PubKey) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	compare := func(x, y nostr.PubKey) int { return bytes.Compare(x[:], y[:]) }
+	slices.SortFunc(a, compare)
+	slices.SortFunc(b, compare)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
 }
 
 // SendRumor seals one private event of any kind to each recipient, as Send
@@ -1087,6 +1126,41 @@ type Message struct {
 	Members []nostr.PubKey
 	At      time.Time
 	Text    string
+	// ReplyTo is the id of the parent of a reply, or empty.
+	ReplyTo string
+}
+
+// ReplyTo returns the id of the message that a message replies to, in hex,
+// or "" for a plain message. A reply holds exactly one e tag, and its second
+// element is 64 lowercase hex digits. Further elements, such as the relay
+// hint of other NIP-17 clients, do not count.
+func ReplyTo(rumor nostr.Event) string {
+	parent, n := "", 0
+	for _, tag := range rumor.Tags {
+		if len(tag) == 0 || tag[0] != "e" {
+			continue
+		}
+		if n++; n == 1 && len(tag) > 1 {
+			parent = tag[1]
+		}
+	}
+	if n != 1 || !isHexID(parent) {
+		return ""
+	}
+	return parent
+}
+
+// isHexID says whether text is 64 lowercase hex digits.
+func isHexID(text string) bool {
+	if len(text) != 64 {
+		return false
+	}
+	for _, c := range text {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Members returns the members of a message: its author, then each key that
@@ -1135,6 +1209,7 @@ func (m *Mail) Inbox(ctx context.Context) ([]Message, error) {
 		out = append(out, Message{
 			ID: rumor.ID.Hex(), From: rumor.PubKey, Members: Members(rumor),
 			At: time.Unix(int64(rumor.CreatedAt), 0).UTC(), Text: rumor.Content,
+			ReplyTo: ReplyTo(rumor),
 		})
 	}
 
@@ -1217,6 +1292,7 @@ func (m *Mail) Outbox(ctx context.Context) ([]Outgoing, error) {
 			return nil, err
 		}
 		out[i].Text = rumor.Content
+		out[i].ReplyTo = ReplyTo(rumor)
 		out[i].Reply, err = m.replyOf(ctx, out[i])
 		if err != nil {
 			return nil, err

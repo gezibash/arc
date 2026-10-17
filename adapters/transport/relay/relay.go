@@ -79,6 +79,13 @@ var reuseWait = 5 * time.Second
 // as in a sync, do not pay for the check.
 var idleCheck = 10 * time.Second
 
+// challengeWait bounds the wait for the NIP-42 challenge of a relay. A relay
+// that rings sends it on each new connection (docs/rings/SPEC.md section
+// 3.3), and a relay sends it with a refusal that asks for authentication.
+// Under load it can come more than 500 ms later. 3 s is a fifth of Timeout,
+// so a read or send that gets no challenge still has time to finish.
+var challengeWait = 3 * time.Second
+
 // Relay is one relay, by its WebSocket URL. A Relay opens a connection for
 // each call. A Relay from New keeps one connection, and each of its calls
 // uses it.
@@ -479,8 +486,9 @@ func (r Relay) publishAsCitizen(ctx context.Context, event nostr.Event) error {
 	return conn.Publish(ctx, event)
 }
 
-// authenticate answers the relay's challenge. The challenge can arrive just
-// after the refusal that asked for it, so authenticate waits for it briefly.
+// authenticate answers the relay's challenge. The challenge can arrive after
+// the connection or the refusal that asked for it, so authenticate waits for
+// it up to challengeWait.
 // On the kept connection, one call answers, and the calls that wait for it
 // then use its answer.
 func (r Relay) authenticate(ctx context.Context, conn *nostr.Relay) error {
@@ -538,11 +546,14 @@ func (r Relay) giveToken(ctx context.Context, conn *nostr.Relay, token nostr.Eve
 	return nil
 }
 
-// challenge answers the challenge of the relay on conn with signer.
+// challenge answers the challenge of the relay on conn with signer. It
+// waits up to challengeWait for the challenge to arrive. The library gives
+// no signal when the challenge arrives, so challenge asks again every 25 ms.
 func (r Relay) challenge(ctx context.Context, conn *nostr.Relay, signer nostr.Signer) error {
-	var err error
-	for range 20 {
-		if err = conn.Auth(ctx, signer.SignEvent); err == nil || !strings.Contains(err.Error(), "no challenge") {
+	deadline := time.Now().Add(challengeWait)
+	for {
+		err := conn.Auth(ctx, signer.SignEvent)
+		if err == nil || !strings.Contains(err.Error(), "no challenge") || time.Now().After(deadline) {
 			return err
 		}
 		select {
@@ -551,7 +562,6 @@ func (r Relay) challenge(ctx context.Context, conn *nostr.Relay, signer nostr.Si
 			return ctx.Err()
 		}
 	}
-	return err
 }
 
 // beforeRead authenticates on conn before a read of mail, when the relay

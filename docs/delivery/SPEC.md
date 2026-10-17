@@ -170,6 +170,29 @@ each recipient separately. A message of kind 14 names each recipient with a
 a message MUST refuse it if no `p` tag names the recipient. [The group
 messages spec](../groups/SPEC.md) defines the rules.
 
+#### Replies
+
+A reply is a message of kind 14 that names its parent with an `e` tag, as
+NIP-17 defines it.
+
+- A reply MUST hold exactly one tag `["e", "<parent id>"]`, with the rumor
+  id of the parent in 64 lowercase hex digits. arc writes no relay hint and
+  no marker.
+- A sender MUST refuse a reply to a message that it does not hold, and a
+  reply whose members are not the members of the parent.
+- A reader takes the second element of the one `e` tag, and ignores the
+  elements after it. A message with no `e` tag, more than one, or a value
+  that is not 64 lowercase hex digits is a plain message. A reader MUST NOT
+  refuse it.
+- The tag is part of the rumor, so it is part of the rumor id and of what
+  the seal encrypts. A relay or a courier cannot change it. The sender can
+  name any id, so a reader shows the parent only from its own store
+  ([the client programs spec](../clients/SPEC.md), section 3.10).
+- The tag adds 73 bytes to the JSON of the rumor, inside the limit below.
+
+`TestAReplyNamesItsParent`, `TestASendReplyChecksItsParent` and
+`TestReplyToReadsOneETag` in `core/mail` prove these rules.
+
 #### The size of mail
 
 Mail is one gift wrap of kind 1059. The author MUST NOT split it into parts.
@@ -1142,6 +1165,17 @@ in the transaction that opens the database.
 - `TestAnOldOutboxMovesToTheNewKeys` opens the mail database of a sender
   of v0.31.0. [The group messages spec](../groups/SPEC.md), section 7,
   has the details.
+
+### 7.7 Replies
+
+The `e` tag of a reply is new in kind 14 (section 3.4). Kind 14 stays as
+it is, and the kind registry needs no new row.
+
+- An older arc reads the author, the `p` tags, the time and the content of
+  a message, and no `e` tag. It shows a reply as a plain message. Nothing
+  fails. `TestAnOlderArcReadsAReplyAsAMessage` in `core/mail` reads a reply
+  with the inbox rule of an older arc.
+- Other NIP-17 clients read the same tag. No test or run uses one.
 
 ## 8. Proof
 
