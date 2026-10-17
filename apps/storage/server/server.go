@@ -33,6 +33,7 @@ import (
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 	wire "github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -211,7 +212,7 @@ func (s *server) HandleRequest(_ context.Context, request provider.Request) (str
 		if errors.Is(err, errNoGrant) {
 			return "", errNotOwner
 		}
-		fmt.Fprintf(s.log, "%.8s: %v\n", request.From, err)
+		fmt.Fprintf(s.log, "%.8s: %s\n", request.From, terminal.EscapeLine(err.Error()))
 		return "", errFailed
 	}
 	select {
@@ -263,20 +264,20 @@ func (s *server) join(request provider.Request) (string, error) {
 	}
 	if j.Citizen != "" {
 		if err := wire.VerifyJoin(j.Citizen, j.Sig, request.From, s.self); err != nil {
-			fmt.Fprintf(s.log, "join of %.8s: %v\n", request.From, err)
+			fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, terminal.EscapeLine(err.Error()))
 			return "", errInvalidRequest
 		}
 	}
 	reply, err := s.store.join(request.From, req.Join, s.rules)
 	if err != nil {
-		fmt.Fprintf(s.log, "join of %.8s: %v\n", request.From, err)
+		fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, terminal.EscapeLine(err.Error()))
 		return "", errFailed
 	}
 	status := reply.Error
 	if reply.Account != nil {
 		status = reply.Account.Status
 	}
-	fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, status)
+	fmt.Fprintf(s.log, "join of %.8s: %s\n", request.From, status) //arc:raw-ok an error code or an account state of this app
 	raw, err := json.Marshal(reply)
 	if err != nil {
 		return "", errFailed
@@ -307,13 +308,13 @@ func (s *server) close(request provider.Request) (string, error) {
 		return "", errNotOwner
 	}
 	if err != nil {
-		fmt.Fprintf(s.log, "close of %.8s: %v\n", request.From, err)
+		fmt.Fprintf(s.log, "close of %.8s: %s\n", request.From, terminal.EscapeLine(err.Error()))
 		return "", errFailed
 	}
 	if reply.Closed {
 		fmt.Fprintf(s.log, "close of %.8s: the account is removed\n", request.From)
 	} else {
-		fmt.Fprintf(s.log, "close of %.8s: %s\n", request.From, reply.Message)
+		fmt.Fprintf(s.log, "close of %.8s: %s\n", request.From, terminal.EscapeLine(reply.Message))
 	}
 	raw, err := json.Marshal(reply)
 	if err != nil {
@@ -328,7 +329,7 @@ func (s *server) close(request provider.Request) (string, error) {
 func (s *server) sweep() {
 	names, err := s.store.closed()
 	if err != nil {
-		fmt.Fprintf(s.log, "the sweep of closed accounts: %v\n", err)
+		fmt.Fprintf(s.log, "the sweep of closed accounts: %s\n", terminal.EscapeLine(err.Error()))
 		return
 	}
 	for _, name := range names {
@@ -339,7 +340,7 @@ func (s *server) sweep() {
 		})
 		switch {
 		case err != nil:
-			fmt.Fprintf(s.log, "account %.8s is closed, and its removal failed: %v\n", name, err)
+			fmt.Fprintf(s.log, "account %.8s is closed, and its removal failed: %s\n", name, terminal.EscapeLine(err.Error()))
 		case removed:
 			fmt.Fprintf(s.log, "account %.8s is closed: its bytes are removed\n", name)
 		}
@@ -413,7 +414,7 @@ func (s *server) grant(request provider.Request) (string, error) {
 	}
 	if active, err := s.store.active(request.From); err != nil || !active {
 		if err != nil {
-			fmt.Fprintf(s.log, "account %.8s: %v\n", request.From, err)
+			fmt.Fprintf(s.log, "account %.8s: %s\n", request.From, terminal.EscapeLine(err.Error()))
 			return "", errFailed
 		}
 		return "", errNotOwner
@@ -422,7 +423,7 @@ func (s *server) grant(request provider.Request) (string, error) {
 		if r, ok := errors.AsType[refusal](err); ok {
 			return "", provider.Error(r.code)
 		}
-		fmt.Fprintf(s.log, "account %.8s: %v\n", request.From, err)
+		fmt.Fprintf(s.log, "account %.8s: %s\n", request.From, terminal.EscapeLine(err.Error()))
 		return "", errFailed
 	}
 	fmt.Fprintf(s.log, "account %.8s: %d device keys have a grant\n", request.From, len(req.Devices))
@@ -492,7 +493,7 @@ func (s *server) connect(account string, req wire.Session, label string) (string
 				}
 				sess := &session{store: s.store, account: account, dc: dc, messages: messages, done: done}
 				if err := sess.serve(); err != nil {
-					fmt.Fprintf(s.log, "%s: %v\n", label, err)
+					fmt.Fprintf(s.log, "%s: %s\n", label, terminal.EscapeLine(err.Error()))
 				}
 			}()
 		})

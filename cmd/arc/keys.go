@@ -356,7 +356,7 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			showSeed(command.ErrOrStderr(), words, passphrase != "")
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
 		},
 	}
@@ -392,7 +392,7 @@ func keysCommand() *cobra.Command {
 			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
 		},
 	}
@@ -432,7 +432,7 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex())
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			if strings.HasPrefix(text, "bunker://") {
 				// The first token lets this device read the sealed data of
 				// the citizen on a relay with no path to the signer.

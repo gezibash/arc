@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // notify tells the caller that a job ended. The result goes to the standard
@@ -25,7 +27,7 @@ func (s *server) notify(owner string, result map[string]any) {
 
 	body, err := encodeJSON(result)
 	if err != nil {
-		fmt.Fprintf(s.log, "the job result does not encode: %v\n", err)
+		fmt.Fprintf(s.log, "the job result does not encode: %s\n", terminal.EscapeLine(err.Error()))
 		return
 	}
 
@@ -40,6 +42,6 @@ func (s *server) notify(owner string, result map[string]any) {
 
 	job, _ := result["job"].(string)
 	if err := process.Run(); err != nil {
-		fmt.Fprintf(s.log, "notify failed for job %s: %v: %s\n", job, err, trimOutput(stderr.Bytes()))
+		fmt.Fprintf(s.log, "notify failed for job %s: %s: %s\n", job, terminal.EscapeLine(err.Error()), trimOutput(stderr.Bytes()))
 	}
 }

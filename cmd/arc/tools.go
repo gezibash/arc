@@ -43,7 +43,7 @@ func appsCommand() *cobra.Command {
 					return nil
 				}
 				for _, e := range list {
-					fmt.Fprintf(command.OutOrStdout(), "%s -> %s/%s\n  %s\n", runName(e), e.Name, e.ID, e.Provider)
+					fmt.Fprintf(command.OutOrStdout(), "%s -> %s/%s\n  %s\n", runName(e), terminal.EscapeLine(e.Name), terminal.EscapeLine(e.ID), e.Provider)
 				}
 				return nil
 			},
@@ -73,7 +73,7 @@ func appsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(command.OutOrStdout(), "%s -> %s/%s\n", runName(install), install.Name, install.ID)
+				fmt.Fprintf(command.OutOrStdout(), "%s -> %s/%s\n", runName(install), terminal.EscapeLine(install.Name), terminal.EscapeLine(install.ID))
 				showOffer(command.OutOrStdout(), offer)
 				if install.Consent != nil && offer.Manifest != nil {
 					if changes := install.Consent.Changes(offer.Manifest); len(changes) > 0 {
@@ -94,7 +94,7 @@ func appsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(command.OutOrStdout(), "removed %s/%s\n", gone.Name, gone.ID)
+				fmt.Fprintf(command.OutOrStdout(), "removed %s/%s\n", terminal.EscapeLine(gone.Name), terminal.EscapeLine(gone.ID))
 				return nil
 			},
 		},
@@ -126,7 +126,7 @@ func installed(installs catalog.Installs, name string) (catalog.Install, error) 
 }
 
 func showOffer(out io.Writer, o catalog.Offer) {
-	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), terminal.EscapeLine(o.Title), terminal.EscapeLine(o.ID), shown(o.Summary), o.Provider.Hex())
+	fmt.Fprintf(out, "%s offers %s (%s)\n  %s\n  %s\n", o.Name(), terminal.EscapeLine(o.Title), terminal.EscapeLine(o.ID), shown(o.Summary), o.Provider.Hex()) //arc:raw-ok a petname that arc makes from the key
 	if o.Manifest != nil {
 		fmt.Fprint(out, iface.Describe(o.Manifest))
 	}

@@ -356,7 +356,7 @@ func websocketInput(ctx context.Context, conn *websocket.Conn, stream *session.S
 		}
 		switch record.Type {
 		case "text":
-			err = conn.Write(ctx, websocket.MessageText, []byte(record.Text))
+			err = conn.Write(ctx, websocket.MessageText, []byte(record.Text)) //arc:raw-ok a WebSocket frame to an HTTP client, not a terminal
 		case "binary":
 			err = conn.Write(ctx, websocket.MessageBinary, record.Data)
 		case "ping":

@@ -580,7 +580,7 @@ func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
 	for _, event := range events {
 		opened, err := r.opener().Open(r.ctx, event)
 		if err != nil {
-			fmt.Fprintf(r.stdio.Err, "left out %s: %s\n", event.ID.Hex()[:8], terminal.EscapeLine(err.Error()))
+			fmt.Fprintf(r.stdio.Err, "left out %s: %s\n", event.ID.Hex()[:8], terminal.EscapeLine(err.Error())) //arc:raw-ok an event ID in hex
 			continue
 		}
 		// Core keeps its own drafts under d tags that start with arc-.
@@ -950,7 +950,7 @@ func (r *run) publishPlain(p *Publish) ([]*entry, error) {
 	if err := r.env.Publish(r.ctx, []nostr.Event{event}, relays); err != nil {
 		return nil, err
 	}
-	fmt.Fprintln(r.stdio.Err, nip19.EncodeNevent(event.ID, relays, event.PubKey))
+	fmt.Fprintln(r.stdio.Err, nip19.EncodeNevent(event.ID, relays, event.PubKey)) //arc:raw-ok a nevent in bech32
 	return []*entry{plainEntry(event, p.Kind)}, nil
 }
 

@@ -179,7 +179,7 @@ func listDevices(command *cobra.Command, _ []string) error {
 		fmt.Fprintln(command.OutOrStdout(), "the device list is empty: the bunker admits no device")
 	}
 	for _, d := range l.Devices {
-		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", d.Name, d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly))
+		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", d.Name, d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly)) //arc:raw-ok a device name that this citizen chose
 	}
 	return nil
 }

@@ -302,7 +302,8 @@ func turnCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = command.OutOrStdout().Write(body)
+			// The relay chose the JSON; it stays valid JSON.
+			_, err = io.WriteString(command.OutOrStdout(), terminal.EscapeJSON(string(body)))
 			return err
 		},
 	}
@@ -500,7 +501,7 @@ func serveCommand() *cobra.Command {
 					defer func() { _ = conn.Close() }()
 					go func() {
 						if err := stun.Serve(conn); err != nil {
-							fmt.Fprintln(os.Stderr, "the STUN server stopped:", err)
+							fmt.Fprintln(os.Stderr, "the STUN server stopped:", terminal.EscapeLine(err.Error()))
 						}
 					}()
 					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN on udp://%s\n", conn.LocalAddr())
@@ -924,7 +925,7 @@ func syncCommand() *cobra.Command {
 					}
 					bodies, err := sess.SyncBodies(dir)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", t.Name(), terminal.EscapeLine(err.Error()))
+						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
 						failed = true
 					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
 						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
@@ -935,12 +936,12 @@ func syncCommand() *cobra.Command {
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", t.Name(), offers.Received)
+					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", t.Name(), offers.Received) //arc:raw-ok the name of a transport of arc
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error()))
+					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
 					failed = true
 					continue
 				}

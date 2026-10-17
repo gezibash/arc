@@ -58,7 +58,7 @@ func (o *output) write(ctx context.Context, line []byte) error {
 	go func() {
 		defer func() { <-o.gate }()
 		body := append(line, '\n')
-		n, err := o.writer.Write(body)
+		n, err := o.writer.Write(body) //arc:raw-ok a line of the provider protocol to arc, not a terminal
 		if err == nil && n != len(body) {
 			err = io.ErrShortWrite
 		}

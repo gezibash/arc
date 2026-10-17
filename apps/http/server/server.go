@@ -38,6 +38,7 @@ import (
 	httpadapter "github.com/gezibash/arc/sdk/httpadapter"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/strictjson"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 const (
@@ -220,7 +221,7 @@ func forward(origin *url.URL, logs io.Writer) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(origin) },
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			fmt.Fprintf(logs, "arc-http: %v\n", err)
+			fmt.Fprintf(logs, "arc-http: %s\n", terminal.EscapeLine(err.Error()))
 			http.Error(w, "the server did not answer", http.StatusBadGateway)
 		},
 	}

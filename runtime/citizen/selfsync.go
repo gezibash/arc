@@ -657,7 +657,7 @@ func (sess *Session) pruneStorageList(ctx context.Context, list storage.List, cf
 		return list
 	}
 	for _, e := range removed {
-		fmt.Fprintf(cfg.Out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02"))
+		fmt.Fprintf(cfg.Out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02")) //arc:raw-ok an entry of the storage list that this citizen signed
 	}
 	return pruned
 }
