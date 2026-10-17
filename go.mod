@@ -121,6 +121,7 @@ require (
 //   - khatru dispatcher: patch 6f5eae72de022b3ef7c176446b736595c8c0aadacc6e921b559da32bf9c2f98c
 //   - Auth challenge: patch f12e652ca1b78ef536c9ff8f50413a7264b63d00e3dc4d1ed292b3dbab3205d5
 //   - khatru authed keys: https://github.com/gezibash/nostrlib/pull/1 (not sent upstream yet)
-// Copy: https://github.com/gezibash/nostrlib, branch fix-authed-keys-race-27e395a.
+// Copy: https://github.com/gezibash/nostrlib, branch arc (its default), which
+// holds all five fixes on 27e395a; the fix-* branches keep each fix for upstream.
 // Remove this replace when upstream merges all five.
-replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261017182656-9b4418217a0a
+replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261017185844-2ab5eba4f53b
