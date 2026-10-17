@@ -444,12 +444,15 @@ func TestAValueCannotReachTheTerminal(t *testing.T) {
 func TestAValueCannotHideText(t *testing.T) {
 	// U+E0068 is a tag character, written in JSON as a surrogate pair.
 	stdout := `a\u200bb\u202ec\udb40\udc68d\u2028e\\f\u200eg\r\n`
-	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":"` + stdout + `","stderr":""}`}}
-	out, _, err := runSpec(t, "exec", env, "run", "x")
+	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":"` + stdout + `","stderr":"x\u200b\n"}`}}
+	out, errs, err := runSpec(t, "exec", env, "run", "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "abcde\\f\u200eg\n"; out != want {
+	if strings.Count(errs, removedNote) != 1 {
+		t.Errorf("standard error is %q, want one note that arc removed characters", errs)
+	}
+	if want := "abcde\\f\u200eg\nx\n"; out != want {
 		t.Errorf("the output is %q, want %q", out, want)
 	}
 }
@@ -718,5 +721,13 @@ func TestTheOutputOfAServiceCannotSave(t *testing.T) {
 	  "kinds": {}, "commands": [{"path": ["x"], "summary": "X", "action": {"call": {"class": "live", "body": "{}"}}}]}`
 	if _, err := Parse([]byte(m)); err == nil || !strings.Contains(err.Error(), "cannot save") {
 		t.Errorf("the output of a service saved to a file: %v", err)
+	}
+}
+
+// A value with nothing to remove gets no note.
+func TestACleanValueGetsNoNote(t *testing.T) {
+	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":"plain text\\n","stderr":""}`}}
+	if _, errs, err := runSpec(t, "exec", env, "run", "x"); err != nil || errs != "" {
+		t.Errorf("standard error is %q (%v), want nothing", errs, err)
 	}
 }

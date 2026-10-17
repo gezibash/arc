@@ -12,6 +12,7 @@ import (
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/selfsync"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // movedFile marks that no relay holds a draft of this citizen that the
@@ -52,18 +53,18 @@ func (sess *Session) moveDrafts(ctx context.Context, cfg SelfSync, kept map[nost
 		if r, ok := t.(relay.Relay); ok {
 			tags, err := r.Tags(ctx)
 			if err != nil {
-				fmt.Fprintf(cfg.Errs, "%s: the relay did not say if it hides deletions, so no draft was deleted: %v\n", t.Name(), err)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the relay did not say if it hides deletions, so no draft was deleted: %v", t.Name(), err)))
 				done = false
 				continue
 			}
 			if !slices.Contains(tags, draft.RetiredTag) {
-				fmt.Fprintf(cfg.Errs, "%s: an older or another relay; the old drafts stay on it, because it would serve their deletion to older devices\n", t.Name())
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: an older or another relay; the old drafts stay on it, because it would serve their deletion to older devices", t.Name())))
 				continue
 			}
 		}
 		batch, err := t.Fetch(ctx, filter)
 		if err != nil {
-			fmt.Fprintf(cfg.Errs, "%s: the drafts on the relay were not listed, so none were deleted: %v\n", t.Name(), err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the drafts on the relay were not listed, so none were deleted: %v", t.Name(), err)))
 			done = false
 			continue
 		}
@@ -75,7 +76,7 @@ func (sess *Session) moveDrafts(ctx context.Context, cfg SelfSync, kept map[nost
 			}
 			ok, err := selfsync.Movable(sess.store, kept, event)
 			if err != nil {
-				fmt.Fprintf(cfg.Errs, "%s: %v\n", t.Name(), err)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: %v", t.Name(), err)))
 				return
 			}
 			if ok {
@@ -88,12 +89,12 @@ func (sess *Session) moveDrafts(ctx context.Context, cfg SelfSync, kept map[nost
 		for i, request := range selfsync.Moves(doomed, nostr.Now()) {
 			n := min(selfsync.MaxMoved, len(doomed)-i*selfsync.MaxMoved)
 			if err := sess.Signer.SignEvent(ctx, &request); err != nil {
-				fmt.Fprintf(cfg.Errs, "%s: the deletion of %d drafts was not signed: %v\n", t.Name(), n, err)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the deletion of %d drafts was not signed: %v", t.Name(), n, err)))
 				done = false
 				break
 			}
 			if err := t.Send(ctx, request); err != nil {
-				fmt.Fprintf(cfg.Errs, "%s: the relay did not take the deletion of %d drafts: %v\n", t.Name(), n, err)
+				fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the relay did not take the deletion of %d drafts: %v", t.Name(), n, err)))
 				done = false
 				break
 			}
@@ -109,7 +110,7 @@ func (sess *Session) moveDrafts(ctx context.Context, cfg SelfSync, kept map[nost
 	}
 	if done {
 		if err := os.WriteFile(marker, []byte(nostr.Now().Time().UTC().Format("2006-01-02T15:04:05Z")+"\n"), 0o600); err != nil {
-			fmt.Fprintf(cfg.Errs, "self data: %v\n", err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 		}
 	}
 }

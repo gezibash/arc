@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -25,9 +26,11 @@ var flags = []string{
 //     newline or a tab, and each byte that is not UTF-8, becomes \xHH;
 //   - a control character of U+0080 to U+009F, an embedding, override or
 //     isolate of the bidirectional algorithm, a line or paragraph
-//     separator, and an invisible character becomes \uHHHH;
+//     separator, an invisible character, and a variation selector that
+//     selects nothing becomes \uHHHH;
 //   - a tag character becomes \UHHHHHHHH, except in the flags of England,
-//     Scotland and Wales;
+//     Scotland and Wales, and so does a variation selector of U+E0100 to
+//     U+E01EF that selects nothing;
 //   - a backslash becomes \\.
 //
 // So a sender cannot move the cursor, change the terminal, reorder a line,
@@ -35,59 +38,143 @@ var flags = []string{
 // person does not see. A typed \x1b looks different from an escaped one,
 // and the byte 0x85 looks different from U+0085. The joiners U+200C and
 // U+200D, and the marks U+200E, U+200F and U+061C, stay: emoji and
-// right-to-left text use them, and they cannot hide text.
-func Escape(text string) string { return escape(text, false, -1) }
+// right-to-left text use them, and they cannot hide text. One variation
+// selector of U+FE00 to U+FE0F after a visible character stays, and one of
+// U+E0100 to U+E01EF after a CJK ideograph: emoji and names use them.
+func Escape(text string) string { return mode{limit: -1}.apply(text) }
 
 // EscapeLine is Escape for text that must stay on one line, such as a
 // title or a reason: it also writes a newline as \n and a tab as \t.
-func EscapeLine(text string) string { return escape(text, true, -1) }
+func EscapeLine(text string) string { return mode{oneLine: true, limit: -1}.apply(text) }
 
 // EscapeLineCut is EscapeLine, cut to at most limit characters of output
 // and then an ellipsis. It never cuts an escape or a flag.
-func EscapeLineCut(text string, limit int) string { return escape(text, true, limit) }
+func EscapeLineCut(text string, limit int) string {
+	return mode{oneLine: true, limit: limit}.apply(text)
+}
+
+// EscapeData is Escape for text that a program reads through a pipe, such
+// as the reply of a call: it escapes the same characters, and keeps a
+// backslash as one backslash, so the rest of the text stays as it was.
+func EscapeData(text string) string { return mode{backslash: true, limit: -1}.apply(text) }
 
 // Strip removes each character that Escape escapes, except a backslash,
 // and keeps the rest as it is. It is for the output of an app, which a
 // person can read on a terminal and a program can read through a pipe:
 // a program gets the backslashes of the value, and no escapes.
-func Strip(text string) string {
+func Strip(text string) string { return mode{strip: true, backslash: true, limit: -1}.apply(text) }
+
+// Stripped reports how many characters Strip removes from text.
+func Stripped(text string) int {
+	return utf8.RuneCountInString(text) - utf8.RuneCountInString(Strip(text))
+}
+
+// EscapeJSON is EscapeData for a JSON text: inside each string, it writes
+// each character that Escape escapes as a JSON escape, \uHHHH, or a pair
+// of them for a character outside the Basic Multilingual Plane. The text
+// stays valid JSON with the same value, and every other byte stays as it
+// was. text must be valid JSON.
+func EscapeJSON(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
+	inString := false
+	prev := rune(-1)
 	for i := 0; i < len(text); {
-		piece, size := next(text[i:], false)
-		if original := text[i : i+size]; piece == original || original == `\` {
+		c := text[i]
+		switch {
+		case !inString:
+			inString = c == '"'
+			prev = -1
+			b.WriteByte(c)
+			i++
+			continue
+		case c == '"':
+			inString = false
+			b.WriteByte(c)
+			i++
+			continue
+		case c == '\\':
+			// An escape of JSON stays whole: \uHHHH, or a backslash and one
+			// character.
+			n := 2
+			if i+1 < len(text) && text[i+1] == 'u' {
+				n = 6
+			}
+			n = min(n, len(text)-i)
+			b.WriteString(text[i : i+n])
+			prev = -1
+			i += n
+			continue
+		}
+		piece, size := next(text[i:], false, prev)
+		original := text[i : i+size]
+		if piece == original {
 			b.WriteString(original)
+			prev, _ = utf8.DecodeLastRuneInString(original)
+		} else {
+			for _, r := range original {
+				if r1, r2 := utf16.EncodeRune(r); r1 != utf8.RuneError {
+					fmt.Fprintf(&b, `\u%04x\u%04x`, r1, r2)
+				} else {
+					fmt.Fprintf(&b, `\u%04x`, r)
+				}
+			}
+			prev = -1
 		}
 		i += size
 	}
 	return b.String()
 }
 
-// escape writes text as Escape and EscapeLine say. With a limit of 0 or
-// more, it stops before the piece that would make the output longer than
-// limit characters, and writes an ellipsis.
-func escape(text string, oneLine bool, limit int) string {
+// mode says how apply writes a text.
+type mode struct {
+	oneLine   bool // a newline and a tab become \n and \t
+	backslash bool // a backslash stays one backslash
+	strip     bool // a character that would be escaped is removed
+	limit     int  // the most characters of output, or -1 for no limit
+}
+
+// apply writes text as the mode says. With a limit of 0 or more, it stops
+// before the piece that would make the output longer than limit
+// characters, and writes an ellipsis.
+func (m mode) apply(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
 	written := 0
+	// prev is the last character written as itself, or -1: a variation
+	// selector stays only after a character that it can select.
+	prev := rune(-1)
 	for i := 0; i < len(text); {
-		piece, size := next(text[i:], oneLine)
-		if limit >= 0 {
+		piece, size := next(text[i:], m.oneLine, prev)
+		original := text[i : i+size]
+		shown := piece == original
+		switch {
+		case original == `\` && m.backslash:
+			piece, shown = original, true
+		case m.strip && !shown:
+			piece = ""
+		}
+		if m.limit >= 0 {
 			written += utf8.RuneCountInString(piece)
-			if written > limit {
+			if written > m.limit {
 				b.WriteString("\u2026")
 				break
 			}
 		}
 		b.WriteString(piece)
+		prev = -1
+		if shown {
+			prev, _ = utf8.DecodeLastRuneInString(original)
+		}
 		i += size
 	}
 	return b.String()
 }
 
 // next returns the escaped form of the character, or flag, at the start of
-// text, and the number of bytes of text that it takes.
-func next(text string, oneLine bool) (string, int) {
+// text, and the number of bytes of text that it takes. prev is the
+// character before it, if that was written as itself, or -1.
+func next(text string, oneLine bool, prev rune) (string, int) {
 	r, size := utf8.DecodeRuneInString(text)
 	if r == '\U0001f3f4' {
 		if flag, ok := flagAt(text); ok {
@@ -107,12 +194,29 @@ func next(text string, oneLine bool) (string, int) {
 		return string(r), size
 	case r < 0x80 && unicode.IsControl(r):
 		return fmt.Sprintf(`\x%02x`, r), size
+	case r >= '\ufe00' && r <= '\ufe0f':
+		if selectable(prev) {
+			return text[:size], size
+		}
+		return fmt.Sprintf(`\u%04x`, r), size
+	case r >= '\U000e0100' && r <= '\U000e01ef':
+		if prev >= 0 && unicode.Is(unicode.Han, prev) {
+			return text[:size], size
+		}
+		return fmt.Sprintf(`\U%08x`, r), size
 	case unicode.IsControl(r), hidden(r):
 		return fmt.Sprintf(`\u%04x`, r), size
 	case r >= '\U000e0000' && r <= '\U000e007f':
 		return fmt.Sprintf(`\U%08x`, r), size
 	}
 	return text[:size], size
+}
+
+// selectable reports a character that a variation selector of U+FE00 to
+// U+FE0F can follow: a visible character that is not a mark. A variation
+// selector is a mark, so a second one in a row selects nothing.
+func selectable(r rune) bool {
+	return r >= 0 && unicode.IsGraphic(r) && !unicode.IsSpace(r) && !unicode.In(r, unicode.Mn, unicode.Me)
 }
 
 // hidden reports a character of the Basic Multilingual Plane that Escape

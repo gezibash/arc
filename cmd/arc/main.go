@@ -71,11 +71,10 @@ func main() {
 
 // errorLine is the line that arc prints for an error. An error can carry
 // text that another party chose, such as the refusal of a provider or of a
-// relay, so the line loses each character that docs/clients/SPEC.md,
-// section 3.9, escapes. It keeps backslashes, so a value that arc quoted
-// in the error reads as it was quoted.
+// relay, so the line is escaped and stays one line, as docs/clients/SPEC.md,
+// section 3.9, says: a refusal cannot forge a second line.
 func errorLine(err error) string {
-	return "arc: " + terminal.Strip(citizen.SignerOnly(err).Error())
+	return "arc: " + terminal.EscapeLine(citizen.SignerOnly(err).Error())
 }
 
 func root() *cobra.Command {
@@ -486,7 +485,7 @@ func serveCommand() *cobra.Command {
 				case err != nil && (command.Flags().Changed("stun") || turnConfig != nil):
 					return fmt.Errorf("STUN: %w", err)
 				case err != nil:
-					fmt.Fprintf(os.Stderr, "relay answers no STUN: %v (set --stun)\n", err)
+					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("relay answers no STUN: %v (set --stun)", err)))
 				case turnConfig != nil:
 					// The TURN server answers STUN binding requests too.
 					host, _, _ := net.SplitHostPort(stunAddress)
@@ -908,7 +907,7 @@ func syncCommand() *cobra.Command {
 				if dir != "" {
 					report, err := syncSealed(command.Context(), sess.Node, sealed, noContacts{t})
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: %v\n", t.Name(), err)
+						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: %v", t.Name(), err)))
 						failed = true
 						continue
 					}
@@ -930,7 +929,7 @@ func syncCommand() *cobra.Command {
 					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
 						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
 						for _, sum := range bodies.Missing {
-							fmt.Fprintf(os.Stderr, "  the body %s is on neither side; the device that wrote it holds it\n", sum)
+							fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("  the body %s is on neither side; the device that wrote it holds it", sum)))
 						}
 					}
 				}

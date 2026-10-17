@@ -13,6 +13,7 @@ import (
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // Store is what the data actions need from the citizen's machine.
@@ -579,7 +580,7 @@ func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
 	for _, event := range events {
 		opened, err := r.opener().Open(r.ctx, event)
 		if err != nil {
-			fmt.Fprintf(r.stdio.Err, "left out %s: %v\n", event.ID.Hex()[:8], err)
+			fmt.Fprintf(r.stdio.Err, "left out %s: %s\n", event.ID.Hex()[:8], terminal.EscapeLine(err.Error()))
 			continue
 		}
 		// Core keeps its own drafts under d tags that start with arc-.

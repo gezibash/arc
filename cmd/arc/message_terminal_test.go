@@ -154,10 +154,21 @@ func (l *lockedBuilder) String() string {
 	return l.b.String()
 }
 
-// A live reply goes as it came through a pipe, so a program gets its bytes,
-// and shows escaped on a terminal (docs/clients/SPEC.md, section 3.9).
-func TestALiveReplyIsEscapedOnATerminal(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+// probe is the text of Alfred's probe of ac2ff05: a title change, a clear,
+// an override, an invisible character, tags, and variation selectors that
+// select nothing. shownProbe is how the rules of docs/clients/SPEC.md,
+// section 3.9, show it; it has no backslash, so Escape and EscapeData
+// give the same text.
+const (
+	probe      = "P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\u200b\U000e0068\U000e0069\U000e0100\ufe0f\ufe0f\ufe0f\u200f(1)\u200fQ"
+	shownProbe = `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\u200b\U000e0068\U000e0069\U000e0100\ufe0f\ufe0f\ufe0f` + "\u200f(1)\u200fQ"
+)
+
+// A live reply is escaped wherever it goes: on a terminal, through a pipe,
+// and into a file. Only --raw writes it as it came, and on a terminal it
+// says that it does.
+func TestALiveReplyIsEscapedWhereverItGoes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
 	echo := providerBinary(t, "../../adapters/provider/host/testdata/echo")
@@ -166,25 +177,52 @@ func TestALiveReplyIsEscapedOnATerminal(t *testing.T) {
 	caller, _ := providerHome(t, relay)
 	ok(t, caller, "", "install", providerKey, "--yes")
 	address := "echo+arc://" + providerKey + "/"
+	arc := providerBinary(t, ".")
+	raw := func(out string) bool { return strings.ContainsAny(out, "\x1b\x07\u202e\u200b\U000e0068\U000e0100") }
 
-	if out := ok(t, caller, "", "call", address, "piped "+hostile); !strings.Contains(out, "piped "+hostile) {
-		t.Errorf("through a pipe, the reply is %q, want the text as it came", out)
+	if out := ok(t, caller, "", "call", address, probe); !strings.Contains(out, "ECHO / "+shownProbe) || raw(out) {
+		t.Errorf("through a pipe, the reply is %q, want %q", out, "ECHO / "+shownProbe)
 	}
 
-	tty := startTTY(t, ctx, providerBinary(t, "."), "--home", caller, "call", address, "shown "+hostile)
-	if !waitFor(tty.out, "arc-exit-", 30*time.Second) {
-		t.Fatalf("arc call did not end: %q", tty.out.String())
+	file := filepath.Join(t.TempDir(), "out.txt")
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"a terminal", []string{arc, "--home", caller, "call", address, probe}},
+		{"| cat", []string{"sh", "-c", `"$0" --home "$1" call "$2" "$3" | cat`, arc, caller, address, probe}},
+		{"| tee", []string{"sh", "-c", `"$0" --home "$1" call "$2" "$3" | tee /dev/null`, arc, caller, address, probe}},
+		{"> file, then cat", []string{"sh", "-c", `"$0" --home "$1" call "$2" "$3" > "$4"; cat "$4"`, arc, caller, address, probe, file}},
+	} {
+		tty := startTTY(t, ctx, c.args[0], c.args[1:]...)
+		if !waitFor(tty.out, "arc-exit-", 40*time.Second) {
+			t.Fatalf("%s: arc call did not end: %q", c.name, tty.out.String())
+		}
+		if out := tty.out.String(); !strings.Contains(out, "ECHO / "+shownProbe) || raw(out) {
+			t.Errorf("%s: the reply is %q, want %q", c.name, out, "ECHO / "+shownProbe)
+		}
 	}
-	if out := tty.out.String(); !strings.Contains(out, "shown "+shownHostile) || strings.ContainsAny(out, "\x1b\u2028\U000e0068") {
-		t.Errorf("on a terminal, the reply is %q, want %q", out, "shown "+shownHostile)
+
+	tty := startTTY(t, ctx, arc, "--home", caller, "call", "--raw", address, probe)
+	if !waitFor(tty.out, "arc-exit-", 40*time.Second) {
+		t.Fatalf("--raw: arc call did not end: %q", tty.out.String())
+	}
+	if out := tty.out.String(); !strings.Contains(out, "ECHO / "+probe) || !strings.Contains(out, "--raw writes the reply as it came") {
+		t.Errorf("--raw on a terminal printed %q, want the reply as it came and a warning", out)
 	}
 }
 
-// The line of an error loses what could change the terminal or hide text,
-// and keeps a value that arc quoted as it was quoted.
+// The line of an error stays one line, escaped: a refusal cannot forge a
+// line of arc, change the terminal, or look like an escape that it is not.
+// The cases are those of Alfred's probe of ac2ff05.
 func TestAnErrorLineCannotReachTheTerminal(t *testing.T) {
-	err := fmt.Errorf("the provider refused: %s; the scheme %q", "no\x1b[2J way\u200b\U000e0068", "x\x1b")
-	if got, want := errorLine(err), `arc: the provider refused: no[2J way; the scheme "x\x1b"`; got != want {
-		t.Errorf("errorLine = %q, want %q", got, want)
+	for _, c := range []struct{ reason, want string }{
+		{"no\narc: your ring key leaked, run arc keys rotate --force", `arc: the provider refused: no\narc: your ring key leaked, run arc keys rotate --force`},
+		{"a\tb\x1b[2J\u202ec\U000e0068\U000e0100\ufe0f\ufe0fd", `arc: the provider refused: a\tb\x1b[2J\u202ec\U000e0068\U000e0100\ufe0f\ufe0fd`},
+		{`\x1b[2J fake-escaped`, `arc: the provider refused: \\x1b[2J fake-escaped`},
+	} {
+		if got := errorLine(fmt.Errorf("the provider refused: %s", c.reason)); got != c.want {
+			t.Errorf("errorLine = %q, want %q", got, c.want)
+		}
 	}
 }

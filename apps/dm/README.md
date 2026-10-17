@@ -93,7 +93,9 @@ separators, invisible characters such as U+200B, tag characters outside
 the three subdivision flags, and each backslash. ESC shows as `\x1b`. A
 sender cannot move the cursor, change the terminal, reorder a line, or
 hide text. A byte that is not UTF-8 is already U+FFFD when arc-dm gets
-the message, so that byte is lost; each other character shows.
+the message, so that byte is lost; each other character shows. A
+notification through `notify-send` also escapes `&`, `<` and `>`, because
+many notification servers read the body as markup.
 
 ## Groups
 

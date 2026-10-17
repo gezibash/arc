@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -480,7 +481,7 @@ func discoverCmd() *cobra.Command {
 
 			_, errs := sess.Node.Pull(command.Context(), announcements, sess.Relays)
 			for _, err := range errs {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
+				fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%v", err)))
 			}
 
 			query := ""
@@ -692,7 +693,7 @@ func callCapability(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "round trip %s via %s\n", rtt.Round(100*time.Microsecond), via)
+	fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("round trip %s via %s", rtt.Round(100*time.Microsecond), via)))
 	if reply.Err != "" {
 		return fmt.Errorf("the provider refused: %s", reply.Err)
 	}
@@ -703,11 +704,22 @@ func callCapability(command *cobra.Command, args []string) error {
 		in := iface.Installed{Manifest: m, Author: provider, Name: offer.ID}
 		return iface.ShowReply(command.Context(), env, in, reply.Body, iface.Stdio{In: os.Stdin, Out: command.OutOrStdout(), Err: os.Stderr})
 	}
-	// On a terminal the reply shows escaped. Through a pipe, or with --raw,
-	// it goes as it came, so a program that reads it gets its bytes.
+	// The reply is escaped wherever it goes: a program or an agent that
+	// reads it through a pipe has no terminal, and gets the hidden
+	// characters too (docs/clients/SPEC.md, section 3.9). Through a pipe,
+	// JSON stays valid JSON. --raw writes the reply as it came.
 	text := reply.Body
-	if !raw && toTerminal(command.OutOrStdout()) {
+	switch out := command.OutOrStdout(); {
+	case raw:
+		if toTerminal(out) {
+			fmt.Fprintln(command.ErrOrStderr(), "arc: --raw writes the reply as it came, and it can change this terminal")
+		}
+	case toTerminal(out):
 		text = terminal.Escape(text)
+	case json.Valid([]byte(text)):
+		text = terminal.EscapeJSON(text)
+	default:
+		text = terminal.EscapeData(text)
 	}
 	fmt.Fprint(command.OutOrStdout(), text)
 	if !strings.HasSuffix(text, "\n") {
@@ -729,13 +741,13 @@ func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Tr
 	var lists []list
 	outbox, err := relaylist.Make(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "the NIP-65 relay list was not signed: %v\n", err)
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the NIP-65 relay list was not signed: %v", err)))
 	} else {
 		lists = append(lists, list{outbox, public})
 	}
 	inbox, err := mail.RelayList(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "the relay list was not signed: %v\n", err)
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the relay list was not signed: %v", err)))
 	} else {
 		lists = append(lists, list{inbox, public})
 	}
@@ -744,7 +756,7 @@ func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Tr
 		_, sent, _ := sess.Node.Publish(ctx, l.event, l.to)
 		for i, s := range sent {
 			if s.Err != nil {
-				fmt.Fprintf(os.Stderr, "the relay list did not reach %s: %v\n", s.Transport, s.Err)
+				fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the relay list did not reach %s: %v", s.Transport, s.Err)))
 				// The relays come first in l.to, and the indexers after them.
 				if i >= len(sess.Relays) && !slices.Contains(owed, l.to[i]) {
 					owed = append(owed, l.to[i])
@@ -782,7 +794,7 @@ func announceCmd() *cobra.Command {
 			} else {
 				for _, s := range sent {
 					if s.Err != nil {
-						fmt.Fprintf(os.Stderr, "not sent to %s: %v\n", s.Transport, s.Err)
+						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("not sent to %s: %v", s.Transport, s.Err)))
 					}
 				}
 			}

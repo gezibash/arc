@@ -19,6 +19,7 @@ import (
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/release"
 	"github.com/gezibash/arc/sdk/direct"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -189,7 +190,7 @@ func update(command *cobra.Command, apply bool) error {
 		if pipes.Policy != direct.Auto {
 			return fmt.Errorf("%s; run arc install %s releases, or run again with --path session", reason, provider.Hex())
 		}
-		fmt.Fprintf(command.ErrOrStderr(), "%s; using chunks over the relay\n", reason)
+		fmt.Fprintln(command.ErrOrStderr(), terminal.EscapeLine(fmt.Sprintf("%s; using chunks over the relay", reason)))
 	}
 	if piped != nil {
 		piped.dial.Need = newest.Archive().Size

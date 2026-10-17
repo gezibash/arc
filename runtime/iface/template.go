@@ -109,6 +109,7 @@ type helpers interface {
 	keyed(purpose, input string) (string, error)
 	eventAuthor(ref string) (string, error)
 	name(key string) string
+	sanitize(text string) string
 }
 
 // scope finds the value of a name.
@@ -154,7 +155,7 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 		}
 		text := str(value)
 		if clean {
-			text = sanitize(text)
+			text = h.sanitize(text)
 		}
 		out.WriteString(text)
 	}
@@ -301,8 +302,20 @@ func str(value any) string {
 	return string(body)
 }
 
+// removedNote is what arc says, once for each run, when it removed
+// characters from what an app shows.
+const removedNote = "arc: the output held characters that could change the terminal or hide text; arc removed them"
+
 // sanitize removes from a value each character that docs/clients/SPEC.md,
 // section 3.9, escapes, except a backslash: a value cannot move the
 // cursor, change the terminal, reorder a line, or hide text, and a program
-// that reads the output gets the rest of the value as it was.
-func sanitize(text string) string { return terminal.Strip(text) }
+// that reads the output gets the rest of the value as it was. The first
+// time that it removes a character in a run, it says so on standard error.
+func (r *run) sanitize(text string) string {
+	clean := terminal.Strip(text)
+	if clean != text && !*r.told {
+		*r.told = true
+		fmt.Fprintln(r.stdio.Err, removedNote)
+	}
+	return clean
+}

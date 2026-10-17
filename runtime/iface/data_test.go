@@ -2,6 +2,7 @@ package iface
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -604,6 +605,8 @@ type listEnv struct {
 	*fakeEnv
 	pals   []nostr.PubKey
 	refuse nostr.PubKey
+	// reason is the refusal, or "no inbox relay" when it is empty.
+	reason string
 }
 
 func (l *listEnv) List(name string) ([]nostr.PubKey, error) {
@@ -615,7 +618,7 @@ func (l *listEnv) List(name string) ([]nostr.PubKey, error) {
 
 func (l *listEnv) SendPrivate(ctx context.Context, to []nostr.PubKey, kind nostr.Kind, content string, tags nostr.Tags) error {
 	if slices.Contains(to, l.refuse) {
-		return errors.New("no inbox relay")
+		return errors.New(cmp.Or(l.reason, "no inbox relay"))
 	}
 	return l.fakeEnv.SendPrivate(ctx, to, kind, content, tags)
 }
@@ -640,5 +643,21 @@ func TestAListSendsToEachMemberAndReportsTheOnesThatFailed(t *testing.T) {
 		if got := alice.env.net.inbox[pk]; len(got) != 1 || got[0].Content != "hello pals" {
 			t.Errorf("%s received %d messages", env.Name(pk), len(got))
 		}
+	}
+}
+
+// The error of a member of a list reaches standard error on one line,
+// escaped: a refusal cannot change the terminal or forge a line of arc.
+func TestTheErrorOfAMemberCannotReachTheTerminal(t *testing.T) {
+	alice := newCitizen(t)
+	gone, bob := nostr.Generate().Public(), nostr.Generate().Public()
+	reason := "A\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\u200b\U000e0068\u2028B\narc: forged line"
+	env := &listEnv{fakeEnv: alice.env, pals: []nostr.PubKey{gone, bob}, refuse: gone, reason: reason}
+	var out, errs bytes.Buffer
+	_ = Run(context.Background(), env, Installed{Manifest: specManifests(t)["dm"], Author: alice.author, Name: "dm"},
+		[]string{"send", "pals", "hello"}, Stdio{In: strings.NewReader(""), Out: &out, Err: &errs})
+	want := env.Name(gone) + ": " + `A\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\u200b\U000e0068\u2028B\narc: forged line`
+	if got := errs.String(); !strings.Contains(got, want) || strings.Contains("\n"+got, "\narc: ") || strings.ContainsAny(got, "\x1b\u202e\u2028") {
+		t.Errorf("standard error is %q, want a line that holds %q, and no line that starts with arc:", got, want)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"os/exec"
@@ -283,7 +284,12 @@ func watch(ctx context.Context, args []string) error {
 		if len(notifier) == 0 {
 			return nil
 		}
-		command := exec.CommandContext(ctx, notifier[0], append(notifier[1:], m.Name, terminal.Escape(preview(m.Text, 200)))...)
+		body := terminal.Escape(preview(m.Text, 200))
+		if notifier[0] == "notify-send" {
+			// Many notification servers read the body as markup.
+			body = html.EscapeString(body)
+		}
+		command := exec.CommandContext(ctx, notifier[0], append(notifier[1:], m.Name, body)...)
 		if out, err := command.CombinedOutput(); err != nil && ctx.Err() == nil {
 			// A failed notification does not stop the watch.
 			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %v %s\n", err, strings.TrimSpace(string(out)))

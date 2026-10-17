@@ -3,7 +3,7 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/
 - Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body.
 
 Phases A to F are built, see section 8. `arc` runs them, and
@@ -659,7 +659,9 @@ and a tag character outside the three subdivision flags. A value from an
 event cannot move the cursor, change the terminal, reorder a line, or hide
 text. A program that reads the output through a pipe gets the rest of the
 value as it was, with its backslashes. arc removes the same characters from
-a reply that does not fit the output of its app.
+a reply that does not fit the output of its app. The first time that it
+removes a character in a command, it says so on standard error. The error
+of each member of a list goes to standard error on one line, escaped.
 
 ### 3.16 Flags of every command
 

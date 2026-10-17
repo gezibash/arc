@@ -1,6 +1,10 @@
 package terminal
 
-import "testing"
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
 
 // Each expected value applies the rules of docs/clients/SPEC.md, section
 // 3.9, by hand.
@@ -31,6 +35,15 @@ func TestEscape(t *testing.T) {
 		{"another tag sequence", "\U0001f3f4\U000e0075\U000e0073\U000e007f", "\U0001f3f4" + `\U000e0075\U000e0073\U000e007f`},
 		{"a flag cut short", "\U0001f3f4\U000e0067\U000e0062", "\U0001f3f4" + `\U000e0067\U000e0062`},
 		{"joiners and the Arabic letter mark stay", "\U0001f468\u200d\U0001f469 a\u200cb x\u061cy", "\U0001f468\u200d\U0001f469 a\u200cb x\u061cy"},
+		{"one emoji selector after a visible character stays", "\u2764\ufe0f", "\u2764\ufe0f"},
+		{"a keycap stays", "1\ufe0f\u20e3", "1\ufe0f\u20e3"},
+		{"a selector alone", "\ufe0f", `\ufe0f`},
+		{"a second selector in a row", "\u2764\ufe0f\ufe0f", "\u2764\ufe0f" + `\ufe0f`},
+		{"a selector after a space", "a \ufe0f", "a " + `\ufe0f`},
+		{"a selector after an escaped character", "\u200b\ufe0f", `\u200b\ufe0f`},
+		{"an ideographic selector after a CJK ideograph stays", "\u845b\U000e0100", "\u845b\U000e0100"},
+		{"an ideographic selector after a letter", "a\U000e0100", "a" + `\U000e0100`},
+		{"a second ideographic selector", "\u845b\U000e0100\U000e0101", "\u845b\U000e0100" + `\U000e0101`},
 		{"emoji and accents stay", "\u00ebmoji \U0001f989", "\u00ebmoji \U0001f989"},
 	} {
 		if got := Escape(c.in); got != c.want {
@@ -88,5 +101,61 @@ func TestStrip(t *testing.T) {
 	want := "a[2Jb\nc" + "def g\\h\u200e\u200d i" + england
 	if got := Strip(in); got != want {
 		t.Errorf("Strip(%q) = %q, want %q", in, got, want)
+	}
+}
+
+func TestStripKeepsOneSelector(t *testing.T) {
+	if got, want := Strip("\u2764\ufe0f\ufe0f a\U000e0100"), "\u2764\ufe0f a"; got != want {
+		t.Errorf("Strip = %q, want %q", got, want)
+	}
+	if got := Stripped("\u2764\ufe0f\ufe0f a\U000e0100\x1b"); got != 3 {
+		t.Errorf("Stripped = %d, want 3", got)
+	}
+}
+
+// EscapeData escapes what Escape escapes, and keeps one backslash.
+func TestEscapeData(t *testing.T) {
+	if got, want := EscapeData("a\\b\x1b\u200bc"), `a\b\x1b\u200bc`; got != want {
+		t.Errorf("EscapeData = %q, want %q", got, want)
+	}
+}
+
+// EscapeJSON keeps a JSON text valid, with the same value, and writes the
+// hidden characters inside its strings as JSON escapes.
+func TestEscapeJSON(t *testing.T) {
+	in := `{"a":"x` + "\u200b" + `y\\z","b":"` + "\u202e" + `q","c":[1,"\u0041"],"d":"` + "\u845b\U000e0100 \U000e0068" + `"}`
+	want := `{"a":"x\u200by\\z","b":"\u202eq","c":[1,"\u0041"],"d":"` + "\u845b\U000e0100" + ` \udb40\udc68"}`
+	got := EscapeJSON(in)
+	if got != want {
+		t.Errorf("EscapeJSON = %q, want %q", got, want)
+	}
+	var before, after any
+	if err := json.Unmarshal([]byte(in), &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(got), &after); err != nil || !reflect.DeepEqual(before, after) {
+		t.Errorf("EscapeJSON changed the value: %v, %v", after, err)
+	}
+}
+
+// The cases of Alfred's probe of ac2ff05, with the values that the rules of
+// docs/clients/SPEC.md, section 3.9, give.
+func TestStripCases(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"a\r\nb", "a\nb"},
+		{"\ufeffBOM", "BOM"},
+		{"caf\xe9", "caf"},
+		{"x\x1b\x00[31my", "x[31my"},
+		{"\\\x00x1b", `\x1b`},
+		{"line1\nline2\tTAB", "line1\nline2\tTAB"},
+		{"ig\u200bnore", "ignore"},
+		{"\U0001f600\ufe00\U000e0100\U000e0150", "\U0001f600\ufe00"},
+		{"pay \ufff9alice\ufffabob\ufffb", "pay alicebob"},
+		{"\u202egnp.exe", "gnp.exe"},
+		{"x\u061c\u200f(1)\u200fy", "x\u061c\u200f(1)\u200fy"},
+	} {
+		if got := Strip(c.in); got != c.want {
+			t.Errorf("Strip(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

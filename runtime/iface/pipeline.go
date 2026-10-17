@@ -516,7 +516,7 @@ func (r *run) stream(entries []*entry) error {
 		ended := true
 		write := func(text string) {
 			if text != "" && writeErr == nil {
-				_, writeErr = io.WriteString(r.stdio.Out, sanitize(text))
+				_, writeErr = io.WriteString(r.stdio.Out, r.sanitize(text))
 				ended = strings.HasSuffix(text, "\n")
 			}
 		}
