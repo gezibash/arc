@@ -110,15 +110,17 @@ require (
 	modernc.org/sqlite v1.37.1 // indirect
 )
 
-// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with fixes for four races:
+// A copy of fiatjaf.com/nostr at 27e395a0f6e7 with fixes for five races:
 // a send on sub.Events or on sub.countResult can race the close of that channel,
-// the khatru dispatcher reads its index sets while a REQ changes them, and a new
-// AUTH challenge replaced the sync.Once of a running Auth (#283).
+// the khatru dispatcher reads its index sets while a REQ changes them, a new
+// AUTH challenge replaced the sync.Once of a running Auth (#283), and khatru
+// read the authed keys of a connection without its auth lock.
 // Upstream nostrlib has one item for each fix (NIP-34 event ids):
 //   - sub.Events: pull request e6561592ddc2132bc8304260b1d40affc2f79c67368f66769c88acdcfeccd08e
 //   - sub.countResult: patch 26040f3bdc58a6665238b526b92c847bc240c5f7898d848c81d0025e6c5f5227
 //   - khatru dispatcher: patch 6f5eae72de022b3ef7c176446b736595c8c0aadacc6e921b559da32bf9c2f98c
 //   - Auth challenge: patch f12e652ca1b78ef536c9ff8f50413a7264b63d00e3dc4d1ed292b3dbab3205d5
-// Copy: https://github.com/gezibash/nostrlib, branch fix-auth-challenge-reset-27e395a.
-// Remove this replace when upstream merges all four.
-replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261013160820-2b1423cdaa2c
+//   - khatru authed keys: https://github.com/gezibash/nostrlib/pull/1 (not sent upstream yet)
+// Copy: https://github.com/gezibash/nostrlib, branch fix-authed-keys-race-27e395a.
+// Remove this replace when upstream merges all five.
+replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261017182656-9b4418217a0a
