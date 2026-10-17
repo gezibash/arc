@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay)$' ./cmd/arc/ ./adapters/relay/rings/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -340,6 +340,49 @@ Open: whether a Grok Bot can run a command-line program on that computer,
 and whether its files stay between runs. If not, arc needs a remote way in,
 such as an MCP server that the Bot calls; that is out of scope here.
 
+### 4.4 The log of the relay, and the warning of arc
+
+When a citizen gets no ring, the operator can see why in the log of the
+relay, and the citizen can see a failed authentication in the output of
+arc. Nothing on the wire changes: no event, HTTP path, field or NOTICE is
+new.
+
+- The relay names a citizen in its log only by the first 8 hex digits of
+  the citizen key, such as `citizen=3bf0c63f`. It never logs the key, the
+  ring key, the URL or its host, or a wrap.
+- Each try of a ring logs one line at Info:
+  `msg=ring citizen=3bf0c63f status=200 failed=false attempt=1`.
+- Each wrap for a registered citizen that rings no one now logs one line
+  at Info, with the reason:
+  `msg="no ring" citizen=3bf0c63f reason="already rang in this unread period"`.
+  A ring that waits also gives the wait, such as `wait=5m0s`. The reasons
+  follow section 3.5 and section 3.7:
+
+  | Reason | Condition |
+  | --- | --- |
+  | `expired` | 1: the registration expired. |
+  | `a read subscription is open` | 3: the citizen reads the wrap live. |
+  | `already rang in this unread period` | 4. |
+  | `citizen bucket empty, waits` | 5: the ring waits for the bucket. |
+  | `daily cap reached, waits` | 5: the ring waits until 00:00 UTC. |
+  | `relay bucket empty, waits` | 6: the ring waits for the bucket of the relay. |
+  | `a retry waits` | A try failed, and the next try waits (section 3.7). |
+  | `a try is on the way` | A try of this citizen has not ended. |
+  | `no registration` | 1: the citizen has no registration. |
+
+  `no registration` is at Debug, which `arc relay serve` does not print:
+  most wraps are for citizens that never registered, and a line for each
+  would make the log a list of all mail. When the sweep removes a
+  registration, it logs one line at Info with the citizen, so a citizen
+  whose registration expired is still visible.
+- A read of a relay that lists `arc-rings` authenticates first (section
+  3.3). When the relay refuses, arc still reads, and prints one line on
+  standard error, once for each relay in one command:
+  `<relay URL>: could not authenticate before it read mail, so the relay does not count the read for rings: <error>`.
+  The relay chooses the text of the error, so arc escapes it on one line
+  with `terminal.EscapeLine` ([the clients spec](../clients/SPEC.md),
+  section 3.9).
+
 ## 5. Failures
 
 | Failure | What happens |
@@ -358,6 +401,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
 | Several inbox relays ring at once | The agent runs more than once. Each run reads the same inbox: the store keeps one copy of each message, by ID, so no run answers a message twice that an earlier run answered. |
 | An older arc reads the mail | It does not authenticate, so the read does not count. The unread period goes on, and the relay rings no more until an arc that authenticates reads. |
+| The relay refuses the authentication of arc | arc reads the mail, and prints the error once for each relay (section 4.4). The read does not count, so the unread period goes on. |
 
 ## 6. Security
 
@@ -370,7 +414,7 @@ such as an MCP server that the Bot calls; that is out of scope here.
 | A reader of the relay | Query the wraps of a citizen with no authentication, as any ARC relay allows. | End the unread period of the citizen. |
 | The platform behind the URL | See when mail waits, as the relay already does. With the wraps of the citizen, which any reader of the relay can query, find the wrap whose ID gives the `id` of a ring. | See an author, a count or content. The body carries none, and the wrap is sealed. |
 | An attacker who breaks into the relay | Take every ring key with the secret, and start paid runs until each citizen changes its key at the platform. | Read mail. |
-| A reader of the relay's log | See one line for each ring, with its status. | See a key, a URL or a citizen: the relay logs none, and strips the URL from the errors of its HTTP client. |
+| A reader of the relay's log | See one line for each try of a ring, with its status, and one line for each wrap that rings no one, with the reason. Each line names a registered citizen by the first 8 hex digits of its key, which links it to a citizen whose key the reader knows. Any reader of the relay can already query the wraps of a known key. | See a key, a URL or the host of a URL: the relay logs none, and strips the URL from the errors of its HTTP client. See the citizen of a wrap with no registration, unless the operator turns on Debug. |
 
 ### 6.2 Who pays
 
@@ -450,6 +494,19 @@ and khatru:
   NOTICE; a stranger's read gets none.
 - `TestSyncSaysThatRingsFail` (`cmd/arc`): `arc sync` prints the NOTICE
   with the URL of the relay.
+- `TestTheLogSaysWhyARelayDoesNotRing`: a wrap that rings no one for each
+  reason of section 4.4, except `no registration` and `a try is on the way`,
+  logs the reason and the first 8 hex digits of the citizen key at Info,
+  and never the whole key.
+  `TestAWrapForNoRegistrationLogsOnlyForDebugging`: `no registration` is
+  at Debug. `TestTheLogNamesTheCitizenOfARing`: the line of a try. No test
+  makes `a try is on the way`, which needs a wrap during a try.
+- `TestSyncSaysThatARelayRefusedTheAuthentication` (`cmd/arc`): two
+  relays that ring refuse the authentication with terminal controls in
+  the text; `arc sync` reads the mail, and prints one escaped line for each
+  relay. `TestARefusedAuthenticationBeforeAReadIsToldOnce`
+  (`adapters/transport/relay`): three reads, one on a new connection, try
+  to authenticate three times and report the error once.
 - `TestTwoRelaysRingWithOneID`: two relays that take one wrap ring with
   the same `id`. `TestTheRingIDComesFromTheFirstWrap` checks the hash
   against Python's `hashlib`, and keeps the `id` through retries.

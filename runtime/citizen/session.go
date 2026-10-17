@@ -94,6 +94,9 @@ func Open(cfg Config) (*Session, error) {
 			}
 			if sess.Errors != nil {
 				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
+				r.OnAuthFailure(func(err error) {
+					sess.warnf("%s: could not authenticate before it read mail, so the relay does not count the read for rings: %s\n", url, err)
+				})
 			}
 			sess.kept[url] = r
 		}
