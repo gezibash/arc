@@ -141,7 +141,10 @@ func (s scope) lookup(name string) any {
 	return value
 }
 
-// render writes the template as text.
+// render writes the template as text. With clean, it cleans each part,
+// and the result can be shown. Without clean, the result is data, such as
+// the content of an event: a caller that shows it must clean it first
+// (docs/clients/SPEC.md, section 3.9).
 func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 	var out strings.Builder
 	for _, p := range t.parts {

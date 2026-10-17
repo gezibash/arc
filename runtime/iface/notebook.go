@@ -427,6 +427,9 @@ func (r *run) pageReference(p notebookPage) string {
 	return r.in.Manifest.ID + "+arc://" + r.env.Me().Hex() + "/" + p.address
 }
 
+// notebookIndex writes the titles of the pages as they are. The caller
+// must clean the index before it shows it: the record that holds it goes
+// through sanitize (docs/clients/SPEC.md, section 3.9).
 func (r *run) notebookIndex(book string, pages []notebookPage, table bool) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# %s\n\n", book)

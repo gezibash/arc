@@ -500,7 +500,10 @@ func (r *run) table(w io.Writer, columns, rows any) error {
 	return tw.Flush()
 }
 
-// line writes text and ends it with a newline, when it has none.
+// line writes text and ends it with a newline, when it has none. It writes
+// the text as it is: each caller must clean another party's text first,
+// with sanitize or a template rendered with clean (docs/clients/SPEC.md,
+// section 3.9).
 func line(w io.Writer, text string) error {
 	// Text that renders to nothing shows nothing, not an empty line.
 	if text == "" {

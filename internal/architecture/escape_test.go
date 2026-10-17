@@ -26,15 +26,24 @@ import (
 // package that returns the result of one. A print of text that arc writes
 // itself carries the comment //arc:raw-ok and the reason on its line.
 //
-// The check reads names, not types or data flow. These still pass:
+// The check reads names, not types or data flow. These still pass, until a
+// check with go/types follows the wire types:
+//   - an error under a name that the check does not know: it finds errors
+//     by name, not by type, so fmt.Println(refused) passes;
 //   - another party's text under a name that the check does not know,
 //     such as x := reply.Message, then a print of x;
-//   - text that reaches a print another way: a helper that prints, a
-//     string built with fmt.Sprintf or + and printed later, or a panic;
-//   - a helper that escapes one part of its result and returns another
-//     part raw, such as s + terminal.EscapeLine(x);
+//   - text that reaches a print another way: a copy to a local variable,
+//     fmt.Sprintf or + into a variable that is printed later, a helper
+//     that prints, Write(buf.Bytes()) of a buffer, or a panic;
+//   - a helper that returns raw and escaped text joined, such as
+//     s + terminal.EscapeLine(x);
 //   - a variation selector in a slog value: slog.TextHandler quotes each
 //     other character that section 3.9 escapes, and keeps selectors.
+//
+// Five exceptions depend on their callers, and say so where they are:
+// line in runtime/iface/run.go, the two prints of notebookIndex in
+// runtime/iface/notebook.go, and the two writes of render in
+// runtime/iface/template.go.
 func TestTextOfOtherPartiesIsEscapedAtThePrint(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, layer := range []string{"core", "sdk", "adapters", "runtime", "apps", "cmd"} {
@@ -76,7 +85,11 @@ func TestTextOfOtherPartiesIsEscapedAtThePrint(t *testing.T) {
 func TestTheEscapeCheckFindsRawPrints(t *testing.T) {
 	const source = `package hostile
 
-import "github.com/gezibash/arc/internal/atomicfile"
+import (
+	"github.com/gezibash/arc/internal/atomicfile"
+	lg "log"        // want
+	logs "log/slog" // want
+)
 
 func old(s *server, e Entry, u Usage, m Message, w *strings.Builder, out io.Writer, logger *log.Logger, request Request, reply Reply) {
 	fmt.Fprintf(s.log, "close of %.8s: %s\n", request.From, reply.Message) // want
@@ -97,6 +110,11 @@ func old(s *server, e Entry, u Usage, m Message, w *strings.Builder, out io.Writ
 	log.Panicf("%v", err)                                                   // want
 	slog.Info("refused", "reason", reply.Reason)                            // want
 	_ = slog.New(slog.NewJSONHandler(os.Stderr, nil))                       // want
+	slog.Default().Info("refused", "reason", refused.Message)               // want
+	held := slog.Default()                                                  // want
+	_ = slog.With("app", "storage")                                         // want
+	j := slog.NewJSONHandler(os.Stderr, nil)
+	_ = slog.New(j)                                                         // want
 	fmt.Println(reply.Message) //arc:raw-ok
 	// want above: a raw-ok with no reason
 
@@ -112,6 +130,8 @@ func old(s *server, e Entry, u Usage, m Message, w *strings.Builder, out io.Writ
 	_ = atomicfile.Write(path, []byte(reply.Message), 0600)
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	log.Info("refused", "reason", reply.Reason)
+	h := slog.NewTextHandler(os.Stderr, nil)
+	_ = slog.New(h)
 }
 
 func launder(s string) string {
@@ -191,11 +211,18 @@ var printers = []string{
 }
 
 // slogPrints are the functions of the slog package that log with the
-// default handler, which the check cannot see.
+// default handler, which the check cannot see. Default and With give a
+// logger with that handler, so a logger that the code holds is caught
+// where it is made.
 var slogPrints = []string{
 	"Debug", "Info", "Warn", "Error", "Log", "LogAttrs",
 	"DebugContext", "InfoContext", "WarnContext", "ErrorContext",
+	"Default", "With",
 }
+
+// loggers are the packages whose calls the check knows by name. An alias
+// would hide them.
+var loggers = []string{"log", "log/slog"}
 
 // remoteNames are the names of fields and values that another party
 // fills: a refusal, a reply, an entry of a list, an account, a message.
@@ -225,6 +252,7 @@ func rawPrints(files *token.FileSet, parsed []*ast.File) []rawPrint {
 	for _, file := range parsed {
 		ok := rawOK(files, file)
 		imports := importNames(file)
+		handlers := textHandlers(file)
 		add := func(node ast.Node, text string) {
 			position := files.Position(node.Pos())
 			reason, marked := ok[position.Line]
@@ -236,17 +264,22 @@ func rawPrints(files *token.FileSet, parsed []*ast.File) []rawPrint {
 			}
 			found = append(found, rawPrint{position.Filename, position.Line, text})
 		}
+		for _, spec := range file.Imports {
+			if path := strings.Trim(spec.Path.Value, `"`); spec.Name != nil && slices.Contains(loggers, path) {
+				add(spec, "imports "+path+" as "+spec.Name.Name+"; the check knows it only by its name")
+			}
+		}
 		ast.Inspect(file, func(node ast.Node) bool {
 			call, isCall := node.(*ast.CallExpr)
 			if !isCall {
 				return true
 			}
-			if isPkgCall(call, "slog", "New") && !textHandler(call) {
+			if isPkgCall(call, "slog", "New") && !textHandler(call, handlers) {
 				add(call, "builds a slog logger whose handler is not slog.NewTextHandler")
 				return true
 			}
 			if isPkgCall(call, "slog", slogPrints...) {
-				add(call, "logs with the default slog handler")
+				add(call, "logs with the default slog handler, or holds a logger with it")
 				return true
 			}
 			if !slices.Contains(printers, calledName(call)) || testReceiver(call) || fileWrite(call, imports) {
@@ -412,16 +445,58 @@ func isLiteral(expr ast.Expr) bool {
 }
 
 // textHandler says whether slog.New gets slog.NewTextHandler or
-// slog.DiscardHandler.
-func textHandler(call *ast.CallExpr) bool {
+// slog.DiscardHandler, inline or through a variable of handlers.
+func textHandler(call *ast.CallExpr, handlers map[string]bool) bool {
 	if len(call.Args) != 1 {
 		return false
 	}
-	if inner, ok := call.Args[0].(*ast.CallExpr); ok {
-		return isPkgCall(inner, "slog", "NewTextHandler")
+	switch arg := call.Args[0].(type) {
+	case *ast.CallExpr:
+		return isPkgCall(arg, "slog", "NewTextHandler")
+	case *ast.SelectorExpr:
+		return arg.Sel.Name == "DiscardHandler"
+	case *ast.Ident:
+		return handlers[arg.Name]
 	}
-	selector, ok := call.Args[0].(*ast.SelectorExpr)
-	return ok && selector.Sel.Name == "DiscardHandler"
+	return false
+}
+
+// textHandlers gives the variables of a file that hold only a
+// slog.NewTextHandler: each assignment to the name is such a call.
+func textHandlers(file *ast.File) map[string]bool {
+	text, other := map[string]bool{}, map[string]bool{}
+	assign := func(name *ast.Ident, value ast.Expr) {
+		if call, ok := value.(*ast.CallExpr); ok && isPkgCall(call, "slog", "NewTextHandler") {
+			text[name.Name] = true
+		} else {
+			other[name.Name] = true
+		}
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.AssignStmt:
+			for i, lhs := range n.Lhs {
+				if name, ok := lhs.(*ast.Ident); ok && len(n.Rhs) == len(n.Lhs) {
+					assign(name, n.Rhs[i])
+				} else if ok {
+					assign(name, nil)
+				}
+			}
+		case *ast.ValueSpec:
+			for i, name := range n.Names {
+				var value ast.Expr
+				if len(n.Values) == len(n.Names) {
+					value = n.Values[i]
+				}
+				assign(name, value)
+			}
+		}
+		return true
+	})
+	for name := range other {
+		delete(text, name)
+	}
+	return text
 }
 
 // importNames gives the names of the packages that a file imports.

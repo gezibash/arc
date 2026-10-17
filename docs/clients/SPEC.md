@@ -355,7 +355,7 @@ agent, or make `file.exe` look like `file.png`.
 | `TestARingRefusalIsEscapedOnOneLine` | A relay that answers `arc relay ring show` and `clear` with a hostile refusal cannot change the terminal or forge a line. |
 | `TestAStorageAnswerIsEscaped` | The message, plan and state of a storage citizen show escaped, each on its line. |
 | `TestNoticeIsCutAndEscaped` | arc shows a relay NOTICE on one line, escaped, and cut to 300 characters of output. |
-| `TestTextOfOtherPartiesIsEscapedAtThePrint` | A check of the source of arc, the SDK and the apps: each print or write of an error, or of a field that another party fills, such as `Message`, `ID` or `State`, goes through `sdk/terminal` or a function that returns the result of an escape. A print of text that arc writes itself carries `//arc:raw-ok` and a reason. Each slog logger uses `slog.TextHandler`. |
+| `TestTextOfOtherPartiesIsEscapedAtThePrint` | A check of the source of arc, the SDK and the apps: each print or write of an error, or of a field that another party fills, such as `Message`, `ID` or `State`, goes through `sdk/terminal` or a function that returns the result of an escape. A print of text that arc writes itself carries `//arc:raw-ok` and a reason. Each slog logger uses `slog.TextHandler`, inline or held in a variable; no code logs with the default slog logger or imports `log` or `log/slog` under another name. |
 | `TestTheEscapeCheckFindsRawPrints` | The check finds each print of a package of hostile prints, and no escaped print. |
 | `TestSlogTextHandlerQuotesHostileText` | `slog.TextHandler` writes ESC, an override, an invisible character, a tag, a newline and U+2028 of a message, a value and an error as escapes. |
 
