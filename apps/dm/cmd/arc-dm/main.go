@@ -192,6 +192,17 @@ func send(ctx context.Context, args []string) error {
 	if flags.NArg() < 1 {
 		return errors.New("usage: arc-dm send [flags] <peer> [text...]")
 	}
+	text := strings.Join(flags.Args()[1:], " ")
+	if flags.NArg() == 1 {
+		body, err := readAll(ctx, os.Stdin)
+		if err != nil {
+			return err
+		}
+		text = strings.TrimRight(string(body), "\n")
+	}
+	if strings.TrimSpace(text) == "" {
+		return errors.New("a message holds at least one character that is not a space")
+	}
 	all, err := conversations(ctx, s.arc)
 	if err != nil {
 		return err
@@ -200,19 +211,31 @@ func send(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	text := strings.Join(flags.Args()[1:], " ")
-	if text == "" {
-		body, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-		text = strings.TrimRight(string(body), "\n")
-	}
 	if _, err := s.arc.Send(ctx, c.Peers, text); err != nil {
 		return err
 	}
 	fmt.Printf("queued for %s\n", cmp.Or(c.Name, c.key()))
 	return nil
+}
+
+// readAll reads r to its end, or returns at the end of ctx: a read of
+// standard input cannot be stopped, and a signal must still stop arc-dm.
+func readAll(ctx context.Context, r io.Reader) ([]byte, error) {
+	type result struct {
+		body []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		body, err := io.ReadAll(r)
+		done <- result{body, err}
+	}()
+	select {
+	case got := <-done:
+		return got.body, got.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // read marks the messages of one conversation, or of all, read.

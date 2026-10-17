@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -475,5 +476,77 @@ func TestNoArc(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "the arc program is not installed") || !strings.Contains(string(out), "https://republic.sh/join.md") {
 		t.Errorf("arc-dm ls with no arc said:\n%s", out)
+	}
+}
+
+// finish waits at most 10 s for a command to end, and kills it after that.
+// It returns false if the command did not end by itself.
+func finish(t *testing.T, command *exec.Cmd) (ended bool) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { _ = command.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(10 * time.Second):
+		_ = command.Process.Kill()
+		<-done
+		return false
+	}
+}
+
+// TestSendText reads standard input only when no text follows the peer,
+// refuses a text of only spaces, and stops on a signal while it reads.
+func TestSendText(t *testing.T) {
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+
+	for _, text := range []string{"", " ", "\t\n"} {
+		// Standard input stays open, as in a program that runs arc-dm
+		// with a pipe that it does not close.
+		command := ada.command("send", bob.key, text)
+		var out bytes.Buffer
+		command.Stdout, command.Stderr = &out, &out
+		stdin, err := command.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = stdin.Close() })
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if !finish(t, command) {
+			t.Errorf("arc-dm send with the text %q waited for standard input", text)
+			continue
+		}
+		if command.ProcessState.Success() || !strings.Contains(out.String(), "not a space") {
+			t.Errorf("arc-dm send with the text %q: %s", text, out.String())
+		}
+	}
+
+	command := ada.command("send", bob.key)
+	command.Stdin = strings.NewReader("from standard input\n")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("arc-dm send with the text on standard input: %v\n%s", err, out)
+	}
+	bob.sync()
+	if out := bob.dm("open", ada.name); !strings.Contains(out, "  from standard input\n") {
+		t.Errorf("bob got %q, want the text of standard input", out)
+	}
+
+	command = ada.command("send", bob.key)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close() })
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if !finish(t, command) {
+		t.Error("arc-dm send did not stop on SIGTERM while it read standard input")
 	}
 }
