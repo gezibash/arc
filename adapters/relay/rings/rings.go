@@ -398,16 +398,19 @@ func (r *Rings) wrap(event nostr.Event) {
 			r.cfg.Logger.Debug("no ring", "citizen", short(pk), "reason", whyNoRegistration)
 			continue
 		}
-		watching := r.watching[pk] > 0
-		s.wrap(now, watching, event.ID.Hex())
-		if watching {
+		if r.watching[pk] > 0 {
+			// The open subscription reads the wrap: no ring waits, so no
+			// try can start.
+			s.wrap(now, true, event.ID.Hex())
 			s.renew(now, r.cfg.TTL)
+			r.save(pk, s)
+			r.stop(pk)
+			r.cfg.Logger.Info("no ring", "citizen", short(pk), "reason", whyWatching)
+			continue
 		}
+		s.wrap(now, false, event.ID.Hex())
 		r.save(pk, s)
 		why, wait := r.schedule(pk)
-		if watching {
-			why, wait = whyWatching, 0
-		}
 		switch {
 		case why == "":
 		case wait > 0:

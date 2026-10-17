@@ -53,11 +53,11 @@ func TestAProtectedEventNeedsItsAuthor(t *testing.T) {
 }
 
 // refusingRelay is a relay that lists arc-rings, sends a challenge on each
-// connection, refuses each AUTH, and answers each query with no events. It
-// counts the AUTH messages.
-func refusingRelay(t *testing.T) (string, *atomic.Int32) {
+// connection, refuses each AUTH unless accept is set, and answers each query
+// with no events. It counts the AUTH messages.
+func refusingRelay(t *testing.T) (url string, auths *atomic.Int32, accept *atomic.Bool) {
 	t.Helper()
-	var auths atomic.Int32
+	auths, accept = &atomic.Int32{}, &atomic.Bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Accept") == "application/nostr+json" {
 			_, _ = w.Write([]byte(`{"tags":["arc-rings"]}`))
@@ -91,7 +91,7 @@ func refusingRelay(t *testing.T) (string, *atomic.Int32) {
 				auths.Add(1)
 				var event nostr.Event
 				_ = json.Unmarshal(message[1], &event)
-				err = send("OK", event.ID.Hex(), false, "restricted: not you")
+				err = send("OK", event.ID.Hex(), accept.Load(), "restricted: not you")
 			case "REQ":
 				_ = json.Unmarshal(message[1], &id)
 				err = send("EOSE", id)
@@ -102,7 +102,7 @@ func refusingRelay(t *testing.T) (string, *atomic.Int32) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	return "ws" + strings.TrimPrefix(server.URL, "http"), &auths
+	return "ws" + strings.TrimPrefix(server.URL, "http"), auths, accept
 }
 
 // A relay that rings counts a read only after authentication
@@ -110,7 +110,7 @@ func refusingRelay(t *testing.T) (string, *atomic.Int32) {
 // reads, and the Relay gives the error to OnAuthFailure once, also when
 // later reads and a new connection fail again.
 func TestARefusedAuthenticationBeforeAReadIsToldOnce(t *testing.T) {
-	url, auths := refusingRelay(t)
+	url, auths, _ := refusingRelay(t)
 	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
 	defer func() { _ = r.Close() }()
 	var told []error
@@ -130,5 +130,29 @@ func TestARefusedAuthenticationBeforeAReadIsToldOnce(t *testing.T) {
 	}
 	if len(told) != 1 || !strings.Contains(told[0].Error(), "restricted: not you") {
 		t.Fatalf("OnAuthFailure got %v, want the one refusal of the relay", told)
+	}
+}
+
+// In a long command, such as arc serve, a relay can refuse, take a later
+// authentication, and refuse again. Each streak of refusals is told once.
+func TestARefusalAfterAnAuthenticationThatWorkedIsToldAgain(t *testing.T) {
+	url, _, accept := refusingRelay(t)
+	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	defer func() { _ = r.Close() }()
+	var told []error
+	r.OnAuthFailure(func(err error) { told = append(told, err) })
+
+	mail := nostr.Filter{Kinds: []nostr.Kind{1059}, Tags: nostr.TagMap{"p": {nostr.Generate().Public().Hex()}}}
+	// Refused twice, taken, then refused twice: each read on a new
+	// connection, so each authenticates.
+	for _, takes := range []bool{false, false, true, false, false} {
+		accept.Store(takes)
+		if _, err := r.Fetch(context.Background(), mail); err != nil {
+			t.Fatal(err)
+		}
+		_ = r.Close()
+	}
+	if len(told) != 2 {
+		t.Fatalf("OnAuthFailure got %d errors, want 2: one for each streak of refusals", len(told))
 	}
 }
