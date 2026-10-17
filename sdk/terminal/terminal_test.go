@@ -22,6 +22,8 @@ func TestEscape(t *testing.T) {
 		{"a byte that is not UTF-8", "a\xffb\xc3", `a\xffb\xc3`},
 		{"a real U+FFFD stays", "\ufffd", "\ufffd"},
 		{"invisible characters", "\u200b\ufeff\u00ad\u2060\u2064\u206a\u206f", `\u200b\ufeff\u00ad\u2060\u2064\u206a\u206f`},
+		{"annotation characters and the Mongolian vowel separator", "a\ufff9b\ufffac\ufffbd\u180e", `a\ufff9b\ufffac\ufffbd\u180e`},
+		{"Hangul fillers", "\u115f\u1160\u3164\uffa0", `\u115f\u1160\u3164\uffa0`},
 		{"tags that hide text", "hi\U000e0068\U000e0069", `hi\U000e0068\U000e0069`},
 		{"the flag of England stays", "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"},
 		{"the flag of Scotland stays", "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f", "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"},

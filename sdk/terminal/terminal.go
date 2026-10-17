@@ -126,6 +126,10 @@ func hidden(r rune) bool {
 	case r == '\u200b', r == '\ufeff', r == '\u00ad',
 		r >= '\u2060' && r <= '\u2064', r >= '\u206a' && r <= '\u206f':
 		return true // invisible characters
+	case r >= '\ufff9' && r <= '\ufffb', r == '\u180e':
+		return true // interlinear annotation, and the Mongolian vowel separator
+	case r == '\u115f', r == '\u1160', r == '\u3164', r == '\uffa0':
+		return true // Hangul fillers
 	}
 	return false
 }

@@ -170,7 +170,7 @@ agent, or make `file.exe` look like `file.png`.
   | A byte that is not UTF-8 | `\x` and its two lowercase hex digits, such as `\xff` |
   | An embedding, override or isolate (U+202A to U+202E, U+2066 to U+2069) | `\u` and four lowercase hex digits, such as `\u202e` |
   | A line or paragraph separator (U+2028, U+2029) | `\u2028`, `\u2029` |
-  | An invisible character: U+200B, U+FEFF, U+00AD, U+2060 to U+2064, U+206A to U+206F | `\u` and four lowercase hex digits, such as `\u200b` |
+  | An invisible character: U+200B, U+FEFF, U+00AD, U+2060 to U+2064, U+206A to U+206F, the interlinear annotation characters U+FFF9 to U+FFFB, the Mongolian vowel separator U+180E, and the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 | `\u` and four lowercase hex digits, such as `\u200b` |
   | A tag character (U+E0000 to U+E007F), except in the flags of England, Scotland and Wales | `\U` and eight lowercase hex digits, such as `\U000e0068` |
   | A backslash | two backslashes, so a typed `\x1b` shows as `\\x1b` |
   | Each other character, including the joiners U+200C and U+200D, and the marks U+200E, U+200F and U+061C | itself |
