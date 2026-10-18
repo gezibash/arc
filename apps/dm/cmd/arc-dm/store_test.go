@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gezibash/arc/apps/dm/cmd/arc-dm/internal/dmtest"
 	"github.com/gezibash/arc/sdk/arcprogram"
 )
 
@@ -550,5 +551,13 @@ func TestAfterAFailedReadNothingShowsAsMissing(t *testing.T) {
 	}
 	if len(*printed) != 7 || len(w.messages.shown) != 0 {
 		t.Errorf("the watch printed %d messages and showed %d ids as missing, want 7 and none", len(*printed), len(w.messages.shown))
+	}
+}
+
+// The tests of the watch in e2e wait on copies of refreshEvery and
+// readTimeout.
+func TestDmtestKeepsTheTimesOfTheWatch(t *testing.T) {
+	if dmtest.RefreshEvery != refreshEvery || dmtest.ReadTimeout != readTimeout {
+		t.Errorf("dmtest has %v and %v, want %v and %v as in main.go", dmtest.RefreshEvery, dmtest.ReadTimeout, refreshEvery, readTimeout)
 	}
 }
