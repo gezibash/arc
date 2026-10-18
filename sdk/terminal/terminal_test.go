@@ -203,10 +203,20 @@ func TestWidth(t *testing.T) {
 		{"\uff21", 2},       // a fullwidth A
 		{"\U0001f600", 2},   // an emoji
 		{"e\u0301", 1},      // a combining acute accent
-		{"\u2764\ufe0f", 1}, // a selector takes no column
-		{"a\u200db", 2},     // a joiner takes no column
-		{"\u2026", 1},       // the ellipsis
-		{`\u200b`, 6},       // an escape
+		{"\u2764\ufe0f", 2}, // the emoji selector makes a heart wide
+		{"\u2764", 1},       // a heart alone is narrow
+		{"a\u200db", 2},     // a joiner between letters takes no column
+		{"\U0001f468\u200d\U0001f469\u200d\U0001f467", 2}, // a family
+		{"\U0001f44d\U0001f3fd", 2},                       // a thumb with a skin tone
+		{"\U0001f1fa\U0001f1f8", 2},                       // a flag
+		{"\U0001f1fa", 2},                                 // a lone regional indicator
+		{"\u0915\u093f", 2},                               // Devanagari ka and the spacing vowel sign i
+		{"a" + strings.Repeat("\u0301", 300), 1},          // marks take no column
+		{strings.Repeat("\U0001f3fb", 215), 430},          // skin tones alone
+		{"a\U0001f3fb", 3},                                // a skin tone after a letter
+		{"\U0001f44d\U0001f3fd\U0001f3fd", 4},             // a second skin tone
+		{"\u2026", 1},                                     // the ellipsis
+		{`\u200b`, 6},                                     // an escape
 	} {
 		if got := Width(c.in); got != c.want {
 			t.Errorf("Width(%q) = %d, want %d", c.in, got, c.want)
@@ -214,9 +224,27 @@ func TestWidth(t *testing.T) {
 	}
 }
 
-// EscapeLineFit cuts by columns: 100 CJK ideographs fit in 72 columns as
-// 35 of them and an ellipsis, and an escape is never cut.
+// EscapeLineFit cuts by columns, and by characters: 100 CJK ideographs fit
+// in 72 columns as 35 of them and an ellipsis, 100 hearts with the emoji
+// selector as 35, and a letter with 300 marks, which takes one column, as
+// nothing. It cuts between clusters: never inside an escape, a flag, or a
+// letter and its marks.
 func TestEscapeLineFit(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		columns  int
+		want     string
+	}{
+		{"hearts", strings.Repeat("\u2764\ufe0f", 100), 72, strings.Repeat("\u2764\ufe0f", 35) + "\u2026"},
+		{"a pile of marks", "a" + strings.Repeat("\u0301", 300), 72, "\u2026"},
+		{"flags", strings.Repeat("\U0001f1fa\U0001f1f8", 50), 9, strings.Repeat("\U0001f1fa\U0001f1f8", 4) + "\u2026"},
+		{"letters with marks", strings.Repeat("e\u0301", 100), 10, strings.Repeat("e\u0301", 9) + "\u2026"},
+		{"marks that fit", "e\u0301e\u0301", 72, "e\u0301e\u0301"},
+	} {
+		if got := EscapeLineFit(c.in, c.columns); got != c.want {
+			t.Errorf("%s: EscapeLineFit is %q, want %q", c.name, got, c.want)
+		}
+	}
 	cjk := strings.Repeat("\u6f22", 100)
 	if got, want := EscapeLineFit(cjk, 72), strings.Repeat("\u6f22", 35)+"\u2026"; got != want {
 		t.Errorf("EscapeLineFit of 100 ideographs is %q, want %q", got, want)

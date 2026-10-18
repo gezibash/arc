@@ -89,9 +89,10 @@ A reply shows a quote line between its header and its text:
   a CJK ideograph or an emoji takes two. A parent of only spaces shows
   `(blank)`.
 - The id on a quote line is at most 12 digits, then `…`.
-- Flags can also come after the peer or the id, before the text:
-  `arc-dm send ada -reply 1c77 yes`. A text that starts with `-reply` is
-  refused, so a misplaced flag never goes out as text.
+- `-reply` can also come after the peer, before the text:
+  `arc-dm send ada -reply 1c77 yes`. Each other word after the peer is
+  text, so `arc-dm send ada -home is where the heart is` sends that text.
+  After `--`, each word is text. An empty `-reply=` is refused.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
@@ -99,8 +100,11 @@ A reply shows a quote line between its header and its text:
   `↳ 5e0c12  (in another conversation)`, and no text of it.
 - A reply shows the direct parent only, one level.
 - `arc-dm watch` adds each message that it receives. When a reply names a
-  parent that the watch does not hold, it reads the outbox once for that
-  id, in case you sent the parent after the watch started.
+  parent that the watch does not hold, it reads the outbox, in case you
+  sent the parent after the watch started: at most once each 5 s,
+  because a sender can name many ids. The reply, and each message after
+  it, waits for that read, at most 5 s, so the order stays and the quote
+  is not lost.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

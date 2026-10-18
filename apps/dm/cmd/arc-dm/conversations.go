@@ -452,8 +452,9 @@ type held struct {
 // from the reply.
 type store struct {
 	byID map[string]held
-	// ids are the ids, sorted, for the short ids.
-	ids []string
+	// ids are the ids, for the short ids. They are sorted unless unsorted.
+	ids      []string
+	unsorted bool
 }
 
 func index(all []conversation) *store {
@@ -477,18 +478,46 @@ func (s *store) add(e entry, c conversation) {
 		return
 	}
 	s.byID[e.ID] = held{entry: e, conv: c}
+	if s.unsorted {
+		s.ids = append(s.ids, e.ID)
+		return
+	}
+	// One message goes in its place: a watch adds one at a time, and a
+	// sort for each would take far longer.
 	i, _ := slices.BinarySearch(s.ids, e.ID)
 	s.ids = slices.Insert(s.ids, i, e.ID)
+}
+
+// addMany adds a message of a batch, such as the outbox. The ids are
+// sorted when they are next read: an insert for each would take time in
+// the square of the number of messages.
+func (s *store) addMany(e entry, c conversation) {
+	if _, ok := s.byID[e.ID]; ok {
+		return
+	}
+	s.byID[e.ID] = held{entry: e, conv: c}
+	s.ids = append(s.ids, e.ID)
+	s.unsorted = true
+}
+
+// sorted returns the ids, sorted.
+func (s *store) sorted() []string {
+	if s.unsorted {
+		slices.Sort(s.ids)
+		s.unsorted = false
+	}
+	return s.ids
 }
 
 // short is the start of an id that names one message of the store: six hex
 // digits, or more when another message starts with the same six.
 func (s *store) short(id string) string {
 	n := 0
-	i, _ := slices.BinarySearch(s.ids, id)
+	ids := s.sorted()
+	i, _ := slices.BinarySearch(ids, id)
 	for _, j := range []int{i - 1, i, i + 1} {
-		if j >= 0 && j < len(s.ids) && s.ids[j] != id {
-			n = max(n, commonPrefix(id, s.ids[j]))
+		if j >= 0 && j < len(ids) && ids[j] != id {
+			n = max(n, commonPrefix(id, ids[j]))
 		}
 	}
 	return id[:min(len(id), max(6, n+1))]
@@ -505,13 +534,14 @@ func commonPrefix(a, b string) int {
 // lookup finds the message whose id starts with prefix: at least four hex
 // digits. It refuses a prefix that names more than one message.
 func (s *store) lookup(prefix string) (held, error) {
-	if len(prefix) < 4 || len(prefix) > 64 || strings.Trim(prefix, "0123456789abcdef") != "" {
-		return held{}, fmt.Errorf("%q is not a message id: give at least 4 of its hex digits, as arc-dm open shows them", prefix)
+	if err := checkID(prefix); err != nil {
+		return held{}, err
 	}
-	i, _ := slices.BinarySearch(s.ids, prefix)
+	ids := s.sorted()
+	i, _ := slices.BinarySearch(ids, prefix)
 	var matches []string
-	for ; i < len(s.ids) && strings.HasPrefix(s.ids[i], prefix); i++ {
-		matches = append(matches, s.ids[i])
+	for ; i < len(ids) && strings.HasPrefix(ids[i], prefix); i++ {
+		matches = append(matches, ids[i])
 	}
 	switch len(matches) {
 	case 0:
@@ -520,6 +550,15 @@ func (s *store) lookup(prefix string) (held, error) {
 		return s.byID[matches[0]], nil
 	}
 	return held{}, fmt.Errorf("%q names %d messages: give more digits", prefix, len(matches))
+}
+
+// checkID refuses a short id that is not at least 4 lowercase hex digits.
+// A command checks it before it runs arc.
+func checkID(prefix string) error {
+	if len(prefix) < 4 || len(prefix) > 64 || strings.Trim(prefix, "0123456789abcdef") != "" {
+		return fmt.Errorf("%q is not a message id: give at least 4 of its hex digits, as arc-dm open shows them", prefix)
+	}
+	return nil
 }
 
 // quoteWidth is the most columns of a quote line.

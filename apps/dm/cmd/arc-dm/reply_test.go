@@ -167,6 +167,8 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 		"\x1b[2Jred\u202eevil\u200b" + strings.Repeat("x", 5000) + "\nsecond line",
 		"\n\n\u200b\u2060\nlast",
 		strings.Repeat("\u6f22", 100),
+		strings.Repeat("\u2764\ufe0f", 100),
+		"a" + strings.Repeat("\u0301", 300),
 	}
 	for _, parent := range parents {
 		mallory.dm("send", bob.key, parent)
@@ -188,14 +190,17 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 		if n := terminal.Width(line); n > 72 {
 			t.Errorf("a quote line takes %d columns, want at most 72: %q", n, line)
 		}
+		if n := utf8.RuneCountInString(line); n > 3*72 {
+			t.Errorf("a quote line holds %d characters, want at most %d: %q", n, 3*72, line)
+		}
 		if strings.Contains(line, "(not on this device)") {
 			nearQuote = append(nearQuote, line)
 		} else {
 			got = append(got, line)
 		}
 	}
-	if len(got) != 3 {
-		t.Fatalf("the quote lines are %q, want three", got)
+	if len(got) != 5 {
+		t.Fatalf("the quote lines are %q, want five", got)
 	}
 	// Each ideograph takes two columns. The head and the name take one for
 	// each character, and the cut leaves one column for the ellipsis.
@@ -209,11 +214,24 @@ func TestAHostileParentIsOneEscapedLine(t *testing.T) {
 	if want := "↳ " + held[:12] + "…  (not on this device)"; len(nearQuote) != 1 || nearQuote[0] != want {
 		t.Errorf("the quote of the near id is %q, want %q", nearQuote, want)
 	}
-	if n := utf8.RuneCountInString(got[0]); n > 72 || !strings.Contains(got[0], `: \x1b[2Jred\u202eevil\u200bxxx`) || !strings.HasSuffix(got[0], "…") {
-		t.Errorf("the quote of the long parent is %q (%d characters), want it escaped and cut to 72", got[0], n)
-	}
-	if !strings.HasSuffix(got[1], `: \u200b\u2060 …`) {
-		t.Errorf("the quote of the parent with empty lines is %q", got[1])
+	// The quotes come in the order of the clock of the sender, and the
+	// parents went in one second, so each is found by what it holds.
+	for _, c := range []struct {
+		name string
+		ok   func(string) bool
+	}{
+		{"the long parent, escaped and cut", func(q string) bool {
+			return strings.Contains(q, `: \x1b[2Jred\u202eevil\u200bxxx`) && strings.HasSuffix(q, "…")
+		}},
+		{"the parent with empty lines", func(q string) bool { return strings.HasSuffix(q, `: \u200b\u2060 …`) }},
+		{"the hearts, cut", func(q string) bool {
+			return strings.Contains(q, ": \u2764\ufe0f\u2764\ufe0f") && strings.HasSuffix(q, "\u2764\ufe0f…")
+		}},
+		{"the pile of marks, left out", func(q string) bool { return strings.HasSuffix(q, mallory.name+": …") }},
+	} {
+		if !slices.ContainsFunc(got, c.ok) {
+			t.Errorf("no quote of %s in %q", c.name, got)
+		}
 	}
 }
 
@@ -426,9 +444,9 @@ func TestSendReplyChecksTheIdBeforeTheText(t *testing.T) {
 }
 
 // A watch reads the outbox at most once for each parent that it does not
-// hold, however many replies name that parent: a sender can name many
-// ids that no message has.
-func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
+// hold, and at most once each refreshEvery, however many ids that no
+// message has a sender names.
+func TestAWatchReadsTheOutboxRarely(t *testing.T) {
 	t.Parallel()
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	mallory.dm("send", bob.key, "hello")
@@ -452,17 +470,21 @@ func TestAWatchReadsTheOutboxOncePerMissingParent(t *testing.T) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 
-	one, two := strings.Repeat("7a", 32), strings.Repeat("7b", 32)
-	for i, junk := range []string{one, one, one, two} {
-		mallory.arcSend(bob.key, "junk "+string(rune('a'+i)), "--arctest-tag", "e,"+junk)
+	start := time.Now()
+	const junk = 20
+	for i := range junk {
+		mallory.arcSend(bob.key, fmt.Sprintf("junk %d", i), "--arctest-tag", fmt.Sprintf("e,%064x", i+1))
 	}
-	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Count(stdout.String(), "(not on this device)") == 4 }) {
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Count(stdout.String(), "(not on this device)") == junk }) {
 		t.Fatalf("the watch printed:\n%s", stdout.String())
 	}
+	elapsed := time.Since(start)
 	data, _ := os.ReadFile(runs)
-	// One read of the outbox at the start, then one for each missing id.
-	if n := strings.Count(string(data), "message outbox"); n != 3 {
-		t.Errorf("the watch read the outbox %d times, want 3:\n%s", n, data)
+	// One read of the outbox at the start, then at most one each
+	// refreshEvery, the first at once.
+	most := 2 + int(elapsed/refreshEvery)
+	if n := strings.Count(string(data), "message outbox"); n < 2 || n > most || n >= junk {
+		t.Errorf("the watch read the outbox %d times in %v, want 2 to %d:\n%s", n, elapsed, most, data)
 	}
 	if n := strings.Count(string(data), "message inbox"); n != 1 {
 		t.Errorf("the watch read the inbox %d times, want 1:\n%s", n, data)
@@ -485,14 +507,92 @@ func TestFlagsAfterThePeer(t *testing.T) {
 	if got, want := bob.dm("send", ada.name, "-reply", short, "yes"), "replied to "+short+" in "+ada.name+"\n"; got != want {
 		t.Errorf("send <peer> -reply printed %q, want %q", got, want)
 	}
-	if out := bob.refused("send", ada.name, "--", "-reply", short, "no"); !strings.Contains(out, "the text starts with -reply") {
-		t.Errorf("a text that starts with -reply: %s", out)
+	if out := bob.refused("send", ada.name, "-reply=", "no"); !strings.Contains(out, `"" is not a message id`) {
+		t.Errorf("an empty -reply: %s", out)
 	}
-	bob.dm("send", ada.name, "I", "think", "-v", "is", "fine")
+	// After the peer, each word but -reply is text: the flags of arc-dm
+	// do not take words of a message.
+	texts := [][]string{
+		{"--", "-reply", short, "is literal"},
+		{"-5", "degrees"},
+		{"-h"},
+		{"-home", "is", "where", "the", "heart", "is"},
+		{"-arc", "/no/such/arc", "everything"},
+		{"-state", "of", "the", "art"},
+		{"I", "think", "-v", "is", "fine"},
+	}
+	for _, words := range texts {
+		bob.dm(append([]string{"send", ada.name}, words...)...)
+	}
 	ada.sync()
 	conv := ada.dm("open", bob.name)
-	if !strings.Contains(conv, "\n\u21b3 "+short+"  you: bring the map\n  yes\n") || strings.Contains(conv, "-reply") || !strings.Contains(conv, "\n  I think -v is fine\n") {
-		t.Errorf("ada's conversation:\n%s", conv)
+	want := []string{"\n\u21b3 " + short + "  you: bring the map\n  yes\n", "\n  -reply " + short + " is literal\n"}
+	for _, words := range texts[1:] {
+		want = append(want, "\n  "+strings.Join(words, " ")+"\n")
+	}
+	for _, w := range want {
+		if !strings.Contains(conv, w) {
+			t.Errorf("ada's conversation holds no %q:\n%s", w, conv)
+		}
+	}
+	if n := strings.Count(conv, "\n  "); n != 2+len(texts) {
+		t.Errorf("ada's conversation holds %d texts, want %d: -reply= sent nothing:\n%s", n, 2+len(texts), conv)
+	}
+}
+
+// A command checks the form of an id before it runs arc, so a wrong id
+// fails even with no arc.
+func TestAnIdIsCheckedBeforeArcRuns(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"reply", "zz", "hi"},
+		{"send", "-reply", "zz", "ada", "hi"},
+		{"send", "ada", "-reply=", "hi"},
+	} {
+		command := exec.Command(env.program, append([]string{args[0], "-arc", "/no/such/arc"}, args[1:]...)...)
+		out, err := command.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "is not a message id") {
+			t.Errorf("arc-dm %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+}
+
+// growth is how many times longer f takes for 4n items than for n, the
+// least of three tries. Time that grows with n log n gives about 4.5, and
+// time that grows with the square of n gives 16.
+func growth(n int, f func(n int)) float64 {
+	measure := func(n int) time.Duration {
+		least := time.Duration(1 << 62)
+		for range 3 {
+			start := time.Now()
+			f(n)
+			least = min(least, time.Since(start))
+		}
+		return least
+	}
+	return float64(measure(4*n)) / float64(measure(n))
+}
+
+// ids makes n message ids, out of order.
+func ids(n int) []entry {
+	entries := make([]entry, n)
+	for i := range entries {
+		entries[i].ID = fmt.Sprintf("%064x", uint64(n-i)*2654435761)
+	}
+	return entries
+}
+
+// The store adds a batch of messages, such as the outbox, with one sort,
+// so a watch that reads a large outbox stays fast.
+func TestAddIsNotQuadratic(t *testing.T) {
+	if g := growth(25000, func(n int) {
+		s := index(nil)
+		for _, e := range ids(n) {
+			s.addMany(e, conversation{})
+		}
+		s.short(s.ids[0])
+	}); g > 9 {
+		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
 	}
 }
 
@@ -528,17 +628,50 @@ func TestArcChecksAReplyBeforeTheText(t *testing.T) {
 // The index of 200,000 messages takes one sort, not an insert for each
 // id, whose time grows with the square of the number of messages.
 func TestIndexIsNotQuadratic(t *testing.T) {
-	entries := make([]entry, 200000)
-	for i := range entries {
-		entries[i].ID = fmt.Sprintf("%064x", uint64(len(entries)-i)*2654435761)
+	if g := growth(25000, func(n int) { index([]conversation{{Peers: []string{"k"}, Entries: ids(n)}}) }); g > 9 {
+		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
 	}
-	start := time.Now()
-	s := index([]conversation{{Peers: []string{"k"}, Entries: entries}})
-	if took := time.Since(start); took > 2*time.Second {
-		t.Errorf("the index of %d messages took %v", len(entries), took)
-	}
-	if len(s.ids) != len(entries) || !slices.IsSorted(s.ids) {
+	s := index([]conversation{{Peers: []string{"k"}, Entries: ids(1000)}})
+	if len(s.ids) != 1000 || !slices.IsSorted(s.ids) {
 		t.Errorf("the index holds %d ids, sorted %v", len(s.ids), slices.IsSorted(s.ids))
+	}
+}
+
+// A watch adds one message to its store in its place, with no sort: at
+// 100,000 messages, a sort for each message took 2 to 3 percent of the
+// time of a whole index, and an insert takes about 0.1 percent.
+func TestALiveAddDoesNotSortTheStore(t *testing.T) {
+	extra := make([]entry, 200)
+	for i := range extra {
+		extra[i].ID = fmt.Sprintf("%064x", uint64(i+7)*1000003)
+	}
+	ratio := 1.0
+	for range 3 {
+		start := time.Now()
+		index([]conversation{{Peers: []string{"k"}, Entries: ids(100000)}})
+		whole := time.Since(start)
+		s := index([]conversation{{Peers: []string{"k"}, Entries: ids(100000)}})
+		start = time.Now()
+		for _, e := range extra {
+			s.add(e, conversation{})
+			s.short(e.ID)
+		}
+		ratio = min(ratio, float64(time.Since(start))/float64(len(extra))/float64(whole))
+	}
+	if ratio > 0.006 {
+		t.Errorf("one message took %.4f of the time of a whole index, want under 0.006", ratio)
+	}
+}
+
+// A watch remembers at most maxMissed ids that a read of the outbox did
+// not find.
+func TestTheWatchForgetsMissedIds(t *testing.T) {
+	w := &watcher{missed: map[string]bool{}}
+	for i := range 2 * maxMissed {
+		w.miss(fmt.Sprint(i))
+	}
+	if len(w.missed) > maxMissed {
+		t.Errorf("the watch remembers %d ids, want at most %d", len(w.missed), maxMissed)
 	}
 }
 
@@ -556,4 +689,45 @@ func TestABlankParentQuotesAsBlank(t *testing.T) {
 			t.Errorf("firstLine(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// A reply whose parent the watch does not hold waits for the next read of
+// the outbox, and is not shown without its parent. A reply to an id that
+// no message has, then within 5 s a reply to a message that bob sent from
+// another process after the watch started: the second still shows its
+// parent, and the replies keep their order.
+func TestAWatchHoldsAReplyUntilItReadsTheOutbox(t *testing.T) {
+	t.Parallel()
+	ada, bob, mallory := newPerson(t, "ada"), newPerson(t, "bob"), newPerson(t, "mallory")
+	ada.dm("send", bob.key, "hello")
+	mallory.dm("send", bob.key, "hello too")
+	bob.sync()
+
+	watch := bob.command("watch", "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+
+	mallory.arcSend(bob.key, "junk", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
+	bob.dm("send", ada.name, "bring the map")
+	ada.sync()
+	short := shortID(t, ada.dm("open", bob.name), "bring the map")
+	ada.dm("reply", short, "yes")
+	want := "\n\u21b3 " + short + "  you: bring the map\n  yes\n"
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stdout.String(), want) }) {
+		t.Fatalf("the watch printed:\n%s\nwant\n%s", stdout.String(), want)
+	}
+	if out := stdout.String(); strings.Index(out, "  junk\n") > strings.Index(out, want) || strings.Contains(out, short+"  (not on this device)") {
+		t.Errorf("the watch printed:\n%s", out)
+	}
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
 }

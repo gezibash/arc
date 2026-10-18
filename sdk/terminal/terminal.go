@@ -56,22 +56,172 @@ func EscapeLineCut(text string, limit int) string {
 	return mode{oneLine: true, limit: limit}.apply(text)
 }
 
-// EscapeLineFit is EscapeLineCut for a line that must fit in a number of
-// columns of a terminal: it counts each character of output as Width does.
+// EscapeLineFit is EscapeLine for a line that must fit in a number of
+// columns of a terminal, as Width counts them. It also holds at most
+// MaxRunesPerColumn characters for each column, so a pile of marks that
+// takes no column cannot make the line long. A line that does not fit ends
+// with an ellipsis after the clusters that fit. It cuts only between
+// clusters: never inside an escape, a flag, an emoji joined of several, or
+// between a character and its marks.
 func EscapeLineFit(text string, columns int) string {
-	return mode{oneLine: true, limit: columns, columns: true}.apply(text)
+	if columns < 1 {
+		return ""
+	}
+	all := clusters(escapedPieces(text))
+	total, runes := 0, 0
+	for _, c := range all {
+		total += c.width()
+		runes += utf8.RuneCountInString(c.text)
+	}
+	var b strings.Builder
+	if total <= columns && runes <= MaxRunesPerColumn*columns {
+		for _, c := range all {
+			b.WriteString(c.text)
+		}
+		return b.String()
+	}
+	// The ellipsis takes one column and one character.
+	total, runes = 0, 0
+	for _, c := range all {
+		w, n := c.width(), utf8.RuneCountInString(c.text)
+		if total+w > columns-1 || runes+n > MaxRunesPerColumn*columns-1 {
+			break
+		}
+		total, runes = total+w, runes+n
+		b.WriteString(c.text)
+	}
+	return b.String() + "\u2026"
 }
 
-// Width is the number of columns that a terminal gives text: two for a
-// wide or fullwidth character of East Asian Width, such as a CJK ideograph
-// or most emoji; none for a mark or a format character, such as a
-// variation selector or a joiner; one for each other character. An emoji
-// joined of several gets two columns for each of its parts, so Width can
-// count more columns than a terminal shows, and never fewer.
+// MaxRunesPerColumn is the most characters for each column of a line that
+// EscapeLineFit makes. Scripts with marks, such as Devanagari, hold fewer
+// than two; a pile of marks that hides a line holds many more.
+const MaxRunesPerColumn = 3
+
+// Width is the number of columns that a terminal gives text, one cluster
+// at a time. A cluster is a character with its marks and its variation
+// selectors, an emoji with one skin tone, pictographs joined by U+200D, or
+// a pair of regional indicators (a flag). A cluster takes two columns when it is
+// a flag or a lone regional indicator, when it holds the emoji selector
+// U+FE0F, or when its first character is wide or fullwidth by East Asian
+// Width, such as a CJK ideograph or most emoji. A cluster whose first
+// character is a mark or a format character takes none, and each other
+// cluster one. Each spacing mark (class Mc) adds one.
+//
+// Width is meant to count no fewer columns than a terminal shows, so that
+// a line cut to fit does fit. Terminals differ, and Width does not know
+// each sequence of Unicode: it is checked for the cases of TestWidth, not
+// proven for all text.
 func Width(text string) int {
+	var pieces []piece
+	for i, r := range text {
+		pieces = append(pieces, piece{text: text[i : i+utf8.RuneLen(r)], r: r, shown: true})
+	}
 	n := 0
-	for _, r := range text {
-		n += runeWidth(r)
+	for _, c := range clusters(pieces) {
+		n += c.width()
+	}
+	return n
+}
+
+// piece is the output of one character, or flag, of a text: the
+// character itself when shown, else its escape.
+type piece struct {
+	text  string
+	r     rune
+	shown bool
+}
+
+// escapedPieces is text as EscapeLine writes it, one piece at a time.
+func escapedPieces(text string) []piece {
+	var out []piece
+	prev := rune(-1)
+	for i := 0; i < len(text); {
+		p, size := next(text[i:], true, prev)
+		original := text[i : i+size]
+		r, _ := utf8.DecodeRuneInString(original)
+		shown := p == original
+		out = append(out, piece{text: p, r: r, shown: shown})
+		prev = -1
+		if shown || original == `\` {
+			prev, _ = utf8.DecodeLastRuneInString(original)
+		}
+		i += size
+	}
+	return out
+}
+
+// cluster is the output of one or more pieces that a cut keeps together.
+type cluster struct {
+	text    string
+	escaped bool
+}
+
+// clusters joins pieces into clusters. An escape is a cluster of its own,
+// and nothing joins it. U+200D joins two pictographs only, so that letters
+// around a joiner keep a column each.
+func clusters(pieces []piece) []cluster {
+	var out []cluster
+	last := rune(-1)  // the last character of the open cluster, if shown
+	first := rune(-1) // the first character of the open cluster
+	flags := 0        // the regional indicators of the open cluster
+	for _, p := range pieces {
+		joins := p.shown && last >= 0 && (extends(p.r) ||
+			// A skin tone belongs to an emoji, once. After a letter, or
+			// after another skin tone, it is an emoji of its own.
+			(tone(p.r) && pictograph(first) && !tone(last)) ||
+			(last == '\u200d' && pictograph(first) && pictograph(p.r)) ||
+			(regional(p.r) && flags == 1))
+		if joins {
+			out[len(out)-1].text += p.text
+		} else {
+			out = append(out, cluster{text: p.text, escaped: !p.shown})
+			first, flags = p.r, 0
+		}
+		if regional(p.r) {
+			flags++
+		}
+		last = -1
+		if p.shown {
+			last, _ = utf8.DecodeLastRuneInString(p.text)
+		}
+	}
+	return out
+}
+
+// extends reports a character that belongs to the cluster before it: a
+// mark, the joiner U+200D, or a variation selector.
+func extends(r rune) bool {
+	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc) || r == '\u200d' ||
+		(r >= '\ufe00' && r <= '\ufe0f') || (r >= '\U000e0100' && r <= '\U000e01ef')
+}
+
+// tone reports a skin tone modifier.
+func tone(r rune) bool { return r >= '\U0001f3fb' && r <= '\U0001f3ff' }
+
+func regional(r rune) bool { return r >= '\U0001f1e6' && r <= '\U0001f1ff' }
+
+// pictograph reports a character of the blocks of emoji and symbols that
+// U+200D joins into one emoji.
+func pictograph(r rune) bool {
+	return (r >= '\U0001f000' && r <= '\U0001faff') || (r >= '\u2600' && r <= '\u27bf') || (r >= '\u2b00' && r <= '\u2bff')
+}
+
+func (c cluster) width() int {
+	if c.escaped {
+		return len(c.text) // an escape is ASCII
+	}
+	first, _ := utf8.DecodeRuneInString(c.text)
+	switch {
+	case strings.ContainsRune(c.text, '\ufe0f'), regional(first):
+		// A lone regional indicator takes two columns on some terminals.
+		return 2
+	}
+	n := runeWidth(first)
+	for _, r := range c.text {
+		if unicode.Is(unicode.Mc, r) {
+			n++ // a spacing mark takes a column of its own
+		}
 	}
 	return n
 }
@@ -166,7 +316,6 @@ type mode struct {
 	backslash bool // a backslash stays one backslash
 	strip     bool // a character that would be escaped is removed
 	limit     int  // the most characters of output, or -1 for no limit
-	columns   bool // the limit counts columns, as Width does
 }
 
 // apply writes text as the mode says. With a limit of 0 or more, an output
@@ -193,11 +342,7 @@ func (m mode) apply(text string) string {
 		}
 		b.WriteString(piece)
 		if m.limit >= 0 {
-			if m.columns {
-				written += Width(piece)
-			} else {
-				written += utf8.RuneCountInString(piece)
-			}
+			written += utf8.RuneCountInString(piece)
 			if written < m.limit {
 				keep = b.Len()
 			}
