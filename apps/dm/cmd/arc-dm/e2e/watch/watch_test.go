@@ -90,13 +90,15 @@ func TestAWatchReadsTheOutboxRarely(t *testing.T) {
 	for i := range junk {
 		mallory.ArcSend(bob.Key, fmt.Sprintf("junk %d", i), "--arctest-tag", fmt.Sprintf("e,%064x", i+1))
 	}
-	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Count(stdout.String(), "(not on this device)") == junk }) {
-		t.Fatalf("the watch printed:\n%s", stdout.String())
+	// Under load a read can take more than 10 s; the replies then show
+	// with no quote line, not as missing. Either way each one shows.
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Count(stdout.String(), "  junk ") == junk }) {
+		t.Fatalf("the watch printed:\n%s\nand on standard error:\n%s", stdout.String(), stderr.String())
 	}
 	elapsed := time.Since(start)
 	data, _ := os.ReadFile(runs)
-	// One read of the outbox at the start, then at most one each
-	// 5 s, the first at once.
+	// One read of the outbox at the start, then at most one each 5 s
+	// from the end of the last read.
 	most := 2 + int(elapsed/dmtest.RefreshEvery)
 	if n := strings.Count(string(data), "message outbox"); n < 2 || n > most || n >= junk {
 		t.Errorf("the watch read the outbox %d times in %v, want 2 to %d:\n%s", n, elapsed, most, data)
@@ -168,6 +170,7 @@ func secondInterrupt(t *testing.T, how string) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	before := reads()
+	first := time.Now()
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
@@ -180,6 +183,15 @@ func secondInterrupt(t *testing.T, how string) {
 	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return reads() > before }) {
 		t.Fatalf("the end of the watch did not read the outbox; reads %d", reads())
 	}
+	// The first interrupt ends a timed read at once, not when its own
+	// limit of 10 s ends it.
+	if took := time.Since(first); took > dmtest.ReadTimeout/2 {
+		t.Errorf("the end of the watch read the outbox %v after the first interrupt, want under %v", took, dmtest.ReadTimeout/2)
+	}
+	// A timed read that starts between the count and the first interrupt
+	// also raises the count: give arc-dm a moment to take the interrupt, so
+	// the second does not come at the same instant.
+	time.Sleep(100 * time.Millisecond)
 	start := time.Now()
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
@@ -387,6 +399,12 @@ func TestSIGTERMEndsEachArc(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = watch.Wait()
+	// arc-dm ends by its own handler, not by the signal: on Linux, a
+	// signal that killed arc-dm would end its arc too, and hide a missing
+	// handler.
+	if watch.ProcessState.Sys().(syscall.WaitStatus).Signaled() {
+		t.Error("SIGTERM killed arc-dm, want it to end by its handler")
+	}
 	dmtest.NoArcLeft(t, bob.Arc.Home)
 }
 
@@ -412,9 +430,11 @@ func TestAKilledArcDmLeavesNoArcOnLinux(t *testing.T) {
 	dmtest.NoArcLeft(t, bob.Arc.Home)
 }
 
-// A read of the outbox while the watch runs takes at most 10 s. On
-// an arc that hangs, the watch warns, keeps the reply that waits, and gets
-// its quote from the next read.
+// A read of the outbox while the watch runs takes at most 10 s. On an arc
+// that hangs, the watch warns, and shows the reply that waits with no
+// quote line. While reads fail, a reply shows at once with no quote line,
+// and makes the timer read again; when that read works, a later reply
+// gets its quote.
 func TestAWatchReadTimesOut(t *testing.T) {
 	t.Parallel()
 	ada, bob := dmtest.NewPerson(t, "ada"), dmtest.NewPerson(t, "bob")
@@ -443,12 +463,211 @@ func TestAWatchReadTimesOut(t *testing.T) {
 	ada.Sync()
 	short := dmtest.ShortID(t, ada.DM("open", bob.Name), "bring the map")
 	ada.DM("reply", short, "yes")
-	want := "\n\u21b3 " + short + "  you: bring the map\n  yes\n"
-	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), want) }) {
-		t.Fatalf("the watch printed:\n%s\nwant\n%s\nstderr:\n%s", stdout.String(), want, stderr.String())
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), "\n  yes\n") }) {
+		t.Fatalf("the watch printed:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "\u21b3") {
+		t.Errorf("the reply of the hung read showed a quote line:\n%s", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "the read of the outbox took more than") {
 		t.Errorf("the watch did not warn of the hung read:\n%s", stderr.String())
+	}
+	reads := func() int {
+		data, _ := os.ReadFile(count)
+		return strings.Count(string(data), "x")
+	}
+	ada.DM("reply", short, "and")
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), "\n  and\n") }) {
+		t.Fatalf("while reads failed, the reply did not show at once:\n%s", stdout.String())
+	}
+	// That reply makes the timer read again, and that read works.
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return reads() >= 3 }) {
+		t.Fatalf("the watch read the outbox no third time; reads %d", reads())
+	}
+	time.Sleep(500 * time.Millisecond)
+	ada.DM("reply", short, "and the torch")
+	want := "\n\u21b3 " + short + "  you: bring the map\n  and the torch\n"
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), want) }) {
+		t.Fatalf("the watch printed:\n%s\nwant\n%s", stdout.String(), want)
+	}
+	_ = watch.Process.Signal(os.Interrupt)
+	_ = watch.Wait()
+}
+
+// An outbox that always hangs does not hide replies past one read: after
+// its 10 s, the read shows the held reply, with no quote line, and not as
+// "(not on this device)": its parent is a message of this citizen.
+func TestAnAlwaysHungOutboxShowsRepliesPlain(t *testing.T) {
+	t.Parallel()
+	ada, bob := dmtest.NewPerson(t, "ada"), dmtest.NewPerson(t, "bob")
+	ada.DM("send", bob.Key, "hello")
+	bob.Sync()
+	dir := t.TempDir()
+	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
+	// Each read of the outbox after the first hangs.
+	sleep := fmt.Sprintf("%d.%d", 200+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && exec sleep " + sleep + ";; esac\nexec " + bob.Arc.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	watch := exec.Command(dmtest.Program(), "watch", "-arc", wrapper, "-home", bob.Arc.Home, "-state", bob.State, "-notify", "none")
+	stdout, stderr := &dmtest.LockedBuffer{}, &dmtest.LockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	bob.DM("send", ada.Name, "bring the map")
+	ada.Sync()
+	short := dmtest.ShortID(t, ada.DM("open", bob.Name), "bring the map")
+	ada.DM("reply", short, "yes")
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), "\n  yes\n") }) {
+		t.Fatalf("the watch printed:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	if out := stdout.String(); strings.Contains(out, "\u21b3") || strings.Contains(out, "not on this device") {
+		t.Errorf("the watch printed a quote line after a read that took too long:\n%s", out)
+	}
+	if !strings.Contains(stderr.String(), "took more than") {
+		t.Errorf("the watch did not warn of the hung read:\n%s", stderr.String())
+	}
+	_ = watch.Process.Signal(os.Interrupt)
+	_ = watch.Wait()
+}
+
+// The ids that a watch shows as missing are saved when the watch ends,
+// so a reply after it refuses them: here the watch shows the id after its
+// timed read, and no message comes after that to save it sooner.
+func TestAWatchSavesShownIdsAtItsEnd(t *testing.T) {
+	t.Parallel()
+	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
+	mallory.DM("send", bob.Key, "hello")
+	bob.Sync()
+	watch := bob.Command("watch", "-notify", "none")
+	stdout, stderr := &dmtest.LockedBuffer{}, &dmtest.LockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	parent := dmtest.FakeID(9)
+	mallory.ArcSend(bob.Key, "see above", "--arctest-tag", "e,"+parent)
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), parent[:12]+"  (not on this device)") }) {
+		t.Fatalf("the watch printed:\n%s", stdout.String())
+	}
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
+	if out := bob.Refused("reply", parent[:12], "yes"); !strings.Contains(out, "was not on this device when arc-dm showed it") {
+		t.Errorf("reply to the id that the watch showed as missing: %s", out)
+	}
+}
+
+// A timer read that shows an id as missing saves it within a second,
+// though no message follows: a watch that is killed then keeps the id,
+// and a reply refuses it.
+func TestAKilledWatchKeepsTheIdsThatAReadShowed(t *testing.T) {
+	t.Parallel()
+	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
+	mallory.DM("send", bob.Key, "hello")
+	bob.Sync()
+	watch := bob.Command("watch", "-notify", "none")
+	stdout, stderr := &dmtest.LockedBuffer{}, &dmtest.LockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	// On macOS the arc of a killed arc-dm runs on.
+	defer func() { _ = exec.Command("pkill", "-f", bob.Arc.Home+" message watch").Run() }()
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	parent := dmtest.FakeID(10)
+	mallory.ArcSend(bob.Key, "see above", "--arctest-tag", "e,"+parent)
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), parent[:12]+"  (not on this device)") }) {
+		t.Fatalf("the watch printed:\n%s", stdout.String())
+	}
+	time.Sleep(2 * time.Second)
+	if err := watch.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
+	if out := bob.Refused("reply", parent[:12], "yes"); !strings.Contains(out, "was not on this device when arc-dm showed it") {
+		t.Errorf("reply to the id that the killed watch showed as missing: %s", out)
+	}
+}
+
+// With an outbox that always hangs, a steady stream of replies shows with
+// a bounded delay: only the timer reads the outbox, and after a read that
+// fails, a reply shows at once. Each reply here shows within the first
+// timed read and its 10 s limit, and a margin, of the time it was sent.
+func TestRepliesShowSoonWhileTheOutboxHangs(t *testing.T) {
+	t.Parallel()
+	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
+	mallory.DM("send", bob.Key, "hello")
+	bob.Sync()
+	dir := t.TempDir()
+	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
+	sleep := fmt.Sprintf("%d.%d", 400+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && exec sleep " + sleep + ";; esac\nexec " + bob.Arc.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	watch := exec.Command(dmtest.Program(), "watch", "-arc", wrapper, "-home", bob.Arc.Home, "-state", bob.State, "-notify", "none")
+	stdout, stderr := &dmtest.LockedBuffer{}, &dmtest.LockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	const replies = 12
+	limit := dmtest.RefreshEvery + dmtest.ReadTimeout + 10*time.Second
+	sent := make([]time.Time, replies)
+	shown := make([]time.Time, replies)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for deadline := time.Now().Add(dmtest.WaitLimit + time.Duration(replies)*time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			out, all := stdout.String(), true
+			for i := range replies {
+				if shown[i].IsZero() && strings.Contains(out, fmt.Sprintf("\n  reply %d\n", i)) {
+					shown[i] = time.Now()
+				}
+				all = all && !shown[i].IsZero()
+			}
+			if all {
+				return
+			}
+		}
+	}()
+	for i := range replies {
+		mallory.ArcSend(bob.Key, fmt.Sprintf("reply %d", i), "--arctest-tag", "e,"+dmtest.FakeID(100+i))
+		sent[i] = time.Now()
+		time.Sleep(time.Second)
+	}
+	<-done
+	for i := range replies {
+		switch {
+		case shown[i].IsZero():
+			t.Errorf("reply %d never showed", i)
+		case shown[i].Sub(sent[i]) > limit:
+			t.Errorf("reply %d showed %v after it was sent, want at most %v", i, shown[i].Sub(sent[i]), limit)
+		}
+	}
+	if strings.Contains(stdout.String(), "not on this device") {
+		t.Errorf("a reply showed as not on this device while reads failed:\n%s", stdout.String())
 	}
 	_ = watch.Process.Signal(os.Interrupt)
 	_ = watch.Wait()

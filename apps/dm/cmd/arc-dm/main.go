@@ -77,8 +77,10 @@ func main() {
 	// last read of a watch on a hung arc. A third one ends arc-dm as with
 	// no handler. The channel listens from the start. A second signal of
 	// the same kind that comes at the same instant as the first can still
-	// be lost: the kernel keeps one signal of each kind that waits. Then
-	// arc-dm ends when the last read ends, within closeRead.
+	// be lost: Go keeps one pending bit for each signal (runtime/sigqueue.go)
+	// until its handler takes it, and the kernel keeps one pending standard
+	// signal of each kind. Then arc-dm ends when the last read ends, within
+	// closeRead.
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
@@ -177,21 +179,25 @@ func parseText(flags *flag.FlagSet, args []string, n int, after ...string) (out 
 // A reply can name a parent that this citizen sent after the watch
 // started, from another process: only a read of the outbox finds it. A
 // sender can name many ids that no message has, and each read of the
-// outbox opens each sealed message that this citizen sent. So the watch
-// reads the outbox at most once each refreshEvery. A reply whose parent
-// the watch does not hold waits for the next read, and each message after
-// it waits too. An id that a read did not find is not waited for again;
-// the watch forgets such ids when it holds maxMissed.
+// outbox opens each sealed message that this citizen sent. So only a timer
+// reads the outbox, refreshEvery after the end of the last read, and the
+// lock of the watcher is free while it reads. A reply whose parent the
+// watch does not hold waits for a read that starts after it arrives, and
+// each message of its sender after it waits too. An id that a read did not
+// find is not waited for again; the watch forgets such ids when it holds
+// maxMissed.
 //
 // A waiting reply prints without its quote only after a read of the
-// outbox that came after it, with one exception: a sender that holds more
-// than maxHeldPerSender messages prints its oldest at once. Past
-// maxWaiting waiting replies, the watch reads the outbox at once, or as
-// soon as overflowRead has passed since the last read. Past maxQueue held
-// messages with the read blocked, it prints early only plain messages that
-// lead the held messages of their sender, and then waits for the read,
-// without its lock. The messages of one sender always print in their
-// order; a sender's messages can print ahead of the messages of others.
+// outbox that started after it, with two exceptions. A sender that holds
+// more than maxHeldPerSender messages prints its oldest at once. While the
+// last read failed or took more than readTimeout, a reply prints at once
+// with no quote line, unless its sender has held messages; the next read
+// shows whether reads work again. Past maxWaiting waiting replies, the
+// timer reads overflowRead after the end of the last read. Past maxQueue
+// held messages, the watch prints early only plain messages that lead the
+// held messages of their sender, and then waits for the read, without its
+// lock. The messages of one sender always print in their order; a
+// sender's messages can print ahead of the messages of others.
 type watcher struct {
 	mu     sync.Mutex
 	outbox func(context.Context) ([]arcprogram.Sent, error)
@@ -201,7 +207,7 @@ type watcher struct {
 	me       string
 	messages *store
 	missed   map[string]bool
-	last     time.Time // the last read of the outbox
+	lastEnd  time.Time // the end of the last read of the outbox
 	// queue holds the held messages in the order of their arrival; an
 	// entry is nil once its message printed early.
 	queue []*arcprogram.Message
@@ -212,11 +218,18 @@ type watcher struct {
 	waiting  int         // the messages in queue that wait for a read
 	timer    *time.Timer // the next read, when a message waits for it
 	due      time.Time   // the time of the next read
+	reading  bool        // a read of the outbox runs, without the lock
+	drained  *sync.Cond  // signals the end of each read
+	readOK   bool        // the last read of the outbox worked
+	closed   bool
 	// ctx ends each read of the outbox while the watch runs: the signal
 	// that ends the watch ends a read on a hung arc too. closeCtx bounds
 	// the read at the end of the watch: a second signal ends it.
 	ctx      context.Context
 	closeCtx context.Context
+	// saveShown saves the ids that the watch showed as missing; nil in
+	// tests. The watch calls it after a read that showed one.
+	saveShown func()
 }
 
 const (
@@ -233,54 +246,75 @@ const (
 	closeRead = 10 * time.Second
 )
 
-// take prints m, or holds it until the next read of the outbox.
+// take prints m, or holds it until a read of the outbox. It never reads
+// the outbox itself.
 func (w *watcher) take(m arcprogram.Message) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	waits := w.waits(m)
+	if waits && !w.readOK && len(w.bySender[m.From]) == 0 {
+		// Reads of the outbox fail: show the reply at once, and let a
+		// later read show whether they work again.
+		w.print(m, w.messages, false)
+		w.schedule()
+		return
+	}
 	if w.live == 0 && !waits {
 		w.print(m, w.messages, true)
 		return
 	}
-	w.bySender[m.From] = append(w.bySender[m.From], len(w.queue))
-	w.queue = append(w.queue, &m)
-	w.live++
-	if waits {
-		w.waiting++
-	}
+	w.hold(m)
 	for len(w.bySender[m.From]) > maxHeldPerSender {
 		w.printOldest(m.From)
 	}
 	for w.live >= maxQueue {
-		if time.Since(w.last) >= overflowRead {
-			w.readAndFlush(w.reading())
-			return
-		}
 		if w.printPlainHeads() {
 			continue
 		}
+		if w.ctx != nil && w.ctx.Err() != nil {
+			return // the watch ends, and its end prints what is held
+		}
 		// Each held message waits, or follows one that waits, of its
-		// sender: wait for the read, and let the timer run meanwhile.
-		wait := overflowRead - time.Since(w.last)
-		w.mu.Unlock()
-		time.Sleep(wait)
-		w.mu.Lock()
+		// sender: wait for the read, without the lock.
+		w.schedule()
+		w.cond().Wait()
 	}
-	switch {
-	case w.live == 0:
-	case w.waiting == 0:
-		w.flush(false)
-	case w.waiting >= maxWaiting && time.Since(w.last) >= overflowRead:
-		w.readAndFlush(w.reading())
-	case w.waiting >= maxWaiting:
-		w.readIn(overflowRead - time.Since(w.last))
-	case w.timer != nil:
-		// A read is due, and m waits for it.
-	case time.Since(w.last) >= refreshEvery:
-		w.readAndFlush(w.reading())
-	default:
-		w.readIn(refreshEvery - time.Since(w.last))
+	if w.waiting == 0 && !w.reading {
+		w.flushTo(len(w.queue), false)
+		return
 	}
+	w.schedule()
+}
+
+// hold puts m at the end of the held messages.
+func (w *watcher) hold(m arcprogram.Message) {
+	w.bySender[m.From] = append(w.bySender[m.From], len(w.queue))
+	w.queue = append(w.queue, &m)
+	w.live++
+	if w.waits(m) {
+		w.waiting++
+	}
+}
+
+func (w *watcher) cond() *sync.Cond {
+	if w.drained == nil {
+		w.drained = sync.NewCond(&w.mu)
+	}
+	return w.drained
+}
+
+// schedule sets the timer for the next read: refreshEvery after the end of
+// the last read, or overflowRead past maxWaiting waiting replies. A read
+// that runs schedules the next when it ends.
+func (w *watcher) schedule() {
+	if w.reading || w.closed {
+		return
+	}
+	after := refreshEvery
+	if w.waiting >= maxWaiting {
+		after = overflowRead
+	}
+	w.readIn(max(0, after-time.Since(w.lastEnd)))
 }
 
 // readIn reads the outbox and prints what is held after wait, or sooner
@@ -295,10 +329,17 @@ func (w *watcher) readIn(wait time.Duration) {
 	w.due = time.Now().Add(wait)
 	w.timer = time.AfterFunc(wait, func() {
 		w.mu.Lock()
-		defer w.mu.Unlock()
 		w.timer = nil
-		if w.live > 0 {
-			w.readAndFlush(w.reading())
+		if !w.reading && !w.closed {
+			w.readAndFlush(w.readCtx())
+		}
+		save := w.saveShown
+		if len(w.messages.shown) == 0 {
+			save = nil
+		}
+		w.mu.Unlock()
+		if save != nil {
+			save()
 		}
 	})
 }
@@ -333,8 +374,10 @@ func (w *watcher) printOldest(sender string) {
 	if w.waits(*m) {
 		w.waiting--
 	}
-	w.print(*m, w.messages, true)
-	if len(w.queue) > 2*w.live+64 {
+	w.print(*m, w.messages, w.readOK)
+	// A read that runs prints the messages before its place in queue,
+	// so the places stay until it ends.
+	if !w.reading && len(w.queue) > 2*w.live+64 {
 		w.compact()
 	}
 }
@@ -366,73 +409,87 @@ func (w *watcher) waits(m arcprogram.Message) bool {
 	return m.ReplyTo != "" && !held && !w.missed[m.ReplyTo]
 }
 
-// reading is the context of a read of the outbox while the watch runs.
-func (w *watcher) reading() context.Context {
+// readCtx is the context of a read of the outbox while the watch runs.
+func (w *watcher) readCtx() context.Context {
 	if w.ctx == nil {
 		return context.Background()
 	}
 	return w.ctx
 }
 
-// readAndFlush reads the outbox, and prints each held message.
+// readAndFlush reads the outbox, without the lock, and prints the messages
+// that were held when the read started. It is called with the lock held.
 //
-// A read that fails because the watch ends leaves the messages held: the
-// end of the watch reads again, and prints them. A read that fails while
-// the watch runs prints them as they are, and marks no parent missed.
-//
-// A read while the watch runs takes at most readTimeout: on a hung arc, the
-// watch warns, and the held messages wait for the next read.
+// A read takes at most readTimeout. A read that the end of the watch cut
+// off leaves the held messages for the end of the watch. A read that fails
+// or takes longer prints each held message as it is, a reply that waits
+// with no quote line, and marks no parent missed. A message that arrived
+// while the read ran waits for the next read, or prints now if nothing
+// that it waits for is missing.
 func (w *watcher) readAndFlush(ctx context.Context) {
 	w.stop()
+	before := len(w.queue)
+	w.reading = true
+	w.mu.Unlock()
 	read, cancel := context.WithTimeout(ctx, readTimeout)
-	err := w.refresh(read)
+	outbox, err := w.outbox(read)
 	timedOut := read.Err() == context.DeadlineExceeded
 	cancel()
+	w.mu.Lock()
+	w.reading = false
+	w.lastEnd = time.Now()
+	defer w.cond().Broadcast()
 	switch {
 	case err == nil:
-		w.flush(true)
+		for _, sent := range sentMessages(outbox) {
+			w.messages.add(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
+		}
+		w.readOK = true
+		w.flushTo(before, true)
 	case ctx.Err() != nil:
-		// The watch ends; its last read prints what is held.
-	case timedOut:
-		fmt.Fprintf(os.Stderr, "arc-dm: the read of the outbox took more than %v; the held messages wait for the next read\n", readTimeout)
-		w.readIn(refreshEvery)
+		return // the watch ends; its end prints what is held
 	default:
-		fmt.Fprintln(os.Stderr, "arc-dm: the read of the outbox failed:", terminal.EscapeLine(err.Error()))
-		w.flush(false)
+		if timedOut {
+			fmt.Fprintf(os.Stderr, "arc-dm: the read of the outbox took more than %v; the held messages show with no quote\n", readTimeout)
+		} else {
+			fmt.Fprintln(os.Stderr, "arc-dm: the read of the outbox failed:", terminal.EscapeLine(err.Error()))
+		}
+		w.readOK = false
+		w.flushTo(len(w.queue), false)
 	}
+	if w.waiting == 0 {
+		w.flushTo(len(w.queue), false)
+		return
+	}
+	w.schedule()
 }
 
-func (w *watcher) refresh(ctx context.Context) error {
-	w.last = time.Now()
-	outbox, err := w.outbox(ctx)
-	if err != nil {
-		return err
-	}
-	for _, sent := range sentMessages(outbox) {
-		w.messages.add(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
-	}
-	return nil
-}
-
-// flush prints each held message, in order. After a read of the outbox, a
-// parent that is still not here is missed, and no later reply waits for
-// it.
+// flushTo prints the held messages that came before place, in order, and
+// holds the rest again. After a read of the outbox (read true), a parent
+// that is still not here is missed, and no later reply waits for it.
 //
-// After a read that failed, a reply that waits shows with no quote line:
-// not "(not on this device)", because its parent can be on this device,
-// and no parent is missed.
-func (w *watcher) flush(read bool) {
-	for _, m := range w.queue {
+// Without a read, a reply that waits shows with no quote line: not "(not
+// on this device)", because its parent can be on this device, and no
+// parent is missed.
+func (w *watcher) flushTo(place int, read bool) {
+	held, rest := w.queue[:place], w.queue[place:]
+	w.queue, w.live, w.waiting = nil, 0, 0
+	clear(w.bySender)
+	for _, m := range held {
 		if m == nil {
 			continue
 		}
-		if read && w.waits(*m) {
+		waits := w.waits(*m)
+		if read && waits {
 			w.miss(m.ReplyTo)
 		}
-		w.print(*m, w.messages, read || !w.waits(*m))
+		w.print(*m, w.messages, read || !waits)
 	}
-	w.queue, w.live, w.waiting = nil, 0, 0
-	clear(w.bySender)
+	for _, m := range rest {
+		if m != nil {
+			w.hold(*m)
+		}
+	}
 }
 
 // miss remembers an id that a read of the outbox did not find.
@@ -450,7 +507,11 @@ func (w *watcher) miss(id string) {
 func (w *watcher) close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closed = true
 	w.stop()
+	for w.reading {
+		w.cond().Wait()
+	}
 	read := false
 	if w.waiting > 0 {
 		parent := w.closeCtx
@@ -458,10 +519,16 @@ func (w *watcher) close() {
 			parent = context.Background()
 		}
 		ctx, cancel := context.WithTimeout(parent, closeRead)
-		read = w.refresh(ctx) == nil
+		outbox, err := w.outbox(ctx)
 		cancel()
+		if read = err == nil; read {
+			for _, sent := range sentMessages(outbox) {
+				w.messages.add(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
+			}
+		}
 	}
-	w.flush(read)
+	w.flushTo(len(w.queue), read)
+	w.cond().Broadcast()
 }
 
 // refuseHelp refuses a text of only -h, -H, --h, --H, -help or --help: a person who
@@ -777,7 +844,8 @@ func watch(ctx context.Context, args []string) error {
 		messages: index(all),
 		missed:   map[string]bool{},
 		bySender: map[string][]int{},
-		last:     time.Now(), // conversations read the outbox
+		lastEnd:  time.Now(), // conversations read the outbox
+		readOK:   true,
 	}
 	w.ctx = ctx
 	if second, ok := ctx.Value(secondSignal{}).(context.Context); ok {
@@ -820,8 +888,14 @@ func watch(ctx context.Context, args []string) error {
 	}
 	// The ids that the watch shows as missing go to the state at most once
 	// a second, and at its end, so a reply in another terminal refuses them.
-	var lastSave time.Time
+	// The watch also saves after each timer read that showed an id.
+	var (
+		saving   sync.Mutex
+		lastSave time.Time
+	)
 	save := func(force bool) {
+		saving.Lock()
+		defer saving.Unlock()
 		if !force && time.Since(lastSave) < time.Second {
 			return
 		}
@@ -834,6 +908,9 @@ func watch(ctx context.Context, args []string) error {
 			fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
 		}
 	}
+	w.mu.Lock()
+	w.saveShown = func() { save(true) } // reads come at most each second
+	w.mu.Unlock()
 	err = s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
 		w.take(m)
 		save(false)

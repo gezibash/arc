@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -345,5 +347,103 @@ func watchOutlivesThreads(t *testing.T, ada, bob arcprogram.Arc, bobKey, text st
 		case <-time.After(30 * time.Second):
 			t.Fatalf("the watch gave no message:\n%s", notes.String())
 		}
+	}
+}
+
+// wrapper is an arc that runs script before the arc of a, in dir.
+func wrapper(t *testing.T, a arcprogram.Arc, script string) arcprogram.Arc {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "arc")
+	body := "#!/bin/sh\n" + script + "\nexec " + a.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return arcprogram.Arc{Program: path, Home: a.Home}
+}
+
+// A call returns when arc ends, even if a child of arc holds its output
+// open: here a sleep that the wrapper of arc leaves behind.
+func TestACallEndsWhenArcEnds(t *testing.T) {
+	ada, adaKey := citizen(t, "ada")
+	sleep := fmt.Sprintf("%d.%d", 300+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	slow := wrapper(t, ada, "sleep "+sleep+" &")
+	start := time.Now()
+	key, err := slow.PublicKey(context.Background())
+	if took := time.Since(start); err != nil || key != adaKey || took > 15*time.Second {
+		t.Errorf("PublicKey gave %q, %v after %v, want %s at once", key, err, took, adaKey)
+	}
+}
+
+// On Linux, arc dies with the thread that starts it. A call holds that
+// thread until arc ends, so a call lives on while other threads end. With
+// one P, the call waits after the start of arc while new goroutines hold
+// their threads and return: the first runs on the thread of the call
+// unless the call holds it, and the end of that thread kills arc.
+func TestACallOutlivesTheEndOfOtherThreads(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux kills a child when the thread that started it ends")
+	}
+	ada, adaKey := citizen(t, "ada")
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	defer arcprogram.SetStarted(func() {
+		// More than one goroutine, so that idle threads end too.
+		for range 16 {
+			ended := make(chan struct{})
+			go func() {
+				runtime.LockOSThread()
+				close(ended)
+			}()
+			<-ended
+		}
+	})()
+	// The first call of a process can miss, as the runtime starts its
+	// threads.
+	for range 3 {
+		key, err := ada.PublicKey(context.Background())
+		if err != nil || key != adaKey {
+			t.Fatalf("PublicKey gave %q, %v after another thread ended", key, err)
+		}
+	}
+}
+
+// A function of a watch that panics, with a caller that recovers, or that
+// ends its goroutine with runtime.Goexit, as t.FailNow does, leaves no arc
+// behind.
+func TestAPanicInAWatchEndsItsArc(t *testing.T) {
+	for _, how := range []string{"panic", "Goexit"} {
+		t.Run(how, func(t *testing.T) {
+			ada, _ := citizen(t, "ada")
+			bob, bobKey := citizen(t, "bob")
+			notes := &lockedBuffer{}
+			ended := make(chan any, 1)
+			go func() {
+				defer func() { ended <- recover() }()
+				_ = bob.Watch(context.Background(), arcprogram.WatchOptions{Notes: notes}, func(arcprogram.Message) error {
+					if how == "Goexit" {
+						runtime.Goexit()
+					}
+					panic("the function of the watch")
+				})
+			}()
+			if !arcprogramtest.WaitUntil(30*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
+				t.Fatalf("the watch did not start:\n%s", notes.String())
+			}
+			if _, err := ada.Send(context.Background(), []string{bobKey}, how); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case r := <-ended:
+				if (r == nil) != (how == "Goexit") {
+					t.Fatalf("the goroutine of the watch ended with %v", r)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the function of the watch did not end it")
+			}
+			if out, _ := exec.Command("pgrep", "-f", bob.Home+" message watch").Output(); len(out) > 0 {
+				t.Errorf("arc message watch runs on after a %s: %s", how, out)
+				_ = exec.Command("pkill", "-f", bob.Home+" message watch").Run()
+			}
+		})
 	}
 }

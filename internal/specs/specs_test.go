@@ -77,8 +77,20 @@ func (t tree) proves(command string) string {
 	if !slices.ContainsFunc(names, run.MatchString) {
 		return fmt.Sprintf("the proof matches no test: -run %q finds nothing in the packages that it names", pattern)
 	}
+	// A pattern that is a list of names, such as ^(TestA|TestB)$, names
+	// each test, so each name must be a test.
+	if list := nameList.FindStringSubmatch(pattern); list != nil {
+		for name := range strings.SplitSeq(list[1]+list[2], "|") {
+			if !slices.Contains(names, name) {
+				return fmt.Sprintf("the proof names %s, which is no test in the packages that it names", name)
+			}
+		}
+	}
 	return ""
 }
+
+// nameList matches a -run pattern that lists whole test names.
+var nameList = regexp.MustCompile(`^\^(?:\((\w+(?:\|\w+)*)\)|(\w+))\$$`)
 
 // checkSpec returns what is wrong with one SPEC.md. path is the path of the
 // spec from the root of the repository.

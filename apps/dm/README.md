@@ -103,20 +103,24 @@ A reply shows a quote line between its header and its text:
 - A reply shows the direct parent only, one level.
 - `arc-dm watch` adds each message that it receives. When a reply names a
   parent that the watch does not hold, it reads the outbox, in case you
-  sent the parent after the watch started: at most once each 5 s,
-  because a sender can name many ids. The reply, and each message after
-  it, waits for that read, at most 5 s, so the order stays and the quote
-  is not lost. A waiting reply shows without its quote only after a read
-  that came after it, with one exception: a sender that holds more than
-  64 messages shows its oldest at once. Past 256 waiting replies, the
-  watch reads the outbox at once, or a second after its last read. Past
+  sent the parent after the watch started: at most once each 5 s from
+  the end of the last read, because a sender can name many ids. Only a
+  timer starts a read; a message that arrives never waits for arc. The
+  reply, and each message after it, waits for that read, so the order
+  stays and the quote is not lost. A waiting reply shows without its
+  quote only after a read that came after it, with one exception: a
+  sender that holds more than 64 messages shows its oldest at once. Past
+  256 waiting replies, the watch reads the outbox a second after the end
+  of its last read. Past
   4,096 held messages, it shows early only plain messages that lead the
   held messages of their sender, and else waits for that read. The
   messages of one sender always show in their order; a sender's messages
   can show ahead of the messages of others.
-  A read of the outbox while the watch runs takes at most 10 s: on a hung
-  arc, the watch warns, and the held messages wait for the next read. A
-  read that fails shows the replies that wait with no quote line.
+  A read of the outbox while the watch runs takes at most 10 s. A read
+  that fails or takes longer shows the held messages at once, each reply
+  that waits with no quote line. Until a read works, a new reply that
+  waits shows at once with no quote line, unless its sender has held
+  messages, and the watch tries a read each 5 s.
   When the watch ends, on an interrupt, SIGTERM or a hangup of its
   terminal, it reads the outbox once more for a reply that waits; a
   second signal ends that read, and the watch shows each held message as
@@ -130,7 +134,9 @@ A reply shows a quote line between its header and its text:
   that starts with the same 12 digits as a message that it sends later.
   So arc-dm remembers the last 4,096 ids that it showed as missing, and
   `arc-dm reply` refuses a short id that starts one of them: give the
-  full id.
+  full id. `arc-dm watch` saves these ids at most once a second as
+  messages arrive, after each read of the outbox that showed one, and at
+  its end.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

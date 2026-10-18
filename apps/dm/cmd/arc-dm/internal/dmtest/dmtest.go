@@ -58,10 +58,14 @@ func run(m *testing.M) int {
 // Program is the path of the arc-dm that Main built.
 func Program() string { return program }
 
-// RefreshEvery is refreshEvery of apps/dm/cmd/arc-dm/main.go: a watch
-// reads the outbox at most once each RefreshEvery. A test in package main
-// checks that the two agree.
-const RefreshEvery = 5 * time.Second
+// RefreshEvery and ReadTimeout are refreshEvery and readTimeout of
+// apps/dm/cmd/arc-dm/main.go: a watch reads the outbox at most once each
+// RefreshEvery, and each read takes at most ReadTimeout. A test in package
+// main checks that they agree.
+const (
+	RefreshEvery = 5 * time.Second
+	ReadTimeout  = 10 * time.Second
+)
 
 // FakeID is an id that no message has: the hash of n.
 func FakeID(n int) string {
