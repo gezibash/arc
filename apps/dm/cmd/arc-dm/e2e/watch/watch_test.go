@@ -58,10 +58,12 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 	_ = watch.Wait()
 }
 
-// A watch reads the outbox at most once for each parent that it does not
-// hold, and at most once each 5 s, however many ids that no
-// message has a sender names.
-func TestAWatchReadsTheOutboxRarely(t *testing.T) {
+// Through the CLI, 20 replies to ids that no message has make a watch read
+// the outbox, and never the inbox again after its start. How often it reads
+// the outbox is a unit test,
+// TestTheOutboxIsReadAtMostOnceEachRefreshFromTheEndOfTheLast: these
+// replies reach bob in one burst, so a count here does not test it.
+func TestAWatchReadsTheInboxOnlyAtItsStart(t *testing.T) {
 	t.Parallel()
 	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
 	mallory.DM("send", bob.Key, "hello")
@@ -85,7 +87,6 @@ func TestAWatchReadsTheOutboxRarely(t *testing.T) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 
-	start := time.Now()
 	const junk = 20
 	for i := range junk {
 		mallory.ArcSend(bob.Key, fmt.Sprintf("junk %d", i), "--arctest-tag", fmt.Sprintf("e,%064x", i+1))
@@ -95,13 +96,10 @@ func TestAWatchReadsTheOutboxRarely(t *testing.T) {
 	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Count(stdout.String(), "  junk ") == junk }) {
 		t.Fatalf("the watch printed:\n%s\nand on standard error:\n%s", stdout.String(), stderr.String())
 	}
-	elapsed := time.Since(start)
 	data, _ := os.ReadFile(runs)
-	// One read of the outbox at the start, then at most one each 5 s
-	// from the end of the last read.
-	most := 2 + int(elapsed/dmtest.RefreshEvery)
-	if n := strings.Count(string(data), "message outbox"); n < 2 || n > most || n >= junk {
-		t.Errorf("the watch read the outbox %d times in %v, want 2 to %d:\n%s", n, elapsed, most, data)
+	// One read of the outbox at the start, and at least one for the replies.
+	if n := strings.Count(string(data), "message outbox"); n < 2 {
+		t.Errorf("the watch read the outbox %d times, want a read after its start:\n%s", n, data)
 	}
 	if n := strings.Count(string(data), "message inbox"); n != 1 {
 		t.Errorf("the watch read the inbox %d times, want 1:\n%s", n, data)

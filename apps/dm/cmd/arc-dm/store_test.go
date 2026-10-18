@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -543,6 +545,32 @@ func TestABlankParentQuotesAsBlank(t *testing.T) {
 	}
 }
 
+// An arc-dm killed during a save leaves the temporary file of the save.
+// The next save removes it, and keeps the files of other paths.
+func TestASaveRemovesTheTemporaryFileOfAKilledSave(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, ".shown-missing.json-2771058471")
+	other := filepath.Join(dir, ".conversations.json-1")
+	for _, path := range []string{stale, other} {
+		if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := strings.Repeat("ab", 32)
+	if err := saveShown(dir, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the temporary file of a killed save is still there: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("the save removed the file of another path: %v", err)
+	}
+	if ids, err := readShown(dir); err != nil || len(ids) != 1 || ids[0] != id {
+		t.Errorf("the saved ids are %q, %v", ids, err)
+	}
+}
+
 // A short id that arc-dm showed as a parent not on this device is refused
 // later: a sender can name, as a parent, an id that starts as its own
 // later message.
@@ -673,10 +701,15 @@ func TestReadsBackOffFromTheEndOfTheLastRead(t *testing.T) {
 // one sender during the read, which prints its oldest messages early, does
 // not move a reply that came during the read into that part: the reply,
 // to a message that this citizen sent after the read started, waits for
-// the next read and gets its quote. 130 messages compact the queue.
+// the next read and gets its quote. 130 messages compact the queue. With
+// 100 messages before the read, 36 of them printed early, a compaction
+// during the read would leave the queue shorter than the place of the read,
+// and the read would slice past its end.
 func TestACompactionDuringAReadKeepsALateReplyWaiting(t *testing.T) {
-	for _, flood := range []int{0, 60, 130, 200} {
-		t.Run(fmt.Sprint(flood), func(t *testing.T) {
+	for _, c := range []struct{ before, flood int }{
+		{maxHeldPerSender, 0}, {maxHeldPerSender, 60}, {maxHeldPerSender, 130}, {maxHeldPerSender, 200}, {100, 100},
+	} {
+		t.Run(fmt.Sprintf("%d then %d", c.before, c.flood), func(t *testing.T) {
 			parent := strings.Repeat("ab", 32)
 			w, printed, _, sent := testWatcherWith()
 			defer w.close()
@@ -691,22 +724,24 @@ func TestACompactionDuringAReadKeepsALateReplyWaiting(t *testing.T) {
 				return read(ctx)
 			}
 			junk := func(i int) string { return fmt.Sprintf("%064x", i+1) }
-			for i := range maxHeldPerSender {
+			for i := range c.before {
 				w.take(msg(i, "mallory", fmt.Sprint("mallory ", i), junk(i)))
 			}
-			done := make(chan struct{})
+			done := make(chan any, 1)
 			go func() {
+				defer func() { done <- recover() }()
 				readNow(w)
-				close(done)
 			}()
 			<-started
 			w.take(msg(1000, "peer", "yes", parent))
-			for i := range flood {
-				j := maxHeldPerSender + i
+			for i := range c.flood {
+				j := c.before + i
 				w.take(msg(j, "mallory", fmt.Sprint("mallory ", j), junk(j)))
 			}
 			close(release)
-			<-done
+			if p := <-done; p != nil {
+				t.Fatalf("the read panicked: %v", p)
+			}
 			w.mu.Lock()
 			missed := w.missed[parent]
 			w.mu.Unlock()
