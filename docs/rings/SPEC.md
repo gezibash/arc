@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain|ALowDayTellsTheRingsLeft|AReadWithFewRingsLeftGetsANotice|AReadGetsBothNotices|ASmallCapAfterAUsedDaySaysNothing|TheDayIsUTC|ToldIsFreedOnDisconnect|AReadThatRacesTheCloseLeavesNoToldSet|SyncSaysThatRingsRunLow)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain|ALowDayTellsTheRingsLeft|AReadWithFewRingsLeftGetsANotice|AReadGetsBothNotices|ASmallCapAfterAUsedDaySaysNothing|TheDayIsUTC|ToldIsFreedOnDisconnect|AReadThatRacesTheCloseLeavesNoToldSet|SyncSaysThatRingsRunLow|ARingCommandActsOnOneRelay)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -300,6 +300,7 @@ ARC_RING_KEY=op://Agents/grok-routine/credential \
 arc relay ring show
 arc relay ring test
 arc relay ring clear
+arc relay ring show --relay wss://relay.republic.sh
 ```
 
 - `arc relay ring set` reads the key from the environment variable that
@@ -315,6 +316,12 @@ arc relay ring clear
   of the URL, because a path can hold a secret.
 - `arc relay ring test` asks each relay for one ring now, with
   `POST /ring/test`, and prints the answer of the URL.
+- With `--relay <url>`, `set`, `show`, `test` and `clear` act on that one
+  relay, and on no other. The URL is `ws://` or `wss://`. It need not be a
+  relay of the citizen, so a citizen can clear a registration on a relay
+  that it no longer uses. If that relay does not list `arc-rings`, the
+  command fails with that error alone. A `--relay` given with no URL,
+  such as `--relay ""`, fails the command, and it acts on no relay.
 
 ### 4.2 A ring, step by step
 
@@ -411,7 +418,8 @@ new.
 | The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. From 5 rings left, each `arc sync` or `arc message watch` prints the NOTICE of section 3.5, with the URL of the relay. |
 | The bucket is empty | The ring waits until one ring comes back, at most `min_interval`. |
 | The registration expired | The citizen read nothing for 30 days. No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
-| A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
+| A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. With `--relay`, that relay fails the command, and the command prints only the error. |
+| `--relay` is given with no URL | The command fails and acts on no relay. A script with an unset variable cannot act on every relay. |
 | Several inbox relays ring at once | The agent runs more than once. Each run reads the same inbox: the store keeps one copy of each message, by ID, so no run answers a message twice that an earlier run answered. |
 | An older arc reads the mail | It does not authenticate, so the read does not count. The unread period goes on, and the relay rings no more until an arc that authenticates reads. |
 | The relay refuses the authentication of arc | arc reads the mail, and prints the error once for each relay and each streak of refusals (section 4.4). The read does not count, so the unread period goes on. |
@@ -456,6 +464,8 @@ a relay that does not offer rings.
   outside ARC, rings like any other relay-form wrap.
 - A citizen without a registration is not rung. A relay without
   `arc-rings` answers 404, and `arc relay ring set` reports it.
+- An arc older than `--relay` refuses the flag as unknown, and acts on no
+  relay. Nothing on the wire changes.
 - The NOTICE of rings left (section 3.5) is new. An arc of v0.33.7 or
   newer prints it as it prints the NOTICE of failing rings. An older arc
   does not print it. A relay older than this rule sends none.
@@ -510,6 +520,11 @@ and khatru:
   NOTICE; a stranger's read gets none.
 - `TestSyncSaysThatRingsFail` (`cmd/arc`): `arc sync` prints the NOTICE
   with the URL of the relay.
+- `TestARingCommandActsOnOneRelay` (`cmd/arc`): with two relays that
+  ring, `set`, `test`, `show` and `clear` with `--relay` touch the named
+  relay only. A named relay without `arc-rings` fails the command with no
+  "skipped" line, and an `https` URL fails it. `clear --relay ""` and
+  `clear --relay=` fail, and both registrations stay.
 - `TestALowDayTellsTheRingsLeft`: the text at 6, 5, 1 and 0 rings left of
   48, none on another day, and none for a `daily_cap` of 3 with no ring
   used. `TestAReadWithFewRingsLeftGetsANotice`: with `daily_cap` 2, a
