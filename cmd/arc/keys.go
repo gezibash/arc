@@ -177,10 +177,13 @@ var openTTY = func() (*os.File, error) { return os.OpenFile("/dev/tty", os.O_RDW
 // afterPrompt runs when the prompt shows; tests type there.
 var afterPrompt = func() {}
 
+// readPassword reads a line without echo; tests make it fail.
+var readPassword = term.ReadPassword
+
 // askSecret reads the variable env, or asks on the terminal without echo.
 // Echo goes off before the prompt shows, so an answer typed or pasted as
 // the prompt appears is not shown, and it comes back on each way out, also
-// on an interrupt.
+// on a signal that ends arc.
 func askSecret(env, prompt string) (string, error) {
 	if value := os.Getenv(env); value != "" {
 		return value, nil
@@ -191,15 +194,17 @@ func askSecret(env, prompt string) (string, error) {
 	}
 	defer func() { _ = tty.Close() }()
 	fd := int(tty.Fd())
-	restore, err := echoOff(fd)
-	if err != nil {
+	echo := &quietTerminal{fd: fd}
+	// The watch of signals starts before echo goes off, and stops after
+	// it comes back, so no signal falls between the two.
+	defer watchSignals(echo)()
+	if err := echo.off(); err != nil {
 		return "", err
 	}
-	defer restore()
-	defer restoreOnSignal(restore)()
+	defer echo.end()
 	fmt.Fprint(tty, prompt)
 	afterPrompt()
-	value, err := term.ReadPassword(fd)
+	value, err := readPassword(fd)
 	fmt.Fprintln(tty)
 	if err != nil {
 		return "", err
@@ -207,39 +212,102 @@ func askSecret(env, prompt string) (string, error) {
 	return string(value), nil
 }
 
-// echoOff stops the terminal fd from showing what is typed, and returns
-// the function that brings its mode back.
-func echoOff(fd int) (restore func(), err error) {
-	old, err := unix.IoctlGetTermios(fd, getTermios)
+// quietTerminal turns the echo of a terminal off, and brings back the mode
+// that it had.
+type quietTerminal struct {
+	fd    int
+	mu    sync.Mutex
+	saved *unix.Termios // the mode to bring back; nil while echo is on
+	ended bool          // the prompt is over: echo stays as it is
+}
+
+// off stops the terminal from showing what is typed.
+func (q *quietTerminal) off() error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.ended || q.saved != nil {
+		return nil
+	}
+	old, err := unix.IoctlGetTermios(q.fd, getTermios)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	quiet := *old
 	quiet.Lflag &^= unix.ECHO
 	quiet.Lflag |= unix.ICANON | unix.ISIG
 	quiet.Iflag |= unix.ICRNL
-	if err := unix.IoctlSetTermios(fd, setTermios, &quiet); err != nil {
-		return nil, err
+	if err := unix.IoctlSetTermios(q.fd, setTermios, &quiet); err != nil {
+		return err
 	}
-	var once sync.Once
-	return func() { once.Do(func() { _ = unix.IoctlSetTermios(fd, setTermios, old) }) }, nil
+	q.saved = old
+	return nil
 }
 
-// restoreOnSignal runs restore when a signal that ends arc comes, and then
-// lets the signal end arc. The returned function stops the watch.
-func restoreOnSignal(restore func()) (stop func()) {
+// restore brings back the mode that the terminal had before off.
+func (q *quietTerminal) restore() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.restoreLocked()
+}
+
+func (q *quietTerminal) restoreLocked() {
+	if q.saved == nil {
+		return
+	}
+	if err := unix.IoctlSetTermios(q.fd, setTermios, q.saved); err != nil {
+		fmt.Fprintln(os.Stderr, "arc: the terminal may still not echo; run stty echo:", terminal.EscapeLine(err.Error()))
+	}
+	q.saved = nil
+}
+
+// end brings the mode back for good, when the prompt is over.
+func (q *quietTerminal) end() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.restoreLocked()
+	q.ended = true
+}
+
+// promptSignals end arc; at the prompt, echo comes back before they do.
+var promptSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT}
+
+// watchSignals brings the echo of q back when a signal that ends arc
+// comes, and then lets the signal end arc. It leaves a signal that arc
+// ignores alone: a watch would stop the ignore. The returned function stops
+// the watch.
+func watchSignals(q *quietTerminal) (stop func()) {
+	var watched []os.Signal
+	for _, s := range promptSignals {
+		if !signal.Ignored(s) {
+			watched = append(watched, s)
+		}
+	}
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	done := make(chan struct{})
+	if len(watched) == 0 {
+		return func() {}
+	}
+	signal.Notify(signals, watched...)
 	go func() {
-		select {
-		case got := <-signals:
-			restore()
-			signal.Reset(got)
-			if sig, ok := got.(syscall.Signal); ok {
-				_ = syscall.Kill(os.Getpid(), sig)
+		for {
+			select {
+			case got := <-signals:
+				q.restore()
+				signal.Reset(got)
+				if sig, ok := got.(syscall.Signal); ok {
+					_ = syscall.Kill(os.Getpid(), sig)
+				}
+				// The signal ends arc. If arc lives on, the read goes
+				// on, and so echo goes off again.
+				select {
+				case <-time.After(time.Second):
+					_ = q.off()
+				case <-done:
+					return
+				}
+			case <-done:
+				return
 			}
-		case <-done:
 		}
 	}()
 	return func() {
