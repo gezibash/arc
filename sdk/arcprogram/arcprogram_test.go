@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -285,5 +286,64 @@ func TestReplies(t *testing.T) {
 	plain, err := ada.Outbox(ctx)
 	if err != nil || len(plain) != 1 || plain[0].ReplyTo != "" {
 		t.Errorf("ada's outbox is %+v, %v, want one plain message", plain, err)
+	}
+}
+
+// On Linux, arc dies with the thread that starts it. A goroutine that
+// holds a thread and returns ends that thread, so the watch holds the
+// thread that started its arc until arc ends: a healthy watch lives on
+// while other threads end. Which threads end is chance, so the test runs
+// four watches; with the thread let go after the start, at least one
+// dies in about 97 runs of 100.
+func TestAWatchOutlivesTheEndOfOtherThreads(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux kills a child when the thread that started it ends")
+	}
+	ada, _ := citizen(t, "ada")
+	bob, bobKey := citizen(t, "bob")
+	for round := range 4 {
+		watchOutlivesThreads(t, ada, bob, bobKey, fmt.Sprint("still there ", round))
+	}
+}
+
+func watchOutlivesThreads(t *testing.T, ada, bob arcprogram.Arc, bobKey, text string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	notes := &lockedBuffer{}
+	got := make(chan arcprogram.Message, 8)
+	ended := make(chan error, 1)
+	go func() {
+		ended <- bob.Watch(ctx, arcprogram.WatchOptions{Notes: notes}, func(m arcprogram.Message) error {
+			got <- m
+			return nil
+		})
+	}()
+	if !arcprogramtest.WaitUntil(30*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", notes.String())
+	}
+	// Each of these goroutines ends the thread that it holds.
+	for range 5 {
+		var wg sync.WaitGroup
+		for range 500 {
+			wg.Go(func() { runtime.LockOSThread() })
+		}
+		wg.Wait()
+		time.Sleep(200 * time.Millisecond)
+	}
+	if _, err := ada.Send(ctx, []string{bobKey}, text); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case m := <-got:
+			if m.Text == text {
+				return
+			}
+		case err := <-ended:
+			t.Fatalf("the watch ended: %v\n%s", err, notes.String())
+		case <-time.After(30 * time.Second):
+			t.Fatalf("the watch gave no message:\n%s", notes.String())
+		}
 	}
 }

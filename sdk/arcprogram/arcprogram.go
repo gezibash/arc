@@ -194,6 +194,10 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	if opts.Since != "" {
 		args = append(args, "--since", opts.Since)
 	}
+	// On Linux, arc dies with the thread that starts it (see prepare), so
+	// that thread stays held until arc ends.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	command := a.Command(ctx, args...)
 	prepare(command)
 	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
@@ -207,7 +211,7 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	if err != nil {
 		return err
 	}
-	if err := start(command); err != nil {
+	if err := command.Start(); err != nil {
 		return fmt.Errorf("arc message watch: %w", a.missing(err))
 	}
 
@@ -250,14 +254,6 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	}
 }
 
-// start starts a command on a held thread: on Linux, arc dies with the
-// thread that started it (see prepare).
-func start(command *exec.Cmd) error {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	return command.Start()
-}
-
 // IsKey says whether text is a public key: 64 lowercase hex digits.
 func IsKey(text string) bool {
 	if len(text) != 64 {
@@ -282,6 +278,8 @@ func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byt
 	command.Stdin = stdin
 	problems := &tail{}
 	command.Stderr = problems
+	// On Linux, arc dies with the thread that starts it (see prepare), so
+	// that thread stays held until arc ends.
 	runtime.LockOSThread()
 	out, err := command.Output()
 	runtime.UnlockOSThread()

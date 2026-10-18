@@ -191,9 +191,11 @@ func parseText(flags *flag.FlagSet, args []string, n int, after ...string) (out 
 // without its lock. The messages of one sender always print in their
 // order; a sender's messages can print ahead of the messages of others.
 type watcher struct {
-	mu       sync.Mutex
-	outbox   func(context.Context) ([]arcprogram.Sent, error)
-	print    func(arcprogram.Message, *store)
+	mu     sync.Mutex
+	outbox func(context.Context) ([]arcprogram.Sent, error)
+	// print shows a message; with quote false, it shows a reply with no
+	// quote line at all, as after a read of the outbox that failed.
+	print    func(m arcprogram.Message, messages *store, quote bool)
 	me       string
 	messages *store
 	missed   map[string]bool
@@ -222,6 +224,8 @@ const (
 	maxHeldPerSender = 64
 	maxQueue         = 4096
 	overflowRead     = time.Second
+	// readTimeout bounds each read of the outbox while the watch runs.
+	readTimeout = 10 * time.Second
 	// closeRead bounds the read of the outbox at the end of a watch,
 	// after the signal that ended it.
 	closeRead = 10 * time.Second
@@ -233,7 +237,7 @@ func (w *watcher) take(m arcprogram.Message) {
 	defer w.mu.Unlock()
 	waits := w.waits(m)
 	if w.live == 0 && !waits {
-		w.print(m, w.messages)
+		w.print(m, w.messages, true)
 		return
 	}
 	w.bySender[m.From] = append(w.bySender[m.From], len(w.queue))
@@ -327,7 +331,7 @@ func (w *watcher) printOldest(sender string) {
 	if w.waits(*m) {
 		w.waiting--
 	}
-	w.print(*m, w.messages)
+	w.print(*m, w.messages, true)
 	if len(w.queue) > 2*w.live+64 {
 		w.compact()
 	}
@@ -373,17 +377,27 @@ func (w *watcher) reading() context.Context {
 // A read that fails because the watch ends leaves the messages held: the
 // end of the watch reads again, and prints them. A read that fails while
 // the watch runs prints them as they are, and marks no parent missed.
+//
+// A read while the watch runs takes at most readTimeout: on a hung arc, the
+// watch warns, and the held messages wait for the next read.
 func (w *watcher) readAndFlush(ctx context.Context) {
 	w.stop()
-	if err := w.refresh(ctx); err != nil {
-		if ctx.Err() != nil {
-			return
-		}
+	read, cancel := context.WithTimeout(ctx, readTimeout)
+	err := w.refresh(read)
+	timedOut := read.Err() == context.DeadlineExceeded
+	cancel()
+	switch {
+	case err == nil:
+		w.flush(true)
+	case ctx.Err() != nil:
+		// The watch ends; its last read prints what is held.
+	case timedOut:
+		fmt.Fprintf(os.Stderr, "arc-dm: the read of the outbox took more than %v; the held messages wait for the next read\n", readTimeout)
+		w.readIn(refreshEvery)
+	default:
 		fmt.Fprintln(os.Stderr, "arc-dm: the read of the outbox failed:", terminal.EscapeLine(err.Error()))
 		w.flush(false)
-		return
 	}
-	w.flush(true)
 }
 
 func (w *watcher) refresh(ctx context.Context) error {
@@ -401,6 +415,10 @@ func (w *watcher) refresh(ctx context.Context) error {
 // flush prints each held message, in order. After a read of the outbox, a
 // parent that is still not here is missed, and no later reply waits for
 // it.
+//
+// After a read that failed, a reply that waits shows with no quote line:
+// not "(not on this device)", because its parent can be on this device,
+// and no parent is missed.
 func (w *watcher) flush(read bool) {
 	for _, m := range w.queue {
 		if m == nil {
@@ -409,7 +427,7 @@ func (w *watcher) flush(read bool) {
 		if read && w.waits(*m) {
 			w.miss(m.ReplyTo)
 		}
-		w.print(*m, w.messages)
+		w.print(*m, w.messages, read || !w.waits(*m))
 	}
 	w.queue, w.live, w.waiting = nil, 0, 0
 	clear(w.bySender)
@@ -763,7 +781,7 @@ func watch(ctx context.Context, args []string) error {
 	if second, ok := ctx.Value(secondSignal{}).(context.Context); ok {
 		w.closeCtx = second
 	}
-	w.print = func(m arcprogram.Message, messages *store) {
+	w.print = func(m arcprogram.Message, messages *store, quote bool) {
 		group := ""
 		if len(m.Members) > 2 {
 			group = fmt.Sprintf("  in a group of %d", len(m.Members))
@@ -777,8 +795,11 @@ func watch(ctx context.Context, args []string) error {
 		e := entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name, ReplyTo: m.ReplyTo}
 		messages.add(e, c)
 		fmt.Printf("%s  %s  %s%s\n", stamp(m.At), messages.short(m.ID), m.Name, group) //arc:raw-ok m.Name is a petname; the id is hex
-		if q := messages.quote(e, c); q != "" {
-			fmt.Println(q)
+		// With no quote line, no id is shown as missing.
+		if quote {
+			if q := messages.quote(e, c); q != "" {
+				fmt.Println(q)
+			}
 		}
 		fmt.Println(indent(terminal.Escape(m.Text)))
 		if len(notifier) == 0 {

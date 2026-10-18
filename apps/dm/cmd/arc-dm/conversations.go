@@ -625,6 +625,11 @@ func (s *store) lookup(prefix string) (held, error) {
 	// message, so a short id that arc-dm showed as missing could name that
 	// message. Only the full id can name it then.
 	for id := range s.avoid {
+		if _, here := s.byID[id]; here {
+			// The parent came later, or was a message of this citizen: the
+			// short id names it.
+			continue
+		}
 		if len(prefix) < len(id) && strings.HasPrefix(id, prefix) {
 			return held{}, fmt.Errorf("%s was not on this device when arc-dm showed it, and could name another message now: give the full id", prefix)
 		}

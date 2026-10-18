@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -706,8 +707,12 @@ func testWatcherWith(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, 
 		bySender: map[string][]int{},
 		last:     time.Now(),
 	}
-	w.print = func(m arcprogram.Message, messages *store) {
+	w.print = func(m arcprogram.Message, messages *store, quote bool) {
 		e := entry{ID: m.ID, Text: m.Text, ReplyTo: m.ReplyTo}
+		if !quote {
+			*printed = append(*printed, m.Text+" (plain)")
+			return
+		}
 		*printed = append(*printed, m.Text+" "+messages.quote(e, conversation{Peers: []string{"peer"}}))
 	}
 	return w, printed, reads, sent
@@ -892,6 +897,60 @@ func TestTheWaitAtTheCapHoldsNoLock(t *testing.T) {
 	}
 	if !free {
 		t.Error("the watch held its lock while it waited for the read")
+	}
+}
+
+// At the hard cap with the read blocked, only plain messages that lead
+// their sender's held messages show early; a reply that waits, and each
+// message behind it, wait for the read.
+func TestOnlyPlainHeadsShowEarly(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	defer w.close()
+	w.take(msg(0, "peer", "peer 0", parent))
+	w.take(msg(1, "peer", "peer 1", ""))
+	for i := range maxQueue {
+		who := fmt.Sprint("s", i%100)
+		w.take(msg(i+2, who, fmt.Sprintf("%s %d", who, i), ""))
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, line := range *printed {
+		if strings.HasPrefix(line, "peer ") {
+			t.Fatalf("a message of the sender that waits showed before the read: %q", line)
+		}
+	}
+	if len(*printed) == 0 {
+		t.Error("no plain message showed early")
+	}
+}
+
+// A read that fails while the watch runs shows the replies that wait with
+// no quote line, and marks no parent missed: their parents can be on this
+// device. A later reply to the same parent, after a read that works, gets
+// its quote.
+func TestAFailedReadMarksNothingMissed(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _, sent := testWatcherWith()
+	read := w.outbox
+	fail := true
+	w.outbox = func(ctx context.Context) ([]arcprogram.Sent, error) {
+		if fail {
+			return nil, errors.New("arc failed")
+		}
+		return read(ctx)
+	}
+	w.last = time.Now().Add(-refreshEvery)
+	w.take(msg(0, "peer", "peer 0", parent))
+	if len(*printed) != 1 || (*printed)[0] != "peer 0 (plain)" || len(w.messages.shown) != 0 {
+		t.Fatalf("after a failed read the watch printed %q and showed %d ids as missing", *printed, len(w.messages.shown))
+	}
+	fail = false
+	*sent = append(*sent, sentParent(parent, "bring the map"))
+	w.take(msg(1, "peer", "peer 1", parent))
+	w.close()
+	if last := (*printed)[len(*printed)-1]; last != "peer 1 \u21b3 ababab  you: bring the map" {
+		t.Errorf("the reply after a read that worked printed %q", last)
 	}
 }
 
@@ -1270,6 +1329,12 @@ func TestAHangupEndsEachArc(t *testing.T) {
 		case <-time.After(waitLimit):
 			t.Fatalf("arc-dm went on after a hangup (to the group: %v)", group)
 		}
+		// arc-dm ends by its own handler, not by the signal: on Linux, a
+		// signal that killed arc-dm would end its arc too, and hide a
+		// missing handler.
+		if command.ProcessState.Sys().(syscall.WaitStatus).Signaled() {
+			t.Errorf("a hangup killed arc-dm (to the group: %v), want it to end by its handler", group)
+		}
 		noArcLeft(t, bob.arc.Home)
 	}
 }
@@ -1331,6 +1396,12 @@ func TestAShownMissingIdIsRefused(t *testing.T) {
 	if got, err := s.lookup(later); err != nil || got.ID != later {
 		t.Errorf("lookup of the full id: %v, %v", got.ID, err)
 	}
+	// An id that arc-dm showed as missing, and that is here now, such as a
+	// message of this citizen, is not refused.
+	s.add(entry{ID: parent}, conversation{Peers: []string{"mallory"}})
+	if got, err := s.lookup(parent[:13]); err != nil || got.ID != parent {
+		t.Errorf("lookup of a shown id that is here now: %v, %v", got.ID, err)
+	}
 }
 
 // Through the CLI: the id of a missing parent that arc-dm open showed is
@@ -1347,4 +1418,46 @@ func TestReplyRefusesAnIdShownAsMissing(t *testing.T) {
 	if out := bob.refused("reply", parent[:12], "yes"); !strings.Contains(out, "was not on this device when arc-dm showed it") {
 		t.Errorf("reply to the shown id: %s", out)
 	}
+}
+
+// A read of the outbox while the watch runs takes at most readTimeout. On
+// an arc that hangs, the watch warns, keeps the reply that waits, and gets
+// its quote from the next read.
+func TestAWatchReadTimesOut(t *testing.T) {
+	t.Parallel()
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "hello")
+	bob.sync()
+	dir := t.TempDir()
+	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
+	// The second read of the outbox, the first timed read, hangs.
+	sleep := fmt.Sprintf("%d.%d", 120+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -eq 2 ] && exec sleep " + sleep + ";; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	watch := exec.Command(env.program, "watch", "-arc", wrapper, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	bob.dm("send", ada.name, "bring the map")
+	ada.sync()
+	short := shortID(t, ada.dm("open", bob.name), "bring the map")
+	ada.dm("reply", short, "yes")
+	want := "\n\u21b3 " + short + "  you: bring the map\n  yes\n"
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stdout.String(), want) }) {
+		t.Fatalf("the watch printed:\n%s\nwant\n%s\nstderr:\n%s", stdout.String(), want, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "the read of the outbox took more than") {
+		t.Errorf("the watch did not warn of the hung read:\n%s", stderr.String())
+	}
+	_ = watch.Process.Signal(os.Interrupt)
+	_ = watch.Wait()
 }
