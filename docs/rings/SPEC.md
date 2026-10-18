@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain|ALowDayTellsTheRingsLeft|AReadWithFewRingsLeftGetsANotice|AReadGetsBothNotices|ASmallCapAfterAUsedDaySaysNothing|TheDayIsUTC|ToldIsFreedOnDisconnect|AReadThatRacesTheCloseLeavesNoToldSet|SyncSaysThatRingsRunLow)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -223,6 +223,18 @@ If condition 5 or 6 alone fails, the ring waits until the bucket holds a
 ring, or until 00:00 UTC for the cap of the day, if the period is still
 unread then. The relay sets one timer for a ring that waits. No loop polls.
 
+While the day of a citizen has 5 or fewer rings left, and the citizen used
+at least one ring of that day, the relay MUST tell the citizen on its next
+read, as section 3.7 tells failing rings: one NOTICE on each connection
+that reads for the citizen, and only on such a connection. Each try and
+each test ring counts as a ring used. The NOTICE is
+`arc-ring: <n> of <daily_cap> rings left today; then rings wait until 00:00 UTC`,
+and at 0 left
+`arc-ring: 0 of <daily_cap> rings left today; rings wait until 00:00 UTC`.
+A day with no ring used says nothing, so that a `daily_cap` of 5 or less
+does not tell each read. A connection that reads for a citizen whose rings
+also fail gets both NOTICEs, the one of section 3.7 first.
+
 `POST /ring/test` rings once now, with `since` the time of the request when
 no wrap waits. It needs condition 1 and the bucket of the relay, and a ring
 left in the day. It counts against `daily_cap`, takes no ring from the
@@ -396,7 +408,7 @@ new.
 | The relay restarts while a ring waits | The relay reads the ring from its store, and tries it at its time. |
 | The host resolves to an address that is not public after registration | The ring fails with no answer; `last_status` is 0. |
 | The ring key changed at the platform | The ring gets 401 or 403, and the relay does not try it again. The next `arc sync` or `arc message watch` prints the NOTICE of each relay. The citizen sets the new key with `arc relay ring set`. Without that, after 7 days the relay removes the registration. |
-| The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. |
+| The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. From 5 rings left, each `arc sync` or `arc message watch` prints the NOTICE of section 3.5, with the URL of the relay. |
 | The bucket is empty | The ring waits until one ring comes back, at most `min_interval`. |
 | The registration expired | The citizen read nothing for 30 days. No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
 | A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
@@ -444,6 +456,9 @@ a relay that does not offer rings.
   outside ARC, rings like any other relay-form wrap.
 - A citizen without a registration is not rung. A relay without
   `arc-rings` answers 404, and `arc relay ring set` reports it.
+- The NOTICE of rings left (section 3.5) is new. An arc of v0.33.7 or
+  newer prints it as it prints the NOTICE of failing rings. An older arc
+  does not print it. A relay older than this rule sends none.
 - A relay with rings sends a NIP-42 challenge on each connection. A client
   that does not want to authenticate ignores it, as NIP-42 allows.
 - An older arc reads its mail without authentication. Its reads do not end
@@ -494,6 +509,21 @@ and khatru:
   makes one call; three reads of the citizen on one connection get one
   NOTICE; a stranger's read gets none.
 - `TestSyncSaysThatRingsFail` (`cmd/arc`): `arc sync` prints the NOTICE
+  with the URL of the relay.
+- `TestALowDayTellsTheRingsLeft`: the text at 6, 5, 1 and 0 rings left of
+  48, none on another day, and none for a `daily_cap` of 3 with no ring
+  used. `TestAReadWithFewRingsLeftGetsANotice`: with `daily_cap` 2, a
+  read before any ring gets nothing; after one test ring, and after two,
+  three reads on one connection get one NOTICE, and a stranger's read gets
+  none. `TestAReadGetsBothNotices`: a ring answered 401 with `daily_cap`
+  2 gives one read the NOTICE of failing rings, then the one of rings left.
+  `TestASmallCapAfterAUsedDaySaysNothing`: a `daily_cap` of 3 with 2 used
+  yesterday says nothing today. `TestTheDayIsUTC`: 00:30 at UTC+2 is the
+  UTC day before. `TestToldIsFreedOnDisconnect`: after 5 connections that
+  each read twice and closed, the relay keeps no record of what it told
+  them. `TestAReadThatRacesTheCloseLeavesNoToldSet`: 300 connections that
+  each authenticate, send 8 reads and close at once leave no such record.
+  `TestSyncSaysThatRingsRunLow` (`cmd/arc`): `arc sync` prints the NOTICE
   with the URL of the relay.
 - `TestTheLogSaysWhyARelayDoesNotRing`: a wrap that rings no one for each
   reason of section 4.4, except `no registration` and `a try is on the way`,
