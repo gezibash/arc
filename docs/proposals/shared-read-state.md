@@ -79,9 +79,12 @@ command first, with no receipt.
 - arc MUST keep a received index in a bucket `received`: the id of each
   message of the inbox. arc writes an id in the transaction that admits
   the message to the inbox: when a message arrives, and when
-  `arc contacts add` releases held mail. The first open of an older
-  database builds the index once, from the stored seals. So a mark checks
-  ids against the index, and decrypts nothing.
+  `arc contacts add` releases held mail. So a mark checks ids against the
+  index, and decrypts nothing.
+- The index carries a schema version and the count of received seals
+  that it covers. When arc opens the database and either is off, as after
+  an older arc added mail, arc rebuilds the index from the stored seals,
+  once, before any mark.
 - Only a message of the inbox can be read: a received message of kind 14
   that names this citizen in a `p` tag. Held mail of a stranger
   ([the strangers spec](../strangers/SPEC.md), section 3.4) is not in the
@@ -114,7 +117,9 @@ command first, with no receipt.
   `arc message read --imported <name>` prints `yes` or `no`, and marks
   nothing.
 - `arc message read --check` prints nothing, marks nothing, and exits 0:
-  a client probes for the command with it. An older arc fails on it.
+  a client probes for the command with it. It does not open the mail
+  database or take its lease, so it does not wait on a watch. An older
+  arc fails on it.
 - `arc message inbox --unread` lists only the messages that are not read,
   and `--limit <n>` lists at most the oldest n of them.
 - There is no `arc message unread` until a client needs one.
@@ -152,21 +157,33 @@ handling and the mark marks again when it starts.
   them succeeded. A message that arrives between the listing and the mark
   is not among them, and stays unread. When standard output is not a
   terminal, `open` marks nothing: a program that reads its output marks
-  with `arc-dm read`.
+  with `arc-dm read`. `arc-dm open -mark` marks through a pipe too, for a
+  person who reads through a pager.
 - `read <peer>` marks the messages of the conversation that its own
   listing holds, by the same rule.
 - arc-dm imports its old `read.json` into each arc home that it uses:
   1. It asks `arc message read --imported arc-dm`. If the answer is
      `yes`, it does nothing.
-  2. Under the lock that it takes on `read.json` now
-     (`conversations.go:411`), it reads the file. A missing file and an
-     empty file are an empty set.
-  3. It runs `arc message read --import arc-dm -` with each id of the
+  2. It takes the lock that it takes on `read.json` now
+     (`conversations.go:411`), and asks again: another run can have
+     imported while it waited.
+  3. It reads the file. A missing file and an empty file are an empty
+     set. It leaves out each id that is not 64 lowercase hex digits, and
+     names how many. A file that does not parse it renames to
+     `read.json.unreadable`, with a warning, and imports nothing.
+  4. It runs `arc message read --import arc-dm -` with each id of the
      file. arc marks the ids that are in this home's inbox, skips the
-     others, and records the import in the same transaction.
-  4. It leaves `read.json` in place, and never writes it again. Another
+     others, and records the import in the same transaction. arc-dm shows
+     the skipped ids as a count: `imported 120 read marks; 14 were not in
+     this inbox`.
+  5. It leaves `read.json` in place, and never writes it again. Another
      arc home that uses the same state directory imports from it on its
      own first run, and marks the ids of its own inbox.
+- An import that fails does not stop arc-dm: it warns, and the command
+  goes on with the read state of arc. The next run tries again.
+- An older arc-dm that still runs beside a newer one writes `read.json`
+  after the import. arc does not read those marks: each arc home imports
+  once.
 - A crash at any point of the import is safe. A mark and the record of
   the import are one transaction, and a second import marks again with
   no change: the first read time stays.
@@ -189,7 +206,9 @@ handling and the mark marks again when it starts.
 | Ids that are not in the inbox | arc marks the others, and skips them. | `skipped 2 ids that are not in the inbox: <id>, <id>` on standard error, or an `error` field with `--json` |
 | arc-dm with an arc older than this proposal | `arc message read --check` fails, and arc-dm stops. | `arc-dm needs arc v0.35.0 or newer, which has arc message read; this arc has none` (the release that ships this sets the version) |
 | Two clients mark at once | Each mark is a transaction; the first time stays. | Nothing. |
-| An old `read.json` that does not parse | arc-dm stops, and leaves the file. | The path and the parse error. |
+| An old `read.json` that does not parse | arc-dm renames it to `read.json.unreadable`, imports nothing, and goes on. | A warning with the path and the parse error. |
+| A malformed id in `read.json` | arc-dm leaves it out, and imports the others. | `left out 1 id that is not a message id` |
+| An import that fails, such as on a busy database | arc-dm warns, goes on, and tries again on the next run. | `arc-dm: the import of read.json failed: …; it runs again next time` |
 | A crash during an import | The next run imports again. | Nothing: the read times stay. |
 | Two runs of arc-dm import at once | The second waits for the lock, then finds the import recorded. | Nothing. |
 
@@ -235,7 +254,12 @@ Each test runs the real arc and arc-dm against the relay of
 | `TestListingMarksNothing` | `arc message inbox`, `arc message watch`, `arc sync` and `arc-dm watch` leave each message unread. |
 | `TestOpenMarksOnlyWhatItPrinted` | A message that arrives after `arc-dm open` listed the conversation, and before it marks, stays unread. An arc wrapper delivers it when arc-dm runs `arc message read`. |
 | `TestOpenThroughAPipeMarksNothing` | `arc-dm open` with its output in a pipe leaves each message unread. |
-| `TestEachHomeImportsTheOldReadState` | Two arc homes share one state directory. Each imports `read.json` on its first run, and marks the ids of its own inbox; the file stays as it was. An empty file is an empty set. |
+| `TestEachHomeImportsTheOldReadState` | Two arc homes share one state directory. Each imports `read.json` on its first run, marks the ids of its own inbox, and shows the skipped ids as a count; the file stays as it was. An empty file is an empty set, and a malformed id is left out. |
+| `TestAnUnreadableReadFileIsSetAside` | A `read.json` that does not parse is renamed to `read.json.unreadable`; arc-dm warns and goes on. |
+| `TestAFailedImportDoesNotStopArcDm` | With the import refused, `arc-dm ls` warns and shows the read state of arc. |
+| `TestTheIndexIsRebuiltAfterAnOlderArc` (`core/mail`) | Mail that an older arc stored after the index was built is in the index after the next open. |
+| `TestTheProbeTakesNoLease` | `arc message read --check` returns while a watch holds the mail database. |
+| `TestOpenMarksThroughAPipeWithMark` | `arc-dm open -mark` through a pipe marks what it printed. |
 | `TestAKilledImportIsSafe` | arc-dm killed during an import, then run again: each id is marked once, with the time of the first mark. |
 | `TestTheVersionErrorNamesTheVersion` | With an arc that fails `arc message read --check`, arc-dm names the version that it needs. |
 | `TestTheReadStateFollowsTheInbox` (`core/mail`) | A message that leaves the inbox leaves the read state; the sweep deletes a read row with no index entry. |
@@ -260,4 +284,12 @@ Otto reviewed this proposal twice on 2026-10-18:
    to `read.json.moved` of the first review.
 7. The error for an older arc names the version that arc-dm needs, after
    a probe with no side effect, `arc message read --check`.
-8. A mark checks a received index, and decrypts nothing.
+8. A mark checks a received index, and decrypts nothing. The index
+   carries a schema version and a count of seals, and is rebuilt when
+   either is off.
+9. The import leaves out a malformed id, sets an unparseable file aside,
+   checks the import record again under the lock, and never stops
+   arc-dm. `arc-dm open -mark` marks through a pipe.
+
+Otto approved this proposal after the second review, with these points
+in; Cato tests the code.
