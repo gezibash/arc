@@ -85,9 +85,13 @@ A reply shows a quote line between its header and its text:
   spaces, so a quote that a sender types into a text shows inside the
   text.
 - The quote is the first line of the parent that is not empty, escaped as
-  `sdk/terminal` does, and cut so that the line holds at most 72
-  characters.
+  `sdk/terminal` does, and cut so that the line takes at most 72 columns:
+  a CJK ideograph or an emoji takes two. A parent of only spaces shows
+  `(blank)`.
 - The id on a quote line is at most 12 digits, then `…`.
+- Flags can also come after the peer or the id, before the text:
+  `arc-dm send ada -reply 1c77 yes`. A text that starts with `-reply` is
+  refused, so a misplaced flag never goes out as text.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.

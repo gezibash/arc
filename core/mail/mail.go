@@ -249,19 +249,8 @@ func (m *Mail) Send(ctx context.Context, to []nostr.PubKey, text string) ([]Outg
 // rumor holds an e tag that names the parent. The parent must be a message
 // that this citizen received or sent, and the reply must have its members.
 func (m *Mail) SendReply(ctx context.Context, to []nostr.PubKey, parent nostr.ID, text string) ([]Outgoing, error) {
-	if err := m.checkRecipients(to); err != nil {
+	if err := m.CheckReply(ctx, to, parent); err != nil {
 		return nil, err
-	}
-	rumors, err := m.Rumors(ctx, []nostr.Kind{MessageKind})
-	if err != nil {
-		return nil, err
-	}
-	i := slices.IndexFunc(rumors, func(r nostr.Event) bool { return r.ID == parent })
-	if i < 0 {
-		return nil, fmt.Errorf("mail: no message %s on this device", parent.Hex())
-	}
-	if !sameMembers(Members(rumors[i]), append([]nostr.PubKey{m.key.PublicKey()}, to...)) {
-		return nil, errors.New("mail: the reply goes to the members of its parent")
 	}
 	tags := make(nostr.Tags, 0, len(to)+1)
 	for _, pk := range to {
@@ -269,6 +258,27 @@ func (m *Mail) SendReply(ctx context.Context, to []nostr.PubKey, parent nostr.ID
 	}
 	tags = append(tags, nostr.Tag{"e", parent.Hex()})
 	return m.SendRumor(ctx, to, MessageKind, text, tags)
+}
+
+// CheckReply refuses a reply that SendReply refuses: a parent that this
+// citizen did not receive or send, or recipients that are not the members
+// of the parent. A command can check before it reads the text.
+func (m *Mail) CheckReply(ctx context.Context, to []nostr.PubKey, parent nostr.ID) error {
+	if err := m.checkRecipients(to); err != nil {
+		return err
+	}
+	rumors, err := m.Rumors(ctx, []nostr.Kind{MessageKind})
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(rumors, func(r nostr.Event) bool { return r.ID == parent })
+	if i < 0 {
+		return fmt.Errorf("mail: no message %s on this device", parent.Hex())
+	}
+	if !sameMembers(Members(rumors[i]), append([]nostr.PubKey{m.key.PublicKey()}, to...)) {
+		return errors.New("mail: the reply goes to the members of its parent")
+	}
+	return nil
 }
 
 // sameMembers says whether two lists hold the same keys, in any order.

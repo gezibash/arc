@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxOncePerMissingParent)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxOncePerMissingParent|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -179,7 +179,8 @@ agent, or make `file.exe` look like `file.png`.
   | A byte that is not UTF-8 | `\x` and its two lowercase hex digits, such as `\xff` |
   | An embedding, override or isolate (U+202A to U+202E, U+2066 to U+2069) | `\u` and four lowercase hex digits, such as `\u202e` |
   | A line or paragraph separator (U+2028, U+2029) | `\u2028`, `\u2029` |
-  | An invisible character: U+200B, U+FEFF, U+00AD, U+2060 to U+2064, U+206A to U+206F, the interlinear annotation characters U+FFF9 to U+FFFB, the Mongolian vowel separator U+180E, and the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 | `\u` and four lowercase hex digits, such as `\u200b` |
+  | An invisible character: U+200B, U+FEFF, U+00AD, U+2060 to U+2064, U+206A to U+206F, the interlinear annotation characters U+FFF9 to U+FFFB, the Mongolian vowel separator U+180E, the Mongolian free variation selector U+180B, the combining grapheme joiner U+034F, and the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 | `\u` and four lowercase hex digits, such as `\u200b` |
+  | A musical format character (U+1D173 to U+1D17A) | `\U` and eight lowercase hex digits, such as `\U0001d173` |
   | A tag character (U+E0000 to U+E007F), except in the flags of England, Scotland and Wales | `\U` and eight lowercase hex digits, such as `\U000e0068` |
   | A variation selector (U+FE00 to U+FE0F) that does not follow a visible character that is not a mark, or that follows another selector | `\u` and four lowercase hex digits, such as `\ufe0f` |
   | A variation selector of U+E0100 to U+E01EF that does not follow an ideograph (Unicode property Ideographic) | `\U` and eight lowercase hex digits, such as `\U000e0100` |
@@ -269,8 +270,10 @@ are not on the wire.
 - A parent that the store does not hold shows its id only.
 - `arc-dm` shows the parent on one quote line, between the header and the
   text of the reply: `↳`, the short id, the author, and the first line of
-  the parent that is not empty, as `terminal.EscapeLineCut` gives it, with
-  the line at most 72 characters. The short id of a quote line is at most
+  the parent that is not empty, as `terminal.EscapeLineFit` gives it, with
+  the line at most 72 columns of a terminal, as `terminal.Width` counts
+  them: a wide character, such as a CJK ideograph or an emoji, takes two.
+  A parent of only spaces shows `(blank)`. The short id of a quote line is at most
   12 digits, then `…`: a sender can name an id that matches a held id in
   63 digits. The quote line starts at column 0, where
   no line of a text starts (section 3.9), so a quote typed into a text
@@ -355,6 +358,10 @@ are not on the wire.
   this spec, with the same fields.
 - `arc message outbox --json` is new. A client program that reads the
   outbox needs an arc of this version or newer.
+- An arc or a client program older than the musical format characters,
+  U+034F and U+180B in the table of section 3.9 shows them as they came,
+  and Strip keeps them. An arc-dm older than the column count can make a
+  quote line of wide text wider than 72 columns.
 - `reply_to` is a new field of each line. An older arc prints none, so a
   client program shows no quote. An older client program ignores it, as
   section 3.5 requires, and shows a reply as a plain message. `SendReply`
@@ -411,7 +418,7 @@ are not on the wire.
 | `TestAReplyQuotesItsParent` | `arc-dm reply` with 4 digits of a short id, and `arc-dm send -reply`, send a reply; the confirmation names the conversation. The other side shows the quote line at column 0 from its own sent text. `arc message inbox` names the parent. |
 | `TestAReplyInAGroup` | A reply to a group message goes to each member of the group, and not to a direct conversation. The confirmation names each member. |
 | `TestAQuoteComesFromTheStore` | A quote line typed into a text shows inside the text, at column 2. The one line at column 0 is the parent from the store. |
-| `TestAHostileParentIsOneEscapedLine` | A parent with ESC, U+202E, U+200B and a first line of 5,000 characters gives one escaped quote line of at most 72 characters. A parent that starts with empty lines quotes its first line with text. An id that matches a held id in 63 digits shows 12 digits and `…`, inside 72 characters. |
+| `TestAHostileParentIsOneEscapedLine` | A parent with ESC, U+202E, U+200B and a first line of 5,000 characters gives one escaped quote line of at most 72 columns. 100 CJK ideographs fit in 72 columns. A parent that starts with empty lines quotes its first line with text. An id that matches a held id in 63 digits shows 12 digits and `…`, inside 72 characters. |
 | `TestAReplyToAnUnheldMessageShowsTheIdOnly` | A reply to an id that the reader does not hold shows `(not on this device)`. |
 | `TestAReplyAcrossConversationsShowsNoText` | A direct reply that names a group message shows `(in another conversation)` and no text of the group. arc refuses to send such a reply. |
 | `TestATagThatIsNoReplyShowsAPlainMessage` | Two `e` tags, or an id in capitals, give a plain message. A relay hint after the id still gives a reply. |
@@ -420,6 +427,12 @@ are not on the wire.
 | `TestAReplyToYourOwnMessage` | A reply to a message that the citizen sent quotes it on both sides: arc finds the parent in the outbox. |
 | `TestSendReplyChecksTheIdBeforeTheText` | `arc-dm send -reply` with a wrong id fails at once, with standard input open. |
 | `TestAWatchReadsTheOutboxOncePerMissingParent` | Four replies to two ids that no message has make a watch read the outbox twice, and the inbox not at all, after its start. |
+| `TestWidth` | `terminal.Width` counts two columns for a CJK ideograph, a fullwidth letter and an emoji, none for a mark, a selector and a joiner. |
+| `TestEscapeLineFit` | 100 CJK ideographs fit in 72 columns as 35 and an ellipsis; an escape is never cut. |
+| `TestFlagsAfterThePeer` | `arc-dm send <peer> -reply <id> text` sends a reply, not the text `-reply <id> text`. A text that starts with `-reply` is refused; a dash later in a text stays. |
+| `TestArcChecksAReplyBeforeTheText` | `arc message send --reply` with a bad or unheld id fails at once, with standard input open. |
+| `TestIndexIsNotQuadratic` | The index of 200,000 messages takes one sort. |
+| `TestABlankParentQuotesAsBlank` | A parent of only spaces, such as U+3000, quotes as `(blank)`. |
 | `TestShortIDs` | A short id grows past 6 digits where two ids share them, and a prefix of two messages is refused. |
 | `TestSlogTextHandlerQuotesHostileText` | `slog.TextHandler` writes ESC, an override, an invisible character, a tag, a newline and U+2028 of a message, a value and an error as escapes. |
 
