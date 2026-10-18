@@ -219,13 +219,11 @@ func TestTwoSavesOfASealGiveItOnePosition(t *testing.T) {
 	seal := sealFrom(t, nostr.Generate(), "one")
 	var saves sync.WaitGroup
 	for range 2 {
-		saves.Add(1)
-		go func() {
-			defer saves.Done()
+		saves.Go(func() {
 			if err := r.receipt(seal); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	saves.Wait()
 	err := receipts.View(func(tx kv.Tx) error {
