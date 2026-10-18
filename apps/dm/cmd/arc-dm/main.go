@@ -73,16 +73,17 @@ func main() {
 	// closes. The end of the context ends each arc that it runs.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	second, interruptAgain := context.WithCancel(context.Background())
+	// A second signal ends the work that the first one began, such as the
+	// last read of a watch on a hung arc. A third one ends arc-dm as with
+	// no handler. The channel listens from the start, so a second signal
+	// that comes at once is not lost.
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		// A second signal ends the work that the first one began, such as
-		// the last read of a watch on a hung arc. A third one ends arc-dm
-		// as with no handler.
-		<-ctx.Done()
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-		stop()
+		<-signals
 		<-signals
 		signal.Stop(signals)
+		stop()
 		interruptAgain()
 	}()
 	err := run(context.WithValue(ctx, secondSignal{}, second), args)
@@ -207,8 +208,10 @@ type watcher struct {
 	waiting  int         // the messages in queue that wait for a read
 	timer    *time.Timer // the next read, when a message waits for it
 	due      time.Time   // the time of the next read
-	// close bounds the read of the outbox at the end of the watch: a
-	// second interrupt ends it.
+	// ctx ends each read of the outbox while the watch runs: the signal
+	// that ends the watch ends a read on a hung arc too. closeCtx bounds
+	// the read at the end of the watch: a second signal ends it.
+	ctx      context.Context
 	closeCtx context.Context
 }
 
@@ -244,7 +247,7 @@ func (w *watcher) take(m arcprogram.Message) {
 	}
 	for w.live >= maxQueue {
 		if time.Since(w.last) >= overflowRead {
-			w.readAndFlush(context.Background())
+			w.readAndFlush(w.reading())
 			return
 		}
 		if w.printPlainHeads() {
@@ -262,13 +265,13 @@ func (w *watcher) take(m arcprogram.Message) {
 	case w.waiting == 0:
 		w.flush(false)
 	case w.waiting >= maxWaiting && time.Since(w.last) >= overflowRead:
-		w.readAndFlush(context.Background())
+		w.readAndFlush(w.reading())
 	case w.waiting >= maxWaiting:
 		w.readIn(overflowRead - time.Since(w.last))
 	case w.timer != nil:
 		// A read is due, and m waits for it.
 	case time.Since(w.last) >= refreshEvery:
-		w.readAndFlush(context.Background())
+		w.readAndFlush(w.reading())
 	default:
 		w.readIn(refreshEvery - time.Since(w.last))
 	}
@@ -289,7 +292,7 @@ func (w *watcher) readIn(wait time.Duration) {
 		defer w.mu.Unlock()
 		w.timer = nil
 		if w.live > 0 {
-			w.readAndFlush(context.Background())
+			w.readAndFlush(w.reading())
 		}
 	})
 }
@@ -357,22 +360,42 @@ func (w *watcher) waits(m arcprogram.Message) bool {
 	return m.ReplyTo != "" && !held && !w.missed[m.ReplyTo]
 }
 
+// reading is the context of a read of the outbox while the watch runs.
+func (w *watcher) reading() context.Context {
+	if w.ctx == nil {
+		return context.Background()
+	}
+	return w.ctx
+}
+
 // readAndFlush reads the outbox, and prints each held message.
+//
+// A read that fails because the watch ends leaves the messages held: the
+// end of the watch reads again, and prints them. A read that fails while
+// the watch runs prints them as they are, and marks no parent missed.
 func (w *watcher) readAndFlush(ctx context.Context) {
 	w.stop()
-	w.refresh(ctx)
+	if err := w.refresh(ctx); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "arc-dm: the read of the outbox failed:", terminal.EscapeLine(err.Error()))
+		w.flush(false)
+		return
+	}
 	w.flush(true)
 }
 
-func (w *watcher) refresh(ctx context.Context) {
+func (w *watcher) refresh(ctx context.Context) error {
 	w.last = time.Now()
 	outbox, err := w.outbox(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	for _, sent := range sentMessages(outbox) {
 		w.messages.add(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
 	}
+	return nil
 }
 
 // flush prints each held message, in order. After a read of the outbox, a
@@ -408,16 +431,17 @@ func (w *watcher) close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.stop()
+	read := false
 	if w.waiting > 0 {
 		parent := w.closeCtx
 		if parent == nil {
 			parent = context.Background()
 		}
 		ctx, cancel := context.WithTimeout(parent, closeRead)
-		w.refresh(ctx)
+		read = w.refresh(ctx) == nil
 		cancel()
 	}
-	w.flush(true)
+	w.flush(read)
 }
 
 // refuseHelp refuses a text of only -h, -H, --h, --H, -help or --help: a person who
@@ -735,6 +759,7 @@ func watch(ctx context.Context, args []string) error {
 		bySender: map[string][]int{},
 		last:     time.Now(), // conversations read the outbox
 	}
+	w.ctx = ctx
 	if second, ok := ctx.Value(secondSignal{}).(context.Context); ok {
 		w.closeCtx = second
 	}

@@ -951,21 +951,34 @@ func TestAnOverflowReadsAnOldOutbox(t *testing.T) {
 	}
 }
 
-// A second interrupt ends the watch at once, even while its end waits on
-// an arc that hangs.
+// A second interrupt ends the watch at once, while a read of the outbox
+// hangs: the read at the end of the watch, or a timed read that hung
+// before the first interrupt. The first interrupt ends a timed read; the
+// second ends the last one. The watch shows its held reply each time.
 func TestASecondInterruptEndsTheWatch(t *testing.T) {
 	t.Parallel()
+	for _, how := range []string{"the last read hangs", "a timed read hangs"} {
+		t.Run(how, func(t *testing.T) { secondInterrupt(t, how) })
+	}
+}
+
+func secondInterrupt(t *testing.T, how string) {
+	timed := how == "a timed read hangs"
 	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
 	mallory.dm("send", bob.key, "hello")
 	bob.sync()
 	dir := t.TempDir()
 	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
-	// The second read of the outbox, at the end of the watch, hangs: the
-	// arc that arc-dm runs sleeps.
+	// Each read of the outbox after the first hangs: the arc that arc-dm
+	// runs sleeps.
 	sleep := fmt.Sprintf("%d.%d", 30+os.Getpid()%30, time.Now().Nanosecond()%1000)
 	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && exec sleep " + sleep + ";; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	reads := func() int {
+		data, _ := os.ReadFile(count)
+		return strings.Count(string(data), "x")
 	}
 	watch := exec.Command(env.program, "watch", "-arc", wrapper, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
 	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
@@ -974,6 +987,7 @@ func TestASecondInterruptEndsTheWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer watch.Process.Kill()
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
 	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
@@ -986,11 +1000,22 @@ func TestASecondInterruptEndsTheWatch(t *testing.T) {
 	}) {
 		t.Fatal("the reply did not arrive")
 	}
-	time.Sleep(200 * time.Millisecond)
+	if timed {
+		// The reply waits; the timed read of the outbox hangs.
+		if !arcprogramtest.WaitUntil(waitLimit, func() bool { return reads() >= 2 }) {
+			t.Fatal("the watch read the outbox no second time")
+		}
+	} else {
+		time.Sleep(200 * time.Millisecond)
+	}
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
+	// The end of the watch reads the outbox once more, and that read
+	// hangs too.
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return reads() >= map[bool]int{false: 2, true: 3}[timed] }) {
+		t.Fatalf("the end of the watch did not read the outbox; reads %d", reads())
+	}
 	start := time.Now()
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
@@ -1006,8 +1031,7 @@ func TestASecondInterruptEndsTheWatch(t *testing.T) {
 		t.Errorf("the watch dropped the held reply:\n%s", stdout.String())
 	}
 	if out, _ := exec.Command("pgrep", "-f", "sleep "+sleep).Output(); len(out) > 0 {
-		t.Errorf("the hung arc is still running: %s", out)
-		_ = exec.Command("pkill", "-f", "sleep "+sleep).Run()
+		t.Errorf("a hung arc is still running: %s", out)
 	}
 }
 
