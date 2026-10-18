@@ -458,7 +458,7 @@ are not on the wire.
 | `TestAWatchReadTimesOut` | A read on a hung arc ends after 10 s with a warning, and shows the held reply with no quote line; a reply after it shows at once with no quote line; after a read that works, a later reply gets its quote. |
 | `TestAfterAFailedReadNothingShowsAsMissing` | After a failed read, no reply shows as "(not on this device)", not even one that a sender over its quota pushes out, and no id is recorded. |
 | `TestAnAlwaysHungOutboxShowsRepliesPlain` | With an outbox that always hangs, a reply to a message of this citizen shows after one read, with no quote line. |
-| `TestRepliesShowSoonWhileTheOutboxHangs` | With an outbox that always hangs, each of 12 replies, 1 s apart, shows within 25 s with no quote line, and none shows as missing. |
+| `TestRepliesShowSoonWhileTheOutboxHangs` | With an outbox that always hangs, each of 12 replies, 1 s apart, shows within 50 s with no quote line, and none shows as missing. A watch that reads for each reply passes 50 s by its eighth reply. |
 | `TestTakeNeverReads` | A message that arrives does not wait for a read of the outbox that blocks. |
 | `TestReadsRecoverAfterAFailure` | After a failed read, a reply shows at once with no quote line; after a read that works, replies wait for reads again, and a sender over its quota shows its oldest as "(not on this device)". |
 | `TestReadsBackOffFromTheEndOfTheLastRead` | With an outbox that takes 2 s and fails, the next read starts at least 5 s after the last one ended. |

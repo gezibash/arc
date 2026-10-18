@@ -44,14 +44,28 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 	bob.DM("send", ada.Name, "bring the map")
 	ada.Sync()
 	short := dmtest.ShortID(t, ada.DM("open", bob.Name), "bring the map")
-	ada.DM("reply", short, "yes")
-	ada.ArcSend(bob.Key, "and that", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
-	want := []string{"\n↳ " + short + "  you: bring the map\n  yes\n", "\n↳ 7a7a7a7a7a7a  (not on this device)\n  and that\n"}
-	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool {
-		return strings.Contains(stdout.String(), want[0]) && strings.Contains(stdout.String(), want[1])
-	}) {
-		t.Errorf("the watch printed:\n%s\nwant\n%s", stdout.String(), strings.Join(want, ""))
+	// A quote, and "(not on this device)", need a read of the outbox that
+	// ends within 10 s. On a busy machine a read can take longer: the
+	// reply then shows with no quote line, as designed, and the test sends
+	// another after the next read, until WaitLimit.
+	shows := func(send func(text string), text, quote string) {
+		t.Helper()
+		deadline := time.Now().Add(dmtest.WaitLimit)
+		for n := 0; time.Now().Before(deadline); n++ {
+			line := fmt.Sprintf("%s %d", text, n)
+			send(line)
+			if !arcprogramtest.WaitUntil(time.Until(deadline), func() bool { return strings.Contains(stdout.String(), "  "+line+"\n") }) {
+				break
+			}
+			if strings.Contains(stdout.String(), "\n"+quote+"\n  "+line+"\n") {
+				return
+			}
+			time.Sleep(dmtest.RefreshEvery + dmtest.ReadTimeout)
+		}
+		t.Errorf("the watch printed:\n%s\nand on standard error:\n%s\nwant %q above a reply %q", stdout.String(), stderr.String(), quote, text)
 	}
+	shows(func(line string) { ada.DM("reply", short, line) }, "yes", "↳ "+short+"  you: bring the map")
+	shows(func(line string) { ada.ArcSend(bob.Key, line, "--arctest-tag", "e,"+strings.Repeat("7a", 32)) }, "and that", "↳ 7a7a7a7a7a7a  (not on this device)")
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
@@ -160,9 +174,12 @@ func secondInterrupt(t *testing.T, how string) {
 		t.Fatal("the reply did not arrive")
 	}
 	if timed {
-		// The reply waits; the timed read of the outbox hangs.
-		if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return reads() >= 2 }) {
-			t.Fatal("the watch read the outbox no second time")
+		// The reply waits; the timed read of the outbox hangs. On a shared
+		// machine with a load of 14 to 20, one run waited 121 s for that
+		// read without it: twice WaitLimit, and the output of the watch if
+		// it does not come.
+		if !arcprogramtest.WaitUntil(2*dmtest.WaitLimit, func() bool { return reads() >= 2 }) {
+			t.Fatalf("the watch read the outbox %d times, want a second; it printed:\n%s\nand on standard error:\n%s", reads(), stdout.String(), stderr.String())
 		}
 	} else {
 		time.Sleep(200 * time.Millisecond)
@@ -605,8 +622,12 @@ func TestAKilledWatchKeepsTheIdsThatAReadShowed(t *testing.T) {
 
 // With an outbox that always hangs, a steady stream of replies shows with
 // a bounded delay: only the timer reads the outbox, and after a read that
-// fails, a reply shows at once. Each reply here shows within the first
-// timed read and its 10 s limit, and a margin, of the time it was sent.
+// fails, a reply shows at once. Each reply here shows within two timed
+// reads and their 10 s limits, and a margin, of the time it was sent. One
+// read and its limit is the delay on an idle machine; on a shared machine
+// with a load of 14 to 20, replies showed after 26 to 37 s. A watch that
+// reads for each reply, as before the timer, falls behind by about 9 s for
+// each reply, and its eighth reply passes this bound.
 func TestRepliesShowSoonWhileTheOutboxHangs(t *testing.T) {
 	t.Parallel()
 	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
@@ -631,7 +652,7 @@ func TestRepliesShowSoonWhileTheOutboxHangs(t *testing.T) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 	const replies = 12
-	limit := dmtest.RefreshEvery + dmtest.ReadTimeout + 10*time.Second
+	limit := 2*(dmtest.RefreshEvery+dmtest.ReadTimeout) + 20*time.Second
 	sent := make([]time.Time, replies)
 	shown := make([]time.Time, replies)
 	done := make(chan struct{})
