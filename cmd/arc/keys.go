@@ -31,6 +31,7 @@ import (
 	"github.com/gezibash/arc/sdk/storage"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -170,23 +171,81 @@ func askPassphrase(prompt string) (string, error) {
 	return askSecret("ARC_PASSPHRASE", prompt)
 }
 
+// openTTY opens the terminal of arc; tests give another.
+var openTTY = func() (*os.File, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
+
+// afterPrompt runs when the prompt shows; tests type there.
+var afterPrompt = func() {}
+
 // askSecret reads the variable env, or asks on the terminal without echo.
+// Echo goes off before the prompt shows, so an answer typed or pasted as
+// the prompt appears is not shown, and it comes back on each way out, also
+// on an interrupt.
 func askSecret(env, prompt string) (string, error) {
 	if value := os.Getenv(env); value != "" {
 		return value, nil
 	}
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	tty, err := openTTY()
 	if err != nil {
 		return "", fmt.Errorf("arc needs a passphrase: set %s, or run arc on a terminal", env)
 	}
 	defer func() { _ = tty.Close() }()
+	fd := int(tty.Fd())
+	restore, err := echoOff(fd)
+	if err != nil {
+		return "", err
+	}
+	defer restore()
+	defer restoreOnSignal(restore)()
 	fmt.Fprint(tty, prompt)
-	value, err := term.ReadPassword(int(tty.Fd()))
+	afterPrompt()
+	value, err := term.ReadPassword(fd)
 	fmt.Fprintln(tty)
 	if err != nil {
 		return "", err
 	}
 	return string(value), nil
+}
+
+// echoOff stops the terminal fd from showing what is typed, and returns
+// the function that brings its mode back.
+func echoOff(fd int) (restore func(), err error) {
+	old, err := unix.IoctlGetTermios(fd, getTermios)
+	if err != nil {
+		return nil, err
+	}
+	quiet := *old
+	quiet.Lflag &^= unix.ECHO
+	quiet.Lflag |= unix.ICANON | unix.ISIG
+	quiet.Iflag |= unix.ICRNL
+	if err := unix.IoctlSetTermios(fd, setTermios, &quiet); err != nil {
+		return nil, err
+	}
+	var once sync.Once
+	return func() { once.Do(func() { _ = unix.IoctlSetTermios(fd, setTermios, old) }) }, nil
+}
+
+// restoreOnSignal runs restore when a signal that ends arc comes, and then
+// lets the signal end arc. The returned function stops the watch.
+func restoreOnSignal(restore func()) (stop func()) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case got := <-signals:
+			restore()
+			signal.Reset(got)
+			if sig, ok := got.(syscall.Signal); ok {
+				_ = syscall.Kill(os.Getpid(), sig)
+			}
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(signals)
+		close(done)
+	}
 }
 
 // Each identity of this machine has its own directory, <root>/citizens/<name>,
