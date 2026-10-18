@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -194,7 +193,8 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 		args = append(args, "--since", opts.Since)
 	}
 	command := a.Command(ctx, args...)
-	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
+	inGroup(command)
+	command.Cancel = func() error { return interrupt(command) }
 	command.WaitDelay = 5 * time.Second
 	problems := &tail{}
 	command.Stderr = problems
@@ -232,7 +232,7 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 		failed = scanner.Err()
 	}
 	if failed != nil {
-		_ = command.Process.Signal(os.Interrupt)
+		_ = interrupt(command)
 		_, _ = io.Copy(io.Discard, out)
 	}
 	waited := command.Wait()
@@ -265,6 +265,9 @@ func IsKey(text string) bool {
 // holds what arc wrote on standard error.
 func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	command := a.Command(ctx, args...)
+	// At the end of ctx, the whole process group of arc ends: an arc that
+	// a wrapper runs, or a child of arc, does not stay behind, hung.
+	inGroup(command)
 	command.Stdin = stdin
 	problems := &tail{}
 	command.Stderr = problems

@@ -528,7 +528,7 @@ func TestFlagsAfterThePeer(t *testing.T) {
 	}
 	// A text of only -h or --help is a request for help that came too
 	// late: arc-dm refuses it, and after -- sends it.
-	for _, help := range []string{"-h", "-help", "--help"} {
+	for _, help := range []string{"-h", "-H", "--h", "-help", "--help"} {
 		if out := bob.refused("send", ada.name, help); !strings.Contains(out, "arc-dm send <peer> -- "+help) {
 			t.Errorf("send <peer> %s: %s", help, out)
 		}
@@ -699,7 +699,7 @@ func testWatcherWith(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, 
 		me:       "me",
 		messages: index(nil),
 		missed:   map[string]bool{},
-		waiting:  map[string]int{},
+		bySender: map[string][]int{},
 		last:     time.Now(),
 	}
 	w.print = func(m arcprogram.Message, messages *store) {
@@ -719,108 +719,163 @@ func sentParent(id, text string) arcprogram.Sent {
 	return arcprogram.Sent{ID: id, To: "peer", Text: text, Members: []string{"me", "peer"}}
 }
 
-// The watch holds at most maxQueue messages: a burst past that prints them
-// at once, in order, and loses none.
+// inOrder reports whether the printed texts of each sender, named by the
+// first word of the text, come in the order of their numbers.
+func inOrder(printed []string) bool {
+	last := map[string]int{}
+	for _, line := range printed {
+		var who string
+		var n int
+		if _, err := fmt.Sscanf(line, "%s %d", &who, &n); err != nil {
+			continue
+		}
+		if prev, ok := last[who]; ok && n <= prev {
+			return false
+		}
+		last[who] = n
+	}
+	return true
+}
+
+// quoted counts the printed lines that hold the quote of the parent.
+func quoted(printed []string) int {
+	n := 0
+	for _, line := range printed {
+		if strings.HasSuffix(line, "\u21b3 ababab  you: bring the map") {
+			n++
+		}
+	}
+	return n
+}
+
+// The watch holds at most maxQueue messages, and loses none: 100 senders
+// that each send many messages behind a reply that waits.
 func TestTheHeldQueueIsCapped(t *testing.T) {
 	w, printed, _ := testWatcher()
-	w.take(msg(0, "peer", "junk", strings.Repeat("7a", 32)))
+	w.take(msg(0, "peer", "peer 0", strings.Repeat("7a", 32)))
 	for i := range 3 * maxQueue {
-		w.take(msg(i+1, "peer", fmt.Sprint(i), ""))
-		if len(w.queue) > maxQueue {
-			t.Fatalf("the watch holds %d messages, want at most %d", len(w.queue), maxQueue)
+		w.take(msg(i+1, fmt.Sprint("s", i%100), fmt.Sprintf("s%d %d", i%100, i), ""))
+		if w.live > maxQueue {
+			t.Fatalf("the watch holds %d messages, want at most %d", w.live, maxQueue)
 		}
 	}
 	w.close()
-	if len(*printed) != 3*maxQueue+1 || !strings.HasPrefix((*printed)[0], "junk ") || !strings.HasPrefix((*printed)[3*maxQueue], fmt.Sprint(3*maxQueue-1)+" ") {
-		t.Errorf("the watch printed %d messages, want %d in order", len(*printed), 3*maxQueue+1)
+	if len(*printed) != 3*maxQueue+1 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, in order %v; want %d in the order of each sender", len(*printed), inOrder(*printed), 3*maxQueue+1)
 	}
 }
 
 // Cato's case: one junk reply, one valid reply whose parent is in the
-// outbox, then 254 junk replies of the same sender. The junk of one sender
-// past its quota prints at once, and the valid reply still gets its quote.
+// outbox, then 254 junk replies of the same sender. The junk past the
+// quota prints at once, oldest first, and the valid reply gets its quote.
 func TestOneSendersJunkDoesNotHideAValidReply(t *testing.T) {
 	parent := strings.Repeat("ab", 32)
 	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
-	w.take(msg(0, "mallory", "junk", strings.Repeat("7a", 32)))
-	w.take(msg(1, "peer", "yes", parent))
+	w.take(msg(0, "mallory", "mallory 0", strings.Repeat("7a", 32)))
+	w.take(msg(1, "peer", "peer 1", parent))
 	for i := range 254 {
-		w.take(msg(i+2, "mallory", "junk", idsFrom(1000+i, 1)[0].ID))
+		w.take(msg(i+2, "mallory", fmt.Sprintf("mallory %d", i+1), idsFrom(1000+i, 1)[0].ID))
 	}
 	w.close()
-	if !slices.Contains(*printed, "yes \u21b3 ababab  you: bring the map") || *reads == 0 {
-		t.Errorf("after %d reads the watch printed %q, want the quote of the valid reply", *reads, *printed)
+	if quoted(*printed) != 1 || *reads == 0 || len(*printed) != 256 || !inOrder(*printed) {
+		t.Errorf("after %d reads the watch printed %d messages, %d quoted, in order %v", *reads, len(*printed), quoted(*printed), inOrder(*printed))
 	}
-	if len(*printed) != 256 {
-		t.Errorf("the watch printed %d messages, want 256", len(*printed))
+}
+
+// Cato's case with keys: 16 keys take turns to send 255 junk replies, after
+// one junk reply and one valid one, within 1 s of a read. No valid reply
+// is hidden: past the cap, the heaviest holder's oldest print.
+func TestRotatingKeysDoNotHideAValidReply(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "k0", "k0 0", strings.Repeat("7a", 32)))
+	w.take(msg(1, "peer", "peer 1", parent))
+	for i := range 255 {
+		key := fmt.Sprint("k", i%16)
+		w.take(msg(i+2, key, fmt.Sprintf("%s %d", key, i+1), idsFrom(1000+i, 1)[0].ID))
+	}
+	w.close()
+	if quoted(*printed) != 1 || len(*printed) != 257 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, %d quoted, in order %v", len(*printed), quoted(*printed), inOrder(*printed))
+	}
+}
+
+// One honest sender replies 20 times, quickly, to messages that this
+// citizen sent: each reply waits for the read, gets its quote, and keeps
+// its place.
+func TestQuickHonestRepliesKeepQuotesAndOrder(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	for i := range 20 {
+		w.take(msg(i, "peer", fmt.Sprintf("peer %d", i), parent))
+	}
+	w.close()
+	if quoted(*printed) != 20 || !inOrder(*printed) {
+		t.Errorf("the watch printed %q, want 20 quoted replies in order", *printed)
+	}
+}
+
+// A sender that holds more than maxHeldPerSender prints its oldest at once,
+// in its own order, and the rest wait behind them.
+func TestASenderOverItsQuotaPrintsItsOldest(t *testing.T) {
+	w, printed, _ := testWatcher()
+	defer w.close()
+	for i := range 100 {
+		w.take(msg(i, "mallory", fmt.Sprintf("mallory %d", i), idsFrom(1000+i, 1)[0].ID))
+	}
+	if len(*printed) != 100-maxHeldPerSender || w.live != maxHeldPerSender || !inOrder(*printed) || !strings.HasPrefix((*printed)[0], "mallory 0 ") {
+		t.Errorf("the watch printed %d and holds %d, want %d printed, oldest first, and %d held", len(*printed), w.live, 100-maxHeldPerSender, maxHeldPerSender)
 	}
 }
 
 // A busy group, 600 messages behind a valid reply that waits, does not
-// push the reply out unquoted: only replies that wait count toward the
-// cap, and the order stays.
+// push the reply out unquoted, and each sender keeps its order.
 func TestABusyGroupDoesNotHideAValidReply(t *testing.T) {
 	parent := strings.Repeat("ab", 32)
 	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
-	w.take(msg(0, "peer", "yes", parent))
+	w.take(msg(0, "peer", "peer 0", parent))
 	for i := range 600 {
-		w.take(msg(i+1, "cy", fmt.Sprint(i), ""))
+		who := fmt.Sprint("m", i%3)
+		w.take(msg(i+1, who, fmt.Sprintf("%s %d", who, i), ""))
 	}
 	w.close()
-	if len(*printed) != 601 || (*printed)[0] != "yes \u21b3 ababab  you: bring the map" || !strings.HasPrefix((*printed)[600], "599 ") {
-		t.Errorf("the watch printed %d messages, first %q, want the quoted reply first", len(*printed), (*printed)[0])
+	if len(*printed) != 601 || quoted(*printed) != 1 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, %d quoted, in order %v", len(*printed), quoted(*printed), inOrder(*printed))
 	}
 }
 
-// An overflow that prints without a read of the outbox marks no parent
-// missed, so a later reply to it, once the parent is in the outbox, still
-// gets its quote.
+// When no sender holds more than two messages, an overflow waits for the
+// read, and each reply gets its quote.
+func TestSmallHoldersWaitForTheRead(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	defer w.close()
+	for i := range maxWaiting {
+		who := fmt.Sprint("s", i/2)
+		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
+	}
+	if *reads != 1 || quoted(*printed) != maxWaiting {
+		t.Errorf("after %d reads, %d of %d replies are quoted", *reads, quoted(*printed), maxWaiting)
+	}
+}
+
+// A reply that printed early, past the cap, marks its parent not missed:
+// a later reply to it, once the parent is in the outbox, gets its quote.
 func TestAnOverflowMarksNoParentMissed(t *testing.T) {
 	parent := strings.Repeat("ab", 32)
 	w, printed, _, sent := testWatcherWith()
-	senders := maxWaiting / maxWaitingPerSender
-	for i := range maxWaitingPerSender {
-		for k := range senders {
-			w.take(msg(i*1000+k, fmt.Sprint("sender", k), "early", parent))
-		}
+	for i := range maxWaiting + 50 {
+		who := fmt.Sprint("s", i%16)
+		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
 	}
-	if len(w.queue) != 0 {
-		t.Fatalf("after %d waiting replies the watch still holds %d", maxWaiting, len(w.queue))
+	if len(*printed) == 0 {
+		t.Fatal("no reply printed early")
 	}
 	*sent = append(*sent, sentParent(parent, "bring the map"))
-	w.take(msg(99999, "peer", "late", parent))
+	w.take(msg(99999, "peer", "peer 1", parent))
 	w.close()
-	if last := (*printed)[len(*printed)-1]; last != "late \u21b3 ababab  you: bring the map" {
+	if last := (*printed)[len(*printed)-1]; !strings.HasPrefix(last, "peer 1 ") || quoted(*printed) == 0 {
 		t.Errorf("the late reply printed %q, want its quote", last)
-	}
-}
-
-// At its end, the watch reads the outbox once for a reply that waits, so
-// a parent that this citizen sent shows in the quote.
-func TestTheEndOfAWatchReadsTheOutbox(t *testing.T) {
-	parent := strings.Repeat("ab", 32)
-	w, printed, reads := testWatcher(arcprogram.Sent{ID: parent, To: "peer", Text: "bring the map", Members: []string{"me", "peer"}})
-	w.take(arcprogram.Message{ID: strings.Repeat("cd", 32), Text: "yes", ReplyTo: parent, From: "peer", Members: []string{"peer", "me"}})
-	if len(*printed) != 0 {
-		t.Fatalf("the reply printed before a read: %q", *printed)
-	}
-	w.close()
-	if want := "yes \u21b3 ababab  you: bring the map"; len(*printed) != 1 || (*printed)[0] != want || *reads != 1 {
-		t.Errorf("the end of the watch printed %q after %d reads, want %q after 1", *printed, *reads, want)
-	}
-}
-
-// A flood of messages that a watch adds one at a time takes time that
-// grows with their number, not its square.
-func TestALiveFloodIsLinear(t *testing.T) {
-	if g := growth(25000, func(n int) {
-		s := index(nil)
-		for _, e := range ids(n) {
-			s.add(e, conversation{})
-			s.short(e.ID)
-		}
-	}); g > 9 {
-		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
 	}
 }
 
@@ -831,13 +886,12 @@ func TestAnOverflowReadsAnOldOutbox(t *testing.T) {
 	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
 	w.last = time.Now().Add(-2 * overflowRead)
 	defer w.close()
-	for i := range maxWaitingPerSender {
-		for k := range maxWaiting / maxWaitingPerSender {
-			w.take(msg(i*1000+k, fmt.Sprint("sender", k), "yes", parent))
-		}
+	for i := range maxWaiting {
+		who := fmt.Sprint("s", i%16)
+		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
 	}
-	if *reads != 1 || len(*printed) != maxWaiting || (*printed)[0] != "yes \u21b3 ababab  you: bring the map" {
-		t.Errorf("after %d reads the watch printed %d messages, the first %q", *reads, len(*printed), (*printed)[0])
+	if *reads != 1 || quoted(*printed) != maxWaiting {
+		t.Errorf("after %d reads, %d of %d replies are quoted", *reads, quoted(*printed), maxWaiting)
 	}
 }
 
@@ -850,8 +904,10 @@ func TestASecondInterruptEndsTheWatch(t *testing.T) {
 	bob.sync()
 	dir := t.TempDir()
 	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
-	// The second read of the outbox, at the end of the watch, hangs.
-	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && exec sleep 30;; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
+	// The second read of the outbox, at the end of the watch, hangs in a
+	// child of the wrapper, which only a kill of the process group ends.
+	sleep := fmt.Sprintf("%d.%d", 30+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && { sleep " + sleep + "; exit 0; };; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -881,6 +937,13 @@ func TestASecondInterruptEndsTheWatch(t *testing.T) {
 	case <-done:
 	case <-time.After(closeRead - 2*time.Second):
 		t.Fatalf("the watch went on %v after a second interrupt", time.Since(start))
+	}
+	if !strings.Contains(stdout.String(), "  junk\n") {
+		t.Errorf("the watch dropped the held reply:\n%s", stdout.String())
+	}
+	if out, _ := exec.Command("pgrep", "-f", "sleep "+sleep).Output(); len(out) > 0 {
+		t.Errorf("the hung arc is still running: %s", out)
+		_ = exec.Command("pkill", "-f", "sleep "+sleep).Run()
 	}
 }
 

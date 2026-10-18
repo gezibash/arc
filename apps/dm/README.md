@@ -93,7 +93,8 @@ A reply shows a quote line between its header and its text:
   `arc-dm send ada -reply 1c77 yes`. Each other word after the peer is
   text, so `arc-dm send ada -home is where the heart is` sends that text.
   After `--`, each word is text. An empty `-reply=` is refused, and so is
-  a text of only `-h`, `-help` or `--help`: put `--` before it to send it.
+  a text of only `-h`, `-H`, `--h`, `--H`, `-help` or `--help`: put `--`
+  before it to send it.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
@@ -105,15 +106,22 @@ A reply shows a quote line between its header and its text:
   sent the parent after the watch started: at most once each 5 s,
   because a sender can name many ids. The reply, and each message after
   it, waits for that read, at most 5 s, so the order stays and the quote
-  is not lost. One sender can hold at most 16 replies that wait; its
-  further replies show at once, as `(not on this device)`. A watch holds
-  at most 256 replies that wait, and 4,096 messages in all: past that it
-  reads the outbox at once, unless it read it less than a second ago, and
-  prints what it holds. When the watch ends, it reads the outbox once more
-  for a reply that waits; a second interrupt ends it at once.
+  is not lost. A waiting reply shows without its quote only after a read
+  that came after it, with two exceptions. A sender that holds more than
+  64 messages shows its oldest at once. Past 256 waiting replies, or 4,096
+  held messages, the watch reads the outbox, unless it read it less than a
+  second ago; then the sender that holds the most shows its oldest, until
+  the watch is under the caps. A sender that holds one or two messages
+  never shows early. The messages of one sender always show in their
+  order; a heavy sender's oldest can show ahead of the messages of others.
+  When the watch ends, it reads the outbox once more for a reply that
+  waits; a second interrupt ends that read, and the watch shows each held
+  message as it is, and drops none.
 - The id of a parent that is not on this device shows 12 digits, so a
   message that arrives later with the same first 6 digits does not take
-  it.
+  it. A sender who spends about 8 GPU-hours can make a message whose id
+  starts with the same 12 digits as another; `arc-dm reply` then refuses
+  the id as one that names two messages.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

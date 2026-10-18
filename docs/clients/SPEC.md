@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxRarely|TestTheWatchForgetsMissedIds|TestALiveAddDoesNotSortTheStore|TestAWatchHoldsAReplyUntilItReadsTheOutbox|TestTheHeldQueueIsCapped|TestOneSendersJunkDoesNotHideAValidReply|TestABusyGroupDoesNotHideAValidReply|TestAnOverflowMarksNoParentMissed|TestAnOverflowReadsAnOldOutbox|TestCraftedCollisionsStayFast|TestASecondInterruptEndsTheWatch|TestTheEndOfAWatchReadsTheOutbox|TestALiveFloodIsLinear|TestAWatchShowsAHeldReplyAtItsEnd|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxRarely|TestTheWatchForgetsMissedIds|TestALiveAddDoesNotSortTheStore|TestAWatchHoldsAReplyUntilItReadsTheOutbox|TestTheHeldQueueIsCapped|TestOneSendersJunkDoesNotHideAValidReply|TestRotatingKeysDoNotHideAValidReply|TestQuickHonestRepliesKeepQuotesAndOrder|TestASenderOverItsQuotaPrintsItsOldest|TestSmallHoldersWaitForTheRead|TestABusyGroupDoesNotHideAValidReply|TestAnOverflowMarksNoParentMissed|TestAnOverflowReadsAnOldOutbox|TestCraftedCollisionsStayFast|TestASecondInterruptEndsTheWatch|TestTheEndOfAWatchReadsTheOutbox|TestALiveFloodIsLinear|TestAWatchShowsAHeldReplyAtItsEnd|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -64,6 +64,12 @@ does not give a client program a way to read the keys of the arc home.
 - A client program MUST NOT read the key files of the arc home.
 - A failure MUST hold the last 4 KiB that arc wrote on standard error. If
   arc wrote nothing, it holds the error of the process.
+- On a system with process groups, the package MUST run each arc of its
+  calls and of a watch in a process group of its own, and end the whole
+  group at the end of the context: an interrupt for a watch, a kill for a
+  call. So an arc that a wrapper runs, or a child of arc, does not stay
+  behind. `Arc.Command` returns a plain command, for a program that runs
+  arc in its own way.
 
 ### 3.2 The message line
 
@@ -439,13 +445,17 @@ are not on the wire.
 | `TestAReplyToYourOwnMessage` | A reply to a message that the citizen sent quotes it on both sides: arc finds the parent in the outbox. |
 | `TestSendReplyChecksTheIdBeforeTheText` | `arc-dm send -reply` with a wrong id fails at once, with standard input open. |
 | `TestAWatchReadsTheOutboxRarely` | 20 replies to ids that no message has make a watch read the outbox at most once each 5 s, and the inbox not at all, after its start. |
-| `TestTheHeldQueueIsCapped` | A watch holds at most 4,096 messages: a burst prints them at once, in order, and loses none. |
-| `TestOneSendersJunkDoesNotHideAValidReply` | One junk reply, one valid reply, then 254 junk replies of one sender: the junk past 16 shows at once, and the valid reply gets its quote. |
-| `TestABusyGroupDoesNotHideAValidReply` | 600 messages behind a valid reply that waits do not push it out unquoted, and the order stays. |
-| `TestAnOverflowMarksNoParentMissed` | An overflow with no read marks no parent missed: a later reply to it gets its quote. |
+| `TestTheHeldQueueIsCapped` | A watch holds at most 4,096 messages, and loses none; each sender keeps its order. |
+| `TestOneSendersJunkDoesNotHideAValidReply` | One junk reply, one valid reply, then 254 junk replies of one sender: the junk past 64 shows at once, oldest first, and the valid reply gets its quote. |
+| `TestRotatingKeysDoNotHideAValidReply` | 16 keys that take turns to send 255 junk replies within 1 s of a read hide no valid reply. |
+| `TestQuickHonestRepliesKeepQuotesAndOrder` | 20 quick replies of one sender all get their quotes, in order. |
+| `TestASenderOverItsQuotaPrintsItsOldest` | A sender with 100 held messages shows its 36 oldest at once, in order, and holds 64. |
+| `TestSmallHoldersWaitForTheRead` | With no sender over two messages, an overflow waits for the read, and each reply gets its quote. |
+| `TestABusyGroupDoesNotHideAValidReply` | 600 messages behind a valid reply that waits do not push it out unquoted, and each sender keeps its order. |
+| `TestAnOverflowMarksNoParentMissed` | A reply that showed early past the cap marks no parent missed: a later reply to it gets its quote. |
 | `TestAnOverflowReadsAnOldOutbox` | An overflow reads the outbox when the last read is older than 1 s. |
 | `TestCraftedCollisionsStayFast` | Ids that share 10 digits get 11-digit short ids, and a flood of such pairs stays linear. |
-| `TestASecondInterruptEndsTheWatch` | A second interrupt ends a watch at once, while its last read of the outbox hangs. |
+| `TestASecondInterruptEndsTheWatch` | A second interrupt ends a watch at once, while its last read of the outbox hangs in a child of a wrapper of arc: the watch shows its held reply, and the whole process group of that arc ends. |
 | `TestTheEndOfAWatchReadsTheOutbox` | At its end, a watch reads the outbox once for a reply that waits, and prints it with its quote. |
 | `TestAWatchShowsAHeldReplyAtItsEnd` | An interrupt while a reply waits for the outbox still prints the reply with the quote of its parent. |
 | `TestALiveFloodIsLinear` | 4 times the messages added one at a time, each with its short id, take less than 9 times as long. |
