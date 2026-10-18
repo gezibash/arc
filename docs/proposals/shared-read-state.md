@@ -8,15 +8,16 @@ clients on one device disagree on what is read.
 
 ## 0. Bad news first
 
-- The read state stays on one arc home, as today's arc-dm state stays on
-  one device. It does not sync between the devices of a citizen. A
-  message read on the phone is still unread on the Mac.
+- The read state is local only. It stays in one arc home, and does not
+  sync between the devices of a citizen: a message read on the phone is
+  still unread on the Mac. This proposal does not change that.
 - Listing is not reading. An agent that reads its mail with
   `arc message inbox --json` must still call `arc message read`, or the
-  messages stay unread for arc-dm too (section 9, question 1).
+  messages stay unread for arc-dm too. There is no `--mark-read`: the call
+  that read is the one that marks.
 - arc-dm then needs an arc with `arc message read`. With an older arc,
-  arc-dm fails with `unknown command "read"`, and says to update arc. It
-  keeps no second read state as a fallback.
+  arc-dm stops and names the version that it needs (section 5). It keeps
+  no second read state as a fallback.
 - The message line of the clients spec gets a field, `read_at`. The
   clients spec is built, so the change ships with a `BREAKING CHANGE`
   footer, as Zim decided for replies.
@@ -39,8 +40,7 @@ This proposal moves the read state into arc, so each client of one arc
 home sees the same state:
 
 - arc keeps the read time of each received message;
-- `arc message read` marks messages read, and `arc message unread`
-  unmarks them;
+- `arc message read` marks messages read;
 - the message line says when a message was read;
 - arc-dm reads and writes that state, and keeps none of its own;
 - arc-dm moves its old `read.json` into arc once.
@@ -67,7 +67,9 @@ command first, with no receipt.
 - Only a message of the inbox can be read: a received message of kind 14
   that names this citizen in a `p` tag. Held mail of a stranger
   ([the strangers spec](../strangers/SPEC.md), section 3.4) is not in the
-  inbox, and cannot be marked.
+  inbox, and cannot be marked. `arc contacts add <stranger>` moves it to
+  the inbox with the same id (`docs/strangers/SPEC.md:592`); from then on
+  it can be marked, and it is unread until a client marks it.
 - A mark of a message that is read already changes nothing: the first
   time stays.
 - arc MUST NOT mark a message read on its own. `arc message inbox`,
@@ -78,10 +80,12 @@ command first, with no receipt.
 - `arc message read <id>...` marks messages read. Each id is 64 lowercase
   hex digits. With `-`, arc reads the ids from standard input, one on
   each line, so a client can mark a whole conversation.
-- If an id is not a message of the inbox, arc MUST refuse the whole call,
-  and mark nothing: `no message <id> in the inbox`.
-- `arc message unread <id>...` removes the mark, with the same rules.
+- If an id is not a message of the inbox, or is not 64 lowercase hex
+  digits, arc MUST refuse the whole call, and mark nothing. The error
+  names each bad id of the call, not only the first:
+  `2 ids are not messages of the inbox: <id>, <id>`.
 - `--json` prints one line for each id: `{"id":…,"read_at":…}`.
+- There is no `arc message unread` until a client needs one.
 - `arc message inbox --unread` lists only the messages that are not read.
 
 ### 3.3 The message line
@@ -99,18 +103,28 @@ section 3.2, gets one field:
 ### 3.4 The SDK
 
 - `arcprogram.Message` gets `ReadAt time.Time`, zero while unread.
-- `arcprogram.Arc.Read(ctx, ids)` and `Arc.Unread(ctx, ids)` run
-  `arc message read -` and `arc message unread -`, with the ids on
-  standard input.
+- `arcprogram.Arc.Read(ctx, ids)` runs `arc message read -`, with the
+  ids on standard input.
 
 ### 3.5 arc-dm
 
-- `arc-dm ls`, `open` and `watch` take the read state from `read_at`.
-  `open` and `read` mark through `Arc.Read`.
-- At its first run with an arc that has `arc message read`, arc-dm finds
-  its old `read.json`, marks each id in it that is in the inbox, and
-  renames the file to `read.json.moved`. An id that is not in the inbox
-  is left out.
+- `arc-dm ls` and `open` take the read state from `read_at`.
+- Only `open` and `read` mark, through `Arc.Read`. `arc-dm watch` marks
+  nothing, as `arc message watch` marks nothing.
+- `open` marks only the ids that it printed. A message that arrives
+  between the listing and the mark is not among them, and stays unread.
+- `read <peer>` marks the messages of the conversation that its own
+  listing holds, by the same rule.
+- At its first run with an arc that has `arc message read`, arc-dm moves
+  its old `read.json` into arc, under the lock that it takes on that file
+  now (`apps/dm/cmd/arc-dm/conversations.go:411`), so two runs of arc-dm
+  do not both move it:
+  1. If `read.json.moved` exists, arc-dm stops, and says so: it does not
+     overwrite a file that an earlier move left.
+  2. It marks each id of `read.json` that is in the inbox, in one call.
+     An id that is not in the inbox, such as the id of a message that
+     expired from a held list, is left out, and arc-dm says how many.
+  3. It renames `read.json` to `read.json.moved`.
 - The flag `-state` and `DM_STATE` then name only where the old file is.
 
 ## 4. Behavior
@@ -125,11 +139,12 @@ section 3.2, gets one field:
 
 | Cause | What happens | What the user sees |
 | --- | --- | --- |
-| An id that is not in the inbox | arc refuses the call, and marks nothing. | `no message <id> in the inbox` |
-| An id that is not 64 hex digits | arc refuses the call. | `a message id is 64 lowercase hex digits` |
-| arc-dm with an arc older than this proposal | arc-dm stops. | `arc message read: unknown command; update arc` |
+| Ids that are not in the inbox, or not 64 hex digits | arc refuses the call, and marks nothing. | `2 ids are not messages of the inbox: <id>, <id>`, with each bad id |
+| arc-dm with an arc older than this proposal | arc-dm stops. | `arc-dm needs arc v0.35.0 or newer, which has arc message read; this arc has none` (the release that ships this sets the version) |
 | Two clients mark at once | Each mark is a transaction; the first time stays. | Nothing. |
 | An old `read.json` that does not parse | arc-dm stops, and leaves the file. | The path and the parse error. |
+| `read.json.moved` exists already | arc-dm stops, and moves nothing. | `<dir>/read.json.moved exists: an earlier move left it; remove it or read.json` |
+| Two runs of arc-dm move at once | The second waits for the lock, then finds no `read.json`. | Nothing. |
 
 ## 6. Security
 
@@ -161,20 +176,28 @@ Each test runs the real arc and arc-dm against the relay of
 | Test | What it proves |
 | --- | --- |
 | `TestAReadMarkIsSharedByEachClient` | An agent marks with `arc message read`; `arc-dm ls` shows no unread. `arc-dm open` marks; `arc message inbox --json` shows `read_at`, and `--unread` leaves the message out. |
-| `TestReadRefusesAnIdNotInTheInbox` | An unknown id, a sent message, a held message and a bad id are refused, and no id of the call is marked. |
-| `TestTheFirstReadTimeStays` | A second mark keeps the first time; `unread` removes it. |
-| `TestListingMarksNothing` | `inbox`, `watch` and `sync` leave each message unread. |
-| `TestArcDmMovesItsOldReadState` | A `read.json` of an older arc-dm moves into arc once, and the file is renamed. |
+| `TestReadRefusesAnIdNotInTheInbox` | An unknown id, a sent message and a bad id are refused in one call; the error names each of them, and no id of the call is marked. |
+| `TestHeldMailIsMarkableOnceAccepted` | A held message of a stranger is refused by `arc message read`. After `arc contacts add <stranger>` moves it to the inbox, with the same id, the same call marks it. |
+| `TestTheFirstReadTimeStays` | A second mark keeps the first time. |
+| `TestListingMarksNothing` | `arc message inbox`, `arc message watch`, `arc sync` and `arc-dm watch` leave each message unread. |
+| `TestOpenMarksOnlyWhatItPrinted` | A message that arrives after `arc-dm open` listed the conversation, and before it marks, stays unread. The test puts the message in the store between the listing and the mark, through an arc wrapper that delivers it when arc-dm runs `arc message read`. |
+| `TestArcDmMovesItsOldReadState` | A `read.json` of an older arc-dm moves into arc once, and the file is renamed. An id not in the inbox is left out and counted. |
+| `TestTheMoveKeepsAnEarlierMove` | With `read.json.moved` there, arc-dm stops and changes neither file. |
+| `TestTwoRunsMoveOnce` | Two runs of arc-dm at once: one moves, the other finds no `read.json`. |
+| `TestTheVersionErrorNamesTheVersion` | With an arc that has no `arc message read`, arc-dm names the version that it needs. |
 | `TestReadMarksAtOnce` (`core/mail`) | Two marks at once keep one time. |
 
-## 9. Open questions
+## 9. Decisions of the review
 
-1. Should `arc message inbox --json` take a flag, such as `--mark-read`,
-   that marks each line that it prints, so an agent needs one call? This
-   proposal says no for now: a listing is not reading, and the call that
-   marks should be the one that read.
-2. Should the read state sync between the devices of a citizen, as self
-   data through the storage citizens? It would need a merge rule for two
-   devices. This proposal leaves it for later.
-3. Is `arc message unread` worth having now? arc-dm has no command that
-   needs it.
+Otto reviewed this proposal on 2026-10-18:
+
+1. No `--mark-read` on `arc message inbox --json`: the call that read is
+   the one that marks.
+2. No sync between devices yet: the read state is local only (section 0).
+3. No `arc message unread` until a client asks for it.
+4. `arc-dm open` marks only the ids that it printed, and `arc-dm watch`
+   marks nothing (section 3.5).
+5. The refusal of a call names each bad id (section 3.2).
+6. The move of `read.json` keeps an earlier move, and runs under the lock
+   of arc-dm (section 3.5).
+7. The error for an older arc names the version that arc-dm needs.
