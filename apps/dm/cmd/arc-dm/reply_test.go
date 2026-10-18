@@ -1067,12 +1067,17 @@ func secondInterrupt(t *testing.T, how string) {
 	} else {
 		time.Sleep(200 * time.Millisecond)
 	}
+	before := reads()
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
 	// The end of the watch reads the outbox once more, and that read
-	// hangs too.
-	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return reads() >= map[bool]int{false: 2, true: 3}[timed] }) {
+	// hangs too. It is the only read that can start after the first
+	// interrupt, so it also shows that arc-dm took that interrupt. Only
+	// then does the test send the second: two signals of one kind that
+	// wait together become one, and under load a timed read can have
+	// made the count before the first interrupt.
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return reads() > before }) {
 		t.Fatalf("the end of the watch did not read the outbox; reads %d", reads())
 	}
 	start := time.Now()
@@ -1083,8 +1088,18 @@ func secondInterrupt(t *testing.T, how string) {
 	go func() { _ = watch.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(closeRead - 2*time.Second):
-		t.Fatalf("the watch went on %v after a second interrupt", time.Since(start))
+	case <-time.After(6 * time.Second):
+		// Still running: make Go show where each goroutine of arc-dm
+		// waits, then fail with it. Under the race detector, a program
+		// that ends can take more than a second to exit.
+		readsThen := reads()
+		processes, _ := exec.Command("pgrep", "-fl", bob.arc.Home).Output()
+		_ = watch.Process.Signal(syscall.SIGQUIT)
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+		}
+		t.Fatalf("the watch went on %v after a second interrupt; reads of the outbox %d; processes of the home:\n%s\nstderr, with the goroutines of arc-dm:\n%s", time.Since(start), readsThen, processes, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "  junk\n") {
 		t.Errorf("the watch dropped the held reply:\n%s", stdout.String())
