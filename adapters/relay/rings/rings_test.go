@@ -1000,10 +1000,6 @@ func TestTwoRelaysRingWithOneID(t *testing.T) {
 	}
 }
 
-// TestAReadOfACitizenWithFailingRingsGetsANotice rings a URL that answers
-// 401, as a platform does after its key changed. The relay tries once, and
-// tells the citizen on its next authenticated read, once on that
-// connection. A stranger's read gets nothing.
 // notices makes times reads of the wraps of citizen, as as, on one
 // connection, and returns the NOTICEs that the connection got.
 func (h *harness) notices(as keys.Key, citizen nostr.PubKey, times int) []string {
@@ -1036,6 +1032,10 @@ func (h *harness) notices(as keys.Key, citizen nostr.PubKey, times int) []string
 	return notices
 }
 
+// TestAReadOfACitizenWithFailingRingsGetsANotice rings a URL that answers
+// 401, as a platform does after its key changed. The relay tries once, and
+// tells the citizen on its next authenticated read, once on that
+// connection. A stranger's read gets nothing.
 func TestAReadOfACitizenWithFailingRingsGetsANotice(t *testing.T) {
 	h := start(t, Config{})
 	bob, stranger := keys.Generate(), keys.Generate()

@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain|ALowDayTellsTheRingsLeft|AReadWithFewRingsLeftGetsANotice|AReadGetsBothNotices|SyncSaysThatRingsRunLow)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain|ALowDayTellsTheRingsLeft|AReadWithFewRingsLeftGetsANotice|AReadGetsBothNotices|ASmallCapAfterAUsedDaySaysNothing|TheDayIsUTC|ToldIsFreedOnDisconnect|AReadThatRacesTheCloseLeavesNoToldSet|SyncSaysThatRingsRunLow)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -517,6 +517,12 @@ and khatru:
   three reads on one connection get one NOTICE, and a stranger's read gets
   none. `TestAReadGetsBothNotices`: a ring answered 401 with `daily_cap`
   2 gives one read the NOTICE of failing rings, then the one of rings left.
+  `TestASmallCapAfterAUsedDaySaysNothing`: a `daily_cap` of 3 with 2 used
+  yesterday says nothing today. `TestTheDayIsUTC`: 00:30 at UTC+2 is the
+  UTC day before. `TestToldIsFreedOnDisconnect`: after 5 connections that
+  each read twice and closed, the relay keeps no record of what it told
+  them. `TestAReadThatRacesTheCloseLeavesNoToldSet`: 300 connections that
+  each authenticate, send 8 reads and close at once leave no such record.
   `TestSyncSaysThatRingsRunLow` (`cmd/arc`): `arc sync` prints the NOTICE
   with the URL of the relay.
 - `TestTheLogSaysWhyARelayDoesNotRing`: a wrap that rings no one for each

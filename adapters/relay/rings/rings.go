@@ -506,6 +506,12 @@ func (r *Rings) unlisten(ws *khatru.WebSocket, ssid int) {
 	delete(r.subs[ws], ssid)
 	if len(r.subs[ws]) == 0 {
 		delete(r.subs, ws)
+		// khatru removes the listeners of a closed connection after
+		// OnDisconnect, and a REQ that raced the close can add one in
+		// between: free its told set here too.
+		if ws.Context.Err() != nil {
+			delete(r.told, ws)
+		}
 	}
 	for _, pk := range citizens {
 		if r.watching[pk]--; r.watching[pk] <= 0 {
