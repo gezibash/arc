@@ -223,3 +223,10 @@ commands as a person does: conversations, groups, unread counts, peer
 names, control characters, replies, and a watch that notifies. A test
 that needs a hostile reply sends it with `arc message send --arctest-tag`,
 which only a test build of arc has.
+
+The tests that run the commands are in three packages under
+`cmd/arc-dm/e2e`: `conversations`, `replies` and `watch`. Each builds arc
+and `arc-dm` and runs its own relay, through `cmd/arc-dm/internal/dmtest`,
+so the packages run at the same time, each within the time limit of
+`go test`. The tests of the store and of the watch's rules stay beside
+the code, in package `main`, and run no relay.
