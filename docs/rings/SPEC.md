@@ -3,7 +3,7 @@
 - Status: built
 - Layers: adapters
 - Owns: none
-- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
+- Proof: go test -count=1 -run '^Test(RingsWakeACitizenThroughTheCLI|SyncSaysThatRingsFail|AReadOfACitizenWithFailingRingsGetsANotice|ARefusedRingIsNotTriedAgain|TwoRelaysRingWithOneID|TheRingIDComesFromTheFirstWrap|AReadRenewsTheRegistration|AWrapRingsWithinMilliseconds|ATestRingDelaysNoMail|ARingTriesAgainWithOneIDAcrossARestart|ARegistrationExpires|ARelayRingsOnceForEachUnreadPeriod|CourierAndLiveWrapsNeverRing|AReadNeedsAuthentication|AWatchingCitizenIsNotRung|TheRelayRefusesARegistrationThatBreaksARule|AHostThatTurnsPrivateIsNotRung|ABadAuthorizationGets401|TheKeyNeverLeavesTheRelay|TheLogSaysWhyARelayDoesNotRing|TheLogNamesTheCitizenOfARing|AWrapForNoRegistrationLogsOnlyForDebugging|SyncSaysThatARelayRefusedTheAuthentication|ARefusedAuthenticationBeforeAReadIsToldOnce|ARefusalAfterAnAuthenticationThatWorkedIsToldAgain|ARingCommandActsOnOneRelay)$' ./cmd/arc/ ./adapters/relay/rings/ ./adapters/transport/relay/
 - Unverified: No automated test runs an agent of a hosted platform with arc on its machine (section 4.3); one such agent was rung by hand on 2026-10-16. The tests ring a local TLS server through an injected resolver and dialer; no automated test rings a URL on the Internet from a deployed relay. The default numbers are estimates.
 
 A relay rings a citizen: it makes one HTTPS call to a URL that the citizen
@@ -288,6 +288,7 @@ ARC_RING_KEY=op://Agents/grok-routine/credential \
 arc relay ring show
 arc relay ring test
 arc relay ring clear
+arc relay ring show --relay wss://relay.republic.sh
 ```
 
 - `arc relay ring set` reads the key from the environment variable that
@@ -303,6 +304,11 @@ arc relay ring clear
   of the URL, because a path can hold a secret.
 - `arc relay ring test` asks each relay for one ring now, with
   `POST /ring/test`, and prints the answer of the URL.
+- With `--relay <url>`, `set`, `show`, `test` and `clear` act on that one
+  relay, and on no other. The URL is `ws://` or `wss://`. It need not be a
+  relay of the citizen, so a citizen can clear a registration on a relay
+  that it no longer uses. If that relay does not list `arc-rings`, the
+  command fails.
 
 ### 4.2 A ring, step by step
 
@@ -444,6 +450,8 @@ a relay that does not offer rings.
   outside ARC, rings like any other relay-form wrap.
 - A citizen without a registration is not rung. A relay without
   `arc-rings` answers 404, and `arc relay ring set` reports it.
+- An arc older than `--relay` refuses the flag as unknown, and acts on no
+  relay. Nothing on the wire changes.
 - A relay with rings sends a NIP-42 challenge on each connection. A client
   that does not want to authenticate ignores it, as NIP-42 allows.
 - An older arc reads its mail without authentication. Its reads do not end
@@ -495,6 +503,10 @@ and khatru:
   NOTICE; a stranger's read gets none.
 - `TestSyncSaysThatRingsFail` (`cmd/arc`): `arc sync` prints the NOTICE
   with the URL of the relay.
+- `TestARingCommandActsOnOneRelay` (`cmd/arc`): with two relays that
+  ring, `set`, `test`, `show` and `clear` with `--relay` touch the named
+  relay only. A named relay without `arc-rings`, and an `https` URL, fail
+  the command.
 - `TestTheLogSaysWhyARelayDoesNotRing`: a wrap that rings no one for each
   reason of section 4.4, except `no registration` and `a try is on the way`,
   logs the reason and the first 8 hex digits of the citizen key at Info,

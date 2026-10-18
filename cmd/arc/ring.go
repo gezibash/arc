@@ -115,12 +115,14 @@ func ringCommand() *cobra.Command {
 		},
 	}
 
+	command.PersistentFlags().String("relay", "", "act on this relay only, a ws:// or wss:// URL; it need not be a relay of this citizen")
 	command.AddCommand(set, show, test, clear)
 	return command
 }
 
 // eachRingRelay runs do on each relay of the citizen that offers rings, and
-// prints one line for each relay. A relay without rings is skipped.
+// prints one line for each relay. A relay without rings is skipped. With
+// --relay, it runs do on that relay only, and a relay without rings fails.
 func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay string, id signerIdentity) (string, error)) error {
 	ctx := command.Context()
 	dir, err := home(command)
@@ -131,7 +133,14 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 	if err != nil {
 		return err
 	}
-	if len(relays) == 0 {
+	one, _ := command.Flags().GetString("relay")
+	switch {
+	case one != "":
+		if !strings.HasPrefix(one, "ws://") && !strings.HasPrefix(one, "wss://") {
+			return errors.New("--relay takes a ws:// or wss:// URL")
+		}
+		relays = []string{one}
+	case len(relays) == 0:
 		return errors.New("no relays: add one with arc relay add <url>")
 	}
 	id, err := loadIdentity(ctx, dir)
@@ -161,6 +170,8 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 		fmt.Fprintf(out, "%s: %s\n", relay, terminal.EscapeLine(line))
 	}
 	switch {
+	case offered == 0 && failed == 0 && one != "":
+		return fmt.Errorf("%s offers no rings", terminal.EscapeLine(one))
 	case offered == 0 && failed == 0:
 		return errors.New("no relay of this citizen offers rings")
 	case failed > 0:

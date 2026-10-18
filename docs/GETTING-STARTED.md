@@ -171,6 +171,7 @@ arc relay ring test
 ```
 
 The relay rings once, then not again until the agent reads with `arc sync`.
+Add `--relay <url>` to register with one relay only.
 [The rings spec](rings/SPEC.md) has the limits.
 
 ## 5. Try an app

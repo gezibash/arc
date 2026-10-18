@@ -175,6 +175,55 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	}
 }
 
+// With --relay, each ring command acts on one relay. Bob has two relays
+// that ring, and registers with the first only: the second has no
+// registration, and test, show and clear touch the first only. A relay
+// that --relay names and that offers no rings fails the command.
+func TestARingCommandActsOnOneRelay(t *testing.T) {
+	first, firstHits := ringRelay(t, http.StatusOK)
+	second, secondHits := ringRelay(t, http.StatusOK)
+	bob, _ := providerHome(t, first)
+	ok(t, bob, "", "relay", "add", second)
+	t.Setenv("ARC_RING_KEY", "a key of the routine of bob")
+
+	set := ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY", "--relay", first)
+	if !strings.Contains(set, first+": rings example.com") || strings.Contains(set, second) {
+		t.Fatalf("arc relay ring set --relay %s:\n%s", first, set)
+	}
+	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", second); err == nil {
+		t.Fatalf("the second relay has a registration:\n%s", out)
+	}
+	if out := ok(t, bob, "", "relay", "ring", "test", "--relay", first); !strings.Contains(out, first+": the URL answered 200 OK") || strings.Contains(out, second) {
+		t.Fatalf("arc relay ring test --relay %s:\n%s", first, out)
+	}
+	waitRing(t, firstHits, "the test ring of the first relay")
+	noRing(t, secondHits, "a test ring of the first relay only")
+	if out := ok(t, bob, "", "relay", "ring", "show", "--relay", first); !strings.Contains(out, "47 of 48 left today") || strings.Contains(out, second) {
+		t.Fatalf("arc relay ring show --relay %s:\n%s", first, out)
+	}
+	if out := ok(t, bob, "", "relay", "ring", "clear", "--relay", first); out != first+": rings no more\n" {
+		t.Fatalf("arc relay ring clear --relay %s:\n%s", first, out)
+	}
+	if _, err := run(t, bob, "", "relay", "ring", "show", "--relay", first); err == nil {
+		t.Fatal("ring show found a registration after clear")
+	}
+
+	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closePlain)
+	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	t.Cleanup(plainServer.Close)
+	plainURL := "ws" + strings.TrimPrefix(plainServer.URL, "http")
+	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", plainURL); err == nil || !strings.Contains(err.Error(), plainURL+" offers no rings") {
+		t.Fatalf("ring show --relay on a relay without rings: %v\n%s", err, out)
+	}
+	if _, err := run(t, bob, "", "relay", "ring", "show", "--relay", "https://example.com"); err == nil || !strings.Contains(err.Error(), "ws:// or wss://") {
+		t.Fatalf("ring show took an https relay: %v", err)
+	}
+}
+
 // TestSyncSaysThatRingsFail registers a URL that answers 401, as a
 // platform does after its key changed. The next arc sync prints the notice
 // of the relay on standard error, with the relay.
