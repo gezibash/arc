@@ -227,6 +227,9 @@ type watcher struct {
 	// the read at the end of the watch: a second signal ends it.
 	ctx      context.Context
 	closeCtx context.Context
+	// saveShown saves the ids that the watch showed as missing; nil in
+	// tests. The watch calls it after a read that showed one.
+	saveShown func()
 }
 
 const (
@@ -326,10 +329,17 @@ func (w *watcher) readIn(wait time.Duration) {
 	w.due = time.Now().Add(wait)
 	w.timer = time.AfterFunc(wait, func() {
 		w.mu.Lock()
-		defer w.mu.Unlock()
 		w.timer = nil
 		if !w.reading && !w.closed {
 			w.readAndFlush(w.readCtx())
+		}
+		save := w.saveShown
+		if len(w.messages.shown) == 0 {
+			save = nil
+		}
+		w.mu.Unlock()
+		if save != nil {
+			save()
 		}
 	})
 }
@@ -365,7 +375,9 @@ func (w *watcher) printOldest(sender string) {
 		w.waiting--
 	}
 	w.print(*m, w.messages, w.readOK)
-	if len(w.queue) > 2*w.live+64 {
+	// A read that runs prints the messages before its place in queue,
+	// so the places stay until it ends.
+	if !w.reading && len(w.queue) > 2*w.live+64 {
 		w.compact()
 	}
 }
@@ -876,8 +888,14 @@ func watch(ctx context.Context, args []string) error {
 	}
 	// The ids that the watch shows as missing go to the state at most once
 	// a second, and at its end, so a reply in another terminal refuses them.
-	var lastSave time.Time
+	// The watch also saves after each timer read that showed an id.
+	var (
+		saving   sync.Mutex
+		lastSave time.Time
+	)
 	save := func(force bool) {
+		saving.Lock()
+		defer saving.Unlock()
 		if !force && time.Since(lastSave) < time.Second {
 			return
 		}
@@ -890,6 +908,9 @@ func watch(ctx context.Context, args []string) error {
 			fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
 		}
 	}
+	w.mu.Lock()
+	w.saveShown = func() { save(true) } // reads come at most each second
+	w.mu.Unlock()
 	err = s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
 		w.take(m)
 		save(false)

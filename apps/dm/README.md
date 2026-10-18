@@ -134,7 +134,9 @@ A reply shows a quote line between its header and its text:
   that starts with the same 12 digits as a message that it sends later.
   So arc-dm remembers the last 4,096 ids that it showed as missing, and
   `arc-dm reply` refuses a short id that starts one of them: give the
-  full id.
+  full id. `arc-dm watch` saves these ids at most once a second as
+  messages arrive, after each read of the outbox that showed one, and at
+  its end.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

@@ -669,6 +669,61 @@ func TestReadsBackOffFromTheEndOfTheLastRead(t *testing.T) {
 	}
 }
 
+// A read prints the messages that were held when it started. A flood of
+// one sender during the read, which prints its oldest messages early, does
+// not move a reply that came during the read into that part: the reply,
+// to a message that this citizen sent after the read started, waits for
+// the next read and gets its quote. 130 messages compact the queue.
+func TestACompactionDuringAReadKeepsALateReplyWaiting(t *testing.T) {
+	for _, flood := range []int{0, 60, 130, 200} {
+		t.Run(fmt.Sprint(flood), func(t *testing.T) {
+			parent := strings.Repeat("ab", 32)
+			w, printed, _, sent := testWatcherWith()
+			defer w.close()
+			started, release := make(chan struct{}, 1), make(chan struct{})
+			read := w.outbox
+			w.outbox = func(ctx context.Context) ([]arcprogram.Sent, error) {
+				select {
+				case started <- struct{}{}:
+					<-release
+				default:
+				}
+				return read(ctx)
+			}
+			junk := func(i int) string { return fmt.Sprintf("%064x", i+1) }
+			for i := range maxHeldPerSender {
+				w.take(msg(i, "mallory", fmt.Sprint("mallory ", i), junk(i)))
+			}
+			done := make(chan struct{})
+			go func() {
+				readNow(w)
+				close(done)
+			}()
+			<-started
+			w.take(msg(1000, "peer", "yes", parent))
+			for i := range flood {
+				j := maxHeldPerSender + i
+				w.take(msg(j, "mallory", fmt.Sprint("mallory ", j), junk(j)))
+			}
+			close(release)
+			<-done
+			w.mu.Lock()
+			missed := w.missed[parent]
+			w.mu.Unlock()
+			if missed {
+				t.Fatalf("the read that started before the parent was sent marked it missed: %q", *printed)
+			}
+			*sent = []arcprogram.Sent{sentParent(parent, "bring the map")}
+			readNow(w)
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			if quoted(*printed) != 1 {
+				t.Errorf("the late reply did not get its quote: %q", *printed)
+			}
+		})
+	}
+}
+
 // Only the timer reads the outbox, and without the lock of the watch: while
 // a read hangs, each take returns at once.
 func TestTakeNeverReads(t *testing.T) {

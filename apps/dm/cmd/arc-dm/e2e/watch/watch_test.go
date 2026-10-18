@@ -90,8 +90,10 @@ func TestAWatchReadsTheOutboxRarely(t *testing.T) {
 	for i := range junk {
 		mallory.ArcSend(bob.Key, fmt.Sprintf("junk %d", i), "--arctest-tag", fmt.Sprintf("e,%064x", i+1))
 	}
-	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Count(stdout.String(), "(not on this device)") == junk }) {
-		t.Fatalf("the watch printed:\n%s", stdout.String())
+	// Under load a read can take more than 10 s; the replies then show
+	// with no quote line, not as missing. Either way each one shows.
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Count(stdout.String(), "  junk ") == junk }) {
+		t.Fatalf("the watch printed:\n%s\nand on standard error:\n%s", stdout.String(), stderr.String())
 	}
 	elapsed := time.Since(start)
 	data, _ := os.ReadFile(runs)
@@ -565,6 +567,41 @@ func TestAWatchSavesShownIdsAtItsEnd(t *testing.T) {
 	_ = watch.Wait()
 	if out := bob.Refused("reply", parent[:12], "yes"); !strings.Contains(out, "was not on this device when arc-dm showed it") {
 		t.Errorf("reply to the id that the watch showed as missing: %s", out)
+	}
+}
+
+// A timer read that shows an id as missing saves it within a second,
+// though no message follows: a watch that is killed then keeps the id,
+// and a reply refuses it.
+func TestAKilledWatchKeepsTheIdsThatAReadShowed(t *testing.T) {
+	t.Parallel()
+	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
+	mallory.DM("send", bob.Key, "hello")
+	bob.Sync()
+	watch := bob.Command("watch", "-notify", "none")
+	stdout, stderr := &dmtest.LockedBuffer{}, &dmtest.LockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	// On macOS the arc of a killed arc-dm runs on.
+	defer func() { _ = exec.Command("pkill", "-f", bob.Arc.Home+" message watch").Run() }()
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	parent := dmtest.FakeID(10)
+	mallory.ArcSend(bob.Key, "see above", "--arctest-tag", "e,"+parent)
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool { return strings.Contains(stdout.String(), parent[:12]+"  (not on this device)") }) {
+		t.Fatalf("the watch printed:\n%s", stdout.String())
+	}
+	time.Sleep(2 * time.Second)
+	if err := watch.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
+	if out := bob.Refused("reply", parent[:12], "yes"); !strings.Contains(out, "was not on this device when arc-dm showed it") {
+		t.Errorf("reply to the id that the killed watch showed as missing: %s", out)
 	}
 }
 
