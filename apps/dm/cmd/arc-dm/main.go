@@ -75,8 +75,10 @@ func main() {
 	second, interruptAgain := context.WithCancel(context.Background())
 	// A second signal ends the work that the first one began, such as the
 	// last read of a watch on a hung arc. A third one ends arc-dm as with
-	// no handler. The channel listens from the start, so a second signal
-	// that comes at once is not lost.
+	// no handler. The channel listens from the start. A second signal of
+	// the same kind that comes at the same instant as the first can still
+	// be lost: the kernel keeps one signal of each kind that waits. Then
+	// arc-dm ends when the last read ends, within closeRead.
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
