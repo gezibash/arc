@@ -214,6 +214,14 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("arc message watch: %w", a.missing(err))
 	}
+	defer func() {
+		// fn can panic, and its caller recover: arc must not run on.
+		if r := recover(); r != nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			panic(r)
+		}
+	}()
 
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(out)
@@ -283,6 +291,10 @@ func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byt
 	runtime.LockOSThread()
 	out, err := command.Output()
 	runtime.UnlockOSThread()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// arc ended well; a child of it held the output open.
+		err = nil
+	}
 	if errors.Is(err, exec.ErrNotFound) {
 		return nil, fmt.Errorf("arc %s: %w", strings.Join(args[:min(2, len(args))], " "), a.missing(err))
 	}

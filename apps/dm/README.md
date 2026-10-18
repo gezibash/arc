@@ -114,9 +114,10 @@ A reply shows a quote line between its header and its text:
   held messages of their sender, and else waits for that read. The
   messages of one sender always show in their order; a sender's messages
   can show ahead of the messages of others.
-  A read of the outbox while the watch runs takes at most 10 s: on a hung
-  arc, the watch warns, and the held messages wait for the next read. A
-  read that fails shows the replies that wait with no quote line.
+  A read of the outbox while the watch runs takes at most 10 s. A read
+  that fails or takes longer shows the held messages at once, each reply
+  that waits with no quote line, and until a read works, a reply that
+  shows early has no quote line either.
   When the watch ends, on an interrupt, SIGTERM or a hangup of its
   terminal, it reads the outbox once more for a reply that waits; a
   second signal ends that read, and the watch shows each held message as

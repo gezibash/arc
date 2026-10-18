@@ -77,8 +77,10 @@ func main() {
 	// last read of a watch on a hung arc. A third one ends arc-dm as with
 	// no handler. The channel listens from the start. A second signal of
 	// the same kind that comes at the same instant as the first can still
-	// be lost: the kernel keeps one signal of each kind that waits. Then
-	// arc-dm ends when the last read ends, within closeRead.
+	// be lost: Go keeps one pending bit for each signal (runtime/sigqueue.go)
+	// until its handler takes it, and the kernel keeps one pending standard
+	// signal of each kind. Then arc-dm ends when the last read ends, within
+	// closeRead.
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
@@ -212,6 +214,7 @@ type watcher struct {
 	waiting  int         // the messages in queue that wait for a read
 	timer    *time.Timer // the next read, when a message waits for it
 	due      time.Time   // the time of the next read
+	readOK   bool        // the last read of the outbox worked
 	// ctx ends each read of the outbox while the watch runs: the signal
 	// that ends the watch ends a read on a hung arc too. closeCtx bounds
 	// the read at the end of the watch: a second signal ends it.
@@ -333,7 +336,7 @@ func (w *watcher) printOldest(sender string) {
 	if w.waits(*m) {
 		w.waiting--
 	}
-	w.print(*m, w.messages, true)
+	w.print(*m, w.messages, w.readOK)
 	if len(w.queue) > 2*w.live+64 {
 		w.compact()
 	}
@@ -380,8 +383,10 @@ func (w *watcher) reading() context.Context {
 // end of the watch reads again, and prints them. A read that fails while
 // the watch runs prints them as they are, and marks no parent missed.
 //
-// A read while the watch runs takes at most readTimeout: on a hung arc, the
-// watch warns, and the held messages wait for the next read.
+// A read while the watch runs takes at most readTimeout. A read that
+// fails or takes longer shows the held messages at once, a reply that
+// waits with no quote line, and until a read works, each reply that
+// shows early has no quote line either: its parent can be on this device.
 func (w *watcher) readAndFlush(ctx context.Context) {
 	w.stop()
 	read, cancel := context.WithTimeout(ctx, readTimeout)
@@ -390,14 +395,17 @@ func (w *watcher) readAndFlush(ctx context.Context) {
 	cancel()
 	switch {
 	case err == nil:
+		w.readOK = true
 		w.flush(true)
 	case ctx.Err() != nil:
 		// The watch ends; its last read prints what is held.
-	case timedOut:
-		fmt.Fprintf(os.Stderr, "arc-dm: the read of the outbox took more than %v; the held messages wait for the next read\n", readTimeout)
-		w.readIn(refreshEvery)
 	default:
-		fmt.Fprintln(os.Stderr, "arc-dm: the read of the outbox failed:", terminal.EscapeLine(err.Error()))
+		if timedOut {
+			fmt.Fprintf(os.Stderr, "arc-dm: the read of the outbox took more than %v; the held messages show with no quote\n", readTimeout)
+		} else {
+			fmt.Fprintln(os.Stderr, "arc-dm: the read of the outbox failed:", terminal.EscapeLine(err.Error()))
+		}
+		w.readOK = false
 		w.flush(false)
 	}
 }
@@ -778,6 +786,7 @@ func watch(ctx context.Context, args []string) error {
 		missed:   map[string]bool{},
 		bySender: map[string][]int{},
 		last:     time.Now(), // conversations read the outbox
+		readOK:   true,
 	}
 	w.ctx = ctx
 	if second, ok := ctx.Value(secondSignal{}).(context.Context); ok {

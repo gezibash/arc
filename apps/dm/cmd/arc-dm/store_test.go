@@ -138,6 +138,7 @@ func testWatcherWith(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, 
 		missed:   map[string]bool{},
 		bySender: map[string][]int{},
 		last:     time.Now(),
+		readOK:   true,
 	}
 	w.print = func(m arcprogram.Message, messages *store, quote bool) {
 		e := entry{ID: m.ID, Text: m.Text, ReplyTo: m.ReplyTo}
@@ -523,5 +524,31 @@ func TestAShownMissingIdIsRefused(t *testing.T) {
 	s.add(entry{ID: parent}, conversation{Peers: []string{"mallory"}})
 	if got, err := s.lookup(parent[:13]); err != nil || got.ID != parent {
 		t.Errorf("lookup of a shown id that is here now: %v, %v", got.ID, err)
+	}
+}
+
+// After a read of the outbox that fails, until a read works, nothing shows
+// as "(not on this device)" and no id is recorded so: not a reply that
+// waited for the read, and not one that a sender over its quota pushes out
+// early. Their parents can be messages of this citizen.
+func TestAfterAFailedReadNothingShowsAsMissing(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher()
+	w.outbox = func(context.Context) ([]arcprogram.Sent, error) { return nil, errors.New("arc failed") }
+	w.last = time.Now().Add(-refreshEvery)
+	defer w.close()
+	w.take(msg(0, "peer", "peer 0", parent))
+	for i := range maxHeldPerSender + 6 {
+		w.take(msg(i+1, "mallory", fmt.Sprintf("mallory %d", i), parent))
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, line := range *printed {
+		if strings.Contains(line, "not on this device") {
+			t.Errorf("after a failed read the watch printed %q", line)
+		}
+	}
+	if len(*printed) != 7 || len(w.messages.shown) != 0 {
+		t.Errorf("the watch printed %d messages and showed %d ids as missing, want 7 and none", len(*printed), len(w.messages.shown))
 	}
 }
