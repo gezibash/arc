@@ -273,9 +273,17 @@ func TestAWatchShowsAHeldReplyAtItsEnd(t *testing.T) {
 	ada.Sync()
 	short := dmtest.ShortID(t, ada.DM("open", bob.Name), "bring the map")
 	ada.DM("reply", short, "yes")
-	// The watch takes the reply within a moment, and holds it until 5 s
-	// after it started. The test ends the watch before then, when it can.
-	time.Sleep(500 * time.Millisecond)
+	// The watch stores each message before it prints it: once the inbox
+	// holds the reply, the watch holds it too, a moment later. It holds it
+	// until 5 s after it started; the test ends the watch before then,
+	// when it can.
+	if !arcprogramtest.WaitUntil(dmtest.WaitLimit, func() bool {
+		inbox, _ := bob.Arc.Inbox(context.Background())
+		return slices.ContainsFunc(inbox, func(m arcprogram.Message) bool { return m.Text == "yes" })
+	}) {
+		t.Fatal("the reply did not arrive")
+	}
+	time.Sleep(200 * time.Millisecond)
 	if time.Since(started) > dmtest.RefreshEvery {
 		t.Logf("the machine is slow: the watch read the outbox before its end, %v after its start", time.Since(started))
 	}

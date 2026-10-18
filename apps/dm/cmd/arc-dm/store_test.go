@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gezibash/arc/apps/dm/cmd/arc-dm/internal/dmtest"
 	"github.com/gezibash/arc/sdk/arcprogram"
 )
 
@@ -523,5 +524,12 @@ func TestAShownMissingIdIsRefused(t *testing.T) {
 	s.add(entry{ID: parent}, conversation{Peers: []string{"mallory"}})
 	if got, err := s.lookup(parent[:13]); err != nil || got.ID != parent {
 		t.Errorf("lookup of a shown id that is here now: %v, %v", got.ID, err)
+	}
+}
+
+// The tests of the watch in e2e wait on a copy of refreshEvery.
+func TestDmtestKeepsTheTimesOfTheWatch(t *testing.T) {
+	if dmtest.RefreshEvery != refreshEvery {
+		t.Errorf("dmtest.RefreshEvery is %v, want %v as in main.go", dmtest.RefreshEvery, refreshEvery)
 	}
 }

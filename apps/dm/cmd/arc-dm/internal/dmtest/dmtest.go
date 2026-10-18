@@ -58,13 +58,10 @@ func run(m *testing.M) int {
 // Program is the path of the arc-dm that Main built.
 func Program() string { return program }
 
-// The times of arc-dm that the tests of its watch wait on, as in
-// apps/dm/cmd/arc-dm/main.go.
-const (
-	RefreshEvery = 5 * time.Second
-	CloseRead    = 10 * time.Second
-	ReadTimeout  = 10 * time.Second
-)
+// RefreshEvery is refreshEvery of apps/dm/cmd/arc-dm/main.go: a watch
+// reads the outbox at most once each RefreshEvery. A test in package main
+// checks that the two agree.
+const RefreshEvery = 5 * time.Second
 
 // FakeID is an id that no message has: the hash of n.
 func FakeID(n int) string {
@@ -210,7 +207,8 @@ func GroupNames(peers ...Person) string {
 	return strings.ReplaceAll(GroupName(peers...), ", ", ",")
 }
 
-// Finish waits at most 10 s for a command to end, and kills it after that.
+// Finish waits at most WaitLimit for a command to end, and kills it after
+// that.
 // It returns false if the command did not end by itself.
 func Finish(t *testing.T, command *exec.Cmd) (ended bool) {
 	t.Helper()
