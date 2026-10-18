@@ -245,7 +245,7 @@ func TestAReplyToAnUnheldMessageShowsTheIdOnly(t *testing.T) {
 	unknown := strings.Repeat("7a", 32)
 	mallory.arcSend(bob.key, "you said so", "--arctest-tag", "e,"+unknown)
 	bob.sync()
-	if conv := bob.dm("open", mallory.name); !strings.Contains(conv, "\n↳ 7a7a7a  (not on this device)\n  you said so\n") {
+	if conv := bob.dm("open", mallory.name); !strings.Contains(conv, "\n↳ 7a7a7a7a7a7a  (not on this device)\n  you said so\n") {
 		t.Errorf("bob's conversation:\n%s", conv)
 	}
 }
@@ -358,7 +358,7 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 	short := shortID(t, ada.dm("open", bob.name), "bring the map")
 	ada.dm("reply", short, "yes")
 	ada.arcSend(bob.key, "and that", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
-	want := []string{"\n↳ " + short + "  you: bring the map\n  yes\n", "\n↳ 7a7a7a  (not on this device)\n  and that\n"}
+	want := []string{"\n↳ " + short + "  you: bring the map\n  yes\n", "\n↳ 7a7a7a7a7a7a  (not on this device)\n  and that\n"}
 	if !arcprogramtest.WaitUntil(waitLimit, func() bool {
 		return strings.Contains(stdout.String(), want[0]) && strings.Contains(stdout.String(), want[1])
 	}) {
@@ -534,6 +534,9 @@ func TestFlagsAfterThePeer(t *testing.T) {
 		}
 	}
 	bob.dm("send", ada.name, "--", "-h")
+	if out := bob.refused("reply", short, "--help"); !strings.Contains(out, "arc-dm reply <id> -- --help") {
+		t.Errorf("reply <id> --help: %s", out)
+	}
 	texts = append(texts, []string{"-h"})
 	ada.sync()
 	conv := ada.dm("open", bob.name)
@@ -681,42 +684,114 @@ func TestALiveAddDoesNotSortTheStore(t *testing.T) {
 // testWatcher is a watcher with an outbox that the test fills, and that
 // records what it prints.
 func testWatcher(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, reads *int) {
-	printed, reads = &[]string{}, new(int)
+	w, printed, reads, _ = testWatcherWith(outbox...)
+	return w, printed, reads
+}
+
+// testWatcherWith is testWatcher, with the outbox that a test can change.
+func testWatcherWith(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, reads *int, sent *[]arcprogram.Sent) {
+	printed, reads, sent = &[]string{}, new(int), &outbox
 	w = &watcher{
 		outbox: func(context.Context) ([]arcprogram.Sent, error) {
 			*reads++
-			return outbox, nil
+			return *sent, nil
 		},
 		me:       "me",
 		messages: index(nil),
 		missed:   map[string]bool{},
+		waiting:  map[string]int{},
 		last:     time.Now(),
 	}
 	w.print = func(m arcprogram.Message, messages *store) {
 		e := entry{ID: m.ID, Text: m.Text, ReplyTo: m.ReplyTo}
 		*printed = append(*printed, m.Text+" "+messages.quote(e, conversation{Peers: []string{"peer"}}))
 	}
-	return w, printed, reads
+	return w, printed, reads, sent
 }
 
-// The watch holds at most maxHeld messages: a burst past that prints them
-// at once, in order, with no read of the outbox, and loses none.
+// msg is a message of the tests of the watcher: one per id, from a sender.
+func msg(id int, from, text, replyTo string) arcprogram.Message {
+	return arcprogram.Message{ID: idsFrom(id, 1)[0].ID, Text: text, ReplyTo: replyTo, From: from, Members: []string{from, "me"}}
+}
+
+// sentParent is a message of this citizen in the outbox, to "peer".
+func sentParent(id, text string) arcprogram.Sent {
+	return arcprogram.Sent{ID: id, To: "peer", Text: text, Members: []string{"me", "peer"}}
+}
+
+// The watch holds at most maxQueue messages: a burst past that prints them
+// at once, in order, and loses none.
 func TestTheHeldQueueIsCapped(t *testing.T) {
-	w, printed, reads := testWatcher()
-	defer w.close()
-	w.take(arcprogram.Message{ID: fmt.Sprintf("%064x", 1), Text: "junk", ReplyTo: strings.Repeat("7a", 32), From: "peer", Members: []string{"peer", "me"}})
-	for i := range 3 * maxHeld {
-		w.take(arcprogram.Message{ID: fmt.Sprintf("%064x", i+2), Text: fmt.Sprint(i), From: "peer", Members: []string{"peer", "me"}})
-		if len(w.queue) > maxHeld {
-			t.Fatalf("the watch holds %d messages, want at most %d", len(w.queue), maxHeld)
+	w, printed, _ := testWatcher()
+	w.take(msg(0, "peer", "junk", strings.Repeat("7a", 32)))
+	for i := range 3 * maxQueue {
+		w.take(msg(i+1, "peer", fmt.Sprint(i), ""))
+		if len(w.queue) > maxQueue {
+			t.Fatalf("the watch holds %d messages, want at most %d", len(w.queue), maxQueue)
 		}
 	}
 	w.close()
-	if len(*printed) != 3*maxHeld+1 || !strings.HasPrefix((*printed)[0], "junk ") || !strings.HasPrefix((*printed)[3*maxHeld], fmt.Sprint(3*maxHeld-1)+" ") {
-		t.Errorf("the watch printed %d messages, want %d in order", len(*printed), 3*maxHeld+1)
+	if len(*printed) != 3*maxQueue+1 || !strings.HasPrefix((*printed)[0], "junk ") || !strings.HasPrefix((*printed)[3*maxQueue], fmt.Sprint(3*maxQueue-1)+" ") {
+		t.Errorf("the watch printed %d messages, want %d in order", len(*printed), 3*maxQueue+1)
 	}
-	if *reads != 0 {
-		t.Errorf("the burst read the outbox %d times, want 0", *reads)
+}
+
+// Cato's case: one junk reply, one valid reply whose parent is in the
+// outbox, then 254 junk replies of the same sender. The junk of one sender
+// past its quota prints at once, and the valid reply still gets its quote.
+func TestOneSendersJunkDoesNotHideAValidReply(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "mallory", "junk", strings.Repeat("7a", 32)))
+	w.take(msg(1, "peer", "yes", parent))
+	for i := range 254 {
+		w.take(msg(i+2, "mallory", "junk", idsFrom(1000+i, 1)[0].ID))
+	}
+	w.close()
+	if !slices.Contains(*printed, "yes \u21b3 ababab  you: bring the map") || *reads == 0 {
+		t.Errorf("after %d reads the watch printed %q, want the quote of the valid reply", *reads, *printed)
+	}
+	if len(*printed) != 256 {
+		t.Errorf("the watch printed %d messages, want 256", len(*printed))
+	}
+}
+
+// A busy group, 600 messages behind a valid reply that waits, does not
+// push the reply out unquoted: only replies that wait count toward the
+// cap, and the order stays.
+func TestABusyGroupDoesNotHideAValidReply(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "peer", "yes", parent))
+	for i := range 600 {
+		w.take(msg(i+1, "cy", fmt.Sprint(i), ""))
+	}
+	w.close()
+	if len(*printed) != 601 || (*printed)[0] != "yes \u21b3 ababab  you: bring the map" || !strings.HasPrefix((*printed)[600], "599 ") {
+		t.Errorf("the watch printed %d messages, first %q, want the quoted reply first", len(*printed), (*printed)[0])
+	}
+}
+
+// An overflow that prints without a read of the outbox marks no parent
+// missed, so a later reply to it, once the parent is in the outbox, still
+// gets its quote.
+func TestAnOverflowMarksNoParentMissed(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _, sent := testWatcherWith()
+	senders := maxWaiting / maxWaitingPerSender
+	for i := range maxWaitingPerSender {
+		for k := range senders {
+			w.take(msg(i*1000+k, fmt.Sprint("sender", k), "early", parent))
+		}
+	}
+	if len(w.queue) != 0 {
+		t.Fatalf("after %d waiting replies the watch still holds %d", maxWaiting, len(w.queue))
+	}
+	*sent = append(*sent, sentParent(parent, "bring the map"))
+	w.take(msg(99999, "peer", "late", parent))
+	w.close()
+	if last := (*printed)[len(*printed)-1]; last != "late \u21b3 ababab  you: bring the map" {
+		t.Errorf("the late reply printed %q, want its quote", last)
 	}
 }
 
@@ -746,6 +821,100 @@ func TestALiveFloodIsLinear(t *testing.T) {
 		}
 	}); g > 9 {
 		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
+	}
+}
+
+// An overflow reads the outbox when the last read is older than
+// overflowRead, so the replies that wait get their quotes.
+func TestAnOverflowReadsAnOldOutbox(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	w.last = time.Now().Add(-2 * overflowRead)
+	defer w.close()
+	for i := range maxWaitingPerSender {
+		for k := range maxWaiting / maxWaitingPerSender {
+			w.take(msg(i*1000+k, fmt.Sprint("sender", k), "yes", parent))
+		}
+	}
+	if *reads != 1 || len(*printed) != maxWaiting || (*printed)[0] != "yes \u21b3 ababab  you: bring the map" {
+		t.Errorf("after %d reads the watch printed %d messages, the first %q", *reads, len(*printed), (*printed)[0])
+	}
+}
+
+// A second interrupt ends the watch at once, even while its end waits on
+// an arc that hangs.
+func TestASecondInterruptEndsTheWatch(t *testing.T) {
+	t.Parallel()
+	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
+	mallory.dm("send", bob.key, "hello")
+	bob.sync()
+	dir := t.TempDir()
+	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
+	// The second read of the outbox, at the end of the watch, hangs.
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && exec sleep 30;; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	watch := exec.Command(env.program, "watch", "-arc", wrapper, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	mallory.arcSend(bob.key, "junk", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
+	time.Sleep(500 * time.Millisecond)
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	start := time.Now()
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = watch.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(closeRead - 2*time.Second):
+		t.Fatalf("the watch went on %v after a second interrupt", time.Since(start))
+	}
+}
+
+// pairs makes 2n ids in pairs that share their first 10 digits and differ
+// at the 11th, as a
+// sender who spent 2^40 hashes on each pair could make them.
+func pairs(n int) []entry {
+	var out []entry
+	for _, e := range idsFrom(1<<20, n) {
+		// The twin differs at the 11th digit.
+		eleventh := map[bool]string{true: "1", false: "0"}[e.ID[10] == '0']
+		twin := e.ID[:10] + eleventh + idsFrom(1<<21+len(out), 1)[0].ID[11:]
+		out = append(out, e, entry{ID: twin})
+	}
+	return out
+}
+
+// Ids that share 8 digits take their short id from their bucket: it is
+// long enough to name one message, and a flood of such pairs stays linear.
+func TestCraftedCollisionsStayFast(t *testing.T) {
+	s := index([]conversation{{Peers: []string{"k"}, Entries: pairs(10)}})
+	for _, e := range pairs(10) {
+		if short := s.short(e.ID); len(short) != 11 || short != e.ID[:11] {
+			t.Errorf("the short id of %s is %q, want its first 11 digits", e.ID[:12], short)
+		}
+	}
+	if g := growth(10000, func(n int) {
+		s := index(nil)
+		for _, e := range pairs(n) {
+			s.add(e, conversation{})
+			s.short(e.ID)
+		}
+	}); g > 9 {
+		t.Errorf("4 times the pairs took %.1f times as long, want under 9", g)
 	}
 }
 

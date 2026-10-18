@@ -105,11 +105,15 @@ A reply shows a quote line between its header and its text:
   sent the parent after the watch started: at most once each 5 s,
   because a sender can name many ids. The reply, and each message after
   it, waits for that read, at most 5 s, so the order stays and the quote
-  is not lost. A watch holds at most 256 messages: a burst past that
-  prints them at once, and a reply among them whose parent you sent a
-  moment ago can show `(not on this device)`; `arc-dm open` shows its
-  quote. When the watch ends, it reads the outbox once more for a reply
-  that waits.
+  is not lost. One sender can hold at most 16 replies that wait; its
+  further replies show at once, as `(not on this device)`. A watch holds
+  at most 256 replies that wait, and 4,096 messages in all: past that it
+  reads the outbox at once, unless it read it less than a second ago, and
+  prints what it holds. When the watch ends, it reads the outbox once more
+  for a reply that waits; a second interrupt ends it at once.
+- The id of a parent that is not on this device shows 12 digits, so a
+  message that arrives later with the same first 6 digits does not take
+  it.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

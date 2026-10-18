@@ -452,9 +452,12 @@ type held struct {
 // from the reply.
 type store struct {
 	byID map[string]held
-	// prefixes counts the ids that start with each prefix of 6, 7 and 8
-	// digits, so a short id takes no sort.
+	// prefixes counts the ids that start with each prefix of 6 and 7
+	// digits, and buckets holds the ids of each prefix of 8, so a short id
+	// takes no sort. Ids that share 8 digits are rare, unless a sender
+	// made them; a short id compares only the ids of its bucket.
 	prefixes map[string]int
+	buckets  map[string][]string
 	// ids are the ids, for a lookup and a long short id. They are sorted
 	// unless unsorted.
 	ids      []string
@@ -462,10 +465,13 @@ type store struct {
 }
 
 // shortLengths are the lengths of short id that prefixes count.
-var shortLengths = []int{6, 7, 8}
+var shortLengths = []int{6, 7}
+
+// bucketLength is the length of the prefix of a bucket.
+const bucketLength = 8
 
 func index(all []conversation) *store {
-	s := &store{byID: map[string]held{}, prefixes: map[string]int{}}
+	s := &store{byID: map[string]held{}, prefixes: map[string]int{}, buckets: map[string][]string{}}
 	for _, c := range all {
 		for _, e := range c.Entries {
 			s.add(e, c)
@@ -488,10 +494,12 @@ func (s *store) add(e entry, c conversation) {
 			s.prefixes[e.ID[:n]]++
 		}
 	}
+	if len(e.ID) >= bucketLength {
+		s.buckets[e.ID[:bucketLength]] = append(s.buckets[e.ID[:bucketLength]], e.ID)
+	}
 }
 
-// sorted returns the ids, sorted. Only a lookup and a short id longer than
-// 8 digits need them.
+// sorted returns the ids, sorted, for a lookup.
 func (s *store) sorted() []string {
 	if s.unsorted {
 		slices.Sort(s.ids)
@@ -512,16 +520,16 @@ func (s *store) short(id string) string {
 			return id[:n]
 		}
 	}
-	// Two ids that share 8 digits are rare, unless a sender made them.
+	if len(id) < bucketLength {
+		return id
+	}
 	n := 0
-	ids := s.sorted()
-	i, _ := slices.BinarySearch(ids, id)
-	for _, j := range []int{i - 1, i, i + 1} {
-		if j >= 0 && j < len(ids) && ids[j] != id {
-			n = max(n, commonPrefix(id, ids[j]))
+	for _, other := range s.buckets[id[:bucketLength]] {
+		if other != id {
+			n = max(n, commonPrefix(id, other))
 		}
 	}
-	return id[:min(len(id), max(6, n+1))]
+	return id[:min(len(id), max(bucketLength, n+1))]
 }
 
 func commonPrefix(a, b string) int {
@@ -573,11 +581,18 @@ func (s *store) quote(e entry, c conversation) string {
 	if e.ReplyTo == "" {
 		return ""
 	}
-	head := "↳ " + s.quoted(e.ReplyTo) + "  "
 	parent, ok := s.byID[e.ReplyTo]
+	if !ok {
+		// The id of a parent that is not here shows 12 digits: a message
+		// that arrives later and starts with the same 6 must not take it.
+		id := e.ReplyTo[:min(len(e.ReplyTo), quotedID)]
+		if len(s.short(e.ReplyTo)) > quotedID {
+			id += "…"
+		}
+		return "↳ " + id + "  (not on this device)"
+	}
+	head := "↳ " + s.quoted(e.ReplyTo) + "  "
 	switch {
-	case !ok:
-		return head + "(not on this device)"
 	case parent.conv.key() != c.key():
 		return head + "(in another conversation)"
 	}

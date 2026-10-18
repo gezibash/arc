@@ -70,6 +70,12 @@ func main() {
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		// After the first signal, a second one ends arc-dm at once, as
+		// with no handler: the end of a watch can wait on a hung arc.
+		<-ctx.Done()
+		stop()
+	}()
 	err := run(ctx, args)
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
@@ -162,10 +168,12 @@ func parseText(flags *flag.FlagSet, args []string, n int, after ...string) (out 
 // it waits too, so the order stays. An id that a read did not find is not
 // waited for again; the watch forgets such ids when it holds maxMissed.
 //
-// The watch holds at most maxHeld messages. A burst past that prints the
-// held messages at once, without the read: a reply whose parent was sent
-// in the last seconds can then show "(not on this device)", and
-// arc-dm open shows its quote.
+// A sender can hold at most maxWaitingPerSender replies that wait: past
+// that, its replies print at once, as "(not on this device)", and hold
+// nothing up. The watch holds at most maxWaiting replies that wait, and
+// maxQueue messages in all. Past either, it reads the outbox at once if
+// the last read is older than overflowRead, and prints what it holds; with
+// no read, it marks no parent missed, so a later reply to it still waits.
 type watcher struct {
 	mu       sync.Mutex
 	outbox   func(context.Context) ([]arcprogram.Sent, error)
@@ -175,13 +183,17 @@ type watcher struct {
 	missed   map[string]bool
 	last     time.Time // the last read of the outbox
 	queue    []arcprogram.Message
-	timer    *time.Timer // the next read, when a message waits for it
+	waiting  map[string]int // the held replies that wait, by sender
+	timer    *time.Timer    // the next read, when a message waits for it
 }
 
 const (
-	refreshEvery = 5 * time.Second
-	maxMissed    = 1024
-	maxHeld      = 256
+	refreshEvery        = 5 * time.Second
+	maxMissed           = 1024
+	maxWaiting          = 256
+	maxWaitingPerSender = 16
+	maxQueue            = 4096
+	overflowRead        = time.Second
 	// closeRead bounds the read of the outbox at the end of a watch,
 	// after the signal that ended it.
 	closeRead = 10 * time.Second
@@ -191,27 +203,56 @@ const (
 func (w *watcher) take(m arcprogram.Message) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	waits := w.waits(m)
+	if waits && w.waiting[m.From] >= maxWaitingPerSender {
+		// This sender names many parents that are not here: its reply
+		// does not hold up the others.
+		w.print(m, w.messages)
+		return
+	}
 	w.queue = append(w.queue, m)
+	if waits {
+		w.waiting[m.From]++
+	}
 	switch {
-	case w.timer != nil && len(w.queue) >= maxHeld:
-		w.timer.Stop()
-		w.timer = nil
-		w.flush()
+	case w.held() >= maxWaiting || len(w.queue) >= maxQueue:
+		w.stop()
+		read := time.Since(w.last) >= overflowRead
+		if read {
+			w.refresh(context.Background())
+		}
+		w.flush(read)
 	case w.timer != nil:
 		// A read is due: m waits for it.
-	case !w.waits(m):
-		w.flush()
+	case !waits:
+		w.flush(false)
 	case time.Since(w.last) >= refreshEvery:
 		w.refresh(context.Background())
-		w.flush()
+		w.flush(true)
 	default:
 		w.timer = time.AfterFunc(refreshEvery-time.Since(w.last), func() {
 			w.mu.Lock()
 			defer w.mu.Unlock()
 			w.timer = nil
 			w.refresh(context.Background())
-			w.flush()
+			w.flush(true)
 		})
+	}
+}
+
+// held counts the held replies that wait.
+func (w *watcher) held() int {
+	n := 0
+	for _, k := range w.waiting {
+		n += k
+	}
+	return n
+}
+
+func (w *watcher) stop() {
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
 	}
 }
 
@@ -233,15 +274,17 @@ func (w *watcher) refresh(ctx context.Context) {
 	}
 }
 
-// flush prints each held message.
-func (w *watcher) flush() {
+// flush prints each held message. After a read of the outbox, a parent
+// that is still not here is missed, and no later reply waits for it.
+func (w *watcher) flush(read bool) {
 	for _, m := range w.queue {
-		if w.waits(m) {
+		if read && w.waits(m) {
 			w.miss(m.ReplyTo)
 		}
 		w.print(m, w.messages)
 	}
 	w.queue = nil
+	clear(w.waiting)
 }
 
 // miss remembers an id that a read of the outbox did not find.
@@ -258,16 +301,25 @@ func (w *watcher) miss(id string) {
 func (w *watcher) close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.timer != nil {
-		w.timer.Stop()
-		w.timer = nil
-	}
-	if slices.ContainsFunc(w.queue, w.waits) {
+	w.stop()
+	read := slices.ContainsFunc(w.queue, w.waits)
+	if read {
 		ctx, cancel := context.WithTimeout(context.Background(), closeRead)
 		w.refresh(ctx)
 		cancel()
 	}
-	w.flush()
+	w.flush(read)
+}
+
+// refuseHelp refuses a text of only -h, -help or --help: a person who
+// asks for help must not send the request as a message. After -- it is
+// text.
+func refuseHelp(words []string, literal bool, command string) error {
+	if len(words) != 1 || literal || !slices.Contains([]string{"-h", "-help", "--help"}, words[0]) {
+		return nil
+	}
+	name, _, _ := strings.Cut(command, " ")
+	return fmt.Errorf("the text is only %s: for help, run arc-dm %s -h; to send it, write arc-dm %s -- %s", words[0], name, command, words[0])
 }
 
 // given reports whether a flag was set, even to an empty value.
@@ -388,9 +440,8 @@ func send(ctx context.Context, args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: arc-dm send [flags] <peer> [text...]")
 	}
-	if len(args) == 2 && !literal && slices.Contains([]string{"-h", "-help", "--help"}, args[1]) {
-		// A person who asks for help must not send the request as a message.
-		return fmt.Errorf("the text is only %s: for help, run arc-dm send -h; to send it, write arc-dm send <peer> -- %s", args[1], args[1])
+	if err := refuseHelp(args[1:], literal, "send <peer>"); err != nil {
+		return err
 	}
 	if given(flags, "reply") {
 		// An empty -reply= must not send a plain message.
@@ -437,12 +488,15 @@ func send(ctx context.Context, args []string) error {
 // reply sends a reply to a message, to each member of its conversation.
 func reply(ctx context.Context, args []string) error {
 	flags, s := newFlags("reply")
-	args, err := parse(flags, args, 1)
+	args, literal, err := parseText(flags, args, 1)
 	if err != nil {
 		return err
 	}
 	if len(args) < 1 {
 		return errors.New("usage: arc-dm reply [flags] <id> [text...]")
+	}
+	if err := refuseHelp(args[1:], literal, "reply <id>"); err != nil {
+		return err
 	}
 	if err := checkID(args[0]); err != nil {
 		return err
@@ -560,6 +614,7 @@ func watch(ctx context.Context, args []string) error {
 		me:       me,
 		messages: index(all),
 		missed:   map[string]bool{},
+		waiting:  map[string]int{},
 		last:     time.Now(), // conversations read the outbox
 	}
 	w.print = func(m arcprogram.Message, messages *store) {
