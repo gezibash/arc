@@ -203,6 +203,30 @@ func TestSyncSaysThatRingsFail(t *testing.T) {
 	}
 }
 
+// TestSyncSaysThatRingsRunLow registers with a daily cap of 2 and uses one
+// ring with ring test. The next arc sync prints the notice of the relay on
+// standard error: 1 of 2 rings left today.
+func TestSyncSaysThatRingsRunLow(t *testing.T) {
+	url, hits := ringRelay(t, http.StatusOK)
+	bob, _ := providerHome(t, url)
+	t.Setenv("ARC_RING_KEY", "a key of the routine of bob")
+	ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY", "--daily-cap", "2")
+	ok(t, bob, "", "relay", "ring", "test")
+	waitRing(t, hits, "the test ring")
+
+	var stderr strings.Builder
+	command := root()
+	command.SetOut(&strings.Builder{})
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"--home", bob, "sync"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if want := url + ": arc-ring: 1 of 2 rings left today; then rings wait until 00:00 UTC\n"; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("arc sync said on standard error:\n%s\nwant %q", stderr.String(), want)
+	}
+}
+
 // refuseAuth runs a proxy in front of the relay at url, and returns its
 // URL. The proxy passes each message on, but answers each AUTH itself with
 // a refusal that gives reason, a text that the relay chose. Each other HTTP
