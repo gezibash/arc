@@ -478,8 +478,24 @@ func (s *store) add(e entry, c conversation) {
 		return
 	}
 	s.byID[e.ID] = held{entry: e, conv: c}
-	// The ids are sorted when they are next read: an insert into the sorted
-	// list for each id would take time in the square of the number of ids.
+	if s.unsorted {
+		s.ids = append(s.ids, e.ID)
+		return
+	}
+	// One message goes in its place: a watch adds one at a time, and a
+	// sort for each would take far longer.
+	i, _ := slices.BinarySearch(s.ids, e.ID)
+	s.ids = slices.Insert(s.ids, i, e.ID)
+}
+
+// addMany adds a message of a batch, such as the outbox. The ids are
+// sorted when they are next read: an insert for each would take time in
+// the square of the number of messages.
+func (s *store) addMany(e entry, c conversation) {
+	if _, ok := s.byID[e.ID]; ok {
+		return
+	}
+	s.byID[e.ID] = held{entry: e, conv: c}
 	s.ids = append(s.ids, e.ID)
 	s.unsorted = true
 }

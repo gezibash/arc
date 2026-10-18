@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -49,7 +50,8 @@ reply goes to each member. The command is ls when none is given. A peer
 with no direct conversation that shares one group with you opens that
 group. An id is the start of the id of a message, as arc-dm open shows
 it beside each message: at least 4 hex digits. Flags can come before or
-after the command, and after the peer or the id, before the text.
+after the command. After the peer of send, only -reply counts; each other
+word is text, and after -- each word is.
 arc-dm <command> -h shows the flags of a command.`
 
 func main() {
@@ -98,15 +100,16 @@ func commandAt(args []string) int {
 	return -1
 }
 
-// parse parses the flags of a command before and between its first n
-// arguments, and returns the arguments. The flag package stops at the first
-// argument that is not a flag, so without this arc-dm send ada -reply 3f9a
-// hi would send "-reply 3f9a hi" as text.
+// parse parses the flags of a command before its first n arguments, and
+// returns the arguments. The flag package stops at the first argument that
+// is not a flag, so without this arc-dm send ada -reply 3f9a hi would send
+// "-reply 3f9a hi" as text.
 //
-// After the n arguments, only a flag of the command counts. The first other
-// word starts the text, so a text such as "-5 degrees" stays text. After
-// "--", each word is text, even one that names a flag.
-func parse(flags *flag.FlagSet, args []string, n int) ([]string, error) {
+// After the n arguments, only the flags named in after count, and the
+// first other word starts the text: arc-dm send ada -home is where the
+// heart is sends that text, and changes no home. After "--", each word is
+// text.
+func parse(flags *flag.FlagSet, args []string, n int, after ...string) ([]string, error) {
 	var out []string
 	for n == 0 || len(out) < n {
 		if err := flags.Parse(args); err != nil {
@@ -126,14 +129,7 @@ func parse(flags *flag.FlagSet, args []string, n int) ([]string, error) {
 			return append(out, args[1:]...), nil
 		}
 		name, value, inline := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-"), "=")
-		if !strings.HasPrefix(arg, "-") {
-			break
-		}
-		if name == "h" || name == "help" {
-			flags.Usage()
-			return nil, flag.ErrHelp
-		}
-		if flags.Lookup(name) == nil {
+		if !strings.HasPrefix(arg, "-") || !slices.Contains(after, name) {
 			break
 		}
 		if !inline {
@@ -150,14 +146,26 @@ func parse(flags *flag.FlagSet, args []string, n int) ([]string, error) {
 	return append(out, args...), nil
 }
 
-// refresh says when a watch reads the outbox again for a parent that it
-// does not hold. A sender can name many ids that no message has, and each
-// read of the outbox opens each sealed message that this citizen sent. So
-// a watch reads it at most once for each id, and at most once each
-// refreshEvery. It forgets the ids when it holds maxMissed.
-type refresh struct {
-	missed map[string]bool
-	last   time.Time
+// watcher prints the messages of a watch in the order that they arrive.
+//
+// A reply can name a parent that this citizen sent after the watch
+// started, from another process: only a read of the outbox finds it. A
+// sender can name many ids that no message has, and each read of the
+// outbox opens each sealed message that this citizen sent. So the watch
+// reads the outbox at most once each refreshEvery. A reply whose parent
+// the watch does not hold waits for the next read, and each message after
+// it waits too, so the order stays. An id that a read did not find is not
+// waited for again; the watch forgets such ids when it holds maxMissed.
+type watcher struct {
+	mu       sync.Mutex
+	outbox   func() ([]arcprogram.Sent, error)
+	print    func(arcprogram.Message, *store)
+	me       string
+	messages *store
+	missed   map[string]bool
+	last     time.Time // the last read of the outbox
+	queue    []arcprogram.Message
+	timer    *time.Timer // the next read, when a message waits for it
 }
 
 const (
@@ -165,18 +173,76 @@ const (
 	maxMissed    = 1024
 )
 
-func newRefresh() *refresh { return &refresh{missed: map[string]bool{}} }
+// take prints m, or holds it until the next read of the outbox.
+func (w *watcher) take(m arcprogram.Message) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.queue = append(w.queue, m)
+	switch {
+	case w.timer != nil:
+		// A read is due: m waits for it.
+	case !w.waits(m):
+		w.flush()
+	case time.Since(w.last) >= refreshEvery:
+		w.refresh()
+		w.flush()
+	default:
+		w.timer = time.AfterFunc(refreshEvery-time.Since(w.last), func() {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			w.timer = nil
+			w.refresh()
+			w.flush()
+		})
+	}
+}
 
-// due reports whether the watch reads the outbox for id at now.
-func (r *refresh) due(id string, now time.Time) bool {
-	if r.missed[id] || now.Sub(r.last) < refreshEvery {
-		return false
+// waits reports whether m names a parent that a read of the outbox could
+// find.
+func (w *watcher) waits(m arcprogram.Message) bool {
+	_, held := w.messages.byID[m.ReplyTo]
+	return m.ReplyTo != "" && !held && !w.missed[m.ReplyTo]
+}
+
+func (w *watcher) refresh() {
+	w.last = time.Now()
+	outbox, err := w.outbox()
+	if err != nil {
+		return
 	}
-	if len(r.missed) >= maxMissed {
-		clear(r.missed)
+	for _, sent := range sentMessages(outbox) {
+		w.messages.addMany(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
 	}
-	r.missed[id], r.last = true, now
-	return true
+}
+
+// flush prints each held message.
+func (w *watcher) flush() {
+	for _, m := range w.queue {
+		if w.waits(m) {
+			w.miss(m.ReplyTo)
+		}
+		w.print(m, w.messages)
+	}
+	w.queue = nil
+}
+
+// miss remembers an id that a read of the outbox did not find.
+func (w *watcher) miss(id string) {
+	if len(w.missed) >= maxMissed {
+		clear(w.missed)
+	}
+	w.missed[id] = true
+}
+
+// close prints the messages that still wait, at the end of the watch.
+func (w *watcher) close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
+	}
+	w.flush()
 }
 
 // given reports whether a flag was set, even to an empty value.
@@ -290,7 +356,7 @@ func open(ctx context.Context, args []string) error {
 func send(ctx context.Context, args []string) error {
 	flags, s := newFlags("send")
 	replyTo := flags.String("reply", "", "reply to the message with this id, or the start of it")
-	args, err := parse(flags, args, 1)
+	args, err := parse(flags, args, 1, "reply")
 	if err != nil {
 		return err
 	}
@@ -460,9 +526,14 @@ func watch(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	messages := index(all)
-	missed := newRefresh()
-	return s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
+	w := &watcher{
+		outbox:   func() ([]arcprogram.Sent, error) { return s.arc.Outbox(ctx) },
+		me:       me,
+		messages: index(all),
+		missed:   map[string]bool{},
+		last:     time.Now(), // conversations read the outbox
+	}
+	w.print = func(m arcprogram.Message, messages *store) {
 		group := ""
 		if len(m.Members) > 2 {
 			group = fmt.Sprintf("  in a group of %d", len(m.Members))
@@ -473,15 +544,6 @@ func watch(ctx context.Context, args []string) error {
 			members = []string{m.From}
 		}
 		c := conversation{Peers: peersOf(me, members)}
-		if _, ok := messages.byID[m.ReplyTo]; m.ReplyTo != "" && !ok && missed.due(m.ReplyTo, time.Now()) {
-			// The parent can be a message that this citizen sent since the
-			// watch started: the watch adds each message that it receives.
-			if outbox, err := s.arc.Outbox(ctx); err == nil {
-				for _, sent := range sentMessages(outbox) {
-					messages.add(sent.entry, conversation{Peers: peersOf(me, sent.members)})
-				}
-			}
-		}
 		e := entry{ID: m.ID, At: m.At, Text: m.Text, From: m.Name, ReplyTo: m.ReplyTo}
 		messages.add(e, c)
 		fmt.Printf("%s  %s  %s%s\n", stamp(m.At), messages.short(m.ID), m.Name, group) //arc:raw-ok m.Name is a petname; the id is hex
@@ -490,7 +552,7 @@ func watch(ctx context.Context, args []string) error {
 		}
 		fmt.Println(indent(terminal.Escape(m.Text)))
 		if len(notifier) == 0 {
-			return nil
+			return
 		}
 		body := terminal.Escape(preview(m.Text, 200))
 		if filepath.Base(notifier[0]) == "notify-send" {
@@ -502,8 +564,13 @@ func watch(ctx context.Context, args []string) error {
 			// A failed notification does not stop the watch.
 			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %s\n", terminal.EscapeLine(err.Error()+" "+strings.TrimSpace(string(out))))
 		}
+	}
+	err = s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
+		w.take(m)
 		return nil
 	})
+	w.close()
+	return err
 }
 
 // notifierOf is the command that posts a notification, before its two
