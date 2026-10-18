@@ -109,10 +109,12 @@ func TestAWatchAnswersAPendingCall(t *testing.T) {
 // Two relays deliver the same wrap. The recipient keeps one message, and
 // sends one acknowledgement.
 //
-// Bob posts the acknowledgement after he stores the message, so the test
-// waits for it on the relay instead of for a fixed time: under load, 300
-// ms was too short. Each relay holds one acknowledgement for alice, and no
-// more: a second would come from the second watch.
+// Bob posts the acknowledgement after he stores the message, so alice
+// syncs until a sync reports it, for at most 5 seconds. The test slept 300
+// ms and synced once, and failed 5 of 40 runs under -race with "alice saw
+// 0 acknowledgements". A second sync cannot show a second acknowledgement:
+// the outbox ignores one for an entry that is delivered. So the test
+// counts the acknowledgements on each relay: one each, and no more.
 func TestTwoWatchesTakeOneMessageOnce(t *testing.T) {
 	first, second := relay.Relay{URL: testrelay.Start(t)}, relay.Relay{URL: testrelay.Start(t)}
 	alice, bob := newCitizen(t, first, second), newCitizen(t, first, second)
@@ -120,6 +122,14 @@ func TestTwoWatchesTakeOneMessageOnce(t *testing.T) {
 	bob.watch(t, second)
 	alice.send(t, bob, "twice on the wire")
 	eventually(t, "bob receives the message", func() bool { return len(inboxText(bob)) == 1 })
+	delivered := 0
+	eventually(t, "alice sees the acknowledgement", func() bool {
+		delivered += alice.sync(t, first).Delivered
+		return delivered > 0
+	})
+	if delivered != 1 {
+		t.Fatalf("alice saw %d acknowledgements, want 1", delivered)
+	}
 	acks := func(r relay.Relay) int {
 		batch, err := r.Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {alice.key.Public.Hex()}}})
 		if err != nil {
@@ -127,7 +137,6 @@ func TestTwoWatchesTakeOneMessageOnce(t *testing.T) {
 		}
 		return len(batch.Events)
 	}
-	eventually(t, "bob acknowledges the message on each relay", func() bool { return acks(first) >= 1 && acks(second) >= 1 })
 	// Let the second watch take its copy of the wrap, and find it a
 	// duplicate. A wrong second acknowledgement would arrive in this time;
 	// a slow machine can only miss it, never fail.
@@ -137,9 +146,6 @@ func TestTwoWatchesTakeOneMessageOnce(t *testing.T) {
 	}
 	if n, m := acks(first), acks(second); n != 1 || m != 1 {
 		t.Fatalf("the relays hold %d and %d acknowledgements for alice, want 1 each", n, m)
-	}
-	if report := alice.sync(t, first); report.Delivered != 1 {
-		t.Fatalf("alice saw %d acknowledgements, want 1", report.Delivered)
 	}
 }
 
