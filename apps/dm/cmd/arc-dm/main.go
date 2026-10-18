@@ -110,15 +110,20 @@ func commandAt(args []string) int {
 // heart is sends that text, and changes no home. After "--", each word is
 // text.
 func parse(flags *flag.FlagSet, args []string, n int, after ...string) ([]string, error) {
-	var out []string
+	out, _, err := parseText(flags, args, n, after...)
+	return out, err
+}
+
+// parseText is parse, and also reports whether the text came after "--".
+func parseText(flags *flag.FlagSet, args []string, n int, after ...string) (out []string, literal bool, err error) {
 	for n == 0 || len(out) < n {
 		if err := flags.Parse(args); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		rest := flags.Args()
 		ended := len(rest) < len(args) && args[len(args)-len(rest)-1] == "--"
 		if n == 0 || ended || len(rest) == 0 {
-			return append(out, rest...), nil
+			return append(out, rest...), ended, nil
 		}
 		out = append(out, rest[0])
 		args = rest[1:]
@@ -126,7 +131,7 @@ func parse(flags *flag.FlagSet, args []string, n int, after ...string) ([]string
 	for len(args) > 0 {
 		arg := args[0]
 		if arg == "--" {
-			return append(out, args[1:]...), nil
+			return append(out, args[1:]...), true, nil
 		}
 		name, value, inline := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-"), "=")
 		if !strings.HasPrefix(arg, "-") || !slices.Contains(after, name) {
@@ -134,16 +139,16 @@ func parse(flags *flag.FlagSet, args []string, n int, after ...string) ([]string
 		}
 		if !inline {
 			if len(args) < 2 {
-				return nil, fmt.Errorf("flag needs an argument: %s", arg)
+				return nil, false, fmt.Errorf("flag needs an argument: %s", arg)
 			}
 			value, args = args[1], args[1:]
 		}
 		if err := flags.Set(name, value); err != nil {
-			return nil, fmt.Errorf("invalid value %q for flag %s: %w", value, arg, err)
+			return nil, false, fmt.Errorf("invalid value %q for flag %s: %w", value, arg, err)
 		}
 		args = args[1:]
 	}
-	return append(out, args...), nil
+	return append(out, args...), false, nil
 }
 
 // watcher prints the messages of a watch in the order that they arrive.
@@ -156,9 +161,14 @@ func parse(flags *flag.FlagSet, args []string, n int, after ...string) ([]string
 // the watch does not hold waits for the next read, and each message after
 // it waits too, so the order stays. An id that a read did not find is not
 // waited for again; the watch forgets such ids when it holds maxMissed.
+//
+// The watch holds at most maxHeld messages. A burst past that prints the
+// held messages at once, without the read: a reply whose parent was sent
+// in the last seconds can then show "(not on this device)", and
+// arc-dm open shows its quote.
 type watcher struct {
 	mu       sync.Mutex
-	outbox   func() ([]arcprogram.Sent, error)
+	outbox   func(context.Context) ([]arcprogram.Sent, error)
 	print    func(arcprogram.Message, *store)
 	me       string
 	messages *store
@@ -171,6 +181,10 @@ type watcher struct {
 const (
 	refreshEvery = 5 * time.Second
 	maxMissed    = 1024
+	maxHeld      = 256
+	// closeRead bounds the read of the outbox at the end of a watch,
+	// after the signal that ended it.
+	closeRead = 10 * time.Second
 )
 
 // take prints m, or holds it until the next read of the outbox.
@@ -179,19 +193,23 @@ func (w *watcher) take(m arcprogram.Message) {
 	defer w.mu.Unlock()
 	w.queue = append(w.queue, m)
 	switch {
+	case w.timer != nil && len(w.queue) >= maxHeld:
+		w.timer.Stop()
+		w.timer = nil
+		w.flush()
 	case w.timer != nil:
 		// A read is due: m waits for it.
 	case !w.waits(m):
 		w.flush()
 	case time.Since(w.last) >= refreshEvery:
-		w.refresh()
+		w.refresh(context.Background())
 		w.flush()
 	default:
 		w.timer = time.AfterFunc(refreshEvery-time.Since(w.last), func() {
 			w.mu.Lock()
 			defer w.mu.Unlock()
 			w.timer = nil
-			w.refresh()
+			w.refresh(context.Background())
 			w.flush()
 		})
 	}
@@ -204,14 +222,14 @@ func (w *watcher) waits(m arcprogram.Message) bool {
 	return m.ReplyTo != "" && !held && !w.missed[m.ReplyTo]
 }
 
-func (w *watcher) refresh() {
+func (w *watcher) refresh(ctx context.Context) {
 	w.last = time.Now()
-	outbox, err := w.outbox()
+	outbox, err := w.outbox(ctx)
 	if err != nil {
 		return
 	}
 	for _, sent := range sentMessages(outbox) {
-		w.messages.addMany(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
+		w.messages.add(sent.entry, conversation{Peers: peersOf(w.me, sent.members)})
 	}
 }
 
@@ -234,13 +252,20 @@ func (w *watcher) miss(id string) {
 	w.missed[id] = true
 }
 
-// close prints the messages that still wait, at the end of the watch.
+// close prints the messages that still wait, at the end of the watch. If
+// one waits for a parent, it reads the outbox once more, for at most
+// closeRead: the context of the watch has ended.
 func (w *watcher) close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.timer != nil {
 		w.timer.Stop()
 		w.timer = nil
+	}
+	if slices.ContainsFunc(w.queue, w.waits) {
+		ctx, cancel := context.WithTimeout(context.Background(), closeRead)
+		w.refresh(ctx)
+		cancel()
 	}
 	w.flush()
 }
@@ -356,12 +381,16 @@ func open(ctx context.Context, args []string) error {
 func send(ctx context.Context, args []string) error {
 	flags, s := newFlags("send")
 	replyTo := flags.String("reply", "", "reply to the message with this id, or the start of it")
-	args, err := parse(flags, args, 1, "reply")
+	args, literal, err := parseText(flags, args, 1, "reply")
 	if err != nil {
 		return err
 	}
 	if len(args) < 1 {
 		return errors.New("usage: arc-dm send [flags] <peer> [text...]")
+	}
+	if len(args) == 2 && !literal && slices.Contains([]string{"-h", "-help", "--help"}, args[1]) {
+		// A person who asks for help must not send the request as a message.
+		return fmt.Errorf("the text is only %s: for help, run arc-dm send -h; to send it, write arc-dm send <peer> -- %s", args[1], args[1])
 	}
 	if given(flags, "reply") {
 		// An empty -reply= must not send a plain message.
@@ -527,7 +556,7 @@ func watch(ctx context.Context, args []string) error {
 		return err
 	}
 	w := &watcher{
-		outbox:   func() ([]arcprogram.Sent, error) { return s.arc.Outbox(ctx) },
+		outbox:   s.arc.Outbox,
 		me:       me,
 		messages: index(all),
 		missed:   map[string]bool{},

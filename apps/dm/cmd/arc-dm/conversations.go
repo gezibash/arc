@@ -452,55 +452,46 @@ type held struct {
 // from the reply.
 type store struct {
 	byID map[string]held
-	// ids are the ids, for the short ids. They are sorted unless unsorted.
+	// prefixes counts the ids that start with each prefix of 6, 7 and 8
+	// digits, so a short id takes no sort.
+	prefixes map[string]int
+	// ids are the ids, for a lookup and a long short id. They are sorted
+	// unless unsorted.
 	ids      []string
 	unsorted bool
 }
 
+// shortLengths are the lengths of short id that prefixes count.
+var shortLengths = []int{6, 7, 8}
+
 func index(all []conversation) *store {
-	s := &store{byID: map[string]held{}}
+	s := &store{byID: map[string]held{}, prefixes: map[string]int{}}
 	for _, c := range all {
 		for _, e := range c.Entries {
-			if _, ok := s.byID[e.ID]; !ok {
-				s.byID[e.ID] = held{entry: e, conv: c}
-				s.ids = append(s.ids, e.ID)
-			}
+			s.add(e, c)
 		}
 	}
-	// One sort: an insert for each id would take time in the square of
-	// the number of messages.
-	slices.Sort(s.ids)
 	return s
 }
 
+// add adds a message in constant time: a watch adds one at a time, and a
+// flood of messages must not take time in the square of their number.
 func (s *store) add(e entry, c conversation) {
-	if _, ok := s.byID[e.ID]; ok {
-		return
-	}
-	s.byID[e.ID] = held{entry: e, conv: c}
-	if s.unsorted {
-		s.ids = append(s.ids, e.ID)
-		return
-	}
-	// One message goes in its place: a watch adds one at a time, and a
-	// sort for each would take far longer.
-	i, _ := slices.BinarySearch(s.ids, e.ID)
-	s.ids = slices.Insert(s.ids, i, e.ID)
-}
-
-// addMany adds a message of a batch, such as the outbox. The ids are
-// sorted when they are next read: an insert for each would take time in
-// the square of the number of messages.
-func (s *store) addMany(e entry, c conversation) {
 	if _, ok := s.byID[e.ID]; ok {
 		return
 	}
 	s.byID[e.ID] = held{entry: e, conv: c}
 	s.ids = append(s.ids, e.ID)
 	s.unsorted = true
+	for _, n := range shortLengths {
+		if len(e.ID) >= n {
+			s.prefixes[e.ID[:n]]++
+		}
+	}
 }
 
-// sorted returns the ids, sorted.
+// sorted returns the ids, sorted. Only a lookup and a short id longer than
+// 8 digits need them.
 func (s *store) sorted() []string {
 	if s.unsorted {
 		slices.Sort(s.ids)
@@ -512,6 +503,16 @@ func (s *store) sorted() []string {
 // short is the start of an id that names one message of the store: six hex
 // digits, or more when another message starts with the same six.
 func (s *store) short(id string) string {
+	own := 0
+	if _, ok := s.byID[id]; ok {
+		own = 1
+	}
+	for _, n := range shortLengths {
+		if len(id) >= n && s.prefixes[id[:n]] <= own {
+			return id[:n]
+		}
+	}
+	// Two ids that share 8 digits are rare, unless a sender made them.
 	n := 0
 	ids := s.sorted()
 	i, _ := slices.BinarySearch(ids, id)

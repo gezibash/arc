@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/arcprogram/arcprogramtest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -515,7 +518,6 @@ func TestFlagsAfterThePeer(t *testing.T) {
 	texts := [][]string{
 		{"--", "-reply", short, "is literal"},
 		{"-5", "degrees"},
-		{"-h"},
 		{"-home", "is", "where", "the", "heart", "is"},
 		{"-arc", "/no/such/arc", "everything"},
 		{"-state", "of", "the", "art"},
@@ -524,6 +526,15 @@ func TestFlagsAfterThePeer(t *testing.T) {
 	for _, words := range texts {
 		bob.dm(append([]string{"send", ada.name}, words...)...)
 	}
+	// A text of only -h or --help is a request for help that came too
+	// late: arc-dm refuses it, and after -- sends it.
+	for _, help := range []string{"-h", "-help", "--help"} {
+		if out := bob.refused("send", ada.name, help); !strings.Contains(out, "arc-dm send <peer> -- "+help) {
+			t.Errorf("send <peer> %s: %s", help, out)
+		}
+	}
+	bob.dm("send", ada.name, "--", "-h")
+	texts = append(texts, []string{"-h"})
 	ada.sync()
 	conv := ada.dm("open", bob.name)
 	want := []string{"\n\u21b3 " + short + "  you: bring the map\n  yes\n", "\n  -reply " + short + " is literal\n"}
@@ -575,9 +586,16 @@ func growth(n int, f func(n int)) float64 {
 
 // ids makes n message ids, out of order.
 func ids(n int) []entry {
+	return idsFrom(0, n)
+}
+
+// idsFrom makes n message ids that a hash makes from first, first+1, and
+// on: like the ids of real messages, they share no start.
+func idsFrom(first, n int) []entry {
 	entries := make([]entry, n)
 	for i := range entries {
-		entries[i].ID = fmt.Sprintf("%064x", uint64(n-i)*2654435761)
+		sum := sha256.Sum256([]byte(fmt.Sprint(first + i)))
+		entries[i].ID = hex.EncodeToString(sum[:])
 	}
 	return entries
 }
@@ -588,7 +606,7 @@ func TestAddIsNotQuadratic(t *testing.T) {
 	if g := growth(25000, func(n int) {
 		s := index(nil)
 		for _, e := range ids(n) {
-			s.addMany(e, conversation{})
+			s.add(e, conversation{})
 		}
 		s.short(s.ids[0])
 	}); g > 9 {
@@ -632,8 +650,8 @@ func TestIndexIsNotQuadratic(t *testing.T) {
 		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
 	}
 	s := index([]conversation{{Peers: []string{"k"}, Entries: ids(1000)}})
-	if len(s.ids) != 1000 || !slices.IsSorted(s.ids) {
-		t.Errorf("the index holds %d ids, sorted %v", len(s.ids), slices.IsSorted(s.ids))
+	if sorted := s.sorted(); len(sorted) != 1000 || !slices.IsSorted(sorted) {
+		t.Errorf("the index holds %d ids, sorted %v", len(sorted), slices.IsSorted(sorted))
 	}
 }
 
@@ -641,10 +659,7 @@ func TestIndexIsNotQuadratic(t *testing.T) {
 // 100,000 messages, a sort for each message took 2 to 3 percent of the
 // time of a whole index, and an insert takes about 0.1 percent.
 func TestALiveAddDoesNotSortTheStore(t *testing.T) {
-	extra := make([]entry, 200)
-	for i := range extra {
-		extra[i].ID = fmt.Sprintf("%064x", uint64(i+7)*1000003)
-	}
+	extra := idsFrom(1<<30, 200)
 	ratio := 1.0
 	for range 3 {
 		start := time.Now()
@@ -660,6 +675,77 @@ func TestALiveAddDoesNotSortTheStore(t *testing.T) {
 	}
 	if ratio > 0.006 {
 		t.Errorf("one message took %.4f of the time of a whole index, want under 0.006", ratio)
+	}
+}
+
+// testWatcher is a watcher with an outbox that the test fills, and that
+// records what it prints.
+func testWatcher(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, reads *int) {
+	printed, reads = &[]string{}, new(int)
+	w = &watcher{
+		outbox: func(context.Context) ([]arcprogram.Sent, error) {
+			*reads++
+			return outbox, nil
+		},
+		me:       "me",
+		messages: index(nil),
+		missed:   map[string]bool{},
+		last:     time.Now(),
+	}
+	w.print = func(m arcprogram.Message, messages *store) {
+		e := entry{ID: m.ID, Text: m.Text, ReplyTo: m.ReplyTo}
+		*printed = append(*printed, m.Text+" "+messages.quote(e, conversation{Peers: []string{"peer"}}))
+	}
+	return w, printed, reads
+}
+
+// The watch holds at most maxHeld messages: a burst past that prints them
+// at once, in order, with no read of the outbox, and loses none.
+func TestTheHeldQueueIsCapped(t *testing.T) {
+	w, printed, reads := testWatcher()
+	defer w.close()
+	w.take(arcprogram.Message{ID: fmt.Sprintf("%064x", 1), Text: "junk", ReplyTo: strings.Repeat("7a", 32), From: "peer", Members: []string{"peer", "me"}})
+	for i := range 3 * maxHeld {
+		w.take(arcprogram.Message{ID: fmt.Sprintf("%064x", i+2), Text: fmt.Sprint(i), From: "peer", Members: []string{"peer", "me"}})
+		if len(w.queue) > maxHeld {
+			t.Fatalf("the watch holds %d messages, want at most %d", len(w.queue), maxHeld)
+		}
+	}
+	w.close()
+	if len(*printed) != 3*maxHeld+1 || !strings.HasPrefix((*printed)[0], "junk ") || !strings.HasPrefix((*printed)[3*maxHeld], fmt.Sprint(3*maxHeld-1)+" ") {
+		t.Errorf("the watch printed %d messages, want %d in order", len(*printed), 3*maxHeld+1)
+	}
+	if *reads != 0 {
+		t.Errorf("the burst read the outbox %d times, want 0", *reads)
+	}
+}
+
+// At its end, the watch reads the outbox once for a reply that waits, so
+// a parent that this citizen sent shows in the quote.
+func TestTheEndOfAWatchReadsTheOutbox(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(arcprogram.Sent{ID: parent, To: "peer", Text: "bring the map", Members: []string{"me", "peer"}})
+	w.take(arcprogram.Message{ID: strings.Repeat("cd", 32), Text: "yes", ReplyTo: parent, From: "peer", Members: []string{"peer", "me"}})
+	if len(*printed) != 0 {
+		t.Fatalf("the reply printed before a read: %q", *printed)
+	}
+	w.close()
+	if want := "yes \u21b3 ababab  you: bring the map"; len(*printed) != 1 || (*printed)[0] != want || *reads != 1 {
+		t.Errorf("the end of the watch printed %q after %d reads, want %q after 1", *printed, *reads, want)
+	}
+}
+
+// A flood of messages that a watch adds one at a time takes time that
+// grows with their number, not its square.
+func TestALiveFloodIsLinear(t *testing.T) {
+	if g := growth(25000, func(n int) {
+		s := index(nil)
+		for _, e := range ids(n) {
+			s.add(e, conversation{})
+			s.short(e.ID)
+		}
+	}); g > 9 {
+		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
 	}
 }
 
@@ -730,4 +816,42 @@ func TestAWatchHoldsAReplyUntilItReadsTheOutbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = watch.Wait()
+}
+
+// A reply that waits for the outbox when the watch ends still shows its
+// parent: the watch reads the outbox once more as it ends.
+func TestAWatchShowsAHeldReplyAtItsEnd(t *testing.T) {
+	t.Parallel()
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "hello")
+	bob.sync()
+
+	watch := bob.command("watch", "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	started := time.Now()
+	bob.dm("send", ada.name, "bring the map")
+	ada.sync()
+	short := shortID(t, ada.dm("open", bob.name), "bring the map")
+	ada.dm("reply", short, "yes")
+	// The watch takes the reply within a moment, and holds it until 5 s
+	// after it started. The test ends the watch before then, when it can.
+	time.Sleep(500 * time.Millisecond)
+	if time.Since(started) > refreshEvery {
+		t.Logf("the machine is slow: the watch read the outbox before its end, %v after its start", time.Since(started))
+	}
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
+	if want := "\n\u21b3 " + short + "  you: bring the map\n  yes\n"; !strings.Contains(stdout.String(), want) {
+		t.Errorf("the watch printed:\n%s\nwant\n%s", stdout.String(), want)
+	}
 }

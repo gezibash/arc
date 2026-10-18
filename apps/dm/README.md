@@ -92,7 +92,8 @@ A reply shows a quote line between its header and its text:
 - `-reply` can also come after the peer, before the text:
   `arc-dm send ada -reply 1c77 yes`. Each other word after the peer is
   text, so `arc-dm send ada -home is where the heart is` sends that text.
-  After `--`, each word is text. An empty `-reply=` is refused.
+  After `--`, each word is text. An empty `-reply=` is refused, and so is
+  a text of only `-h`, `-help` or `--help`: put `--` before it to send it.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
@@ -104,7 +105,11 @@ A reply shows a quote line between its header and its text:
   sent the parent after the watch started: at most once each 5 s,
   because a sender can name many ids. The reply, and each message after
   it, waits for that read, at most 5 s, so the order stays and the quote
-  is not lost.
+  is not lost. A watch holds at most 256 messages: a burst past that
+  prints them at once, and a reply among them whose parent you sent a
+  moment ago can show `(not on this device)`; `arc-dm open` shows its
+  quote. When the watch ends, it reads the outbox once more for a reply
+  that waits.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer
