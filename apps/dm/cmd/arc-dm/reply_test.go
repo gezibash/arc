@@ -2,16 +2,24 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/creack/pty"
+	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/arcprogram/arcprogramtest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -242,7 +250,7 @@ func TestAReplyToAnUnheldMessageShowsTheIdOnly(t *testing.T) {
 	unknown := strings.Repeat("7a", 32)
 	mallory.arcSend(bob.key, "you said so", "--arctest-tag", "e,"+unknown)
 	bob.sync()
-	if conv := bob.dm("open", mallory.name); !strings.Contains(conv, "\n↳ 7a7a7a  (not on this device)\n  you said so\n") {
+	if conv := bob.dm("open", mallory.name); !strings.Contains(conv, "\n↳ 7a7a7a7a7a7a  (not on this device)\n  you said so\n") {
 		t.Errorf("bob's conversation:\n%s", conv)
 	}
 }
@@ -355,7 +363,7 @@ func TestAWatchQuotesTheParent(t *testing.T) {
 	short := shortID(t, ada.dm("open", bob.name), "bring the map")
 	ada.dm("reply", short, "yes")
 	ada.arcSend(bob.key, "and that", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
-	want := []string{"\n↳ " + short + "  you: bring the map\n  yes\n", "\n↳ 7a7a7a  (not on this device)\n  and that\n"}
+	want := []string{"\n↳ " + short + "  you: bring the map\n  yes\n", "\n↳ 7a7a7a7a7a7a  (not on this device)\n  and that\n"}
 	if !arcprogramtest.WaitUntil(waitLimit, func() bool {
 		return strings.Contains(stdout.String(), want[0]) && strings.Contains(stdout.String(), want[1])
 	}) {
@@ -515,7 +523,6 @@ func TestFlagsAfterThePeer(t *testing.T) {
 	texts := [][]string{
 		{"--", "-reply", short, "is literal"},
 		{"-5", "degrees"},
-		{"-h"},
 		{"-home", "is", "where", "the", "heart", "is"},
 		{"-arc", "/no/such/arc", "everything"},
 		{"-state", "of", "the", "art"},
@@ -524,6 +531,18 @@ func TestFlagsAfterThePeer(t *testing.T) {
 	for _, words := range texts {
 		bob.dm(append([]string{"send", ada.name}, words...)...)
 	}
+	// A text of only -h or --help is a request for help that came too
+	// late: arc-dm refuses it, and after -- sends it.
+	for _, help := range []string{"-h", "-H", "--h", "-help", "--help"} {
+		if out := bob.refused("send", ada.name, help); !strings.Contains(out, "arc-dm send <peer> -- "+help) {
+			t.Errorf("send <peer> %s: %s", help, out)
+		}
+	}
+	bob.dm("send", ada.name, "--", "-h")
+	if out := bob.refused("reply", short, "--help"); !strings.Contains(out, "arc-dm reply <id> -- --help") {
+		t.Errorf("reply <id> --help: %s", out)
+	}
+	texts = append(texts, []string{"-h"})
 	ada.sync()
 	conv := ada.dm("open", bob.name)
 	want := []string{"\n\u21b3 " + short + "  you: bring the map\n  yes\n", "\n  -reply " + short + " is literal\n"}
@@ -575,9 +594,16 @@ func growth(n int, f func(n int)) float64 {
 
 // ids makes n message ids, out of order.
 func ids(n int) []entry {
+	return idsFrom(0, n)
+}
+
+// idsFrom makes n message ids that a hash makes from first, first+1, and
+// on: like the ids of real messages, they share no start.
+func idsFrom(first, n int) []entry {
 	entries := make([]entry, n)
 	for i := range entries {
-		entries[i].ID = fmt.Sprintf("%064x", uint64(n-i)*2654435761)
+		sum := sha256.Sum256([]byte(fmt.Sprint(first + i)))
+		entries[i].ID = hex.EncodeToString(sum[:])
 	}
 	return entries
 }
@@ -588,7 +614,7 @@ func TestAddIsNotQuadratic(t *testing.T) {
 	if g := growth(25000, func(n int) {
 		s := index(nil)
 		for _, e := range ids(n) {
-			s.addMany(e, conversation{})
+			s.add(e, conversation{})
 		}
 		s.short(s.ids[0])
 	}); g > 9 {
@@ -632,8 +658,8 @@ func TestIndexIsNotQuadratic(t *testing.T) {
 		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
 	}
 	s := index([]conversation{{Peers: []string{"k"}, Entries: ids(1000)}})
-	if len(s.ids) != 1000 || !slices.IsSorted(s.ids) {
-		t.Errorf("the index holds %d ids, sorted %v", len(s.ids), slices.IsSorted(s.ids))
+	if sorted := s.sorted(); len(sorted) != 1000 || !slices.IsSorted(sorted) {
+		t.Errorf("the index holds %d ids, sorted %v", len(sorted), slices.IsSorted(sorted))
 	}
 }
 
@@ -641,10 +667,7 @@ func TestIndexIsNotQuadratic(t *testing.T) {
 // 100,000 messages, a sort for each message took 2 to 3 percent of the
 // time of a whole index, and an insert takes about 0.1 percent.
 func TestALiveAddDoesNotSortTheStore(t *testing.T) {
-	extra := make([]entry, 200)
-	for i := range extra {
-		extra[i].ID = fmt.Sprintf("%064x", uint64(i+7)*1000003)
-	}
+	extra := idsFrom(1<<30, 200)
 	ratio := 1.0
 	for range 3 {
 		start := time.Now()
@@ -660,6 +683,463 @@ func TestALiveAddDoesNotSortTheStore(t *testing.T) {
 	}
 	if ratio > 0.006 {
 		t.Errorf("one message took %.4f of the time of a whole index, want under 0.006", ratio)
+	}
+}
+
+// testWatcher is a watcher with an outbox that the test fills, and that
+// records what it prints.
+func testWatcher(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, reads *int) {
+	w, printed, reads, _ = testWatcherWith(outbox...)
+	return w, printed, reads
+}
+
+// testWatcherWith is testWatcher, with the outbox that a test can change.
+func testWatcherWith(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, reads *int, sent *[]arcprogram.Sent) {
+	printed, reads, sent = &[]string{}, new(int), &outbox
+	w = &watcher{
+		outbox: func(context.Context) ([]arcprogram.Sent, error) {
+			*reads++
+			return *sent, nil
+		},
+		me:       "me",
+		messages: index(nil),
+		missed:   map[string]bool{},
+		bySender: map[string][]int{},
+		last:     time.Now(),
+	}
+	w.print = func(m arcprogram.Message, messages *store, quote bool) {
+		e := entry{ID: m.ID, Text: m.Text, ReplyTo: m.ReplyTo}
+		if !quote {
+			*printed = append(*printed, m.Text+" (plain)")
+			return
+		}
+		*printed = append(*printed, m.Text+" "+messages.quote(e, conversation{Peers: []string{"peer"}}))
+	}
+	return w, printed, reads, sent
+}
+
+// msg is a message of the tests of the watcher: one per id, from a sender.
+func msg(id int, from, text, replyTo string) arcprogram.Message {
+	return arcprogram.Message{ID: idsFrom(id, 1)[0].ID, Text: text, ReplyTo: replyTo, From: from, Members: []string{from, "me"}}
+}
+
+// sentParent is a message of this citizen in the outbox, to "peer".
+func sentParent(id, text string) arcprogram.Sent {
+	return arcprogram.Sent{ID: id, To: "peer", Text: text, Members: []string{"me", "peer"}}
+}
+
+// inOrder reports whether the printed texts of each sender, named by the
+// first word of the text, come in the order of their numbers.
+func inOrder(printed []string) bool {
+	last := map[string]int{}
+	for _, line := range printed {
+		var who string
+		var n int
+		if _, err := fmt.Sscanf(line, "%s %d", &who, &n); err != nil {
+			continue
+		}
+		if prev, ok := last[who]; ok && n <= prev {
+			return false
+		}
+		last[who] = n
+	}
+	return true
+}
+
+// quoted counts the printed lines that hold the quote of the parent.
+func quoted(printed []string) int {
+	n := 0
+	for _, line := range printed {
+		if strings.HasSuffix(line, "\u21b3 ababab  you: bring the map") {
+			n++
+		}
+	}
+	return n
+}
+
+// The watch holds at most maxQueue messages, and loses none: 100 senders
+// that each send many messages behind a reply that waits.
+func TestTheHeldQueueIsCapped(t *testing.T) {
+	w, printed, _ := testWatcher()
+	w.take(msg(0, "peer", "peer 0", strings.Repeat("7a", 32)))
+	for i := range 3 * maxQueue {
+		w.take(msg(i+1, fmt.Sprint("s", i%100), fmt.Sprintf("s%d %d", i%100, i), ""))
+		if w.live > maxQueue {
+			t.Fatalf("the watch holds %d messages, want at most %d", w.live, maxQueue)
+		}
+	}
+	w.close()
+	if len(*printed) != 3*maxQueue+1 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, in order %v; want %d in the order of each sender", len(*printed), inOrder(*printed), 3*maxQueue+1)
+	}
+}
+
+// Cato's case: one junk reply, one valid reply whose parent is in the
+// outbox, then 254 junk replies of the same sender. The junk past the
+// quota prints at once, oldest first, and the valid reply gets its quote.
+func TestOneSendersJunkDoesNotHideAValidReply(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "mallory", "mallory 0", strings.Repeat("7a", 32)))
+	w.take(msg(1, "peer", "peer 1", parent))
+	for i := range 254 {
+		w.take(msg(i+2, "mallory", fmt.Sprintf("mallory %d", i+1), idsFrom(1000+i, 1)[0].ID))
+	}
+	w.close()
+	if quoted(*printed) != 1 || *reads == 0 || len(*printed) != 256 || !inOrder(*printed) {
+		t.Errorf("after %d reads the watch printed %d messages, %d quoted, in order %v", *reads, len(*printed), quoted(*printed), inOrder(*printed))
+	}
+}
+
+// Cato's case with keys: 16 keys take turns to send 255 junk replies, after
+// one junk reply and one valid one, within 1 s of a read. No valid reply
+// is hidden: past the cap, the watch reads the outbox a second after the
+// last read, and no waiting reply shows before it.
+func TestRotatingKeysDoNotHideAValidReply(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "k0", "k0 0", strings.Repeat("7a", 32)))
+	w.take(msg(1, "peer", "peer 1", parent))
+	for i := range 255 {
+		key := fmt.Sprint("k", i%16)
+		w.take(msg(i+2, key, fmt.Sprintf("%s %d", key, i+1), idsFrom(1000+i, 1)[0].ID))
+	}
+	w.close()
+	if quoted(*printed) != 1 || len(*printed) != 257 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, %d quoted, in order %v", len(*printed), quoted(*printed), inOrder(*printed))
+	}
+}
+
+// One honest sender replies 20 times, quickly, to messages that this
+// citizen sent: each reply waits for the read, gets its quote, and keeps
+// its place.
+func TestQuickHonestRepliesKeepQuotesAndOrder(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	for i := range 20 {
+		w.take(msg(i, "peer", fmt.Sprintf("peer %d", i), parent))
+	}
+	w.close()
+	if quoted(*printed) != 20 || !inOrder(*printed) {
+		t.Errorf("the watch printed %q, want 20 quoted replies in order", *printed)
+	}
+}
+
+// A sender that holds more than maxHeldPerSender prints its oldest at once,
+// in its own order, and the rest wait behind them.
+func TestASenderOverItsQuotaPrintsItsOldest(t *testing.T) {
+	w, printed, _ := testWatcher()
+	defer w.close()
+	for i := range 100 {
+		w.take(msg(i, "mallory", fmt.Sprintf("mallory %d", i), idsFrom(1000+i, 1)[0].ID))
+	}
+	if len(*printed) != 100-maxHeldPerSender || w.live != maxHeldPerSender || !inOrder(*printed) || !strings.HasPrefix((*printed)[0], "mallory 0 ") {
+		t.Errorf("the watch printed %d and holds %d, want %d printed, oldest first, and %d held", len(*printed), w.live, 100-maxHeldPerSender, maxHeldPerSender)
+	}
+}
+
+// A busy group, 600 messages behind a valid reply that waits, does not
+// push the reply out unquoted, and each sender keeps its order.
+func TestABusyGroupDoesNotHideAValidReply(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "peer", "peer 0", parent))
+	for i := range 600 {
+		who := fmt.Sprint("m", i%3)
+		w.take(msg(i+1, who, fmt.Sprintf("%s %d", who, i), ""))
+	}
+	w.close()
+	if len(*printed) != 601 || quoted(*printed) != 1 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, %d quoted, in order %v", len(*printed), quoted(*printed), inOrder(*printed))
+	}
+}
+
+// Past maxWaiting replies that wait, with the read blocked, no reply shows
+// early: the watch reads the outbox when overflowRead has passed, and each
+// reply gets its quote. 128 senders hold two each.
+func TestSmallHoldersWaitForTheRead(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	defer w.close()
+	for i := range maxWaiting {
+		who := fmt.Sprint("s", i/2)
+		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
+	}
+	w.mu.Lock()
+	early := len(*printed)
+	w.mu.Unlock()
+	time.Sleep(overflowRead + 500*time.Millisecond)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if early != 0 || *reads != 1 || quoted(*printed) != maxWaiting {
+		t.Errorf("%d printed before the read; after %d reads, %d of %d replies are quoted", early, *reads, quoted(*printed), maxWaiting)
+	}
+}
+
+// At the hard cap, with each held message waiting and the read blocked,
+// the watch waits for the read without its lock: the timer and the end of
+// the watch can run meanwhile.
+func TestTheWaitAtTheCapHoldsNoLock(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, _, _ := testWatcher(sentParent(parent, "bring the map"))
+	defer w.close()
+	for i := range maxQueue - 1 {
+		who := fmt.Sprint("s", i%(maxQueue/maxHeldPerSender))
+		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
+	}
+	go w.take(msg(maxQueue, "last", "last 0", parent))
+	time.Sleep(100 * time.Millisecond)
+	free := false
+	for deadline := time.Now().Add(overflowRead / 2); time.Now().Before(deadline) && !free; time.Sleep(10 * time.Millisecond) {
+		if free = w.mu.TryLock(); free {
+			w.mu.Unlock()
+		}
+	}
+	if !free {
+		t.Error("the watch held its lock while it waited for the read")
+	}
+}
+
+// At the hard cap with the read blocked, only plain messages that lead
+// their sender's held messages show early; a reply that waits, and each
+// message behind it, wait for the read.
+func TestOnlyPlainHeadsShowEarly(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	defer w.close()
+	w.take(msg(0, "peer", "peer 0", parent))
+	w.take(msg(1, "peer", "peer 1", ""))
+	for i := range maxQueue {
+		who := fmt.Sprint("s", i%100)
+		w.take(msg(i+2, who, fmt.Sprintf("%s %d", who, i), ""))
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, line := range *printed {
+		if strings.HasPrefix(line, "peer ") {
+			t.Fatalf("a message of the sender that waits showed before the read: %q", line)
+		}
+	}
+	if len(*printed) == 0 {
+		t.Error("no plain message showed early")
+	}
+}
+
+// A read that fails while the watch runs shows the replies that wait with
+// no quote line, and marks no parent missed: their parents can be on this
+// device. A later reply to the same parent, after a read that works, gets
+// its quote.
+func TestAFailedReadMarksNothingMissed(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _, sent := testWatcherWith()
+	read := w.outbox
+	fail := true
+	w.outbox = func(ctx context.Context) ([]arcprogram.Sent, error) {
+		if fail {
+			return nil, errors.New("arc failed")
+		}
+		return read(ctx)
+	}
+	w.last = time.Now().Add(-refreshEvery)
+	w.take(msg(0, "peer", "peer 0", parent))
+	if len(*printed) != 1 || (*printed)[0] != "peer 0 (plain)" || len(w.messages.shown) != 0 {
+		t.Fatalf("after a failed read the watch printed %q and showed %d ids as missing", *printed, len(w.messages.shown))
+	}
+	fail = false
+	*sent = append(*sent, sentParent(parent, "bring the map"))
+	w.take(msg(1, "peer", "peer 1", parent))
+	w.close()
+	if last := (*printed)[len(*printed)-1]; last != "peer 1 \u21b3 ababab  you: bring the map" {
+		t.Errorf("the reply after a read that worked printed %q", last)
+	}
+}
+
+// Cato's case: 300 keys send one junk reply each, within 1 s of a read,
+// while an honest sender has 30 replies that wait. The honest replies all
+// get their quotes: only plain messages and senders over their quota show
+// early.
+func TestManyKeysDoNotHideAnHonestSender(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher(sentParent(parent, "bring the map"))
+	for i := range 30 {
+		w.take(msg(i, "peer", fmt.Sprintf("peer %d", i), parent))
+	}
+	for i := range 300 {
+		key := fmt.Sprint("k", i)
+		w.take(msg(1000+i, key, key+" 0", idsFrom(5000+i, 1)[0].ID))
+	}
+	w.close()
+	if quoted(*printed) != 30 || len(*printed) != 330 || !inOrder(*printed) {
+		t.Errorf("the watch printed %d messages, %d of 30 quoted, in order %v", len(*printed), quoted(*printed), inOrder(*printed))
+	}
+}
+
+// A reply that shows early because its sender is over the quota marks
+// its parent not missed: a later reply to it, once the parent is in the
+// outbox, gets its quote.
+func TestAnEarlyReplyMarksNoParentMissed(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _, sent := testWatcherWith()
+	for i := range maxHeldPerSender + 6 {
+		w.take(msg(i, "mallory", fmt.Sprintf("mallory %d", i), parent))
+	}
+	if len(*printed) != 6 {
+		t.Fatalf("%d replies showed early, want 6", len(*printed))
+	}
+	*sent = append(*sent, sentParent(parent, "bring the map"))
+	w.take(msg(99999, "peer", "peer 1", parent))
+	w.close()
+	if quoted(*printed) != maxHeldPerSender+1 {
+		t.Errorf("%d replies are quoted, want the %d that waited", quoted(*printed), maxHeldPerSender+1)
+	}
+}
+
+// An overflow reads the outbox when the last read is older than
+// overflowRead, so the replies that wait get their quotes.
+func TestAnOverflowReadsAnOldOutbox(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	w.last = time.Now().Add(-2 * overflowRead)
+	defer w.close()
+	for i := range maxWaiting {
+		who := fmt.Sprint("s", i%16)
+		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
+	}
+	if *reads != 1 || quoted(*printed) != maxWaiting {
+		t.Errorf("after %d reads, %d of %d replies are quoted", *reads, quoted(*printed), maxWaiting)
+	}
+}
+
+// A second interrupt ends the watch at once, while a read of the outbox
+// hangs: the read at the end of the watch, or a timed read that hung
+// before the first interrupt. The first interrupt ends a timed read; the
+// second ends the last one. The watch shows its held reply each time.
+func TestASecondInterruptEndsTheWatch(t *testing.T) {
+	t.Parallel()
+	for _, how := range []string{"the last read hangs", "a timed read hangs"} {
+		t.Run(how, func(t *testing.T) { secondInterrupt(t, how) })
+	}
+}
+
+func secondInterrupt(t *testing.T, how string) {
+	timed := how == "a timed read hangs"
+	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
+	mallory.dm("send", bob.key, "hello")
+	bob.sync()
+	dir := t.TempDir()
+	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
+	// Each read of the outbox after the first hangs: the arc that arc-dm
+	// runs sleeps.
+	sleep := fmt.Sprintf("%d.%d", 30+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -ge 2 ] && exec sleep " + sleep + ";; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reads := func() int {
+		data, _ := os.ReadFile(count)
+		return strings.Count(string(data), "x")
+	}
+	watch := exec.Command(env.program, "watch", "-arc", wrapper, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	mallory.arcSend(bob.key, "junk", "--arctest-tag", "e,"+strings.Repeat("7a", 32))
+	// The watch stores each message before it prints it: once the inbox
+	// holds the reply, the watch holds it too, a moment later.
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool {
+		inbox, _ := bob.arc.Inbox(context.Background())
+		return slices.ContainsFunc(inbox, func(m arcprogram.Message) bool { return m.Text == "junk" })
+	}) {
+		t.Fatal("the reply did not arrive")
+	}
+	if timed {
+		// The reply waits; the timed read of the outbox hangs.
+		if !arcprogramtest.WaitUntil(waitLimit, func() bool { return reads() >= 2 }) {
+			t.Fatal("the watch read the outbox no second time")
+		}
+	} else {
+		time.Sleep(200 * time.Millisecond)
+	}
+	before := reads()
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	// The end of the watch reads the outbox once more, and that read
+	// hangs too. It is the only read that can start after the first
+	// interrupt, so it also shows that arc-dm took that interrupt. Only
+	// then does the test send the second: two signals of one kind that
+	// wait together become one, and under load a timed read can have
+	// made the count before the first interrupt.
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return reads() > before }) {
+		t.Fatalf("the end of the watch did not read the outbox; reads %d", reads())
+	}
+	start := time.Now()
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = watch.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		// Still running: make Go show where each goroutine of arc-dm
+		// waits, then fail with it. Under the race detector, a program
+		// that ends can take more than a second to exit.
+		readsThen := reads()
+		processes, _ := exec.Command("pgrep", "-fl", bob.arc.Home).Output()
+		_ = watch.Process.Signal(syscall.SIGQUIT)
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+		}
+		t.Fatalf("the watch went on %v after a second interrupt; reads of the outbox %d; processes of the home:\n%s\nstderr, with the goroutines of arc-dm:\n%s", time.Since(start), readsThen, processes, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "  junk\n") {
+		t.Errorf("the watch dropped the held reply:\n%s", stdout.String())
+	}
+	if out, _ := exec.Command("pgrep", "-f", "sleep "+sleep).Output(); len(out) > 0 {
+		t.Errorf("a hung arc is still running: %s", out)
+	}
+}
+
+// pairs makes 2n ids in pairs that share their first 10 digits and differ
+// at the 11th, as a
+// sender who spent 2^40 hashes on each pair could make them.
+func pairs(n int) []entry {
+	var out []entry
+	for _, e := range idsFrom(1<<20, n) {
+		// The twin differs at the 11th digit.
+		eleventh := map[bool]string{true: "1", false: "0"}[e.ID[10] == '0']
+		twin := e.ID[:10] + eleventh + idsFrom(1<<21+len(out), 1)[0].ID[11:]
+		out = append(out, e, entry{ID: twin})
+	}
+	return out
+}
+
+// Ids that share 8 digits take their short id from their bucket: it is
+// long enough to name one message, and a flood of such pairs stays linear.
+func TestCraftedCollisionsStayFast(t *testing.T) {
+	s := index([]conversation{{Peers: []string{"k"}, Entries: pairs(10)}})
+	for _, e := range pairs(10) {
+		if short := s.short(e.ID); len(short) != 11 || short != e.ID[:11] {
+			t.Errorf("the short id of %s is %q, want its first 11 digits", e.ID[:12], short)
+		}
+	}
+	if g := growth(10000, func(n int) {
+		s := index(nil)
+		for _, e := range pairs(n) {
+			s.add(e, conversation{})
+			s.short(e.ID)
+		}
+	}); g > 9 {
+		t.Errorf("4 times the pairs took %.1f times as long, want under 9", g)
 	}
 }
 
@@ -729,5 +1209,270 @@ func TestAWatchHoldsAReplyUntilItReadsTheOutbox(t *testing.T) {
 	if err := watch.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
+	_ = watch.Wait()
+}
+
+// A reply that waits for the outbox when the watch ends still shows its
+// parent: the watch reads the outbox once more as it ends.
+func TestAWatchShowsAHeldReplyAtItsEnd(t *testing.T) {
+	t.Parallel()
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "hello")
+	bob.sync()
+
+	watch := bob.command("watch", "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	started := time.Now()
+	bob.dm("send", ada.name, "bring the map")
+	ada.sync()
+	short := shortID(t, ada.dm("open", bob.name), "bring the map")
+	ada.dm("reply", short, "yes")
+	// The watch takes the reply within a moment, and holds it until 5 s
+	// after it started. The test ends the watch before then, when it can.
+	time.Sleep(500 * time.Millisecond)
+	if time.Since(started) > refreshEvery {
+		t.Logf("the machine is slow: the watch read the outbox before its end, %v after its start", time.Since(started))
+	}
+	if err := watch.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
+	if want := "\n\u21b3 " + short + "  you: bring the map\n  yes\n"; !strings.Contains(stdout.String(), want) {
+		t.Errorf("the watch printed:\n%s\nwant\n%s", stdout.String(), want)
+	}
+}
+
+// arcs counts the arc processes of an arc home.
+func arcs(home string) int {
+	out, _ := exec.Command("pgrep", "-f", home).Output()
+	return len(strings.Fields(string(out)))
+}
+
+// noArcLeft waits for each arc process of an arc home to end.
+func noArcLeft(t *testing.T, home string) {
+	t.Helper()
+	if !arcprogramtest.WaitUntil(10*time.Second, func() bool { return arcs(home) == 0 }) {
+		out, _ := exec.Command("pgrep", "-fl", home).Output()
+		t.Errorf("arc processes of the home are still running:\n%s", out)
+		_ = exec.Command("pkill", "-f", home).Run()
+	}
+}
+
+// onTerminal starts arc-dm on a pseudo-terminal, as a person does, and
+// gathers what the terminal shows.
+func onTerminal(t *testing.T, args ...string) (*exec.Cmd, *os.File, *lockedBuffer) {
+	t.Helper()
+	command := exec.Command(env.program, args...)
+	terminal, err := pty.Start(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	go func() { _, _ = io.Copy(out, terminal) }()
+	t.Cleanup(func() { _ = command.Process.Kill(); terminal.Close() })
+	return command, terminal, out
+}
+
+// A key that a passphrase seals asks on the terminal of arc-dm, with no
+// echo, and arc-dm works: arc runs in the process group of arc-dm, which
+// the terminal lets read.
+func TestASealedKeyAsksOnTheTerminal(t *testing.T) {
+	t.Parallel()
+	bob := newPerson(t, "bob")
+	seal := bob.arc.Command(context.Background(), "keys", "encrypt")
+	seal.Env = append(os.Environ(), "ARC_PASSPHRASE=open sesame")
+	if out, err := seal.CombinedOutput(); err != nil {
+		t.Fatalf("arc keys encrypt: %v\n%s", err, out)
+	}
+	command, terminal, out := onTerminal(t, "ls", "-arc", bob.arc.Program, "-home", bob.arc.Home, "-state", bob.state)
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	answered := 0
+	deadline := time.After(waitLimit)
+	for {
+		select {
+		case err := <-done:
+			if err != nil || answered == 0 || strings.Contains(out.String(), "open sesame") {
+				t.Errorf("arc-dm ls ended with %v after %d passphrases; the terminal showed:\n%s", err, answered, out.String())
+			}
+			return
+		case <-deadline:
+			t.Fatalf("arc-dm ls did not end after %d passphrases; the terminal showed:\n%s", answered, out.String())
+		case <-time.After(100 * time.Millisecond):
+			if n := strings.Count(out.String(), "passphrase of the key: "); n > answered {
+				answered = n
+				if _, err := terminal.Write([]byte("open sesame\r")); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+}
+
+// A hangup, as when the terminal of arc-dm closes, ends arc-dm and each
+// arc that it runs: sent to the process of arc-dm alone, and to its
+// process group, as the terminal sends it. (A test cannot close its end of
+// a pseudo-terminal while a read waits on it: Go keeps the file open until
+// the read returns.)
+func TestAHangupEndsEachArc(t *testing.T) {
+	t.Parallel()
+	for _, group := range []bool{false, true} {
+		bob := newPerson(t, "bob")
+		command, _, out := onTerminal(t, "watch", "-arc", bob.arc.Program, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
+		if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(out.String(), "watching") }) {
+			t.Fatalf("the watch did not start:\n%s", out.String())
+		}
+		pid := command.Process.Pid
+		if group {
+			pid = -pid // arc-dm leads the session and the group of the terminal
+		}
+		if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() { _ = command.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(waitLimit):
+			t.Fatalf("arc-dm went on after a hangup (to the group: %v)", group)
+		}
+		// arc-dm ends by its own handler, not by the signal: on Linux, a
+		// signal that killed arc-dm would end its arc too, and hide a
+		// missing handler.
+		if command.ProcessState.Sys().(syscall.WaitStatus).Signaled() {
+			t.Errorf("a hangup killed arc-dm (to the group: %v), want it to end by its handler", group)
+		}
+		noArcLeft(t, bob.arc.Home)
+	}
+}
+
+// SIGTERM to the process of arc-dm alone ends each arc that it runs.
+func TestSIGTERMEndsEachArc(t *testing.T) {
+	t.Parallel()
+	bob := newPerson(t, "bob")
+	watch := bob.command("watch", "-notify", "none")
+	stderr := &lockedBuffer{}
+	watch.Stderr = stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	if err := watch.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	_ = watch.Wait()
+	noArcLeft(t, bob.arc.Home)
+}
+
+// On Linux, an arc-dm that is killed takes each arc that it runs with it.
+// macOS has no such signal: there, an arc of a killed arc-dm runs on.
+func TestAKilledArcDmLeavesNoArcOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux kills a child when its parent dies")
+	}
+	t.Parallel()
+	bob := newPerson(t, "bob")
+	watch := bob.command("watch", "-notify", "none")
+	stderr := &lockedBuffer{}
+	watch.Stderr = stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	_ = watch.Process.Kill()
+	_ = watch.Wait()
+	noArcLeft(t, bob.arc.Home)
+}
+
+// A short id that arc-dm showed as a parent not on this device is refused
+// later: a sender can name, as a parent, an id that starts as its own
+// later message.
+func TestAShownMissingIdIsRefused(t *testing.T) {
+	parent := idsFrom(1, 1)[0].ID
+	later := parent[:12] + idsFrom(2, 1)[0].ID[12:]
+	s := index([]conversation{{Peers: []string{"mallory"}, Entries: []entry{{ID: later}}}})
+	s.avoid = map[string]bool{parent: true}
+	if _, err := s.lookup(parent[:12]); err == nil || !strings.Contains(err.Error(), "was not on this device") {
+		t.Errorf("lookup of the shown id: %v", err)
+	}
+	if got, err := s.lookup(later); err != nil || got.ID != later {
+		t.Errorf("lookup of the full id: %v, %v", got.ID, err)
+	}
+	// An id that arc-dm showed as missing, and that is here now, such as a
+	// message of this citizen, is not refused.
+	s.add(entry{ID: parent}, conversation{Peers: []string{"mallory"}})
+	if got, err := s.lookup(parent[:13]); err != nil || got.ID != parent {
+		t.Errorf("lookup of a shown id that is here now: %v, %v", got.ID, err)
+	}
+}
+
+// Through the CLI: the id of a missing parent that arc-dm open showed is
+// refused by arc-dm reply.
+func TestReplyRefusesAnIdShownAsMissing(t *testing.T) {
+	t.Parallel()
+	mallory, bob := newPerson(t, "mallory"), newPerson(t, "bob")
+	parent := idsFrom(3, 1)[0].ID
+	mallory.arcSend(bob.key, "see above", "--arctest-tag", "e,"+parent)
+	bob.sync()
+	if conv := bob.dm("open", mallory.name); !strings.Contains(conv, parent[:12]+"  (not on this device)") {
+		t.Fatalf("bob's conversation:\n%s", conv)
+	}
+	if out := bob.refused("reply", parent[:12], "yes"); !strings.Contains(out, "was not on this device when arc-dm showed it") {
+		t.Errorf("reply to the shown id: %s", out)
+	}
+}
+
+// A read of the outbox while the watch runs takes at most readTimeout. On
+// an arc that hangs, the watch warns, keeps the reply that waits, and gets
+// its quote from the next read.
+func TestAWatchReadTimesOut(t *testing.T) {
+	t.Parallel()
+	ada, bob := newPerson(t, "ada"), newPerson(t, "bob")
+	ada.dm("send", bob.key, "hello")
+	bob.sync()
+	dir := t.TempDir()
+	count, wrapper := filepath.Join(dir, "count"), filepath.Join(dir, "arc")
+	// The second read of the outbox, the first timed read, hangs.
+	sleep := fmt.Sprintf("%d.%d", 120+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	script := "#!/bin/sh\ncase " + `"$*"` + " in *" + `"message outbox"` + "*) echo x >> " + count + "; [ $(wc -l < " + count + ") -eq 2 ] && exec sleep " + sleep + ";; esac\nexec " + bob.arc.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	watch := exec.Command(env.program, "watch", "-arc", wrapper, "-home", bob.arc.Home, "-state", bob.state, "-notify", "none")
+	stdout, stderr := &lockedBuffer{}, &lockedBuffer{}
+	watch.Stdout, watch.Stderr = stdout, stderr
+	if err := watch.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Process.Kill()
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stderr.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", stderr.String())
+	}
+	bob.dm("send", ada.name, "bring the map")
+	ada.sync()
+	short := shortID(t, ada.dm("open", bob.name), "bring the map")
+	ada.dm("reply", short, "yes")
+	want := "\n\u21b3 " + short + "  you: bring the map\n  yes\n"
+	if !arcprogramtest.WaitUntil(waitLimit, func() bool { return strings.Contains(stdout.String(), want) }) {
+		t.Fatalf("the watch printed:\n%s\nwant\n%s\nstderr:\n%s", stdout.String(), want, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "the read of the outbox took more than") {
+		t.Errorf("the watch did not warn of the hung read:\n%s", stderr.String())
+	}
+	_ = watch.Process.Signal(os.Interrupt)
 	_ = watch.Wait()
 }

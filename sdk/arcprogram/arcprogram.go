@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -193,7 +194,12 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	if opts.Since != "" {
 		args = append(args, "--since", opts.Since)
 	}
+	// On Linux, arc dies with the thread that starts it (see prepare), so
+	// that thread stays held until arc ends.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	command := a.Command(ctx, args...)
+	prepare(command)
 	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 	command.WaitDelay = 5 * time.Second
 	problems := &tail{}
@@ -265,10 +271,18 @@ func IsKey(text string) bool {
 // holds what arc wrote on standard error.
 func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	command := a.Command(ctx, args...)
+	prepare(command)
+	// A child of arc that holds the output open does not hold the call
+	// after arc ends.
+	command.WaitDelay = time.Second
 	command.Stdin = stdin
 	problems := &tail{}
 	command.Stderr = problems
+	// On Linux, arc dies with the thread that starts it (see prepare), so
+	// that thread stays held until arc ends.
+	runtime.LockOSThread()
 	out, err := command.Output()
+	runtime.UnlockOSThread()
 	if errors.Is(err, exec.ErrNotFound) {
 		return nil, fmt.Errorf("arc %s: %w", strings.Join(args[:min(2, len(args))], " "), a.missing(err))
 	}

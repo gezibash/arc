@@ -92,7 +92,9 @@ A reply shows a quote line between its header and its text:
 - `-reply` can also come after the peer, before the text:
   `arc-dm send ada -reply 1c77 yes`. Each other word after the peer is
   text, so `arc-dm send ada -home is where the heart is` sends that text.
-  After `--`, each word is text. An empty `-reply=` is refused.
+  After `--`, each word is text. An empty `-reply=` is refused, and so is
+  a text of only `-h`, `-H`, `--h`, `--H`, `-help` or `--help`: put `--`
+  before it to send it.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
@@ -104,7 +106,31 @@ A reply shows a quote line between its header and its text:
   sent the parent after the watch started: at most once each 5 s,
   because a sender can name many ids. The reply, and each message after
   it, waits for that read, at most 5 s, so the order stays and the quote
-  is not lost.
+  is not lost. A waiting reply shows without its quote only after a read
+  that came after it, with one exception: a sender that holds more than
+  64 messages shows its oldest at once. Past 256 waiting replies, the
+  watch reads the outbox at once, or a second after its last read. Past
+  4,096 held messages, it shows early only plain messages that lead the
+  held messages of their sender, and else waits for that read. The
+  messages of one sender always show in their order; a sender's messages
+  can show ahead of the messages of others.
+  A read of the outbox while the watch runs takes at most 10 s: on a hung
+  arc, the watch warns, and the held messages wait for the next read. A
+  read that fails shows the replies that wait with no quote line.
+  When the watch ends, on an interrupt, SIGTERM or a hangup of its
+  terminal, it reads the outbox once more for a reply that waits; a
+  second signal ends that read, and the watch shows each held message as
+  it is, and drops none. arc-dm ends each arc that it runs, but not a
+  process that such an arc starts in turn. On Linux, an
+  arc-dm that is killed takes its arc with it; on macOS such an arc runs
+  on, and can hold the database of its home until it ends.
+- The id of a parent that is not on this device shows 12 digits, so a
+  message that arrives later with the same first 6 digits does not take
+  it. A sender can still aim the id: it can name, as the parent, an id
+  that starts with the same 12 digits as a message that it sends later.
+  So arc-dm remembers the last 4,096 ids that it showed as missing, and
+  `arc-dm reply` refuses a short id that starts one of them: give the
+  full id.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

@@ -385,6 +385,75 @@ func stateDir(flag string) string {
 
 func readPath(dir string) string { return filepath.Join(dir, "read.json") }
 
+// shownPath holds the ids that arc-dm showed as parents that are not on
+// this device, the last maxShown of them.
+func shownPath(dir string) string { return filepath.Join(dir, "shown-missing.json") }
+
+const maxShown = 4096
+
+type shownFile struct {
+	IDs []string `json:"ids"`
+}
+
+// loadShown reads the ids that arc-dm showed as missing. A missing or
+// empty file holds none.
+func loadShown(dir string) (map[string]bool, error) {
+	ids, err := readShown(dir)
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]bool{}
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set, nil
+}
+
+func readShown(dir string) ([]string, error) {
+	data, err := os.ReadFile(shownPath(dir))
+	if errors.Is(err, os.ErrNotExist) || (err == nil && len(data) == 0) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var file shownFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("%s: %w", shownPath(dir), err)
+	}
+	return file.IDs, nil
+}
+
+// saveShown adds ids to the ids that arc-dm showed as missing, under a
+// lock, and keeps the last maxShown.
+func saveShown(dir string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	unlock, err := atomicfile.Lock(shownPath(dir))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	all, err := readShown(dir)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if !slices.Contains(all, id) {
+			all = append(all, id)
+		}
+	}
+	if len(all) > maxShown {
+		all = all[len(all)-maxShown:]
+	}
+	data, err := json.Marshal(shownFile{IDs: all})
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(shownPath(dir), data, 0o600)
+}
+
 // loadRead reads the read set. A missing file is an empty set.
 func loadRead(dir string) (readSet, error) {
 	data, err := os.ReadFile(readPath(dir))
@@ -452,55 +521,60 @@ type held struct {
 // from the reply.
 type store struct {
 	byID map[string]held
-	// ids are the ids, for the short ids. They are sorted unless unsorted.
+	// prefixes counts the ids that start with each prefix of 6 and 7
+	// digits, and buckets holds the ids of each prefix of 8, so a short id
+	// takes no sort. Ids that share 8 digits are rare, unless a sender
+	// made them; a short id compares only the ids of its bucket.
+	prefixes map[string]int
+	buckets  map[string][]string
+	// ids are the ids, for a lookup and a long short id. They are sorted
+	// unless unsorted.
 	ids      []string
 	unsorted bool
+	// shown are the ids that this run showed as parents that are not on
+	// this device, and avoid the ids that runs before it showed so. A
+	// short id that starts one of them is refused (see lookup).
+	shown   []string
+	isShown map[string]bool
+	avoid   map[string]bool
 }
 
+// shortLengths are the lengths of short id that prefixes count.
+var shortLengths = []int{6, 7}
+
+// bucketLength is the length of the prefix of a bucket.
+const bucketLength = 8
+
 func index(all []conversation) *store {
-	s := &store{byID: map[string]held{}}
+	s := &store{byID: map[string]held{}, prefixes: map[string]int{}, buckets: map[string][]string{}}
 	for _, c := range all {
 		for _, e := range c.Entries {
-			if _, ok := s.byID[e.ID]; !ok {
-				s.byID[e.ID] = held{entry: e, conv: c}
-				s.ids = append(s.ids, e.ID)
-			}
+			s.add(e, c)
 		}
 	}
-	// One sort: an insert for each id would take time in the square of
-	// the number of messages.
-	slices.Sort(s.ids)
 	return s
 }
 
+// add adds a message in constant time: a watch adds one at a time, and a
+// flood of messages must not take time in the square of their number.
 func (s *store) add(e entry, c conversation) {
-	if _, ok := s.byID[e.ID]; ok {
-		return
-	}
-	s.byID[e.ID] = held{entry: e, conv: c}
-	if s.unsorted {
-		s.ids = append(s.ids, e.ID)
-		return
-	}
-	// One message goes in its place: a watch adds one at a time, and a
-	// sort for each would take far longer.
-	i, _ := slices.BinarySearch(s.ids, e.ID)
-	s.ids = slices.Insert(s.ids, i, e.ID)
-}
-
-// addMany adds a message of a batch, such as the outbox. The ids are
-// sorted when they are next read: an insert for each would take time in
-// the square of the number of messages.
-func (s *store) addMany(e entry, c conversation) {
 	if _, ok := s.byID[e.ID]; ok {
 		return
 	}
 	s.byID[e.ID] = held{entry: e, conv: c}
 	s.ids = append(s.ids, e.ID)
 	s.unsorted = true
+	for _, n := range shortLengths {
+		if len(e.ID) >= n {
+			s.prefixes[e.ID[:n]]++
+		}
+	}
+	if len(e.ID) >= bucketLength {
+		s.buckets[e.ID[:bucketLength]] = append(s.buckets[e.ID[:bucketLength]], e.ID)
+	}
 }
 
-// sorted returns the ids, sorted.
+// sorted returns the ids, sorted, for a lookup.
 func (s *store) sorted() []string {
 	if s.unsorted {
 		slices.Sort(s.ids)
@@ -512,15 +586,25 @@ func (s *store) sorted() []string {
 // short is the start of an id that names one message of the store: six hex
 // digits, or more when another message starts with the same six.
 func (s *store) short(id string) string {
-	n := 0
-	ids := s.sorted()
-	i, _ := slices.BinarySearch(ids, id)
-	for _, j := range []int{i - 1, i, i + 1} {
-		if j >= 0 && j < len(ids) && ids[j] != id {
-			n = max(n, commonPrefix(id, ids[j]))
+	own := 0
+	if _, ok := s.byID[id]; ok {
+		own = 1
+	}
+	for _, n := range shortLengths {
+		if len(id) >= n && s.prefixes[id[:n]] <= own {
+			return id[:n]
 		}
 	}
-	return id[:min(len(id), max(6, n+1))]
+	if len(id) < bucketLength {
+		return id
+	}
+	n := 0
+	for _, other := range s.buckets[id[:bucketLength]] {
+		if other != id {
+			n = max(n, commonPrefix(id, other))
+		}
+	}
+	return id[:min(len(id), max(bucketLength, n+1))]
 }
 
 func commonPrefix(a, b string) int {
@@ -536,6 +620,19 @@ func commonPrefix(a, b string) int {
 func (s *store) lookup(prefix string) (held, error) {
 	if err := checkID(prefix); err != nil {
 		return held{}, err
+	}
+	// A sender can name as a parent an id that starts as its own later
+	// message, so a short id that arc-dm showed as missing could name that
+	// message. Only the full id can name it then.
+	for id := range s.avoid {
+		if _, here := s.byID[id]; here {
+			// The parent came later, or was a message of this citizen: the
+			// short id names it.
+			continue
+		}
+		if len(prefix) < len(id) && strings.HasPrefix(id, prefix) {
+			return held{}, fmt.Errorf("%s was not on this device when arc-dm showed it, and could name another message now: give the full id", prefix)
+		}
 	}
 	ids := s.sorted()
 	i, _ := slices.BinarySearch(ids, prefix)
@@ -572,11 +669,25 @@ func (s *store) quote(e entry, c conversation) string {
 	if e.ReplyTo == "" {
 		return ""
 	}
-	head := "↳ " + s.quoted(e.ReplyTo) + "  "
 	parent, ok := s.byID[e.ReplyTo]
+	if !ok {
+		// The id of a parent that is not here shows 12 digits: a message
+		// that arrives later and starts with the same 6 must not take it.
+		id := e.ReplyTo[:min(len(e.ReplyTo), quotedID)]
+		if len(s.short(e.ReplyTo)) > quotedID {
+			id += "…"
+		}
+		if !s.isShown[e.ReplyTo] {
+			if s.isShown == nil {
+				s.isShown = map[string]bool{}
+			}
+			s.isShown[e.ReplyTo] = true
+			s.shown = append(s.shown, e.ReplyTo)
+		}
+		return "↳ " + id + "  (not on this device)"
+	}
+	head := "↳ " + s.quoted(e.ReplyTo) + "  "
 	switch {
-	case !ok:
-		return head + "(not on this device)"
 	case parent.conv.key() != c.key():
 		return head + "(in another conversation)"
 	}
