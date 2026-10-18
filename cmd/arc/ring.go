@@ -36,7 +36,7 @@ func ringCommand() *cobra.Command {
 	}
 
 	set := &cobra.Command{
-		Use: "set <https url>", Short: "Register the URL with each relay that offers rings", Args: cobra.ExactArgs(1),
+		Use: "set <https url>", Short: "Register the URL with each relay that offers rings, or with --relay", Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			name, _ := command.Flags().GetString("key-env")
 			key := os.Getenv(name)
@@ -68,7 +68,7 @@ func ringCommand() *cobra.Command {
 	_ = set.MarkFlagRequired("key-env")
 
 	show := &cobra.Command{
-		Use: "show", Short: "Show the registration on each relay", Args: cobra.NoArgs,
+		Use: "show", Short: "Show the registration on each relay, or on --relay", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return eachRingRelay(command, func(ctx context.Context, relay string, id signerIdentity) (string, error) {
 				var status rings.Status
@@ -85,7 +85,7 @@ func ringCommand() *cobra.Command {
 	}
 
 	test := &cobra.Command{
-		Use: "test", Short: "Ask each relay for one ring now; it counts against the cap of the day", Args: cobra.NoArgs,
+		Use: "test", Short: "Ask each relay, or --relay, for one ring now; it counts against the cap of the day", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return eachRingRelay(command, func(ctx context.Context, relay string, id signerIdentity) (string, error) {
 				var answer rings.TestAnswer
@@ -104,7 +104,7 @@ func ringCommand() *cobra.Command {
 	}
 
 	clear := &cobra.Command{
-		Use: "clear", Short: "Remove the registration from each relay", Args: cobra.NoArgs,
+		Use: "clear", Short: "Remove the registration from each relay, or from --relay", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return eachRingRelay(command, func(ctx context.Context, relay string, id signerIdentity) (string, error) {
 				if err := ringCall(ctx, id, http.MethodDelete, relay, rings.Path, nil, nil); err != nil {
@@ -135,6 +135,9 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 	}
 	one, _ := command.Flags().GetString("relay")
 	switch {
+	case command.Flags().Changed("relay") && one == "":
+		// An unset variable in a script must not act on every relay.
+		return errors.New("--relay needs a URL")
 	case one != "":
 		if !strings.HasPrefix(one, "ws://") && !strings.HasPrefix(one, "wss://") {
 			return errors.New("--relay takes a ws:// or wss:// URL")
@@ -157,6 +160,9 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 			continue
 		}
 		if !slices.Contains(tags, rings.Tag) {
+			if one != "" {
+				return fmt.Errorf("%s offers no rings", terminal.EscapeLine(one))
+			}
 			fmt.Fprintf(out, "%s: offers no rings, skipped\n", relay)
 			continue
 		}
@@ -170,8 +176,6 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 		fmt.Fprintf(out, "%s: %s\n", relay, terminal.EscapeLine(line))
 	}
 	switch {
-	case offered == 0 && failed == 0 && one != "":
-		return fmt.Errorf("%s offers no rings", terminal.EscapeLine(one))
 	case offered == 0 && failed == 0:
 		return errors.New("no relay of this citizen offers rings")
 	case failed > 0:

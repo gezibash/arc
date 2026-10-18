@@ -320,7 +320,8 @@ arc relay ring show --relay wss://relay.republic.sh
   relay, and on no other. The URL is `ws://` or `wss://`. It need not be a
   relay of the citizen, so a citizen can clear a registration on a relay
   that it no longer uses. If that relay does not list `arc-rings`, the
-  command fails.
+  command fails with that error alone. A `--relay` given with no URL,
+  such as `--relay ""`, fails the command, and it acts on no relay.
 
 ### 4.2 A ring, step by step
 
@@ -417,7 +418,8 @@ new.
 | The day's cap is used | The ring waits until 00:00 UTC, if the period is still unread. Mail waits as it would without rings. `ring test` gets 429. From 5 rings left, each `arc sync` or `arc message watch` prints the NOTICE of section 3.5, with the URL of the relay. |
 | The bucket is empty | The ring waits until one ring comes back, at most `min_interval`. |
 | The registration expired | The citizen read nothing for 30 days. No ring. The relay removes it within one hour. `arc relay ring show` says when a registration ends. |
-| A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. |
+| A relay without `arc-rings` | `arc relay ring set` skips it and says so. If no relay offers rings, the command fails. With `--relay`, that relay fails the command, and the command prints only the error. |
+| `--relay` is given with no URL | The command fails and acts on no relay. A script with an unset variable cannot act on every relay. |
 | Several inbox relays ring at once | The agent runs more than once. Each run reads the same inbox: the store keeps one copy of each message, by ID, so no run answers a message twice that an earlier run answered. |
 | An older arc reads the mail | It does not authenticate, so the read does not count. The unread period goes on, and the relay rings no more until an arc that authenticates reads. |
 | The relay refuses the authentication of arc | arc reads the mail, and prints the error once for each relay and each streak of refusals (section 4.4). The read does not count, so the unread period goes on. |
@@ -520,8 +522,9 @@ and khatru:
   with the URL of the relay.
 - `TestARingCommandActsOnOneRelay` (`cmd/arc`): with two relays that
   ring, `set`, `test`, `show` and `clear` with `--relay` touch the named
-  relay only. A named relay without `arc-rings`, and an `https` URL, fail
-  the command.
+  relay only. A named relay without `arc-rings` fails the command with no
+  "skipped" line, and an `https` URL fails it. `clear --relay ""` and
+  `clear --relay=` fail, and both registrations stay.
 - `TestALowDayTellsTheRingsLeft`: the text at 6, 5, 1 and 0 rings left of
   48, none on another day, and none for a `daily_cap` of 3 with no ring
   used. `TestAReadWithFewRingsLeftGetsANotice`: with `daily_cap` 2, a

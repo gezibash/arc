@@ -208,6 +208,21 @@ func TestARingCommandActsOnOneRelay(t *testing.T) {
 		t.Fatal("ring show found a registration after clear")
 	}
 
+	// A given but empty --relay, as from an unset variable in a script,
+	// must fail and touch no relay.
+	ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY")
+	for _, args := range [][]string{{"--relay", ""}, {"--relay="}} {
+		out, err := run(t, bob, "", append([]string{"relay", "ring", "clear"}, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "--relay needs a URL") {
+			t.Fatalf("ring clear %q: %v\n%s", args, err, out)
+		}
+	}
+	for _, relay := range []string{first, second} {
+		if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", relay); err != nil {
+			t.Fatalf("an empty --relay cleared %s: %v\n%s", relay, err, out)
+		}
+	}
+
 	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +231,7 @@ func TestARingCommandActsOnOneRelay(t *testing.T) {
 	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 	plainURL := "ws" + strings.TrimPrefix(plainServer.URL, "http")
-	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", plainURL); err == nil || !strings.Contains(err.Error(), plainURL+" offers no rings") {
+	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", plainURL); err == nil || !strings.Contains(err.Error(), plainURL+" offers no rings") || strings.Contains(out, "skipped") {
 		t.Fatalf("ring show --relay on a relay without rings: %v\n%s", err, out)
 	}
 	if _, err := run(t, bob, "", "relay", "ring", "show", "--relay", "https://example.com"); err == nil || !strings.Contains(err.Error(), "ws:// or wss://") {
