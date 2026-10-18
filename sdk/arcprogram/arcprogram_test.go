@@ -376,64 +376,74 @@ func TestACallEndsWhenArcEnds(t *testing.T) {
 }
 
 // On Linux, arc dies with the thread that starts it. A call holds that
-// thread until arc ends, so a call lives on while other threads end. Which
-// threads end is chance, so the test makes four calls.
+// thread until arc ends, so a call lives on while other threads end. With
+// one P, the call waits after the start of arc while new goroutines hold
+// their threads and return: the first runs on the thread of the call
+// unless the call holds it, and the end of that thread kills arc.
 func TestACallOutlivesTheEndOfOtherThreads(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("only Linux kills a child when the thread that started it ends")
 	}
 	ada, adaKey := citizen(t, "ada")
-	slow := wrapper(t, ada, "sleep 1")
-	for range 4 {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			for range 5 {
-				var wg sync.WaitGroup
-				for range 500 {
-					wg.Go(func() { runtime.LockOSThread() })
-				}
-				wg.Wait()
-				time.Sleep(100 * time.Millisecond)
-			}
-		}()
-		key, err := slow.PublicKey(context.Background())
-		<-done
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	defer arcprogram.SetStarted(func() {
+		// More than one goroutine, so that idle threads end too.
+		for range 16 {
+			ended := make(chan struct{})
+			go func() {
+				runtime.LockOSThread()
+				close(ended)
+			}()
+			<-ended
+		}
+	})()
+	// The first call of a process can miss, as the runtime starts its
+	// threads.
+	for range 3 {
+		key, err := ada.PublicKey(context.Background())
 		if err != nil || key != adaKey {
-			t.Fatalf("PublicKey gave %q, %v while other threads ended", key, err)
+			t.Fatalf("PublicKey gave %q, %v after another thread ended", key, err)
 		}
 	}
 }
 
-// A function of a watch that panics, and a caller that recovers, leave no
-// arc behind.
+// A function of a watch that panics, with a caller that recovers, or that
+// ends its goroutine with runtime.Goexit, as t.FailNow does, leaves no arc
+// behind.
 func TestAPanicInAWatchEndsItsArc(t *testing.T) {
-	ada, _ := citizen(t, "ada")
-	bob, bobKey := citizen(t, "bob")
-	notes := &lockedBuffer{}
-	ended := make(chan any, 1)
-	go func() {
-		defer func() { ended <- recover() }()
-		_ = bob.Watch(context.Background(), arcprogram.WatchOptions{Notes: notes}, func(arcprogram.Message) error {
-			panic("the function of the watch")
+	for _, how := range []string{"panic", "Goexit"} {
+		t.Run(how, func(t *testing.T) {
+			ada, _ := citizen(t, "ada")
+			bob, bobKey := citizen(t, "bob")
+			notes := &lockedBuffer{}
+			ended := make(chan any, 1)
+			go func() {
+				defer func() { ended <- recover() }()
+				_ = bob.Watch(context.Background(), arcprogram.WatchOptions{Notes: notes}, func(arcprogram.Message) error {
+					if how == "Goexit" {
+						runtime.Goexit()
+					}
+					panic("the function of the watch")
+				})
+			}()
+			if !arcprogramtest.WaitUntil(30*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
+				t.Fatalf("the watch did not start:\n%s", notes.String())
+			}
+			if _, err := ada.Send(context.Background(), []string{bobKey}, how); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case r := <-ended:
+				if (r == nil) != (how == "Goexit") {
+					t.Fatalf("the goroutine of the watch ended with %v", r)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the function of the watch did not end it")
+			}
+			if out, _ := exec.Command("pgrep", "-f", bob.Home+" message watch").Output(); len(out) > 0 {
+				t.Errorf("arc message watch runs on after a %s: %s", how, out)
+				_ = exec.Command("pkill", "-f", bob.Home+" message watch").Run()
+			}
 		})
-	}()
-	if !arcprogramtest.WaitUntil(30*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
-		t.Fatalf("the watch did not start:\n%s", notes.String())
-	}
-	if _, err := ada.Send(context.Background(), []string{bobKey}, "panic"); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case r := <-ended:
-		if r == nil {
-			t.Fatal("the panic did not reach the caller")
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("the watch did not panic")
-	}
-	if out, _ := exec.Command("pgrep", "-f", bob.Home+" message watch").Output(); len(out) > 0 {
-		t.Errorf("arc message watch runs on after the panic: %s", out)
-		_ = exec.Command("pkill", "-f", bob.Home+" message watch").Run()
 	}
 }

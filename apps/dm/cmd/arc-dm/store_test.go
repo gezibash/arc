@@ -13,6 +13,7 @@ import (
 
 	"github.com/gezibash/arc/apps/dm/cmd/arc-dm/internal/dmtest"
 	"github.com/gezibash/arc/sdk/arcprogram"
+	"github.com/gezibash/arc/sdk/arcprogram/arcprogramtest"
 )
 
 // The short id is six hex digits, and longer where two ids of this machine
@@ -84,6 +85,35 @@ func TestAddIsNotQuadratic(t *testing.T) {
 	}
 }
 
+// A flood of messages that a watch adds one at a time, each with its short
+// id, takes time that grows with their number, not its square.
+func TestALiveFloodIsLinear(t *testing.T) {
+	if g := growth(25000, func(n int) {
+		s := index(nil)
+		for _, e := range ids(n) {
+			s.add(e, conversation{})
+			s.short(e.ID)
+		}
+	}); g > 9 {
+		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
+	}
+}
+
+// At its end, the watch reads the outbox once for a reply that waits, so
+// a parent that this citizen sent shows in the quote.
+func TestTheEndOfAWatchReadsTheOutbox(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
+	w.take(msg(0, "peer", "yes", parent))
+	if len(*printed) != 0 {
+		t.Fatalf("the reply printed before a read: %q", *printed)
+	}
+	w.close()
+	if len(*printed) != 1 || quoted(*printed) != 1 || *reads != 1 {
+		t.Errorf("the end of the watch printed %q after %d reads, want the reply with its quote after 1", *printed, *reads)
+	}
+}
+
 // The index of 200,000 messages takes one sort, not an insert for each
 // id, whose time grows with the square of the number of messages.
 func TestIndexIsNotQuadratic(t *testing.T) {
@@ -138,7 +168,7 @@ func testWatcherWith(outbox ...arcprogram.Sent) (w *watcher, printed *[]string, 
 		messages: index(nil),
 		missed:   map[string]bool{},
 		bySender: map[string][]int{},
-		last:     time.Now(),
+		lastEnd:  time.Now(),
 		readOK:   true,
 	}
 	w.print = func(m arcprogram.Message, messages *store, quote bool) {
@@ -374,13 +404,14 @@ func TestAFailedReadMarksNothingMissed(t *testing.T) {
 		}
 		return read(ctx)
 	}
-	w.last = time.Now().Add(-refreshEvery)
 	w.take(msg(0, "peer", "peer 0", parent))
+	readNow(w)
 	if len(*printed) != 1 || (*printed)[0] != "peer 0 (plain)" || len(w.messages.shown) != 0 {
 		t.Fatalf("after a failed read the watch printed %q and showed %d ids as missing", *printed, len(w.messages.shown))
 	}
 	fail = false
 	*sent = append(*sent, sentParent(parent, "bring the map"))
+	readNow(w) // a read that works
 	w.take(msg(1, "peer", "peer 1", parent))
 	w.close()
 	if last := (*printed)[len(*printed)-1]; last != "peer 1 \u21b3 ababab  you: bring the map" {
@@ -433,13 +464,19 @@ func TestAnEarlyReplyMarksNoParentMissed(t *testing.T) {
 func TestAnOverflowReadsAnOldOutbox(t *testing.T) {
 	parent := strings.Repeat("ab", 32)
 	w, printed, reads := testWatcher(sentParent(parent, "bring the map"))
-	w.last = time.Now().Add(-2 * overflowRead)
+	w.lastEnd = time.Now().Add(-2 * overflowRead)
 	defer w.close()
 	for i := range maxWaiting {
 		who := fmt.Sprint("s", i%16)
 		w.take(msg(i, who, fmt.Sprintf("%s %d", who, i), parent))
 	}
-	if *reads != 1 || quoted(*printed) != maxWaiting {
+	if !arcprogramtest.WaitUntil(overflowRead, func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return quoted(*printed) == maxWaiting
+	}) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
 		t.Errorf("after %d reads, %d of %d replies are quoted", *reads, quoted(*printed), maxWaiting)
 	}
 }
@@ -536,9 +573,9 @@ func TestAfterAFailedReadNothingShowsAsMissing(t *testing.T) {
 	parent := strings.Repeat("ab", 32)
 	w, printed, _ := testWatcher()
 	w.outbox = func(context.Context) ([]arcprogram.Sent, error) { return nil, errors.New("arc failed") }
-	w.last = time.Now().Add(-refreshEvery)
 	defer w.close()
 	w.take(msg(0, "peer", "peer 0", parent))
+	readNow(w)
 	for i := range maxHeldPerSender + 6 {
 		w.take(msg(i+1, "mallory", fmt.Sprintf("mallory %d", i), parent))
 	}
@@ -549,8 +586,8 @@ func TestAfterAFailedReadNothingShowsAsMissing(t *testing.T) {
 			t.Errorf("after a failed read the watch printed %q", line)
 		}
 	}
-	if len(*printed) != 7 || len(w.messages.shown) != 0 {
-		t.Errorf("the watch printed %d messages and showed %d ids as missing, want 7 and none", len(*printed), len(w.messages.shown))
+	if want := maxHeldPerSender + 7; len(*printed) != want || len(w.messages.shown) != 0 {
+		t.Errorf("the watch printed %d messages and showed %d ids as missing, want %d and none", len(*printed), len(w.messages.shown), want)
 	}
 }
 
@@ -560,4 +597,110 @@ func TestDmtestKeepsTheTimesOfTheWatch(t *testing.T) {
 	if dmtest.RefreshEvery != refreshEvery || dmtest.ReadTimeout != readTimeout {
 		t.Errorf("dmtest has %v and %v, want %v and %v as in main.go", dmtest.RefreshEvery, dmtest.ReadTimeout, refreshEvery, readTimeout)
 	}
+}
+
+// readNow reads the outbox, as the timer does.
+func readNow(w *watcher) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.readAndFlush(context.Background())
+}
+
+// After a failed read, a reply shows at once with no quote line; after a
+// read that works, replies wait for reads again, and a sender over its
+// quota shows its oldest as "(not on this device)", as before the failure.
+func TestReadsRecoverAfterAFailure(t *testing.T) {
+	parent := strings.Repeat("ab", 32)
+	w, printed, _ := testWatcher()
+	read := w.outbox
+	fail := true
+	w.outbox = func(ctx context.Context) ([]arcprogram.Sent, error) {
+		if fail {
+			return nil, errors.New("arc failed")
+		}
+		return read(ctx)
+	}
+	defer w.close()
+	w.take(msg(0, "peer", "peer 0", parent))
+	readNow(w)
+	w.take(msg(1, "peer", "peer 1", parent))
+	if len(*printed) != 2 || (*printed)[1] != "peer 1 (plain)" {
+		t.Fatalf("after a failed read the watch printed %q, want the reply at once with no quote", *printed)
+	}
+	fail = false
+	readNow(w)
+	for i := range maxHeldPerSender + 6 {
+		w.take(msg(i+2, "mallory", fmt.Sprintf("mallory %d", i), parent))
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	early := (*printed)[2:]
+	if len(early) != 6 || !strings.HasSuffix(early[0], "(not on this device)") {
+		t.Errorf("after reads work again the watch printed %q early, want the 6 oldest of mallory as not on this device", early)
+	}
+}
+
+// The watch waits refreshEvery from the end of a read, not from its start:
+// with an outbox that takes 2 s and fails, the next read starts at least
+// 5 s after the last one ended.
+func TestReadsBackOffFromTheEndOfTheLastRead(t *testing.T) {
+	w, _, _ := testWatcher()
+	starts, ends := make(chan time.Time, 4), make(chan time.Time, 4)
+	w.outbox = func(context.Context) ([]arcprogram.Sent, error) {
+		starts <- time.Now()
+		time.Sleep(2 * time.Second)
+		ends <- time.Now()
+		return nil, errors.New("arc failed")
+	}
+	defer w.close()
+	parent := strings.Repeat("ab", 32)
+	w.take(msg(0, "peer", "peer 0", parent))
+	<-starts
+	ended := <-ends
+	time.Sleep(100 * time.Millisecond)
+	w.take(msg(1, "peer", "peer 1", parent))
+	select {
+	case next := <-starts:
+		if gap := next.Sub(ended); gap < refreshEvery-100*time.Millisecond {
+			t.Errorf("the next read started %v after the last one ended, want %v", gap, refreshEvery)
+		}
+	case <-time.After(2 * refreshEvery):
+		t.Error("no read came after a reply while reads fail")
+	}
+}
+
+// Only the timer reads the outbox, and without the lock of the watch: while
+// a read hangs, each take returns at once.
+func TestTakeNeverReads(t *testing.T) {
+	w, _, _ := testWatcher()
+	w.lastEnd = time.Now().Add(-time.Hour)
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	w.outbox = func(ctx context.Context) ([]arcprogram.Sent, error) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil, nil
+	}
+	parent := strings.Repeat("7a", 32)
+	took := make(chan struct{})
+	go func() {
+		w.take(msg(0, "peer", "peer 0", parent))
+		<-started
+		for i := range 3 {
+			w.take(msg(i+1, "peer", fmt.Sprintf("peer %d", i+1), parent))
+		}
+		close(took)
+	}()
+	select {
+	case <-took:
+	case <-time.After(5 * time.Second):
+		t.Error("take waited on a read of the outbox")
+	}
+	close(release)
+	w.close()
 }

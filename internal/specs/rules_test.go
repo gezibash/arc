@@ -53,6 +53,7 @@ func TestASpecThatBreaksARuleHasThatProblem(t *testing.T) {
 		"owns core, says runtime": {document(head("Owns: none", "Owns: core/keys")), "the spec owns core/keys, so Layers must list core"},
 		"owns nothing real":       {document(head("Owns: none", "Owns: core/nothing")), "Owns names core/nothing, which is not a package"},
 		"proof names no test":     {document(head("TestProof$", "TestNope$")), "the proof matches no test"},
+		"proof names a lost test": {document(head("^TestProof$", "^(TestProof|TestGone)$")), "the proof names TestGone, which is no test"},
 		"proof is not go test":    {document(head("go test -count=1 -run '^TestProof$' ./pkg/a/", "make test")), "the proof must be one go test command"},
 		"proposed":                {document(head("Status: built", "Status: proposed")), "a proposed document lives under docs/proposals/"},
 		"no status":               {document(head("- Status: built\n", "")), `Status is ""`},

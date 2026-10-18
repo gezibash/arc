@@ -214,12 +214,13 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("arc message watch: %w", a.missing(err))
 	}
+	// fn can panic, or end its goroutine with runtime.Goexit, as t.FailNow
+	// does, and its caller go on: arc must not run on.
+	waited := false
 	defer func() {
-		// fn can panic, and its caller recover: arc must not run on.
-		if r := recover(); r != nil {
+		if !waited {
 			_ = command.Process.Kill()
 			_ = command.Wait()
-			panic(r)
 		}
 	}()
 
@@ -249,14 +250,15 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 		_ = command.Process.Signal(os.Interrupt)
 		_, _ = io.Copy(io.Discard, out)
 	}
-	waited := command.Wait()
+	result := command.Wait()
+	waited = true
 	switch {
 	case failed != nil:
 		return failed
 	case ctx.Err() != nil:
 		return nil
-	case waited != nil:
-		return fmt.Errorf("arc message watch: %s", problems.reason(waited))
+	case result != nil:
+		return fmt.Errorf("arc message watch: %s", problems.reason(result))
 	default:
 		return errors.New("arc message watch stopped")
 	}
@@ -286,10 +288,16 @@ func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byt
 	command.Stdin = stdin
 	problems := &tail{}
 	command.Stderr = problems
+	var out bytes.Buffer
+	command.Stdout = &out
 	// On Linux, arc dies with the thread that starts it (see prepare), so
 	// that thread stays held until arc ends.
 	runtime.LockOSThread()
-	out, err := command.Output()
+	err := command.Start()
+	if err == nil {
+		started()
+		err = command.Wait()
+	}
 	runtime.UnlockOSThread()
 	if errors.Is(err, exec.ErrWaitDelay) {
 		// arc ended well; a child of it held the output open.
@@ -301,8 +309,12 @@ func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("arc %s: %s", strings.Join(args[:min(2, len(args))], " "), problems.reason(err))
 	}
-	return out, nil
+	return out.Bytes(), nil
 }
+
+// started runs between the start of arc and the wait for it. A test sets it
+// to end other threads at that point.
+var started = func() {}
 
 // ErrNoArc is the error when the arc program cannot be found.
 var ErrNoArc = errors.New("the arc program is not installed")
