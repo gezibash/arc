@@ -107,21 +107,26 @@ A reply shows a quote line between its header and its text:
   because a sender can name many ids. The reply, and each message after
   it, waits for that read, at most 5 s, so the order stays and the quote
   is not lost. A waiting reply shows without its quote only after a read
-  that came after it, with two exceptions. A sender that holds more than
-  64 messages shows its oldest at once. Past 256 waiting replies, or 4,096
-  held messages, the watch reads the outbox, unless it read it less than a
-  second ago; then the sender that holds the most shows its oldest, until
-  the watch is under the caps. A sender that holds one or two messages
-  never shows early. The messages of one sender always show in their
-  order; a heavy sender's oldest can show ahead of the messages of others.
-  When the watch ends, it reads the outbox once more for a reply that
-  waits; a second interrupt ends that read, and the watch shows each held
-  message as it is, and drops none.
+  that came after it, with one exception: a sender that holds more than
+  64 messages shows its oldest at once. Past 256 waiting replies, the
+  watch reads the outbox at once, or a second after its last read. Past
+  4,096 held messages, it shows early only plain messages that lead the
+  held messages of their sender, and else waits for that read. The
+  messages of one sender always show in their order; a sender's messages
+  can show ahead of the messages of others.
+  When the watch ends, on an interrupt, SIGTERM or a hangup of its
+  terminal, it reads the outbox once more for a reply that waits; a
+  second signal ends that read, and the watch shows each held message as
+  it is, and drops none. arc-dm ends each arc that it runs. On Linux, an
+  arc-dm that is killed takes its arc with it; on macOS such an arc runs
+  on, and can hold the database of its home until it ends.
 - The id of a parent that is not on this device shows 12 digits, so a
   message that arrives later with the same first 6 digits does not take
-  it. A sender who spends about 8 GPU-hours can make a message whose id
-  starts with the same 12 digits as another; `arc-dm reply` then refuses
-  the id as one that names two messages.
+  it. A sender can still aim the id: it can name, as the parent, an id
+  that starts with the same 12 digits as a message that it sends later.
+  So arc-dm remembers each id that it showed as missing, and
+  `arc-dm reply` refuses a short id that starts one of them: give the
+  full id.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer

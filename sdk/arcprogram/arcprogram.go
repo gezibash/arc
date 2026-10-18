@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -193,8 +195,8 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 		args = append(args, "--since", opts.Since)
 	}
 	command := a.Command(ctx, args...)
-	inGroup(command)
-	command.Cancel = func() error { return interrupt(command) }
+	prepare(command)
+	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 	command.WaitDelay = 5 * time.Second
 	problems := &tail{}
 	command.Stderr = problems
@@ -205,7 +207,7 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	if err != nil {
 		return err
 	}
-	if err := command.Start(); err != nil {
+	if err := start(command); err != nil {
 		return fmt.Errorf("arc message watch: %w", a.missing(err))
 	}
 
@@ -232,7 +234,7 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 		failed = scanner.Err()
 	}
 	if failed != nil {
-		_ = interrupt(command)
+		_ = command.Process.Signal(os.Interrupt)
 		_, _ = io.Copy(io.Discard, out)
 	}
 	waited := command.Wait()
@@ -246,6 +248,14 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	default:
 		return errors.New("arc message watch stopped")
 	}
+}
+
+// start starts a command on a held thread: on Linux, arc dies with the
+// thread that started it (see prepare).
+func start(command *exec.Cmd) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	return command.Start()
 }
 
 // IsKey says whether text is a public key: 64 lowercase hex digits.
@@ -265,13 +275,16 @@ func IsKey(text string) bool {
 // holds what arc wrote on standard error.
 func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	command := a.Command(ctx, args...)
-	// At the end of ctx, the whole process group of arc ends: an arc that
-	// a wrapper runs, or a child of arc, does not stay behind, hung.
-	inGroup(command)
+	prepare(command)
+	// A child of arc that holds the output open does not hold the call
+	// after arc ends.
+	command.WaitDelay = time.Second
 	command.Stdin = stdin
 	problems := &tail{}
 	command.Stderr = problems
+	runtime.LockOSThread()
 	out, err := command.Output()
+	runtime.UnlockOSThread()
 	if errors.Is(err, exec.ErrNotFound) {
 		return nil, fmt.Errorf("arc %s: %w", strings.Join(args[:min(2, len(args))], " "), a.missing(err))
 	}
