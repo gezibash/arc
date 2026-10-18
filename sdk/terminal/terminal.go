@@ -99,15 +99,19 @@ func EscapeLineFit(text string, columns int) string {
 const MaxRunesPerColumn = 3
 
 // Width is the number of columns that a terminal gives text, one cluster
-// at a time. A cluster is a character with its marks, its variation
-// selectors and its skin tone, or characters joined by U+200D, or a pair
-// of regional indicators (a flag). A cluster takes two columns when it is
+// at a time. A cluster is a character with its marks and its variation
+// selectors, an emoji with one skin tone, pictographs joined by U+200D, or
+// a pair of regional indicators (a flag). A cluster takes two columns when it is
 // a flag or a lone regional indicator, when it holds the emoji selector
 // U+FE0F, or when its first character is wide or fullwidth by East Asian
 // Width, such as a CJK ideograph or most emoji. A cluster whose first
 // character is a mark or a format character takes none, and each other
-// cluster one. Each spacing mark (class Mc) adds one. Width can count more
-// columns than a terminal shows, and not fewer.
+// cluster one. Each spacing mark (class Mc) adds one.
+//
+// Width is meant to count no fewer columns than a terminal shows, so that
+// a line cut to fit does fit. Terminals differ, and Width does not know
+// each sequence of Unicode: it is checked for the cases of TestWidth, not
+// proven for all text.
 func Width(text string) int {
 	var pieces []piece
 	for i, r := range text {
@@ -163,6 +167,9 @@ func clusters(pieces []piece) []cluster {
 	flags := 0        // the regional indicators of the open cluster
 	for _, p := range pieces {
 		joins := p.shown && last >= 0 && (extends(p.r) ||
+			// A skin tone belongs to an emoji, once. After a letter, or
+			// after another skin tone, it is an emoji of its own.
+			(tone(p.r) && pictograph(first) && !tone(last)) ||
 			(last == '\u200d' && pictograph(first) && pictograph(p.r)) ||
 			(regional(p.r) && flags == 1))
 		if joins {
@@ -183,12 +190,14 @@ func clusters(pieces []piece) []cluster {
 }
 
 // extends reports a character that belongs to the cluster before it: a
-// mark, the joiner U+200D, a variation selector, or a skin tone.
+// mark, the joiner U+200D, or a variation selector.
 func extends(r rune) bool {
 	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc) || r == '\u200d' ||
-		(r >= '\ufe00' && r <= '\ufe0f') || (r >= '\U000e0100' && r <= '\U000e01ef') ||
-		(r >= '\U0001f3fb' && r <= '\U0001f3ff')
+		(r >= '\ufe00' && r <= '\ufe0f') || (r >= '\U000e0100' && r <= '\U000e01ef')
 }
+
+// tone reports a skin tone modifier.
+func tone(r rune) bool { return r >= '\U0001f3fb' && r <= '\U0001f3ff' }
 
 func regional(r rune) bool { return r >= '\U0001f1e6' && r <= '\U0001f1ff' }
 

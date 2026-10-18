@@ -212,6 +212,9 @@ func TestWidth(t *testing.T) {
 		{"\U0001f1fa", 2},                                 // a lone regional indicator
 		{"\u0915\u093f", 2},                               // Devanagari ka and the spacing vowel sign i
 		{"a" + strings.Repeat("\u0301", 300), 1},          // marks take no column
+		{strings.Repeat("\U0001f3fb", 215), 430},          // skin tones alone
+		{"a\U0001f3fb", 3},                                // a skin tone after a letter
+		{"\U0001f44d\U0001f3fd\U0001f3fd", 4},             // a second skin tone
 		{"\u2026", 1},                                     // the ellipsis
 		{`\u200b`, 6},                                     // an escape
 	} {
