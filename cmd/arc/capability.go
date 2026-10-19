@@ -283,6 +283,11 @@ func serve(command *cobra.Command, args []string) error {
 					log.Info("answered store-and-forward calls", "transport", t.Name(), "calls", report.Answered)
 				}
 			}
+			if sent, err := sess.Mail.Forward(ctx); err != nil {
+				log.Warn("the waiting messages were not sent to the relays of their recipients", "error", err)
+			} else if sent > 0 {
+				log.Info("sent waiting messages to relays that their recipients read", "wraps", sent)
+			}
 			// A watched relay needs only a flush. It sends nothing when the
 			// relay holds each wrap, so an idle provider stays quiet.
 			for _, r := range watched {
