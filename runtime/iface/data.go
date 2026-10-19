@@ -383,6 +383,16 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The store saves the parts first. A draft that it then refuses would
+	// leave parts that nothing names, so check its size before any save.
+	if size := max(len(wrap.Content), len(checkpoint.Content)); size > draft.MaxContent {
+		total := len(head) + len(keep)*draft.PartSize
+		for _, text := range rest {
+			total += len(text)
+		}
+		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft of %d bytes names %d parts, and the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
+			float64(total)/1e6, size, len(ids), draft.MaxContent)
+	}
 	if err := r.env.Publish(r.ctx, append(events, wrap, checkpoint), nil); err != nil {
 		return nil, err
 	}
@@ -392,6 +402,49 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		return nil, err
 	}
 	return []*entry{entryOf(opened, p.Kind)}, nil
+}
+
+// removeUnnamed deletes parts and checkpoints that no draft names, such as
+// the parts of a write whose draft the store refused. The request names
+// each event, and not the coordinate, so a blank draft of the address
+// stays, and NIP-37 still reads the page as deleted.
+func (r *run) removeUnnamed(coordinate string, events []nostr.Event) error {
+	if r.flags.DryRun {
+		return r.dryRun(map[string]any{"delete": coordinate, "events": len(events)})
+	}
+	k, err := r.env.Sealer(r.ctx, r.in.Manifest.ID)
+	if err != nil {
+		return err
+	}
+	var tags nostr.Tags
+	for _, event := range events {
+		tags = append(tags, nostr.Tag{"e", event.ID.Hex()})
+	}
+	for _, kind := range []nostr.Kind{draft.CheckpointKind, draft.PartKind} {
+		tags = append(tags, nostr.Tag{"k", strconv.Itoa(int(kind))})
+	}
+	request, err := k.Deletion(r.ctx, tags, nostr.Now())
+	if err != nil {
+		return err
+	}
+	if err := r.env.Publish(r.ctx, []nostr.Event{request}, nil); err != nil {
+		return err
+	}
+	parts := 0
+	for _, event := range events {
+		if event.Kind == draft.PartKind {
+			parts++
+		}
+	}
+	count := func(n int, one string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return strconv.Itoa(n) + " " + one + "s"
+	}
+	fmt.Fprintf(r.stdio.Err, "removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n",
+		count(parts, "part"), count(len(events)-parts, "checkpoint"))
+	return nil
 }
 
 // mergeTags keeps the old tags, and replaces each one that a new tag of the
@@ -466,12 +519,15 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(wraps) == 0 || wraps[0].Content == "" {
-		return nil, fmt.Errorf("there is nothing to delete")
-	}
 	history, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.CheckpointKind, draft.PartKind}, nostr.TagMap{"a": {coordinate}}))
 	if err != nil {
 		return nil, err
+	}
+	if len(wraps) == 0 || wraps[0].Content == "" {
+		if len(history) == 0 {
+			return nil, fmt.Errorf("there is nothing to delete")
+		}
+		return nil, r.removeUnnamed(coordinate, history)
 	}
 
 	if r.flags.DryRun {

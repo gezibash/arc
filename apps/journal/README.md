@@ -31,6 +31,10 @@ configured delivery paths.
 ## Write and read a page
 
 Addresses are `project/notebook/page`. Page numbers are positive ordinals.
+A page holds at most about 3 MB: the store keeps at most 65,535 bytes in the
+draft of a page, which holds its first 32 KiB and the list of its other
+parts. A larger page is refused before arc keeps any of it, with its size;
+split it into several pages.
 Required front matter names the title, notebook and page. ARC supplies UTC
 `created_at` and `updated_at` values and retains the original creation time.
 
