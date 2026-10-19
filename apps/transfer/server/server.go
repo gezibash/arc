@@ -166,7 +166,7 @@ func (s *server) fetch(from string, req files.Fetch) (string, error) {
 					}
 				case reason := <-refused:
 					fmt.Fprintf(s.log, "%s: the receiver refused the bytes: %s\n", label, terminal.EscapeLine(strings.TrimPrefix(reason, "refused: ")))
-				case <-time.After(confirmWait()):
+				case <-time.After(confirmWait(s.state)):
 					fmt.Fprintf(s.log, "%s: the receiver did not confirm\n", label)
 				}
 			}()
@@ -231,6 +231,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 				return
 			}
 			// The caller closes the connection when it has the answer.
+			beforePutFinish(s.state)
 			if err := part.Finish(); err != nil {
 				fmt.Fprintf(s.log, "%s: %s\n", label, terminal.EscapeLine(err.Error()))
 				_ = dc.SendText(files.Refusal(err))

@@ -31,6 +31,7 @@ var env struct {
 	relay                   string // the URL of the relay
 	senderKey, receiverKey  string
 	strangerKey             string
+	served                  *output // the log of the app of the sender
 }
 
 // output collects what a background process prints.
@@ -128,8 +129,9 @@ func setup(m *testing.M) int {
 	// The app of the sender. The two ends are on one machine, so they use
 	// the loopback address and no STUN server.
 	serve := exec.Command(env.arc, "--home", env.sender, "serve", app)
-	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1", "TRANSFER_PUT_MAX_MIB=4", "TRANSFER_TEST_CONFIRM_WAIT=5s")
-	served := &output{}
+	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1", "TRANSFER_PUT_MAX_MIB=4")
+	env.served = &output{}
+	served := env.served
 	serve.Stdout, serve.Stderr = served, served
 	if err := serve.Start(); err != nil {
 		return fail("arc serve: %v", err)
@@ -326,28 +328,93 @@ func TestBytesThatFailTheCheckAreNoDelivery(t *testing.T) {
 	}
 }
 
+// shortConfirmWait makes the sender wait d for ok, for this test only.
+func shortConfirmWait(t *testing.T, d string) {
+	t.Helper()
+	path := filepath.Join(env.state, "arctest-confirm-wait")
+	if err := os.MkdirAll(env.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(d), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+// The short wait of a test is that test's only: in another test the sender
+// waits its 30 s, so a check of 6 s still gets its ok to the sender.
+func TestTheSenderWaitsItsFullTimeForOK(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	sum := sha256.Sum256(data)
+	label := fmt.Sprintf("%.12s to %.8s", hex.EncodeToString(sum[:]), env.receiverKey)
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "6s")
+	if log, err := fetch(env.receiver, link, filepath.Join(t.TempDir(), "got.bin")); err != nil {
+		t.Fatalf("get: %v\n%s", err, log)
+	}
+	want := fmt.Sprintf("%s: %d bytes in", label, len(data))
+	if !waitUntil(3*time.Second, func() bool { return strings.Contains(env.served.String(), want) }) {
+		t.Fatalf("the sender did not get the ok of a 6 s check; its log:\n%s", env.served.String())
+	}
+}
+
+// A local error at the receiver, such as a directory that it cannot write,
+// is no refusal of the bytes: the get says that the file could not be kept.
+func TestALocalErrorIsNoRefusalOfTheBytes(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	dir := t.TempDir()
+	output := filepath.Join(dir, "got.bin")
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "3s")
+	type got struct {
+		log string
+		err error
+	}
+	done := make(chan got, 1)
+	go func() {
+		log, err := fetch(env.receiver, link, output)
+		done <- got{log, err}
+	}()
+	if !waitUntil(10*time.Second, func() bool {
+		info, err := os.Stat(output + ".part")
+		return err == nil && info.Size() == int64(len(data))
+	}) {
+		t.Fatal("the part file did not fill")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	r := <-done
+	if r.err == nil || !strings.Contains(r.log, "the file could not be kept") || strings.Contains(r.log, "refused") {
+		t.Fatalf("a get that could not write its file gave %v:\n%s", r.err, r.log)
+	}
+}
+
 // A receiver whose check of the bytes takes longer than the sender waits
 // for ok, as on a slow disk, still ends its get well: once end arrives,
-// only the check decides. The sender records no delivery, and a second get
-// confirms it. The sender of these tests waits 5 s.
+// only the check decides. The sender has closed by then, so the receiver
+// tells it again by itself, and the sender records the delivery. The sender
+// waits 5 s here.
 func TestASlowCheckStillEndsTheGetWell(t *testing.T) {
+	shortConfirmWait(t, "5s")
 	data := random(t, 1<<20)
 	_, link := offered(t, data)
 	sum := sha256.Sum256(data)
 	output := filepath.Join(t.TempDir(), "got.bin")
 	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "7s")
-	if log, err := fetch(env.receiver, link, output); err != nil {
+	log, err := fetch(env.receiver, link, output)
+	if err != nil {
 		t.Fatalf("a get with a slow check failed: %v\n%s", err, log)
+	}
+	if !strings.Contains(log, "telling it that the file arrived") {
+		t.Errorf("the get did not tell the sender again:\n%s", log)
 	}
 	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("the file is not the file of the sender (%v)", err)
 	}
-	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "")
-	if log, err := fetch(env.receiver, link, output); err != nil {
-		t.Fatalf("a second get to confirm: %v\n%s", err, log)
-	}
 	if !delivered(hex.EncodeToString(sum[:])) {
-		t.Fatal("the second get did not confirm the delivery")
+		t.Fatal("the sender recorded no delivery: the receiver did not tell it again")
 	}
 }
 
@@ -636,6 +703,29 @@ func give(home, file string) (link, log string, err error) {
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err = command.Run()
 	return strings.TrimSpace(stdout.String()), stderr.String(), err
+}
+
+// The app puts a file on its disk before it says ok, so a put waits longer
+// for a larger file: here 2 s and 1 s for each MiB, against a check of
+// 3.5 s for 3 MiB. A wait that does not grow gives up after 2 s.
+func TestAPutWaitsLongerForALargerFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.bin")
+	if err := os.WriteFile(path, random(t, 3<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	delay := filepath.Join(env.state, "arctest-put-finish-delay")
+	if err := os.MkdirAll(env.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(delay, []byte("3500ms"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(delay) })
+	t.Setenv("TRANSFER_TEST_CONFIRM_BASE", "2s")
+	t.Setenv("TRANSFER_TEST_CONFIRM_RATE", fmt.Sprint(1<<20))
+	if _, log, err := give(env.receiver, path); err != nil {
+		t.Fatalf("a put whose check took 3.5 s failed: %v\n%s", err, log)
+	}
 }
 
 // A phone gives a photo to the app of an agent, and sends the link in a

@@ -21,6 +21,7 @@ import (
 	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/direct"
+	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -76,6 +77,8 @@ type getter struct {
 	sender string
 	offer  files.Offer
 	part   *files.Part
+	// unconfirmed says that the sender closed before this end said ok.
+	unconfirmed atomic.Bool
 }
 
 // Run gets the file. It writes <output>.part, and renames it when the
@@ -106,14 +109,7 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		// The file is here and whole. The ok of an earlier get can have
 		// been lost, so tell the sender again: it sends no bytes.
 		fmt.Fprintf(g.Notes, "%s is there already; telling the sender that it arrived\n", g.Output)
-		run := &getter{Get: g, sender: sender, offer: offer}
-		err = direct.Attempts{
-			Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: turn(g.Arc), Notes: g.Notes,
-			Need: func() int64 { return 0 },
-		}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
-			result.Path, err = run.attempt(ctx, options, hold)
-			return err
-		})
+		result.Path, err = g.confirm(ctx, sender, offer)
 		result.Output, result.Confirmed = g.Output, err == nil
 		return result, err
 	}
@@ -147,7 +143,7 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		part.Discard()
 		return result, fmt.Errorf("%w; the part file is removed", err)
 	}
-	if errors.Is(err, errRefused) {
+	if errors.Is(err, errRefused) || errors.Is(err, errNotKept) {
 		return result, err
 	}
 	if err != nil {
@@ -157,7 +153,29 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		return result, err
 	}
 	result.Output, result.Bytes, result.Elapsed = g.Output, part.Have()-resumed, time.Since(started)
+	if run.unconfirmed.Load() {
+		// The sender closed before this end could say ok, as when a slow
+		// disk makes the check long: tell it once more, with no bytes.
+		fmt.Fprintln(g.Notes, "the sender stopped waiting for the check; telling it that the file arrived")
+		if _, err := g.confirm(ctx, sender, offer); err != nil {
+			fmt.Fprintln(g.Notes, "the sender was not told:", terminal.EscapeLine(err.Error()))
+		}
+	}
 	return result, nil
+}
+
+// confirm tells the sender that the whole file is here: a transfer from the
+// offset of the size, with no bytes.
+func (g Get) confirm(ctx context.Context, sender string, offer files.Offer) (path string, err error) {
+	run := &getter{Get: g, sender: sender, offer: offer}
+	err = direct.Attempts{
+		Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: turn(g.Arc), Notes: g.Notes,
+		Need: func() int64 { return 0 },
+	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
+		path, err = run.attempt(ctx, options, hold)
+		return err
+	})
+	return path, err
 }
 
 // takePushed moves a file that the sender gave with a put to output. It
@@ -195,8 +213,12 @@ func takePushed(file string, size int64, output string) (bool, error) {
 	return true, os.Remove(file)
 }
 
-// errRefused marks bytes that failed the check of size and SHA-256.
-var errRefused = errors.New("the bytes are refused")
+// errRefused marks bytes that failed the check of size and SHA-256, and
+// errNotKept a file that this end could not keep, such as on a full disk.
+var (
+	errRefused = errors.New("the bytes are refused")
+	errNotKept = errors.New("the file could not be kept")
+)
 
 // offset is where the sender starts: after the bytes of the part file, or
 // at the end when the file is here and only needs confirming.
@@ -227,7 +249,7 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 	finish := func(err error) { once.Do(func() { result <- err }) }
 	// Once end arrives, only the check of the bytes decides the get: a
 	// sender that gives up waiting for ok closes the connection then.
-	var ending atomic.Bool
+	var ending, gone atomic.Bool
 	dc.OnOpen(func() { close(opened) })
 	dc.OnClose(func() { close(closed) })
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
@@ -244,16 +266,27 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 			if g.part != nil {
 				beforeFinish()
 				if err := g.part.Finish(); err != nil {
-					finish(fmt.Errorf("%w: %w", errRefused, err))
+					switch {
+					case errors.Is(err, files.ErrWrongBytes):
+						finish(fmt.Errorf("%w: %w", errRefused, err))
+					case errors.Is(err, files.ErrEarlyEnd):
+						finish(err)
+					default:
+						// The bytes can be right: this end could not keep them.
+						finish(fmt.Errorf("%w: %w", errNotKept, err))
+					}
 					_ = dc.SendText("refused: " + files.Refusal(err))
 					return
 				}
 			}
-			finish(nil)
-			if !dropOK() {
-				_ = dc.SendText("ok")
+			// A sender that gave up waiting has closed: then the ok does
+			// not go, and the get tells the sender again at its end. An
+			// ok that a test drops counts as sent, as a lost one does.
+			if !dropOK() && (gone.Load() || dc.SendText("ok") != nil) {
+				g.unconfirmed.Store(true)
 			}
 			afterOK()
+			finish(nil)
 			return
 		}
 		if g.part == nil {
@@ -265,8 +298,11 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 		}
 	})
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		if (state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed) && !ending.Load() {
-			finish(errors.New("the connection ended before the end of the file"))
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+			gone.Store(true)
+			if !ending.Load() {
+				finish(errors.New("the connection ended before the end of the file"))
+			}
 		}
 	})
 
@@ -493,7 +529,7 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 		if text != "ok" {
 			return path, 0, fmt.Errorf("the receiver refused the file: %s", text)
 		}
-	case <-time.After(30 * time.Second):
+	case <-time.After(putConfirmWait(offer.Size)):
 		return path, 0, errors.New("the receiver did not confirm the file")
 	case <-ctx.Done():
 		return path, 0, ctx.Err()
