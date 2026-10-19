@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync/atomic"
 
 	"github.com/gezibash/arc/sdk/direct"
@@ -117,7 +116,7 @@ func (p *Part) Write(b []byte) error {
 // part file. An early end keeps the part file, so that the next transfer
 // takes only the rest; all the bytes with a wrong SHA-256 remove it.
 func (p *Part) Finish() error {
-	if err := p.file.Sync(); err != nil {
+	if err := fileSync(p.file); err != nil {
 		_ = p.file.Close()
 		return err
 	}
@@ -134,49 +133,10 @@ func (p *Part) Finish() error {
 	if err := os.Rename(p.path+".part", p.path); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(p.path))
-}
-
-// syncDir puts a rename in dir on the disk. Windows cannot sync a
-// directory, and its rename needs none.
-func syncDir(dir string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-	return d.Sync()
-}
-
-// WriteFile replaces path with data in one step: a reader sees the old or
-// the new file, and the new file is on the disk before the rename.
-func WriteFile(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Chmod(mode)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	return syncDir(dir)
+	// The file is in place: a directory that cannot be synced does not
+	// undo that, so it is no refusal.
+	_ = dirSync(filepath.Dir(p.path))
+	return nil
 }
 
 // Close keeps the part file, so that a later transfer gets only the rest.

@@ -108,6 +108,10 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		// The file is here and whole. The ok of an earlier get can have
 		// been lost, so tell the sender again: it sends no bytes.
 		fmt.Fprintf(g.Notes, "%s is there already; telling the sender that it arrived\n", g.Output)
+		// A part file next to the whole file is left from an earlier get.
+		if err := os.Remove(g.Output + ".part"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(g.Notes, "%s.part is left from an earlier get, and could not be removed\n", g.Output)
+		}
 		result.Path, err = g.confirm(ctx, sender, offer)
 		result.Output, result.Confirmed = g.Output, err == nil
 		return result, err
@@ -185,31 +189,9 @@ func takePushed(file string, size int64, output string) (bool, error) {
 	if err != nil || info.Size() != size {
 		return false, nil
 	}
-	if os.Rename(file, output) == nil {
-		return true, nil
-	}
-	// The state directory can be on another file system than the output.
-	in, err := os.Open(file)
-	if err != nil {
-		return true, err
-	}
-	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(output+".part", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return true, err
-	}
-	_, err = io.Copy(out, in)
-	if closeErr := out.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(output+".part", output)
-	}
-	if err != nil {
-		_ = os.Remove(output + ".part")
-		return true, err
-	}
-	return true, os.Remove(file)
+	// The bytes and the name are on the disk before the file counts as
+	// taken.
+	return true, files.MoveFile(file, output)
 }
 
 // errRefused marks bytes that failed the check of size and SHA-256, and

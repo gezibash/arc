@@ -197,7 +197,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 		return "", errBusy
 	}
 	var part *files.Part
-	err := os.MkdirAll(filepath.Dir(file), 0o700)
+	err := files.MkdirSynced(filepath.Dir(file))
 	if err == nil {
 		part, err = files.OpenPart(file, req.SHA256, req.Size)
 	}
