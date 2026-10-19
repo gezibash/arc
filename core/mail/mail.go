@@ -85,7 +85,29 @@ type Outgoing struct {
 	// ReplyTo is the parent of a message that replies to one, from the
 	// sender's own seal. It is not stored.
 	ReplyTo string `json:"-"`
+	// Inbox says how the send found the relay list of the recipient. It is
+	// not stored.
+	Inbox InboxLookup `json:"-"`
 }
+
+// InboxLookup is the result of the lookup of the NIP-17 relay list of a
+// recipient.
+type InboxLookup string
+
+const (
+	// InboxFound says that a relay or an indexer answered the lookup, and
+	// the newest list was used.
+	InboxFound InboxLookup = "found"
+	// InboxStored says that no relay or indexer answered, and the send used
+	// the list in the store, which can be old.
+	InboxStored InboxLookup = "stored"
+	// InboxNone says that no list was found: the mail waits on the relays
+	// of the sender only.
+	InboxNone InboxLookup = "none"
+)
+
+// LookupWait bounds the lookup of the relay list of a recipient.
+const LookupWait = 5 * time.Second
 
 // State says where a message is.
 func (o Outgoing) State(now time.Time) string {
@@ -386,7 +408,7 @@ func (m *Mail) queue(ctx context.Context, to []nostr.PubKey, rumor nostr.Event, 
 	}
 	// Transmission is best effort. Durable state survives every failed send.
 	for i, pk := range to {
-		m.sendPrepared(ctx, pk, wraps[i])
+		_, outs[i].Inbox = m.sendPrepared(ctx, pk, wraps[i])
 	}
 	return outs, nil
 }
@@ -426,8 +448,9 @@ func putCarried(tx kv.Tx, entries []carried) error {
 	return nil
 }
 
-func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carried) {
-	inbox, _ := m.inboxRelays(ctx, to)
+func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carried) (int, InboxLookup) {
+	inbox, lookup, _ := m.inboxRelays(ctx, to)
+	wraps := 0
 	// A message has a wrap in each form. The send of a message is one
 	// attempt, however many of its wraps went out.
 	counted := map[string]bool{}
@@ -446,6 +469,7 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 			if !slices.Contains(entry.SentTo, t.Name()) && t.Send(ctx, events[0]) == nil {
 				entry.SentTo = append(entry.SentTo, t.Name())
 				sent = true
+				wraps++
 			}
 		}
 		// Failure to record a receipt can only repeat a wrap, never lose a call.
@@ -457,6 +481,50 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 			_ = m.attempted(key)
 		}
 	}
+	return wraps, lookup
+}
+
+// Forward sends each pending message of this citizen, and each pending
+// request, to the relays of the newest relay list of its recipient that do
+// not have its wraps yet. A list can appear or change after the send. It
+// returns the number of wraps sent. A delivered or expired message gets
+// nothing.
+func (m *Mail) Forward(ctx context.Context) (int, error) {
+	var entries []carried
+	if err := m.each(func(c carried) {
+		if c.Own && c.Rumor != "" && c.To != "" {
+			entries = append(entries, c)
+		}
+	}); err != nil {
+		return 0, err
+	}
+	pending := map[string][]carried{}
+	var order []string
+	now := m.now()
+	for _, entry := range entries {
+		var out Outgoing
+		found, err := m.get(outboxBucket, outboxKey(entry.Rumor, entry.To), &out)
+		if err != nil {
+			return 0, err
+		}
+		if !found || !out.Delivered.IsZero() || !now.Before(out.Expires) {
+			continue
+		}
+		if _, ok := pending[entry.To]; !ok {
+			order = append(order, entry.To)
+		}
+		pending[entry.To] = append(pending[entry.To], entry)
+	}
+	sent := 0
+	for _, to := range order {
+		pk, err := nostr.PubKeyFromHex(to)
+		if err != nil {
+			continue
+		}
+		n, _ := m.sendPrepared(ctx, pk, pending[to])
+		sent += n
+	}
+	return sent, nil
 }
 
 // post durably queues an acknowledgement or reply before transmitting it.
@@ -1392,33 +1460,39 @@ func RelayList(ctx context.Context, k keys.Signer, urls []string, at nostr.Times
 }
 
 // inboxRelays returns the relays where a citizen reads its mail, from its
-// NIP-17 relay list. It looks in the store first, then asks the relays.
-func (m *Mail) inboxRelays(ctx context.Context, to nostr.PubKey) ([]transport.Transport, error) {
+// newest NIP-17 relay list. Each lookup asks the relays and the indexers of
+// this citizen first, for at most LookupWait, because the list in the store
+// can be old. If none of them answers, it uses the list in the store.
+func (m *Mail) inboxRelays(ctx context.Context, to nostr.PubKey) ([]transport.Transport, InboxLookup, error) {
 	if m.InboxRelay == nil {
-		return nil, nil
+		return nil, InboxNone, nil
 	}
 	filter := nostr.Filter{Kinds: []nostr.Kind{RelayListKind}, Authors: []nostr.PubKey{to}}
+	answered := false
+	if via := slices.Concat(m.relays, m.Indexers); len(via) > 0 {
+		lookup, cancel := context.WithTimeout(ctx, LookupWait)
+		reports, _ := m.node.Pull(lookup, filter, via)
+		cancel()
+		answered = len(reports) > 0
+	}
 	lists, err := m.node.Store.Query(filter)
 	if err != nil {
-		return nil, err
-	}
-	if via := slices.Concat(m.relays, m.Indexers); len(lists) == 0 && len(via) > 0 {
-		m.node.Pull(ctx, filter, via)
-		lists, err = m.node.Store.Query(filter)
-		if err != nil {
-			return nil, err
-		}
+		return nil, InboxNone, err
 	}
 	if len(lists) == 0 {
-		return nil, nil
+		return nil, InboxNone, nil
 	}
+	// The list is replaceable, so the store keeps only the newest.
 	var out []transport.Transport
 	for _, tag := range lists[0].Tags {
 		if len(tag) > 1 && tag[0] == "relay" {
 			out = append(out, m.InboxRelay(tag[1]))
 		}
 	}
-	return out, nil
+	if !answered {
+		return out, InboxStored, nil
+	}
+	return out, InboxFound, nil
 }
 
 func (m *Mail) Carrying() (int, error) {

@@ -795,6 +795,7 @@ func messageCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			inboxNotes(sess, out)
 			if asJSON, _ := command.Flags().GetBool("json"); asJSON {
 				if len(sess.Relays) == 0 {
 					fmt.Fprintln(os.Stderr, "no relays: run arc sync --dir <path> to hand it to a courier")
@@ -1009,6 +1010,14 @@ func syncCommand() *cobra.Command {
 					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
 				for _, reason := range mails.Refused {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
+				}
+			}
+			if dir == "" && len(sess.Relays) > 0 {
+				if sent, err := sess.Mail.Forward(command.Context()); err != nil {
+					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("mail: the waiting messages were not sent to the relays of their recipients: %v", err)))
+					failed = true
+				} else if sent > 0 {
+					fmt.Fprintf(command.OutOrStdout(), "mail: sent %d wraps of waiting messages to relays that their recipients read\n", sent)
 				}
 			}
 			if dir == "" {

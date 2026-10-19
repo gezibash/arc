@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -421,10 +421,43 @@ relay holds its drafts. `arc relay add`, `arc relay rm`, and
 
 A citizen can also name indexer relays with `arc relay add <url> --index`.
 An indexer holds only relay lists. The citizen publishes its NIP-65 and NIP-17
-lists there. The citizen looks up the lists of
-others in its store, then on its relays and its indexers. A one-time key
-answers the NIP-42 challenge of an indexer, so the indexer does not learn who
-looks up a list. `arc` names no indexer by default.
+lists there. A one-time key answers the NIP-42 challenge of an indexer, so the
+indexer does not learn who looks up a list. `arc` names no indexer by default.
+
+**The lookup of a NIP-17 list.** Before each send to a recipient, the
+citizen MUST ask its relays and its indexers for the NIP-17 list of the
+recipient, for at most 5 seconds, and MUST use the newest list. The list in
+the store can be old: a recipient who moves to other relays publishes a new
+list there. The mail goes to the relays of the sender and to the relays of
+that list.
+
+- If no relay or indexer answers in time, the citizen uses the list in its
+  store, and tells the user:
+  `no relay or indexer answered the lookup of the relay list of <name>: the mail goes to the relays of the list in your store, which can be old`.
+- If no list is found, the mail waits on the relays of the sender only, and
+  the citizen tells the user:
+  `no relay list for <name> on your relays or indexers: the mail waits on your relays only; if <name> reads mail on other relays, add one of them with arc relay add --index <url>, and arc sync sends it there`.
+  Two citizens with no relay and no indexer in common cannot find the list
+  of the other.
+
+**Waiting mail.** After the sync of its relays, `arc sync` and each tick of
+`arc serve` look up the list of each recipient of a message or a request
+that is not delivered and not expired, and send its wraps to each relay of
+that list that does not have them yet. Each wrap goes to a relay once.
+`arc sync` prints
+`mail: sent <n> wraps of waiting messages to relays that their recipients read`.
+
+An older arc looks in its store first, and asks the relays only when the
+store has no list. So it keeps sending to the old relays of a recipient who
+moved, and it never sends waiting mail to a list that it learns later. Its
+mail reaches a newer recipient only on the relays of the old list. Reason:
+Cato's test of v0.36.1 (2026-10-19). A citizen on relay.republic.sh only and
+a citizen on aurelia.republic.sh only exchanged no mail after they swapped
+relays. `TestASendFollowsANewerRelayList`,
+`TestPendingMailGoesToARelayListThatAppearsLater` and
+`TestASendWithNoAnswerUsesTheStoredList` in `core/mail` prove this. Zim
+accepted the lookup on each send and the sending of waiting mail on
+2026-10-19.
 
 **File.** A node writes events to a directory as JSON lines, one event on
 each line. Another node reads the directory, imports each event that it does

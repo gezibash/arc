@@ -6,6 +6,37 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-19
+
+Mail follows a recipient who moves to other relays, and waiting mail goes
+to relays that are learned later. A sync goes to TURN first for 6 hours
+after the direct attempts to a storage citizen find no path. A key with a
+letter that is not hex is refused on amd64 too. Found and tested by Otto
+and Cato. Nothing is breaking. Update each relay, then each device.
+
+### Changed
+
+- Each send asks the relays and indexers for the NIP-17 relay list of the
+  recipient, for at most 5 s, and uses the newest. If none answers, it uses
+  the stored list and says so. With no list, it says that the mail waits on
+  the sender's relays only. After the relays, `arc sync` and each
+  `arc serve` tick send waiting messages and requests to relays of the
+  current list that lack their wraps (docs/delivery/SPEC.md, section 3.8).
+  An older arc looks in its store first, so it keeps using a moved
+  recipient's old relays (#374).
+- After the direct attempts to a storage citizen find no path, a sync that
+  takes a pipe through TURN goes to TURN first for that storage citizen for
+  6 hours, then tries the direct attempts first again. A repair without
+  `--turn` still tries a direct path first (docs/storage/SPEC.md, section
+  4.6; docs/delivery/SPEC.md, section 4.12) (#372).
+
+### Fixed
+
+- On amd64 with AVX2, the hex decoder of the Nostr library took any byte as
+  a digit, so `arc message send` and `arc contacts add` took a key with Z,
+  g or q and queued mail for a key that nobody typed. Relays read such
+  bytes too. Every hex decode now checks each byte (#373, nostrlib#5).
+
 ## [0.36.1] - 2026-10-19
 
 A relay serves mail only to the full key it is addressed to. Found by Otto
