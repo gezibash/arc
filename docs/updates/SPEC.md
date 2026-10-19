@@ -154,7 +154,8 @@ by itself, and grants no permission to restart.
 
 `<identity directory>/update/<publisher>/<channel>.json` holds the highest
 sequence that this identity accepted, and the digest of that document. The
-identity directory is `~/.config/arc/citizens/<name>`.
+identity directory is `<home>/citizens/<name>`, and the home is the one that
+arc picks ([the interface spec](../interface/SPEC.md), section 3.17).
 
 - Each publisher and each channel holds its own record.
 - A record that cannot be read is an error, not an empty record: the update

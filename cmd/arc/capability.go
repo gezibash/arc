@@ -559,7 +559,7 @@ func installCmd() *cobra.Command {
 				as = offer.ID
 			}
 			if builtinName(command.Root(), as) {
-				return fmt.Errorf("%s is a command of arc; choose another name with --as", as)
+				return fmt.Errorf("%s is a name of arc itself; choose another name with --as", as)
 			}
 			if err := installs.Add(offer, as); err != nil {
 				return err

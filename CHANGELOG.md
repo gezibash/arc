@@ -6,6 +6,18 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the default home of `arc` is `~/.arc`. A home that an older
+  arc made in `~/.config/arc` stays in use while `~/.arc` holds no entry of
+  arc (`citizens`, `default`, `device`, `relay.db`, `wake`, `wake.toml`), so
+  an installed machine and a relay volume keep working. arc moves no file.
+  `--home` and `ARC_HOME` still win. arc never takes a home from the working
+  directory. An older arc does not find a home in `~/.arc`: give it `--home`.
+  The Docker image declares its volume at `/home/arc/.arc`.
+- `arc install` refuses the name of an entry of the arc home as the name of
+  an app.
+
 ## [0.37.0] - 2026-10-19
 
 Mail follows a recipient who moves to other relays, and waiting mail goes
