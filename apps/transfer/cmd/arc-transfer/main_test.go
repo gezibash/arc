@@ -391,6 +391,23 @@ func TestALocalErrorIsNoRefusalOfTheBytes(t *testing.T) {
 	}
 }
 
+// A part file next to a whole file is stale: a re-confirm removes it.
+func TestAReconfirmRemovesAStalePartFile(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	if err := os.WriteFile(output, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output+".part", data[:1000], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("a re-confirm: %v\n%s", err, log)
+	}
+	absent(t, output+".part")
+}
+
 // A receiver whose check of the bytes takes longer than the sender waits
 // for ok, as on a slow disk, still ends its get well: once end arrives,
 // only the check decides. The sender has closed by then, so the receiver
@@ -578,16 +595,26 @@ func TestTheSenderCanSendTheFirstPacket(t *testing.T) {
 
 // inboxText returns the text of the first message of a sender in the inbox
 // of a citizen, after a sync, or "" if there is none.
-func inboxText(home, from string) string {
+func inboxText(home, from, prefix string) string {
 	_ = exec.Command(env.arc, "--home", home, "sync").Run()
 	out, _ := exec.Command(env.arc, "--home", home, "message", "inbox", "--json").Output()
 	for line := range strings.SplitSeq(string(out), "\n") {
 		var message struct{ From, Text string }
-		if json.Unmarshal([]byte(line), &message) == nil && message.From == from {
+		if json.Unmarshal([]byte(line), &message) == nil && message.From == from && strings.HasPrefix(message.Text, prefix) {
 			return message.Text
 		}
 	}
 	return ""
+}
+
+// serveProcesses are the pids of the services that sends started.
+func serveProcesses() map[string]bool {
+	out, _ := exec.Command("pgrep", "-f", "arc-transfer-send").Output()
+	pids := map[string]bool{}
+	for pid := range strings.FieldsSeq(string(out)) {
+		pids[pid] = true
+	}
+	return pids
 }
 
 // send gives a file with one command: no service runs before it, and none
@@ -598,10 +625,13 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The stranger is the sender here: no service runs for its key.
+	// The stranger is the sender here: no service runs for its key. Each
+	// run has its own message, so a run with -count finds its own link.
 	state := filepath.Join(t.TempDir(), "state")
+	note := "listen to this " + hex.EncodeToString(data[:4])
+	before := serveProcesses()
 	send := func(wait string) (command *exec.Cmd, stdout, stderr *output) {
-		command = exec.Command(env.program, "send", "-arc", env.arc, "-home", env.other, "-state", state, "-wait", wait, "-m", "listen to this", env.receiverKey, path)
+		command = exec.Command(env.program, "send", "-arc", env.arc, "-home", env.other, "-state", state, "-wait", wait, "-m", note, env.receiverKey, path)
 		command.Env = append(os.Environ(), "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1")
 		stdout, stderr = &output{}, &output{}
 		command.Stdout, command.Stderr = stdout, stderr
@@ -618,16 +648,18 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 	if out, err := exec.Command(env.arc, "--home", env.receiver, "install", env.strangerKey, "transfer", "--as", "transfer-of-stranger", "--yes").CombinedOutput(); err != nil {
 		t.Fatalf("arc install: %v\n%s", err, out)
 	}
-	text := inboxText(env.receiver, env.strangerKey)
-	if !strings.HasPrefix(text, "listen to this\ntransfer+arc://"+env.strangerKey+"/") {
+	text := inboxText(env.receiver, env.strangerKey, note+"\n")
+	if !strings.HasPrefix(text, note+"\ntransfer+arc://"+env.strangerKey+"/") {
 		t.Fatalf("the message of the first send is %q", text)
 	}
-	link := strings.TrimPrefix(text, "listen to this\n")
+	link := strings.TrimPrefix(text, note+"\n")
 	output := filepath.Join(t.TempDir(), "got.wav")
 	// The service of the first send stopped with it: no process of it is
 	// left, and the receiver gets no answer.
-	if left, _ := exec.Command("pgrep", "-f", "arc-transfer-send").Output(); len(left) > 0 {
-		t.Fatalf("a process of the service runs after send ended: %s", left)
+	for pid := range serveProcesses() {
+		if !before[pid] {
+			t.Fatalf("a process of the service runs after send ended: %s", pid)
+		}
 	}
 	if log, err := fetch(env.receiver, link, output); err == nil {
 		t.Fatalf("a service answers after send ended:\n%s", log)
@@ -637,8 +669,17 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 	if err := second.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- second.Wait() }()
+	done, exited := make(chan error, 1), make(chan struct{})
+	go func() { done <- second.Wait(); close(exited) }()
+	// A failed run must not leave this send and its service running.
+	t.Cleanup(func() {
+		_ = second.Process.Signal(os.Interrupt)
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			_ = second.Process.Kill()
+		}
+	})
 	// The receiver gets the file while send waits. The service of send
 	// answers only when it runs, so the receiver tries until then.
 	var log string

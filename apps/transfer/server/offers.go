@@ -54,9 +54,6 @@ func Record(state, file string, to []string) (files.Offer, error) {
 	}
 	o = files.Offer{SHA256: sum, Path: path, Name: filepath.Base(path), Size: info.Size(), Modified: info.ModTime(), To: to}
 
-	if err := os.MkdirAll(filepath.Join(state, "offers"), 0o700); err != nil {
-		return o, err
-	}
 	raw, err := json.Marshal(o)
 	if err != nil {
 		return o, err
@@ -85,9 +82,6 @@ func deliveryFile(state, sum, to string) string {
 // file delivered/<sha256>-<key> holds the time and the path of the
 // connection.
 func recordDelivery(state, sum, to, path string) error {
-	if err := os.MkdirAll(filepath.Join(state, "delivered"), 0o700); err != nil {
-		return err
-	}
 	return files.WriteFile(deliveryFile(state, sum, to), []byte(time.Now().UTC().Format(time.RFC3339)+" "+path+"\n"), 0o600)
 }
 
