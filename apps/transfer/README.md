@@ -332,6 +332,12 @@ A refused request has one of these errors:
   SHA-256 of the link, `get` tells the sender that it arrived, with no
   bytes: this recovers an `ok` that the network lost. Another file at the
   output stops `get`.
+- If the sender stopped waiting for `ok` while `get` checked the bytes, as
+  on a slow disk, `get` tells the sender once more, in the same way.
+- If the sender ends before the last byte, the part file keeps the bytes,
+  and the next `get` takes only the rest.
+- A `put` waits 30 s for the `ok` of the app, and 1 s more for each 4 MiB
+  of the file, because the app puts the file on its disk first.
 - The name in a link comes from another citizen. `get` uses only its last
   part, with no directory. It removes each character that could change the
   terminal or hide text, and newlines and tabs. If only removed characters
