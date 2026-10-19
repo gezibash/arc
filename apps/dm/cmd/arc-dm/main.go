@@ -374,6 +374,10 @@ func (w *watcher) printOldest(sender string) {
 	if w.waits(*m) {
 		w.waiting--
 	}
+	// readOK is true here today: while reads fail, nothing is held, since
+	// a failed read prints all and take then holds nothing. It stays the
+	// argument, so that a later path that holds messages while reads fail
+	// does not show a parent as missing.
 	w.print(*m, w.messages, w.readOK)
 	// A read that runs prints the messages before its place in queue,
 	// so the places stay until it ends.

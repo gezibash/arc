@@ -435,6 +435,17 @@ func saveShown(dir string, ids []string) error {
 		return err
 	}
 	defer unlock()
+	// An arc-dm killed between the write of its temporary file and the
+	// rename leaves that file. Each writer holds the lock, so a temporary
+	// file of this path now is such a leftover.
+	if entries, err := os.ReadDir(dir); err == nil {
+		temp := "." + filepath.Base(shownPath(dir)) + "-"
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), temp) {
+				_ = os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
 	all, err := readShown(dir)
 	if err != nil {
 		return err
