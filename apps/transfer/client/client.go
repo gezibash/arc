@@ -198,8 +198,11 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 				finish(fmt.Errorf("the sender stopped: %s", m.Data))
 				return
 			}
-			_ = dc.SendText("ok")
+			// The file is whole: the get has ended well before the
+			// sender reads ok and closes the connection.
 			finish(nil)
+			_ = dc.SendText("ok")
+			afterOK()
 			return
 		}
 		if err := g.part.Write(m.Data); err != nil {

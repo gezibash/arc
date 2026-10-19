@@ -272,6 +272,23 @@ func TestGetTakesOnlyTheRestAfterAPartFile(t *testing.T) {
 	}
 }
 
+// A sender closes the connection once it reads ok. The receiver has the
+// whole file by then, so the get must end well, however late the receiver
+// goes on after it sends ok.
+func TestAGetEndsWellWhenTheSenderClosesAtOK(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	t.Setenv("TRANSFER_TEST_OK_DELAY", "300ms")
+	log, err := fetch(env.receiver, link, output)
+	if err != nil {
+		t.Fatalf("a get whose sender closed at ok failed: %v\n%s", err, log)
+	}
+	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the file is not the file of the sender (%v)", err)
+	}
+}
+
 func TestGetRefusesBytesWithAWrongSHA256(t *testing.T) {
 	data := random(t, 2<<20)
 	_, link := offered(t, data)
