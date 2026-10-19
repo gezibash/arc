@@ -8,5 +8,6 @@ import "time"
 func confirmWait(string) time.Duration { return 30 * time.Second }
 
 // beforePutFinish runs before the app checks the bytes of a put; a test
-// build waits there, as a slow disk does.
-func beforePutFinish(string) {}
+// build waits there, as a slow disk does, or ends the connection, as an
+// app that is gone does, and then returns true.
+func beforePutFinish(string) bool { return false }

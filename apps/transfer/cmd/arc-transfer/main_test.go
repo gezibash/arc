@@ -713,18 +713,56 @@ func TestAPutWaitsLongerForALargerFile(t *testing.T) {
 	if err := os.WriteFile(path, random(t, 3<<20), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	delay := filepath.Join(env.state, "arctest-put-finish-delay")
-	if err := os.MkdirAll(env.state, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(delay, []byte("3500ms"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(delay) })
+	stateFile(t, "arctest-put-finish-delay", "3500ms")
 	t.Setenv("TRANSFER_TEST_CONFIRM_BASE", "2s")
 	t.Setenv("TRANSFER_TEST_CONFIRM_RATE", fmt.Sprint(1<<20))
 	if _, log, err := give(env.receiver, path); err != nil {
 		t.Fatalf("a put whose check took 3.5 s failed: %v\n%s", err, log)
+	}
+}
+
+// stateFile writes a file of the state directory of the app, for this test
+// only: the knobs of a test build.
+func stateFile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(env.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(env.state, name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+// A put whose app is gone before it answers stops at once: it does not sit
+// out its wait, which grows with the size.
+func TestAPutStopsWhenTheAppIsGone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, random(t, 1<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateFile(t, "arctest-put-gone", "")
+	t.Setenv("TRANSFER_TEST_CONFIRM_BASE", "30s")
+	started := time.Now()
+	_, log, err := give(env.receiver, path)
+	if err == nil || !strings.Contains(log, "ended before it confirmed") {
+		t.Fatalf("a put to an app that is gone gave %v:\n%s", err, log)
+	}
+	if took := time.Since(started); took > 15*time.Second {
+		t.Fatalf("the put waited %v for an app that is gone", took)
+	}
+}
+
+// A sender that ends before the last byte hears why from the receiver.
+func TestAnEarlyEndIsToldToTheSender(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, random(t, 1<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TRANSFER_TEST_END_AFTER", "100000")
+	if _, log, err := give(env.receiver, path); err == nil || !strings.Contains(log, "the sender ended before the last byte") {
+		t.Fatalf("a put that ended early gave %v:\n%s", err, log)
 	}
 }
 

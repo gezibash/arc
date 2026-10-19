@@ -231,7 +231,10 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 				return
 			}
 			// The caller closes the connection when it has the answer.
-			beforePutFinish(s.state)
+			if beforePutFinish(s.state) {
+				end() // a test build can act as an app that is gone
+				return
+			}
 			if err := part.Finish(); err != nil {
 				fmt.Fprintf(s.log, "%s: %s\n", label, terminal.EscapeLine(err.Error()))
 				_ = dc.SendText(files.Refusal(err))

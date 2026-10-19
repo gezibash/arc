@@ -21,7 +21,6 @@ import (
 	"github.com/gezibash/arc/apps/transfer/files"
 	"github.com/gezibash/arc/sdk/arcprogram"
 	"github.com/gezibash/arc/sdk/direct"
-	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -158,7 +157,7 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		// disk makes the check long: tell it once more, with no bytes.
 		fmt.Fprintln(g.Notes, "the sender stopped waiting for the check; telling it that the file arrived")
 		if _, err := g.confirm(ctx, sender, offer); err != nil {
-			fmt.Fprintln(g.Notes, "the sender was not told:", terminal.EscapeLine(err.Error()))
+			fmt.Fprintln(g.Notes, "the sender was not told; a later get of the same link tells it")
 		}
 	}
 	return result, nil
@@ -469,6 +468,8 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 	}
 	opened := make(chan struct{})
 	answered := make(chan string, 1)
+	gone := make(chan struct{})
+	var goneOnce sync.Once
 	dc.OnOpen(func() { close(opened) })
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
 		if m.IsString {
@@ -476,6 +477,11 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 			case answered <- string(m.Data):
 			default:
 			}
+		}
+	})
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+			goneOnce.Do(func() { close(gone) })
 		}
 	})
 
@@ -524,15 +530,23 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 		return path, 0, err
 	}
 	// The receiver checks the SHA-256 of all the bytes, and then says "ok".
+	// An end that is gone gives no answer: the wait stops then.
+	var text string
 	select {
-	case text := <-answered:
-		if text != "ok" {
-			return path, 0, fmt.Errorf("the receiver refused the file: %s", text)
+	case text = <-answered:
+	case <-gone:
+		select {
+		case text = <-answered:
+		default:
+			return path, 0, errors.New("the connection to the receiver ended before it confirmed the file")
 		}
 	case <-time.After(putConfirmWait(offer.Size)):
 		return path, 0, errors.New("the receiver did not confirm the file")
 	case <-ctx.Done():
 		return path, 0, ctx.Err()
+	}
+	if text != "ok" {
+		return path, 0, fmt.Errorf("the receiver refused the file: %s", text)
 	}
 	return path, offer.Size - remote.Offset, nil
 }

@@ -199,7 +199,7 @@ func Send(dc *webrtc.DataChannel, path string, offset, size int64) error {
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return err
 	}
-	if err := direct.Send(dc, f, size-offset); err != nil {
+	if err := direct.Send(dc, f, sendLimit(size-offset)); err != nil {
 		return err
 	}
 	return dc.SendText("end")
