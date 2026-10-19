@@ -279,7 +279,7 @@ func TestAGetEndsWellWhenTheSenderClosesAtOK(t *testing.T) {
 	data := random(t, 1<<20)
 	_, link := offered(t, data)
 	output := filepath.Join(t.TempDir(), "got.bin")
-	t.Setenv("TRANSFER_TEST_OK_DELAY", "300ms")
+	t.Setenv("TRANSFER_TEST_OK_DELAY", "1s")
 	log, err := fetch(env.receiver, link, output)
 	if err != nil {
 		t.Fatalf("a get whose sender closed at ok failed: %v\n%s", err, log)
