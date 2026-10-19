@@ -128,4 +128,4 @@ require (
 // Copy: https://github.com/gezibash/nostrlib, branch arc (its default), which
 // holds the fixes on 27e395a; the fix-* branches keep each fix for upstream.
 // Remove this replace when upstream merges all seven.
-replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261019121115-9d4f4e8a4a70
+replace fiatjaf.com/nostr => github.com/gezibash/nostrlib v0.0.0-20261019123949-003858b705c5
