@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -41,20 +42,24 @@ func TestShortIDs(t *testing.T) {
 	}
 }
 
-// growth is how many times longer f takes for 4n items than for n, the
-// least of three tries. Time that grows with n log n gives about 4.5, and
-// time that grows with the square of n gives 16.
+// growth is how many times as long f takes for 8n as for n. Time that grows
+// with n log n gives about 10, and time that grows with the square of n
+// gives 64. Each size runs 5 times, in turn with the other, after a
+// collection, and the shortest run counts: load on the machine then slows
+// both sizes alike, not one of them.
 func growth(n int, f func(n int)) float64 {
-	measure := func(n int) time.Duration {
-		least := time.Duration(1 << 62)
-		for range 3 {
-			start := time.Now()
-			f(n)
-			least = min(least, time.Since(start))
-		}
-		return least
+	small, large := time.Duration(1<<62), time.Duration(1<<62)
+	run := func(n int) time.Duration {
+		runtime.GC()
+		start := time.Now()
+		f(n)
+		return time.Since(start)
 	}
-	return float64(measure(4*n)) / float64(measure(n))
+	for range 5 {
+		small = min(small, run(n))
+		large = min(large, run(8*n))
+	}
+	return float64(large) / float64(small)
 }
 
 // ids makes n message ids, out of order.
@@ -76,28 +81,28 @@ func idsFrom(first, n int) []entry {
 // The store adds a batch of messages, such as the outbox, with one sort,
 // so a watch that reads a large outbox stays fast.
 func TestAddIsNotQuadratic(t *testing.T) {
-	if g := growth(25000, func(n int) {
+	if g := growth(12500, func(n int) {
 		s := index(nil)
 		for _, e := range ids(n) {
 			s.add(e, conversation{})
 		}
 		s.short(s.ids[0])
-	}); g > 9 {
-		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
+	}); g > 30 {
+		t.Errorf("8 times the messages took %.1f times as long, want under 30", g)
 	}
 }
 
 // A flood of messages that a watch adds one at a time, each with its short
 // id, takes time that grows with their number, not its square.
 func TestALiveFloodIsLinear(t *testing.T) {
-	if g := growth(25000, func(n int) {
+	if g := growth(12500, func(n int) {
 		s := index(nil)
 		for _, e := range ids(n) {
 			s.add(e, conversation{})
 			s.short(e.ID)
 		}
-	}); g > 9 {
-		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
+	}); g > 30 {
+		t.Errorf("8 times the messages took %.1f times as long, want under 30", g)
 	}
 }
 
@@ -119,8 +124,8 @@ func TestTheEndOfAWatchReadsTheOutbox(t *testing.T) {
 // The index of 200,000 messages takes one sort, not an insert for each
 // id, whose time grows with the square of the number of messages.
 func TestIndexIsNotQuadratic(t *testing.T) {
-	if g := growth(25000, func(n int) { index([]conversation{{Peers: []string{"k"}, Entries: ids(n)}}) }); g > 9 {
-		t.Errorf("4 times the messages took %.1f times as long, want under 9", g)
+	if g := growth(12500, func(n int) { index([]conversation{{Peers: []string{"k"}, Entries: ids(n)}}) }); g > 30 {
+		t.Errorf("8 times the messages took %.1f times as long, want under 30", g)
 	}
 	s := index([]conversation{{Peers: []string{"k"}, Entries: ids(1000)}})
 	if sorted := s.sorted(); len(sorted) != 1000 || !slices.IsSorted(sorted) {
@@ -506,14 +511,14 @@ func TestCraftedCollisionsStayFast(t *testing.T) {
 			t.Errorf("the short id of %s is %q, want its first 11 digits", e.ID[:12], short)
 		}
 	}
-	if g := growth(10000, func(n int) {
+	if g := growth(5000, func(n int) {
 		s := index(nil)
 		for _, e := range pairs(n) {
 			s.add(e, conversation{})
 			s.short(e.ID)
 		}
-	}); g > 9 {
-		t.Errorf("4 times the pairs took %.1f times as long, want under 9", g)
+	}); g > 30 {
+		t.Errorf("8 times the pairs took %.1f times as long, want under 30", g)
 	}
 }
 
