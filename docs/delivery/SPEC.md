@@ -455,7 +455,9 @@ Cato's test of v0.36.1 (2026-10-19). A citizen on relay.republic.sh only and
 a citizen on aurelia.republic.sh only exchanged no mail after they swapped
 relays. `TestASendFollowsANewerRelayList`,
 `TestPendingMailGoesToARelayListThatAppearsLater` and
-`TestASendWithNoAnswerUsesTheStoredList` in `core/mail` prove this.
+`TestASendWithNoAnswerUsesTheStoredList` in `core/mail` prove this. Zim
+accepted the lookup on each send and the sending of waiting mail on
+2026-10-19.
 
 **File.** A node writes events to a directory as JSON lines, one event on
 each line. Another node reads the directory, imports each event that it does
