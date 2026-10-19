@@ -249,3 +249,27 @@ func TestReplacedReturns(t *testing.T) {
 	b.held(3, 3, 3)
 	b.reads(2)
 }
+
+// TestARepairOverTURNDeletesWhileARebuildWaits checks decision 5 of the
+// storage spec, section 4.6: with no --turn, a repair over TURN still
+// removes the blob of a replaced record, and the rebuild onto a new
+// storage citizen behind TURN waits, so the device counts it and says so.
+func TestARepairOverTURNDeletesWhileARebuildWaits(t *testing.T) {
+	b := newPageBench(t)
+	b.edit(1)
+	b.sync(b.device, false, b.sides)
+	b.edit(2)
+	b.sync(b.device, false, b.sides)
+	extra := newMemStorage()
+	b.stores = append(b.stores, extra)
+	sides := append(slices.Clone(b.sides), Side{Key: keys.Generate().Public, Label: "s3", Conn: extra, Active: true, Relayed: true})
+	sides[0].Relayed = true
+	r := b.sync(b.device, true, sides)
+	if r.Repair.Replaced != 1 {
+		t.Errorf("the repair removed %d replaced blobs; want 1", r.Repair.Replaced)
+	}
+	if r.Repair.WaitDirect == 0 {
+		t.Error("the rebuild onto the new storage citizen behind TURN did not wait")
+	}
+	b.held(3, 3, 3, 0)
+}
