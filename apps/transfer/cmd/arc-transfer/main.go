@@ -117,6 +117,10 @@ func get(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "the sender gave the file before, with put")
 		return nil
 	}
+	if result.Confirmed {
+		fmt.Fprintln(os.Stderr, "the file was here already; the sender now knows that it arrived")
+		return nil
+	}
 	seconds := result.Elapsed.Seconds()
 	fmt.Fprintf(os.Stderr, "%d bytes in %.1f s, %.2f MiB/s, path %s\n", result.Bytes, seconds, float64(result.Bytes)/(1<<20)/seconds, result.Path)
 	return nil

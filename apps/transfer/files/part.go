@@ -16,6 +16,22 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+// ErrWrongBytes says that the bytes do not have the size and the SHA-256
+// of the link.
+var ErrWrongBytes = errors.New("the bytes do not have the SHA-256 of the link")
+
+// Refusal is the reason that a receiver gives the sender for err: the text
+// of ErrWrongBytes or ErrTooManyBytes, and no more of other errors, whose
+// text can name a path of the receiver.
+func Refusal(err error) string {
+	for _, known := range []error{ErrWrongBytes, ErrTooManyBytes} {
+		if errors.Is(err, known) {
+			return known.Error()
+		}
+	}
+	return "the receiver could not keep the file"
+}
+
 // ErrTooManyBytes says that the other end wrote more bytes than the size of
 // the file. The receiving end does not write these bytes.
 var ErrTooManyBytes = errors.New("the sender wrote more bytes than the link says")
@@ -106,7 +122,7 @@ func (p *Part) Finish() error {
 	}
 	if got := hex.EncodeToString(p.sum.Sum(nil)); p.have.Load() != p.size || got != p.sha256 {
 		_ = os.Remove(p.path + ".part")
-		return fmt.Errorf("the bytes do not have the SHA-256 of the link (%d bytes, %s); the part file is removed", p.have.Load(), got)
+		return fmt.Errorf("%w (%d bytes, %s); the part file is removed", ErrWrongBytes, p.have.Load(), got)
 	}
 	if err := os.Rename(p.path+".part", p.path); err != nil {
 		return err

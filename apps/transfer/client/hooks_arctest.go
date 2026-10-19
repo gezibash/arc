@@ -19,3 +19,12 @@ func afterOK() {
 // dropOK says whether TRANSFER_TEST_DROP_OK is set, in a build with the tag
 // arctest: the receiver then skips its ok, as if the network lost it.
 func dropOK() bool { return os.Getenv("TRANSFER_TEST_DROP_OK") != "" }
+
+// beforeFinish waits TRANSFER_TEST_FINISH_DELAY when end arrives, before
+// the check of the bytes, in a build with the tag arctest, as a slow disk
+// does.
+func beforeFinish() {
+	if d, err := time.ParseDuration(os.Getenv("TRANSFER_TEST_FINISH_DELAY")); err == nil {
+		time.Sleep(d)
+	}
+}

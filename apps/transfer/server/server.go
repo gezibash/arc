@@ -165,8 +165,8 @@ func (s *server) fetch(from string, req files.Fetch) (string, error) {
 						fmt.Fprintf(s.log, "%s: the delivery is not recorded: %s\n", label, terminal.EscapeLine(err.Error()))
 					}
 				case reason := <-refused:
-					fmt.Fprintf(s.log, "%s: the receiver refused the bytes: %s\n", label, terminal.EscapeLine(reason))
-				case <-time.After(30 * time.Second):
+					fmt.Fprintf(s.log, "%s: the receiver refused the bytes: %s\n", label, terminal.EscapeLine(strings.TrimPrefix(reason, "refused: ")))
+				case <-time.After(confirmWait()):
 					fmt.Fprintf(s.log, "%s: the receiver did not confirm\n", label)
 				}
 			}()
@@ -221,7 +221,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 					if errors.Is(err, files.ErrTooManyBytes) {
 						part.Discard()
 					}
-					_ = dc.SendText(err.Error())
+					_ = dc.SendText(files.Refusal(err))
 					end()
 				}
 				return
@@ -233,7 +233,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 			// The caller closes the connection when it has the answer.
 			if err := part.Finish(); err != nil {
 				fmt.Fprintf(s.log, "%s: %s\n", label, terminal.EscapeLine(err.Error()))
-				_ = dc.SendText(err.Error())
+				_ = dc.SendText(files.Refusal(err))
 			} else {
 				fmt.Fprintf(s.log, "%s: %d bytes in %.1f s on %s\n", label, req.Size-have, time.Since(started).Seconds(), direct.SelectedPath(pc))
 				_ = dc.SendText("ok")

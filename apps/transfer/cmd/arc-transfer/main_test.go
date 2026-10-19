@@ -128,7 +128,7 @@ func setup(m *testing.M) int {
 	// The app of the sender. The two ends are on one machine, so they use
 	// the loopback address and no STUN server.
 	serve := exec.Command(env.arc, "--home", env.sender, "serve", app)
-	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1", "TRANSFER_PUT_MAX_MIB=4")
+	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1", "TRANSFER_PUT_MAX_MIB=4", "TRANSFER_TEST_CONFIRM_WAIT=5s")
 	served := &output{}
 	serve.Stdout, serve.Stderr = served, served
 	if err := serve.Start(); err != nil {
@@ -326,6 +326,31 @@ func TestBytesThatFailTheCheckAreNoDelivery(t *testing.T) {
 	}
 }
 
+// A receiver whose check of the bytes takes longer than the sender waits
+// for ok, as on a slow disk, still ends its get well: once end arrives,
+// only the check decides. The sender records no delivery, and a second get
+// confirms it. The sender of these tests waits 5 s.
+func TestASlowCheckStillEndsTheGetWell(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	sum := sha256.Sum256(data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "7s")
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("a get with a slow check failed: %v\n%s", err, log)
+	}
+	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the file is not the file of the sender (%v)", err)
+	}
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "")
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("a second get to confirm: %v\n%s", err, log)
+	}
+	if !delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the second get did not confirm the delivery")
+	}
+}
+
 // An ok that the network lost leaves the receiver with the file and the
 // sender with no record. A second get of the same link confirms it, and
 // the sender records the delivery. A different file at the output stays.
@@ -342,8 +367,12 @@ func TestAGetOfAFileThatIsThereConfirmsIt(t *testing.T) {
 		t.Fatal("the sender recorded a delivery with no ok")
 	}
 	t.Setenv("TRANSFER_TEST_DROP_OK", "")
-	if log, err := fetch(env.receiver, link, output); err != nil {
+	log, err := fetch(env.receiver, link, output)
+	if err != nil {
 		t.Fatalf("a second get of a file that is there: %v\n%s", err, log)
+	}
+	if !strings.Contains(log, "was here already") || strings.Contains(log, "NaN") {
+		t.Errorf("the second get printed:\n%s", log)
 	}
 	if !delivered(hex.EncodeToString(sum[:])) {
 		t.Fatal("the second get did not confirm the delivery")
