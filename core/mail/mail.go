@@ -1092,6 +1092,23 @@ func (m *Mail) give(ctx context.Context, t transport.Transport, carrier transpor
 }
 
 func (m *Mail) attempted(key string) error {
+	// Read first: each write transaction ends with an fsync, and a courier
+	// gets again the wraps of an acknowledgement, which has no outbox entry.
+	open := false
+	if err := m.view(func(tx kv.Tx) error {
+		if b := tx.Bucket(outboxBucket); b != nil {
+			if data := b.Get([]byte(key)); data != nil {
+				var out Outgoing
+				if err := json.Unmarshal(data, &out); err != nil {
+					return err
+				}
+				open = out.Delivered.IsZero()
+			}
+		}
+		return nil
+	}); err != nil || !open {
+		return err
+	}
 	return m.update(func(tx kv.Tx) error {
 		data := tx.Bucket(outboxBucket).Get([]byte(key))
 		if data == nil {
