@@ -120,6 +120,27 @@ func hexKeys(pks []nostr.PubKey) []string {
 }
 
 // petnames names some keys, separated by commas.
+// inboxNotes says, for each recipient, when the send found no relay list,
+// or used an old one because no relay or indexer answered
+// (docs/delivery/SPEC.md, section 3.8).
+func inboxNotes(sess *citizen.Session, out []mail.Outgoing) {
+	for _, o := range out {
+		pk, err := nostr.PubKeyFromHex(o.To)
+		if err != nil {
+			continue
+		}
+		name := petnames([]nostr.PubKey{pk})
+		switch o.Inbox {
+		case mail.InboxNone:
+			if len(sess.Relays) > 0 {
+				fmt.Fprintf(os.Stderr, "no relay list for %s on your relays or indexers: the mail waits on your relays only; if %s reads mail on other relays, add one of them with arc relay add --index <url>, and arc sync sends it there\n", name, name)
+			}
+		case mail.InboxStored:
+			fmt.Fprintf(os.Stderr, "no relay or indexer answered the lookup of the relay list of %s: the mail goes to the relays of the list in your store, which can be old\n", name)
+		}
+	}
+}
+
 func petnames(pks []nostr.PubKey) string {
 	names := make([]string, len(pks))
 	for i, pk := range pks {
