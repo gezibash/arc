@@ -1017,7 +1017,7 @@ func syncCommand() *cobra.Command {
 					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("mail: the waiting messages were not sent to the relays of their recipients: %v", err)))
 					failed = true
 				} else if sent > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "mail: sent %d wraps of waiting messages to relays that their recipients read\n", sent)
+					fmt.Fprintf(command.OutOrStdout(), "mail: sent %d waiting %s to the relays that %s recipients read\n", sent, plural(sent, "message", "messages"), plural(sent, "its", "their"))
 				}
 			}
 			if dir == "" {
