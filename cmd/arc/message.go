@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -102,13 +103,40 @@ func replyParent(command *cobra.Command) (nostr.ID, error) {
 func recipients(text string) ([]nostr.PubKey, error) {
 	var out []nostr.PubKey
 	for part := range strings.SplitSeq(text, ",") {
-		pk, err := nostr.PubKeyFromHex(strings.TrimSpace(part))
+		pk, err := publicKey(strings.TrimSpace(part))
 		if err != nil {
-			return nil, errors.New("a recipient is 64 characters of hex, as arc whoami prints it; separate the recipients of a group with commas")
+			return nil, fmt.Errorf("the recipient %w; separate the recipients of a group with commas", err)
 		}
 		out = append(out, pk)
 	}
 	return out, nil
+}
+
+// plural gives one for n == 1, else many.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// publicKey reads a public key of 64 hex characters, as arc whoami prints
+// it. Its error names the first character that is not hex, or says that
+// the hex is not a key.
+func publicKey(text string) (nostr.PubKey, error) {
+	if len(text) != 64 {
+		return nostr.PubKey{}, fmt.Errorf("is not a key: a key is 64 hex characters, as arc whoami prints it, and this has %d", len(text))
+	}
+	for i, c := range text {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
+			return nostr.PubKey{}, fmt.Errorf("is not a key: %s at position %d is not hex", terminal.EscapeLine(strconv.QuoteRune(c)), i+1)
+		}
+	}
+	pk, err := nostr.PubKeyFromHex(text)
+	if err != nil {
+		return nostr.PubKey{}, errors.New("is not a key: it is hex, but no key has this value; check it for a typo")
+	}
+	return pk, nil
 }
 
 func hexKeys(pks []nostr.PubKey) []string {
@@ -297,9 +325,9 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	texts, _ := command.Flags().GetStringArray("from")
 	senders := map[nostr.PubKey]bool{}
 	for _, text := range texts {
-		pk, err := nostr.PubKeyFromHex(text)
+		pk, err := publicKey(text)
 		if err != nil {
-			return fmt.Errorf("--from %q is not a public key", text)
+			return fmt.Errorf("--from %w", err)
 		}
 		senders[pk] = true
 	}
