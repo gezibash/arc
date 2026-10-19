@@ -6,6 +6,43 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-19
+
+A relay can serve TURN over TCP behind a TLS proxy on port 443, so a
+citizen whose network lets out only TCP port 443 can still reach a storage
+citizen or another device. arc takes a TURN credential that names TCP or
+TLS first. Transfers say ok only after the bytes pass the check, keep a
+good partial file, and sync their files to disk. Found and tested by Otto
+and Cato. Nothing is breaking. Update each relay, then each device.
+
+### Added
+
+- `arc relay serve --turn-tcp <address>` also serves TURN over TCP, such as
+  on 127.0.0.1:3479 behind a TLS proxy on port 443. The relay sockets stay
+  UDP, and the same quota counts their bytes. `--turn-url <url>` adds an
+  address, such as `turns:relay.example:443?transport=tcp`, to each
+  credential (docs/delivery/SPEC.md, section 4.12) (#368).
+
+### Changed
+
+- `arc relay turn` with no URL, `arc sync` and the other direct
+  connections take the first credential that names TURN over TCP or TLS,
+  else the first that a relay gives (docs/direct/SPEC.md, section 3.6). An
+  older arc takes the credential of the first relay that answers (#368).
+
+### Fixed
+
+- A get ends well before it sends ok, so a sender that closes at once
+  cannot fail it (#363).
+- A receiver says ok only after the bytes pass the check, and a repeat get
+  confirms a file that is already there. An older receiver says ok before
+  its check, as before; an older sender records nothing on a refusal (#364).
+- A slow get confirms by itself when the connection closed before ok went
+  out, a good partial file is kept when the sender ends early, and a large
+  put waits longer for its confirmation (#365).
+- A transfer syncs new directories and moved files to disk, keeps a renamed
+  file when the directory sync fails, and removes a stale part file (#366).
+
 ## [0.35.0] - 2026-10-19
 
 arc-dm can reply to a message, a relay tells a citizen when its rings for
