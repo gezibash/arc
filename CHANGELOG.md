@@ -21,9 +21,10 @@ each relay, then each device.
   party where they print it, not where they make an error, and the source
   check `TestTextOfOtherPartiesIsEscapedAtThePrint` enforces it
   (docs/clients/SPEC.md, section 3.9). An operator log shows an error on
-  one line. A storage reply to a get, delete or audit with `ids` must name
-  the IDs of the request, in order, or the client refuses it
-  (docs/storage/SPEC.md, section 3.3). The text of an app's format
+  one line. docs/storage/SPEC.md, section 3.3, now states that a storage
+  reply to a get, delete or audit with `ids` names the IDs of the request,
+  in order, and tests cover it; the client has refused another reply
+  since #226 (v0.26.0). The text of an app's format
   templates is stripped like its values (docs/interface/SPEC.md, section
   3.15) (#337).
 - **Breaking:** `arc-dm reply <id> <text>` and `arc-dm send -reply <id>`
@@ -47,7 +48,9 @@ each relay, then each device.
   (docs/rings/SPEC.md, section 3.5). An arc of v0.33.7 or newer prints it;
   a relay older than this rule sends none (#357).
 
-- arc-dm takes its flags after the peer or id as well as before it (#350).
+- arc-dm takes its flags after the peer or id as well as before it. The
+  first word that is not a flag starts the text, each word after `--` is
+  text, and an empty `-reply=` is refused (#350, #351).
 
 ### Added
 
@@ -65,13 +68,19 @@ each relay, then each device.
   (#358, #361). On the Mac of a developer, `arc sync` of the same citizen
   took 28.4, 27.1 and 28.4 s with v0.34.0, and 7.7, 7.7 and 7.4 s with
   this release. On Cato's Linux machine, a repeat sync of 400 known seals
-  went from a 3436 ms median to 2869 ms (-16.5%), and from 4814 fdatasync
-  calls to 14. The gain differs by machine and disk.
+  makes about 9620 fdatasync calls with v0.34.0 and 14 with this release.
+  There, #361 alone took the median of that sync from 3436 ms to 2869 ms
+  (-16.5%); #358 alone halved the fdatasync calls with no change in time.
+  The gain differs by machine and disk.
 - The passphrase prompt turns echo off before it shows, so a passphrase
   typed or pasted as the prompt appears is not shown. Ctrl-C, Ctrl-\,
   SIGTERM and SIGHUP at the prompt bring echo back before arc ends, and a
   signal that arc started with ignored, as under `nohup`, stays ignored
   (#360).
+- `arc-transfer get` gives a 16-hex-digit hash prefix to a file whose
+  name had only hidden characters before its first dot, so the file no
+  longer becomes a dot file such as `.tar.gz`. A dot file that the sender
+  named, such as `.bashrc`, stays one (#337).
 - arc-dm holds a reply until it has read the outbox, keeps each sender's
   order, caps what it holds, and refuses a short id that it showed as
   missing (#352). After an outbox read that times out, held replies show
