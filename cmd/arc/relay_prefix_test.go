@@ -60,7 +60,10 @@ func TestRelayServesMailOnlyToTheFullKey(t *testing.T) {
 		}
 	}
 
-	conn, _, err := websocket.Dial(ctx, url, nil)
+	conn, response, err := websocket.Dial(ctx, url, nil)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
