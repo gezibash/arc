@@ -47,11 +47,11 @@ func failing(err error) func() (*storage.Conn, error) {
 }
 
 // pathSync runs openPipe for the storage citizen "box" at the time at.
-func pathSync(t *testing.T, syncer *selfsync.Syncer, policy direct.Policy, turnOK bool, at time.Time, results ...func() (*storage.Conn, error)) ([]string, string, error) {
+func pathSync(t *testing.T, syncer *selfsync.Syncer, policy direct.Policy, at time.Time, results ...func() (*storage.Conn, error)) ([]string, string, error) {
 	t.Helper()
 	o := &opens{results: results}
 	var notes bytes.Buffer
-	_, err := openPipe(syncer, "box", "storage-1", policy, turnOK, func() time.Time { return at }, &notes, o.open)
+	_, err := openPipe(syncer, "box", "storage-1", policy, func() time.Time { return at }, &notes, o.open)
 	if len(o.results) != 0 {
 		t.Fatalf("openPipe left %d results unused after asking for %v", len(o.results), o.asked)
 	}
@@ -72,13 +72,13 @@ func TestADirectFailureSendsTheNextSyncsToTURNFor6Hours(t *testing.T) {
 	syncer := &selfsync.Syncer{State: t.TempDir()}
 	start := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
 
-	asked, _, err := pathSync(t, syncer, direct.Auto, true, start, through("relay"))
+	asked, _, err := pathSync(t, syncer, direct.Auto, start, through("relay"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sameAttempts(t, "the first sync", asked, "auto")
 
-	asked, notes, err := pathSync(t, syncer, direct.Auto, true, start.Add(5*time.Hour+59*time.Minute), through("relay"))
+	asked, notes, err := pathSync(t, syncer, direct.Auto, start.Add(5*time.Hour+59*time.Minute), through("relay"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,14 +88,14 @@ func TestADirectFailureSendsTheNextSyncsToTURNFor6Hours(t *testing.T) {
 	}
 
 	// A sync through TURN first does not move the end of the 6 hours.
-	asked, _, err = pathSync(t, syncer, direct.Auto, true, start.Add(6*time.Hour), through("srflx to srflx"))
+	asked, _, err = pathSync(t, syncer, direct.Auto, start.Add(6*time.Hour), through("srflx to srflx"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sameAttempts(t, "a sync 6 h later", asked, "auto")
 
 	// The direct path opened, so the next sync tries it first.
-	asked, _, err = pathSync(t, syncer, direct.Auto, true, start.Add(6*time.Hour+time.Minute), through("srflx to srflx"))
+	asked, _, err = pathSync(t, syncer, direct.Auto, start.Add(6*time.Hour+time.Minute), through("srflx to srflx"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,17 +107,17 @@ func TestADirectFailureSendsTheNextSyncsToTURNFor6Hours(t *testing.T) {
 func TestNoPathThroughTURNFallsBackToTheDirectAttempts(t *testing.T) {
 	syncer := &selfsync.Syncer{State: t.TempDir()}
 	start := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
-	if _, _, err := pathSync(t, syncer, direct.Auto, true, start, through("relay")); err != nil {
+	if _, _, err := pathSync(t, syncer, direct.Auto, start, through("relay")); err != nil {
 		t.Fatal(err)
 	}
 
-	asked, _, err := pathSync(t, syncer, direct.Auto, true, start.Add(time.Hour), failing(direct.NoPath(direct.ErrNoPath)), through("host to host"))
+	asked, _, err := pathSync(t, syncer, direct.Auto, start.Add(time.Hour), failing(direct.NoPath(direct.ErrNoPath)), through("host to host"))
 	if err != nil {
 		t.Fatalf("the direct attempts opened a pipe, but openPipe failed: %v", err)
 	}
 	sameAttempts(t, "a sync whose TURN attempt found no path", asked, "turn", "direct")
 
-	asked, _, err = pathSync(t, syncer, direct.Auto, true, start.Add(2*time.Hour), through("host to host"))
+	asked, _, err = pathSync(t, syncer, direct.Auto, start.Add(2*time.Hour), through("host to host"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,44 +129,42 @@ func TestNoPathThroughTURNFallsBackToTheDirectAttempts(t *testing.T) {
 func TestAFailedCallGetsNoDirectAttempt(t *testing.T) {
 	syncer := &selfsync.Syncer{State: t.TempDir()}
 	start := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
-	if _, _, err := pathSync(t, syncer, direct.Auto, true, start, through("relay")); err != nil {
+	if _, _, err := pathSync(t, syncer, direct.Auto, start, through("relay")); err != nil {
 		t.Fatal(err)
 	}
 	offline := errors.New("no answer from the storage citizen")
-	asked, _, err := pathSync(t, syncer, direct.Auto, true, start.Add(time.Hour), failing(callError{offline}))
+	asked, _, err := pathSync(t, syncer, direct.Auto, start.Add(time.Hour), failing(callError{offline}))
 	if !errors.Is(err, offline) {
 		t.Fatalf("openPipe gave %v, want the error of the call", err)
 	}
 	sameAttempts(t, "a sync whose call failed", asked, "turn")
 
 	// A sync that ends, such as by Ctrl-C, makes no second attempt either.
-	asked, _, err = pathSync(t, syncer, direct.Auto, true, start.Add(time.Hour), failing(context.Canceled))
+	asked, _, err = pathSync(t, syncer, direct.Auto, start.Add(time.Hour), failing(context.Canceled))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("openPipe gave %v, want the end of the sync", err)
 	}
 	sameAttempts(t, "a sync that ended", asked, "turn")
 }
 
-// A repair without --turn needs a direct pipe, and the paths turn and
-// direct are the choice of the citizen: none of them goes to TURN first.
-func TestTURNFirstSkipsRepairAndAFixedPath(t *testing.T) {
+// The paths turn and direct are the choice of the citizen, so they do not
+// follow the record.
+func TestTURNFirstSkipsAFixedPath(t *testing.T) {
 	syncer := &selfsync.Syncer{State: t.TempDir()}
 	start := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
-	if _, _, err := pathSync(t, syncer, direct.Auto, true, start, through("relay")); err != nil {
+	if _, _, err := pathSync(t, syncer, direct.Auto, start, through("relay")); err != nil {
 		t.Fatal(err)
 	}
 	later := start.Add(time.Hour)
 	for _, c := range []struct {
 		what   string
 		policy direct.Policy
-		turnOK bool
 		want   string
 	}{
-		{"a repair without --turn", direct.Auto, false, "auto"},
-		{"the path direct", direct.DirectOnly, true, "direct"},
-		{"the path turn", direct.RelayOnly, true, "turn"},
+		{"the path direct", direct.DirectOnly, "direct"},
+		{"the path turn", direct.RelayOnly, "turn"},
 	} {
-		asked, _, err := pathSync(t, syncer, c.policy, c.turnOK, later, through("relay"))
+		asked, _, err := pathSync(t, syncer, c.policy, later, through("relay"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +172,7 @@ func TestTURNFirstSkipsRepairAndAFixedPath(t *testing.T) {
 	}
 	// The path session tries a direct path first, as auto does, so it
 	// follows the record too.
-	asked, _, err := pathSync(t, syncer, direct.Off, true, later, through("relay"))
+	asked, _, err := pathSync(t, syncer, direct.Off, later, through("relay"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,10 +184,10 @@ func TestTURNFirstSkipsRepairAndAFixedPath(t *testing.T) {
 func TestAClockThatWentBackTriesTheDirectAttempts(t *testing.T) {
 	syncer := &selfsync.Syncer{State: t.TempDir()}
 	start := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
-	if _, _, err := pathSync(t, syncer, direct.Auto, true, start, through("relay")); err != nil {
+	if _, _, err := pathSync(t, syncer, direct.Auto, start, through("relay")); err != nil {
 		t.Fatal(err)
 	}
-	asked, _, err := pathSync(t, syncer, direct.Auto, true, start.Add(-time.Minute), through("relay"))
+	asked, _, err := pathSync(t, syncer, direct.Auto, start.Add(-time.Minute), through("relay"))
 	if err != nil {
 		t.Fatal(err)
 	}

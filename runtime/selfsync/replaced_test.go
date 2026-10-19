@@ -171,8 +171,9 @@ func TestReplacedInterrupted(t *testing.T) {
 	b.reads(2)
 }
 
-// TestReplacedTURN checks that the deletion waits for a direct path, as
-// repair does (decision 7 of the storage network proposal).
+// TestReplacedTURN checks that a deletion runs on a pipe through TURN with
+// no --turn: it moves no bytes of the blob (Otto, 2026-10-19; storage
+// spec, section 4.6). A rebuild still waits, see TestRepairTURN.
 func TestReplacedTURN(t *testing.T) {
 	b := newPageBench(t)
 	b.edit(1)
@@ -181,12 +182,10 @@ func TestReplacedTURN(t *testing.T) {
 	b.sync(b.device, false, b.sides)
 	relayed := slices.Clone(b.sides)
 	relayed[0].Relayed = true
-	if r := b.sync(b.device, true, relayed); r.Repair.WaitDirect != 1 {
-		t.Fatalf("%d blobs wait for a direct path; want 1", r.Repair.WaitDirect)
+	r := b.sync(b.device, true, relayed)
+	if r.Repair.WaitDirect != 0 || r.Repair.Replaced != 1 {
+		t.Fatalf("a repair through TURN counted %d blobs that wait and removed %d replaced blobs; want 0 and 1", r.Repair.WaitDirect, r.Repair.Replaced)
 	}
-	b.held(4, 3, 3)
-	b.device.TURN = true
-	b.sync(b.device, true, relayed)
 	b.held(3, 3, 3)
 }
 
