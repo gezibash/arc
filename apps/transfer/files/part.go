@@ -20,11 +20,14 @@ import (
 // of the link.
 var ErrWrongBytes = errors.New("the bytes do not have the SHA-256 of the link")
 
+// ErrEarlyEnd says that the sender ended before the last byte.
+var ErrEarlyEnd = errors.New("the sender ended before the last byte")
+
 // Refusal is the reason that a receiver gives the sender for err: the text
-// of ErrWrongBytes or ErrTooManyBytes, and no more of other errors, whose
+// of ErrWrongBytes, ErrTooManyBytes or ErrEarlyEnd, and no more of other errors, whose
 // text can name a path of the receiver.
 func Refusal(err error) string {
-	for _, known := range []error{ErrWrongBytes, ErrTooManyBytes} {
+	for _, known := range []error{ErrWrongBytes, ErrTooManyBytes, ErrEarlyEnd} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}
@@ -111,7 +114,8 @@ func (p *Part) Write(b []byte) error {
 }
 
 // Finish checks the size and the SHA-256 of all the bytes, and renames the
-// part file. If a check fails, it removes the part file.
+// part file. An early end keeps the part file, so that the next transfer
+// takes only the rest; all the bytes with a wrong SHA-256 remove it.
 func (p *Part) Finish() error {
 	if err := p.file.Sync(); err != nil {
 		_ = p.file.Close()
@@ -120,7 +124,10 @@ func (p *Part) Finish() error {
 	if err := p.file.Close(); err != nil {
 		return err
 	}
-	if got := hex.EncodeToString(p.sum.Sum(nil)); p.have.Load() != p.size || got != p.sha256 {
+	if p.have.Load() < p.size {
+		return fmt.Errorf("%w: %d of %d bytes; the part file keeps them", ErrEarlyEnd, p.have.Load(), p.size)
+	}
+	if got := hex.EncodeToString(p.sum.Sum(nil)); got != p.sha256 {
 		_ = os.Remove(p.path + ".part")
 		return fmt.Errorf("%w (%d bytes, %s); the part file is removed", ErrWrongBytes, p.have.Load(), got)
 	}
@@ -192,7 +199,7 @@ func Send(dc *webrtc.DataChannel, path string, offset, size int64) error {
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return err
 	}
-	if err := direct.Send(dc, f, size-offset); err != nil {
+	if err := direct.Send(dc, f, sendLimit(size-offset)); err != nil {
 		return err
 	}
 	return dc.SendText("end")
