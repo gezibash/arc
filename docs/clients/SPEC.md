@@ -458,12 +458,12 @@ are not on the wire.
 | `TestAWatchReadTimesOut` | A read on a hung arc ends after 10 s with a warning, and shows the held reply with no quote line; a reply after it shows at once with no quote line; after a read that works, a later reply gets its quote. |
 | `TestAfterAFailedReadNothingShowsAsMissing` | After a failed read, no reply shows as "(not on this device)", not even one that a sender over its quota pushes out, and no id is recorded. |
 | `TestAnAlwaysHungOutboxShowsRepliesPlain` | With an outbox that always hangs, a reply to a message of this citizen shows after one read, with no quote line. |
-| `TestRepliesShowSoonWhileTheOutboxHangs` | With an outbox that always hangs, each of 12 replies, 1 s apart, shows within 50 s with no quote line, and none shows as missing. A watch that reads for each reply passes 50 s by its eighth reply. |
+| `TestRepliesShowSoonWhileTheOutboxHangs` | With an outbox that always hangs, each of 12 replies, 1 s apart, shows within 40 s with no quote line, and none shows as missing. A watch that reads for each reply passes 40 s by its seventh reply. |
 | `TestTakeNeverReads` | A message that arrives does not wait for a read of the outbox that blocks. |
 | `TestReadsRecoverAfterAFailure` | After a failed read, a reply shows at once with no quote line; after a read that works, replies wait for reads again, and a sender over its quota shows its oldest as "(not on this device)". |
 | `TestReadsBackOffFromTheEndOfTheLastRead` | With an outbox that takes 2 s and fails, the next read starts at least 5 s after the last one ended. |
 | `TestACompactionDuringAReadKeepsALateReplyWaiting` | A flood of 0, 60, 130 or 200 messages of one sender during a read does not put a reply that came during the read into what that read prints: the reply to a message sent after the read started is not marked missing, and gets its quote from the next read. With 100 messages before the read, 36 of them printed early, and 100 during it, the read does not slice past the end of the queue. |
-| `TestASaveRemovesTheTemporaryFileOfAKilledSave` | A save of the shown ids removes the temporary file that a killed save left, and no file of another path. |
+| `TestASaveRemovesTheTemporaryFileOfAKilledSave` | A save of the shown ids removes the temporary file that a killed save left, and neither the lock file nor a file of another path. |
 | `TestAKilledWatchKeepsTheIdsThatAReadShowed` | After a timer read shows an id as missing, with no message after it, a watch killed with SIGKILL has saved the id, and `arc-dm reply` refuses it. |
 | `TestAWatchSavesShownIdsAtItsEnd` | The ids that a watch showed as missing are saved at its end, and `arc-dm reply` refuses them. |
 | `TestACallEndsWhenArcEnds` | A call returns when arc ends, though a child of arc holds its output open. |

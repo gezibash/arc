@@ -546,7 +546,8 @@ func TestABlankParentQuotesAsBlank(t *testing.T) {
 }
 
 // An arc-dm killed during a save leaves the temporary file of the save.
-// The next save removes it, and keeps the files of other paths.
+// The next save removes it, and keeps the files of other paths and the
+// lock file.
 func TestASaveRemovesTheTemporaryFileOfAKilledSave(t *testing.T) {
 	dir := t.TempDir()
 	stale := filepath.Join(dir, ".shown-missing.json-2771058471")
@@ -565,6 +566,10 @@ func TestASaveRemovesTheTemporaryFileOfAKilledSave(t *testing.T) {
 	}
 	if _, err := os.Stat(other); err != nil {
 		t.Errorf("the save removed the file of another path: %v", err)
+	}
+	// The lock that the save holds is a dot file of the same name too.
+	if _, err := os.Stat(filepath.Join(dir, ".shown-missing.json.lock")); err != nil {
+		t.Errorf("the save removed the lock file: %v", err)
 	}
 	if ids, err := readShown(dir); err != nil || len(ids) != 1 || ids[0] != id {
 		t.Errorf("the saved ids are %q, %v", ids, err)

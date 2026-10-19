@@ -62,7 +62,9 @@ func TestConversations(t *testing.T) {
 	if strings.Contains(got[0].Header, "unread") || !strings.HasSuffix(got[1].Header, cy.Name+"  1 unread") {
 		t.Fatalf("after bob opened ada, the conversations are %q; want ada read and cy with 1 unread", got)
 	}
-	if again := bob.DM("open", ada.Name); strings.Contains(again, "new") {
+	// "  new" ends the header of an unread message. A petname can hold
+	// "new", as in fluid-newcomb, but never two spaces.
+	if again := bob.DM("open", ada.Name); strings.Contains(again, "  new\n") {
 		t.Errorf("the second open still shows new messages:\n%s", again)
 	}
 

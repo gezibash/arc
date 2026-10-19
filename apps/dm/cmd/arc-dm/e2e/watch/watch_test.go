@@ -622,12 +622,12 @@ func TestAKilledWatchKeepsTheIdsThatAReadShowed(t *testing.T) {
 
 // With an outbox that always hangs, a steady stream of replies shows with
 // a bounded delay: only the timer reads the outbox, and after a read that
-// fails, a reply shows at once. Each reply here shows within two timed
-// reads and their 10 s limits, and a margin, of the time it was sent. One
-// read and its limit is the delay on an idle machine; on a shared machine
-// with a load of 14 to 20, replies showed after 26 to 37 s. A watch that
-// reads for each reply, as before the timer, falls behind by about 9 s for
-// each reply, and its eighth reply passes this bound.
+// fails, a reply shows at once. The first reply waits at most 5 s for the
+// next read and 10 s for its limit; each reply after that read shows at
+// once. So the code bounds the delay at about 15 s. The test allows 40 s:
+// on a shared machine with a load of 14 to 20, replies showed after 26 to
+// 37 s. A watch that reads for each reply, as before the timer, falls
+// behind by about 9 s for each reply, and passes 40 s by its seventh.
 func TestRepliesShowSoonWhileTheOutboxHangs(t *testing.T) {
 	t.Parallel()
 	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
@@ -652,7 +652,7 @@ func TestRepliesShowSoonWhileTheOutboxHangs(t *testing.T) {
 		t.Fatalf("the watch did not start:\n%s", stderr.String())
 	}
 	const replies = 12
-	limit := 2*(dmtest.RefreshEvery+dmtest.ReadTimeout) + 20*time.Second
+	limit := 40 * time.Second
 	sent := make([]time.Time, replies)
 	shown := make([]time.Time, replies)
 	done := make(chan struct{})
