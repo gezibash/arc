@@ -427,7 +427,24 @@ func (r *run) removeUnnamed(coordinate string, events []nostr.Event) error {
 	if err != nil {
 		return err
 	}
-	return r.env.Publish(r.ctx, []nostr.Event{request}, nil)
+	if err := r.env.Publish(r.ctx, []nostr.Event{request}, nil); err != nil {
+		return err
+	}
+	parts := 0
+	for _, event := range events {
+		if event.Kind == draft.PartKind {
+			parts++
+		}
+	}
+	count := func(n int, one string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return strconv.Itoa(n) + " " + one + "s"
+	}
+	fmt.Fprintf(r.stdio.Err, "removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n",
+		count(parts, "part"), count(len(events)-parts, "checkpoint"))
+	return nil
 }
 
 // mergeTags keeps the old tags, and replaces each one that a new tag of the

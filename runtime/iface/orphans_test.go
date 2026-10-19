@@ -1,6 +1,8 @@
 package iface
 
 import (
+	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -74,8 +76,14 @@ func TestADeleteRemovesPartsThatNoDraftNames(t *testing.T) {
 		t.Fatalf("the page without its draft reads %q", got)
 	}
 
-	if _, err := c.run("journal", "", "delete", page); err != nil {
+	var errs bytes.Buffer
+	err := Run(context.Background(), c.env, Installed{Manifest: specManifests(t)["journal"], Author: c.author, Name: "journal"},
+		[]string{"delete", page}, Stdio{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &errs})
+	if err != nil {
 		t.Fatalf("the delete of parts that no draft names failed: %v", err)
+	}
+	if !strings.Contains(errs.String(), "removed 3 parts and 1 checkpoint that no page names") || !strings.Contains(errs.String(), "arc sync --repair") {
+		t.Errorf("the delete does not say what it removed and what frees the storage: %q", errs.String())
 	}
 	if n := countKind(c, draft.PartKind); n != 0 {
 		t.Errorf("%d parts stay after the delete, want 0", n)
