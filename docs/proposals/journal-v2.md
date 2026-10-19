@@ -356,20 +356,25 @@ the exact size between 3.0 MB and 4.04 MB where the cap starts.
 
 PR A0 fixes the delete path:
 
-- A publish checks the size of the draft before it saves any part, and
-  says `the page is <n> MB; the largest page is <m> MB` (Cato's finding 3).
-- A failed publish deletes the parts that it saved.
-- `journal delete` deletes each part and checkpoint of the address, also
-  with no draft.
-- Repair deletes a part or a checkpoint whose draft is blank or missing on
-  every storage citizen and on the device, including the orphan parts
-  already on the storage citizens.
-- Tests: a write that fails on size leaves no part in the store; a delete
-  of a page of many parts leaves no event of kind 3275 or 1234; a sync after
-  both puts only the blank draft and the request; repair frees an orphan
-  part. Each test fails on `16c08bb`.
+- A publish checks the size of the draft and the checkpoint before it saves
+  any part, and says
+  `the page is <n> MB, too large to keep: … split it into pages of at most about 3 MB`
+  (Cato's finding 3).
+- `journal delete` of an address whose draft is missing or blank deletes
+  each part and checkpoint that names it. The request names each event and
+  not the coordinate, so a blank draft stays.
+- Repair then frees those blobs on the storage citizens by the path that
+  already frees the parts and checkpoints of a deleted page
+  (`TestStorageDeletesReplaced`).
+- A sync does not sweep parts that no draft names. In a sync, a part can
+  arrive before its draft, so such a sweep could delete a page that is on
+  its way.
+- Tests: a write that fails on size leaves no part in the store, and the
+  page before it stays; a delete of parts that no draft names leaves no
+  event of kind 3275 or 1234. Each test fails on `16c08bb`.
 
-After A0 is deployed, a repair on Cato's home frees his 4 MiB.
+On Cato's home, `journal delete` of the address of his failed page, then
+`arc sync --repair`, frees his 4 MiB on the storage citizens.
 
 ## 7. Compatibility
 
