@@ -92,7 +92,22 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		}
 	}
 	if _, err := os.Stat(g.Output); err == nil {
-		return result, fmt.Errorf("%s is there already", g.Output)
+		if sum, err := files.HashFile(g.Output); err != nil || sum != offer.SHA256 {
+			return result, fmt.Errorf("%s is there already", g.Output)
+		}
+		// The file is here and whole. The ok of an earlier get can have
+		// been lost, so tell the sender again: it sends no bytes.
+		fmt.Fprintf(g.Notes, "%s is there already; telling the sender that it arrived\n", g.Output)
+		run := &getter{Get: g, sender: sender, offer: offer}
+		err := direct.Attempts{
+			Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: turn(g.Arc), Notes: g.Notes,
+			Need: func() int64 { return 0 },
+		}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
+			result.Path, err = run.attempt(ctx, options, hold)
+			return err
+		})
+		result.Output = g.Output
+		return result, err
 	}
 	if g.State != "" {
 		if taken, err := takePushed(files.ReceivedFile(g.State, sender, offer.SHA256), offer.Size, g.Output); taken || err != nil {
@@ -124,13 +139,13 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		part.Discard()
 		return result, fmt.Errorf("%w; the part file is removed", err)
 	}
+	if errors.Is(err, errRefused) {
+		return result, err
+	}
 	if err != nil {
 		if part.Have() > resumed {
 			return result, fmt.Errorf("%w; %s.part holds %d of %d bytes, run the command again to get the rest", err, g.Output, part.Have(), offer.Size)
 		}
-		return result, err
-	}
-	if err := part.Finish(); err != nil {
 		return result, err
 	}
 	result.Output, result.Bytes, result.Elapsed = g.Output, part.Have()-resumed, time.Since(started)
@@ -172,6 +187,18 @@ func takePushed(file string, size int64, output string) (bool, error) {
 	return true, os.Remove(file)
 }
 
+// errRefused marks bytes that failed the check of size and SHA-256.
+var errRefused = errors.New("the bytes are refused")
+
+// offset is where the sender starts: after the bytes of the part file, or
+// at the end when the file is here and only needs confirming.
+func (g *getter) offset() int64 {
+	if g.part == nil {
+		return g.offer.Size
+	}
+	return g.part.Have()
+}
+
 // attempt opens one connection and takes bytes from it. It returns
 // direct.ErrNoPath if the data channel did not open.
 func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.Duration) (path string, err error) {
@@ -198,11 +225,26 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 				finish(fmt.Errorf("the sender stopped: %s", m.Data))
 				return
 			}
-			// The file is whole: the get has ended well before the
-			// sender reads ok and closes the connection.
+			// The sender says ok only after the size, the SHA-256 and
+			// the rename pass, so that it records no delivery of bytes
+			// that this end refused. The get ends before the sender reads
+			// ok and closes the connection.
+			if g.part != nil {
+				if err := g.part.Finish(); err != nil {
+					finish(fmt.Errorf("%w: %w", errRefused, err))
+					_ = dc.SendText("refused: " + err.Error())
+					return
+				}
+			}
 			finish(nil)
-			_ = dc.SendText("ok")
+			if !dropOK() {
+				_ = dc.SendText("ok")
+			}
 			afterOK()
+			return
+		}
+		if g.part == nil {
+			finish(errors.New("the sender sent bytes of a file that is here"))
 			return
 		}
 		if err := g.part.Write(m.Data); err != nil {
@@ -226,7 +268,7 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 	if err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
+	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.offset(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
 	if err != nil {
 		return "", err
 	}

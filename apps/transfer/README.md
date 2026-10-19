@@ -276,7 +276,11 @@ and the path `/`. The body and the reply are JSON.
 
 The receiver opens one data channel. The sender writes the bytes from
 `offset` in messages of 16 KiB, and then the text `end`. The receiver
-answers with the text `ok`.
+checks the size and the SHA-256 of all the bytes, and renames its part
+file. Then it answers with the text `ok`, or with `refused: ` and the
+reason. A receiver that has the whole file already asks with `offset` equal
+to the size, so that the sender sends no bytes and the receiver confirms
+again. An older receiver answers `ok` before its check.
 
 A put has the operation `put` and the size of the file. It has no offset:
 
@@ -317,13 +321,17 @@ A refused request has one of these errors:
 - To limit the callers of the app, set `allow` in the `Arcfile`.
 - An offer stays until you delete its file `offers/<sha256>.json` in the
   state directory.
-- When a receiver confirms the last byte of a file, the service writes the
-  file `delivered/<sha256>-<key of the receiver>` in the state directory.
-  It holds the time and the path. `send` reads it.
+- When a receiver answers `ok`, the service writes the file
+  `delivered/<sha256>-<key of the receiver>` in the state directory. It
+  holds the time and the path. `send` reads it. A refusal writes nothing,
+  and the log of the service gives the reason.
 
 ## Rules of the receiver
 
-- `get` does not replace a file. If the output file is there, it stops.
+- `get` does not replace a file. If the output file is there with the
+  SHA-256 of the link, `get` tells the sender that it arrived, with no
+  bytes: this recovers an `ok` that the network lost. Another file at the
+  output stops `get`.
 - The name in a link comes from another citizen. `get` uses only its last
   part, with no directory. It removes each character that could change the
   terminal or hide text, and newlines and tabs. If only removed characters

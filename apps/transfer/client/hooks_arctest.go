@@ -15,3 +15,7 @@ func afterOK() {
 		time.Sleep(d)
 	}
 }
+
+// dropOK says whether TRANSFER_TEST_DROP_OK is set, in a build with the tag
+// arctest: the receiver then skips its ok, as if the network lost it.
+func dropOK() bool { return os.Getenv("TRANSFER_TEST_DROP_OK") != "" }

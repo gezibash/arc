@@ -289,6 +289,81 @@ func TestAGetEndsWellWhenTheSenderClosesAtOK(t *testing.T) {
 	}
 }
 
+// delivered says whether the sender recorded that the receiver has the
+// file, within a few seconds.
+func delivered(sum string) bool {
+	return waitUntil(3*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(env.state, "delivered", sum+"-"+env.receiverKey))
+		return err == nil
+	})
+}
+
+// A file that changed on the side of the sender, with the same size and
+// time, gives bytes that fail the check of the receiver. The receiver must
+// not say ok, so the sender records no delivery.
+func TestBytesThatFailTheCheckAreNoDelivery(t *testing.T) {
+	data := random(t, 1<<20)
+	path, link := offered(t, data)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := random(t, len(data))
+	if err := os.WriteFile(path, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "got.bin")
+	log, err := fetch(env.receiver, link, output)
+	if err == nil || !strings.Contains(log, "SHA-256") {
+		t.Fatalf("a get of changed bytes gave %v:\n%s", err, log)
+	}
+	sum := sha256.Sum256(data)
+	if delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the sender recorded a delivery of bytes that the receiver refused")
+	}
+}
+
+// An ok that the network lost leaves the receiver with the file and the
+// sender with no record. A second get of the same link confirms it, and
+// the sender records the delivery. A different file at the output stays.
+func TestAGetOfAFileThatIsThereConfirmsIt(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	sum := sha256.Sum256(data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	t.Setenv("TRANSFER_TEST_DROP_OK", "1")
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("get: %v\n%s", err, log)
+	}
+	if delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the sender recorded a delivery with no ok")
+	}
+	t.Setenv("TRANSFER_TEST_DROP_OK", "")
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("a second get of a file that is there: %v\n%s", err, log)
+	}
+	if !delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the second get did not confirm the delivery")
+	}
+	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the file changed (%v)", err)
+	}
+
+	other := filepath.Join(t.TempDir(), "other.bin")
+	if err := os.WriteFile(other, []byte("another file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if log, err := fetch(env.receiver, link, other); err == nil || !strings.Contains(log, "is there already") {
+		t.Fatalf("a get over another file gave %v:\n%s", err, log)
+	}
+	if got, _ := os.ReadFile(other); string(got) != "another file" {
+		t.Fatal("a get wrote over another file")
+	}
+}
+
 func TestGetRefusesBytesWithAWrongSHA256(t *testing.T) {
 	data := random(t, 2<<20)
 	_, link := offered(t, data)
