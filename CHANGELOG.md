@@ -6,6 +6,25 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-10-19
+
+A relay serves mail only to the full key it is addressed to. Found by Otto
+in a new-user test. Nothing is breaking. Update each relay, then each
+device.
+
+### Fixed
+
+- The Bolt event store matched pubkeys, ids and tag values by their first
+  8 bytes and never checked the full value. A relay so served a citizen
+  every gift wrap whose `p` tag shared the first 8 bytes of its key, and
+  counted them, and the client printed `filter does not match`. The same
+  shortcut let an event with a colliding author replace another author's
+  replaceable event. The store now checks each event it finds through an
+  index against the full filter, and an id lookup checks the full id. The
+  wraps are public ciphertext, so no content leaked (#369).
+- arc no longer prints the Nostr library's info lines, such as `[nl][info]
+  ... filter does not match`, for an event that the library drops (#369).
+
 ## [0.36.0] - 2026-10-19
 
 A relay can serve TURN over TCP behind a TLS proxy on port 443, so a
