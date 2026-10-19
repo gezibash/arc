@@ -1000,6 +1000,38 @@ func TestTwoRelaysRingWithOneID(t *testing.T) {
 	}
 }
 
+// notices makes times reads of the wraps of citizen, as as, on one
+// connection, and returns the NOTICEs that the connection got.
+func (h *harness) notices(as keys.Key, citizen nostr.PubKey, times int) []string {
+	t := h.t
+	t.Helper()
+	var mu sync.Mutex
+	var notices []string
+	ctx := context.Background()
+	conn, err := nostr.RelayConnect(ctx, h.ws, nostr.RelayOptions{NoticeHandler: func(_ *nostr.Relay, text string) {
+		mu.Lock()
+		notices = append(notices, text)
+		mu.Unlock()
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	authenticate(t, conn, as)
+	for range times {
+		sub, err := conn.Subscribe(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {citizen.Hex()}}}, nostr.SubscriptionOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitStored(t, sub)
+		sub.Unsub()
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	return notices
+}
+
 // TestAReadOfACitizenWithFailingRingsGetsANotice rings a URL that answers
 // 401, as a platform does after its key changed. The relay tries once, and
 // tells the citizen on its next authenticated read, once on that
@@ -1017,33 +1049,7 @@ func TestAReadOfACitizenWithFailingRingsGetsANotice(t *testing.T) {
 		t.Fatalf("a ring answered 401 made %d calls, want 1: a retry cannot fix the key", n)
 	}
 
-	read := func(as keys.Key, times int) []string {
-		var mu sync.Mutex
-		var notices []string
-		ctx := context.Background()
-		conn, err := nostr.RelayConnect(ctx, h.ws, nostr.RelayOptions{NoticeHandler: func(_ *nostr.Relay, text string) {
-			mu.Lock()
-			notices = append(notices, text)
-			mu.Unlock()
-		}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = conn.Close() }()
-		authenticate(t, conn, as)
-		for range times {
-			sub, err := conn.Subscribe(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {bob.Public.Hex()}}}, nostr.SubscriptionOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			waitStored(t, sub)
-			sub.Unsub()
-		}
-		time.Sleep(100 * time.Millisecond)
-		mu.Lock()
-		defer mu.Unlock()
-		return notices
-	}
+	read := func(as keys.Key, times int) []string { return h.notices(as, bob.Public, times) }
 
 	if got := read(stranger, 1); len(got) != 0 {
 		t.Fatalf("a stranger's read got %q", got)
@@ -1054,5 +1060,50 @@ func TestAReadOfACitizenWithFailingRingsGetsANotice(t *testing.T) {
 	}
 	if strings.Contains(got[0], "/hook") {
 		t.Fatalf("the notice names the path of the URL: %s", got[0])
+	}
+}
+
+// A citizen whose rings fail and whose day has few rings left gets both
+// notices on one read.
+func TestAReadGetsBothNotices(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	if code, body := h.register(bob, Request{URL: "https://example.com/hook", Key: ringKey, DailyCap: 2}); code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	h.status.Store(401)
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.rings.sends.Wait()
+	got := h.notices(bob, bob.Public, 1)
+	if len(got) != 2 || !strings.HasPrefix(got[0], "arc-ring: the rings to example.com fail since ") || got[1] != "arc-ring: 1 of 2 rings left today; then rings wait until 00:00 UTC" {
+		t.Fatalf("a read got %q, want the failure and then the rings left", got)
+	}
+}
+
+// A read of a citizen whose day has 5 or fewer rings left, after one ring
+// of the day, gets one NOTICE on each connection: the rings left, and at
+// 0, that rings wait until 00:00 UTC. A stranger's read gets none.
+func TestAReadWithFewRingsLeftGetsANotice(t *testing.T) {
+	h := start(t, Config{})
+	bob, stranger := keys.Generate(), keys.Generate()
+	if code, body := h.register(bob, Request{URL: "https://example.com/hook", Key: ringKey, DailyCap: 2}); code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	if got := h.notices(bob, bob.Public, 1); len(got) != 0 {
+		t.Fatalf("a read before any ring of the day got %q", got)
+	}
+	for _, want := range []string{
+		"arc-ring: 1 of 2 rings left today; then rings wait until 00:00 UTC",
+		"arc-ring: 0 of 2 rings left today; rings wait until 00:00 UTC",
+	} {
+		if code, body := h.do(http.MethodPost, TestPath, bob, nil, nil); code != http.StatusOK {
+			t.Fatalf("ring test: %d %s", code, body)
+		}
+		if got := h.notices(stranger, bob.Public, 1); len(got) != 0 {
+			t.Fatalf("a stranger's read got %q", got)
+		}
+		if got := h.notices(bob, bob.Public, 3); len(got) != 1 || got[0] != want {
+			t.Fatalf("bob's three reads on one connection got %q, want [%q]", got, want)
+		}
 	}
 }
