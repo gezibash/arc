@@ -627,7 +627,8 @@ func TestAKilledWatchKeepsTheIdsThatAReadShowed(t *testing.T) {
 // once. So the code bounds the delay at about 15 s. The test allows 40 s:
 // on a shared machine with a load of 14 to 20, replies showed after 26 to
 // 37 s. A watch that reads for each reply, as before the timer, falls
-// behind by about 9 s for each reply, and passes 40 s by its seventh.
+// behind by about 9 s for each reply: in Cato's mutant run its fifth
+// reply showed after 45.45 s.
 func TestRepliesShowSoonWhileTheOutboxHangs(t *testing.T) {
 	t.Parallel()
 	mallory, bob := dmtest.NewPerson(t, "mallory"), dmtest.NewPerson(t, "bob")
