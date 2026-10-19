@@ -201,7 +201,7 @@ func askSecret(env, prompt string) (string, error) {
 	if err := echo.off(); err != nil {
 		return "", err
 	}
-	defer echo.end()
+	defer echo.restore()
 	fmt.Fprint(tty, prompt)
 	afterPrompt()
 	value, err := readPassword(fd)
@@ -218,14 +218,13 @@ type quietTerminal struct {
 	fd    int
 	mu    sync.Mutex
 	saved *unix.Termios // the mode to bring back; nil while echo is on
-	ended bool          // the prompt is over: echo stays as it is
 }
 
 // off stops the terminal from showing what is typed.
 func (q *quietTerminal) off() error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.ended || q.saved != nil {
+	if q.saved != nil {
 		return nil
 	}
 	old, err := unix.IoctlGetTermios(q.fd, getTermios)
@@ -247,10 +246,6 @@ func (q *quietTerminal) off() error {
 func (q *quietTerminal) restore() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.restoreLocked()
-}
-
-func (q *quietTerminal) restoreLocked() {
 	if q.saved == nil {
 		return
 	}
@@ -258,14 +253,6 @@ func (q *quietTerminal) restoreLocked() {
 		fmt.Fprintln(os.Stderr, "arc: the terminal may still not echo; run stty echo:", terminal.EscapeLine(err.Error()))
 	}
 	q.saved = nil
-}
-
-// end brings the mode back for good, when the prompt is over.
-func (q *quietTerminal) end() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.restoreLocked()
-	q.ended = true
 }
 
 // promptSignals end arc; at the prompt, echo comes back before they do.
@@ -289,25 +276,14 @@ func watchSignals(q *quietTerminal) (stop func()) {
 	}
 	signal.Notify(signals, watched...)
 	go func() {
-		for {
-			select {
-			case got := <-signals:
-				q.restore()
-				signal.Reset(got)
-				if sig, ok := got.(syscall.Signal); ok {
-					_ = syscall.Kill(os.Getpid(), sig)
-				}
-				// The signal ends arc. If arc lives on, the read goes
-				// on, and so echo goes off again.
-				select {
-				case <-time.After(time.Second):
-					_ = q.off()
-				case <-done:
-					return
-				}
-			case <-done:
-				return
+		select {
+		case got := <-signals:
+			q.restore()
+			signal.Reset(got)
+			if sig, ok := got.(syscall.Signal); ok {
+				_ = syscall.Kill(os.Getpid(), sig)
 			}
+		case <-done:
 		}
 	}()
 	return func() {
