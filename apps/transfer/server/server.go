@@ -132,12 +132,21 @@ func (s *server) fetch(from string, req files.Fetch) (string, error) {
 	}
 	return s.connect(req, 0, func() { <-s.slots }, func(pc *webrtc.PeerConnection, dc *webrtc.DataChannel, end func()) func() {
 		received := make(chan struct{})
+		refused := make(chan string, 1)
 		var once sync.Once
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
-			// The receiver says "ok" after it has the last byte.
-			if m.IsString && string(m.Data) == "ok" {
-				once.Do(func() { close(received) })
+			// The receiver says "ok" after the size and the SHA-256 of all
+			// the bytes pass, and the reason when they do not.
+			if !m.IsString {
+				return
 			}
+			once.Do(func() {
+				if string(m.Data) == "ok" {
+					close(received)
+					return
+				}
+				refused <- string(m.Data)
+			})
 		})
 		return func() {
 			go func() {
@@ -155,7 +164,9 @@ func (s *server) fetch(from string, req files.Fetch) (string, error) {
 					if err := recordDelivery(s.state, offer.SHA256, from, path); err != nil {
 						fmt.Fprintf(s.log, "%s: the delivery is not recorded: %s\n", label, terminal.EscapeLine(err.Error()))
 					}
-				case <-time.After(30 * time.Second):
+				case reason := <-refused:
+					fmt.Fprintf(s.log, "%s: the receiver refused the bytes: %s\n", label, terminal.EscapeLine(strings.TrimPrefix(reason, "refused: ")))
+				case <-time.After(confirmWait()):
 					fmt.Fprintf(s.log, "%s: the receiver did not confirm\n", label)
 				}
 			}()
@@ -210,7 +221,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 					if errors.Is(err, files.ErrTooManyBytes) {
 						part.Discard()
 					}
-					_ = dc.SendText(err.Error())
+					_ = dc.SendText(files.Refusal(err))
 					end()
 				}
 				return
@@ -222,7 +233,7 @@ func (s *server) put(from string, req files.Fetch) (string, error) {
 			// The caller closes the connection when it has the answer.
 			if err := part.Finish(); err != nil {
 				fmt.Fprintf(s.log, "%s: %s\n", label, terminal.EscapeLine(err.Error()))
-				_ = dc.SendText(err.Error())
+				_ = dc.SendText(files.Refusal(err))
 			} else {
 				fmt.Fprintf(s.log, "%s: %d bytes in %.1f s on %s\n", label, req.Size-have, time.Since(started).Seconds(), direct.SelectedPath(pc))
 				_ = dc.SendText("ok")

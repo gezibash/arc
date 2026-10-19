@@ -62,12 +62,8 @@ func Record(state, file string, to []string) (files.Offer, error) {
 		return o, err
 	}
 	// The service reads the file while this command writes it, so the new
-	// file replaces the old file in one step.
-	next := offerFile(state, sum) + ".next"
-	if err := os.WriteFile(next, append(raw, '\n'), 0o600); err != nil {
-		return o, err
-	}
-	return o, os.Rename(next, offerFile(state, sum))
+	// file replaces the old file in one step, and is on the disk first.
+	return o, files.WriteFile(offerFile(state, sum), append(raw, '\n'), 0o600)
 }
 
 // load returns the offer with this SHA-256. The caller checks first that
@@ -92,7 +88,7 @@ func recordDelivery(state, sum, to, path string) error {
 	if err := os.MkdirAll(filepath.Join(state, "delivered"), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(deliveryFile(state, sum, to), []byte(time.Now().UTC().Format(time.RFC3339)+" "+path+"\n"), 0o600)
+	return files.WriteFile(deliveryFile(state, sum, to), []byte(time.Now().UTC().Format(time.RFC3339)+" "+path+"\n"), 0o600)
 }
 
 // Delivered says whether a citizen got all the bytes of an offer, and on
