@@ -29,7 +29,7 @@ Building waits until Zim and Otto have read this document.
   the scheme goes before `+arc://`, an address has no fragment, and a path
   holds no `@`. Section 4.5 keeps the address form of ARC instead:
   `journal+arc://<owner>/<project>/<notebook>/<page>`, with the entry and
-  the time as path segments.
+  the time as path segments. Zim accepted this form on 2026-10-19.
 - **A revoke takes nothing back.** A reader keeps each entry that reached
   them. They can copy it, and a clone (section 5.2) only makes that copy
   official. A revoke stops new entries only.
@@ -57,7 +57,7 @@ Building waits until Zim and Otto have read this document.
   proof.** A storage citizen can lie about it. It changes the storage
   protocol (section 5.4).
 - **Phase B, redact, attachments and device signing touch keys.** Zim
-  decides them directly (section 9).
+  decided them on 2026-10-19 (section 9).
 
 ## 1. Purpose
 
@@ -150,9 +150,11 @@ storage sync and the data roots need no change. An entry is never revised:
 - Its `created_at` is the write time, by the clock of the device. The
   device key signs the draft, as today, so each entry names its device.
 
-The inner kind is a decision for review: a new regular ARC kind, or kind 1
-of NIP-01 inside the draft. The row in [the kind registry](../KINDS.md) goes
-in the build PR, because the registry test needs the kind in code.
+The inner event has a new regular ARC kind. An entry has tags that only ARC
+reads, `page` and `corrects`, and a rule that only ARC keeps: it is never
+revised. A kind of its own keeps tools that read kind 1 from misreading it.
+The row in [the kind registry](../KINDS.md) goes in the build PR, because
+the registry test needs the kind in code.
 
 A page is the list of the entries that name it, in time order. A page of
 v1 stays readable. Its whole text shows as one old entry.
@@ -193,6 +195,13 @@ only exception to append-only, and it is for leaked secrets.
 - `arc sync` sends the redact to each storage citizen, which deletes the
   blob. This depends on section 6.
 - Phase B sends the redact to each reader of the entry.
+- The redact names the entry by its `d` tag only. It never holds the text,
+  or a hash of the text.
+- The owner sees which storage citizens and which readers acknowledged the
+  redact.
+- The docs and the output of the command say
+  `rotate the secret anyway: a redact removes copies that arc can reach, and no others`.
+  A redact is cleanup, not a fix.
 
 ### 4.5 Links
 
@@ -216,6 +225,8 @@ Inside an entry, arc accepts `[[arc/otto/3]]` for a page of the owner,
   index.
 - A link to a page that the reader cannot read says
   `you cannot read this page`, exits 0, and shows nothing of it.
+- The words `at`, `next` and `today` never name a page, so the segments of
+  an address stay unambiguous.
 
 ### 4.6 Interface spec changes
 
@@ -257,8 +268,14 @@ proposal section before its build.
 - **By a link**: the link holds the share key. Each link has its own key,
   so a revoke of one link leaves the others.
 - **Revoke**: the owner makes a new share key for the readers who remain,
-  and stops sealing to the old one. A reader keeps what they got. The docs
-  say so plainly.
+  and stops sealing to the old one. The readers who remain keep the old key
+  too, so they can still read what they had. A reader keeps what they got.
+  The docs say so plainly.
+- The owner's own devices get each share key, sealed to their device keys.
+  A storage citizen and a relay never get it.
+- A link is a bearer secret. arc prints it once, when the owner makes it,
+  and never puts it in an entry, in `journal links`, in a log or in
+  `--json` output. An expiry on a link can come later.
 - The entries of a share live on the owner's storage citizens. A reader
   fetches them through an ARC call to the owner's storage, or through the
   owner's devices. This is open. A storage citizen and a relay never hold a
@@ -283,15 +300,22 @@ linked. A clone needs nothing that the reader does not have already.
 
 ### 5.4 Phase D: devices, attachments, templates, export
 
-- Several devices: entries do not conflict, so phase A covers it. The open
-  question is policy: does a device key of the device list sign entries, as
-  it signs drafts today?
+- Several devices: entries do not conflict, so phase A covers it. A device
+  key of the device list signs each entry, as it signs drafts today. A
+  reader checks that the device was on the owner's device list at the time
+  of the entry, and flags an entry that a device signed after its removal.
 - Time of receipt: a storage citizen adds a signed time when it stores a
   blob. That changes the storage protocol ([storage](../storage/SPEC.md)).
-  A reader shows a warning when the write time and the time of receipt are
-  more than one hour apart (*estimated* threshold).
-- Attachments: a file of the files app, linked from an entry, sealed so
-  that a reader of the entry can open it.
+  A reader shows both times quietly: `written <time>, stored <time>`. An
+  honest write offline is stored hours later, so a gap alone proves
+  nothing. A reader warns only when the write time is later than the time
+  of receipt by more than 5 minutes of clock skew (*estimated*). This is
+  low priority.
+- Attachments: a file of the files app, linked from an entry. Each
+  attachment has its own key, and the key goes inside the sealed entry.
+  Whoever can read the entry can open the file, so a share, a revoke and a
+  clone follow the entry with no second key path. A redact of the entry
+  deletes the blob of the attachment too.
 - Templates: fixed shapes in the manifest, used with `--template`.
 - Export: Markdown or HTML, with each `journal+arc://` link rewritten to a
   local file.
@@ -367,19 +391,31 @@ After A0 is deployed, a repair on Cato's home frees his 4 MiB.
 4. Only then, announce the new manifest from Zim's key. An older home that
    was missed loses `arc journal` until it updates.
 
-## 9. Decisions for Zim
+## 9. Decisions
 
-These touch keys or protocols, so Zim decides them directly:
+These touch keys or protocols. Otto answered each one, and Zim accepted the
+answers on 2026-10-19:
 
-1. Share keys: one per share, sealed to a reader, rotated on revoke
-   (section 5.1).
-2. Share links that carry a key, and the revoke of one link.
-3. Redact: a signature of the owner, and its reach into shares (section
-   4.4).
-4. Attachment keys for readers (section 5.4).
-5. Signing of entries by device keys (section 5.4).
-6. A time of receipt signed by storage citizens (section 5.4).
-7. The inner kind of an entry (section 4.1).
+1. Share keys: one per share, sealed to each reader and to the owner's
+   devices, never to a storage citizen or a relay. A revoke makes a new key
+   for the readers who remain, who keep the old key (section 5.1).
+2. Share links: each link has its own key, never the owner's content key.
+   A link is a bearer secret: printed once, and never in an entry, a
+   listing, a log or `--json` output (section 5.1).
+3. Redact: signed by the owner or a device of the owner, by `d` tag only,
+   with the acknowledgements shown to the owner, and the advice to rotate
+   the secret anyway (section 4.4).
+4. Attachment keys: one per attachment, inside the sealed entry
+   (section 5.4).
+5. Device signing: device keys sign entries, and a reader checks the
+   device list at the time of the entry (section 5.4).
+6. Time of receipt: signed by the storage citizen, shown quietly, with a
+   warning only for a write time later than the time of receipt
+   (section 5.4).
+7. Entry kind: a new regular ARC kind (section 4.1).
+
+Zim also accepted the address form of section 4.5, with `at`, `next` and
+`today` reserved.
 
 ## 10. Proof
 
