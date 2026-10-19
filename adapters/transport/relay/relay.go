@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"math"
 	"net/http"
@@ -24,6 +25,13 @@ import (
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/transport"
 )
+
+// The Nostr library writes an info line to standard error for each event
+// that it drops: an event that does not match the filter of its
+// subscription, an event with a bad signature, and an OK for an event that
+// it did not send. The drop is correct, and arc reports its own errors, so
+// the line only confuses the user of arc.
+func init() { nostr.InfoLogger.SetOutput(io.Discard) }
 
 // Timeout bounds one call to a relay.
 const Timeout = 15 * time.Second
