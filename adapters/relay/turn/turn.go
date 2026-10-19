@@ -62,6 +62,13 @@ type Config struct {
 	TTL time.Duration
 	// Net replaces the network of the machine. Tests use it.
 	Net transport.Net
+	// TCP, if not nil, also serves TURN over TCP, such as behind a TLS
+	// proxy on port 443 for citizens that cannot send UDP. The relay
+	// sockets stay UDP.
+	TCP net.Listener
+	// URLs are more addresses that each credential names, after the UDP
+	// one, such as "turns:relay.example:443?transport=tcp".
+	URLs []string
 }
 
 // Credential is the reply to GET /turn.
@@ -109,6 +116,21 @@ func Serve(conn net.PacketConn, config Config) (*Server, error) {
 	s := &Server{config: config, port: port, ledger: newLedger(config.Quota, config.Period)}
 	quiet := logging.NewDefaultLoggerFactory()
 	quiet.DefaultLogLevel = logging.LogLevelDisabled
+	generator := &meteredGenerator{
+		RelayAddressGeneratorPortRange: &pturn.RelayAddressGeneratorPortRange{
+			RelayAddress: config.PublicIP,
+			Address:      config.RelayHost,
+			MinPort:      config.MinPort,
+			MaxPort:      config.MaxPort,
+			Net:          config.Net,
+		},
+		ledger:  s.ledger,
+		localIP: localIP(config),
+	}
+	var listeners []pturn.ListenerConfig
+	if config.TCP != nil {
+		listeners = []pturn.ListenerConfig{{Listener: config.TCP, RelayAddressGenerator: generator}}
+	}
 	server, err := pturn.NewServer(pturn.ServerConfig{
 		Realm:         Realm,
 		LoggerFactory: quiet,
@@ -117,19 +139,10 @@ func Serve(conn net.PacketConn, config Config) (*Server, error) {
 			return s.ledger.left(userOf(username)) > 0
 		},
 		PacketConnConfigs: []pturn.PacketConnConfig{{
-			PacketConn: conn,
-			RelayAddressGenerator: &meteredGenerator{
-				RelayAddressGeneratorPortRange: &pturn.RelayAddressGeneratorPortRange{
-					RelayAddress: config.PublicIP,
-					Address:      config.RelayHost,
-					MinPort:      config.MinPort,
-					MaxPort:      config.MaxPort,
-					Net:          config.Net,
-				},
-				ledger:  s.ledger,
-				localIP: localIP(config),
-			},
+			PacketConn:            conn,
+			RelayAddressGenerator: generator,
 		}},
+		ListenerConfigs: listeners,
 	})
 	if err != nil {
 		return nil, err
@@ -165,7 +178,7 @@ func (s *Server) Credential(key, host string) (Credential, error) {
 		return Credential{}, err
 	}
 	return Credential{
-		URLs:      []string{"turn:" + net.JoinHostPort(host, strconv.Itoa(s.port)) + "?transport=udp"},
+		URLs:      append([]string{"turn:" + net.JoinHostPort(host, strconv.Itoa(s.port)) + "?transport=udp"}, s.config.URLs...),
 		Username:  username,
 		Password:  password,
 		TTL:       int(s.config.TTL / time.Second),

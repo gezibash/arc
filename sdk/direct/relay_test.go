@@ -263,3 +263,49 @@ func TestADeadFirstSTUNServerDoesNotStopAnEnd(t *testing.T) {
 		t.Fatalf("an end with a dead first STUN server got no public address from the second:\n%s", offer.SDP)
 	}
 }
+
+// An end that has only TURN over TCP, as one with no UDP out of its
+// network, still gets an address of type relay: the network types of an
+// end limit its candidates, not how it reaches the TURN server.
+func TestTURNOverTCPGivesARelayAddress(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := turn.Serve(conn, turn.Config{Secret: "secret", PublicIP: net.IPv4(127, 0, 0, 1), RelayHost: "127.0.0.1", MinPort: 53000, MaxPort: 53099, Quota: 1 << 20, TCP: tcp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	credential, err := server.Credential(strings.Repeat("ab", 32), "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, err := NewConnection(Options{TURN: &webrtc.ICEServer{
+		URLs:       []string{"turn:" + tcp.Addr().String() + "?transport=tcp"},
+		Username:   credential.Username,
+		Credential: credential.Password,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	if _, err := pc.CreateDataChannel("file", nil); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := Describe(pc, offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(local.SDP, "typ relay") {
+		t.Fatalf("no relay address through TURN over TCP:\n%s", local.SDP)
+	}
+}

@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestSTUNURLs|TestADeadFirstSTUNServerDoesNotStopAnEnd|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
+- Proof: go test -count=1 -run '^(TestRelayPath|TestTURNOverTCPGivesARelayAddress|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestSTUNURLs|TestADeadFirstSTUNServerDoesNotStopAnEnd|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
 - Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` and a consumer with `--path turn` gave a path between two machines behind NAT through the production relay in 6 of 6 runs, with the relay of v0.27.0 (section 8.2).
 
@@ -148,9 +148,10 @@ then fails.
 
 ### 3.6 The relay attempt
 
-1. The offerer gets a TURN credential and its quota from the first of its
-   relays, in their order, that answers with one. A relay that is down, or
-   serves no TURN, does not stop the others. An app program runs
+1. The offerer gets a TURN credential and its quota from its relays, in
+   their order: the first credential that names TURN over TCP or TLS, else
+   the first that any relay gives. A relay that is down, or serves no TURN,
+   does not stop the others. TURN over TCP lets an end with no UDP relay. An app program runs
    `arc relay turn`. arc signs a NIP-98 request with the key of the
    citizen.
 2. If the quota is smaller than the bytes that remain plus a tenth, the
