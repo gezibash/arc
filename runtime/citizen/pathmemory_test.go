@@ -2,6 +2,7 @@ package citizen
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -137,6 +138,13 @@ func TestAFailedCallGetsNoDirectAttempt(t *testing.T) {
 		t.Fatalf("openPipe gave %v, want the error of the call", err)
 	}
 	sameAttempts(t, "a sync whose call failed", asked, "turn")
+
+	// A sync that ends, such as by Ctrl-C, makes no second attempt either.
+	asked, _, err = pathSync(t, syncer, direct.Auto, true, start.Add(time.Hour), failing(context.Canceled))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("openPipe gave %v, want the end of the sync", err)
+	}
+	sameAttempts(t, "a sync that ended", asked, "turn")
 }
 
 // A repair without --turn needs a direct pipe, and the paths turn and
