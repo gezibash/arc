@@ -955,8 +955,11 @@ takes the first credential that names TURN over TCP or TLS, else the first
 that any relay gives. An app gets a credential with this command, because
 an app cannot read the key.
 
-An app MUST use TURN only after its direct attempts fail. It MUST tell the
-user that the bytes go through the relay. Before it starts an attempt
+An app MUST use TURN only after its direct attempts fail. A failure of the
+direct attempts to the same citizen in the last 6 hours counts, as in the
+sync of self data (docs/storage/SPEC.md, section 4.6). An app that then
+goes to TURN first MUST run the direct attempts if TURN gives no path. It
+MUST tell the user that the bytes go through the relay. Before it starts an attempt
 through the relay, it compares `quota_left` with the bytes that remain, and
 refuses with an error if the quota is too small.
 

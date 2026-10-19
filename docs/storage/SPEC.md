@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestClosedAccountRemoved|TestCloseCall|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestAReplyWithABadIDIsRefused|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestClosedAccountRemoved|TestCloseCall|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestAReplyWithABadIDIsRefused|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes|TestADirectFailureSendsTheNextSyncsToTURNFor6Hours|TestNoPathThroughTURNFallsBackToTheDirectAttempts|TestAFailedCallGetsNoDirectAttempt|TestTURNFirstSkipsRepairAndAFixedPath|TestAClockThatWentBackTriesTheDirectAttempts)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/ ./runtime/citizen/
 - Remaining: the steps that section 8.2 names: set reconciliation, and a command that removes the old drafts from a relay.
 - Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record. No test puts a file of 63 MiB, the largest body, through the CLI: the proof puts 60 MiB. No test puts a large file on storage citizens on other machines or behind real NATs; the proof uses the loopback address. No test measures the memory of a storage citizen during a put of 64 MiB; a unit test proves that the bytes go to the disk as they come. No test checks the limit of 128 MiB of puts in flight. No test waits one hour for the removal of a body that no draft names: a unit test gives the time. `TestStorageLargeFile` needs commit 9ee6088 in the checkout, so a shallow clone fails it. No test waits 30 days after a close of the operator: the test moves `closing` back in `state.json`. No test sends a close call to an older storage app; section 7 states its behavior from the code. No test closes an account through the CLI while another device holds a pipe of the account; a unit test ends the pipe.
 
@@ -935,7 +935,32 @@ than the TURN quota of one day.
 
 The sync opens each pipe with the path of the citizen (`arc path`): `turn`
 uses only the TURN server of the relay, and `direct` uses no TURN. `auto`
-and `session` try a direct path first.
+and `session` try a direct path first, with one exception.
+
+**TURN first after a direct failure.** With `auto` or `session`, the
+device records in the state file of each storage citizen
+(`direct_failed`, a Unix time) when the direct attempts found no path and
+the TURN server of the relay opened the pipe. A direct path that opens
+removes the record. For 6 hours after the record, a sync that takes a pipe
+through TURN opens the pipe to that storage citizen through the TURN server
+of the relay first, with no direct attempt. If that attempt finds no path,
+the sync runs the direct attempts. If the call to the storage citizen
+fails, the sync makes no second attempt. A pipe that opens through TURN
+first does not move the record, so after 6 hours a sync tries the direct
+attempts first again. A clock before the record also tries them first. The
+sync tells the user:
+`<name>: the direct attempts found no path; until <HH:MM> each sync tries the TURN server of the relay first, so the bytes go through the relay`.
+A repair without `--turn` needs a direct pipe, so it tries the direct
+attempts first. Reason: a device with no UDP, such as a sandbox that lets
+out only TCP port 443, spent about 36 s of each sync on two direct attempts
+to each storage citizen (Otto, 2026-10-19). An older device ignores the
+record and drops it when it saves the state file, so the next sync tries
+the direct attempts first. Proved by
+`TestADirectFailureSendsTheNextSyncsToTURNFor6Hours`,
+`TestNoPathThroughTURNFallsBackToTheDirectAttempts`,
+`TestAFailedCallGetsNoDirectAttempt`,
+`TestTURNFirstSkipsRepairAndAFixedPath` and
+`TestAClockThatWentBackTriesTheDirectAttempts` in `runtime/citizen`.
 
 **Decisions.** Zim accepted these on 2026-10-12, with the build of this
 section:
@@ -947,6 +972,12 @@ section:
    `arc sync --repair`. Reason: the piece costs k pieces down, as a
    rebuild does (decision 4 of the proposal).
 3. Audits wait for a direct path, as repair does. `--turn` allows both.
+
+Zim accepted this decision on 2026-10-19:
+
+4. After the direct attempts to a storage citizen find no path, the sync
+   goes to the TURN server of the relay first for 6 hours, then tries the
+   direct attempts first again.
 
 Zim accepted these on 2026-10-12, with the move of blobs of format 1:
 

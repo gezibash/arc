@@ -509,14 +509,22 @@ type opening struct {
 // its silence.
 func (sess *Session) openOne(ctx context.Context, cfg SelfSync, syncer *selfsync.Syncer, t target) (o opening) {
 	install := t.install
-	client := storage.Client{
-		Call: func(ctx context.Context, session string) ([]byte, error) {
-			return sess.openStorage(ctx, cfg.Installs, install.As, session)
-		},
-		TURN: cfg.TURN, Options: cfg.Options, Notes: &o.notes,
-		NoRelay: cfg.Path == direct.DirectOnly, OnlyRelay: cfg.Path == direct.RelayOnly,
-	}
-	conn, err := client.Open(ctx, 0)
+	// Repair and audits take a pipe through TURN only with --turn.
+	turnOK := !cfg.Repair || cfg.RepairTURN
+	conn, err := openPipe(syncer, install.Provider, install.As, cfg.Path, turnOK, time.Now, &o.notes,
+		func(noRelay, onlyRelay bool) (*storage.Conn, error) {
+			client := storage.Client{
+				Call: func(ctx context.Context, session string) ([]byte, error) {
+					reply, err := sess.openStorage(ctx, cfg.Installs, install.As, session)
+					if err != nil {
+						return nil, callError{err}
+					}
+					return reply, nil
+				},
+				TURN: cfg.TURN, Options: cfg.Options, Notes: &o.notes, NoRelay: noRelay, OnlyRelay: onlyRelay,
+			}
+			return client.Open(ctx, 0)
+		})
 	o.opened = time.Now()
 	if err != nil {
 		o.err = err
@@ -535,6 +543,56 @@ func (sess *Session) openOne(ctx context.Context, cfg SelfSync, syncer *selfsync
 	o.conn = conn
 	o.locked, o.err = sess.setDrain(ctx, conn, t, &o.said, &o.notes)
 	return o
+}
+
+// callError is an error of the ARC call that carries the offer of a pipe:
+// the storage citizen did not answer, so another attempt does not help.
+type callError struct{ error }
+
+func (e callError) Unwrap() error { return e.error }
+
+// openPipe opens the pipe to one storage citizen with the path of the
+// citizen. With the path auto or session, it records whether the direct
+// attempts found a path. For selfsync.TURNFirstFor after they found none,
+// a sync that takes a pipe through TURN (turnOK) tries the TURN server of
+// the relay first, and the direct attempts only if that fails
+// (docs/storage/SPEC.md, section 4.6). open runs the attempts.
+func openPipe(syncer *selfsync.Syncer, name, as string, policy direct.Policy, turnOK bool, now func() time.Time, notes io.Writer,
+	open func(noRelay, onlyRelay bool) (*storage.Conn, error)) (*storage.Conn, error) {
+	if policy == direct.DirectOnly || policy == direct.RelayOnly {
+		return open(policy == direct.DirectOnly, policy == direct.RelayOnly)
+	}
+	record := func(conn *storage.Conn, found bool) (*storage.Conn, error) {
+		if err := syncer.DirectPath(name, now(), found); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return conn, nil
+	}
+	if turnOK {
+		until, err := syncer.TURNFirst(name, now())
+		if err != nil {
+			return nil, err
+		}
+		if !until.IsZero() {
+			fmt.Fprintln(notes, terminal.EscapeLine(fmt.Sprintf("%s: the direct attempts found no path; until %s each sync tries the TURN server of the relay first, so the bytes go through the relay",
+				as, until.Local().Format("15:04"))))
+			conn, err := open(false, true)
+			if err == nil || errors.As(err, new(callError)) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return conn, err
+			}
+			fmt.Fprintln(notes, terminal.EscapeLine(fmt.Sprintf("%s: no path through the relay: %v; trying the direct attempts", as, err)))
+			if conn, err = open(true, false); err != nil {
+				return nil, err
+			}
+			return record(conn, true)
+		}
+	}
+	conn, err := open(false, false)
+	if err != nil {
+		return nil, err
+	}
+	return record(conn, conn.Path != "relay")
 }
 
 // setDrain makes the account follow the storage list before the sync
