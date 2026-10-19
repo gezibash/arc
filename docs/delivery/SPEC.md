@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -442,10 +442,14 @@ that list.
 
 **Waiting mail.** After the sync of its relays, `arc sync` and each tick of
 `arc serve` look up the list of each recipient of a message or a request
-that is not delivered and not expired, and send its wraps to each relay of
-that list that does not have them yet. Each wrap goes to a relay once.
-`arc sync` prints
-`mail: sent <n> wraps of waiting messages to relays that their recipients read`.
+that is not delivered and not expired, and of each acknowledgement or reply
+that is not expired, and send its wraps to each relay of that list that
+does not have them yet. Each wrap goes to a relay once. So an
+acknowledgement that waited on the relays of its sender reaches the
+sender of the message once the list is found, and the outbox shows the
+message delivered. `arc sync` prints
+`mail: sent <n> waiting messages to the relays that their recipients read`,
+with `message` and `its` for one.
 
 An older arc looks in its store first, and asks the relays only when the
 store has no list. So it keeps sending to the old relays of a recipient who
@@ -454,7 +458,8 @@ mail reaches a newer recipient only on the relays of the old list. Reason:
 Cato's test of v0.36.1 (2026-10-19). A citizen on relay.republic.sh only and
 a citizen on aurelia.republic.sh only exchanged no mail after they swapped
 relays. `TestASendFollowsANewerRelayList`,
-`TestPendingMailGoesToARelayListThatAppearsLater` and
+`TestPendingMailGoesToARelayListThatAppearsLater`,
+`TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater` and
 `TestASendWithNoAnswerUsesTheStoredList` in `core/mail` prove this. Zim
 accepted the lookup on each send and the sending of waiting mail on
 2026-10-19.

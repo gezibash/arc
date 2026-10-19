@@ -450,7 +450,7 @@ func putCarried(tx kv.Tx, entries []carried) error {
 
 func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carried) (int, InboxLookup) {
 	inbox, lookup, _ := m.inboxRelays(ctx, to)
-	wraps := 0
+	messages := 0
 	// A message has a wrap in each form. The send of a message is one
 	// attempt, however many of its wraps went out.
 	counted := map[string]bool{}
@@ -469,7 +469,6 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 			if !slices.Contains(entry.SentTo, t.Name()) && t.Send(ctx, events[0]) == nil {
 				entry.SentTo = append(entry.SentTo, t.Name())
 				sent = true
-				wraps++
 			}
 		}
 		// Failure to record a receipt can only repeat a wrap, never lose a call.
@@ -478,17 +477,18 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 		// own. A failure to count it changes only the number that it shows.
 		if key := outboxKey(entry.Rumor, entry.To); sent && entry.Own && entry.Rumor != "" && !counted[key] {
 			counted[key] = true
+			messages++
 			_ = m.attempted(key)
 		}
 	}
-	return wraps, lookup
+	return messages, lookup
 }
 
-// Forward sends each pending message of this citizen, and each pending
-// request, to the relays of the newest relay list of its recipient that do
-// not have its wraps yet. A list can appear or change after the send. It
-// returns the number of wraps sent. A delivered or expired message gets
-// nothing.
+// Forward sends each pending message, request, acknowledgement and reply
+// of this citizen to the relays of the newest relay list of its recipient
+// that do not have its wraps yet. A list can appear or change after the
+// send. It returns the number of messages sent, one for each message and
+// recipient. A delivered message and an expired wrap get nothing.
 func (m *Mail) Forward(ctx context.Context) (int, error) {
 	var entries []carried
 	if err := m.each(func(c carried) {
@@ -507,7 +507,9 @@ func (m *Mail) Forward(ctx context.Context) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if !found || !out.Delivered.IsZero() || !now.Before(out.Expires) {
+		// An acknowledgement or a reply has no outbox entry, and waits
+		// until it expires.
+		if found && !out.Delivered.IsZero() || !now.Before(entry.Expires) {
 			continue
 		}
 		if _, ok := pending[entry.To]; !ok {

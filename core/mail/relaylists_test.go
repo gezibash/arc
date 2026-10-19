@@ -79,13 +79,13 @@ func TestPendingMailGoesToARelayListThatAppearsLater(t *testing.T) {
 	publishList(t, bob, shared, nostr.Now(), bobs.URL)
 	sent := testutil.Must(alice.mail.Forward(ctx))
 	if sent != 1 {
-		t.Errorf("Forward sent %d wraps, want 1", sent)
+		t.Errorf("Forward sent %d messages, want 1", sent)
 	}
 	if got := bob.sync(t, bobs); got.Received != 1 {
 		t.Fatalf("bob received %d messages after Forward, want 1", got.Received)
 	}
 	if again := testutil.Must(alice.mail.Forward(ctx)); again != 0 {
-		t.Errorf("a second Forward sent %d wraps to relays that have them", again)
+		t.Errorf("a second Forward sent %d messages to relays that have them", again)
 	}
 
 	// Alice has no relay list, so Bob's acknowledgement waits on his relay.
@@ -97,7 +97,7 @@ func TestPendingMailGoesToARelayListThatAppearsLater(t *testing.T) {
 	moved := relay.Relay{URL: testrelay.Start(t)}
 	publishList(t, bob, shared, nostr.Now()+1, moved.URL)
 	if after := testutil.Must(alice.mail.Forward(ctx)); after != 0 {
-		t.Errorf("Forward sent %d wraps of a delivered message", after)
+		t.Errorf("Forward sent %d messages of a delivered message", after)
 	}
 }
 
@@ -123,5 +123,38 @@ func TestASendWithNoAnswerUsesTheStoredList(t *testing.T) {
 	}
 	if got := bob.sync(t, bobs); got.Received != 1 {
 		t.Fatalf("bob received %d messages through the stored list, want 1", got.Received)
+	}
+}
+
+// Bob's acknowledgement waits on his relay while he cannot find Alice's
+// list. When her list appears, Bob's next Forward sends the
+// acknowledgement to her relay, so her outbox shows the message
+// delivered (Cato's retest of v0.37.0, 2026-10-19: both outboxes stayed
+// "pending" after the mail arrived).
+func TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater(t *testing.T) {
+	shared := relay.Relay{URL: testrelay.Start(t)}
+	bobs := relay.Relay{URL: testrelay.Start(t)}
+	alice, bob := newCitizen(t, shared), newCitizen(t, bobs)
+	ctx := context.Background()
+
+	publishList(t, bob, shared, nostr.Now(), bobs.URL)
+	sendOne(t, alice, bob, "please acknowledge")
+	if got := bob.sync(t, bobs); got.Received != 1 {
+		t.Fatalf("bob received %d messages, want 1", got.Received)
+	}
+	if got := alice.sync(t, shared); got.Delivered != 0 {
+		t.Fatalf("alice saw %d deliveries before bob could find her list", got.Delivered)
+	}
+
+	// Alice's list appears where Bob looks, as after her relay add --index.
+	publishList(t, alice, bobs, nostr.Now(), shared.URL)
+	if sent := testutil.Must(bob.mail.Forward(ctx)); sent != 1 {
+		t.Errorf("bob's Forward sent %d messages, want his acknowledgement", sent)
+	}
+	if got := alice.sync(t, shared); got.Delivered != 1 {
+		t.Fatalf("alice saw %d deliveries after bob's Forward, want 1", got.Delivered)
+	}
+	if again := testutil.Must(bob.mail.Forward(ctx)); again != 0 {
+		t.Errorf("a second Forward sent %d messages to relays that have them", again)
 	}
 }
