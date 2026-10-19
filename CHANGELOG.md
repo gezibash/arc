@@ -6,6 +6,92 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-19
+
+arc-dm can reply to a message, a relay tells a citizen when its rings for
+the day run low, and a passphrase no longer shows on the terminal when it
+is typed or pasted as the prompt appears. A sync of mail that it already
+holds no longer pays an fsync for each message. Found and reviewed by
+Otto, Cato and Alfred. Several changes are breaking, under Changed. Update
+each relay, then each device.
+
+### Changed
+
+- **Breaking:** arc and each client program escape the text of another
+  party where they print it, not where they make an error, and the source
+  check `TestTextOfOtherPartiesIsEscapedAtThePrint` enforces it
+  (docs/clients/SPEC.md, section 3.9). An operator log shows an error on
+  one line. docs/storage/SPEC.md, section 3.3, now states that a storage
+  reply to a get, delete or audit with `ids` names the IDs of the request,
+  in order, and tests cover it; the client has refused another reply
+  since #226 (v0.26.0). The text of an app's format
+  templates is stripped like its values (docs/interface/SPEC.md, section
+  3.15) (#337).
+- **Breaking:** `arc-dm reply <id> <text>` and `arc-dm send -reply <id>`
+  reply to a message with a NIP-17 `e` tag, and the reply shows its parent
+  as one quoted line, taken from this device only (docs/clients/SPEC.md,
+  `reply_to`). An older arc or client program shows a reply as a plain
+  message. `arc-dm reply` with an older arc fails with
+  `unknown flag: --reply` (#348).
+- **Breaking:** the quote of a reply caps the id it shows and fits in 72
+  columns, counted by grapheme clusters with a cap on characters
+  (docs/clients/SPEC.md, section 3.10). An older arc-dm can show the whole
+  short id, or a quote wider than 72 columns (#349, #350, #351).
+- **Breaking:** U+034F, U+180B and U+1D173 to U+1D17A are escaped too, and
+  `Strip` removes them (docs/clients/SPEC.md, section 3.9). An older arc
+  or client program shows them as they came (#350).
+- **Breaking:** while 5 or fewer of a citizen's rings are left for the
+  day, and the citizen used at least one, the relay sends one NOTICE on
+  each connection that reads for it:
+  `arc-ring: <n> of <daily_cap> rings left today; then rings wait until 00:00 UTC`,
+  and at 0, `arc-ring: 0 of <daily_cap> rings left today; rings wait until 00:00 UTC`
+  (docs/rings/SPEC.md, section 3.5). An arc of v0.33.7 or newer prints it;
+  a relay older than this rule sends none (#357).
+
+- arc-dm takes its flags after the peer or id as well as before it. The
+  first word that is not a flag starts the text, each word after `--` is
+  text, and an empty `-reply=` is refused (#350, #351).
+
+### Added
+
+- `arc relay ring set`, `show`, `test` and `clear` take `--relay <url>` to
+  act on one relay only. A `--relay` given with no URL fails and acts on
+  no relay (#356).
+- A relay logs why it does not ring, with a short citizen id, and arc
+  prints an authentication that a relay refused (#344). A streak of
+  refused sign-ins is told once (#345).
+
+### Fixed
+
+- A sync of mail that it already holds no longer opens a write
+  transaction, each with an fsync, for each message it reads again
+  (#358, #361). On the Mac of a developer, `arc sync` of the same citizen
+  took 28.4, 27.1 and 28.4 s with v0.34.0, and 7.7, 7.7 and 7.4 s with
+  this release. On Cato's Linux machine, a repeat sync of 400 known seals
+  makes about 9620 fdatasync calls with v0.34.0 and 14 with this release.
+  There, #361 alone took the median of that sync from 3436 ms to 2869 ms
+  (-16.5%); #358 alone halved the fdatasync calls with no change in time.
+  The gain differs by machine and disk.
+- The passphrase prompt turns echo off before it shows, so a passphrase
+  typed or pasted as the prompt appears is not shown. Ctrl-C, Ctrl-\,
+  SIGTERM and SIGHUP at the prompt bring echo back before arc ends, and a
+  signal that arc started with ignored, as under `nohup`, stays ignored
+  (#360).
+- `arc-transfer get` gives a 16-hex-digit hash prefix to a file whose
+  name had only hidden characters before its first dot, so the file no
+  longer becomes a dot file such as `.tar.gz`. A dot file that the sender
+  named, such as `.bashrc`, stays one (#337).
+- arc-dm holds a reply until it has read the outbox, keeps each sender's
+  order, caps what it holds, and refuses a short id that it showed as
+  missing (#352). After an outbox read that times out, held replies show
+  at once with no quote line; a watch whose function panics ends its arc
+  (#355). A killed save leaves no temporary file behind (#359).
+- A relay reads the authenticated keys of a connection under its lock,
+  which removes a data race in khatru (#339, #341, with the nostrlib pin
+  in #343).
+- arc waits up to 3 s for a relay's NIP-42 challenge before a read, so a
+  slow challenge no longer fails the read (#346).
+
 ## [0.34.0] - 2026-10-17
 
 Text that another party chooses can no longer change your terminal, reorder
