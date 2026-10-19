@@ -539,7 +539,7 @@ func TestInterface(t *testing.T) {
 	}
 	t.Log("ok: an agent signs as its owner through a bunker, and holds no secret key")
 
-	contains(agent.refuse("notes", "post", "not", "allowed"), "does not sign kind 1",
+	contains(refusedByBunker(t, agent, "notes", "post", "not", "allowed"), "does not sign kind 1",
 		"the refusal of a kind that the bunker does not allow")
 	t.Log("ok: the bunker refuses a kind that its owner does not allow")
 
@@ -581,4 +581,32 @@ func TestInterface(t *testing.T) {
 	t.Log("ok: with --decrypt all, the agent reads its owner's mail, and the URI stays the same")
 
 	t.Log("phase D holds: reserved kinds, consent, dry runs, sealed keys, and remote signers")
+}
+
+// refusedByBunker runs a command that the bunker must refuse, and returns
+// its standard error. Under load, as with the race detector, the bunker can
+// miss the 15 s window of a connect. arc then keeps the file signer-silent
+// in the identity, and fails each command for a minute with "the signer did
+// not answer", which is not the refusal under test. So it removes that file
+// and asks again, up to 3 times. A bunker that never answers still fails.
+func refusedByBunker(t *testing.T, agent machine, args ...string) string {
+	t.Helper()
+	var refused string
+	for attempt := 1; attempt <= 3; attempt++ {
+		refused = agent.refuse(args...)
+		if !strings.Contains(refused, "the signer did not answer") {
+			return refused
+		}
+		t.Logf("measured: the bunker did not answer in time, attempt %d; asking again", attempt)
+		err := filepath.WalkDir(agent.home, func(path string, entry fs.DirEntry, err error) error {
+			if err == nil && entry.Name() == "signer-silent" {
+				return os.Remove(path)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return refused
 }
