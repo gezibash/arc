@@ -38,13 +38,12 @@ Building waits until Zim and Otto have read this document.
   new enough. It cannot remove a copy that a reader made outside ARC, a
   clone, or the store of a device that is offline or runs an older arc. A
   storage citizen deletes on request, and nobody can prove that it did.
-- **Redact needs a working delete path first, and today there is none.**
-  Cato's test of v0.36.0 (2026-10-19, *measured*): he wrote a page, deleted
-  it before any sync, and then ran `arc sync`. The sync sent 132 records,
-  and the use on each storage citizen went from 1.4 MiB to 5.3 MiB.
-  `arc sync --repair` removed 0 blobs. Section 6 traces the cause. About
-  4 MiB of his test data stays on the shared storage citizens until it is
-  fixed.
+- **A write that fails leaves its parts behind, and nothing frees them.**
+  A delete that finds its page works. But a write of 4.04 MB that failed on
+  the size cap left about 124 parts in the store, which `arc sync`
+  uploaded, and which no delete or repair removes (Cato, 2026-10-19,
+  *measured*, section 6). About 4 MiB of his test data stays on the shared
+  storage citizens until PR A0. Redact builds on the same delete path.
 - **The largest page is about 3 MB, not the 256 parts of section 3.9.2.**
   A page of 3.0 MB works, and a page of 4.04 MB fails with
   `store: content is too large: 65628, max is 65535` (Cato, 2026-10-19,
@@ -304,31 +303,32 @@ kind 5 request ([interface](../interface/SPEC.md), section 3.10;
 [storage](../storage/SPEC.md), measured at 3 blobs for a deleted page). So
 132 records after a delete is not the path of a delete that worked.
 
-The likely cause, not yet proven, is a write that failed half way:
+The cause is a write that failed half way. Cato confirmed it on
+2026-10-19 with throwaway homes and `arc sync --dir` to a local folder, so
+nothing went to a storage citizen (*measured*):
 
 1. A publish saves its events one by one: the parts, then the draft, then
    the checkpoint (`runtime/iface/data.go:386`,
    `runtime/citizen/environment.go:124-134`).
-2. Cato's page of 4.04 MB failed on the draft, with the codec limit of
+2. His page of 4.04 MB failed on the draft, with the codec limit of
    section 0. Its parts were in the store already, and no draft names
-   them.
-3. `arc sync` uploads every part of the citizen
-   (`runtime/selfsync/sync.go:23` and `:35-54`). A page of 4.04 MB has about
-   124 parts of 32 KiB (*arithmetic*: 4,040,000 / 32,768), close to the 132
-   records and the 3.9 MiB that each storage citizen gained (*measured*).
-4. `journal delete` of a page with no draft stops with
-   `there is nothing to delete` (`runtime/iface/data.go:469`), and deletes no
-   part.
-5. Repair deletes a blob only when a later record that is on storage
+   them. After the failure, `journal ls` and `journal history` showed
+   nothing.
+3. `journal delete` of a page with no draft stops with
+   `there is nothing to delete`, exit 1 (`runtime/iface/data.go:469`), and
+   deletes no part.
+4. The next sync sent 124 items, 5.4 MB, because `arc sync` uploads every
+   part of the citizen (`runtime/selfsync/sync.go:23` and `:35-54`).
+5. A page of 300 KB, written and deleted twice, sent 4 small records
+   (15 KB): a delete that finds its draft works.
+6. Repair deletes a blob only when a later record that is on storage
    replaces or deletes it (`runtime/selfsync/repair.go:223-224`, `:509-517`).
    No record names the orphan parts, so repair keeps them.
 
-Cato's steps say that he deleted the page. The trace cannot yet tell
-whether his delete found a draft. The full output of his `arc sync`, or a
-count of the parts of that address in his store, decides it. A second
-reading is possible: a sync that cannot open the piece tags of an older
-generation codes those blobs again (`runtime/selfsync/network.go:311-317`).
-It prints `refused <n> pieces of generation <g>`.
+The 132 records of his first run are the 124 orphan parts and 4 deletes of
+2 records each (*arithmetic*, from the counts; the raw output of that run
+is gone). The use grew by about 3.9 MiB, one body of 4 MB. Not checked:
+the exact size between 3.0 MB and 4.04 MB where the cap starts.
 
 PR A0 fixes the delete path:
 
@@ -338,7 +338,8 @@ PR A0 fixes the delete path:
 - `journal delete` deletes each part and checkpoint of the address, also
   with no draft.
 - Repair deletes a part or a checkpoint whose draft is blank or missing on
-  every storage citizen and on the device.
+  every storage citizen and on the device, including the orphan parts
+  already on the storage citizens.
 - Tests: a write that fails on size leaves no part in the store; a delete
   of a page of many parts leaves no event of kind 3275 or 1234; a sync after
   both puts only the blank draft and the request; repair frees an orphan
