@@ -286,7 +286,7 @@ func relayCommand() *cobra.Command {
 // direct path.
 func turnCommand() *cobra.Command {
 	return &cobra.Command{
-		Use: "turn [url]", Short: "Get a TURN credential from a relay (default: the first relay that answers)", Args: cobra.MaximumNArgs(1),
+		Use: "turn [url]", Short: "Get a TURN credential from a relay (default: the first that also takes TCP, else the first that answers)", Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			dir, err := home(command)
 			if err != nil {
@@ -309,23 +309,35 @@ func turnCommand() *cobra.Command {
 	}
 }
 
-// fetchAnyTURN asks each relay in turn for a TURN credential, and returns
-// the first reply. A relay that does not answer, or serves no TURN, does not
-// stop the others.
+// fetchAnyTURN asks each relay in turn for a TURN credential. It returns
+// the first that also names TURN over TCP, so that a citizen with no UDP,
+// such as in a sandbox that lets only port 443 out, can still relay; else
+// the first reply. A relay that does not answer, or serves no TURN, does
+// not stop the others.
 func fetchAnyTURN(ctx context.Context, dir string, relays []string) ([]byte, error) {
 	if len(relays) == 0 {
 		return nil, errors.New("no relays: add one with arc relay add <url>")
 	}
 	var problems []error
+	var first []byte
 	for _, relay := range relays {
 		body, err := fetchTURN(ctx, dir, relay)
 		if err == nil {
-			return body, nil
+			if overTCP(body) {
+				return body, nil
+			}
+			if first == nil {
+				first = body
+			}
+			continue
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		problems = append(problems, err)
+	}
+	if first != nil {
+		return first, nil
 	}
 	return nil, errors.Join(problems...)
 }
@@ -374,6 +386,17 @@ func fetchTURN(ctx context.Context, dir, relay string) ([]byte, error) {
 }
 
 // turnURL is the HTTP URL of the TURN credential of a relay URL.
+// overTCP says whether a credential names TURN over TCP or TLS.
+func overTCP(body []byte) bool {
+	var credential turn.Credential
+	if json.Unmarshal(body, &credential) != nil {
+		return false
+	}
+	return slices.ContainsFunc(credential.URLs, func(u string) bool {
+		return strings.HasPrefix(u, "turns:") || strings.Contains(u, "transport=tcp")
+	})
+}
+
 func turnURL(relay string) (string, error) { return relayHTTP(relay, turn.Path) }
 
 // relayHTTP is the HTTP URL of a path on the listener of a relay.
@@ -491,12 +514,24 @@ func serveCommand() *cobra.Command {
 					// The TURN server answers STUN binding requests too.
 					host, _, _ := net.SplitHostPort(stunAddress)
 					turnConfig.RelayHost = host
+					if address, _ := command.Flags().GetString("turn-tcp"); address != "" {
+						if turnConfig.TCP, err = net.Listen("tcp", address); err != nil {
+							_ = conn.Close()
+							return fmt.Errorf("TURN over TCP: %w", err)
+						}
+					}
 					if turnServer, err = turn.Serve(conn, *turnConfig); err != nil {
 						_ = conn.Close()
+						if turnConfig.TCP != nil {
+							_ = turnConfig.TCP.Close()
+						}
 						return fmt.Errorf("TURN: %w", err)
 					}
 					defer func() { _ = turnServer.Close() }()
 					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN and TURN on udp://%s, relay ports %d-%d on %s\n", conn.LocalAddr(), turnConfig.MinPort, turnConfig.MaxPort, turnConfig.PublicIP)
+					if turnConfig.TCP != nil {
+						fmt.Fprintf(command.OutOrStdout(), "relay answers TURN on tcp://%s\n", turnConfig.TCP.Addr())
+					}
 				default:
 					defer func() { _ = conn.Close() }()
 					go func() {
@@ -539,6 +574,8 @@ func serveCommand() *cobra.Command {
 	command.Flags().String("turn-ports", "", "serve TURN on the STUN port, with relay sockets on this UDP port range, such as 49152-49251 (needs TURN_SECRET)")
 	command.Flags().String("turn-ip", "", "the public IP address of the TURN relay sockets (default: the host of --listen)")
 	command.Flags().Int64("turn-quota", 1024, "the MiB that one citizen can relay through TURN in 24 hours (0: refuse every allocation)")
+	command.Flags().String("turn-tcp", "", "also serve TURN over TCP on this address, such as 127.0.0.1:3479 behind a TLS proxy on port 443 (needs --turn-ports)")
+	command.Flags().StringArray("turn-url", nil, "another address that TURN credentials name, such as turns:relay.example:443?transport=tcp (repeatable; needs --turn-ports)")
 	command.Flags().Bool("rings", false, "ring a registered citizen at its URL when mail waits unread (needs RINGS_SECRET)")
 	command.Flags().Int("rings-daily-cap", rings.DefaultDailyCap, "the most rings that a citizen can ask for in one UTC day")
 	command.Flags().Int("rings-per-minute", rings.DefaultPerMinute, "the most rings of the whole relay in one minute")
@@ -597,6 +634,9 @@ func turnSetting(command *cobra.Command) (*turn.Config, error) {
 	flags := command.Flags()
 	ports, _ := flags.GetString("turn-ports")
 	if ports == "" {
+		if flags.Changed("turn-tcp") || flags.Changed("turn-url") {
+			return nil, errors.New("--turn-tcp and --turn-url need --turn-ports")
+		}
 		return nil, nil
 	}
 	low, high, ok := strings.Cut(ports, "-")
@@ -619,7 +659,13 @@ func turnSetting(command *cobra.Command) (*turn.Config, error) {
 		return nil, fmt.Errorf("TURN needs the public IP address of this machine: set --turn-ip (not %q)", address)
 	}
 	quota, _ := flags.GetInt64("turn-quota")
-	return &turn.Config{Secret: secret, PublicIP: ip, MinPort: uint16(minPort), MaxPort: uint16(maxPort), Quota: quota << 20}, nil
+	urls, _ := flags.GetStringArray("turn-url")
+	for _, u := range urls {
+		if !strings.HasPrefix(u, "turn:") && !strings.HasPrefix(u, "turns:") {
+			return nil, fmt.Errorf("--turn-url %q is not a turn: or turns: URL", u)
+		}
+	}
+	return &turn.Config{Secret: secret, PublicIP: ip, MinPort: uint16(minPort), MaxPort: uint16(maxPort), Quota: quota << 20, URLs: urls}, nil
 }
 
 // stunListen is the UDP address of the STUN server of a relay, or empty for
