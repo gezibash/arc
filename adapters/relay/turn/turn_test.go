@@ -336,3 +336,69 @@ func TestRelayToRelay(t *testing.T) {
 		}
 	}
 }
+
+// A TURN server with a TCP listener, as behind a TLS proxy on port 443,
+// gives allocations over TCP too. The relay sockets stay UDP, the quota
+// counts their bytes, and the credential names the extra URL.
+func TestAnAllocationOverTCP(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const extra = "turns:relay.example:443?transport=tcp"
+	s, err := Serve(conn, Config{Secret: "secret", PublicIP: net.IPv4(127, 0, 0, 1), RelayHost: "127.0.0.1", MinPort: 51000, MaxPort: 51999, Quota: 1 << 20, TCP: tcp, URLs: []string{extra}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	k := keys.Generate()
+	credential, err := s.Credential(k.Public.Hex(), "relay.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credential.URLs) != 2 || credential.URLs[1] != extra || !strings.HasPrefix(credential.URLs[0], "turn:relay.example:") {
+		t.Fatalf("the credential names %q, want the UDP URL and %q", credential.URLs, extra)
+	}
+
+	stream, err := net.Dial("tcp4", tcp.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := pturn.NewClient(&pturn.ClientConfig{TURNServerAddr: tcp.Addr().String(), Username: credential.Username, Password: credential.Password, Realm: Realm, Conn: pturn.NewSTUNConn(stream)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	if err := client.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	relayed, err := client.Allocate()
+	if err != nil {
+		t.Fatalf("no allocation over TCP: %v", err)
+	}
+	t.Cleanup(func() { _ = relayed.Close() })
+	if _, ok := relayed.LocalAddr().(*net.UDPAddr); !ok {
+		t.Fatalf("the relayed address is %v, want UDP", relayed.LocalAddr())
+	}
+
+	peer, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if _, err := relayed.WriteTo([]byte("hello"), peer.LocalAddr()); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1500)
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if n, _, err := peer.ReadFrom(buf); err != nil || string(buf[:n]) != "hello" {
+		t.Fatalf("the peer got %q through the relay: %v", buf[:n], err)
+	}
+	if left := s.Left(k.Public.Hex()); left != 1<<20-5 {
+		t.Errorf("left %d after 5 relayed bytes, want %d", left, 1<<20-5)
+	}
+}
