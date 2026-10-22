@@ -133,6 +133,26 @@ func TestADirLeavesOutTheEventsOfDeletedPages(t *testing.T) {
 	}
 	t.Log("ok: the events that a stopped removal left go at the next sync")
 
+	// A stick that holds the page and a changed copy of the deletion keeps
+	// the page: the sync does not send the valid deletion under that ID.
+	changedStick := filepath.Join(work, "changed-stick")
+	for name, text := range before {
+		write(t, filepath.Join(changedStick, "events", name), text, 0o600)
+	}
+	for name, text := range after {
+		if _, ok := before[name]; !ok && strings.Contains(text, `"kind":5,`) {
+			write(t, filepath.Join(changedStick, "events", name), strings.Replace(text, `"content":"`, `"content":"X`, 1), 0o600)
+		}
+	}
+	kept := laptop.try("", "sync", "--dir", changedStick)
+	has(t, kept.Stdout, "events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request", "the sync with a changed deletion")
+	for name := range before {
+		if _, err := os.Stat(filepath.Join(changedStick, "events", name)); err != nil {
+			t.Fatalf("the sync with a changed deletion removed %s: %v", name, err)
+		}
+	}
+	t.Log("ok: a stick with a changed copy of the deletion keeps the events of the page")
+
 	// The phone still holds the page. It learns of the delete from the
 	// stick, and does not put the events back.
 	from := phone.try("", "sync", "--dir", stick)
