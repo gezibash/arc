@@ -978,6 +978,10 @@ func syncCommand() *cobra.Command {
 					for _, reason := range report.Refused {
 						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 					}
+					if err := dropDeleted(command.OutOrStdout(), file.Dir{Path: dir}, report); err != nil {
+						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: the events of deleted pages stay: %v", t.Name(), err)))
+						failed = true
+					}
 					if report.Unreadable > 0 {
 						fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
 					}
@@ -1070,6 +1074,11 @@ func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t tra
 		sum.Duplicate += report.Duplicate
 		sum.Superseded += report.Superseded
 		sum.Refused = append(sum.Refused, report.Refused...)
+		for _, id := range report.Deleted {
+			if !slices.Contains(sum.Deleted, id) {
+				sum.Deleted = append(sum.Deleted, id)
+			}
+		}
 		sum.Unreadable += report.Unreadable
 		sum.Sent += report.Sent
 		for _, err := range report.SendFailed {
@@ -1079,6 +1088,23 @@ func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t tra
 		}
 	}
 	return sum, nil
+}
+
+// dropDeleted removes from a directory each event that the store refused
+// because its author deleted it, and says how many. It removes nothing when
+// a send failed: the deletion request may not be in the directory yet, and
+// another device learns of the delete from it.
+func dropDeleted(out io.Writer, d file.Dir, report node.Report) error {
+	if len(report.Deleted) == 0 {
+		return nil
+	}
+	if len(report.SendFailed) > 0 {
+		fmt.Fprintf(out, "%s: %d events of deleted pages left out; they stay in the directory until a sync sends everything\n", report.Transport, len(report.Deleted))
+		return nil
+	}
+	removed, err := d.Remove(report.Deleted)
+	fmt.Fprintf(out, "%s: %d events of deleted pages left out, %d removed from the directory\n", report.Transport, len(report.Deleted), removed)
+	return err
 }
 
 // errContactDraft says that a directory gets no draft of the contact list.
