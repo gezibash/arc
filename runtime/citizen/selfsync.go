@@ -51,8 +51,8 @@ type SelfSync struct {
 	// the pipe and each refused blob.
 	Out, Errs io.Writer
 	// Repair lets the sync audit and repair pieces: arc serve on each
-	// tick, arc sync with --repair. RepairTURN lets repair use a pipe through
-	// TURN.
+	// tick, arc sync with --repair. RepairTURN lets a rebuild and an audit
+	// use a pipe through TURN; the path turn does too. A deletion always may.
 	Repair, RepairTURN bool
 }
 
@@ -326,7 +326,8 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Devices: onceList(sess.DeviceList),
 		State:   cfg.Dir,
 		Repair:  cfg.Repair,
-		TURN:    cfg.RepairTURN,
+		// On the path turn, each pipe goes through TURN, so a rebuild may too.
+		TURN: cfg.RepairTURN || cfg.Path == direct.RelayOnly,
 	}
 	// Each pipe opens at the same time. Then one sync lists each storage
 	// citizen, reads the pieces that this machine lacks, and puts the
@@ -509,9 +510,10 @@ type opening struct {
 // its silence.
 func (sess *Session) openOne(ctx context.Context, cfg SelfSync, syncer *selfsync.Syncer, t target) (o opening) {
 	install := t.install
-	// Repair and audits take a pipe through TURN only with --turn.
-	turnOK := !cfg.Repair || cfg.RepairTURN
-	conn, err := openPipe(syncer, install.Provider, install.As, cfg.Path, turnOK, time.Now, &o.notes,
+	// A repair opens its pipes as a sync does: it deletes over TURN, and
+	// waits for a direct pipe only to rebuild or audit (docs/storage/SPEC.md,
+	// section 4.6). So it never adds a direct failure inside the window.
+	conn, err := openPipe(syncer, install.Provider, install.As, cfg.Path, time.Now, &o.notes,
 		func(noRelay, onlyRelay bool) (*storage.Conn, error) {
 			client := storage.Client{
 				Call: func(ctx context.Context, session string) ([]byte, error) {
@@ -554,10 +556,10 @@ func (e callError) Unwrap() error { return e.error }
 // openPipe opens the pipe to one storage citizen with the path of the
 // citizen. With the path auto or session, it records whether the direct
 // attempts found a path. For selfsync.TURNFirstFor after they found none,
-// a sync that takes a pipe through TURN (turnOK) tries the TURN server of
-// the relay first, and the direct attempts only if that fails
-// (docs/storage/SPEC.md, section 4.6). open runs the attempts.
-func openPipe(syncer *selfsync.Syncer, name, as string, policy direct.Policy, turnOK bool, now func() time.Time, notes io.Writer,
+// a sync tries the TURN server of the relay first, and the direct attempts
+// only if that fails (docs/storage/SPEC.md, section 4.6). open runs the
+// attempts.
+func openPipe(syncer *selfsync.Syncer, name, as string, policy direct.Policy, now func() time.Time, notes io.Writer,
 	open func(noRelay, onlyRelay bool) (*storage.Conn, error)) (*storage.Conn, error) {
 	if policy == direct.DirectOnly || policy == direct.RelayOnly {
 		return open(policy == direct.DirectOnly, policy == direct.RelayOnly)
@@ -569,25 +571,24 @@ func openPipe(syncer *selfsync.Syncer, name, as string, policy direct.Policy, tu
 		}
 		return conn, nil
 	}
-	if turnOK {
-		until, err := syncer.TURNFirst(name, now())
-		if err != nil {
+	until, err := syncer.TURNFirst(name, now())
+	if err != nil {
+		return nil, err
+	}
+	if !until.IsZero() {
+		fmt.Fprintln(notes, terminal.EscapeLine(fmt.Sprintf("%s: the direct attempts found no path; until %s each sync tries the TURN server of the relay first, so the bytes go through the relay",
+			as, until.Local().Format("15:04"))))
+		conn, err := open(false, true)
+		if err == nil || errors.As(err, new(callError)) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return conn, err
+		}
+		fmt.Fprintln(notes, terminal.EscapeLine(fmt.Sprintf("%s: no path through the relay: %v; trying the direct attempts", as, err)))
+		if conn, err = open(true, false); err != nil {
 			return nil, err
 		}
-		if !until.IsZero() {
-			fmt.Fprintln(notes, terminal.EscapeLine(fmt.Sprintf("%s: the direct attempts found no path; until %s each sync tries the TURN server of the relay first, so the bytes go through the relay",
-				as, until.Local().Format("15:04"))))
-			conn, err := open(false, true)
-			if err == nil || errors.As(err, new(callError)) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return conn, err
-			}
-			fmt.Fprintln(notes, terminal.EscapeLine(fmt.Sprintf("%s: no path through the relay: %v; trying the direct attempts", as, err)))
-			if conn, err = open(true, false); err != nil {
-				return nil, err
-			}
-			return record(conn, true)
-		}
+		return record(conn, true)
 	}
+
 	conn, err := open(false, false)
 	if err != nil {
 		return nil, err
