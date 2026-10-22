@@ -61,6 +61,9 @@ type Report struct {
 	Duplicate  int
 	Superseded int
 	Refused    []string
+	// Deleted holds each event that the store refused because a stored
+	// deletion request of its author names it. Refused does not hold them.
+	Deleted    []nostr.ID
 	Unreadable int
 	Sent       int
 	SendFailed []error
@@ -200,6 +203,10 @@ func count(event nostr.Event, result store.Result, report *Report) {
 	case store.Superseded:
 		report.Superseded++
 	case store.Refused:
+		if result.Reason == store.ReasonDeleted {
+			report.Deleted = append(report.Deleted, event.ID)
+			return
+		}
 		report.Refused = append(report.Refused, event.ID.Hex()+": "+result.Reason)
 	}
 }
