@@ -45,6 +45,15 @@ type RepairReport struct {
 	// repair deleted. In a sync that does not repair, it is the number of
 	// such blobs that wait.
 	Replaced int
+	// Unnamed is the number of blobs of parts and checkpoints that no page
+	// names, whose pieces and whole copies the repair deleted. Replaced
+	// does not count them. In a sync that does not repair, it is the
+	// number of such blobs that wait.
+	Unnamed int
+	// UnnamedParts and UnnamedCheckpoints are the parts and checkpoints
+	// that this device signed, that no page names, and that the repair
+	// deleted from the store. The next repair frees their blobs.
+	UnnamedParts, UnnamedCheckpoints int
 }
 
 // migrateMax is the most blobs of format 1 that one sync moves to pieces.
@@ -84,6 +93,9 @@ type job struct {
 	// replaced says that the store replaced or deleted the record of the
 	// blob. The job deletes each piece and whole copy, and puts nothing.
 	replaced bool
+	// unnamed says that the deletion of the record names parts and
+	// checkpoints that no page names.
+	unnamed bool
 }
 
 // move copies one piece from a draining storage citizen to a free one.
@@ -148,7 +160,9 @@ func (r *run) repair(ctx context.Context) error {
 	defer r.countOld()
 	if !r.s.Repair {
 		for _, j := range jobs {
-			if j.replaced {
+			if j.unnamed {
+				r.report.Repair.Unnamed++
+			} else if j.replaced {
 				r.report.Repair.Replaced++
 			} else {
 				r.report.Repair.Pending++
@@ -511,7 +525,9 @@ func (r *run) runJobs(ctx context.Context, jobs []*job) error {
 		if j.dropsOld && len(j.olds) > 0 {
 			r.report.Repair.Coded++
 		}
-		if j.replaced {
+		if j.unnamed {
+			r.report.Repair.Unnamed++
+		} else if j.replaced {
 			r.report.Repair.Replaced++
 		}
 		drops = append(drops, j.drops...)
@@ -534,7 +550,7 @@ func (r *run) planReplaced(id string, m *mapped, o replaced, event *nostr.Event,
 	if err != nil || by == nil || !r.onStorage(*by) {
 		return nil
 	}
-	j := &job{id: id, replaced: true}
+	j := &job{id: id, replaced: true, unnamed: isUnnamed(*by)}
 	all := slices.Clone(m.lost)
 	for _, sl := range m.seals {
 		for _, ps := range sl.pieces {

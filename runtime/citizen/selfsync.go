@@ -324,6 +324,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Newest:  func(context.Context) (selfsync.Keys, error) { return newest, nil },
 		Keys:    once(sess.selfKeysAt),
 		Devices: onceList(sess.DeviceList),
+		Opener:  sess.pageOpener(cfg.Installs),
 		State:   cfg.Dir,
 		Repair:  cfg.Repair,
 		// On the path turn, each pipe goes through TURN, so a rebuild may too.
@@ -446,14 +447,33 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	}
 	rep := report.Repair
 	if cfg.Repair {
-		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, coded %d blobs of format 1 into pieces, removed %d blobs of replaced records, deleted %d; %d bytes down, %d bytes up\n",
-			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Coded, rep.Replaced, rep.Deleted, rep.Down, rep.Up)
+		// The blobs of a deletion of parts that no page names get the words
+		// of journal delete, not those of replaced records.
+		unnamed := ""
+		if rep.Unnamed > 0 {
+			unnamed = fmt.Sprintf("removed %d blobs of parts and checkpoints that no page names, ", rep.Unnamed)
+		}
+		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, coded %d blobs of format 1 into pieces, %sremoved %d blobs of replaced records, deleted %d; %d bytes down, %d bytes up\n",
+			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Coded, unnamed, rep.Replaced, rep.Deleted, rep.Down, rep.Up)
+		if rep.UnnamedParts+rep.UnnamedCheckpoints > 0 {
+			count := func(n int, one string) string {
+				if n == 1 {
+					return "1 " + one
+				}
+				return fmt.Sprintf("%d %ss", n, one)
+			}
+			fmt.Fprintf(cfg.Out, "self data: repair removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n",
+				count(rep.UnnamedParts, "part"), count(rep.UnnamedCheckpoints, "checkpoint"))
+		}
 	} else {
 		if rep.Pending > 0 {
 			fmt.Fprintf(cfg.Errs, "self data: %d blobs need repair; arc serve repairs them on its tick, or run arc sync --repair\n", rep.Pending)
 		}
 		if rep.Replaced > 0 {
 			fmt.Fprintf(cfg.Out, "self data: %d blobs of replaced or deleted records wait; arc serve deletes them on its tick, or run arc sync --repair\n", rep.Replaced)
+		}
+		if rep.Unnamed > 0 {
+			fmt.Fprintf(cfg.Out, "self data: %d blobs of parts and checkpoints that no page names wait; arc serve frees them on its tick, or run arc sync --repair\n", rep.Unnamed)
 		}
 	}
 	if rep.Old > 0 {
