@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/
-- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body.
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
+- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body. No test runs the Docker image with a volume at the older home `/home/arc/.config/arc`.
 
 Phases A to F are built, see section 8. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
@@ -684,7 +684,23 @@ A citizen's key comes from one of these, as NIP-19, NIP-49 and NIP-46 define:
 | `bunker://` or a NIP-05 name | A NIP-46 remote signer. Core never holds the secret key. An agent signs through a signer that its owner controls. |
 
 Each identity of a machine has its own directory, `<home>/citizens/<name>`,
-with its key, store, relays and installs. `arc keys gen` makes an identity
+with its key, store, relays and installs.
+
+arc picks its home in this order:
+
+1. `--home <dir>`.
+2. `ARC_HOME`.
+3. `~/.arc`, if it holds an entry of arc.
+4. `~/.config/arc`, if it holds an entry of arc. An older arc made its home
+   there, and it stays in use.
+5. `~/.arc`, for a new home.
+
+The entries of arc are `citizens`, `default`, `device`, `relay.db`, `wake`
+and `wake.toml`. An app that keeps its data in `~/.arc/<app>` MUST NOT use
+one of these names, and `arc install` refuses them as the name of an app.
+arc MUST NOT move a file between the two homes. arc MUST NOT look for a
+home in the working directory or a parent of it: a cloned repository can
+hold a `.arc` with the key of someone else. `arc keys gen` makes an identity
 from a new 24-word seed, as docs/delivery/SPEC.md section 3.2 defines.
 `arc keys recover` makes it again from the words, and `arc keys add` adds a
 key that exists already. The first identity is the
@@ -1008,6 +1024,10 @@ older client behaves.
 
 ### 7.5 An older client
 
+- An older arc uses `~/.config/arc` and never `~/.arc`. A machine that an
+  older arc set up keeps its home in `~/.config/arc`, and a newer arc uses
+  it (section 3.17). A home that a newer arc made in `~/.arc` is not found
+  by an older arc: give it `--home ~/.arc` or `ARC_HOME`.
 - An older client keeps writing sealed events to its relays. `arc sync` of
   a newer client imports them, and seals each one again in the format of
   section 3.9.4 when it reaches the signer. Thus the newer client sees the

@@ -238,9 +238,12 @@ func TestInterface(t *testing.T) {
 	contains(caller.refuse("exec", "fly"), `no command "fly"`, "the error of an unknown command")
 	t.Log("ok: arc checks the arguments before it calls")
 
-	contains(caller.refuse("install", execKey, "--as", "relay", "--yes"), "is a command of arc",
+	contains(caller.refuse("install", execKey, "--as", "relay", "--yes"), "is a name of arc itself",
 		"the error of a capability that takes the name of a command")
 	t.Log("ok: a capability cannot take the name of a command of arc")
+	contains(caller.refuse("install", execKey, "--as", "wake", "--yes"), "is a name of arc itself",
+		"the error of a capability that takes the name of an entry of the arc home")
+	t.Log("ok: a capability cannot take the name of an entry of the arc home")
 
 	stranger := home("stranger")
 	stranger.run("keys", "gen")

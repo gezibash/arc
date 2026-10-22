@@ -28,9 +28,10 @@ COPY --from=build --chown=arc:arc /out /app
 USER arc
 WORKDIR /home/arc
 
-# The home of arc is $HOME/.config/arc: identities, stores, and the events
-# of the relay in relay.db. Mount a volume there to keep them across runs.
-VOLUME ["/home/arc/.config/arc"]
+# The home of arc is $HOME/.arc: identities, stores, and the events of the
+# relay in relay.db. Mount a volume there to keep them across runs. A volume
+# that an older image filled at $HOME/.config/arc stays in use.
+VOLUME ["/home/arc/.arc"]
 
 # The image runs a Nostr relay, with no write limits. To run another
 # command, name it: docker run IMAGE arc keys gen

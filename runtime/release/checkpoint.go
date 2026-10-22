@@ -20,7 +20,7 @@ var channelName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 // Checkpoint holds what this machine accepted before.
 type Checkpoint struct {
-	// Dir is the directory of ARC, for example ~/.config/arc.
+	// Dir is the directory of an identity, for example ~/.arc/citizens/<name>.
 	Dir string
 }
 
