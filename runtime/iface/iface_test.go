@@ -139,6 +139,9 @@ type fakeEnv struct {
 	later      bool
 	calls      int
 	bodies     map[string][]byte
+	// refuse is a kind that the store refuses, as a store refuses a draft
+	// too large for one event.
+	refuse nostr.Kind
 }
 
 func (f *fakeEnv) KeepBody(sum string, data []byte) error {
@@ -205,6 +208,9 @@ func (f *fakeEnv) Opener(app string) draft.Opener {
 }
 func (f *fakeEnv) Publish(_ context.Context, events []nostr.Event, relays []string) error {
 	for _, event := range events {
+		if f.refuse != 0 && event.Kind == f.refuse {
+			return errors.New("the store refused the event")
+		}
 		s := f.store
 		if relays != nil {
 			s = f.net.relay(f.t, relays[0])

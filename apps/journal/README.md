@@ -203,6 +203,13 @@ bounds. `--from` and `--to` accept a UTC date or RFC3339 timestamp; a date for
 selected pages, or the requested Markdown section. Search filters before
 ranking and limiting. Search options must precede the search terms.
 
+A write that fails after it keeps some parts names the address of the parts
+in its error, and the `arc journal delete` command that removes them. `ls`
+also writes a line on the standard error for each address that holds parts
+or checkpoints but no page. A checkpoint gives the address. Parts without a
+checkpoint do not name their address, so `ls` only counts them. A `delete`
+says how many parts and checkpoints that no page names it removed.
+
 Journal search uses a local Bleve Scorch index with BM25 scoring. Plain queries
 match any Unicode word, without stemming or stop-word removal. `--syntax` enables
 Bleve query syntax: quoted phrases, `+required` and `-excluded` terms, fuzzy terms
