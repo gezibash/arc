@@ -6,6 +6,10 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Go 1.27.3. It fixes GO-2026-6809 in `crypto/x509`, which the code calls.
+
 ## [0.37.0] - 2026-10-19
 
 Mail follows a recipient who moves to other relays, and waiting mail goes
