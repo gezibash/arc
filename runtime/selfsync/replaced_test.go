@@ -171,8 +171,9 @@ func TestReplacedInterrupted(t *testing.T) {
 	b.reads(2)
 }
 
-// TestReplacedTURN checks that the deletion waits for a direct path, as
-// repair does (decision 7 of the storage network proposal).
+// TestReplacedTURN checks that a deletion runs on a pipe through TURN with
+// no --turn: it moves no bytes of the blob (Otto, 2026-10-19; storage
+// spec, section 4.6). A rebuild still waits, see TestRepairTURN.
 func TestReplacedTURN(t *testing.T) {
 	b := newPageBench(t)
 	b.edit(1)
@@ -181,12 +182,10 @@ func TestReplacedTURN(t *testing.T) {
 	b.sync(b.device, false, b.sides)
 	relayed := slices.Clone(b.sides)
 	relayed[0].Relayed = true
-	if r := b.sync(b.device, true, relayed); r.Repair.WaitDirect != 1 {
-		t.Fatalf("%d blobs wait for a direct path; want 1", r.Repair.WaitDirect)
+	r := b.sync(b.device, true, relayed)
+	if r.Repair.WaitDirect != 0 || r.Repair.Replaced != 1 {
+		t.Fatalf("a repair through TURN counted %d blobs that wait and removed %d replaced blobs; want 0 and 1", r.Repair.WaitDirect, r.Repair.Replaced)
 	}
-	b.held(4, 3, 3)
-	b.device.TURN = true
-	b.sync(b.device, true, relayed)
 	b.held(3, 3, 3)
 }
 
@@ -249,4 +248,28 @@ func TestReplacedReturns(t *testing.T) {
 	}
 	b.held(3, 3, 3)
 	b.reads(2)
+}
+
+// TestARepairOverTURNDeletesWhileARebuildWaits checks decision 5 of the
+// storage spec, section 4.6: with no --turn, a repair over TURN still
+// removes the blob of a replaced record, and the rebuild onto a new
+// storage citizen behind TURN waits, so the device counts it and says so.
+func TestARepairOverTURNDeletesWhileARebuildWaits(t *testing.T) {
+	b := newPageBench(t)
+	b.edit(1)
+	b.sync(b.device, false, b.sides)
+	b.edit(2)
+	b.sync(b.device, false, b.sides)
+	extra := newMemStorage()
+	b.stores = append(b.stores, extra)
+	sides := append(slices.Clone(b.sides), Side{Key: keys.Generate().Public, Label: "s3", Conn: extra, Active: true, Relayed: true})
+	sides[0].Relayed = true
+	r := b.sync(b.device, true, sides)
+	if r.Repair.Replaced != 1 {
+		t.Errorf("the repair removed %d replaced blobs; want 1", r.Repair.Replaced)
+	}
+	if r.Repair.WaitDirect == 0 {
+		t.Error("the rebuild onto the new storage citizen behind TURN did not wait")
+	}
+	b.held(3, 3, 3, 0)
 }

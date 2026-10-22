@@ -209,10 +209,10 @@ func TestStorageRepair(t *testing.T) {
 	t.Log("ok: after the close, arc keys storage add opened a new account on erin, the sync put the data back, and the usage line of each storage citizen gives the bytes of its files")
 }
 
-// TestStorageRepairTURN proves decision 7 of the storage network proposal
+// TestStorageRepairTURN proves decision 5 of the storage spec, section 4.6,
 // through the CLI and a relay that serves TURN: with arc path turn, each
-// pipe to a storage citizen goes through TURN, and arc sync --repair does
-// not repair, and says why. With --turn it repairs.
+// pipe to a storage citizen goes through TURN, and arc sync --repair acts
+// as with --turn, so it rebuilds onto a new storage citizen.
 func TestStorageRepairTURN(t *testing.T) {
 	work := t.TempDir()
 	relayHome := arc(t, filepath.Join(work, "relay")).with("TURN_SECRET=proof-turn-secret")
@@ -253,21 +253,15 @@ func TestStorageRepairTURN(t *testing.T) {
 	signer.run("keys", "storage", "add", key, "--as", "frank")
 
 	signer.run("path", "turn")
-	waits := signer.try("", "sync", "--repair")
-	t.Logf("arc sync --repair through TURN:\n%s\n%s", strings.TrimSpace(waits.Stdout), strings.TrimSpace(waits.Stderr))
-	has(t, waits.Stderr, "waits for a direct path: the pipe to charlie, dana, erin, frank goes through TURN; arc sync --repair --turn allows TURN", "a repair through TURN")
-	has(t, waits.Stdout, "repair rebuilt 0 pieces", "a repair through TURN")
-	signer.run("path", "auto")
-	if got := len(listAll(t, signer, "frank")); got != 0 {
-		t.Fatalf("a repair through TURN put %d pieces on frank", got)
+	turned := signer.try("", "sync", "--repair")
+	t.Logf("arc sync --repair on the path turn:\n%s\n%s", strings.TrimSpace(turned.Stdout), strings.TrimSpace(turned.Stderr))
+	if strings.Contains(turned.Stderr, "waits for a direct path") {
+		t.Errorf("a repair on the path turn waited for a direct path:\n%s", turned.Stderr)
 	}
-	signer.run("path", "turn")
-	turned := signer.try("", "sync", "--repair", "--turn")
-	t.Logf("arc sync --repair --turn:\n%s\n%s", strings.TrimSpace(turned.Stdout), strings.TrimSpace(turned.Stderr))
-	has(t, turned.Stdout, fmt.Sprintf("repair rebuilt %d pieces", n), "a repair with --turn")
+	has(t, turned.Stdout, fmt.Sprintf("repair rebuilt %d pieces", n), "a repair on the path turn")
 	signer.run("path", "auto")
 	if got := len(listAll(t, signer, "frank")); got != n {
-		t.Fatalf("a repair with --turn put %d pieces on frank; want %d", got, n)
+		t.Fatalf("a repair on the path turn put %d pieces on frank; want %d", got, n)
 	}
 	refused := signer.try("", "sync", "--turn")
 	if refused.Err == nil || !strings.Contains(refused.Stderr, "give it with --repair") {
