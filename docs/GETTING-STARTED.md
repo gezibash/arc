@@ -90,7 +90,8 @@ If you added a seed passphrase with `arc keys gen --seed-passphrase`, run
 `arc keys recover --seed-passphrase`. The words without that passphrase give
 another identity.
 
-By default, each identity lives under `~/.config/arc/citizens/`. An identity
+By default, each identity lives under `~/.arc/citizens/`, or under
+`~/.config/arc/citizens/` if an older arc made the home there. An identity
 from before the seed has no words. For such an identity, back up the
 identity's key file to a private, secure location, and keep the passphrase
 available separately. A copy of the identity directory also preserves local

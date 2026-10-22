@@ -233,7 +233,7 @@ func installStorage(command *cobra.Command, sess *citizen.Session, installs cata
 		}
 	}
 	if builtinName(command.Root(), as) {
-		return "", fmt.Errorf("%s is a command of arc; choose another name with --as", as)
+		return "", fmt.Errorf("%s is a name of arc itself; choose another name with --as", as)
 	}
 	offer, err := sess.FindOffer(command.Context(), provider, citizen.StorageApp)
 	if err != nil {

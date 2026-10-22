@@ -91,7 +91,7 @@ func root() *cobra.Command {
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 	}
-	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc)")
+	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.arc, or ~/.config/arc when an older arc made it)")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(), contactsCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
@@ -114,7 +114,37 @@ func rootDir(command *cobra.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(user, ".config", "arc"), nil
+	return defaultRoot(user), nil
+}
+
+// homeNames are the entries that arc keeps at the top of its home. An app
+// that keeps data in ~/.arc/<app> never uses one of these names, and
+// arc install refuses them.
+var homeNames = []string{"citizens", "default", "device", "relay.db", "wake", "wake.toml"}
+
+// defaultRoot is ~/.arc. A home that an older arc made in ~/.config/arc
+// stays in use, until ~/.arc holds an entry of arc. arc moves no file, and
+// it never looks for a home in the working directory: a cloned repository
+// can hold a .arc with the key of someone else.
+func defaultRoot(user string) string {
+	home := filepath.Join(user, ".arc")
+	if holdsHome(home) {
+		return home
+	}
+	if old := filepath.Join(user, ".config", "arc"); holdsHome(old) {
+		return old
+	}
+	return home
+}
+
+// holdsHome says whether dir holds an entry of arc.
+func holdsHome(dir string) bool {
+	for _, name := range homeNames {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // home is the directory of the identity that the command uses. It holds the

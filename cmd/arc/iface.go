@@ -90,12 +90,13 @@ func helpCommand(root *cobra.Command) *cobra.Command {
 	}
 }
 
-// builtinName says whether a name is a command of arc itself.
+// builtinName says whether a name is a command of arc itself, or an entry
+// of its home, which an app must not take as the directory of its data.
 func builtinName(root *cobra.Command, name string) bool {
 	for _, c := range root.Commands() {
 		if c.Name() == name || slices.Contains(c.Aliases, name) {
 			return true
 		}
 	}
-	return name == "help" || name == "completion"
+	return name == "help" || name == "completion" || slices.Contains(homeNames, name)
 }
