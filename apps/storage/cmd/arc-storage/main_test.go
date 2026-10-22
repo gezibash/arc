@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/apps/storage/server"
+	"github.com/gezibash/arc/sdk/stdio"
 	wire "github.com/gezibash/arc/sdk/storage"
 )
 
@@ -52,6 +53,12 @@ func (o *output) String() string {
 }
 
 func TestMain(m *testing.M) {
+	// Under arc serve, the test program is the hostile storage citizen of
+	// hostile_test.go.
+	if os.Getenv(hostileEnv) != "" {
+		stdio.Main("hostile", runHostile)
+		return
+	}
 	os.Exit(setup(m))
 }
 
@@ -386,8 +393,8 @@ func cleanup(t *testing.T, home string, ids ...string) {
 
 // The error line of arc-storage stays one line, escaped, when it holds the
 // message of a refusal that a storage citizen chose (docs/clients/SPEC.md,
-// section 3.9). No test runs a hostile storage citizen, so this checks the
-// line itself.
+// section 3.9). TestAHostileStorageCitizenIsEscaped checks the same line
+// from a hostile storage citizen.
 func TestTheErrorLineIsEscaped(t *testing.T) {
 	refusal := fmt.Errorf("the storage citizen refused: %s", "P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line")
 	want := `arc-storage: the storage citizen refused: P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`
