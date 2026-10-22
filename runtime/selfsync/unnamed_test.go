@@ -126,8 +126,9 @@ func TestRepairFreesPartsThatNoPageNames(t *testing.T) {
 	// The deletion went to the storage citizens in the same sync.
 	b.held(8, 8, 8)
 	r = b.sync(b.device, true, b.sides)
-	if r.Repair.Unnamed != 3 || r.Repair.Replaced != 0 {
-		t.Fatalf("the next repair freed %d blobs of unnamed parts and %d of replaced records; want 3 and 0", r.Repair.Unnamed, r.Repair.Replaced)
+	if r.Repair.Unnamed != 3 || r.Repair.Replaced != 0 || r.Repair.Down != 0 {
+		t.Fatalf("the next repair freed %d blobs of unnamed parts and %d of replaced records, and got %d bytes; want 3, 0 and 0",
+			r.Repair.Unnamed, r.Repair.Replaced, r.Repair.Down)
 	}
 	b.held(5, 5, 5)
 }

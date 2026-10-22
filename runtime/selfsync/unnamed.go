@@ -47,8 +47,7 @@ func (r *run) unnamed(ctx context.Context) error {
 		if _, sealed := draft.Gen(e); !sealed || a == nil || draft.Owner(e) != r.s.Citizen {
 			continue
 		}
-		id := r.current.BlobID(e.ID)
-		if r.blobs[id] == nil || r.written[id] {
+		if r.blobs[r.current.BlobID(e.ID)] == nil {
 			continue
 		}
 		byAddress[a[1]] = append(byAddress[a[1]], e)

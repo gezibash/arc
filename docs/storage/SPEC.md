@@ -1199,9 +1199,8 @@ when all of these hold:
   (interface spec, section 3.9.4). In a sync, a part of another device
   can arrive before its draft, so the device keeps each event of another
   device.
-- The listings of the start of the sync hold its blob, and this sync did
-  not put it. Thus it is older than one sync, and a write that still runs
-  keeps its parts.
+- The listings of the start of the sync hold its blob. Thus it is older
+  than one sync, and a write that still runs keeps its parts.
 - No page names it. A checkpoint is unnamed when its address has no draft,
   or a blank draft. A part is unnamed when no draft and no checkpoint that
   stays names it in a `parts` tag, after each one is opened with the key
