@@ -50,6 +50,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/private"
+	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/iface"
@@ -90,7 +91,7 @@ func root() *cobra.Command {
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 	}
-	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.config/arc)")
+	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.arc, or ~/.config/arc when an older arc made it)")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(), contactsCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
@@ -113,7 +114,37 @@ func rootDir(command *cobra.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(user, ".config", "arc"), nil
+	return defaultRoot(user), nil
+}
+
+// homeNames are the entries that arc keeps at the top of its home. An app
+// that keeps data in ~/.arc/<app> never uses one of these names, and
+// arc install refuses them.
+var homeNames = []string{"citizens", "default", "device", "relay.db", "wake", "wake.toml"}
+
+// defaultRoot is ~/.arc. A home that an older arc made in ~/.config/arc
+// stays in use, until ~/.arc holds an entry of arc. arc moves no file, and
+// it never looks for a home in the working directory: a cloned repository
+// can hold a .arc with the key of someone else.
+func defaultRoot(user string) string {
+	home := filepath.Join(user, ".arc")
+	if holdsHome(home) {
+		return home
+	}
+	if old := filepath.Join(user, ".config", "arc"); holdsHome(old) {
+		return old
+	}
+	return home
+}
+
+// holdsHome says whether dir holds an entry of arc.
+func holdsHome(dir string) bool {
+	for _, name := range homeNames {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // home is the directory of the identity that the command uses. It holds the
@@ -978,6 +1009,10 @@ func syncCommand() *cobra.Command {
 					for _, reason := range report.Refused {
 						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 					}
+					if err := dropDeleted(command.Context(), command.OutOrStdout(), sess.Node, sealed, file.Dir{Path: dir}, report); err != nil {
+						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: the events of deleted pages stay: %v", t.Name(), err)))
+						failed = true
+					}
 					if report.Unreadable > 0 {
 						fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
 					}
@@ -1060,6 +1095,8 @@ func sealedFilters(me nostr.PubKey) []nostr.Filter {
 // the reports.
 func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t transport.Transport) (node.Report, error) {
 	var sum node.Report
+	// An event can match two filters. It counts once.
+	deleted := map[nostr.ID]bool{}
 	for _, filter := range filters {
 		report, err := n.Sync(ctx, filter, t)
 		if err != nil {
@@ -1070,6 +1107,12 @@ func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t tra
 		sum.Duplicate += report.Duplicate
 		sum.Superseded += report.Superseded
 		sum.Refused = append(sum.Refused, report.Refused...)
+		for _, id := range report.Deleted {
+			if !deleted[id] {
+				deleted[id] = true
+				sum.Deleted = append(sum.Deleted, id)
+			}
+		}
 		sum.Unreadable += report.Unreadable
 		sum.Sent += report.Sent
 		for _, err := range report.SendFailed {
@@ -1079,6 +1122,57 @@ func syncSealed(ctx context.Context, n *node.Node, filters []nostr.Filter, t tra
 		}
 	}
 	return sum, nil
+}
+
+// dropDeleted removes from a directory each event that the store refused
+// because its author deleted it, and says how many. Another device learns
+// of the delete from the directory, so it removes nothing unless the
+// directory holds a valid copy of each deletion request of the store.
+func dropDeleted(ctx context.Context, out io.Writer, n *node.Node, filters []nostr.Filter, d file.Dir, report node.Report) error {
+	if len(report.Deleted) == 0 {
+		return nil
+	}
+	held, err := holdsDeletions(ctx, n, filters, d)
+	if err != nil {
+		return err
+	}
+	if !held {
+		fmt.Fprintf(out, "%s: %d events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request\n", report.Transport, len(report.Deleted))
+		return nil
+	}
+	removed, err := d.Remove(report.Deleted)
+	fmt.Fprintf(out, "%s: %d events of deleted pages left out, %d removed from the directory\n", report.Transport, len(report.Deleted), removed)
+	return err
+}
+
+// holdsDeletions says whether the directory holds each deletion request
+// of the store that the filters match, and whether each copy verifies. A
+// changed copy keeps the ID of the request, so the sync sent no valid one.
+func holdsDeletions(ctx context.Context, n *node.Node, filters []nostr.Filter, d file.Dir) (bool, error) {
+	want := map[nostr.ID]bool{}
+	for _, filter := range filters {
+		filter.Kinds = []nostr.Kind{nostr.KindDeletion}
+		found, err := n.Store.Query(filter)
+		if err != nil {
+			return false, err
+		}
+		for _, e := range found {
+			want[e.ID] = true
+		}
+	}
+	if len(want) == 0 {
+		return false, nil
+	}
+	batch, err := d.Fetch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}})
+	if err != nil {
+		return false, err
+	}
+	for _, e := range batch.Events {
+		if want[e.ID] && store.Verify(e) == nil {
+			delete(want, e.ID)
+		}
+	}
+	return len(want) == 0, nil
 }
 
 // errContactDraft says that a directory gets no draft of the contact list.

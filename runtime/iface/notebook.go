@@ -380,6 +380,12 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 	if n.Op == "select" || n.Op == "next" || n.Op == "prev" {
 		return r.notebookSections(entries, n.Section)
 	}
+	if n.Op == "list" {
+		// A failed write leaves no page to list, so name its address here.
+		if err := r.reportUnnamed(n.Kind); err != nil {
+			return nil, err
+		}
+	}
 	return entries, nil
 }
 

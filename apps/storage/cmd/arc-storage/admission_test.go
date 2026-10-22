@@ -39,9 +39,17 @@ func startStorageOf(t *testing.T, owners []string, extra ...string) storageCitiz
 	for _, owner := range owners {
 		accounts = append(accounts, strings.TrimSpace(arc(t, owner, "keys", "account", sc.key)))
 	}
-	serve := exec.Command(env.arc, "--home", home, "serve", env.app)
 	sc.owners = strings.Join(accounts, ",")
-	serve.Env = append(append(os.Environ(), "STORAGE_DIR="+sc.dir, "STORAGE_OWNERS="+sc.owners, "STORAGE_STUN=none", "STORAGE_LOOPBACK=1"), extra...)
+	serveApp(t, home, env.app, append([]string{"STORAGE_DIR=" + sc.dir, "STORAGE_OWNERS=" + sc.owners, "STORAGE_STUN=none", "STORAGE_LOOPBACK=1"}, extra...)...)
+	return sc
+}
+
+// serveApp serves the app of a directory with arc serve in an arc home,
+// with more settings in the environment, until the test ends.
+func serveApp(t *testing.T, home, app string, environ ...string) {
+	t.Helper()
+	serve := exec.Command(env.arc, "--home", home, "serve", app)
+	serve.Env = append(os.Environ(), environ...)
 	served := &output{}
 	serve.Stdout, serve.Stderr = served, served
 	if err := serve.Start(); err != nil {
@@ -57,7 +65,6 @@ func startStorageOf(t *testing.T, owners []string, extra ...string) storageCitiz
 	if !waitUntil(15*time.Second, func() bool { return strings.Contains(served.String(), "serves storage") }) {
 		t.Fatalf("the app did not start:\n%s", served.String())
 	}
-	return sc
 }
 
 // newCitizen makes an arc home with a new key and the relay of the tests.

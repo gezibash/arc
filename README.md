@@ -83,9 +83,10 @@ passphrase, read from `ARC_SEED_PASSPHRASE` or the terminal.
 identity is the default. `arc keys use <name>` changes the default, and
 `--key <name>` or `ARC_KEY` picks another identity for one command.
 
-Each identity has its own directory, `~/.config/arc/citizens/<name>`,
+Each identity has its own directory, `~/.arc/citizens/<name>`,
 with its key, store, relays and installs. `--home` or `ARC_HOME` names
-another home. Back up the key files.
+another home. A home that an older arc made in `~/.config/arc`
+stays in use, and arc moves no file. Back up the key files.
 
 `arc keys gen --encrypt` seals a key with a passphrase, as NIP-49 defines.
 `arc` reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
@@ -202,7 +203,7 @@ is live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 
 Before a live call, `arc` runs the wake hook of the service identity from
-`~/.config/arc/wake.toml`. Without a hook, the service needs a current
+`wake.toml` in the arc home. Without a hook, the service needs a current
 announcement. See [the Exec app](apps/exec/README.md).
 
 `arc lists add <command> <name> <citizen>...` saves a set of citizens. Where
