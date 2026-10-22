@@ -106,7 +106,8 @@ func (j *job) work() int {
 
 // repair plans the repair of each blob with pieces (docs/storage/SPEC.md,
 // section 4.6). Without Syncer.Repair it only counts the blobs that need
-// it. Repair uses a pipe through TURN only with Syncer.TURN.
+// it. A rebuild or an audit uses a pipe through TURN only with Syncer.TURN;
+// a deletion uses each open pipe.
 func (r *run) repair(ctx context.Context) error {
 	usable := func(turn bool) func(int) bool {
 		return func(i int) bool { return r.open[i] && (turn || !r.sides[i].Relayed) }
@@ -127,7 +128,13 @@ func (r *run) repair(ctx context.Context) error {
 	r.deleted(records)
 	var jobs []*job
 	for id, m := range r.blobs {
-		j := r.plan(id, m, local[id], usable(r.s.TURN))
+		use := usable(r.s.TURN)
+		if _, old := r.olds.Old[id]; old {
+			// A deletion moves no bytes of the blob, so it runs on a pipe
+			// through TURN too (docs/storage/SPEC.md, section 4.6).
+			use = usable(true)
+		}
+		j := r.plan(id, m, local[id], use)
 		if !r.s.TURN {
 			// A plan that may use TURN shows what waits for a direct path.
 			if dry := r.plan(id, m, local[id], usable(true)); dry != nil && (j == nil || dry.work() > j.work()) {
@@ -183,12 +190,23 @@ func (r *run) repair(ctx context.Context) error {
 			r.open[i] = r.open[i] && open[i]
 		}
 	}()
+	r.repairing = true
+	defer func() { r.repairing = false }()
+	// The deletions go first, on each open pipe: they move no bytes of a
+	// blob. Then the other jobs, on the pipes that a rebuild may use.
+	deletions := 0
+	for deletions < len(jobs) && jobs[deletions].replaced {
+		deletions++
+	}
+	for chunk := range slices.Chunk(jobs[:deletions], getChunk) {
+		if err := r.runJobs(ctx, chunk); err != nil {
+			return err
+		}
+	}
 	for i := range r.open {
 		r.open[i] = usable(r.s.TURN)(i)
 	}
-	r.repairing = true
-	defer func() { r.repairing = false }()
-	for chunk := range slices.Chunk(jobs, getChunk) {
+	for chunk := range slices.Chunk(jobs[deletions:], getChunk) {
 		if err := r.runJobs(ctx, chunk); err != nil {
 			return err
 		}
