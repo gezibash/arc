@@ -160,9 +160,12 @@ func TestAMissingPageAndTheReservedWords(t *testing.T) {
 	c := newCitizen(t)
 	c.must("journal", "text\n", "write", page, "--title", "LR sweep")
 	for _, address := range []string{"hrs/ablations/9", "hrs/ablations/today", "hrs/missing/1"} {
-		if _, err := c.run("journal", "", "read", address); err == nil || !strings.HasPrefix(err.Error(), "no such page ") {
-			t.Errorf("read %s gave %v, want no such page", address, err)
+		if _, err := c.run("journal", "", "read", address); err == nil || err.Error() != "no such page "+address {
+			t.Errorf("read %s gave %v, want no such page %s", address, err, address)
 		}
+	}
+	if _, err := c.run("journal", "text\n", "write", "hrs/log/today", "--title", "Plans"); err == nil {
+		t.Error("a write of today's page took a title that today cannot find")
 	}
 	for _, words := range [][]string{
 		{"read", "hrs/ablations/next"},

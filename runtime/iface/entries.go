@@ -310,7 +310,11 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	if _, err := ordinal(number); err != nil {
 		return "", fmt.Errorf("a new page has a number, not %q", number)
 	}
-	if strings.HasSuffix(n.Address, "/today") && n.Title == "" {
+	if strings.HasSuffix(n.Address, "/today") {
+		// today finds its page by the date in the title.
+		if n.Title != "" && n.Title != r.today() {
+			return "", fmt.Errorf("the title of today's page is the date %s, not %q", r.today(), n.Title)
+		}
 		n.Title = r.today()
 	}
 	d, err := r.headD(dTemplate, address)
@@ -490,7 +494,7 @@ func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, noSuchPage(address)
+		return nil, noSuchPage(n.Address)
 	}
 	d, err := r.headD(dTemplate, address)
 	if err != nil {

@@ -278,7 +278,7 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		if n.Section == "" {
 			n.Section = anchor
 		}
-		found := true
+		found, given := true, address
 		if r.kindOf(n.Kind).NotebookEntry != "" {
 			if address, found, err = r.resolve(n.Kind, address, "today"); err != nil {
 				return nil, err
@@ -297,7 +297,10 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !found || head == nil && len(added[address]) == 0 {
+		if !found {
+			return nil, noSuchPage(given)
+		}
+		if head == nil && len(added[address]) == 0 {
 			return nil, noSuchPage(address)
 		}
 		if head == nil {

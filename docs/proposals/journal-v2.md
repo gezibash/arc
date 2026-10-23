@@ -408,6 +408,10 @@ On Cato's home, `journal delete` of the address of his failed page, then
    from A1, so they need no deploy for it.
 4. Only then, announce the new manifest from Zim's key. An older home that
    was missed loses `arc journal` until it updates.
+5. On each home, run `arc install <Zim's key> journal` once. The manifest
+   adds the kind of entries, 4272, so `arc journal` stops with
+   `the author changed what journal can do` until the citizen agrees again
+   ([interface](../interface/SPEC.md), section 4.1).
 
 ## 9. Decisions
 
