@@ -12,7 +12,9 @@ import (
 )
 
 // TestStorageDeletesReplaced proves section 4.7 of the storage spec
-// through the normal CLI, a real relay and three storage citizens
+// through the normal CLI, a real relay and three storage citizens. A page
+// of the journal is never replaced, so the test app of
+// testdata/notes.manifest.json writes the page, as the journal of v1 did
 // (k = 2, t = 3, so each blob of 4 KiB is one piece of 2,093 bytes on each
 // storage citizen):
 //
@@ -30,7 +32,6 @@ import (
 //   - A new machine from the seed reads the same.
 //   - The delete of the page: repair deletes each version and checkpoint.
 func TestStorageDeletesReplaced(t *testing.T) {
-	begin := time.Now()
 	work := t.TempDir()
 	url := startRelay(t, filepath.Join(work, "relay"))
 
@@ -51,14 +52,16 @@ func TestStorageDeletesReplaced(t *testing.T) {
 		running[name] = serve[name]()
 		has(t, signer.run("keys", "storage", "add", key, "--as", name), "storage list: "+name+" is active", "the add of "+name)
 	}
+	// A machine from the seed installs the journal, so it is announced too.
 	signer.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
-	signer.run("install", citizen, "journal", "--yes")
+	signer.run("announce", filepath.Join(repo, "internal/proof/testdata/notes.manifest.json"))
+	signer.run("install", citizen, "notes", "--yes")
 
 	const page, writes = "hrs/edits/1", 8
 	text := func(n int) string { return fmt.Sprintf("version %d of the page that changes", n) }
 	write := func(n int) {
 		t.Helper()
-		signer.input(fmt.Sprintf("---\ntitle: Edits\npage: 1\nnotebook: hrs/edits\n---\n%s\n", text(n)), "journal", "write", page)
+		signer.input(text(n)+"\n", "notes", "write", page)
 	}
 	sync := func(m machine, args ...string) result {
 		t.Helper()
@@ -99,8 +102,9 @@ func TestStorageDeletesReplaced(t *testing.T) {
 	write(1)
 	sync(signer)
 	phone := fromSeed(t, work, "phone", url, citizen, words)
+	phone.run("install", citizen, "notes", "--yes")
 	sync(phone)
-	has(t, journalDoc(t, begin, phone.run("journal", "read", page)), text(1), "the first read of the phone")
+	has(t, phone.run("notes", "read", page), text(1), "the first read of the phone")
 	t.Log("ok: the phone holds version 1, and is off from now")
 
 	for n := 2; n <= writes; n++ {
@@ -140,8 +144,8 @@ func TestStorageDeletesReplaced(t *testing.T) {
 
 	reads := func(m machine, what string) {
 		t.Helper()
-		has(t, journalDoc(t, begin, m.run("journal", "read", page)), text(writes), "the read of "+what)
-		history := m.run("journal", "history", page)
+		has(t, m.run("notes", "read", page), text(writes), "the read of "+what)
+		history := m.run("notes", "history", page)
 		for n := 1; n <= writes; n++ {
 			has(t, history, text(n), "the history of "+what)
 		}
@@ -153,18 +157,19 @@ func TestStorageDeletesReplaced(t *testing.T) {
 	t.Log("ok: the phone that held version 1 reads version 8 and each revision, and puts no old version back")
 
 	fresh := fromSeed(t, work, "fresh", url, citizen, words)
+	fresh.run("install", citizen, "notes", "--yes")
 	sync(fresh)
 	reads(fresh, "a new machine")
 	t.Log("ok: a new machine reads version 8 and each revision")
 
 	// The delete of the page leaves the blank draft and the deletion.
-	signer.run("journal", "delete", page)
+	signer.run("notes", "delete", page)
 	sync(signer)
 	gone := sync(signer, "--repair")
 	t.Logf("arc sync --repair after the delete:\n%s", strings.TrimSpace(gone.Stdout))
 	same("after the delete", 2)
 	sync(phone)
-	if got := phone.try("", "journal", "read", page).Stdout; got != "" {
+	if got := phone.try("", "notes", "read", page).Stdout; got != "" {
 		t.Fatalf("the phone still reads the deleted page:\n%s", got)
 	}
 	same("after the phone synced the delete", 2)

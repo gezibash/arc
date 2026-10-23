@@ -339,6 +339,7 @@ registry uses these numbers:
 | 3274 | regular | an acknowledgement, inside a gift wrap |
 | 3275 | regular | one continuation part of sealed content longer than 32 KiB |
 | 3276 | private rumor | core session frames, inside live wraps of kind 21059; see [sessions](../sessions/SPEC.md) |
+| 4272 | regular | a journal entry, inside a NIP-37 draft; see [interface](../interface/SPEC.md), section 3.9.3 |
 | 10272 | replaceable | reserved, and not used, see section 7.1 |
 | 10273 | replaceable | the sealed storage list; see [storage](../storage/SPEC.md), section 3.8 |
 | 10274 | replaceable | the sealed device list; see [devices](../devices/SPEC.md) |

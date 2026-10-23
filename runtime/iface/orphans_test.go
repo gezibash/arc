@@ -31,12 +31,14 @@ func longBody(n int) string {
 
 // A page whose draft is larger than the store keeps in one event is
 // refused before arc saves any of its parts, and the error says the size.
-// An older page at the address stays as it was (Cato's test of v0.36.0,
-// 2026-10-19: a write of 4.04 MB failed after its parts were saved, and
-// the next sync uploaded 124 parts that nothing named).
+// Another page stays as it was (Cato's test of v0.36.0, 2026-10-19: a
+// write of 4.04 MB failed after its parts were saved, and the next sync
+// uploaded 124 parts that nothing named).
 func TestAPageTooLargeForTheStoreLeavesNoPart(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", pageHeader+"the old page\n", "write", page)
+	other := "hrs/ablations/2"
+	c.must("journal", "the old page\n", "write", other, "--title", "Old")
+	before := c.must("journal", "", "read", other)
 
 	_, err := c.run("journal", longBody(125), "write", page)
 	if err == nil {
@@ -48,8 +50,11 @@ func TestAPageTooLargeForTheStoreLeavesNoPart(t *testing.T) {
 	if n := countKind(c, draft.PartKind); n != 0 {
 		t.Errorf("the refused page left %d parts in the store, want 0", n)
 	}
-	if got := c.must("journal", "", "read", page); got != pageHeader+"the old page\n" {
+	if got := c.must("journal", "", "read", other); got != before {
 		t.Errorf("the old page reads %q after the refused write", got)
+	}
+	if _, err := c.run("journal", "", "read", page); err == nil {
+		t.Error("the refused page reads")
 	}
 }
 
@@ -74,8 +79,8 @@ func TestADeleteRemovesPartsThatNoDraftNames(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := c.must("journal", "", "read", page); got != "" {
-		t.Fatalf("the page without its draft reads %q", got)
+	if out, err := c.run("journal", "", "read", page); err == nil {
+		t.Fatalf("the page without its draft reads %q", out)
 	}
 
 	var errs bytes.Buffer
@@ -194,16 +199,18 @@ func TestLsNamesAnAddressWithPartsAndNoPage(t *testing.T) {
 // says how many it removed, in the words of the delete with no page (#385).
 func TestADeleteOfAPageCountsItsUnnamedParts(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", longBody(2), "write", page)
 	c.env.refuse = draft.Kind
 	if _, err := c.run("journal", longBody(3)+"more\n", "write", page); err == nil {
 		t.Fatal("the write succeeded, but the store refused its draft")
-	} else if !strings.Contains(err.Error(), "removes them with the page") {
-		t.Errorf("the error does not say that the delete takes the page too: %v", err)
+	} else if !strings.Contains(err.Error(), "arc journal delete "+page+" removes them") {
+		t.Errorf("the error does not name the delete: %v", err)
 	}
+	// A write again at the address makes the page; the parts of the
+	// failed write stay beside it.
 	c.env.refuse = 0
+	c.must("journal", longBody(2), "write", page)
 	if got := c.must("journal", "", "read", page); got != longBody(2) {
-		t.Fatal("the old page changed after the refused write")
+		t.Fatal("the page after the refused write reads wrong")
 	}
 
 	_, errs, err := c.runErr("journal", "delete", page)

@@ -254,6 +254,19 @@ newer arc reads every page of v1.
 
 Otto and Cato test each PR as users.
 
+A1 is built as phase G of [the interface spec](../interface/SPEC.md),
+section 3.9.3. It differs from this section in two points:
+
+- The entries are notebook operations (`write`, `append`, `fix`,
+  `history`, `delete`), not a `revise` value of `publish`. The notebook
+  code already holds the rules of a page, so the publish action stays as
+  it is.
+- The first text of a page stays in its head, as in v1. A write is then
+  one draft, which the size check of PR A0 covers, and `read --lines`
+  still reads only the parts that it needs. Two devices that start one
+  page offline keep one head; the checkpoint of the other stays in the
+  history.
+
 ## 5. Phases B to D
 
 These sections give the decisions, not the design. Each phase gets its own

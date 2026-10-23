@@ -1,6 +1,7 @@
 package proof
 
 import (
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,12 +39,19 @@ func TestDevicePages(t *testing.T) {
 	signer.run("relay", "add", url)
 	citizen := signer.key()
 	storeKey := storageCitizen(t, work, url, signer)
-	signer.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
-	signer.run("install", citizen, "journal", "--yes")
 	signer.run("install", storeKey, "storage", "--yes")
 
-	// An older arc writes the pages of the format before the data roots:
-	// a short page, and a long page with parts.
+	// An older arc writes the pages of the format before the data roots,
+	// with the journal manifest of its version: a short page, and a long
+	// page with parts.
+	olderManifest := filepath.Join(work, "journal-old.json")
+	shown, err := exec.Command("git", "-C", repo, "show", releasedCommit+":apps/journal/manifest.json").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, olderManifest, string(shown), 0o600)
+	signer.using(older).run("announce", olderManifest)
+	signer.using(older).run("install", citizen, "journal", "--yes")
 	var long strings.Builder
 	long.WriteString("---\ntitle: Long\npage: 2\nnotebook: hrs/old\n---\n")
 	for long.Len() < 2*draft.PartSize {
@@ -55,6 +63,10 @@ func TestDevicePages(t *testing.T) {
 	if old, _ := pageFormats(t, signer.home, citizen); old != 2 {
 		t.Fatalf("the older arc made %d pages of the old format, want 2", old)
 	}
+	// This arc announces the journal of this version, which adds the kind
+	// of entries, so the citizen agrees to it again.
+	signer.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
+	signer.run("install", citizen, "journal", "--yes")
 
 	first := signer.run("sync")
 	has(t, first, "sealed 2 pages again under the data roots", "the import of the old pages")
