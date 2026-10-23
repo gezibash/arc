@@ -145,6 +145,13 @@ func (s *Syncer) SyncAll(ctx context.Context, sides []Side) (Report, error) {
 	if err := r.read(ctx); err != nil {
 		return r.report, errors.Join(err, r.save())
 	}
+	// The deletion of unnamed parts goes before the write, so that this
+	// sync gives it to the storage citizens.
+	if s.Repair {
+		if err := r.unnamed(ctx); err != nil {
+			return r.report, errors.Join(err, r.save())
+		}
+	}
 	if err := r.write(ctx); err != nil {
 		return r.report, errors.Join(err, r.save())
 	}

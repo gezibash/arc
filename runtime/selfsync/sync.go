@@ -104,6 +104,11 @@ type Syncer struct {
 	// Devices returns the device list of the citizen, and false when the
 	// citizen has none.
 	Devices func(ctx context.Context) (devices.List, bool, error)
+	// Opener returns the opener of the app whose drafts hold the kind
+	// inside, as the k tag of a draft names it, and false for a kind of no
+	// app. Repair opens the drafts and checkpoints with it to find the
+	// parts that no page names. Nil keeps each part.
+	Opener func(kind string) (draft.Opener, bool)
 	// State is the directory of the cursor of each storage citizen.
 	State string
 	// Repair lets the sync audit, rebuild, move and delete pieces
