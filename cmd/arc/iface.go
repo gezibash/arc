@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // dispatch runs a command of an installed app: arc <name> <path...>.
@@ -70,7 +72,17 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 		return err
 	}
 	env := &citizen.Environment{Session: sess, Installs: installs, Tool: name, Lists: store}
-	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: command.OutOrStdout(), Err: os.Stderr})
+	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: inputOf(os.Stdin), Out: command.OutOrStdout(), Err: os.Stderr})
+}
+
+// inputOf is the standard input of an app command. No command waits for a
+// terminal: from a terminal it reads nothing, so a command that needs text
+// says so and ends.
+func inputOf(f *os.File) io.Reader {
+	if term.IsTerminal(int(f.Fd())) {
+		return strings.NewReader("")
+	}
+	return f
 }
 
 // helpCommand shows the help of a command of arc, or of an app.

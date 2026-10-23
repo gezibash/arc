@@ -129,6 +129,28 @@ func TestThePageIsADraftOfAnArticle(t *testing.T) {
 	}
 }
 
+// An append is an entry: a draft of its own, of kind 4272, whose d tag the
+// draft does not show. It has no checkpoint.
+func TestAnAppendIsAnEntry(t *testing.T) {
+	c := newCitizen(t)
+	c.must("journal", pageHeader+"short page\n", "write", page)
+	c.must("journal", "", "append", page, "second", "line")
+	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Tags: nostr.TagMap{"k": {"4272"}}}))
+	if len(wraps) != 1 {
+		t.Fatalf("the store holds %d entries, want 1", len(wraps))
+	}
+	if strings.Contains(wraps[0].Tags.GetD(), "hrs") || strings.Contains(wraps[0].Content, "second line") {
+		t.Error("the draft of the entry shows the address or the text")
+	}
+	entry := testutil.Must(c.env.Opener("journal").Open(context.Background(), wraps[0]))
+	if d := entry.Event.Tags.GetD(); !strings.HasPrefix(d, page+"/") || len(d) != len(page)+17 || entry.Event.Tags.Find("page")[1] != page || entry.Event.Content != "second line\n" {
+		t.Errorf("the entry holds %+v", entry.Event)
+	}
+	if n := countKind(c, draft.CheckpointKind); n != 1 {
+		t.Errorf("the store holds %d checkpoints, want 1, of the head: an entry has none", n)
+	}
+}
+
 func TestALongPageTravelsInParts(t *testing.T) {
 	c := newCitizen(t)
 	var body strings.Builder
@@ -144,13 +166,13 @@ func TestALongPageTravelsInParts(t *testing.T) {
 		t.Errorf("the page has %d parts, want 3", n)
 	}
 
-	// Append changes only the last part.
+	// Append adds a short entry, and changes no part.
 	c.must("journal", "", "append", page, "the", "end")
 	if got := c.must("journal", "", "read", page); got != body.String()+"the end\n" {
 		t.Errorf("after append the page ends %q", got[len(got)-20:])
 	}
-	if n := len(testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}}))); n != 4 {
-		t.Errorf("append made %d parts in all, want 4: three, and one new last part", n)
+	if n := len(testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.PartKind}}))); n != 3 {
+		t.Errorf("append made %d parts in all, want the 3 of the head", n)
 	}
 }
 
@@ -201,20 +223,25 @@ func TestListSearchHistoryAndDelete(t *testing.T) {
 	if got := c.must("journal", "", "search", "warmup"); !strings.HasPrefix(got, "hrs/ablations/2\t") || strings.Count(got, "\n") != 1 {
 		t.Errorf("search shows %q", got)
 	}
+	// The history is the head, then the entry, which history names by its
+	// address and id.
 	history := c.must("journal", "", "history", page)
-	if strings.Count(history, "\n  the learning rate sweep\n") != 2 || !strings.HasSuffix(history, "  second revision\n") {
+	if strings.Count(history, "\n  the learning rate sweep\n") != 1 || !strings.Contains(history, "\t"+page+"/") || !strings.HasSuffix(history, "  second revision\n") {
 		t.Errorf("history shows %q", history)
 	}
 
 	c.must("journal", "", "delete", page)
-	if got := c.must("journal", "", "read", page); got != "" {
-		t.Errorf("a deleted page reads %q", got)
+	if _, err := c.run("journal", "", "read", page); err == nil || err.Error() != "no such page "+page {
+		t.Errorf("a deleted page reads with %v, want no such page", err)
 	}
 	if got := c.must("journal", "", "ls", "hrs/"); strings.Contains(got, "lr-sweep") {
 		t.Errorf("ls still shows the deleted page: %q", got)
 	}
-	if got := c.must("journal", "", "history", page); got != "no revisions\n" {
-		t.Errorf("the history of a deleted page is %q", got)
+	if _, err := c.run("journal", "", "history", page); err == nil || err.Error() != "no such page "+page {
+		t.Errorf("the history of a deleted page has %v, want no such page", err)
+	}
+	if n := countKind(c, draft.Kind) - 1; n != 2 {
+		t.Errorf("the store holds %d drafts besides the blank head, want the 2 other pages", n)
 	}
 	if _, err := c.run("journal", "", "delete", page); err == nil {
 		t.Error("a second delete found something to delete")
@@ -353,6 +380,7 @@ func TestAFileInPartsStillReads(t *testing.T) {
 func TestTailShowsOnlyWhatIsAppended(t *testing.T) {
 	c := newCitizen(t)
 	c.must("journal", pageHeader+"first\n", "write", page)
+	c.must("journal", "other\n", "write", "hrs/ablations/2", "--title", "Other")
 
 	c.env.live = make(chan nostr.Event, 64)
 	done := make(chan string)
@@ -367,12 +395,13 @@ func TestTailShowsOnlyWhatIsAppended(t *testing.T) {
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.must("journal", "", "append", page, "second")
-	c.must("journal", pageHeader+"rewritten\n", "write", page)
+	c.must("journal", "", "append", "hrs/ablations/2", "another page")
+	c.must("journal", "", "append", page, "third")
 	time.Sleep(100 * time.Millisecond)
 	close(c.env.live)
 
 	got := <-done
-	want := pageHeader + "first\nsecond\n--- rewritten ---\n" + pageHeader + "rewritten\n"
+	want := pageHeader + "first\nsecond\nthird\n"
 	if got != want {
 		t.Errorf("tail showed %q, want %q", got, want)
 	}

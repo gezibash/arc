@@ -13,32 +13,58 @@ import (
 
 func TestJournalFrontmatterRejectsInvalidWritesWithoutStoring(t *testing.T) {
 	cases := map[string]string{
-		"absent":           "# Notes\n",
-		"empty":            "---\ntitle: \n---\nNotes\n",
-		"quoted empty":     "---\ntitle: \"\"\n---\n",
-		"duplicate":        "---\ntitle: One\ntitle: Two\n---\n",
-		"unclosed":         "---\ntitle: Notes\n",
-		"missing title":    "---\ntype: decision\npage: 1\nnotebook: hrs/ablations\n---\n",
-		"missing page":     "---\ntitle: Notes\nnotebook: hrs/ablations\n---\n",
-		"missing notebook": "---\ntitle: Notes\npage: 1\n---\n",
-		"wrong notebook":   "---\ntitle: Notes\npage: 1\nnotebook: hrs/status\n---\n",
-		"wrong page":       "---\ntitle: Notes\npage: other\nnotebook: hrs/ablations\n---\n",
-		"list":             "---\ntitle: [One, Two]\n---\n",
-		"multiline":        "---\ntitle: \"One\\nTwo\"\n---\n",
-		"malformed":        "---\ntitle Notes\n---\n",
-		"large header":     "---\ntitle: " + strings.Repeat("x", 4096) + "\n---\n",
+		"duplicate":      "---\ntitle: One\ntitle: Two\n---\n",
+		"unclosed":       "---\ntitle: Notes\n",
+		"wrong notebook": "---\ntitle: Notes\npage: 1\nnotebook: hrs/status\n---\n",
+		"wrong page":     "---\ntitle: Notes\npage: other\nnotebook: hrs/ablations\n---\n",
+		"list":           "---\ntitle: [One, Two]\n---\n",
+		"multiline":      "---\ntitle: \"One\\nTwo\"\n---\n",
+		"malformed":      "---\ntitle Notes\n---\n",
+		"large header":   "---\ntitle: " + strings.Repeat("x", 4096) + "\n---\n",
+		// A page with no text and no title is no page.
+		"quoted empty":  "---\ntitle: \"\"\n---\n",
+		"missing title": "---\ntype: decision\npage: 1\nnotebook: hrs/ablations\n---\n",
+		"no text":       "",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			c := newCitizen(t)
 			for _, flags := range [][]string{nil, {"--dry-run"}} {
 				_, err := c.run("journal", body, append([]string{"write", page}, flags...)...)
-				if err == nil || !strings.Contains(err.Error(), "frontmatter") {
+				if err == nil || !strings.Contains(err.Error(), "frontmatter") && !strings.Contains(err.Error(), "no text") {
 					t.Fatalf("accepted invalid header: %v", err)
 				}
 			}
 			if events := testutil.Must(c.env.store.Query(nostr.Filter{})); len(events) != 0 {
 				t.Fatalf("invalid write stored %d events", len(events))
+			}
+		})
+	}
+}
+
+// A write fills in the front matter that the text does not give: notebook
+// and page from the address, and the title from --title, else from the first
+// heading, else from the date (proposal journal-v2, section 4.3; Cato's
+// finding 2 of 2026-10-19: --title did not work).
+func TestAWriteFillsInTheFrontMatter(t *testing.T) {
+	stamps := "created_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n"
+	for name, tc := range map[string]struct {
+		in    string
+		flags []string
+		want  string
+	}{
+		"title flag":   {"plain text\n", []string{"--title", "From the flag"}, "---\ntitle: From the flag\nnotebook: hrs/ablations\npage: 1\n" + stamps + "plain text\n"},
+		"heading":      {"# Decisions\nbody\n", nil, "---\ntitle: Decisions\nnotebook: hrs/ablations\npage: 1\n" + stamps + "# Decisions\nbody\n"},
+		"date":         {"no heading\n", nil, "---\ntitle: 2026-09-29\nnotebook: hrs/ablations\npage: 1\n" + stamps + "no heading\n"},
+		"partial":      {"---\ntitle: Notes\ntype: decision\n---\nbody\n", nil, "---\ntitle: Notes\ntype: decision\nnotebook: hrs/ablations\npage: 1\n" + stamps + "body\n"},
+		"empty title":  {"---\ntitle: \n---\nNotes\n", nil, "---\ntitle: 2026-09-29\nnotebook: hrs/ablations\npage: 1\n" + stamps + "Notes\n"},
+		"quoted title": {"text\n", []string{"--title", "\"Quoted\" start"}, "---\ntitle: \"\\\"Quoted\\\" start\"\nnotebook: hrs/ablations\npage: 1\n" + stamps + "text\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newCitizen(t)
+			c.must("journal", tc.in, append([]string{"write", page}, tc.flags...)...)
+			if got := c.must("journal", "", "read", page); got != tc.want {
+				t.Errorf("read\n%q\nwant\n%q", got, tc.want)
 			}
 		})
 	}
@@ -76,16 +102,17 @@ func TestJournalFrontmatterTitleAppendAndFailedReplacement(t *testing.T) {
 	}
 }
 
+// A page that an older arc wrote with no header stays readable, takes
+// entries, and is never written again.
 func TestJournalFrontmatterHistoricalPagesStayReadable(t *testing.T) {
 	c := newCitizen(t)
 	old := specManifests(t)["journal"]
 	kind := old.Kinds["page"]
-	kind.Frontmatter = nil
-	kind.NotebookIndex = ""
+	kind.Frontmatter, kind.NotebookIndex, kind.NotebookEntry = nil, "", ""
 	old.Kinds["page"] = kind
 	for i := range old.Commands {
-		if p := old.Commands[i].Action.Publish; p != nil {
-			p.FrontmatterAddress = ""
+		if old.Commands[i].Path[0] == "write" {
+			old.Commands[i].Action = Action{Publish: &Publish{Kind: "page", D: "{{address|keyed:page}}", Revise: "replace", Content: Content{Text: "{{body}}"}, Tags: [][]string{{"d", "{{address}}"}}}}
 		}
 	}
 	var out bytes.Buffer
@@ -96,16 +123,13 @@ func TestJournalFrontmatterHistoricalPagesStayReadable(t *testing.T) {
 	if got := c.must("journal", "", "read", page); got != "legacy body\n" {
 		t.Fatal(got)
 	}
-	if _, err := c.run("journal", "", "append", page, "new text"); err == nil {
-		t.Fatal("append bypassed new write policy")
-	}
-	if got := c.must("journal", "", "read", page); got != "legacy body\n" {
-		t.Fatal("legacy page changed")
-	}
-	c.must("journal", "---\ntitle: Legacy\npage: 1\nnotebook: hrs/ablations\n---\nlegacy body\n", "write", page)
+	// An entry leaves the head as it was, so it needs no header.
 	c.must("journal", "", "append", page, "new text")
-	if got := c.must("journal", "", "read", page); got != "---\ntitle: Legacy\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nlegacy body\nnew text\n" {
+	if got := c.must("journal", "", "read", page); got != "legacy body\nnew text\n" {
 		t.Fatal(got)
+	}
+	if _, err := c.run("journal", "---\ntitle: Legacy\npage: 1\nnotebook: hrs/ablations\n---\nlegacy body\n", "write", page); err == nil {
+		t.Fatal("a write replaced a page that exists")
 	}
 }
 

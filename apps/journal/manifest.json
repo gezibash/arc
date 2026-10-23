@@ -5,7 +5,8 @@
   "title": "Journal",
   "summary": "A private notebook, sealed to your own key.",
   "kinds": {
-    "page": {"kind": 30023, "visibility": "sealed", "frontmatter": ["title", "page", "notebook"], "notebook_index": "index"},
+    "page": {"kind": 30023, "visibility": "sealed", "frontmatter": ["title", "page", "notebook"], "notebook_index": "index", "notebook_entry": "entry"},
+    "entry": {"kind": 4272, "visibility": "sealed"},
     "kpi": {"kind": 30078, "visibility": "sealed"},
     "index": {"kind": 30023, "visibility": "sealed"}
   },
@@ -13,57 +14,98 @@
     "page": {"record": "{{text}}"},
     "list": {"record": "{{tags.d}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no pages"},
     "hits": {"record": "{{tags.d}}\t{{score}}\t{{tags.title}}\t{{created_at}}\t{{updated_at}}", "empty": "no results"},
-    "history": {"record": "{{created|time}}\n{{text|truncate:200|indent}}", "empty": "no revisions"},
+    "history": {"record": "{{created|time}}\t{{tags.d}}\n{{text|truncate:200|indent}}", "empty": "no revisions"},
+    "address": {"record": "{{tags.d}}"},
     "kpi": {"record": "{{created|time}}\t{{key}}\t{{value}}\t{{note}}", "empty": "no records"}
   },
   "commands": [
     {
       "path": ["write"],
-      "summary": "Replace a page with the standard input",
+      "summary": "Start a page with the standard input",
       "args": [
         {
           "name": "address",
           "kind": "positional",
           "type": "address",
           "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/([1-9][0-9]*|next|today)$"
         },
         {"name": "title", "kind": "option", "type": "text"},
         {"name": "body", "kind": "positional", "type": "stdin"}
       ],
       "action": {
-        "publish": {
-          "kind": "page",
-          "d": "{{address|keyed:page}}",
-          "frontmatter_address": "{{address}}",
-          "revise": "replace",
-          "content": "{{body}}",
-          "tags": [["d", "{{address}}"], ["title", "{{title}}"]]
-        }
+        "notebook": {"op": "write", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "text": "{{body}}", "title": "{{title}}"}
       }
     },
     {
+      "path": ["new"],
+      "summary": "Start the next page of a notebook, and show its address",
+      "args": [
+        {
+          "name": "notebook",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$"
+        },
+        {"name": "title", "kind": "option", "type": "text"},
+        {"name": "body", "kind": "positional", "type": "stdin"}
+      ],
+      "action": {
+        "notebook": {"op": "write", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{notebook}}/next", "text": "{{body}}", "title": "{{title}}"}
+      },
+      "output": {"format": "address"}
+    },
+    {
       "path": ["append"],
-      "summary": "Add text to the end of a page",
+      "summary": "Add an entry to the end of a page",
       "args": [
         {
           "name": "address",
           "kind": "positional",
           "type": "address",
           "required": true,
-          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*$"
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/([1-9][0-9]*|today)$"
         },
         {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}
       ],
       "action": {
-        "publish": {
-          "kind": "page",
-          "d": "{{address|keyed:page}}",
-          "frontmatter_address": "{{address}}",
-          "revise": "append",
-          "content": "{{text}}\n",
-          "tags": [["d", "{{address}}"]]
-        }
+        "notebook": {"op": "append", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "text": "{{text|join}}\n"}
+      }
+    },
+    {
+      "path": ["add"],
+      "summary": "Add an entry to today's page of a notebook, and show its address",
+      "args": [
+        {
+          "name": "notebook",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$"
+        },
+        {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}
+      ],
+      "action": {
+        "notebook": {"op": "append", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{notebook}}/today", "text": "{{text|join}}\n"}
+      },
+      "output": {"format": "address"}
+    },
+    {
+      "path": ["fix"],
+      "summary": "Correct an entry with a new one; the history keeps both",
+      "args": [
+        {
+          "name": "address",
+          "kind": "positional",
+          "type": "address",
+          "required": true,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*/[1-9][0-9]*(/[0-9a-f]{16})?$"
+        },
+        {"name": "text", "kind": "positional", "type": "text", "variadic": true, "required": true}
+      ],
+      "action": {
+        "notebook": {"op": "fix", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "text": "{{text|join}}\n"}
       }
     },
     {
@@ -81,7 +123,7 @@
     },
     {
       "path": ["tail"],
-      "summary": "Show each text as it is appended",
+      "summary": "Show a page, then each entry as it is added",
       "args": [
         {
           "name": "address",
@@ -91,12 +133,12 @@
           "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
         }
       ],
-      "action": {"watch": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
-      "output": {"open": {"parse": "text"}, "join": {}, "tail": {}, "format": "page"}
+      "action": {"watch": {"kinds": ["page", "entry"], "authors": "me"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "where": [{"any": [{"field": "tags.d", "is": "{{address}}"}, {"field": "tags.page", "is": "{{address}}"}]}], "tail": {}, "format": "page"}
     },
     {
       "path": ["history"],
-      "summary": "List the revisions of a page",
+      "summary": "List the entries of a page, with each fix",
       "args": [
         {
           "name": "address",
@@ -106,7 +148,7 @@
           "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
         }
       ],
-      "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
+      "action": {"notebook": {"op": "history", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}"}},
       "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}
     },
     {
@@ -171,7 +213,7 @@
     },
     {
       "path": ["delete"],
-      "summary": "Delete a page and its history",
+      "summary": "Delete a page, its entries and its history",
       "args": [
         {
           "name": "address",
@@ -181,7 +223,7 @@
           "pattern": "^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*){2}$"
         }
       ],
-      "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}
+      "action": {"notebook": {"op": "delete", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}"}}
     },
     {
       "path": ["kpi", "set"],

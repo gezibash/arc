@@ -1,0 +1,45 @@
+{
+  "interface": 1,
+  "id": "notes",
+  "shape": "data",
+  "title": "Notes",
+  "summary": "A test app whose pages a write replaces, as the journal of v1 did.",
+  "kinds": {
+    "page": {"kind": 30023, "visibility": "sealed"}
+  },
+  "formats": {
+    "page": {"record": "{{text}}"},
+    "history": {"record": "{{created|time}}\n{{text|truncate:200|indent}}", "empty": "no revisions"}
+  },
+  "commands": [
+    {
+      "path": ["write"],
+      "summary": "Replace a page with the standard input",
+      "args": [
+        {"name": "address", "kind": "positional", "type": "address", "required": true, "pattern": "^[a-z0-9/]+$"},
+        {"name": "body", "kind": "positional", "type": "stdin"}
+      ],
+      "action": {"publish": {"kind": "page", "d": "{{address|keyed:page}}", "revise": "replace", "content": "{{body}}", "tags": [["d", "{{address}}"]]}}
+    },
+    {
+      "path": ["read"],
+      "summary": "Show a page",
+      "args": [{"name": "address", "kind": "positional", "type": "text", "required": true}],
+      "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}"}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "page"}
+    },
+    {
+      "path": ["history"],
+      "summary": "List the revisions of a page",
+      "args": [{"name": "address", "kind": "positional", "type": "text", "required": true}],
+      "action": {"query": {"kinds": ["page"], "authors": "me", "d": "{{address|keyed:page}}", "history": true}},
+      "output": {"open": {"parse": "text"}, "join": {}, "format": "history"}
+    },
+    {
+      "path": ["delete"],
+      "summary": "Delete a page and its history",
+      "args": [{"name": "address", "kind": "positional", "type": "text", "required": true}],
+      "action": {"delete": {"kind": "page", "d": "{{address|keyed:page}}"}}
+    }
+  ]
+}

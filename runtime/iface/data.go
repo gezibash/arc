@@ -252,11 +252,19 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		return nil, err
 	}
 
-	old, err := r.current(d)
-	if err != nil {
-		return nil, err
+	// An entry has a d tag of its own, and is never revised: there is no
+	// old version to read, and no checkpoint to keep.
+	isEntry := p.Revise == "entry"
+	var old *draft.Draft
+	if !isEntry {
+		if old, err = r.current(d); err != nil {
+			return nil, err
+		}
 	}
 	now := after(old, nostr.Timestamp(r.env.Now().Unix()))
+	if p.at != 0 {
+		now = p.at
+	}
 	var keep []string
 	var keptLines []int
 	head := content
@@ -379,13 +387,21 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	} else if wrap, err = k.Wrap(r.ctx, d, inner, now); err != nil {
 		return nil, err
 	}
-	checkpoint, err := k.Checkpoint(r.ctx, d, inner, now)
-	if err != nil {
-		return nil, err
+	var saved []nostr.Event
+	if !isEntry {
+		checkpoint, err := k.Checkpoint(r.ctx, d, inner, now)
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, checkpoint)
 	}
 	// The store saves the parts first. A draft that it then refuses would
 	// leave parts that nothing names, so check its size before any save.
-	if size := max(len(wrap.Content), len(checkpoint.Content)); size > draft.MaxContent {
+	size := len(wrap.Content)
+	for _, event := range saved {
+		size = max(size, len(event.Content))
+	}
+	if size > draft.MaxContent {
 		total := len(head) + len(keep)*draft.PartSize
 		for _, text := range rest {
 			total += len(text)
@@ -393,8 +409,8 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft of %d bytes names %d parts, and the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
 			float64(total)/1e6, size, len(ids), draft.MaxContent)
 	}
-	if err := r.env.Publish(r.ctx, append(events, wrap, checkpoint), nil); err != nil {
-		return nil, r.failedWrite(err, p.Kind, d, inner, old, append(events, checkpoint))
+	if err := r.env.Publish(r.ctx, append(append(events, wrap), saved...), nil); err != nil {
+		return nil, r.failedWrite(err, p.Kind, d, inner, old, append(events, saved...))
 	}
 
 	opened, err := r.opener().Open(r.ctx, wrap)
@@ -467,7 +483,7 @@ func counted(events []nostr.Event) string {
 // or "" when the manifest has no such command.
 func (r *run) deleteCommand(kind, address string) string {
 	for _, c := range r.in.Manifest.Commands {
-		if c.Action.Delete != nil && c.Action.Delete.Kind == kind {
+		if c.Action.Delete != nil && c.Action.Delete.Kind == kind || c.Action.Notebook != nil && c.Action.Notebook.Op == "delete" && c.Action.Notebook.Kind == kind {
 			return strings.Join(append(append([]string{"arc", r.in.Name}, c.Path...), address), " ")
 		}
 	}
