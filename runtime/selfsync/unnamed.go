@@ -14,6 +14,11 @@ import (
 // no page names. It names each event, and not the coordinate of a draft.
 var unnamedKinds = []string{strconv.Itoa(int(draft.CheckpointKind)), strconv.Itoa(int(draft.PartKind))}
 
+// unnamedBatch is the most events that one deletion names. An e tag is
+// about 72 bytes of JSON, so a deletion of 512 is about 37 KiB, well below
+// store.MaxEvent.
+const unnamedBatch = 512
+
 // unnamed deletes the parts and checkpoints that no page names, as a
 // write that stopped half way leaves them (docs/storage/SPEC.md, section
 // 4.7). It deletes an event only when all of these hold:
@@ -28,8 +33,9 @@ var unnamedKinds = []string{strconv.Itoa(int(draft.CheckpointKind)), strconv.Ito
 //     opened. If one of them does not open, each event of the address
 //     stays.
 //
-// It saves one deletion that names each such event, as journal delete
-// does. The write of this sync gives it to the storage citizens, and the
+// It saves deletions that name each such event, as journal delete does,
+// at most unnamedBatch in each, so that each one fits in one event. The
+// write of this sync gives it to the storage citizens, and the
 // next repair frees the blobs.
 func (r *run) unnamed(ctx context.Context) error {
 	if r.s.Opener == nil {
@@ -70,25 +76,31 @@ func (r *run) unnamed(ctx context.Context) error {
 	if len(gone) == 0 {
 		return nil
 	}
-	tags := nostr.Tags{}
-	for _, e := range gone {
-		tags = append(tags, nostr.Tag{"e", e.ID.Hex()})
-		if e.Kind == draft.PartKind {
-			r.report.Repair.UnnamedParts++
-		} else {
-			r.report.Repair.UnnamedCheckpoints++
+	s := draft.Sealer{Citizen: r.s.Citizen, Signer: keyer.NewPlainKeySigner(r.s.Device)}
+	for batch := range slices.Chunk(gone, unnamedBatch) {
+		tags := nostr.Tags{}
+		for _, e := range batch {
+			tags = append(tags, nostr.Tag{"e", e.ID.Hex()})
+		}
+		for _, kind := range unnamedKinds {
+			tags = append(tags, nostr.Tag{"k", kind})
+		}
+		request, err := s.Deletion(ctx, tags, nostr.Now())
+		if err != nil {
+			return err
+		}
+		if _, err := r.s.Store.Save(request); err != nil {
+			return err
+		}
+		for _, e := range batch {
+			if e.Kind == draft.PartKind {
+				r.report.Repair.UnnamedParts++
+			} else {
+				r.report.Repair.UnnamedCheckpoints++
+			}
 		}
 	}
-	for _, kind := range unnamedKinds {
-		tags = append(tags, nostr.Tag{"k", kind})
-	}
-	s := draft.Sealer{Citizen: r.s.Citizen, Signer: keyer.NewPlainKeySigner(r.s.Device)}
-	request, err := s.Deletion(ctx, tags, nostr.Now())
-	if err != nil {
-		return err
-	}
-	_, err = r.s.Store.Save(request)
-	return err
+	return nil
 }
 
 // named returns the IDs of the events of one address that a page names:

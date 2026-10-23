@@ -133,6 +133,41 @@ func TestRepairFreesPartsThatNoPageNames(t *testing.T) {
 	b.held(5, 5, 5)
 }
 
+// A deletion of many unnamed parts goes in several requests, each smaller
+// than one event may be (store.MaxEvent). One request for 1,000 parts would
+// be about 72 KiB: the write could not put it, and each later sync would
+// fail on it.
+func TestRepairSplitsTheDeletionOfManyParts(t *testing.T) {
+	b := newPageBench(t)
+	b.sealedPages()
+	const n = 1000
+	orphans := b.parts(b.sealer(b.citizen.Secret), "crashed", n, nostr.Now()-10)
+	b.save(orphans...)
+
+	b.sync(b.device, false, b.sides)
+	r := b.sync(b.device, true, b.sides)
+	if r.Repair.UnnamedParts != n {
+		t.Fatalf("the repair deleted %d parts that no page names; want %d", r.Repair.UnnamedParts, n)
+	}
+	requests, err := b.local.Query(nostr.Filter{Kinds: []nostr.Kind{nostr.KindDeletion}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) < 2 {
+		t.Fatalf("the repair made %d deletions for %d parts; want more than one", len(requests), n)
+	}
+	for _, request := range requests {
+		if size := len(request.String()); size > store.MaxEvent {
+			t.Fatalf("a deletion is %d bytes; one event holds at most %d", size, store.MaxEvent)
+		}
+	}
+	r = b.sync(b.device, true, b.sides)
+	if r.Repair.Unnamed != n {
+		t.Fatalf("the next repair freed %d blobs; want %d", r.Repair.Unnamed, n)
+	}
+	b.held(len(requests), len(requests), len(requests))
+}
+
 // A part of another device can arrive in a sync before the draft that
 // names it. The repair keeps it.
 func TestRepairKeepsPartsOfAnotherDevice(t *testing.T) {
