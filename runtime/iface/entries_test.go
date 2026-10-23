@@ -308,3 +308,32 @@ func TestUpdatedAtIsNeverEarlierThanTheHead(t *testing.T) {
 		t.Errorf("read %q, want the time of the newest entry", got)
 	}
 }
+
+// A sync can bring the entries of a page before its head. A write of that
+// address then fails, so the entries do not join a new head.
+func TestAWriteOfAPageWithOnlyEntriesFails(t *testing.T) {
+	a := newCitizen(t)
+	a.must("journal", "text\n", "write", page, "--title", "Head")
+	a.must("journal", "", "append", page, "an", "entry")
+	b := a.device()
+	for _, event := range testutil.Must(a.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}, Tags: nostr.TagMap{"k": {"4272"}}})) {
+		if _, err := b.env.store.Save(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := b.run("journal", "other\n", "write", page, "--title", "Other"); err == nil || !strings.Contains(err.Error(), "exists") {
+		t.Errorf("a write of a page with only entries gave %v, want: the page exists", err)
+	}
+}
+
+// ls shows no updated_at earlier than created_at for an entry of the same
+// second as the head.
+func TestLsKeepsTheHeadTimeForAnEntryOfTheSameSecond(t *testing.T) {
+	c := newCitizen(t)
+	c.env.now = time.Date(2026, 9, 29, 13, 0, 0, 500_000_000, time.UTC)
+	c.must("journal", "text\n", "write", page, "--title", "Same second")
+	c.must("journal", "", "append", page, "an", "entry")
+	if got := c.must("journal", "", "ls"); !strings.Contains(got, "\t2026-09-29T13:00:00.5Z\t2026-09-29T13:00:00.5Z") {
+		t.Errorf("ls shows %q, want updated_at no earlier than created_at", got)
+	}
+}

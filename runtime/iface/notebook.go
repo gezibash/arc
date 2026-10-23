@@ -200,7 +200,11 @@ func (r *run) notebookPages(kind string) ([]notebookPage, error) {
 		}
 		if list := added[address]; len(list) > 0 {
 			p.entries = list
-			p.updated = time.Unix(int64(list[len(list)-1].created), 0).UTC()
+			// The time of an entry is in seconds: keep the head's time when
+			// the entry is not later.
+			if newest := time.Unix(int64(list[len(list)-1].created), 0).UTC(); newest.After(p.updated) {
+				p.updated = newest
+			}
 		}
 		e.rec["page"] = p.page
 		e.rec["notebook"] = p.book

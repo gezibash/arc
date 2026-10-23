@@ -321,10 +321,18 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	exists := fmt.Errorf("the page %s exists: a page keeps each entry, so journal append adds one, and journal fix corrects one", terminal.EscapeLine(address))
 	if old, err := r.current(d); err != nil {
 		return "", err
 	} else if old != nil && !old.Deleted {
-		return "", fmt.Errorf("the page %s exists: a page keeps each entry, so journal append adds one, and journal fix corrects one", terminal.EscapeLine(address))
+		return "", exists
+	}
+	// A sync can bring the entries of a page before its head. A new head
+	// would take those entries, so the page exists.
+	if entries, err := r.pageEntries(n.Kind); err != nil {
+		return "", err
+	} else if len(entries[address]) > 0 {
+		return "", exists
 	}
 	fields, body, err := frontmatter(n.Text)
 	if err != nil {
