@@ -1,7 +1,10 @@
 package iface
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -57,27 +60,6 @@ func TestTwoDevicesThatAppendOfflineKeepBothEntries(t *testing.T) {
 		}
 		if !strings.HasSuffix(got, "start\nfrom the laptop\nfrom the phone\n") {
 			t.Errorf("the %s reads the entries out of time order: %q", name, got)
-		}
-	}
-}
-
-// Two devices that start one page offline make two heads. The store keeps
-// one, and history still shows the text of the other.
-func TestTwoHeadsOfOnePageStayInTheHistory(t *testing.T) {
-	a := newCitizen(t)
-	b := a.device()
-	a.must("journal", "laptop text\n", "write", page, "--title", "Laptop")
-	b.env.now = a.env.Now().Add(time.Minute)
-	b.must("journal", "phone text\n", "write", page, "--title", "Phone")
-	a.syncWith(b)
-
-	for _, c := range []*citizen{a, b} {
-		if got := c.must("journal", "", "read", page); !strings.Contains(got, "phone text\n") {
-			t.Errorf("the page reads %q, want the newer head", got)
-		}
-		history := c.must("journal", "", "history", page)
-		if !strings.Contains(history, "laptop text") || !strings.Contains(history, "phone text") {
-			t.Errorf("the history lost a head: %q", history)
 		}
 	}
 }
@@ -304,7 +286,7 @@ func TestUpdatedAtIsNeverEarlierThanTheHead(t *testing.T) {
 	}
 	c.env.now = c.env.now.Add(2 * time.Second)
 	c.must("journal", "", "append", page, "later")
-	if got := c.must("journal", "", "read", page); !strings.Contains(got, "updated_at: 2026-09-29T13:00:02Z\n") {
+	if got := c.must("journal", "", "read", page); !strings.Contains(got, "updated_at: 2026-09-29T13:00:02.5Z\n") {
 		t.Errorf("read %q, want the time of the newest entry", got)
 	}
 }
@@ -335,5 +317,205 @@ func TestLsKeepsTheHeadTimeForAnEntryOfTheSameSecond(t *testing.T) {
 	c.must("journal", "", "append", page, "an", "entry")
 	if got := c.must("journal", "", "ls"); !strings.Contains(got, "\t2026-09-29T13:00:00.5Z\t2026-09-29T13:00:00.5Z") {
 		t.Errorf("ls shows %q, want updated_at no earlier than created_at", got)
+	}
+}
+
+// runAll runs a command, and returns its output, its standard error and its
+// error.
+func (c *citizen) runAll(stdin string, words ...string) (string, string, error) {
+	c.t.Helper()
+	var out, errs bytes.Buffer
+	err := Run(context.Background(), c.env, Installed{Manifest: specManifests(c.t)["journal"], Author: c.author, Name: "journal"}, words,
+		Stdio{In: strings.NewReader(stdin), Out: &out, Err: &errs})
+	return out.String(), errs.String(), err
+}
+
+// Two devices that start the next page of one notebook offline take the
+// same number. After a sync, each page keeps its own text and entries: the
+// store keeps one head at the number, and the other page reads at an
+// address of its own, which read and ls name (Cato's test of #395 at
+// d4476bd: D1's entries read under D2's head, and D1's head had no address).
+func TestTwoOfflineNewsKeepTheirOwnPages(t *testing.T) {
+	a := newCitizen(t)
+	b := a.device()
+	if got := a.must("journal", "laptop text\n", "new", "hrs/log", "--title", "Laptop"); got != "hrs/log/1\n" {
+		t.Fatalf("new printed %q", got)
+	}
+	a.must("journal", "", "append", "hrs/log/1", "laptop", "entry")
+	b.env.now = a.env.Now().Add(time.Minute)
+	if got := b.must("journal", "phone text\n", "new", "hrs/log", "--title", "Phone"); got != "hrs/log/1\n" {
+		t.Fatalf("new printed %q", got)
+	}
+	b.must("journal", "", "append", "hrs/log/1", "phone", "entry")
+	a.syncWith(b)
+
+	for name, c := range map[string]*citizen{"laptop": a, "phone": b} {
+		// The store keeps the newer head: the phone's.
+		got, errs, err := c.runAll("", "read", "hrs/log/1")
+		if err != nil {
+			t.Fatalf("%s: read: %v", name, err)
+		}
+		if !strings.HasSuffix(got, "---\nphone text\nphone entry\n") || strings.Contains(got, "laptop") {
+			t.Errorf("%s: hrs/log/1 reads %q, want the phone's page alone", name, got)
+		}
+		if !strings.Contains(errs, "hrs/log/1-") {
+			t.Errorf("%s: read does not name the address of the other page: %q", name, errs)
+		}
+		ls := c.must("journal", "", "ls", "--notebook", "hrs/log")
+		var other string
+		for line := range strings.SplitSeq(ls, "\n") {
+			if address, _, _ := strings.Cut(line, "\t"); strings.HasPrefix(address, "hrs/log/1-") {
+				other = address
+			}
+		}
+		if other == "" || !strings.Contains(ls, "\tLaptop\t") {
+			t.Fatalf("%s: ls does not list the laptop's page: %q", name, ls)
+		}
+		if got := c.must("journal", "", "read", other); !strings.HasSuffix(got, "---\nlaptop text\nlaptop entry\n") || strings.Contains(got, "phone") {
+			t.Errorf("%s: %s reads %q, want the laptop's page alone", name, other, got)
+		}
+	}
+}
+
+// A device that adds a burst of entries, and another device that adds one
+// entry less than a second later, read in time order after a sync (Cato's
+// test of #395 at d4476bd: each entry of a burst was one second after the
+// one before, so a later entry of the other device read in the middle).
+func TestABurstKeepsTimeOrderWithTheOtherDevice(t *testing.T) {
+	a := newCitizen(t)
+	a.must("journal", "start\n", "write", page, "--title", "Burst")
+	b := a.device()
+	a.syncWith(b)
+	burst := a.env.Now()
+	b.env.now = burst
+	for i := 1; i <= 6; i++ {
+		b.must("journal", "", "append", page, fmt.Sprintf("B%d", i))
+	}
+	a.env.now = burst.Add(330 * time.Millisecond)
+	a.must("journal", "", "append", page, "A1")
+	a.syncWith(b)
+	for name, c := range map[string]*citizen{"laptop": a, "phone": b} {
+		got := c.must("journal", "", "read", page)
+		if !strings.HasSuffix(got, "---\nstart\nB1\nB2\nB3\nB4\nB5\nB6\nA1\n") {
+			t.Errorf("%s reads %q, want the burst, then A1", name, got)
+		}
+		if !strings.Contains(got, "updated_at: "+burst.Add(330*time.Millisecond).UTC().Format(time.RFC3339Nano)+"\n") {
+			t.Errorf("%s: updated_at is not the time of A1: %q", name, got)
+		}
+	}
+}
+
+// One device deletes a page while the other appends to it, in either
+// order. After a sync the page is gone, the entry that the delete did not
+// know reads at an address of its own, and ls lists it (Cato's test of #395
+// at d4476bd: the page was left with no head and no listing).
+func TestADeleteAndAnOfflineAppendEndClear(t *testing.T) {
+	for _, appendFirst := range []bool{true, false} {
+		a := newCitizen(t)
+		a.must("journal", "start\n", "write", page, "--title", "Doomed")
+		b := a.device()
+		a.syncWith(b)
+		b.env.now = a.env.Now().Add(time.Minute)
+		if appendFirst {
+			b.must("journal", "", "append", page, "kept", "entry")
+			a.env.now = a.env.Now().Add(2 * time.Minute)
+			a.must("journal", "", "delete", page)
+		} else {
+			a.must("journal", "", "delete", page)
+			b.must("journal", "", "append", page, "kept", "entry")
+		}
+		a.syncWith(b)
+		for name, c := range map[string]*citizen{"deleter": a, "appender": b} {
+			if _, err := c.run("journal", "", "read", page); err == nil || err.Error() != "no such page "+page {
+				t.Errorf("append first %v, %s: read gave %v, want no such page", appendFirst, name, err)
+			}
+			ls := c.must("journal", "", "ls", "--notebook", "hrs/ablations")
+			address, _, _ := strings.Cut(ls, "\t")
+			if !strings.HasPrefix(address, page+"-") {
+				t.Fatalf("append first %v, %s: ls shows %q, want the entry at an address of its own", appendFirst, name, ls)
+			}
+			if got := c.must("journal", "", "read", address); !strings.Contains(got, "kept entry\n") {
+				t.Errorf("append first %v, %s: %s reads %q", appendFirst, name, address, got)
+			}
+			// The address of the page is free again.
+			c.must("journal", "fresh\n", "write", page, "--title", "Fresh")
+			c.must("journal", "", "delete", page)
+		}
+	}
+}
+
+// A page number too large to have a next one is refused (Cato's test of
+// #395 at d4476bd: new and /next then failed with an overflow).
+func TestAPageNumberTooLargeIsRefused(t *testing.T) {
+	c := newCitizen(t)
+	if _, err := c.run("journal", "text\n", "write", "hrs/log/9223372036854775807", "--title", "Huge"); err == nil {
+		t.Fatal("a write of page 9223372036854775807 was kept")
+	}
+	if got := c.must("journal", "text\n", "write", "hrs/log/999999999", "--title", "Last"); got != "" {
+		t.Fatalf("write printed %q", got)
+	}
+	if _, err := c.run("journal", "text\n", "new", "hrs/log"); err == nil {
+		t.Error("new wrote past the highest page number")
+	}
+}
+
+// lostAddress is the address of the lost page of an address, from ls.
+func lostAddress(c *citizen, address string) string {
+	c.t.Helper()
+	for line := range strings.SplitSeq(c.must("journal", "", "ls"), "\n") {
+		if a, _, _ := strings.Cut(line, "\t"); strings.HasPrefix(a, address+"-") {
+			return a
+		}
+	}
+	c.t.Fatalf("ls lists no lost page of %s", address)
+	return ""
+}
+
+// A lost page takes entries and fixes of its own. A delete of the live page
+// leaves the lost page, and a delete of the lost page leaves the live one.
+func TestALostPageLivesOnItsOwn(t *testing.T) {
+	a := newCitizen(t)
+	b := a.device()
+	a.must("journal", "laptop text\n", "new", "hrs/log", "--title", "Laptop")
+	b.env.now = a.env.Now().Add(time.Minute)
+	b.must("journal", "phone text\n", "new", "hrs/log", "--title", "Phone")
+	a.syncWith(b)
+
+	lost := lostAddress(a, "hrs/log/1")
+	if got := a.must("journal", "", "add", "hrs/log", "unrelated"); got == lost+"\n" {
+		t.Fatal("add wrote to the lost page")
+	}
+	a.must("journal", "", "append", lost, "after", "the", "sync")
+	history := a.must("journal", "", "history", lost)
+	var id string
+	for line := range strings.SplitSeq(history, "\n") {
+		if _, d, ok := strings.Cut(line, "\t"); ok && strings.HasPrefix(d, "hrs/log/1/") {
+			id = d[len("hrs/log/1/"):]
+		}
+	}
+	if id == "" {
+		t.Fatalf("the history of the lost page names no entry: %q", history)
+	}
+	a.must("journal", "", "fix", lost+"/"+id, "fixed", "after", "the", "sync")
+	if got := a.must("journal", "", "read", lost); !strings.HasSuffix(got, "---\nlaptop text\nfixed after the sync\n") {
+		t.Errorf("the lost page reads %q", got)
+	}
+	if got := a.must("journal", "", "history", lost); !strings.Contains(got, "\tfixes hrs/log/1/"+id) {
+		t.Errorf("history does not say which entry the fix corrects: %q", got)
+	}
+	if got := a.must("journal", "", "read", "hrs/log/1"); strings.Contains(got, "sync") {
+		t.Errorf("the live page took an entry of the lost page: %q", got)
+	}
+
+	a.must("journal", "", "delete", "hrs/log/1")
+	if got := a.must("journal", "", "read", lost); !strings.Contains(got, "laptop text\n") {
+		t.Errorf("a delete of the live page took the lost page: %q", got)
+	}
+	a.must("journal", "", "delete", lost)
+	if _, err := a.run("journal", "", "read", lost); err == nil {
+		t.Error("the deleted lost page still reads")
+	}
+	if got := a.must("journal", "", "ls", "--notebook", "hrs/log"); strings.Contains(got, "hrs/log/1") {
+		t.Errorf("ls still lists page 1 after both deletes: %q", got)
 	}
 }

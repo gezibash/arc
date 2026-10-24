@@ -302,8 +302,8 @@ func TestNotebookTimestampGrowthKeepsMultipartContentWithinBounds(t *testing.T) 
 	c.env.now = time.Date(2026, 9, 29, 13, 0, 0, 123456789, time.UTC)
 	c.must("journal", "", "append", "arc/research/1", "appended")
 	// The head is never revised: read shows the time of the entry, in
-	// seconds, as the event has it.
-	want := strings.Replace(body, "updated_at: 2026-09-29T12:00:00Z", "updated_at: 2026-09-29T13:00:00Z", 1) + "appended\n"
+	// milliseconds, as its ms tag has it.
+	want := strings.Replace(body, "updated_at: 2026-09-29T12:00:00Z", "updated_at: 2026-09-29T13:00:00.123Z", 1) + "appended\n"
 	if got := c.must("journal", "", "read", "arc/research/1"); got != want {
 		t.Fatal("timestamp update lost or reordered content")
 	}

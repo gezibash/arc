@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/search"
 )
@@ -170,14 +171,16 @@ type notebookPage struct {
 	text                 string
 	// entries are the entries of the page, oldest first.
 	entries []pageEntry
+	// base is the address that the head and the entries name, and hid the
+	// id of the head. A lost page has an address of its own,
+	// <base>-<hid>, and checkpoint is the ID of its head, if it has one.
+	base, hid  string
+	lost       bool
+	checkpoint nostr.ID
 }
 
 func (r *run) notebookPages(kind string) ([]notebookPage, error) {
 	entries, err := r.query(&Query{Kinds: []string{kind}, Authors: "me"})
-	if err != nil {
-		return nil, err
-	}
-	added, err := r.pageEntries(kind)
 	if err != nil {
 		return nil, err
 	}
@@ -188,32 +191,48 @@ func (r *run) notebookPages(kind string) ([]notebookPage, error) {
 		if slash < 0 || !notebookPattern.MatchString(address[:slash]) {
 			continue
 		}
-		p := notebookPage{entry: e, address: address, book: address[:slash], title: str(field(e.rec, "tags.title"))}
-		fields, _, parseErr := frontmatter(str(e.rec["content"]))
-		if parseErr == nil && str(fields["notebook"])+"/"+str(fields["page"]) == address {
-			p.page, _ = ordinal(str(fields["page"]))
-			p.created, _ = time.Parse(time.RFC3339Nano, str(fields["created_at"]))
-			p.updated, _ = time.Parse(time.RFC3339Nano, str(fields["updated_at"]))
-		}
-		if p.updated.IsZero() {
-			p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()
-		}
-		if list := added[address]; len(list) > 0 {
-			p.entries = list
-			// The time of an entry is in seconds: keep the head's time when
-			// the entry is not later.
-			if newest := time.Unix(int64(list[len(list)-1].created), 0).UTC(); newest.After(p.updated) {
-				p.updated = newest
-			}
-		}
-		e.rec["page"] = p.page
-		e.rec["notebook"] = p.book
-		e.rec["created_at"] = stamp(p.created)
-		e.rec["updated_at"] = stamp(p.updated)
-		e.rec["legacy"] = p.page == 0 || p.created.IsZero()
+		p := notebookPage{entry: e, address: address, base: address, hid: str(field(e.rec, "tags.head"))}
+		pageMeta(&p)
 		pages = append(pages, p)
 	}
-	return pages, nil
+	if r.kindOf(kind).NotebookEntry == "" {
+		return pages, nil
+	}
+	return r.attachEntries(kind, pages)
+}
+
+// pageMeta reads the title, the number and the times of a page from its
+// head, and puts them in its record.
+func pageMeta(p *notebookPage) {
+	e := p.entry
+	p.book = p.base[:strings.LastIndex(p.base, "/")]
+	p.title = str(field(e.rec, "tags.title"))
+	fields, _, parseErr := frontmatter(str(e.rec["content"]))
+	if parseErr == nil && str(fields["notebook"])+"/"+str(fields["page"]) == p.base {
+		if !p.lost {
+			p.page, _ = ordinal(str(fields["page"]))
+		}
+		p.created, _ = time.Parse(time.RFC3339Nano, str(fields["created_at"]))
+		p.updated, _ = time.Parse(time.RFC3339Nano, str(fields["updated_at"]))
+	}
+	if p.updated.IsZero() && number(e.rec["created"]) > 0 {
+		p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()
+	}
+	if len(p.entries) > 0 {
+		if p.created.IsZero() {
+			p.created = p.entries[0].at()
+		}
+		// The time of an entry is in milliseconds: keep the head's time when
+		// the entry is not later.
+		if newest := p.entries[len(p.entries)-1].at(); newest.After(p.updated) {
+			p.updated = newest
+		}
+	}
+	e.rec["page"] = p.page
+	e.rec["notebook"] = p.book
+	e.rec["created_at"] = stamp(p.created)
+	e.rec["updated_at"] = stamp(p.updated)
+	e.rec["legacy"] = p.page == 0 || p.created.IsZero()
 }
 
 func stamp(t time.Time) string {
@@ -282,11 +301,17 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		if n.Section == "" {
 			n.Section = anchor
 		}
-		found, given := true, address
 		if r.kindOf(n.Kind).NotebookEntry != "" {
-			if address, found, err = r.resolve(n.Kind, address, "today"); err != nil {
+			p, err := r.findPage(n.Kind, address, "today")
+			if err != nil {
 				return nil, err
 			}
+			page := []notebookPage{*p}
+			if err := r.compose(page); err != nil {
+				return nil, err
+			}
+			page[0].entry.rec["entries"] = entryList(p.entries)
+			return r.notebookSections([]*entry{page[0].entry}, n.Section)
 		}
 		// Resolve the input reference before the manifest's keyed d template.
 		d, err := r.headD(dTemplate, address)
@@ -297,27 +322,8 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		if err != nil {
 			return nil, err
 		}
-		added, err := r.pageEntries(n.Kind)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return nil, noSuchPage(given)
-		}
-		if head == nil && len(added[address]) == 0 {
-			return nil, noSuchPage(address)
-		}
 		if head == nil {
-			head = &entry{rec: Record{"kind": n.Kind, "tags": map[string]any{"d": address}}}
-		}
-		if len(added[address]) > 0 {
-			page := []notebookPage{{entry: head, address: address, entries: added[address]}}
-			if err := r.compose(page); err != nil {
-				return nil, err
-			}
-		}
-		if added != nil {
-			head.rec["entries"] = entryList(added[address])
+			return nil, noSuchPage(address)
 		}
 		return r.notebookSections([]*entry{head}, n.Section)
 	}
@@ -443,6 +449,7 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		return r.notebookSections(entries, n.Section)
 	}
 	if n.Op == "list" {
+		r.noteLost(allPages, "")
 		// A failed write leaves no page to list, so name its address here.
 		if err := r.reportUnnamed(n.Kind); err != nil {
 			return nil, err

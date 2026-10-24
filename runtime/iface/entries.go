@@ -1,6 +1,7 @@
 package iface
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -28,21 +29,31 @@ var reservedPages = []string{"next", "today", "at"}
 // entryID is the id of an entry: 16 hex digits.
 var entryID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
+// maxPage is the highest page number. A higher one would leave no next
+// page.
+const maxPage = 999_999_999
+
 // pageEntry is one entry of a page.
 type pageEntry struct {
 	e *entry
 	// d is the d tag of the event inside: <address>/<id>.
 	d        string
 	page     string
+	head     string
 	corrects string
 	created  nostr.Timestamp
+	// ms is the time of the entry in milliseconds, which orders a page.
+	ms int64
 	// wrap is the ID of the draft, which a delete names.
 	wrap nostr.ID
 }
 
+// at is the time of the entry.
+func (p pageEntry) at() time.Time { return time.UnixMilli(p.ms).UTC() }
+
 // pageEntries opens each entry of the notebook kind once, and groups the
-// entries by page, oldest first. The page tag is sealed, so the store cannot
-// select the entries of one page.
+// entries by the address that they name, oldest first. The page tag is
+// sealed, so the store cannot select the entries of one page.
 func (r *run) pageEntries(kind string) (map[string][]pageEntry, error) {
 	name := r.kindOf(kind).NotebookEntry
 	if name == "" {
@@ -63,29 +74,196 @@ func (r *run) pageEntries(kind string) (map[string][]pageEntry, error) {
 		if opened.Deleted || opened.Event.Kind != number {
 			continue
 		}
-		p := pageEntry{d: opened.Event.Tags.GetD(), created: opened.Event.CreatedAt, wrap: wrap.ID}
-		if tag := opened.Event.Tags.Find("page"); tag != nil {
-			p.page = tag[1]
+		tags := opened.Event.Tags
+		p := pageEntry{d: tags.GetD(), created: opened.Event.CreatedAt, ms: int64(opened.Event.CreatedAt) * 1000, wrap: wrap.ID}
+		for name, value := range map[string]*string{"page": &p.page, "head": &p.head, "corrects": &p.corrects} {
+			if tag := tags.Find(name); tag != nil {
+				*value = tag[1]
+			}
+		}
+		if tag := tags.Find("ms"); tag != nil {
+			if ms, err := strconv.ParseInt(tag[1], 10, 64); err == nil && ms/1000 == int64(p.created) {
+				p.ms = ms
+			}
 		}
 		if p.page == "" || !strings.HasPrefix(p.d, p.page+"/") {
 			continue
 		}
-		if tag := opened.Event.Tags.Find("corrects"); tag != nil {
-			p.corrects = tag[1]
-		}
 		p.e = entryOf(opened, name)
 		p.e.rec["device"] = opened.Wrap.PubKey.Hex()
+		p.e.rec["at"] = p.at().Format(time.RFC3339Nano)
+		p.e.rec["fixes"] = ""
+		if p.corrects != "" {
+			p.e.rec["fixes"] = "\tfixes " + p.corrects
+		}
 		out[p.page] = append(out[p.page], p)
 	}
 	for _, entries := range out {
-		slices.SortFunc(entries, func(a, b pageEntry) int {
-			if a.created != b.created {
-				return int(a.created) - int(b.created)
-			}
-			return strings.Compare(a.d, b.d)
-		})
+		sortPageEntries(entries)
 	}
 	return out, nil
+}
+
+func sortPageEntries(entries []pageEntry) {
+	slices.SortFunc(entries, func(a, b pageEntry) int {
+		if a.ms != b.ms {
+			return cmp.Compare(a.ms, b.ms)
+		}
+		return strings.Compare(a.d, b.d)
+	})
+}
+
+// attachEntries gives each page the entries that name its head. Entries
+// and heads of an address that the live head does not name are a lost
+// page: two devices made a page at one address offline, or one deleted it
+// while the other added to it. A lost page reads at <address>-<head id>,
+// on each device, with no write. A lost head with no text and the title of
+// the live head, as two adds to today make, joins the live page instead.
+func (r *run) attachEntries(kind string, pages []notebookPage) ([]notebookPage, error) {
+	added, err := r.pageEntries(kind)
+	if err != nil {
+		return nil, err
+	}
+	me := r.env.Me()
+	live := map[string]int{}
+	var coordinates []string
+	for i, p := range pages {
+		live[p.address] = i
+		if p.hid != "" {
+			coordinates = append(coordinates, draft.Coordinate(me, p.entry.d))
+		}
+	}
+	// A deleted head leaves a blank draft. A lost head at its address stays.
+	wraps, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.Kind}, nostr.TagMap{"k": {strconv.Itoa(r.kindOf(kind).Kind)}}))
+	if err != nil {
+		return nil, err
+	}
+	for _, wrap := range wraps {
+		if wrap.Content == "" {
+			coordinates = append(coordinates, draft.Coordinate(me, wrap.Tags.GetD()))
+		}
+	}
+	type key struct{ address, hid string }
+	lostEntries := map[key][]pageEntry{}
+	for address, list := range added {
+		for _, e := range list {
+			i, ok := live[address]
+			switch {
+			case ok && (e.head == "" || pages[i].hid == "" || e.head == pages[i].hid):
+				pages[i].entries = append(pages[i].entries, e)
+			case e.head != "":
+				lostEntries[key{address, e.head}] = append(lostEntries[key{address, e.head}], e)
+			}
+		}
+	}
+	// A head is written once, so a checkpoint of another head id at the
+	// address of a live head is the head of a lost page.
+	lostHeads := map[key]draft.Draft{}
+	lostIDs := map[key]nostr.ID{}
+	if len(coordinates) > 0 {
+		checkpoints, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.CheckpointKind}, nostr.TagMap{"a": coordinates}))
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range checkpoints {
+			opened, err := r.opener().Open(r.ctx, event)
+			if err != nil || opened.Event.Kind != nostr.Kind(r.kindOf(kind).Kind) {
+				continue
+			}
+			address := opened.Event.Tags.GetD()
+			hid := ""
+			if tag := opened.Event.Tags.Find("head"); tag != nil {
+				hid = tag[1]
+			}
+			i, ok := live[address]
+			k := key{address, hid}
+			if hid == "" || ok && hid == pages[i].hid {
+				continue
+			}
+			if _, seen := lostHeads[k]; !seen {
+				lostHeads[k], lostIDs[k] = opened, event.ID
+			}
+		}
+	}
+	keys := slices.Collect(maps.Keys(lostEntries))
+	for k := range lostHeads {
+		if _, ok := lostEntries[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	slices.SortFunc(keys, func(a, b key) int { return strings.Compare(a.address+"-"+a.hid, b.address+"-"+b.hid) })
+	for _, k := range keys {
+		head, hasHead := lostHeads[k]
+		if i, ok := live[k.address]; ok && hasHead {
+			_, body, err := frontmatter(head.Event.Content)
+			if err == nil && strings.TrimSpace(body) == "" && len(head.Parts()) == 0 && head.Event.Tags.Find("title") != nil && head.Event.Tags.Find("title")[1] == pages[i].title {
+				pages[i].entries = append(pages[i].entries, lostEntries[k]...)
+				continue
+			}
+		}
+		address := k.address + "-" + k.hid
+		var e *entry
+		if hasHead {
+			e = entryOf(head, kind)
+		} else {
+			e = &entry{rec: Record{"kind": kind, "content": "", "tags": map[string]any{"title": "entries of " + k.address}}}
+		}
+		tags := map[string]any{}
+		if old, ok := e.rec["tags"].(map[string]any); ok {
+			tags = maps.Clone(old)
+		}
+		tags["d"] = address
+		e.rec["tags"], e.d = tags, address
+		p := notebookPage{entry: e, address: address, base: k.address, hid: k.hid, lost: true, checkpoint: lostIDs[k], entries: lostEntries[k]}
+		sortPageEntries(p.entries)
+		pageMeta(&p)
+		pages = append(pages, p)
+	}
+	for i := range pages {
+		if !pages[i].lost {
+			sortPageEntries(pages[i].entries)
+			pageMeta(&pages[i])
+		}
+	}
+	return pages, nil
+}
+
+// noteLost says, on the standard error, which pages are lost pages, and
+// why. With an address, it names only the lost pages of that address.
+func (r *run) noteLost(pages []notebookPage, address string) {
+	for _, p := range pages {
+		if !p.lost || address != "" && p.base != address && p.address != address {
+			continue
+		}
+		why := "two devices made a page at %s offline; the store keeps the other one there, and this one reads at %s"
+		if p.checkpoint == (nostr.ID{}) {
+			why = "these entries name a head of %s that is gone, as a delete on another device leaves them; they read at %s"
+		}
+		fmt.Fprintf(r.stdio.Err, why+"\n", terminal.EscapeLine(p.base), terminal.EscapeLine(p.address))
+	}
+}
+
+// findPage finds the page of an address: a live page, today's page, or a
+// lost page.
+func (r *run) findPage(kind, address string, allow ...string) (*notebookPage, error) {
+	resolved, found, err := r.resolve(kind, address, allow...)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, noSuchPage(address)
+	}
+	pages, err := r.notebookPages(kind)
+	if err != nil {
+		return nil, err
+	}
+	for i := range pages {
+		if pages[i].address == resolved {
+			r.noteLost(pages, resolved)
+			return &pages[i], nil
+		}
+	}
+	return nil, noSuchPage(resolved)
 }
 
 // pageText is the text of a page: the head, then each entry, oldest first.
@@ -119,9 +297,8 @@ func (r *run) pageText(head *entry, address string, entries []pageEntry) (string
 		}
 		text = text[:len(text)-len(old)] + body
 	}
-	// The time of an entry is in seconds, and the time of the head is not:
 	// updated_at is never earlier than the head.
-	newest := time.Unix(int64(entries[len(entries)-1].created), 0).UTC()
+	newest := entries[len(entries)-1].at()
 	if fields, _, err := frontmatter(text); err == nil {
 		if head, err := time.Parse(time.RFC3339Nano, str(fields["updated_at"])); err != nil || newest.After(head) {
 			text = setField(text, "updated_at", newest.Format(time.RFC3339Nano))
@@ -195,7 +372,7 @@ func (r *run) compose(pages []notebookPage) error {
 func entryList(entries []pageEntry) []any {
 	out := []any{}
 	for _, p := range entries {
-		item := map[string]any{"d": p.d, "created": int64(p.created), "device": p.e.rec["device"]}
+		item := map[string]any{"d": p.d, "at": p.e.rec["at"], "device": p.e.rec["device"]}
 		if p.corrects != "" {
 			item["corrects"] = p.corrects
 		}
@@ -271,35 +448,37 @@ func (r *run) resolve(kind, address string, allow ...string) (string, bool, erro
 }
 
 // addEntry adds one entry to a page. Its time is later than each other
-// entry of the page, so two entries of one second keep their order.
-func (r *run) addEntry(kind, address, text, corrects string, entries []pageEntry) error {
+// entry of the page that this device holds, by at least a millisecond, so
+// entries of one device keep their order.
+func (r *run) addEntry(kind string, page *notebookPage, text, corrects string) error {
 	name := r.kindOf(kind).NotebookEntry
 	id := make([]byte, 8)
 	if _, err := rand.Read(id); err != nil {
 		return err
 	}
-	d := address + "/" + hex.EncodeToString(id)
+	d := page.base + "/" + hex.EncodeToString(id)
 	key, err := r.keyed(name, d)
 	if err != nil {
 		return err
 	}
-	at := nostr.Timestamp(r.env.Now().Unix())
-	for _, p := range entries {
-		if p.created >= at {
-			at = p.created + 1
+	ms := r.env.Now().UnixMilli()
+	for _, p := range page.entries {
+		if p.ms >= ms {
+			ms = p.ms + 1
 		}
 	}
-	scoped := r.scopedWith(Values{"entry_text": text, "entry_d": d, "entry_page": address, "entry_corrects": corrects})
+	scoped := r.scopedWith(Values{"entry_text": text, "entry_d": d, "entry_page": page.base, "entry_head": page.hid, "entry_corrects": corrects, "entry_ms": strconv.FormatInt(ms, 10)})
 	_, err = scoped.publishSealed(&Publish{
-		Kind: name, D: key, Revise: "entry", at: at,
+		Kind: name, D: key, Revise: "entry", at: nostr.Timestamp(ms / 1000),
 		Content: Content{Text: "{{entry_text}}"},
-		Tags:    [][]string{{"d", "{{entry_d}}"}, {"page", "{{entry_page}}"}, {"corrects", "{{entry_corrects}}"}},
+		Tags:    [][]string{{"d", "{{entry_d}}"}, {"page", "{{entry_page}}"}, {"head", "{{entry_head}}"}, {"corrects", "{{entry_corrects}}"}, {"ms", "{{entry_ms}}"}},
 	})
 	return err
 }
 
 // writePage makes the head of a new page: its front matter and its first
-// text. It fills in the front matter that the text does not give.
+// text, with a random head id that its entries name. It fills in the front
+// matter that the text does not give.
 func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	address, _, err := r.resolve(n.Kind, n.Address, "next", "today")
 	if err != nil {
@@ -307,8 +486,8 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	}
 	slash := strings.LastIndex(address, "/")
 	book, number := address[:slash], address[slash+1:]
-	if _, err := ordinal(number); err != nil {
-		return "", fmt.Errorf("a new page has a number, not %q", number)
+	if n, err := ordinal(number); err != nil || n > maxPage {
+		return "", fmt.Errorf("a new page has a number from 1 to %d, not %q", maxPage, number)
 	}
 	if strings.HasSuffix(n.Address, "/today") {
 		// today finds its page by the date in the title.
@@ -322,17 +501,22 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		return "", err
 	}
 	exists := fmt.Errorf("the page %s exists: a page keeps each entry, so journal append adds one, and journal fix corrects one", terminal.EscapeLine(address))
-	if old, err := r.current(d); err != nil {
+	old, err := r.current(d)
+	if err != nil {
 		return "", err
-	} else if old != nil && !old.Deleted {
+	}
+	if old != nil && !old.Deleted {
 		return "", exists
 	}
 	// A sync can bring the entries of a page before its head. A new head
-	// would take those entries, so the page exists.
-	if entries, err := r.pageEntries(n.Kind); err != nil {
-		return "", err
-	} else if len(entries[address]) > 0 {
-		return "", exists
+	// would hide them, so the page exists until its head comes, or until a
+	// delete of the address.
+	if old == nil {
+		if entries, err := r.pageEntries(n.Kind); err != nil {
+			return "", err
+		} else if len(entries[address]) > 0 {
+			return "", exists
+		}
 	}
 	fields, body, err := frontmatter(n.Text)
 	if err != nil {
@@ -374,11 +558,15 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 			header = header[:end] + key + ": " + value + "\n" + header[end:]
 		}
 	}
-	scoped := r.scopedWith(Values{"head_text": header + body, "head_address": address, "head_title": title})
+	hid := make([]byte, 8)
+	if _, err := rand.Read(hid); err != nil {
+		return "", err
+	}
+	scoped := r.scopedWith(Values{"head_text": header + body, "head_address": address, "head_title": title, "head_id": hex.EncodeToString(hid)})
 	if _, err := scoped.publishSealed(&Publish{
 		Kind: n.Kind, D: d, Revise: "replace", FrontmatterAddress: "{{head_address}}",
 		Content: Content{Text: "{{head_text}}"},
-		Tags:    [][]string{{"d", "{{head_address}}"}, {"title", "{{head_title}}"}},
+		Tags:    [][]string{{"d", "{{head_address}}"}, {"title", "{{head_title}}"}, {"head", "{{head_id}}"}},
 	}); err != nil {
 		return "", err
 	}
@@ -421,35 +609,11 @@ func (r *run) appendEntry(n *Notebook, dTemplate string) (string, error) {
 			return "", err
 		}
 	}
-	entries, err := r.pageEntries(n.Kind)
+	page, err := r.findPage(n.Kind, address)
 	if err != nil {
 		return "", err
 	}
-	if found {
-		if err := r.mustExist(n.Kind, dTemplate, address, entries[address]); err != nil {
-			return "", err
-		}
-	}
-	return address, r.addEntry(n.Kind, address, n.Text, "", entries[address])
-}
-
-// mustExist fails when a page has no head and no entry.
-func (r *run) mustExist(kind, dTemplate, address string, entries []pageEntry) error {
-	if len(entries) > 0 {
-		return nil
-	}
-	d, err := r.headD(dTemplate, address)
-	if err != nil {
-		return err
-	}
-	head, err := r.head(kind, d)
-	if err != nil {
-		return err
-	}
-	if head == nil {
-		return noSuchPage(address)
-	}
-	return nil
+	return page.address, r.addEntry(n.Kind, page, n.Text, "")
 }
 
 func noSuchPage(address string) error {
@@ -458,109 +622,127 @@ func noSuchPage(address string) error {
 
 // fixEntry adds an entry that corrects an entry, or the head when the
 // address names a page.
-func (r *run) fixEntry(n *Notebook, dTemplate string) (string, error) {
+func (r *run) fixEntry(n *Notebook) (string, error) {
 	if strings.TrimSpace(n.Text) == "" {
 		return "", errors.New("no text for the fix")
 	}
-	address, target := n.Address, n.Address
+	address, id := n.Address, ""
 	if parts := strings.Split(n.Address, "/"); len(parts) == 4 {
 		if !entryID.MatchString(parts[3]) {
 			return "", fmt.Errorf("invalid entry %q", parts[3])
 		}
-		address = strings.Join(parts[:3], "/")
+		address, id = strings.Join(parts[:3], "/"), parts[3]
 	}
 	if _, _, err := r.notebookAddress(address); err != nil {
 		return "", err
 	}
-	if _, _, err := r.resolve(n.Kind, address); err != nil {
-		return "", err
-	}
-	entries, err := r.pageEntries(n.Kind)
+	page, err := r.findPage(n.Kind, address)
 	if err != nil {
 		return "", err
 	}
-	if target == address {
-		if err := r.mustExist(n.Kind, dTemplate, address, nil); err != nil {
-			return "", err
-		}
-	} else {
-		i := slices.IndexFunc(entries[address], func(p pageEntry) bool { return p.d == target })
+	target := page.address
+	if id != "" {
+		target = page.base + "/" + id
+		i := slices.IndexFunc(page.entries, func(p pageEntry) bool { return p.d == target })
 		if i < 0 {
-			return "", fmt.Errorf("no such entry %s", terminal.EscapeLine(target))
+			return "", fmt.Errorf("no such entry %s", terminal.EscapeLine(n.Address))
 		}
-		if first := entries[address][i].corrects; first != "" {
+		if first := page.entries[i].corrects; first != "" {
 			target = first
 		}
 	}
-	return address, r.addEntry(n.Kind, address, n.Text, target, entries[address])
+	return page.address, r.addEntry(n.Kind, page, n.Text, target)
 }
 
 // history lists the checkpoints of the head, then each entry and fix.
 func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
-	address, found, err := r.resolve(n.Kind, n.Address, "today")
+	page, err := r.findPage(n.Kind, n.Address, "today")
 	if err != nil {
 		return nil, err
 	}
-	if !found {
-		return nil, noSuchPage(n.Address)
+	var out []*entry
+	switch {
+	case page.lost && page.checkpoint != (nostr.ID{}):
+		out = append(out, page.entry)
+	case !page.lost:
+		d, err := r.headD(dTemplate, page.base)
+		if err != nil {
+			return nil, err
+		}
+		checkpoints, err := r.scopedWith(Values{"history_d": d}).query(&Query{Kinds: []string{n.Kind}, Authors: "me", D: "{{history_d}}", History: true})
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range checkpoints {
+			// The checkpoint of a lost head belongs to its own page.
+			if page.hid == "" || str(field(e.rec, "tags.head")) == page.hid {
+				out = append(out, e)
+			}
+		}
 	}
-	d, err := r.headD(dTemplate, address)
-	if err != nil {
-		return nil, err
+	for _, e := range out {
+		e.rec["at"] = time.Unix(int64(number(e.rec["created"])), 0).UTC().Format(time.RFC3339)
+		e.rec["fixes"] = ""
 	}
-	out, err := r.scopedWith(Values{"history_d": d}).query(&Query{Kinds: []string{n.Kind}, Authors: "me", D: "{{history_d}}", History: true})
-	if err != nil {
-		return nil, err
-	}
-	entries, err := r.pageEntries(n.Kind)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range entries[address] {
+	for _, p := range page.entries {
 		out = append(out, p.e)
-	}
-	if len(out) == 0 {
-		return nil, noSuchPage(address)
 	}
 	return out, nil
 }
 
-// deletePage deletes the head of a page, as a delete action does, and each
-// entry and its parts with one request.
+// deletePage deletes a page. The head goes as a delete action deletes a
+// draft, with the entries of the page and their parts in one more request.
+// The head of a lost page is a checkpoint, so a request names it and its
+// parts, and the live page at the address stays.
 func (r *run) deletePage(n *Notebook, dTemplate string) error {
 	// A delete names its page: it does not resolve today.
 	if _, _, err := r.resolve(n.Kind, n.Address); err != nil {
 		return err
 	}
-	entries, err := r.pageEntries(n.Kind)
+	pages, err := r.notebookPages(n.Kind)
 	if err != nil {
 		return err
 	}
-	list := entries[n.Address]
-	if len(list) > 0 {
+	i := slices.IndexFunc(pages, func(p notebookPage) bool { return p.address == n.Address })
+	var page *notebookPage
+	var keep []string
+	if i >= 0 {
+		page = &pages[i]
+		for _, p := range pages {
+			// The head of a lost page is a checkpoint at the same address.
+			if p.lost && p.base == page.base && p.checkpoint != (nostr.ID{}) && !page.lost {
+				keep = append(append(keep, p.checkpoint.Hex()), p.entry.parts...)
+			}
+		}
+	}
+	if page != nil && (len(page.entries) > 0 || page.lost) {
 		if r.flags.DryRun {
-			return r.dryRun(map[string]any{"delete": n.Address, "entries": len(list)})
+			return r.dryRun(map[string]any{"delete": n.Address, "entries": len(page.entries)})
 		}
 		me := r.env.Me()
 		tags := nostr.Tags{}
-		for _, p := range list {
+		at := nostr.Now()
+		for _, p := range page.entries {
 			tags = append(tags, nostr.Tag{"a", draft.Coordinate(me, p.e.d)}, nostr.Tag{"e", p.wrap.Hex()})
 			for _, id := range p.e.parts {
 				tags = append(tags, nostr.Tag{"e", id})
 			}
+			if p.created >= at {
+				at = p.created + 1
+			}
 		}
-		for _, kind := range []nostr.Kind{draft.Kind, draft.PartKind} {
+		if page.lost && page.checkpoint != (nostr.ID{}) {
+			tags = append(tags, nostr.Tag{"e", page.checkpoint.Hex()})
+			for _, id := range page.entry.parts {
+				tags = append(tags, nostr.Tag{"e", id})
+			}
+		}
+		for _, kind := range []nostr.Kind{draft.Kind, draft.CheckpointKind, draft.PartKind} {
 			tags = append(tags, nostr.Tag{"k", strconv.Itoa(int(kind))})
 		}
 		k, err := r.env.Sealer(r.ctx, r.in.Manifest.ID)
 		if err != nil {
 			return err
-		}
-		at := nostr.Now()
-		for _, p := range list {
-			if p.created >= at {
-				at = p.created + 1
-			}
 		}
 		request, err := k.Deletion(r.ctx, tags, at)
 		if err != nil {
@@ -569,9 +751,12 @@ func (r *run) deletePage(n *Notebook, dTemplate string) error {
 		if err := r.env.Publish(r.ctx, []nostr.Event{request}, nil); err != nil {
 			return err
 		}
+		if page.lost {
+			return nil
+		}
 	}
 	scoped := r.scopedWith(Values{"address": n.Address})
-	if _, err := scoped.remove(&Delete{Kind: n.Kind, D: dTemplate}); err != nil && (len(list) == 0 || err.Error() != "there is nothing to delete") {
+	if _, err := scoped.removeKeeping(&Delete{Kind: n.Kind, D: dTemplate}, keep); err != nil && (page == nil || len(page.entries) == 0 || err.Error() != "there is nothing to delete") {
 		return err
 	}
 	return nil
@@ -594,7 +779,7 @@ func (r *run) notebookWrite(n *Notebook, dTemplate string) ([]*entry, error) {
 	case "append":
 		address, err = r.appendEntry(n, dTemplate)
 	case "fix":
-		address, err = r.fixEntry(n, dTemplate)
+		address, err = r.fixEntry(n)
 	case "history":
 		return r.history(n, dTemplate)
 	case "delete":

@@ -263,9 +263,14 @@ section 3.9.3. It differs from this section in two points:
   it is.
 - The first text of a page stays in its head, as in v1. A write is then
   one draft, which the size check of PR A0 covers, and `read --lines`
-  still reads only the parts that it needs. Two devices that start one
-  page offline keep one head; the checkpoint of the other stays in the
-  history.
+  still reads only the parts that it needs.
+
+Cato's test of the first build found that two devices that start one page
+offline mixed the entries of both under one head. Each head now has an id
+that its entries name. The other head and its entries read as a lost page
+at `<address>-<head id>`, and so do entries that a delete on another device
+did not know. Entries carry a time in milliseconds, so a burst on one device
+and an entry of another device read in time order.
 
 ## 5. Phases B to D
 

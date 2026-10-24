@@ -649,7 +649,11 @@ func (r *run) content(c Content) (string, error) {
 	return string(body), err
 }
 
-func (r *run) remove(dl *Delete) ([]*entry, error) {
+func (r *run) remove(dl *Delete) ([]*entry, error) { return r.removeKeeping(dl, nil) }
+
+// removeKeeping deletes a draft and its history, except the events of the
+// IDs in keep, such as the head of a lost page at the same address.
+func (r *run) removeKeeping(dl *Delete, keep []string) ([]*entry, error) {
 	if err := r.sealedOnly(dl.Kind, "delete"); err != nil {
 		return nil, err
 	}
@@ -671,6 +675,7 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	history = slices.DeleteFunc(history, func(e nostr.Event) bool { return slices.Contains(keep, e.ID.Hex()) })
 	if len(wraps) == 0 || wraps[0].Content == "" {
 		if len(history) == 0 {
 			return nil, fmt.Errorf("there is nothing to delete")

@@ -70,6 +70,12 @@ arc journal toc arc/design
   that entry when the page is read, and the history keeps both. `fix <page>`
   replaces the first text of the page.
 - `read` of a page that does not exist says `no such page`, and exits 1.
+- Two devices that start one page offline, such as two `new` of one
+  notebook, keep two pages. The store keeps one at the number, and the
+  other reads at `<page>-<head id>`, such as `arc/design/3-9f2c4e1a0b7d3c55`.
+  `ls` lists it and says why. Entries that a delete on another device did
+  not know read the same way. `append`, `fix`, `history` and `delete` take
+  such an address.
 - No command waits for a terminal. `write` and `new` with no standard input
   and no `--title` say `no text`, and exit 1.
 
@@ -208,9 +214,9 @@ ones that the text does not give. Their combined address must match the
 command address. ARC fills in `created_at` and `updated_at` as UTC RFC3339
 timestamps. `created_at` is the time of the write. `updated_at` shows the
 time of the newest entry. Caller-supplied timestamps cannot change these
-values. The time of an entry comes from the clock of its device. On one
-device, each entry is at least one second later than the entry before it,
-so entries of one second keep their order.
+values. The time of an entry comes from the clock of its device, in
+milliseconds. Each entry is later than each entry of the page that its
+device holds, so entries of one device keep their order.
 
 ```sh
 arc journal write arc/architecture/1 <<'MD'
