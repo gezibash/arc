@@ -600,3 +600,54 @@ func TestFixTakesTheAddressesOfHistory(t *testing.T) {
 		t.Errorf("the lost page reads %q after the fix", got)
 	}
 }
+
+// A fix of the head of a lost page stays when the page moves up, on this
+// device and on the other after a sync. Each fix that history lists works
+// again with fix (#402, Cato's retest of #395 at aba6e42: after the move-up,
+// read showed the old head, and a fix of the fix exited 0 and changed
+// nothing).
+func TestAHeadFixStaysWhenTheLostPageMovesUp(t *testing.T) {
+	a := newCitizen(t)
+	b := a.device()
+	a.must("journal", "H\n", "write", "arc/loss/1", "--title", "Lost")
+	b.env.now = a.env.Now().Add(time.Minute)
+	b.must("journal", "winner\n", "write", "arc/loss/1", "--title", "Winner")
+	a.syncWith(b)
+	lost := lostAddress(a, "arc/loss/1")
+	a.must("journal", "", "fix", lost, "head", "fixed", "while", "losing")
+	if got := a.must("journal", "", "read", lost); !strings.HasSuffix(got, "---\nhead fixed while losing\n") {
+		t.Fatalf("the lost page reads %q before the move-up", got)
+	}
+
+	a.env.now = a.env.Now().Add(time.Hour)
+	a.must("journal", "", "delete", "arc/loss/1")
+	a.syncWith(b)
+	for name, c := range map[string]*citizen{"laptop": a, "phone": b} {
+		for _, address := range []string{"arc/loss/1", lost} {
+			if got := c.must("journal", "", "read", address); !strings.HasSuffix(got, "---\nhead fixed while losing\n") {
+				t.Errorf("%s: %s reads %q after the move-up, want the head fix", name, address, got)
+			}
+		}
+	}
+
+	// A fix of the head fix, by the address that history lists for it.
+	var fix string
+	for _, rec := range historyOf(a, "arc/loss/1") {
+		if d := rec["tags"].(map[string]any)["d"].(string); strings.HasPrefix(d, "arc/loss/1/") {
+			fix = d
+		}
+	}
+	if fix == "" {
+		t.Fatal("history lists no fix of the head")
+	}
+	a.must("journal", "", "fix", fix, "head", "fixed", "again")
+	if got := a.must("journal", "", "read", "arc/loss/1"); !strings.HasSuffix(got, "---\nhead fixed again\n") {
+		t.Errorf("after a fix of the head fix, read %q", got)
+	}
+	// A newer fix at the number wins over the fixes at the lost address.
+	a.env.now = a.env.Now().Add(time.Minute)
+	a.must("journal", "", "fix", "arc/loss/1", "head", "fixed", "at", "the", "number")
+	if got := a.must("journal", "", "read", lost); !strings.HasSuffix(got, "---\nhead fixed at the number\n") {
+		t.Errorf("after a fix at the number, read %q", got)
+	}
+}
