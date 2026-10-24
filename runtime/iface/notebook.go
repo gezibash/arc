@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/search"
 )
@@ -36,21 +36,34 @@ type Notebook struct {
 	Reverse  string `json:"reverse,omitempty"`
 	Limit    string `json:"limit,omitempty"`
 	Section  string `json:"section,omitempty"`
+	// Text is the text of a write, an append or a fix.
+	Text string `json:"text,omitempty"`
 }
 
 var notebookPageName = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
 var notebookPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$`)
 
-func (m *Manifest) checkNotebook(n *Notebook, check func(string) error) error {
+func (m *Manifest) checkNotebook(n *Notebook, check, checkD func(string) error) error {
 	if err := m.checkKind(n.Kind); err != nil {
 		return err
 	}
 	if m.Kinds[n.Kind].NotebookIndex == "" {
 		return errors.New("notebook action requires a notebook_index kind")
 	}
-	if !slices.Contains([]string{"read", "list", "search", "select", "next", "prev", "index", "toc"}, n.Op) {
+	ops := []string{"read", "list", "search", "select", "next", "prev", "index", "toc"}
+	writes := []string{"history", "write", "append", "fix", "delete"}
+	if m.Kinds[n.Kind].NotebookEntry != "" {
+		ops = append(ops, writes...)
+	}
+	if !slices.Contains(ops, n.Op) {
+		if slices.Contains(writes, n.Op) {
+			return fmt.Errorf("notebook %s requires a notebook_entry kind", n.Op)
+		}
 		return fmt.Errorf("invalid notebook operation %q", n.Op)
+	}
+	if slices.Contains(writes, n.Op) && (n.D == "" || n.Address == "") {
+		return fmt.Errorf("notebook %s requires d and address", n.Op)
 	}
 	if n.Op == "read" && (n.D == "" || n.Address == "") {
 		return errors.New("notebook read requires d and address")
@@ -61,7 +74,10 @@ func (m *Manifest) checkNotebook(n *Notebook, check func(string) error) error {
 	if (n.Op == "index" || n.Op == "toc") && n.Notebook == "" {
 		return errors.New("notebook index or toc requires notebook")
 	}
-	for _, text := range []string{n.D, n.Address, n.Notebook, n.Prefix, n.Query, n.Syntax, n.Title, n.Page, n.From, n.To, n.Order, n.Reverse, n.Limit, n.Section} {
+	if err := checkD(n.D); err != nil {
+		return err
+	}
+	for _, text := range []string{n.Address, n.Notebook, n.Prefix, n.Query, n.Syntax, n.Title, n.Page, n.From, n.To, n.Order, n.Reverse, n.Limit, n.Section, n.Text} {
 		if err := check(text); err != nil {
 			return err
 		}
@@ -153,6 +169,14 @@ type notebookPage struct {
 	page                 int64
 	created, updated     time.Time
 	text                 string
+	// entries are the entries of the page, oldest first.
+	entries []pageEntry
+	// base is the address that the head and the entries name, and hid the
+	// id of the head. A lost page has an address of its own,
+	// <base>-<hid>, and checkpoint is the ID of its head, if it has one.
+	base, hid  string
+	lost       bool
+	checkpoint nostr.ID
 }
 
 func (r *run) notebookPages(kind string) ([]notebookPage, error) {
@@ -167,24 +191,48 @@ func (r *run) notebookPages(kind string) ([]notebookPage, error) {
 		if slash < 0 || !notebookPattern.MatchString(address[:slash]) {
 			continue
 		}
-		p := notebookPage{entry: e, address: address, book: address[:slash], title: str(field(e.rec, "tags.title"))}
-		fields, _, parseErr := frontmatter(str(e.rec["content"]))
-		if parseErr == nil && str(fields["notebook"])+"/"+str(fields["page"]) == address {
-			p.page, _ = ordinal(str(fields["page"]))
-			p.created, _ = time.Parse(time.RFC3339Nano, str(fields["created_at"]))
-			p.updated, _ = time.Parse(time.RFC3339Nano, str(fields["updated_at"]))
-		}
-		if p.updated.IsZero() {
-			p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()
-		}
-		e.rec["page"] = p.page
-		e.rec["notebook"] = p.book
-		e.rec["created_at"] = stamp(p.created)
-		e.rec["updated_at"] = stamp(p.updated)
-		e.rec["legacy"] = p.page == 0 || p.created.IsZero()
+		p := notebookPage{entry: e, address: address, base: address, hid: str(field(e.rec, "tags.head"))}
+		pageMeta(&p)
 		pages = append(pages, p)
 	}
-	return pages, nil
+	if r.kindOf(kind).NotebookEntry == "" {
+		return pages, nil
+	}
+	return r.attachEntries(kind, pages)
+}
+
+// pageMeta reads the title, the number and the times of a page from its
+// head, and puts them in its record.
+func pageMeta(p *notebookPage) {
+	e := p.entry
+	p.book = p.base[:strings.LastIndex(p.base, "/")]
+	p.title = str(field(e.rec, "tags.title"))
+	fields, _, parseErr := frontmatter(str(e.rec["content"]))
+	if parseErr == nil && str(fields["notebook"])+"/"+str(fields["page"]) == p.base {
+		if !p.lost {
+			p.page, _ = ordinal(str(fields["page"]))
+		}
+		p.created, _ = time.Parse(time.RFC3339Nano, str(fields["created_at"]))
+		p.updated, _ = time.Parse(time.RFC3339Nano, str(fields["updated_at"]))
+	}
+	if p.updated.IsZero() && number(e.rec["created"]) > 0 {
+		p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()
+	}
+	if len(p.entries) > 0 {
+		if p.created.IsZero() {
+			p.created = p.entries[0].at()
+		}
+		// The time of an entry is in milliseconds: keep the head's time when
+		// the entry is not later.
+		if newest := p.entries[len(p.entries)-1].at(); newest.After(p.updated) {
+			p.updated = newest
+		}
+	}
+	e.rec["page"] = p.page
+	e.rec["notebook"] = p.book
+	e.rec["created_at"] = stamp(p.created)
+	e.rec["updated_at"] = stamp(p.updated)
+	e.rec["legacy"] = p.page == 0 || p.created.IsZero()
 }
 
 func stamp(t time.Time) string {
@@ -234,7 +282,7 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 	copy := *n
 	n = &copy
 	dTemplate := n.D
-	values := []*string{&n.Address, &n.Notebook, &n.Prefix, &n.Query, &n.Syntax, &n.Title, &n.Page, &n.From, &n.To, &n.Order, &n.Reverse, &n.Limit, &n.Section}
+	values := []*string{&n.Address, &n.Notebook, &n.Prefix, &n.Query, &n.Syntax, &n.Title, &n.Page, &n.From, &n.To, &n.Order, &n.Reverse, &n.Limit, &n.Section, &n.Text}
 	for _, value := range values {
 		text, err := r.template(*value)
 		if err != nil {
@@ -242,7 +290,10 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		}
 		*value = text
 	}
-	if n.Op == "read" {
+	switch n.Op {
+	case "write", "append", "fix", "history", "delete":
+		return r.notebookWrite(n, dTemplate)
+	case "read":
 		address, anchor, err := r.notebookAddress(n.Address)
 		if err != nil {
 			return nil, err
@@ -250,19 +301,31 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		if n.Section == "" {
 			n.Section = anchor
 		}
+		if r.kindOf(n.Kind).NotebookEntry != "" {
+			p, err := r.findPage(n.Kind, address, "today")
+			if err != nil {
+				return nil, err
+			}
+			page := []notebookPage{*p}
+			if err := r.compose(page); err != nil {
+				return nil, err
+			}
+			page[0].entry.rec["entries"] = entryList(p.entries)
+			return r.notebookSections([]*entry{page[0].entry}, n.Section)
+		}
 		// Resolve the input reference before the manifest's keyed d template.
-		scoped := *r
-		scoped.values = maps.Clone(r.values)
-		scoped.values["address"] = address
-		d, err := scoped.template(dTemplate)
+		d, err := r.headD(dTemplate, address)
 		if err != nil {
 			return nil, err
 		}
-		entries, err := r.query(&Query{Kinds: []string{n.Kind}, Authors: "me", D: d, Limit: "1"})
+		head, err := r.head(n.Kind, d)
 		if err != nil {
 			return nil, err
 		}
-		return r.notebookSections(entries, n.Section)
+		if head == nil {
+			return nil, noSuchPage(address)
+		}
+		return r.notebookSections([]*entry{head}, n.Section)
 	}
 	if n.Notebook != "" && !notebookPattern.MatchString(n.Notebook) {
 		return nil, errors.New("notebook must be project/notebook")
@@ -351,6 +414,11 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 	}
 	// Fetch parts only after metadata filters and non-search limits. A missing
 	// part in another notebook must not prevent a selected notebook from reading.
+	if r.kindOf(n.Kind).NotebookEntry != "" {
+		if err := r.compose(pages); err != nil {
+			return nil, err
+		}
+	}
 	if bodies {
 		for i := range pages {
 			pages[i].text, err = r.joined(pages[i].entry)
@@ -381,6 +449,7 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		return r.notebookSections(entries, n.Section)
 	}
 	if n.Op == "list" {
+		r.noteLost(allPages, "")
 		// A failed write leaves no page to list, so name its address here.
 		if err := r.reportUnnamed(n.Kind); err != nil {
 			return nil, err
@@ -515,7 +584,13 @@ func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit in
 	sources := make([]search.Source, 0, len(all))
 	for _, p := range all {
 		_, eligible := byID[p.entry.d]
-		sources = append(sources, search.Source{ID: p.entry.d, Version: str(p.entry.rec["id"]), Selected: eligible})
+		// A new entry changes the version, so search reads the page again.
+		var version strings.Builder
+		version.WriteString(str(p.entry.rec["id"]))
+		for _, e := range p.entries {
+			version.WriteString("+" + e.wrap.Hex()[:16])
+		}
+		sources = append(sources, search.Source{ID: p.entry.d, Version: version.String(), Selected: eligible})
 	}
 	hits, err := r.env.SearchIndex().Search(r.ctx, search.Request{
 		Namespace: r.env.Me().Hex() + "/" + r.in.Author.Hex() + "/" + r.in.Manifest.ID + "/" + n.Kind,
@@ -524,7 +599,7 @@ func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit in
 			p := byID[source.ID]
 			scoped := *r
 			scoped.ctx = ctx
-			text, err := scoped.joined(p.entry)
+			text, err := scoped.pageText(p.entry, p.address, p.entries)
 			if err != nil {
 				return search.Document{}, err
 			}
@@ -542,7 +617,8 @@ func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit in
 	for _, hit := range hits {
 		e := byID[hit.ID].entry
 		if r.flags.JSON {
-			text, err := r.joined(e)
+			p := byID[hit.ID]
+			text, err := r.pageText(e, p.address, p.entries)
 			if err != nil {
 				return nil, err
 			}

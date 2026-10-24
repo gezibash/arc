@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
-- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body. No test runs the Docker image with a volume at the older home `/home/arc/.config/arc`.
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory|TestTwoDevicesThatAppendOfflineKeepBothEntries|TestTwoOfflineNewsKeepTheirOwnPages|TestABurstKeepsTimeOrderWithTheOtherDevice|TestADeleteAndAnOfflineAppendEndClear|TestALostPageLivesOnItsOwn|TestAPageNumberTooLargeIsRefused|TestADeleteOfTheLivePageKeepsTheLostPage|TestFixTakesTheAddressesOfHistory|TestTwoDevicesThatAddOfflineKeepBothTexts|TestEntriesOfOneSecondKeepTheirOrder|TestNewWritesTheNextPage|TestAddWritesToTodaysPage|TestAMissingPageAndTheReservedWords|TestAFixReplacesAnEntryAndTheHistoryKeepsBoth|TestADeleteTakesEachEntry|TestLsOrdersByTheNewestEntry|TestAnAppendIsAnEntry|TestAWriteFillsInTheFrontMatter|TestAnAppCommandDoesNotWaitForATerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
+- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body. No test runs the Docker image with a volume at the older home `/home/arc/.config/arc`. No test syncs entries between two devices through a real storage citizen: the entry tests copy the events between two stores. No test runs `arc sync --repair` on a lost page that moved up; the rule of section 4.7 of the storage spec keeps it by reasoning. An older arc that deletes the page at an address deletes the head of a lost page there too. No test measures `read` on a notebook of 10,000 entries, which opens each entry.
 
 Phases A to F are built, see section 8. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
@@ -112,6 +112,9 @@ new content and the resulting content of an append must start with a header
 that contains each named field with a nonempty string value. Validation runs
 before signing, storage or delivery, including a dry run. An existing page
 without a header remains readable; rewrite it with a header before appending.
+For a kind with `notebook_entry`, an append adds an entry and leaves the
+head as it was, so the policy applies to `write`, which fills in the
+fields that the text does not give (section 3.9.3).
 
 The header starts and ends with a line of `---`, uses at most 4096 bytes, and
 contains flat `key: value` fields. Keys use lowercase letters, digits and
@@ -128,6 +131,11 @@ A sealed kind can name `notebook_index`, a separate sealed kind in the same
 manifest. Notebook pages require title/page/notebook front matter, positive page
 numbers, managed timestamps, and automatic index refresh. Notebook application
 behavior stays outside core; all events use its existing draft protocol.
+
+A notebook kind can also name `notebook_entry`, a separate sealed kind in
+the same manifest. It MUST have no `frontmatter`, no `notebook_index` and
+no `notebook_entry` of its own. The pages of the notebook kind then keep
+each entry, as section 3.9.3 defines.
 
 A command can publish only kinds that the manifest names here. Section 6
 lists the kinds that no manifest can name.
@@ -362,6 +370,113 @@ supplies `address`; `index` and `toc` supply `notebook`. Optional templates are
 `prefix`, `query`, `title`, `page`, `from`, `to`, `order`, `reverse`, `limit`, and
 `section`. These are application selections over verified sealed page events.
 The command's usual output pipeline renders the resulting records.
+
+A kind with `notebook_entry` keeps each entry of a page. Its operations
+also include `history`, `write`, `append`, `fix` and `delete`, with the
+templates `text` and `title`.
+
+**The head and the entries.** A page of such a kind has one head and any
+number of entries.
+
+- The head is a draft of the notebook kind, with the `d` tag
+  `{{address|keyed:<kind>}}`, as before. Its content is the front matter
+  and the first text of the page, as a page of an older arc. Its event has
+  the tag `["head", "<head id>"]`, 16 random hex digits. `write` makes the
+  head once, with its checkpoint. An operation MUST NOT revise a head that
+  exists.
+- An entry is a draft of the entry kind. Its `d` tag is
+  `{{entry|keyed:<entry kind>}}`, where `entry` is `<address>/<id>` and
+  `<id>` is 16 random hex digits. A new entry MUST NOT reuse an `<id>`.
+- The event inside an entry has the tags `["d", "<address>/<id>"]`,
+  `["page", "<address>"]`, `["head", "<head id>"]` and
+  `["ms", "<time in milliseconds>"]`. A fix also has `["corrects", "<d>"]`,
+  which names the entry that it replaces, or the address of the page.
+- An entry has no checkpoint. An operation MUST NOT revise an entry.
+- The `ms` tag is the time of the device clock, in milliseconds since 1970.
+  It is later than each entry of the page that the device holds, by at
+  least one millisecond. The `created_at` is that time in whole seconds.
+  A reader that finds no `ms` tag, or one that does not fit `created_at`,
+  uses `created_at`.
+- The device key signs the draft of an entry, as section 3.9.4 defines.
+  The record of an entry names that key as `device`.
+
+**The text of a page.** The text of a page is the content of the head,
+then the text of each entry, oldest first: by `ms`, then by `d`.
+The newest fix of an entry takes the place of that entry. A fix of the head
+replaces the text after its front matter. The `updated_at` field of the
+front matter shows the time of the newest entry, or else of the head.
+`read`, `select`, `next`, `prev`, `search`, `index` and `toc` use this
+text. `read` gives one record, with the field `entries`: the `d`, `at`,
+`device` and `corrects` of each entry, oldest first.
+
+An entry belongs to the page whose head has its head id. An entry with no
+`head` tag belongs to the head at its address.
+
+The `page` tag is sealed, so the store cannot select the entries of one
+page. An operation opens each entry draft of the kind once, and groups the
+entries by page. Its cost grows with the number of entries.
+
+**Addresses.** An address of a write operation can end in a word that arc
+resolves before it signs:
+
+- `<project>/<notebook>/next` is the page number one higher than the
+  highest page number of the notebook, or 1. Only `write` resolves it. A
+  page number is at most 999,999,999.
+- `<project>/<notebook>/today` is the page with the lowest number whose
+  title is today's UTC date, as `YYYY-MM-DD`. `write` and `append` make it
+  at `next` when no such page exists. `read` and `history` resolve it, and
+  fail when it does not exist.
+
+The words `next`, `today` and `at` MUST NOT name a page.
+
+**Front matter.** `write` fills in each missing field of the front matter:
+`notebook` and `page` from the address, and `title` from the `title`
+template, else from the first `# ` heading of the text, else from the UTC
+date. A field that is given MUST match the address, and a title that is
+given MUST match the `title` template.
+
+| Op | Templates | Effect |
+| --- | --- | --- |
+| `write` | `address`, `text`, `title` | Makes the head of a new page. It fails when the page exists, or when it has no text and no title. A page with entries and no draft of its head exists: its head has not come yet. |
+| `append` | `address`, `text` | Adds one entry. It fails when the page does not exist, unless the address is `today`, or when the text is empty. |
+| `fix` | `address`, `text` | Adds one entry that corrects the entry `<address>/<id>`, or the head when the address names a page. A fix of a fix corrects the first entry. |
+| `history` | `address` | One record for each checkpoint of the head, then one for each entry and fix, oldest first. The record of a fix names the entry that it corrects. |
+| `delete` | `address`, `d` | Deletes the head as section 3.10 defines, and each entry of the page and its parts, with one request. It MUST NOT name the head of a lost page at the address: the newest lost page with a head moves up, as below. The delete of a lost page names its head and its entries, and leaves the page at the address. |
+
+`read` and `history` of a page with no head and no entry fail with
+`no such page <address>`.
+
+**Lost pages.** Two devices that add entries offline lose no entry. Two
+other cases leave heads and entries that the head at their address does
+not name:
+
+- Two devices make one new page at one address offline, such as through
+  `next`. The store keeps one draft at the address: the newer one, or on a
+  tie the one with the lower ID. The checkpoint of the other head stays.
+- One device deletes a page while another adds to it. The delete does not
+  name the entries that it did not hold.
+
+The head and the entries of each other head id are a lost page. It reads
+at `<address>-<head id>` on each device, with no write: its head is the
+checkpoint, and a lost page with no head has the entries alone. `ls`
+lists it, with page number 0, so the `next` and `prev` operations and a
+`next` address pass it. `ls` and `read` say on the standard error why the page is lost.
+`append`, `fix`, `history` and `delete` take its address. Its entries
+keep the address of the page in their `page` tag, and the id of the lost
+head. `fix` also takes an entry by the address of its `page` tag, as
+`history` prints it.
+
+When the page at an address is deleted, the newest lost page with a head
+moves up: the delete publishes its head as the draft at the address, as it
+was written, with its head id, and with no checkpoint. The draft is newer
+than the blank draft of the delete. The lost page then reads at the
+address, and still at `<address>-<head id>`. Thus a sweep of parts and
+checkpoints that no page names, such as the repair of the storage spec,
+section 4.7, finds a draft that names the checkpoint, and keeps it.
+
+A lost head with no text after its front matter, and the title of the head
+at its address, is not a lost page: its entries join that page. Thus two
+devices that start today's page offline keep one page, with each text.
 
 #### 3.9.4 The format of the data roots
 
@@ -1050,6 +1165,14 @@ older client behaves.
   of a file with a body, and gets it after its update
   ([the storage spec](../storage/SPEC.md), section 7). A newer client
   reads a file that an older client put in parts.
+- An older client cannot parse a manifest with `notebook_entry`
+  (section 3.2). Its catalog skips the announcement, so `arc journal` stops
+  on that home until it updates. Announce such a manifest only after each
+  home updates. The kind of the entries is new, so after the announcement
+  each home agrees to it again with `arc install` (section 4.1).
+- An older client cannot read an entry. Its store keeps the draft, and its
+  queries do not find it, so it shows a page without its entries. A newer
+  client reads each page of an older client: its text is the head.
 - An ARC relay refuses new sealed events, and still serves the old ones to
   their author until 2027-01-10. An older client then gets
   `blocked: this relay keeps no drafts` for each new page. The storage spec,
@@ -1075,7 +1198,7 @@ older client behaves.
 
 ## 8. Proof
 
-`mise run interface` proves phases A to D. `TestDevicePages` proves phase E, and `TestStorageLargeFile` proves phase F.
+`mise run interface` proves phases A to D. `TestDevicePages` proves phase E, `TestStorageLargeFile` proves phase F, and the entry tests of `runtime/iface/entries_test.go` prove phase G.
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
@@ -1085,3 +1208,4 @@ older client behaves.
 | E (built) | Pages of the data roots: the device key signs, the content key seals, the store names a page by the citizen, the import of old pages. | `TestDevicePages`: with the signer stopped, a device writes and reads its journal; a second device reads the page after a sync; a page of a revoked device after its revocation is refused; old pages are sealed again once. |
 | C (built) | Private kinds through the mail layer, `watch`, `rank`, `latest`, `thread`. Group kinds. The test manifest `runtime/iface/testdata/dm.manifest.json`. | A direct message opens in a NIP-17 client. A list of two citizens gets one message each. `go test ./runtime/iface` posts group kinds with the `h` and NIP-70 tags. |
 | D (built) | Install consent, reserved kinds, `--dry-run`, `--json`, and keys from `ncryptsec` and NIP-46 signers. | A manifest that names a reserved kind does not install. A new kind asks the citizen again. An agent signs through a remote signer. |
+| G (built) | Notebook entries (section 3.9.3): a head written once, entries of kind 4272 that are never revised, fixes, `next` and `today`, front matter that arc fills in, and no wait for a terminal. | `TestTwoDevicesThatAppendOfflineKeepBothEntries`: two devices append to one page offline, and after a sync each reads both entries in time order. The same test on the code before entries loses the entry of the first device. |
