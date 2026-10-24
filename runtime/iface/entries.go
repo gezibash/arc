@@ -133,16 +133,6 @@ func (r *run) attachEntries(kind string, pages []notebookPage) ([]notebookPage, 
 			coordinates = append(coordinates, draft.Coordinate(me, p.entry.d))
 		}
 	}
-	// A deleted head leaves a blank draft. A lost head at its address stays.
-	wraps, err := r.fetchSelf(r.selfFilter([]nostr.Kind{draft.Kind}, nostr.TagMap{"k": {strconv.Itoa(r.kindOf(kind).Kind)}}))
-	if err != nil {
-		return nil, err
-	}
-	for _, wrap := range wraps {
-		if wrap.Content == "" {
-			coordinates = append(coordinates, draft.Coordinate(me, wrap.Tags.GetD()))
-		}
-	}
 	type key struct{ address, hid string }
 	lostEntries := map[key][]pageEntry{}
 	for address, list := range added {
@@ -236,6 +226,9 @@ func (r *run) noteLost(pages []notebookPage, address string) {
 			continue
 		}
 		why := "two devices made a page at %s offline; the store keeps the other one there, and this one reads at %s"
+		if !slices.ContainsFunc(pages, func(o notebookPage) bool { return !o.lost && o.address == p.base }) {
+			why = "two devices made a page at %s offline, and the other one is gone; this one reads at %s"
+		}
 		if p.checkpoint == (nostr.ID{}) {
 			why = "these entries name a head of %s that is gone, as a delete on another device leaves them; they read at %s"
 		}
@@ -246,24 +239,31 @@ func (r *run) noteLost(pages []notebookPage, address string) {
 // findPage finds the page of an address: a live page, today's page, or a
 // lost page.
 func (r *run) findPage(kind, address string, allow ...string) (*notebookPage, error) {
+	page, _, err := r.findPages(kind, address, allow...)
+	return page, err
+}
+
+// findPages is findPage, and each page of the kind. A lost page that moved
+// to its address still reads at <address>-<head id>.
+func (r *run) findPages(kind, address string, allow ...string) (*notebookPage, []notebookPage, error) {
 	resolved, found, err := r.resolve(kind, address, allow...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !found {
-		return nil, noSuchPage(address)
+		return nil, nil, noSuchPage(address)
 	}
 	pages, err := r.notebookPages(kind)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for i := range pages {
-		if pages[i].address == resolved {
-			r.noteLost(pages, resolved)
-			return &pages[i], nil
+		if pages[i].address == resolved || !pages[i].lost && pages[i].hid != "" && pages[i].address+"-"+pages[i].hid == resolved {
+			r.noteLost(pages, pages[i].base)
+			return &pages[i], pages, nil
 		}
 	}
-	return nil, noSuchPage(resolved)
+	return nil, nil, noSuchPage(resolved)
 }
 
 // pageText is the text of a page: the head, then each entry, oldest first.
@@ -636,14 +636,26 @@ func (r *run) fixEntry(n *Notebook) (string, error) {
 	if _, _, err := r.notebookAddress(address); err != nil {
 		return "", err
 	}
-	page, err := r.findPage(n.Kind, address)
+	page, pages, err := r.findPages(n.Kind, address)
 	if err != nil {
 		return "", err
 	}
 	target := page.address
 	if id != "" {
 		target = page.base + "/" + id
+		// history names an entry by the address of its page tag, so the
+		// entry can be on a lost page of the address.
 		i := slices.IndexFunc(page.entries, func(p pageEntry) bool { return p.d == target })
+		for j := range pages {
+			if i >= 0 {
+				break
+			}
+			if pages[j].base == page.base {
+				if i = slices.IndexFunc(pages[j].entries, func(p pageEntry) bool { return p.d == target }); i >= 0 {
+					page = &pages[j]
+				}
+			}
+		}
 		if i < 0 {
 			return "", fmt.Errorf("no such entry %s", terminal.EscapeLine(n.Address))
 		}
@@ -704,14 +716,28 @@ func (r *run) deletePage(n *Notebook, dTemplate string) error {
 		return err
 	}
 	i := slices.IndexFunc(pages, func(p notebookPage) bool { return p.address == n.Address })
+	if i < 0 {
+		// A lost page that moved up still answers to <address>-<head id>.
+		if i = slices.IndexFunc(pages, func(p notebookPage) bool {
+			return !p.lost && p.hid != "" && p.address+"-"+p.hid == n.Address
+		}); i >= 0 {
+			n.Address = pages[i].address
+		}
+	}
 	var page *notebookPage
-	var keep []string
 	if i >= 0 {
 		page = &pages[i]
-		for _, p := range pages {
-			// The head of a lost page is a checkpoint at the same address.
-			if p.lost && p.base == page.base && p.checkpoint != (nostr.ID{}) && !page.lost {
-				keep = append(append(keep, p.checkpoint.Hex()), p.entry.parts...)
+	}
+	// The head of a lost page is a checkpoint at the same address, so the
+	// delete of the address keeps it, and the newest one moves up to it.
+	var keep []string
+	var up *notebookPage
+	for j := range pages {
+		p := &pages[j]
+		if p.lost && p.base == n.Address && p.checkpoint != (nostr.ID{}) {
+			keep = append(append(keep, p.checkpoint.Hex()), p.entry.parts...)
+			if up == nil || number(p.entry.rec["created"]) > number(up.entry.rec["created"]) {
+				up = p
 			}
 		}
 	}
@@ -756,9 +782,45 @@ func (r *run) deletePage(n *Notebook, dTemplate string) error {
 		}
 	}
 	scoped := r.scopedWith(Values{"address": n.Address})
+	d, err := scoped.template(dTemplate)
+	if err != nil {
+		return err
+	}
+	old, err := r.current(d)
+	if err != nil {
+		return err
+	}
 	if _, err := scoped.removeKeeping(&Delete{Kind: n.Kind, D: dTemplate}, keep); err != nil && (page == nil || len(page.entries) == 0 || err.Error() != "there is nothing to delete") {
 		return err
 	}
+	if up == nil || r.flags.DryRun {
+		return nil
+	}
+	return r.moveUp(n.Kind, d, old, up)
+}
+
+// moveUp makes the head of a lost page the draft at its address again, as
+// it was written, when the page there is deleted. Nothing then takes its
+// checkpoint for one that a failed write left, and its entries, which name
+// its head id, read at the address.
+func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage) error {
+	text, err := r.joined(up.entry)
+	if err != nil {
+		return err
+	}
+	// The blank draft of the delete is one second newer than the old draft
+	// or the clock; this draft is newer again.
+	at := nostr.Now()
+	if old != nil && at <= old.Wrap.CreatedAt {
+		at = old.Wrap.CreatedAt + 1
+	}
+	at++
+	tags := [][]string{{"d", "{{up_address}}"}, {"title", "{{up_title}}"}, {"head", "{{up_head}}"}}
+	scoped := r.scopedWith(Values{"up_text": text, "up_address": up.base, "up_title": up.title, "up_head": up.hid})
+	if _, err := scoped.publishSealed(&Publish{Kind: kind, D: d, Revise: "entry", at: at, Content: Content{Text: "{{up_text}}"}, Tags: tags}); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.stdio.Err, "the page at %s moved up from %s\n", terminal.EscapeLine(up.base), terminal.EscapeLine(up.address))
 	return nil
 }
 

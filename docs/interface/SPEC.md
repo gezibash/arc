@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory|TestTwoDevicesThatAppendOfflineKeepBothEntries|TestTwoOfflineNewsKeepTheirOwnPages|TestABurstKeepsTimeOrderWithTheOtherDevice|TestADeleteAndAnOfflineAppendEndClear|TestALostPageLivesOnItsOwn|TestAPageNumberTooLargeIsRefused|TestTwoDevicesThatAddOfflineKeepBothTexts|TestEntriesOfOneSecondKeepTheirOrder|TestNewWritesTheNextPage|TestAddWritesToTodaysPage|TestAMissingPageAndTheReservedWords|TestAFixReplacesAnEntryAndTheHistoryKeepsBoth|TestADeleteTakesEachEntry|TestLsOrdersByTheNewestEntry|TestAnAppendIsAnEntry|TestAWriteFillsInTheFrontMatter|TestAnAppCommandDoesNotWaitForATerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
-- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body. No test runs the Docker image with a volume at the older home `/home/arc/.config/arc`. No test syncs entries between two devices through a real storage citizen: the entry tests copy the events between two stores. No test syncs a lost page through a stick. No test measures `read` on a notebook of 10,000 entries, which opens each entry.
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory|TestTwoDevicesThatAppendOfflineKeepBothEntries|TestTwoOfflineNewsKeepTheirOwnPages|TestABurstKeepsTimeOrderWithTheOtherDevice|TestADeleteAndAnOfflineAppendEndClear|TestALostPageLivesOnItsOwn|TestAPageNumberTooLargeIsRefused|TestADeleteOfTheLivePageKeepsTheLostPage|TestFixTakesTheAddressesOfHistory|TestTwoDevicesThatAddOfflineKeepBothTexts|TestEntriesOfOneSecondKeepTheirOrder|TestNewWritesTheNextPage|TestAddWritesToTodaysPage|TestAMissingPageAndTheReservedWords|TestAFixReplacesAnEntryAndTheHistoryKeepsBoth|TestADeleteTakesEachEntry|TestLsOrdersByTheNewestEntry|TestAnAppendIsAnEntry|TestAWriteFillsInTheFrontMatter|TestAnAppCommandDoesNotWaitForATerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
+- Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body. No test runs the Docker image with a volume at the older home `/home/arc/.config/arc`. No test syncs entries between two devices through a real storage citizen: the entry tests copy the events between two stores. No test runs `arc sync --repair` on a lost page that moved up; the rule of section 4.7 of the storage spec keeps it by reasoning. An older arc that deletes the page at an address deletes the head of a lost page there too. No test measures `read` on a notebook of 10,000 entries, which opens each entry.
 
 Phases A to F are built, see section 8. `arc` runs them, and
 `mise run interface` proves them. This interface replaces the command
@@ -441,7 +441,7 @@ given MUST match the `title` template.
 | `append` | `address`, `text` | Adds one entry. It fails when the page does not exist, unless the address is `today`, or when the text is empty. |
 | `fix` | `address`, `text` | Adds one entry that corrects the entry `<address>/<id>`, or the head when the address names a page. A fix of a fix corrects the first entry. |
 | `history` | `address` | One record for each checkpoint of the head, then one for each entry and fix, oldest first. The record of a fix names the entry that it corrects. |
-| `delete` | `address`, `d` | Deletes the head as section 3.10 defines, and each entry of the page and its parts, with one request. The head of a lost page at the address stays. The delete of a lost page names its head and its entries, and leaves the page at the address. |
+| `delete` | `address`, `d` | Deletes the head as section 3.10 defines, and each entry of the page and its parts, with one request. It MUST NOT name the head of a lost page at the address: the newest lost page with a head moves up, as below. The delete of a lost page names its head and its entries, and leaves the page at the address. |
 
 `read` and `history` of a page with no head and no entry fail with
 `no such page <address>`.
@@ -463,7 +463,16 @@ lists it, with page number 0, so the `next` and `prev` operations and a
 `next` address pass it. `ls` and `read` say on the standard error why the page is lost.
 `append`, `fix`, `history` and `delete` take its address. Its entries
 keep the address of the page in their `page` tag, and the id of the lost
-head.
+head. `fix` also takes an entry by the address of its `page` tag, as
+`history` prints it.
+
+When the page at an address is deleted, the newest lost page with a head
+moves up: the delete publishes its head as the draft at the address, as it
+was written, with its head id, and with no checkpoint. The draft is newer
+than the blank draft of the delete. The lost page then reads at the
+address, and still at `<address>-<head id>`. Thus a sweep of parts and
+checkpoints that no page names, such as the repair of the storage spec,
+section 4.7, finds a draft that names the checkpoint, and keeps it.
 
 A lost head with no text after its front matter, and the title of the head
 at its address, is not a lost page: its entries join that page. Thus two

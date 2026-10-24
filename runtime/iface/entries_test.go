@@ -519,3 +519,84 @@ func TestALostPageLivesOnItsOwn(t *testing.T) {
 		t.Errorf("ls still lists page 1 after both deletes: %q", got)
 	}
 }
+
+// A delete of the live page never removes the head of a lost page at its
+// address. The lost page takes the address, ls never calls its head a
+// leftover, and a search on the other device still finds it after a sync
+// (Cato's test of #395 at a9459d8: following the hint of ls deleted the
+// lost page for good).
+func TestADeleteOfTheLivePageKeepsTheLostPage(t *testing.T) {
+	a := newCitizen(t)
+	b := a.device()
+	a.must("journal", "passport\n", "write", "arc/loss/1", "--title", "Passport")
+	b.env.now = a.env.Now().Add(time.Minute)
+	b.must("journal", "groceries\n", "write", "arc/loss/1", "--title", "Groceries")
+	a.syncWith(b)
+	lost := lostAddress(a, "arc/loss/1")
+
+	a.env.now = a.env.Now().Add(time.Hour)
+	a.must("journal", "", "delete", "arc/loss/1")
+	_, errs, err := a.runAll("", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(errs, "no page names") || strings.Contains(errs, "journal delete") {
+		t.Errorf("ls calls the lost head a leftover: %q", errs)
+	}
+	for _, address := range []string{"arc/loss/1", lost} {
+		got := a.must("journal", "", "read", address)
+		if !strings.HasSuffix(got, "---\npassport\n") {
+			t.Errorf("%s reads %q, want the passport page", address, got)
+		}
+		// It moves up as it was written.
+		if !strings.Contains(got, "created_at: 2026-09-29T12:00:00Z\n") {
+			t.Errorf("%s reads %q, want the time the passport page was written", address, got)
+		}
+	}
+	if got := a.must("journal", "", "history", "arc/loss/1"); !strings.Contains(got, "passport") {
+		t.Errorf("the history of the page that moved up lost its head: %q", got)
+	}
+	// The delete that ls once named finds the page, not a leftover.
+	if _, errs, err := a.runAll("", "delete", "arc/loss/1"); err != nil || strings.Contains(errs, "no page names") {
+		t.Fatalf("a second delete gave %v, %q", err, errs)
+	}
+
+	// On two other devices, one delete and a sync: the phone finds the
+	// passport.
+	c := newCitizen(t)
+	d := c.device()
+	c.must("journal", "passport\n", "write", "arc/loss/1", "--title", "Passport")
+	d.env.now = c.env.Now().Add(time.Minute)
+	d.must("journal", "groceries\n", "write", "arc/loss/1", "--title", "Groceries")
+	c.syncWith(d)
+	c.must("journal", "", "delete", "arc/loss/1")
+	c.syncWith(d)
+	if got := d.must("journal", "", "search", "passport"); !strings.HasPrefix(got, "arc/loss/1\t") {
+		t.Errorf("after the sync, the phone's search for passport shows %q", got)
+	}
+	if got := d.must("journal", "", "ls", "--notebook", "arc/loss"); strings.Contains(got, "Groceries") || !strings.Contains(got, "Passport") {
+		t.Errorf("after the sync, the phone lists %q", got)
+	}
+}
+
+// Each address that history prints works with fix, on a lost page too.
+func TestFixTakesTheAddressesOfHistory(t *testing.T) {
+	a := newCitizen(t)
+	b := a.device()
+	a.must("journal", "laptop\n", "new", "hrs/log", "--title", "Laptop")
+	a.must("journal", "", "append", "hrs/log/1", "teh", "laptop", "entry")
+	b.env.now = a.env.Now().Add(time.Minute)
+	b.must("journal", "phone\n", "new", "hrs/log", "--title", "Phone")
+	a.syncWith(b)
+	lost := lostAddress(a, "hrs/log/1")
+	for _, rec := range historyOf(a, lost) {
+		d := rec["tags"].(map[string]any)["d"].(string)
+		if !strings.HasPrefix(d, "hrs/log/1/") {
+			continue
+		}
+		a.must("journal", "", "fix", d, "the", "laptop", "entry")
+	}
+	if got := a.must("journal", "", "read", lost); !strings.HasSuffix(got, "---\nlaptop\nthe laptop entry\n") {
+		t.Errorf("the lost page reads %q after the fix", got)
+	}
+}

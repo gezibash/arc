@@ -291,9 +291,12 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 			}
 		}
 	}
-	head, err = r.notebookHeader(p, head, old)
-	if err != nil {
-		return nil, err
+	// An entry, and a head that moves to its address, keep their text as
+	// it is.
+	if !isEntry {
+		if head, err = r.notebookHeader(p, head, old); err != nil {
+			return nil, err
+		}
 	}
 	tags, err = r.enforceFrontmatter(p, head, tags)
 	if err != nil {

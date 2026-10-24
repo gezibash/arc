@@ -75,7 +75,8 @@ arc journal toc arc/design
   other reads at `<page>-<head id>`, such as `arc/design/3-9f2c4e1a0b7d3c55`.
   `ls` lists it and says why. Entries that a delete on another device did
   not know read the same way. `append`, `fix`, `history` and `delete` take
-  such an address.
+  such an address. A delete of the page at the number moves the other page
+  up to it, so a delete never takes both.
 - No command waits for a terminal. `write` and `new` with no standard input
   and no `--title` say `no text`, and exit 1.
 
