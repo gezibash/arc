@@ -384,11 +384,11 @@ func addCitizen(ctx context.Context, root, why, text string, known *keys.Key) (_
 	}
 	first := strings.TrimSpace(string(body)) == ""
 	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
-		return keys.Key{}, err
+		return keys.Key{}, unwritableIdentities(root, why, err)
 	}
 	staging, err := os.MkdirTemp(citizensDir(root), ".adding-")
 	if err != nil {
-		return keys.Key{}, err
+		return keys.Key{}, unwritableIdentities(root, why, err)
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
 
@@ -589,7 +589,11 @@ func keysCommand() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no identities: make one with arc keys gen")
 				return nil
 			}
-			active := defaultName(root)
+			body, err := os.ReadFile(defaultPath(root))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return unreadableDefault(root, why, err)
+			}
+			active := strings.TrimSpace(string(body))
 			for _, c := range all {
 				mark := " "
 				if c.name == active {

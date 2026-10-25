@@ -483,7 +483,7 @@ func TestEachUnreadablePartOfAHomeHasOneError(t *testing.T) {
 
 	// (c): only the default file is unreadable; the home is readable.
 	lock(filepath.Join(dot, "default"))
-	for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+	for _, args := range [][]string{{"whoami"}, {"keys", "gen"}, {"keys", "list"}, {"keys", "ls"}} {
 		check("an unreadable default", []string{"cannot read the default identity in " + dot + ", chosen by ~/.arc", "Fix the permissions of " + filepath.Join(dot, "default")}, args...)
 	}
 	_ = os.Chmod(filepath.Join(dot, "default"), 0o600)
@@ -492,6 +492,12 @@ func TestEachUnreadablePartOfAHomeHasOneError(t *testing.T) {
 	lock(filepath.Join(dot, "citizens"))
 	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens") + ", chosen by ~/.arc"}, "keys", "list")
 	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens"), "chosen by ~/.arc"}, "whoami")
+	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens"), "chosen by ~/.arc"}, "keys", "gen")
+	// A folder of identities that arc reads but cannot add to.
+	if err := os.Chmod(filepath.Join(dot, "citizens"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	check("read-only identities", []string{"cannot add an identity to " + filepath.Join(dot, "citizens") + ", chosen by ~/.arc", "Fix the permissions of that folder"}, "keys", "gen")
 	_ = os.Chmod(filepath.Join(dot, "citizens"), 0o700)
 
 	// (a) and (b): the home itself, chosen by default and by --home.
@@ -509,8 +515,8 @@ func TestAHomeOfAnotherUserIsRefused(t *testing.T) {
 	user(t)
 	work := t.TempDir()
 	t.Chdir(work)
-	for _, dir := range []string{"~root/x", "~nosuchuser/x"} {
-		if _, _, err := runErr(t, "--home", dir, "keys", "gen"); err == nil || !strings.Contains(err.Error(), "names the home of another user") {
+	for _, dir := range []string{"~root/x", "~nosuchuser/x", "~+/x", "~-/x"} {
+		if _, _, err := runErr(t, "--home", dir, "keys", "gen"); err == nil || !strings.Contains(err.Error(), "arc expands only ~ and ~/") {
 			t.Errorf("--home %s gave %v", dir, err)
 		}
 	}
@@ -525,5 +531,66 @@ func TestKeysLsLists(t *testing.T) {
 	name := identity(t, filepath.Join(home, ".arc"))
 	if out, err := runDefault(t, "keys", "ls"); err != nil || !strings.Contains(out, name) {
 		t.Errorf("keys ls printed %q, %v; want %s", out, err, name)
+	}
+}
+
+// A lone ~/.arc/wake.toml gives way to an older home only when arc can read
+// that home. An unreadable ~/.config/arc, or its folder of identities, stops
+// arc, and keys gen writes no second identity in ~/.arc, which would hide
+// the first once the permissions are fixed.
+func TestAnUnreadableOlderHomeBesideALoneWakeFileStopsArc(t *testing.T) {
+	for _, part := range []string{"", "citizens"} {
+		home := user(t)
+		dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+		identity(t, old)
+		if err := os.MkdirAll(dotArc, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dotArc, "wake.toml"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		lock(t, filepath.Join(old, part))
+		want := "cannot read the home " + old
+		if part != "" {
+			want = "cannot read the identities in " + filepath.Join(old, "citizens")
+		}
+		for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+			if _, _, err := runErr(t, args...); err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("with %s locked, arc %s gave %v, want %q", filepath.Join(old, part), strings.Join(args, " "), err, want)
+			}
+		}
+		if entries, err := os.ReadDir(dotArc); err != nil || len(entries) != 1 {
+			t.Errorf("with %s locked, arc wrote to %s: %v, %v", filepath.Join(old, part), dotArc, entries, err)
+		}
+	}
+}
+
+// A ~/.arc that is a plain file, or a loop of symbolic links, stops arc
+// with an error that says so. arc never uses the identity of ~/.config/arc
+// in its place, and writes nothing.
+func TestADotArcThatIsNoFolderStopsArc(t *testing.T) {
+	for _, shape := range []string{"file", "loop"} {
+		home := user(t)
+		dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+		other := identity(t, old)
+		var err error
+		want := "It is not a folder"
+		if shape == "file" {
+			err = os.WriteFile(dotArc, nil, 0o600)
+		} else {
+			err, want = os.Symlink(dotArc, dotArc), "It is a loop of symbolic links"
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+			out, _, err := runErr(t, args...)
+			if err == nil || strings.Contains(out, other) || !strings.Contains(err.Error(), "cannot read the home "+dotArc) || !strings.Contains(err.Error(), want) {
+				t.Errorf("a ~/.arc that is a %s: arc %s printed %q, %v; want %q", shape, strings.Join(args, " "), out, err, want)
+			}
+		}
+		if entries, _ := os.ReadDir(citizensDir(old)); len(entries) != 1 {
+			t.Errorf("a ~/.arc that is a %s: ~/.config/arc holds %d identities, want 1", shape, len(entries))
+		}
 	}
 }

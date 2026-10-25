@@ -833,7 +833,11 @@ which names the folder and its rule, and says what fixes it.
 If arc cannot read a home of
 steps 3 and 4, for example a folder of mode 000 or a folder that root owns
 after `sudo arc`, arc MUST fail with an error that names the folder. It
-MUST NOT go to the next step: that would use, or make, another identity. If
+MUST NOT go to the next step: that would use, or make, another identity.
+The same holds when `~/.arc` holds no identity and arc cannot read
+`~/.config/arc` or its folder of identities: arc MUST fail, and MUST NOT
+make an identity in `~/.arc`, which would hide the older one later. If a
+home is not a folder, or is a loop of symbolic links, the error MUST say so. If
 `~/.arc` and `~/.config/arc` both hold an identity, and arc uses `~/.arc`
 by step 3, each command MUST warn once on the standard error, name both
 folders, and say that arc uses `~/.arc` because it holds an identity. An

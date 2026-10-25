@@ -92,7 +92,7 @@ func root() *cobra.Command {
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 	}
-	command.PersistentFlags().String("home", "", "the directory of arc; arc takes --home, then ARC_HOME, then ~/.arc, then ~/.config/arc when an older arc made it")
+	command.PersistentFlags().String("home", "", "the directory of arc; arc takes --home, then ARC_HOME, then ~/.arc, then ~/.config/arc when an older arc made it; a ~/.arc with no identity gives way to a ~/.config/arc with one")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(), contactsCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
@@ -155,9 +155,10 @@ func absHome(user, dir string) (string, error) {
 	} else if rest, ok := strings.CutPrefix(dir, "~/"); ok {
 		dir = filepath.Join(user, rest)
 	} else if strings.HasPrefix(dir, "~") {
-		// ~root is the home of another user in a shell, so a folder of that
-		// name here would be one rm -rf away from it (#411).
-		return "", fmt.Errorf("the home %q names the home of another user: arc expands only ~ and ~/; give the whole path", dir)
+		// A shell expands ~root to the home of a user, and ~+ to the working
+		// directory, so a folder of that name here would be one rm -rf away
+		// from the folder that it names there (#411).
+		return "", fmt.Errorf("the home %q starts with a ~ that a shell expands to another folder: arc expands only ~ and ~/; give the whole path", dir)
 	}
 	return filepath.Abs(dir)
 }
@@ -173,7 +174,7 @@ func twoHomes(user, dir string) string {
 		return fmt.Sprintf("both %s and %s hold an identity. arc uses %s, because it holds an identity, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.", home, old, home, old)
 	case dir == old && holdsIdentity(old):
 		if holds, _ := holdsHome(home, "~/.arc"); holds {
-			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and writes nothing to %s. Move the entries of %s into %s, or set ARC_HOME.", home, old, old, home, home, home, old)
+			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and reads and writes nothing in %s. Set ARC_HOME to choose the home.", home, old, old, home, home)
 		}
 	}
 	return ""
@@ -202,8 +203,17 @@ func defaultRoot(user string) (string, error) {
 	}
 	if holds {
 		// A ~/.arc with entries but no identity, such as a lone wake.toml,
-		// does not hide the identity of an older home (#408).
-		if !holdsIdentity(home) && holdsIdentity(old) {
+		// does not hide the identity of an older home (#408). An older home
+		// that arc cannot read stops arc: else keys gen would make a second
+		// identity in ~/.arc, which then hides the first.
+		if mine, err := identityIn(home, "~/.arc"); err != nil || mine {
+			return home, err
+		}
+		older, err := identityIn(old, olderHome)
+		if err != nil {
+			return old, err
+		}
+		if older {
 			return old, nil
 		}
 		return home, nil
@@ -238,7 +248,14 @@ func holdsHome(dir, why string) (bool, error) {
 // what fixes it (#408).
 
 func unreadableHome(dir, why string, err error) error {
-	return fmt.Errorf("cannot read the home %s, chosen by %s, and arc uses no other home in its place: %w. Fix its permissions, or give --home or ARC_HOME", dir, why, err)
+	fix := "Fix its permissions"
+	switch {
+	case errors.Is(err, syscall.ENOTDIR):
+		fix = "It is not a folder: move it away"
+	case errors.Is(err, syscall.ELOOP):
+		fix = "It is a loop of symbolic links: remove the link"
+	}
+	return fmt.Errorf("cannot read the home %s, chosen by %s, and arc uses no other home in its place: %w. %s, or give --home or ARC_HOME", dir, why, err, fix)
 }
 
 // unreadableDefault is the error of a default file that arc cannot read,
@@ -255,6 +272,26 @@ func unreadableIdentities(root, why string, err error) error {
 		return unreadableHome(root, why, dirErr)
 	}
 	return fmt.Errorf("cannot read the identities in %s, chosen by %s: %w. Fix the permissions of that folder", citizensDir(root), why, err)
+}
+
+// identityIn says whether dir holds an identity of arc. Only a folder of
+// identities that is not there is missing: one that arc cannot read is an
+// error. why is the rule that would choose dir.
+func identityIn(dir, why string) (bool, error) {
+	entries, err := os.ReadDir(citizensDir(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, unreadableIdentities(dir, why, err)
+	}
+	return len(entries) > 0, nil
+}
+
+// unwritableIdentities is the error of a folder of identities that arc
+// can read but cannot add to.
+func unwritableIdentities(root, why string, err error) error {
+	return fmt.Errorf("cannot add an identity to %s, chosen by %s: %w. Fix the permissions of that folder", citizensDir(root), why, err)
 }
 
 // holdsIdentity says whether dir holds an identity of arc.
