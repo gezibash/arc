@@ -1,11 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/internal/testrelay"
+	"github.com/gezibash/arc/runtime/catalog"
 )
 
 func arc(t *testing.T, home string, args ...string) error {
@@ -36,5 +45,52 @@ func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
 	err = arc(t, home, "install", provider, "journal", "--yes")
 	if err == nil || !strings.Contains(err.Error(), "no relay answered") || !strings.Contains(err.Error(), dead) {
 		t.Fatalf("install returned %v, want an error that names the relay %s", err, dead)
+	}
+}
+
+// A new announcement replaces an older one of the same second, and one that
+// a clock ahead signed later, which only the relay holds
+// (docs/delivery/SPEC.md, section 4.7).
+func TestAnnounceReplacesAnAnnouncementOfTheSameSecond(t *testing.T) {
+	path := filepath.Join("..", "..", "apps", "files", "manifest.json")
+	manifest, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := bytes.Replace(manifest, []byte(`"title": "Files"`), []byte(`"title": "Old files"`), 1)
+	for _, ahead := range []time.Duration{0, 2 * time.Second} {
+		url := testrelay.Start(t)
+		home := t.TempDir()
+		for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
+			if err := arc(t, home, args...); err != nil {
+				t.Fatalf("%v: %v", args, err)
+			}
+		}
+		mine, err := listCitizens(home)
+		if err != nil || len(mine) != 1 {
+			t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
+		}
+		id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := catalog.AnnounceManifest(context.Background(), id.signer, old, nostr.Timestamp(time.Now().Add(ahead).Unix()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := (relay.Relay{URL: url}).Send(context.Background(), before); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := arc(t, home, "announce", path); err != nil {
+			t.Fatal(err)
+		}
+		batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{id.key.Public}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(batch.Events) != 1 || strings.Contains(batch.Events[0].Content, "Old files") || batch.Events[0].CreatedAt <= before.CreatedAt {
+			t.Fatalf("%s ahead: the relay holds %d announcements, and the old one was signed at %d; want only the new one, signed later", ahead, len(batch.Events), before.CreatedAt)
+		}
 	}
 }
