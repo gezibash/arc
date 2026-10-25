@@ -157,6 +157,7 @@ func RelayOptions(ctx context.Context, turn func(context.Context) (Credential, e
 		return options, fmt.Errorf("the relay lets this citizen relay %.1f MiB more today, and this file needs about %.1f MiB", float64(credential.QuotaLeft)/(1<<20), float64(need)/(1<<20))
 	}
 	options.TURN = &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
+	options.gather = &gatherLog{}
 	return options, nil
 }
 
@@ -171,7 +172,7 @@ func OfferSTUN(ctx context.Context, options Options, local webrtc.SessionDescrip
 		return "", nil
 	}
 	if !strings.Contains(local.SDP, "typ relay") {
-		return "", NoPath(errors.New("the TURN server of the relay gave no address"))
+		return "", NoPath(errors.New("the TURN server of the relay gave no address" + options.gather.reason()))
 	}
 	stun, err := TURNSTUN(ctx, options.TURN)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"slices"
@@ -113,5 +114,44 @@ func TestAFailedRelayAttemptNamesTheTURNServer(t *testing.T) {
 	}
 	if !errors.Is(err, ErrNoPath) {
 		t.Errorf("error %v is not ErrNoPath", err)
+	}
+}
+
+// When the TURN server gives no address, the error says why, as pion's ICE
+// agent logged it, such as a dial that failed (#427: "the TURN server of the
+// relay gave no address", with no reason, four times in a day).
+func TestNoAddressOnTheTURNServerGivesTheReason(t *testing.T) {
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := closed.Addr().String()
+	_ = closed.Close()
+	turn := func(context.Context) (Credential, error) {
+		return Credential{URLs: []string{"turn:" + address + "?transport=tcp"}, Username: "u", Password: "p", QuotaLeft: 1 << 30}, nil
+	}
+	options, err := RelayOptions(t.Context(), turn, Options{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, err := NewConnection(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	if _, err := pc.CreateDataChannel("data", nil); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := Describe(pc, offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = OfferSTUN(t.Context(), options, local)
+	if err == nil || !strings.HasPrefix(err.Error(), "no direct path, and no path through the relay: the TURN server of the relay gave no address: ") || !strings.Contains(err.Error(), address) {
+		t.Errorf("error %v, want the reason with the address %s", err, address)
 	}
 }
