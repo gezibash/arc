@@ -268,7 +268,7 @@ func TestLsOrdersByTheNewestEntry(t *testing.T) {
 	c.env.now = c.env.Now().Add(time.Hour)
 	c.must("journal", "", "append", "hrs/log/1", "later")
 	got := c.must("journal", "", "ls", "--notebook", "hrs/log", "--order", "updated")
-	if !strings.HasPrefix(got, "hrs/log/2\t") || !strings.Contains(got, "hrs/log/1\tOne\t2026-09-29T12:00:00Z\t2026-09-29T14:00:00Z") {
+	if !strings.HasPrefix(got, "hrs/log/2\t") || !strings.Contains(got, "hrs/log/1\tOne\t2026-09-29T12:00:00.000Z\t2026-09-29T14:00:00.000Z") {
 		t.Errorf("ls --order updated shows %q", got)
 	}
 }
@@ -282,12 +282,12 @@ func TestUpdatedAtIsNeverEarlierThanTheHead(t *testing.T) {
 	c.must("journal", "text\n", "write", page, "--title", "Same second")
 	c.must("journal", "", "append", page, "an", "entry")
 	got := c.must("journal", "", "read", page)
-	if !strings.Contains(got, "created_at: 2026-09-29T13:00:00.5Z\nupdated_at: 2026-09-29T13:00:00.5Z\n") {
+	if !strings.Contains(got, "created_at: 2026-09-29T13:00:00.500Z\nupdated_at: 2026-09-29T13:00:00.500Z\n") {
 		t.Errorf("read %q, want updated_at no earlier than created_at", got)
 	}
 	c.env.now = c.env.now.Add(2 * time.Second)
 	c.must("journal", "", "append", page, "later")
-	if got := c.must("journal", "", "read", page); !strings.Contains(got, "updated_at: 2026-09-29T13:00:02.5Z\n") {
+	if got := c.must("journal", "", "read", page); !strings.Contains(got, "updated_at: 2026-09-29T13:00:02.500Z\n") {
 		t.Errorf("read %q, want the time of the newest entry", got)
 	}
 }
@@ -316,7 +316,7 @@ func TestLsKeepsTheHeadTimeForAnEntryOfTheSameSecond(t *testing.T) {
 	c.env.now = time.Date(2026, 9, 29, 13, 0, 0, 500_000_000, time.UTC)
 	c.must("journal", "text\n", "write", page, "--title", "Same second")
 	c.must("journal", "", "append", page, "an", "entry")
-	if got := c.must("journal", "", "ls"); !strings.Contains(got, "\t2026-09-29T13:00:00.5Z\t2026-09-29T13:00:00.5Z") {
+	if got := c.must("journal", "", "ls"); !strings.Contains(got, "\t2026-09-29T13:00:00.500Z\t2026-09-29T13:00:00.500Z") {
 		t.Errorf("ls shows %q, want updated_at no earlier than created_at", got)
 	}
 }
@@ -400,7 +400,7 @@ func TestABurstKeepsTimeOrderWithTheOtherDevice(t *testing.T) {
 		if !strings.HasSuffix(got, "---\nstart\nB1\nB2\nB3\nB4\nB5\nB6\nA1\n") {
 			t.Errorf("%s reads %q, want the burst, then A1", name, got)
 		}
-		if !strings.Contains(got, "updated_at: "+burst.Add(330*time.Millisecond).UTC().Format(time.RFC3339Nano)+"\n") {
+		if !strings.Contains(got, "updated_at: "+burst.Add(330*time.Millisecond).UTC().Format(timeFormat)+"\n") {
 			t.Errorf("%s: updated_at is not the time of A1: %q", name, got)
 		}
 	}
@@ -550,7 +550,7 @@ func TestADeleteOfTheLivePageKeepsTheLostPage(t *testing.T) {
 			t.Errorf("%s reads %q, want the passport page", address, got)
 		}
 		// It moves up as it was written.
-		if !strings.Contains(got, "created_at: 2026-09-29T12:00:00Z\n") {
+		if !strings.Contains(got, "created_at: 2026-09-29T12:00:00.000Z\n") {
 			t.Errorf("%s reads %q, want the time the passport page was written", address, got)
 		}
 	}

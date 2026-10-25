@@ -91,7 +91,7 @@ func (r *run) pageEntries(kind string) (map[string][]pageEntry, error) {
 		}
 		p.e = entryOf(opened, name)
 		p.e.rec["device"] = opened.Wrap.PubKey.Hex()
-		p.e.rec["at"] = p.at().Format(time.RFC3339Nano)
+		p.e.rec["at"] = p.at().Format(timeFormat)
 		p.e.rec["fixes"] = ""
 		if p.corrects != "" {
 			p.e.rec["fixes"] = "\tfixes " + p.corrects
@@ -308,7 +308,7 @@ func (r *run) pageText(head *entry, addresses []string, entries []pageEntry) (st
 	newest := entries[len(entries)-1].at()
 	if fields, _, err := frontmatter(text); err == nil {
 		if head, err := time.Parse(time.RFC3339Nano, str(fields["updated_at"])); err != nil || newest.After(head) {
-			text = setField(text, "updated_at", newest.Format(time.RFC3339Nano))
+			text = setField(text, "updated_at", newest.Format(timeFormat))
 		}
 	}
 	var b strings.Builder
@@ -700,7 +700,7 @@ func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
 		}
 	}
 	for _, e := range out {
-		e.rec["at"] = time.Unix(int64(number(e.rec["created"])), 0).UTC().Format(time.RFC3339)
+		e.rec["at"] = stamp(time.Unix(int64(number(e.rec["created"])), 0))
 		e.rec["fixes"] = ""
 	}
 	for _, p := range page.entries {

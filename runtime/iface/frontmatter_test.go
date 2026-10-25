@@ -47,7 +47,7 @@ func TestJournalFrontmatterRejectsInvalidWritesWithoutStoring(t *testing.T) {
 // heading, else from the date (proposal journal-v2, section 4.3; Cato's
 // finding 2 of 2026-10-19: --title did not work).
 func TestAWriteFillsInTheFrontMatter(t *testing.T) {
-	stamps := "created_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n"
+	stamps := "created_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n"
 	for name, tc := range map[string]struct {
 		in    string
 		flags []string
@@ -81,7 +81,7 @@ func TestJournalFrontmatterTitleAppendAndFailedReplacement(t *testing.T) {
 		t.Fatal(got)
 	}
 	c.must("journal", "", "append", page, "next")
-	want := "---\ntitle: \"Memory: decisions\"\ntype: decision\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n# Decisions\nnext\n"
+	want := "---\ntitle: \"Memory: decisions\"\ntype: decision\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n# Decisions\nnext\n"
 	if got := c.must("journal", "", "read", page); got != want {
 		t.Fatalf("roundtrip %q", got)
 	}
@@ -167,10 +167,10 @@ func TestJournalFrontmatterSeparatesNotebooks(t *testing.T) {
 	second := "---\ntitle: Session status\npage: 1\nnotebook: arc/status\n---\nProviders migrated.\n"
 	c.must("journal", first, "write", "arc/architecture/1")
 	c.must("journal", second, "write", "arc/status/1")
-	if got := c.must("journal", "", "read", "arc/architecture/1"); got != strings.Replace(first, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n", 1) {
+	if got := c.must("journal", "", "read", "arc/architecture/1"); got != strings.Replace(first, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n", 1) {
 		t.Fatal(got)
 	}
-	if got := c.must("journal", "", "read", "arc/status/1"); got != strings.Replace(second, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n", 1) {
+	if got := c.must("journal", "", "read", "arc/status/1"); got != strings.Replace(second, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n", 1) {
 		t.Fatal(got)
 	}
 	if got := c.must("journal", "", "ls", "arc/architecture/"); !strings.HasPrefix(got, "arc/architecture/1\tArchitecture decision\t") || strings.Contains(got, "arc/status/") {

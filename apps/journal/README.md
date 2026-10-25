@@ -213,7 +213,8 @@ not silently renumbered.
 The header of a page holds `title`, `page` and `notebook`; arc fills in the
 ones that the text does not give. Their combined address must match the
 command address. ARC fills in `created_at` and `updated_at` as UTC RFC3339
-timestamps. `created_at` is the time of the write. `updated_at` shows the
+timestamps with three digits of milliseconds, such as
+`2026-10-24T19:26:07.420Z`; `ls` and `history` show times in the same form. `created_at` is the time of the write. `updated_at` shows the
 time of the newest entry. Caller-supplied timestamps cannot change these
 values. The time of an entry comes from the clock of its device, in
 milliseconds. Each entry is later than each entry of the page that its
