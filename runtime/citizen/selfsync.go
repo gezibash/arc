@@ -327,6 +327,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Devices: onceList(sess.DeviceList),
 		Opener:  sess.pageOpener(cfg.Installs),
 		Writing: func() (bool, error) { return writelock.Busy(sess.storeDir) },
+		Now:     testNow(),
 		State:   cfg.Dir,
 		Repair:  cfg.Repair,
 		// On the path turn, each pipe goes through TURN, so a rebuild may too.

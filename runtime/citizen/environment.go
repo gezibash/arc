@@ -131,7 +131,7 @@ func (e *Environment) Publish(ctx context.Context, events []nostr.Event, urls []
 	}
 	targets := e.relaysOf(urls)
 	unsent := map[string]error{}
-	for _, event := range events {
+	for i, event := range events {
 		to := targets
 		if urls == nil && selfsync.Local(event) {
 			to = nil
@@ -142,6 +142,9 @@ func (e *Environment) Publish(ctx context.Context, events []nostr.Event, urls []
 		}
 		if result.Outcome == store.Refused {
 			return fmt.Errorf("the store refused the event: %s", result.Reason)
+		}
+		if urls == nil {
+			pauseAfterSave(i+1, e.Session.Errors)
 		}
 		taken := false
 		for _, s := range sent {
