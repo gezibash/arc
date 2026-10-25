@@ -116,7 +116,7 @@ func TestARelayKeepsItsOlderHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, err := defaultRoot(home); err != nil || got != old {
-		t.Fatalf("the home is %s (%v), want %s", got, err, old)
+		t.Fatalf("the home is %s, want %s", got, old)
 	}
 }
 
@@ -159,8 +159,9 @@ func TestNoHomeFromTheWorkingDirectory(t *testing.T) {
 	}
 }
 
-// runDefaultErr is runDefault, and it also returns the standard error.
-func runDefaultErr(t *testing.T, args ...string) (string, string, error) {
+// runErr runs arc with no --home, and returns its standard output and
+// standard error.
+func runErr(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	var out, errs strings.Builder
 	command := root()
@@ -170,6 +171,135 @@ func runDefaultErr(t *testing.T, args ...string) (string, string, error) {
 	command.SetArgs(args)
 	err := command.Execute()
 	return out.String(), errs.String(), err
+}
+
+// whoami names the home in use, and the rule that chose it (#406: nothing
+// showed which home arc used).
+func TestWhoamiShowsTheHomeInUse(t *testing.T) {
+	home := user(t)
+	older := filepath.Join(home, ".config", "arc")
+	identity(t, older)
+	check := func(want string, args ...string) {
+		t.Helper()
+		out, _, err := runErr(t, append(args, "whoami")...)
+		if err != nil {
+			t.Fatalf("arc whoami: %v\n%s", err, out)
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if len(lines) != 4 || lines[3] != want {
+			t.Errorf("arc %v whoami printed %q, want the last line %q", args, out, want)
+		}
+	}
+	check("home " + older + ", chosen by ~/.config/arc, the home of an older arc")
+
+	identity(t, filepath.Join(home, ".arc"))
+	check("home " + filepath.Join(home, ".arc") + ", chosen by ~/.arc")
+
+	variable := t.TempDir()
+	identity(t, variable)
+	t.Setenv("ARC_HOME", variable)
+	check("home " + variable + ", chosen by ARC_HOME")
+
+	flag := t.TempDir()
+	identity(t, flag)
+	check("home "+flag+", chosen by --home", "--home", flag)
+}
+
+// keys gen and keys recover say where they wrote the identity, on the
+// standard error, so the standard output keeps the name and the key (#406).
+func TestKeysGenSaysWhereItWrote(t *testing.T) {
+	home := user(t)
+	out, errs, err := runErr(t, "keys", "gen")
+	if err != nil {
+		t.Fatalf("arc keys gen: %v\n%s", err, errs)
+	}
+	if lines := strings.Split(strings.TrimSpace(out), "\n"); len(lines) != 2 {
+		t.Errorf("keys gen printed %q, want the name and the key", out)
+	}
+	if want := "wrote the identity in " + filepath.Join(home, ".arc"); !strings.Contains(errs, want) {
+		t.Errorf("keys gen said %q, want %q", errs, want)
+	}
+}
+
+// homeLine is the last line of arc whoami: the home in use.
+func homeLine(t *testing.T, args ...string) string {
+	t.Helper()
+	out, errs, err := runErr(t, append(args, "whoami")...)
+	if err != nil {
+		t.Fatalf("arc %v whoami: %v\n%s", args, err, errs)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	return lines[len(lines)-1]
+}
+
+// A home of --home or ARC_HOME that starts with ~ is in the user's home, as
+// the shell would expand it; bash does not expand ~ after = (Otto's test of
+// #410: --home=~/tgen made a folder named ~ in the working directory).
+func TestAHomeWithATildeIsInTheUserHome(t *testing.T) {
+	home := user(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	if _, errs, err := runErr(t, "--home=~/tgen", "keys", "gen"); err != nil {
+		t.Fatalf("arc --home=~/tgen keys gen: %v\n%s", err, errs)
+	} else if want := "wrote the identity in " + filepath.Join(home, "tgen"); !strings.Contains(errs, want) {
+		t.Errorf("keys gen said %q, want %q", errs, want)
+	}
+	if exists(filepath.Join(work, "~")) {
+		t.Error("arc made a folder named ~ in the working directory")
+	}
+	if got, want := homeLine(t, "--home=~/tgen"), "home "+filepath.Join(home, "tgen")+", chosen by --home"; got != want {
+		t.Errorf("whoami says %q, want %q", got, want)
+	}
+	t.Setenv("ARC_HOME", "~/tgen")
+	if got, want := homeLine(t), "home "+filepath.Join(home, "tgen")+", chosen by ARC_HOME"; got != want {
+		t.Errorf("whoami says %q, want %q", got, want)
+	}
+}
+
+// The home is printed as a clean absolute path. A symlink keeps its own name.
+func TestTheHomeIsAnAbsoluteCleanPath(t *testing.T) {
+	user(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	for _, dir := range []string{"relgen", "homes//./flagH", "../" + filepath.Base(work) + "/homes/x"} {
+		identity(t, filepath.Join(work, filepath.Clean(dir)))
+		want := "home " + filepath.Join(work, filepath.Clean(dir)) + ", chosen by --home"
+		if strings.HasPrefix(dir, "..") {
+			want = "home " + filepath.Join(work, "homes", "x") + ", chosen by --home"
+		}
+		if got := homeLine(t, "--home", dir); got != want {
+			t.Errorf("--home %s: whoami says %q, want %q", dir, got, want)
+		}
+	}
+	if err := os.Symlink(filepath.Join(work, "relgen"), filepath.Join(work, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := homeLine(t, "--home", "link/"), "home "+filepath.Join(work, "link")+", chosen by --home"; got != want {
+		t.Errorf("a symlinked home: whoami says %q, want %q", got, want)
+	}
+}
+
+// When whoami finds no identity, it names the home and its rule. A home that
+// it cannot read says so, and does not ask for a new identity.
+func TestAFailedWhoamiNamesTheHome(t *testing.T) {
+	home := user(t)
+	_, _, err := runErr(t, "whoami")
+	if err == nil || !strings.Contains(err.Error(), "no identity in "+filepath.Join(home, ".arc")+", chosen by ~/.arc") {
+		t.Errorf("whoami in a fresh home gave %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder of mode 000")
+	}
+	locked := t.TempDir()
+	identity(t, locked)
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	_, _, err = runErr(t, "--home", locked, "whoami")
+	if err == nil || !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), locked) || strings.Contains(err.Error(), "make one") {
+		t.Errorf("whoami of a home that it cannot read gave %v", err)
+	}
 }
 
 // lock makes dir unreadable until the test ends, as mode 000 or a home
@@ -193,12 +323,12 @@ func TestTwoHomesWithAnIdentityWarn(t *testing.T) {
 	dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
 	identity(t, dotArc)
 
-	if _, errs, err := runDefaultErr(t, "whoami"); err != nil || errs != "" {
+	if _, errs, err := runErr(t, "whoami"); err != nil || errs != "" {
 		t.Fatalf("with one home, arc whoami: %v, warned %q", err, errs)
 	}
 	identity(t, old)
 	for _, args := range [][]string{{"whoami"}, {"keys", "list"}, {"contacts"}} {
-		_, errs, err := runDefaultErr(t, args...)
+		_, errs, err := runErr(t, args...)
 		if err != nil {
 			t.Fatalf("arc %s: %v", strings.Join(args, " "), err)
 		}
@@ -207,7 +337,7 @@ func TestTwoHomesWithAnIdentityWarn(t *testing.T) {
 		}
 	}
 	t.Setenv("ARC_HOME", dotArc)
-	if _, errs, err := runDefaultErr(t, "whoami"); err != nil || errs != "" {
+	if _, errs, err := runErr(t, "whoami"); err != nil || errs != "" {
 		t.Fatalf("with ARC_HOME, arc whoami: %v, warned %q", err, errs)
 	}
 }
@@ -221,7 +351,7 @@ func TestAnUnreadableDotArcStopsArc(t *testing.T) {
 	other := identity(t, old)
 	lock(t, dotArc)
 
-	out, errs, err := runDefaultErr(t, "whoami")
+	out, errs, err := runErr(t, "whoami")
 	if err == nil || strings.Contains(out, other) {
 		t.Fatalf("arc whoami used the identity of ~/.config/arc: %q", out)
 	}
@@ -239,7 +369,7 @@ func TestAnUnreadableOlderHomeStopsArc(t *testing.T) {
 	lock(t, old)
 
 	for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
-		_, _, err := runDefaultErr(t, args...)
+		_, _, err := runErr(t, args...)
 		if err == nil || !strings.Contains(err.Error(), "cannot read the home "+old) {
 			t.Errorf("arc %s: %v, want an error that names %s", strings.Join(args, " "), err, old)
 		}
@@ -261,7 +391,7 @@ func TestAnUnreadableDefaultIsNoMissingIdentity(t *testing.T) {
 	if err := os.Chmod(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := runDefaultErr(t, "whoami")
+	_, _, err := runErr(t, "whoami")
 	if err == nil || strings.Contains(err.Error(), "keys gen") || !strings.Contains(err.Error(), path) {
 		t.Fatalf("arc whoami: %v, want an error that names %s", err, path)
 	}
@@ -279,7 +409,7 @@ func TestAnUnreadableDefaultStopsKeysGen(t *testing.T) {
 	if err := os.Chmod(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := runDefaultErr(t, "keys", "gen")
+	_, _, err := runErr(t, "keys", "gen")
 	if err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("arc keys gen: %v, want an error that names %s", err, path)
 	}

@@ -303,7 +303,7 @@ func publicPath(dir string) string   { return filepath.Join(dir, "public") }
 // chosen returns the directory of the identity that the command uses, and
 // what chose it: --key, ARC_KEY, or the default.
 func chosen(command *cobra.Command) (string, string, error) {
-	root, err := rootDir(command)
+	root, why, err := rootSource(command)
 	if err != nil {
 		return "", "", err
 	}
@@ -315,10 +315,11 @@ func chosen(command *cobra.Command) (string, string, error) {
 	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
 		name, source = strings.TrimSpace(string(body)), "the default"
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", "", fmt.Errorf("cannot read the default identity: %w", err)
+		// A home that arc cannot read is not a home with no identity.
+		return "", "", fmt.Errorf("cannot read the home %s, chosen by %s: %w", root, why, err)
 	}
 	if name == "" {
-		return "", "", errors.New("no identity: make one with arc keys gen, or add one with arc keys add")
+		return "", "", fmt.Errorf("no identity in %s, chosen by %s: make one with arc keys gen, or add one with arc keys add", root, why)
 	}
 	dir := filepath.Join(citizensDir(root), name)
 	if !validName(name) {
@@ -467,6 +468,7 @@ func keysCommand() *cobra.Command {
 			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
+			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", root) //arc:raw-ok a folder of this machine
 			showSeed(command.ErrOrStderr(), words, passphrase != "")
 			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
@@ -504,6 +506,7 @@ func keysCommand() *cobra.Command {
 			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
+			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", root)   //arc:raw-ok a folder of this machine
 			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
 		},
@@ -682,7 +685,11 @@ func whoamiCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\nchosen by %s\n", filepath.Base(dir), strings.TrimSpace(string(public)), source)
+			root, why, err := rootSource(command)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\nchosen by %s\nhome %s, chosen by %s\n", filepath.Base(dir), strings.TrimSpace(string(public)), source, root, why) //arc:raw-ok a folder of this machine
 			return nil
 		},
 	}

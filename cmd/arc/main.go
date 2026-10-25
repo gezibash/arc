@@ -105,26 +105,57 @@ func root() *cobra.Command {
 // rootDir is the directory of arc. It holds one directory for each identity,
 // and the files of a relay that this machine runs.
 func rootDir(command *cobra.Command) (string, error) {
-	if dir, _ := command.Flags().GetString("home"); dir != "" {
-		return dir, nil
-	}
-	if dir := os.Getenv("ARC_HOME"); dir != "" {
-		return dir, nil
-	}
+	dir, _, err := rootSource(command)
+	return dir, err
+}
+
+// rootSource is rootDir, and the rule that chose it: --home, ARC_HOME,
+// ~/.arc, or the home of an older arc.
+func rootSource(command *cobra.Command) (string, string, error) {
 	user, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	for _, given := range []struct{ dir, why string }{
+		{flagString(command, "home"), "--home"},
+		{os.Getenv("ARC_HOME"), "ARC_HOME"},
+	} {
+		if given.dir != "" {
+			dir, err := absHome(user, given.dir)
+			return dir, given.why, err
+		}
 	}
 	dir, err := defaultRoot(user)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	if old := filepath.Join(user, ".config", "arc"); dir != old && holdsIdentity(dir) && holdsIdentity(old) {
+	old := filepath.Join(user, ".config", "arc")
+	if dir != old && holdsIdentity(dir) && holdsIdentity(old) {
 		if _, warned := homeWarned.LoadOrStore(command.Root(), true); !warned {
 			fmt.Fprintf(command.ErrOrStderr(), "arc: warning: both %s and %s hold an identity. arc uses %s, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.\n", dir, old, dir, old)
 		}
 	}
-	return dir, nil
+	if dir == old {
+		return dir, "~/.config/arc, the home of an older arc", nil
+	}
+	return dir, "~/.arc", nil
+}
+
+func flagString(command *cobra.Command, name string) string {
+	value, _ := command.Flags().GetString(name)
+	return value
+}
+
+// absHome is a home that --home or ARC_HOME gives, as a clean absolute
+// path. A leading ~ is the user's home, as a shell expands it: bash does
+// not expand it after =, as in --home=~/arc. A symlink keeps its own name.
+func absHome(user, dir string) (string, error) {
+	if dir == "~" {
+		dir = user
+	} else if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		dir = filepath.Join(user, rest)
+	}
+	return filepath.Abs(dir)
 }
 
 // homeWarned holds each run of arc, by its root command, that warned of
