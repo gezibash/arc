@@ -314,6 +314,8 @@ func chosen(command *cobra.Command) (string, string, error) {
 		name, source = env, "ARC_KEY"
 	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
 		name, source = strings.TrimSpace(string(body)), "the default"
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("cannot read the default identity: %w", err)
 	}
 	if name == "" {
 		return "", "", errors.New("no identity: make one with arc keys gen, or add one with arc keys add")
@@ -370,6 +372,13 @@ func defaultName(root string) string {
 // default. A caller that made the key passes it as known, so a sealed key does
 // not ask for its passphrase again.
 func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys.Key, err error) {
+	// A default that arc cannot read stops the add before it writes a key:
+	// keys gen shows the seed only after the add.
+	body, err := os.ReadFile(defaultPath(root))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return keys.Key{}, fmt.Errorf("cannot read the default identity: %w", err)
+	}
+	first := strings.TrimSpace(string(body)) == ""
 	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
 		return keys.Key{}, err
 	}
@@ -416,7 +425,7 @@ func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys
 		}
 		return keys.Key{}, err
 	}
-	if defaultName(root) == "" {
+	if first {
 		if err := os.WriteFile(defaultPath(root), []byte(name+"\n"), 0o600); err != nil {
 			return keys.Key{}, err
 		}

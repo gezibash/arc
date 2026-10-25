@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -649,5 +650,56 @@ func TestAHeadFixStaysWhenTheLostPageMovesUp(t *testing.T) {
 	a.must("journal", "", "fix", "arc/loss/1", "head", "fixed", "at", "the", "number")
 	if got := a.must("journal", "", "read", lost); !strings.HasSuffix(got, "---\nhead fixed at the number\n") {
 		t.Errorf("after a fix at the number, read %q", got)
+	}
+}
+
+// tailOf runs journal tail on the address until the live events stop, and
+// returns its output.
+func tailOf(t *testing.T, c *citizen, address string, live []nostr.Event) string {
+	t.Helper()
+	c.env.live = make(chan nostr.Event, len(live)+1)
+	done := make(chan string)
+	go func() {
+		var out bytes.Buffer
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		Run(ctx, c.env, Installed{Manifest: specManifests(t)["journal"], Author: c.author, Name: "journal"}, []string{"tail", address},
+			Stdio{In: strings.NewReader(""), Out: &out, Err: &bytes.Buffer{}})
+		done <- out.String()
+	}()
+	time.Sleep(100 * time.Millisecond)
+	for _, event := range live {
+		c.env.live <- event
+	}
+	time.Sleep(300 * time.Millisecond)
+	close(c.env.live)
+	return <-done
+}
+
+// tail shows the head of a page before its entries, and the entries in time
+// order, though they are of one second and come in any order (#420: a write
+// and an append in one second came out of the store poll as the entry, then
+// the page).
+func TestTailShowsThePageBeforeItsEntries(t *testing.T) {
+	want := pageHeader + "first note\nsecond note\nthird note\n"
+	for range 10 {
+		c := newCitizen(t)
+		c.must("journal", pageHeader+"first note\n", "write", page)
+		c.must("journal", "", "append", page, "second", "note")
+		c.must("journal", "", "append", page, "third", "note")
+		if got := tailOf(t, c, page, nil); got != want {
+			t.Fatalf("tail of the stored page showed %q, want %q", got, want)
+		}
+	}
+	// The same events, live, newest first.
+	c := newCitizen(t)
+	c.must("journal", pageHeader+"first note\n", "write", page)
+	c.must("journal", "", "append", page, "second", "note")
+	c.must("journal", "", "append", page, "third", "note")
+	events := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
+	slices.SortFunc(events, func(a, b nostr.Event) int { return strings.Compare(b.ID.Hex(), a.ID.Hex()) })
+	fresh := c.device()
+	if got := tailOf(t, fresh, page, events); got != want {
+		t.Fatalf("tail of live events in any order showed %q, want %q", got, want)
 	}
 }
