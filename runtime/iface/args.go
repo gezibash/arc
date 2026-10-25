@@ -84,7 +84,9 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 			positionals = append(positionals, words[i:]...)
 			break
 		}
-		if !strings.HasPrefix(word, "-") || word == "-" {
+		// A word of dashes only, such as the --- of front matter, is text,
+		// not a flag (#398). Only -- ends the flags.
+		if !strings.HasPrefix(word, "-") || word == "-" || len(word) > 2 && strings.Trim(word, "-") == "" {
 			positionals = append(positionals, word)
 			continue
 		}
@@ -229,7 +231,8 @@ func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
 		return eventRef(text)
 	case "address":
 		if !regexp.MustCompile(a.Pattern).MatchString(text) {
-			return nil, fmt.Errorf("%q does not match %s", text, a.Pattern)
+			// The pattern is for the manifest, not for the citizen (#398).
+			return nil, fmt.Errorf("%q is not an address that this command takes", text)
 		}
 		return text, nil
 	case "lines":

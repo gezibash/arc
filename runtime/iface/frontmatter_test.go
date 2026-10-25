@@ -55,9 +55,9 @@ func TestAWriteFillsInTheFrontMatter(t *testing.T) {
 	}{
 		"title flag":   {"plain text\n", []string{"--title", "From the flag"}, "---\ntitle: From the flag\nnotebook: hrs/ablations\npage: 1\n" + stamps + "plain text\n"},
 		"heading":      {"# Decisions\nbody\n", nil, "---\ntitle: Decisions\nnotebook: hrs/ablations\npage: 1\n" + stamps + "# Decisions\nbody\n"},
-		"date":         {"no heading\n", nil, "---\ntitle: 2026-09-29\nnotebook: hrs/ablations\npage: 1\n" + stamps + "no heading\n"},
+		"first line":   {"no heading\n", nil, "---\ntitle: no heading\nnotebook: hrs/ablations\npage: 1\n" + stamps + "no heading\n"},
 		"partial":      {"---\ntitle: Notes\ntype: decision\n---\nbody\n", nil, "---\ntitle: Notes\ntype: decision\nnotebook: hrs/ablations\npage: 1\n" + stamps + "body\n"},
-		"empty title":  {"---\ntitle: \n---\nNotes\n", nil, "---\ntitle: 2026-09-29\nnotebook: hrs/ablations\npage: 1\n" + stamps + "Notes\n"},
+		"empty title":  {"---\ntitle: \n---\nNotes\n", nil, "---\ntitle: Notes\nnotebook: hrs/ablations\npage: 1\n" + stamps + "Notes\n"},
 		"quoted title": {"text\n", []string{"--title", "\"Quoted\" start"}, "---\ntitle: \"\\\"Quoted\\\" start\"\nnotebook: hrs/ablations\npage: 1\n" + stamps + "text\n"},
 	} {
 		t.Run(name, func(t *testing.T) {

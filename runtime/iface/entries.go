@@ -576,7 +576,9 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		return "", errors.New("no text: give the page on the standard input, or give a --title")
 	}
 	if title == "" {
-		title = r.today()
+		// The first line, and not the date: only today's page has the date
+		// as its title, so that today names one page (#398).
+		title = firstLine(body)
 	}
 	for key, want := range map[string]string{"notebook": book, "page": number} {
 		if given := str(fields[key]); given != "" && given != want {
@@ -612,6 +614,20 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		return "", err
 	}
 	return address, nil
+}
+
+// firstLine is the first line of the text that holds more than blanks, cut
+// to 80 characters.
+func firstLine(body string) string {
+	for line := range strings.SplitSeq(body, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			if r := []rune(line); len(r) > 80 {
+				line = string(r[:80])
+			}
+			return line
+		}
+	}
+	return ""
 }
 
 // heading is the text of the first "# " heading.

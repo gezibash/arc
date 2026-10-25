@@ -452,7 +452,7 @@ func TestAPageNumberTooLargeIsRefused(t *testing.T) {
 	if _, err := c.run("journal", "text\n", "write", "hrs/log/9223372036854775807", "--title", "Huge"); err == nil {
 		t.Fatal("a write of page 9223372036854775807 was kept")
 	}
-	if got := c.must("journal", "text\n", "write", "hrs/log/999999999", "--title", "Last"); got != "" {
+	if got := c.must("journal", "text\n", "write", "hrs/log/999999999", "--title", "Last"); got != "hrs/log/999999999\n" {
 		t.Fatalf("write printed %q", got)
 	}
 	if _, err := c.run("journal", "text\n", "new", "hrs/log"); err == nil {
@@ -740,5 +740,25 @@ func TestTheNoticeOfLostPagesNamesThem(t *testing.T) {
 	}
 	if !strings.Contains(errs, `"Tablet" is deleted, so "Phone", made at arc/test/1 offline too, moved up from arc/test/1-`) {
 		t.Errorf("the delete said %q, want the titles of both pages", errs)
+	}
+}
+
+// The lows of the user test of #395 (#398): a word of dashes is text,
+// write of next and fix print the address, and a usage error is one line.
+func TestTheLowsOfTheJournalUserTest(t *testing.T) {
+	c := newCitizen(t)
+	c.must("journal", "first\n", "write", "hrs/log/1", "--title", "First")
+	if got := c.must("journal", "second\n", "write", "hrs/log/next", "--title", "Second"); got != "hrs/log/2\n" {
+		t.Errorf("write of next printed %q, want hrs/log/2", got)
+	}
+	c.must("journal", "", "append", "hrs/log/1", "---")
+	if got := c.must("journal", "", "read", "hrs/log/1"); !strings.HasSuffix(got, "---\nfirst\n---\n") {
+		t.Errorf("an append of --- reads %q", got)
+	}
+	if got := c.must("journal", "", "fix", "hrs/log/1", "fixed"); got != "hrs/log/1\n" {
+		t.Errorf("fix printed %q, want hrs/log/1", got)
+	}
+	if _, err := c.run("journal", "", "append"); err == nil || strings.Contains(err.Error(), "\n") || !strings.Contains(err.Error(), "; usage: ") {
+		t.Errorf("a usage error is %q, want one line with the usage", err)
 	}
 }

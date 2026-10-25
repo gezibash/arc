@@ -431,8 +431,9 @@ The words `next`, `today` and `at` MUST NOT name a page.
 
 **Front matter.** `write` fills in each missing field of the front matter:
 `notebook` and `page` from the address, and `title` from the `title`
-template, else from the first `# ` heading of the text, else from the UTC
-date. A field that is given MUST match the address, and a title that is
+template, else from the first `# ` heading of the text, else from its
+first line that holds more than blanks, cut to 80 characters. Only a page
+of `today` gets the date as its title. A field that is given MUST match the address, and a title that is
 given MUST match the `title` template.
 
 | Op | Templates | Effect |

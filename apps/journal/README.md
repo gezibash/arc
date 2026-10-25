@@ -63,7 +63,7 @@ arc journal toc arc/design
   `write`. The words `next`, `today` and `at` never name a page.
 - arc fills in the front matter that the text does not give: `notebook`
   and `page` from the address, and `title` from `--title`, else from the
-  first `# ` heading, else from the date. A field that is given must match.
+  first `# ` heading, else from its first line. Only `add` and `today` make a page titled with the date. A field that is given must match.
 - `write` of a page that exists fails. Add an entry, or fix one.
 - `history` lists the page and each entry and fix, oldest first, with the
   address of each entry: `<page>/<id>`. `fix <page>/<id> <text>` replaces
