@@ -266,3 +266,28 @@ func TestAnUnreadableDefaultIsNoMissingIdentity(t *testing.T) {
 		t.Fatalf("arc whoami: %v, want an error that names %s", err, path)
 	}
 }
+
+// A default file that arc cannot read stops arc keys gen before it writes
+// an identity. Else arc keeps a key whose seed nobody saw.
+func TestAnUnreadableDefaultStopsKeysGen(t *testing.T) {
+	home := user(t)
+	identity(t, filepath.Join(home, ".arc"))
+	path := filepath.Join(home, ".arc", "default")
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file of mode 000")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runDefaultErr(t, "keys", "gen")
+	if err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("arc keys gen: %v, want an error that names %s", err, path)
+	}
+	entries, err := os.ReadDir(filepath.Join(home, ".arc", "citizens"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("arc keys gen kept %d identities, want the 1 from before", len(entries))
+	}
+}

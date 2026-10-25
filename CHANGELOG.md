@@ -32,7 +32,8 @@ All notable changes to ARC are recorded here. The format follows
   `sudo arc`, each command fails with an error that names the folder. arc
   never uses the identity of the other folder in its place, and never makes
   a new one. A `default` file that arc cannot read is an error too, not a
-  missing identity.
+  missing identity, and `arc keys gen`, `recover` and `add` stop before they
+  write a key.
 - `arc install` refuses the name of an entry of the arc home as the name of
   an app.
 
