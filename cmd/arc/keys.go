@@ -314,6 +314,8 @@ func chosen(command *cobra.Command) (string, string, error) {
 		name, source = env, "ARC_KEY"
 	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
 		name, source = strings.TrimSpace(string(body)), "the default"
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("cannot read the default identity: %w", err)
 	}
 	if name == "" {
 		return "", "", errors.New("no identity: make one with arc keys gen, or add one with arc keys add")
