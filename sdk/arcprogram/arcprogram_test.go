@@ -462,9 +462,11 @@ func fakeArc(t *testing.T, script string) string {
 // in a program, and an error that follows a warning is one line, with no
 // warning in it.
 func TestAWarningOfArcShowsOnceAndAnErrorIsOneLine(t *testing.T) {
-	const warning = "arc: warning: both /h/.arc and /h/.config/arc hold an identity. arc uses /h/.arc, because it holds an identity"
+	// arc escaped the newline of the path itself: the client keeps that
+	// escape as it is, and does not escape it twice.
+	const warning = `arc: warning: both /h\narc: x/.arc and /h/.config/arc hold an identity. arc uses /h\narc: x/.arc, because it holds an identity`
 	key := strings.Repeat("ab", 32)
-	program := fakeArc(t, `echo "`+warning+`" >&2
+	program := fakeArc(t, `printf '%s\n' '`+warning+`' >&2
 if [ -n "$FAIL" ]; then echo "arc: no identity in /h/.arc" >&2; echo "chosen by ~/.arc" >&2; exit 1; fi
 echo `+key)
 	var warnings strings.Builder

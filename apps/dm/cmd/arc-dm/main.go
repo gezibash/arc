@@ -94,8 +94,9 @@ func main() {
 	stop()
 	if err != nil && !errors.Is(err, flag.ErrHelp) {
 		// An error can hold what arc wrote, which can hold text that a
-		// relay chose.
-		fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
+		// relay chose. arc escaped its own lines: escape the rest, and
+		// keep the escapes of arc as they are.
+		fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLineData(err.Error()))
 		os.Exit(1)
 	}
 }

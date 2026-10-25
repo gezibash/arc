@@ -132,7 +132,8 @@ func rootSource(command *cobra.Command) (string, string, error) {
 	old := filepath.Join(user, ".config", "arc")
 	if warning := twoHomes(user, dir); warning != "" {
 		if _, warned := homeWarned.LoadOrStore(command.Root(), true); !warned {
-			fmt.Fprintln(command.ErrOrStderr(), "arc: warning: "+warning)
+			// A path can hold any character, such as a newline in HOME.
+			fmt.Fprintln(command.ErrOrStderr(), "arc: warning: "+terminal.EscapeLine(warning))
 		}
 	}
 	if dir == old {
@@ -158,7 +159,7 @@ func absHome(user, dir string) (string, error) {
 		// A shell expands ~root to the home of a user, and ~+ to the working
 		// directory, so a folder of that name here would be one rm -rf away
 		// from the folder that it names there (#411).
-		return "", fmt.Errorf("the home %q starts with a ~ that a shell expands to another folder: arc expands only ~ and ~/; give the whole path", dir)
+		return "", fmt.Errorf("the home \"%s\" starts with a ~ that a shell expands to another folder: arc expands only ~ and ~/; give the whole path", dir)
 	}
 	return filepath.Abs(dir)
 }
@@ -173,7 +174,9 @@ func twoHomes(user, dir string) string {
 	case dir == home && holdsIdentity(home) && holdsIdentity(old):
 		return fmt.Sprintf("both %s and %s hold an identity. arc uses %s, because it holds an identity, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.", home, old, home, old)
 	case dir == old && holdsIdentity(old):
-		if holds, _ := holdsHome(home, "~/.arc"); holds {
+		// Anything at ~/.arc: entries of arc, or a link that leads to no
+		// home, as a dangling link or a link to ".".
+		if _, err := os.Lstat(home); err == nil {
 			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and reads and writes nothing in %s. Set ARC_HOME to choose the home.", home, old, old, home, home)
 		}
 	}

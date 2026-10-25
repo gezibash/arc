@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // user makes a fresh user home, with no ARC_HOME and no ARC_KEY.
@@ -592,5 +594,78 @@ func TestADotArcThatIsNoFolderStopsArc(t *testing.T) {
 		if entries, _ := os.ReadDir(citizensDir(old)); len(entries) != 1 {
 			t.Errorf("a ~/.arc that is a %s: ~/.config/arc holds %d identities, want 1", shape, len(entries))
 		}
+	}
+}
+
+// hostileHome is a HOME whose name holds a newline, a forged line of arc
+// and control characters.
+func hostileHome(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "h\narc: fake forged\x1b[2J\r\x07")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("ARC_HOME", "")
+	t.Setenv("ARC_KEY", "")
+	return dir
+}
+
+// Both warnings of two homes escape each path on one line: a HOME with a
+// newline and control characters forges no line of arc (#431).
+func TestTheWarningsOfTwoHomesAreOneEscapedLine(t *testing.T) {
+	for _, lone := range []bool{false, true} {
+		home := hostileHome(t)
+		identity(t, filepath.Join(home, ".config", "arc"))
+		if lone {
+			if err := os.MkdirAll(filepath.Join(home, ".arc"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".arc", "wake.toml"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			identity(t, filepath.Join(home, ".arc"))
+		}
+		_, errs, err := runErr(t, "whoami")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(errs, "\n") != 1 || !strings.HasPrefix(errs, "arc: warning: ") || strings.ContainsAny(errs, "\x1b\r\x07") || strings.Contains(errs, "\narc: fake") ||
+			!strings.Contains(errs, `h\narc: fake forged\x1b[2J\x0d\x07`) {
+			t.Errorf("with a lone ~/.arc %v, the warning is %q, want one escaped line", lone, errs)
+		}
+	}
+}
+
+// A ~/.arc that is a dangling link, or a link to ".", gives way to the
+// identity of ~/.config/arc, and warns, as a lone wake.toml does.
+func TestALinkThatLeadsToNoHomeWarns(t *testing.T) {
+	for _, target := range []string{"nowhere", "."} {
+		home := user(t)
+		old := filepath.Join(home, ".config", "arc")
+		older := identity(t, old)
+		if err := os.Symlink(target, filepath.Join(home, ".arc")); err != nil {
+			t.Fatal(err)
+		}
+		out, errs, err := runErr(t, "whoami")
+		if err != nil || !strings.Contains(out, older) {
+			t.Fatalf("with ~/.arc -> %s, arc whoami: %v, %q", target, err, out)
+		}
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc uses "+old+", because ") {
+			t.Errorf("with ~/.arc -> %s, arc warned %q, want the home in use and why", target, errs)
+		}
+	}
+}
+
+// The refusal of a ~ home names the home escaped once (#431).
+func TestTheRefusalOfATildeHomeIsEscapedOnce(t *testing.T) {
+	user(t)
+	_, _, err := runErr(t, "--home", "~x\ny/z", "whoami")
+	if err == nil || !strings.Contains(err.Error(), "\"~x\ny/z\"") {
+		t.Fatalf("the refusal is %v, want the home as given, for the edge to escape once", err)
+	}
+	if got := terminal.EscapeLine(err.Error()); !strings.Contains(got, `"~x\ny/z"`) {
+		t.Errorf("the escaped refusal is %q, want \\n once", got)
 	}
 }

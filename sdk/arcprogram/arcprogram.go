@@ -412,7 +412,7 @@ func (a Arc) warn(text string) {
 			continue
 		}
 		if _, done := warned.LoadOrStore(line, true); !done {
-			fmt.Fprintln(a.Warnings, terminal.EscapeLine(line))
+			fmt.Fprintln(a.Warnings, terminal.EscapeLineData(line))
 		}
 	}
 }

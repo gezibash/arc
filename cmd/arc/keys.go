@@ -323,7 +323,7 @@ func chosen(command *cobra.Command) (string, string, error) {
 	}
 	dir := filepath.Join(citizensDir(root), name)
 	if !validName(name) {
-		return "", "", fmt.Errorf("no identity %q on this machine: see arc keys list", name)
+		return "", "", fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 	}
 	if _, err := os.Stat(dir); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -613,7 +613,7 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			if _, err := os.Stat(filepath.Join(citizensDir(root), args[0])); err != nil || !validName(args[0]) {
-				return fmt.Errorf("no identity %q on this machine: see arc keys list", args[0])
+				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", args[0])
 			}
 			if err := os.WriteFile(defaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
 				return err
@@ -637,7 +637,7 @@ func keysCommand() *cobra.Command {
 			name := args[0]
 			dir := filepath.Join(citizensDir(root), name)
 			if _, err := os.Stat(dir); err != nil || !validName(name) {
-				return fmt.Errorf("no identity %q on this machine: see arc keys list", name)
+				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
 				fmt.Fprintf(command.OutOrStdout(), "Remove %s, its key and its store? [y/N] ", name)

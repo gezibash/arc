@@ -845,6 +845,9 @@ older arc, or an older arc-dm, uses the identity of `~/.config/arc` on the
 same machine. If `~/.arc` holds an entry of arc but no identity, and arc
 uses `~/.config/arc` by step 3, each command MUST warn once in the same way,
 and say that arc uses `~/.config/arc` because `~/.arc` holds no identity.
+The same holds for a `~/.arc` that is a link to no home, such as a
+dangling link or a link to `.`. Each warning MUST escape every path on its
+one line, as an error line does: a path can hold a newline.
 arc MUST NOT write to the home that it does not use. If arc cannot read the `default` file
 of its home, `arc keys gen`, `arc keys recover` and `arc keys add` MUST fail
 before they write a key: else arc keeps a key whose seed nobody saw. `arc keys gen` makes an identity
