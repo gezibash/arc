@@ -332,8 +332,8 @@ func TestTwoHomesWithAnIdentityWarn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("arc %s: %v", strings.Join(args, " "), err)
 		}
-		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, dotArc) || !strings.Contains(errs, old) {
-			t.Errorf("arc %s did not warn once, with both homes: %q", strings.Join(args, " "), errs)
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, old) || !strings.Contains(errs, "arc uses "+dotArc+", because it holds an identity") {
+			t.Errorf("arc %s did not warn once, with both homes and the one in use: %q", strings.Join(args, " "), errs)
 		}
 	}
 	t.Setenv("ARC_HOME", dotArc)
@@ -423,18 +423,31 @@ func TestAnUnreadableDefaultStopsKeysGen(t *testing.T) {
 }
 
 // A ~/.arc that holds only a wake.toml does not hide the identity of an
-// older home (#408).
+// older home (#408). arc warns that it uses the older home and why, and
+// writes nothing to ~/.arc.
 func TestALoneWakeFileDoesNotHideTheOlderIdentity(t *testing.T) {
 	home := user(t)
-	older := identity(t, filepath.Join(home, ".config", "arc"))
-	if err := os.MkdirAll(filepath.Join(home, ".arc"), 0o700); err != nil {
+	dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+	older := identity(t, old)
+	if err := os.MkdirAll(dotArc, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".arc", "wake.toml"), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dotArc, "wake.toml"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := whoami(t); got != older {
-		t.Errorf("arc picked %s, want the identity %s of ~/.config/arc", got, older)
+	out, errs, err := runErr(t, "whoami")
+	if err != nil || !strings.Contains(out, older) {
+		t.Fatalf("arc whoami: %v, want the identity %s of ~/.config/arc in %q", err, older, out)
+	}
+	if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc uses "+old+", because "+dotArc+" holds no identity") {
+		t.Errorf("arc whoami did not warn once with the home in use and why: %q", errs)
+	}
+	if _, _, err := runErr(t, "keys", "gen"); err != nil {
+		t.Fatalf("arc keys gen: %v", err)
+	}
+	entries, err := os.ReadDir(dotArc)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "wake.toml" {
+		t.Errorf("arc wrote to %s, which it does not use: %v, %v", dotArc, entries, err)
 	}
 }
 

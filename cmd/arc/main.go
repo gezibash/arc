@@ -130,9 +130,9 @@ func rootSource(command *cobra.Command) (string, string, error) {
 		return "", "", err
 	}
 	old := filepath.Join(user, ".config", "arc")
-	if dir != old && holdsIdentity(dir) && holdsIdentity(old) {
+	if warning := twoHomes(user, dir); warning != "" {
 		if _, warned := homeWarned.LoadOrStore(command.Root(), true); !warned {
-			fmt.Fprintf(command.ErrOrStderr(), "arc: warning: both %s and %s hold an identity. arc uses %s, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.\n", dir, old, dir, old)
+			fmt.Fprintln(command.ErrOrStderr(), "arc: warning: "+warning)
 		}
 	}
 	if dir == old {
@@ -160,6 +160,23 @@ func absHome(user, dir string) (string, error) {
 		return "", fmt.Errorf("the home %q names the home of another user: arc expands only ~ and ~/; give the whole path", dir)
 	}
 	return filepath.Abs(dir)
+}
+
+// twoHomes is the warning when both default homes exist, which says the
+// home that arc uses and why, or "" when one home exists. arc writes
+// nothing to the other home.
+func twoHomes(user, dir string) string {
+	home := filepath.Join(user, ".arc")
+	old := filepath.Join(user, ".config", "arc")
+	switch {
+	case dir == home && holdsIdentity(home) && holdsIdentity(old):
+		return fmt.Sprintf("both %s and %s hold an identity. arc uses %s, because it holds an identity, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.", home, old, home, old)
+	case dir == old && holdsIdentity(old):
+		if holds, _ := holdsHome(home, "~/.arc"); holds {
+			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and writes nothing to %s. Move the entries of %s into %s, or set ARC_HOME.", home, old, old, home, home, home, old)
+		}
+	}
+	return ""
 }
 
 // homeWarned holds each run of arc, by its root command, that warned of

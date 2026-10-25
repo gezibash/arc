@@ -835,9 +835,13 @@ steps 3 and 4, for example a folder of mode 000 or a folder that root owns
 after `sudo arc`, arc MUST fail with an error that names the folder. It
 MUST NOT go to the next step: that would use, or make, another identity. If
 `~/.arc` and `~/.config/arc` both hold an identity, and arc uses `~/.arc`
-by step 3, each command MUST warn once on the standard error, and name both
-folders. An older arc, or an older arc-dm, uses the identity of
-`~/.config/arc` on the same machine. If arc cannot read the `default` file
+by step 3, each command MUST warn once on the standard error, name both
+folders, and say that arc uses `~/.arc` because it holds an identity. An
+older arc, or an older arc-dm, uses the identity of `~/.config/arc` on the
+same machine. If `~/.arc` holds an entry of arc but no identity, and arc
+uses `~/.config/arc` by step 3, each command MUST warn once in the same way,
+and say that arc uses `~/.config/arc` because `~/.arc` holds no identity.
+arc MUST NOT write to the home that it does not use. If arc cannot read the `default` file
 of its home, `arc keys gen`, `arc keys recover` and `arc keys add` MUST fail
 before they write a key: else arc keeps a key whose seed nobody saw. `arc keys gen` makes an identity
 from a new 24-word seed, as docs/delivery/SPEC.md section 3.2 defines.
