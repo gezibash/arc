@@ -790,7 +790,19 @@ func announceCmd() *cobra.Command {
 			}
 			defer sess.Close()
 
-			announcement, err := catalog.AnnounceManifest(command.Context(), sess.Signer, data, nostr.Now())
+			m, err := iface.Parse(data)
+			if err != nil {
+				return err
+			}
+			// A new announcement replaces the old one only if it is newer.
+			// The relays can hold one that this store does not.
+			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {m.ID}}}
+			sess.Node.Pull(command.Context(), mine, sess.Relays)
+			at, err := catalog.After(sess.Node.Store, sess.Key.Public, m.ID, nostr.Now())
+			if err != nil {
+				return err
+			}
+			announcement, err := catalog.AnnounceManifest(command.Context(), sess.Signer, data, at)
 			if err != nil {
 				return err
 			}

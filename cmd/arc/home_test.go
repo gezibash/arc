@@ -115,7 +115,7 @@ func TestARelayKeepsItsOlderHome(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(old, "relay.db"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := defaultRoot(home); got != old {
+	if got, err := defaultRoot(home); err != nil || got != old {
 		t.Fatalf("the home is %s, want %s", got, old)
 	}
 }
@@ -299,5 +299,125 @@ func TestAFailedWhoamiNamesTheHome(t *testing.T) {
 	_, _, err = runErr(t, "--home", locked, "whoami")
 	if err == nil || !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), locked) || strings.Contains(err.Error(), "make one") {
 		t.Errorf("whoami of a home that it cannot read gave %v", err)
+	}
+}
+
+// lock makes dir unreadable until the test ends, as mode 000 or a home
+// that root owns after sudo arc does.
+func lock(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder of mode 000")
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+}
+
+// An older arc that does not see ~/.arc makes a second identity in
+// ~/.config/arc. Each command that picks the default home warns in one line,
+// and names both folders. With ARC_HOME, or with one home, no warning shows.
+func TestTwoHomesWithAnIdentityWarn(t *testing.T) {
+	home := user(t)
+	dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+	identity(t, dotArc)
+
+	if _, errs, err := runErr(t, "whoami"); err != nil || errs != "" {
+		t.Fatalf("with one home, arc whoami: %v, warned %q", err, errs)
+	}
+	identity(t, old)
+	for _, args := range [][]string{{"whoami"}, {"keys", "list"}, {"contacts"}} {
+		_, errs, err := runErr(t, args...)
+		if err != nil {
+			t.Fatalf("arc %s: %v", strings.Join(args, " "), err)
+		}
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, dotArc) || !strings.Contains(errs, old) {
+			t.Errorf("arc %s did not warn once, with both homes: %q", strings.Join(args, " "), errs)
+		}
+	}
+	t.Setenv("ARC_HOME", dotArc)
+	if _, errs, err := runErr(t, "whoami"); err != nil || errs != "" {
+		t.Fatalf("with ARC_HOME, arc whoami: %v, warned %q", err, errs)
+	}
+}
+
+// A ~/.arc that arc cannot read stops arc. It never takes the identity of
+// ~/.config/arc in its place.
+func TestAnUnreadableDotArcStopsArc(t *testing.T) {
+	home := user(t)
+	dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+	identity(t, dotArc)
+	other := identity(t, old)
+	lock(t, dotArc)
+
+	out, errs, err := runErr(t, "whoami")
+	if err == nil || strings.Contains(out, other) {
+		t.Fatalf("arc whoami used the identity of ~/.config/arc: %q", out)
+	}
+	if !strings.Contains(err.Error(), "cannot read the home "+dotArc) {
+		t.Fatalf("the error does not name %s: %v\n%s", dotArc, err, errs)
+	}
+}
+
+// A ~/.config/arc that arc cannot read stops arc too: arc does not make a
+// second identity in ~/.arc.
+func TestAnUnreadableOlderHomeStopsArc(t *testing.T) {
+	home := user(t)
+	old := filepath.Join(home, ".config", "arc")
+	identity(t, old)
+	lock(t, old)
+
+	for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+		_, _, err := runErr(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "cannot read the home "+old) {
+			t.Errorf("arc %s: %v, want an error that names %s", strings.Join(args, " "), err, old)
+		}
+	}
+	if exists(filepath.Join(home, ".arc")) {
+		t.Fatal("arc made ~/.arc in place of the unreadable ~/.config/arc")
+	}
+}
+
+// A default file that arc cannot read is not a missing identity: arc says
+// that it cannot read it, and does not tell the user to make one.
+func TestAnUnreadableDefaultIsNoMissingIdentity(t *testing.T) {
+	home := user(t)
+	identity(t, filepath.Join(home, ".arc"))
+	path := filepath.Join(home, ".arc", "default")
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file of mode 000")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runErr(t, "whoami")
+	if err == nil || strings.Contains(err.Error(), "keys gen") || !strings.Contains(err.Error(), path) {
+		t.Fatalf("arc whoami: %v, want an error that names %s", err, path)
+	}
+}
+
+// A default file that arc cannot read stops arc keys gen before it writes
+// an identity. Else arc keeps a key whose seed nobody saw.
+func TestAnUnreadableDefaultStopsKeysGen(t *testing.T) {
+	home := user(t)
+	identity(t, filepath.Join(home, ".arc"))
+	path := filepath.Join(home, ".arc", "default")
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file of mode 000")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runErr(t, "keys", "gen")
+	if err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("arc keys gen: %v, want an error that names %s", err, path)
+	}
+	entries, err := os.ReadDir(filepath.Join(home, ".arc", "citizens"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("arc keys gen kept %d identities, want the 1 from before", len(entries))
 	}
 }
