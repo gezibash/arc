@@ -49,6 +49,14 @@ func (r *run) unnamed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A write that runs now can hold parts of any age before its draft:
+	// then only events with a blob go.
+	writing := false
+	if r.s.Writing != nil {
+		if writing, err = r.s.Writing(); err != nil {
+			return err
+		}
+	}
 	// The candidates of each address.
 	byAddress := map[string][]nostr.Event{}
 	for _, e := range mine {
@@ -56,7 +64,7 @@ func (r *run) unnamed(ctx context.Context) error {
 		if _, sealed := draft.Gen(e); !sealed || a == nil || draft.Owner(e) != r.s.Citizen {
 			continue
 		}
-		if r.blobs[r.current.BlobID(e.ID)] == nil && r.s.now().Sub(e.CreatedAt.Time()) < unnamedAge {
+		if r.blobs[r.current.BlobID(e.ID)] == nil && (writing || r.s.now().Sub(e.CreatedAt.Time()) < unnamedAge) {
 			continue
 		}
 		byAddress[a[1]] = append(byAddress[a[1]], e)

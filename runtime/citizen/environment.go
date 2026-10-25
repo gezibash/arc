@@ -17,6 +17,7 @@ import (
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/internal/writelock"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/lists"
@@ -119,6 +120,15 @@ func (e *Environment) relaysOf(urls []string) []transport.Transport {
 // Self data, such as a draft of the journal, stays in the store. It goes to
 // no relay; arc sync gives it to the storage citizens of the citizen.
 func (e *Environment) Publish(ctx context.Context, events []nostr.Event, urls []string) error {
+	// A write of self data holds the lock of writes until its last event,
+	// so that a repair keeps the parts that it saved before its draft.
+	if urls == nil && len(events) > 1 && e.Session.storeDir != "" {
+		release, err := writelock.Hold(e.Session.storeDir)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	targets := e.relaysOf(urls)
 	unsent := map[string]error{}
 	for _, event := range events {

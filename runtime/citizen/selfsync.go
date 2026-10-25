@@ -20,6 +20,7 @@ import (
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
+	"github.com/gezibash/arc/internal/writelock"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/selfsync"
@@ -325,6 +326,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Keys:    once(sess.selfKeysAt),
 		Devices: onceList(sess.DeviceList),
 		Opener:  sess.pageOpener(cfg.Installs),
+		Writing: func() (bool, error) { return writelock.Busy(sess.storeDir) },
 		State:   cfg.Dir,
 		Repair:  cfg.Repair,
 		// On the path turn, each pipe goes through TURN, so a rebuild may too.

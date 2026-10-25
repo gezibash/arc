@@ -300,6 +300,13 @@ func TestAStoppedWriteSendsNoParts(t *testing.T) {
 	b.held(8, 8, 8)
 
 	now = now.Add(2 * unnamedAge)
+	// A write that runs now, however slow, can hold parts of any age.
+	b.device.Writing = func() (bool, error) { return true, nil }
+	if r = b.sync(b.device, true, b.sides); r.Repair.UnnamedParts != 0 {
+		t.Fatalf("a repair during a write deleted %d parts with no blob", r.Repair.UnnamedParts)
+	}
+	b.keeps(orphans...)
+	b.device.Writing = func() (bool, error) { return false, nil }
 	r = b.sync(b.device, true, b.sides)
 	if r.Repair.UnnamedParts != 3 {
 		t.Fatalf("a repair after unnamedAge deleted %d parts that no page names; want 3", r.Repair.UnnamedParts)
