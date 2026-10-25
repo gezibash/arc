@@ -96,3 +96,22 @@ func TestAnswererFirst(t *testing.T) {
 		t.Errorf("notes %q, want %q", notes.String(), want)
 	}
 }
+
+// The error of a relay attempt whose data channel does not open names the
+// TURN server, and not a direct path (#427: with path turn, the error read
+// "no direct path, and no path through the relay: no direct path").
+func TestAFailedRelayAttemptNamesTheTURNServer(t *testing.T) {
+	turn := func(context.Context) (Credential, error) {
+		return Credential{URLs: []string{"turns:turn.example:443?transport=tcp"}, Username: "u", Password: "p", QuotaLeft: 1 << 30}, nil
+	}
+	err := Attempts{OnlyRelay: true, TURN: turn, Need: func() int64 { return 0 }}.Run(t.Context(), func(context.Context, Options, time.Duration) error {
+		return ErrNoPath
+	})
+	want := "no direct path, and no path through the relay: the data channel did not open through the TURN server turns:turn.example:443?transport=tcp"
+	if err == nil || err.Error() != want {
+		t.Errorf("error %v, want %q", err, want)
+	}
+	if !errors.Is(err, ErrNoPath) {
+		t.Errorf("error %v is not ErrNoPath", err)
+	}
+}

@@ -24,6 +24,18 @@ const HoldWait = time.Second
 // TURN server of the relay.
 var ErrNoPath = errors.New("no direct path")
 
+// relayNoPath says that the data channel did not open through the TURN
+// server, after the TURN server gave an address. It names the server, so
+// that the error does not read as a direct attempt (#427). It is still an
+// ErrNoPath.
+type relayNoPath struct{ urls []string }
+
+func (e relayNoPath) Error() string {
+	return "the data channel did not open through the TURN server " + strings.Join(e.urls, ", ")
+}
+
+func (relayNoPath) Unwrap() error { return ErrNoPath }
+
 // NoPath is the error after the direct attempts and the relay attempt.
 func NoPath(err error) error {
 	return fmt.Errorf("no direct path, and no path through the relay: %w", err)
@@ -95,6 +107,9 @@ func (a Attempts) Run(ctx context.Context, attempt func(ctx context.Context, opt
 		return NoPath(err)
 	}
 	if err = attempt(ctx, options, 0); errors.Is(err, ErrNoPath) {
+		if err == ErrNoPath && options.TURN != nil { //nolint:errorlint // Only the bare sentinel, which says nothing of the relay; a wrapped one keeps its detail.
+			err = relayNoPath{urls: options.TURN.URLs}
+		}
 		return NoPath(err)
 	}
 	return err

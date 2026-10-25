@@ -571,6 +571,7 @@ func serveCommand() *cobra.Command {
 					// The TURN server answers STUN binding requests too.
 					host, _, _ := net.SplitHostPort(stunAddress)
 					turnConfig.RelayHost = host
+					turnConfig.Logger = logger
 					if address, _ := command.Flags().GetString("turn-tcp"); address != "" {
 						if turnConfig.TCP, err = net.Listen("tcp", address); err != nil {
 							_ = conn.Close()

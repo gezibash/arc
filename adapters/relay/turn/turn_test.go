@@ -1,13 +1,16 @@
 package turn
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -400,5 +403,99 @@ func TestAnAllocationOverTCP(t *testing.T) {
 	}
 	if left := s.Left(k.Public.Hex()); left != 1<<20-5 {
 		t.Errorf("left %d after 5 relayed bytes, want %d", left, 1<<20-5)
+	}
+}
+
+// syncBuffer is a log that a test reads while the server writes it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// The TURN server logs each allocation and each refusal at Info, with the
+// citizen and the address it came from, so an operator sees why a citizen
+// found no path through the relay (#427: aurelia logged nothing about TURN).
+func TestTheTURNServerLogsAllocationsAndRefusals(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log syncBuffer
+	s, err := Serve(conn, Config{Secret: "secret", PublicIP: net.IPv4(127, 0, 0, 1), RelayHost: "127.0.0.1", MinPort: 52000, MaxPort: 52999, Quota: 1 << 20,
+		Logger: slog.New(slog.NewTextHandler(&log, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	web := httptest.NewServer(s)
+	t.Cleanup(web.Close)
+	k := keys.Generate()
+	header, err := AuthHeader(context.Background(), k, http.MethodGet, web.URL+Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, credential := get(t, web, header)
+	server := strings.TrimSuffix(strings.TrimPrefix(credential.URLs[0], "turn:"), "?transport=udp")
+	allocate := func(password string) error {
+		c, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		client, err := pturn.NewClient(&pturn.ClientConfig{TURNServerAddr: server, Username: credential.Username, Password: password, Realm: Realm, Conn: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		if err := client.Listen(); err != nil {
+			t.Fatal(err)
+		}
+		relayed, err := client.Allocate()
+		if err == nil {
+			_ = relayed.Close()
+		}
+		return err
+	}
+	citizen := "citizen=" + k.Public.Hex()[:8]
+	if err := allocate(credential.Password); err != nil {
+		t.Fatal(err)
+	}
+	// The challenge of a good allocation is no refusal.
+	if strings.Contains(log.String(), "turn refused") {
+		t.Errorf("a good allocation logged a refusal:\n%s", log.String())
+	}
+	if err := allocate("wrong"); err == nil {
+		t.Fatal("an allocation with a wrong password worked")
+	}
+	for _, want := range [][]string{
+		{`msg="turn allocation"`, citizen, "from=127.0.0.1:", "relay=127.0.0.1:52"},
+		{`msg="turn refused"`, citizen, "from=127.0.0.1:", `reason="bad credential"`},
+	} {
+		found := false
+		for line := range strings.Lines(log.String()) {
+			ok := true
+			for _, part := range want {
+				ok = ok && strings.Contains(line, part)
+			}
+			found = found || ok
+		}
+		if !found {
+			t.Errorf("no line of the log holds %q; the log is:\n%s", want, log.String())
+		}
+	}
+	if strings.Contains(log.String(), k.Public.Hex()) {
+		t.Errorf("the log holds the whole key of the citizen:\n%s", log.String())
 	}
 }
