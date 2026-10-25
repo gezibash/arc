@@ -1029,6 +1029,13 @@ func syncCommand() *cobra.Command {
 			"disk you carry.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			// A directory holds events, not the pieces of a storage citizen,
+			// so a repair through it has nothing to audit (#404).
+			if repair, _ := command.Flags().GetBool("repair"); repair {
+				if dir, _ := command.Flags().GetString("dir"); dir != "" {
+					return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: run arc sync --repair and arc sync --dir apart")
+				}
+			}
 			sess, err := open(command)
 			if err != nil {
 				return err
