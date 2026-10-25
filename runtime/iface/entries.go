@@ -268,8 +268,9 @@ func (r *run) findPages(kind, address string, allow ...string) (*notebookPage, [
 
 // pageText is the text of a page: the head, then each entry, oldest first.
 // The newest fix of an entry takes its place, and the updated_at field shows
-// the time of the newest entry.
-func (r *run) pageText(head *entry, address string, entries []pageEntry) (string, error) {
+// the time of the newest entry. A fix of the head names one address of the
+// page: a lost page that moved up has two.
+func (r *run) pageText(head *entry, addresses []string, entries []pageEntry) (string, error) {
 	text := ""
 	if head != nil {
 		var err error
@@ -286,7 +287,13 @@ func (r *run) pageText(head *entry, address string, entries []pageEntry) (string
 			fixes[p.corrects] = p
 		}
 	}
-	if fix, ok := fixes[address]; ok {
+	var fix *pageEntry
+	for _, address := range addresses {
+		if f, ok := fixes[address]; ok && (fix == nil || f.ms > fix.ms || f.ms == fix.ms && f.d > fix.d) {
+			fix = &f
+		}
+	}
+	if fix != nil {
 		body, err := r.joined(fix.e)
 		if err != nil {
 			return "", err
@@ -358,7 +365,7 @@ func (r *run) compose(pages []notebookPage) error {
 			// only the parts that hold it.
 			continue
 		}
-		text, err := r.pageText(p.entry, p.address, p.entries)
+		text, err := r.pageText(p.entry, p.names(), p.entries)
 		if err != nil {
 			return err
 		}
@@ -851,4 +858,14 @@ func (r *run) notebookWrite(n *Notebook, dTemplate string) ([]*entry, error) {
 		return nil, err
 	}
 	return []*entry{{rec: Record{"kind": n.Kind, "tags": map[string]any{"d": address}, "content": address}}}, nil
+}
+
+// names are the addresses of a page that a fix of its head can name: its
+// address, and <address>-<head id>, which a fix made while the page was lost
+// names.
+func (p *notebookPage) names() []string {
+	if p.lost || p.hid == "" {
+		return []string{p.address}
+	}
+	return []string{p.address, p.address + "-" + p.hid}
 }

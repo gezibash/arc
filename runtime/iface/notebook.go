@@ -599,7 +599,7 @@ func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit in
 			p := byID[source.ID]
 			scoped := *r
 			scoped.ctx = ctx
-			text, err := scoped.pageText(p.entry, p.address, p.entries)
+			text, err := scoped.pageText(p.entry, p.names(), p.entries)
 			if err != nil {
 				return search.Document{}, err
 			}
@@ -618,7 +618,7 @@ func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit in
 		e := byID[hit.ID].entry
 		if r.flags.JSON {
 			p := byID[hit.ID]
-			text, err := r.pageText(e, p.address, p.entries)
+			text, err := r.pageText(e, p.names(), p.entries)
 			if err != nil {
 				return nil, err
 			}
