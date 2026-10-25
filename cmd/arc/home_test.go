@@ -158,3 +158,65 @@ func TestNoHomeFromTheWorkingDirectory(t *testing.T) {
 		}
 	}
 }
+
+// runErr runs arc with no --home, and returns its standard output and
+// standard error.
+func runErr(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	var out, errs strings.Builder
+	command := root()
+	command.SetIn(strings.NewReader(""))
+	command.SetOut(&out)
+	command.SetErr(&errs)
+	command.SetArgs(args)
+	err := command.Execute()
+	return out.String(), errs.String(), err
+}
+
+// whoami names the home in use, and the rule that chose it (#406: nothing
+// showed which home arc used).
+func TestWhoamiShowsTheHomeInUse(t *testing.T) {
+	home := user(t)
+	older := filepath.Join(home, ".config", "arc")
+	identity(t, older)
+	check := func(want string, args ...string) {
+		t.Helper()
+		out, _, err := runErr(t, append(args, "whoami")...)
+		if err != nil {
+			t.Fatalf("arc whoami: %v\n%s", err, out)
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if len(lines) != 4 || lines[3] != want {
+			t.Errorf("arc %v whoami printed %q, want the last line %q", args, out, want)
+		}
+	}
+	check("home " + older + ", chosen by ~/.config/arc, the home of an older arc")
+
+	identity(t, filepath.Join(home, ".arc"))
+	check("home " + filepath.Join(home, ".arc") + ", chosen by ~/.arc")
+
+	variable := t.TempDir()
+	identity(t, variable)
+	t.Setenv("ARC_HOME", variable)
+	check("home " + variable + ", chosen by ARC_HOME")
+
+	flag := t.TempDir()
+	identity(t, flag)
+	check("home "+flag+", chosen by --home", "--home", flag)
+}
+
+// keys gen and keys recover say where they wrote the identity, on the
+// standard error, so the standard output keeps the name and the key (#406).
+func TestKeysGenSaysWhereItWrote(t *testing.T) {
+	home := user(t)
+	out, errs, err := runErr(t, "keys", "gen")
+	if err != nil {
+		t.Fatalf("arc keys gen: %v\n%s", err, errs)
+	}
+	if lines := strings.Split(strings.TrimSpace(out), "\n"); len(lines) != 2 {
+		t.Errorf("keys gen printed %q, want the name and the key", out)
+	}
+	if want := "wrote the identity in " + filepath.Join(home, ".arc"); !strings.Contains(errs, want) {
+		t.Errorf("keys gen said %q, want %q", errs, want)
+	}
+}

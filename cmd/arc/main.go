@@ -104,17 +104,28 @@ func root() *cobra.Command {
 // rootDir is the directory of arc. It holds one directory for each identity,
 // and the files of a relay that this machine runs.
 func rootDir(command *cobra.Command) (string, error) {
+	dir, _, err := rootSource(command)
+	return dir, err
+}
+
+// rootSource is rootDir, and the rule that chose it: --home, ARC_HOME,
+// ~/.arc, or the home of an older arc.
+func rootSource(command *cobra.Command) (string, string, error) {
 	if dir, _ := command.Flags().GetString("home"); dir != "" {
-		return dir, nil
+		return dir, "--home", nil
 	}
 	if dir := os.Getenv("ARC_HOME"); dir != "" {
-		return dir, nil
+		return dir, "ARC_HOME", nil
 	}
 	user, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return defaultRoot(user), nil
+	dir := defaultRoot(user)
+	if dir == filepath.Join(user, ".config", "arc") {
+		return dir, "~/.config/arc, the home of an older arc", nil
+	}
+	return dir, "~/.arc", nil
 }
 
 // homeNames are the entries that arc keeps at the top of its home. An app
