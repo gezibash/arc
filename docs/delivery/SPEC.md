@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList|TestAnnounceReplacesAnAnnouncementOfTheSameSecond)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/ ./cmd/arc/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -838,6 +838,8 @@ capability that the store and the relays hold. It MUST sign the new one at
 least one second after the newest of them. An older client signs at the
 current second, so its new version can lose to an announcement of the same
 second. A reader needs no change.
+`TestAnnounceReplacesAnAnnouncementOfTheSameSecond` in `cmd/arc` proves
+this.
 
 An announcement is one event, so its JSON holds at most 65,536 bytes, see
 section 3.4. If the announcement of a manifest is larger, the provider MUST
