@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -19,6 +20,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // MaxInput bounds a file or the standard input that a command reads. It is
@@ -129,6 +131,7 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 		return nil, flags, nil
 	}
 
+	var given []string
 	for _, a := range c.Args {
 		if a.Kind != "positional" || a.Type == "stdin" {
 			continue
@@ -142,10 +145,17 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 			break
 		}
 		raw[a.Name] = positionals[:1]
+		given = append(given, fmt.Sprintf("the %s is %q", a.Name, positionals[0]))
 		positionals = positionals[1:]
 	}
 	if len(positionals) > 0 {
-		return nil, flags, fmt.Errorf("too many arguments: %s", strings.Join(positionals, " "))
+		// Name what each argument took, so that a word in the wrong place,
+		// such as --- before the address, shows (#398).
+		text := fmt.Sprintf("too many arguments: %s", terminal.EscapeLine(strings.Join(positionals, " ")))
+		if len(given) > 0 {
+			text += ", after " + terminal.EscapeLine(strings.Join(given, ", "))
+		}
+		return nil, flags, errors.New(text)
 	}
 
 	values := Values{}
@@ -232,7 +242,7 @@ func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
 	case "address":
 		if !regexp.MustCompile(a.Pattern).MatchString(text) {
 			// The pattern is for the manifest, not for the citizen (#398).
-			return nil, fmt.Errorf("%q is not an address that this command takes", text)
+			return nil, fmt.Errorf("%q is not an address that this command takes%s", text, addressExample(a.Pattern))
 		}
 		return text, nil
 	case "lines":
@@ -353,4 +363,18 @@ func usageOf(a Arg) string {
 		return "<" + a.Name + "...>"
 	}
 	return "<" + a.Name + ">"
+}
+
+// addressExamples are addresses of each form that the journal takes.
+var addressExamples = []string{"notes/work/1", "notes/work"}
+
+// addressExample says what an address of the pattern looks like, with the
+// first example that it takes, or "" if it takes none.
+func addressExample(pattern string) string {
+	for _, example := range addressExamples {
+		if regexp.MustCompile(pattern).MatchString(example) {
+			return fmt.Sprintf(": an address is lowercase words and numbers joined by /, such as %s", example)
+		}
+	}
+	return ""
 }

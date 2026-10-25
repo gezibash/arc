@@ -720,21 +720,25 @@ func TestTheNoticeOfLostPagesNamesThem(t *testing.T) {
 	a.syncWith(c)
 	a.syncWith(b)
 
-	_, errs, err := a.runAll("", "ls", "--notebook", "arc/test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(errs), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], `3 pages were made at arc/test/1 offline; the store keeps "Tablet" there; `) ||
-		!strings.Contains(lines[0], `"Laptop" reads at arc/test/1-`) || !strings.Contains(lines[0], `"Phone" reads at arc/test/1-`) {
-		t.Errorf("ls of arc/test said %q, want one line that names the 3 pages", errs)
+	// A filter that hides the live page counts the pages of the whole
+	// journal, and still finds the live page.
+	for _, filter := range [][]string{{"--notebook", "arc/test"}, {"--title", "Laptop"}, {"--notebook", "arc/test", "--limit", "1", "--order", "created"}} {
+		_, errs, err := a.runAll("", append([]string{"ls"}, filter...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(errs), "\n")
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], `3 pages were made at arc/test/1 offline; the store keeps "Tablet" there; `) ||
+			!strings.Contains(lines[0], `"Laptop" reads at arc/test/1-`) || !strings.Contains(lines[0], `"Phone" reads at arc/test/1-`) {
+			t.Errorf("ls %s said %q, want one line that names the 3 pages", strings.Join(filter, " "), errs)
+		}
 	}
 	if _, errs, _ := a.runAll("", "ls", "--notebook", "arc/other"); errs != "" {
 		t.Errorf("ls of another notebook said %q, want no notice", errs)
 	}
 
 	a.env.now = a.env.Now().Add(time.Hour)
-	_, errs, err = a.runAll("", "delete", "arc/test/1")
+	_, errs, err := a.runAll("", "delete", "arc/test/1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -760,5 +764,76 @@ func TestTheLowsOfTheJournalUserTest(t *testing.T) {
 	}
 	if _, err := c.run("journal", "", "append"); err == nil || strings.Contains(err.Error(), "\n") || !strings.Contains(err.Error(), "; usage: ") {
 		t.Errorf("a usage error is %q, want one line with the usage", err)
+	}
+
+	if _, err := c.run("journal", "x\n", "write", "---", "hrs/log/9"); err == nil || !strings.Contains(err.Error(), `too many arguments: hrs/log/9, after the address is "---"`) {
+		t.Errorf("write --- hrs/log/9 failed with %v, want the words that each argument took", err)
+	}
+	if _, err := c.run("journal", "x\n", "write", "Hrs Log"); err == nil || !strings.Contains(err.Error(), "such as notes/work/1") {
+		t.Errorf("a bad address failed with %v, want an example address", err)
+	}
+
+	// A title from the text has no heading marker, a long one ends in an
+	// ellipsis, and a date never gives the title: only today's page has it.
+	today := c.env.Now().UTC().Format("2006-01-02")
+	c.must("journal", "## Notes of the day\nbody\n", "write", "hrs/log/3")
+	c.must("journal", strings.Repeat("a", 100)+"\n", "write", "hrs/log/4")
+	c.must("journal", today+"\nnotes\n", "write", "hrs/log/5")
+	c.must("journal", "# "+today+"\nnotes\n", "write", "hrs/log/6")
+	titles := map[string]string{}
+	for line := range strings.SplitSeq(strings.TrimSpace(c.must("journal", "", "ls", "--json")), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatal(err)
+		}
+		titles[str(field(rec, "tags.d"))] = str(field(rec, "tags.title"))
+	}
+	for address, want := range map[string]string{"hrs/log/3": "Notes of the day", "hrs/log/4": strings.Repeat("a", 79) + "…", "hrs/log/5": "notes", "hrs/log/6": "notes"} {
+		if titles[address] != want {
+			t.Errorf("the title of %s is %q, want %q", address, titles[address], want)
+		}
+	}
+	if got := c.must("journal", "", "add", "hrs/log", "of", "today"); got == "hrs/log/5\n" || got == "hrs/log/6\n" {
+		t.Errorf("add to today wrote to %s, a page whose text starts with the date", got)
+	}
+	if _, err := c.run("journal", today+"\n", "write", "hrs/log/8"); err == nil || !strings.Contains(err.Error(), "give a --title") {
+		t.Errorf("a text of a date only gave %v, want a request for a --title", err)
+	}
+}
+
+// history shows the time of the head in milliseconds, as read and ls show
+// it.
+func TestHistoryShowsTheMillisecondsOfTheHead(t *testing.T) {
+	c := newCitizen(t)
+	c.env.now = time.Date(2026, 10, 25, 21, 49, 38, 414e6, time.UTC)
+	c.must("journal", "first\n", "write", "hrs/log/1", "--title", "First")
+	c.env.now = c.env.now.Add(time.Second + 7*time.Millisecond)
+	c.must("journal", "", "append", "hrs/log/1", "second")
+	history := historyOf(c, "hrs/log/1")
+	if len(history) != 2 || history[0]["at"] != "2026-10-25T21:49:38.414Z" || history[1]["at"] != "2026-10-25T21:49:39.421Z" {
+		t.Errorf("history shows %v, want the head at 21:49:38.414Z and the entry at 21:49:39.421Z", history)
+	}
+}
+
+// A page too large to keep names the size of its draft, which grows with
+// the page. NIP-44 pads the sealed draft in steps, so pages of 3.5 and
+// 4.0 MB seal to the same size (#398).
+func TestTheRefusalOfALargePageNamesItsDraftSize(t *testing.T) {
+	sizes := map[string]bool{}
+	for _, n := range []int{3_500_000, 4_000_000} {
+		c := newCitizen(t)
+		_, err := c.run("journal", strings.Repeat("abcdefghij\n", n/11), "write", "hrs/big/1")
+		if err == nil {
+			t.Fatalf("a page of %d bytes was kept", n)
+		}
+		_, after, ok := strings.Cut(err.Error(), " parts in ")
+		size, _, _ := strings.Cut(after, " bytes")
+		if !ok || size == "" {
+			t.Fatalf("the refusal of %d bytes names no draft size: %v", n, err)
+		}
+		sizes[size] = true
+	}
+	if len(sizes) != 2 {
+		t.Errorf("pages of 3.5 and 4.0 MB name the draft sizes %v, want two sizes", sizes)
 	}
 }
