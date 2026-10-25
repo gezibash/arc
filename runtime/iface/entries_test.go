@@ -703,3 +703,42 @@ func TestTailShowsThePageBeforeItsEntries(t *testing.T) {
 		t.Fatalf("tail of live events in any order showed %q, want %q", got, want)
 	}
 }
+
+// The notice of lost pages names each page by its title, counts each page
+// of the address, comes once for each address, and only with the pages
+// that ls shows. A move-up names both pages (#399, #403).
+func TestTheNoticeOfLostPagesNamesThem(t *testing.T) {
+	a := newCitizen(t)
+	b, c := a.device(), a.device()
+	a.must("journal", "one\n", "write", "arc/test/1", "--title", "Laptop")
+	b.env.now = a.env.Now().Add(time.Minute)
+	b.must("journal", "two\n", "write", "arc/test/1", "--title", "Phone")
+	c.env.now = a.env.Now().Add(2 * time.Minute)
+	c.must("journal", "three\n", "write", "arc/test/1", "--title", "Tablet")
+	a.must("journal", "other\n", "write", "arc/other/1", "--title", "Other")
+	a.syncWith(b)
+	a.syncWith(c)
+	a.syncWith(b)
+
+	_, errs, err := a.runAll("", "ls", "--notebook", "arc/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(errs), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], `3 pages were made at arc/test/1 offline; the store keeps "Tablet" there; `) ||
+		!strings.Contains(lines[0], `"Laptop" reads at arc/test/1-`) || !strings.Contains(lines[0], `"Phone" reads at arc/test/1-`) {
+		t.Errorf("ls of arc/test said %q, want one line that names the 3 pages", errs)
+	}
+	if _, errs, _ := a.runAll("", "ls", "--notebook", "arc/other"); errs != "" {
+		t.Errorf("ls of another notebook said %q, want no notice", errs)
+	}
+
+	a.env.now = a.env.Now().Add(time.Hour)
+	_, errs, err = a.runAll("", "delete", "arc/test/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errs, `"Tablet" is deleted, so "Phone", made at arc/test/1 offline too, moved up from arc/test/1-`) {
+		t.Errorf("the delete said %q, want the titles of both pages", errs)
+	}
+}

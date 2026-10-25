@@ -220,20 +220,54 @@ func (r *run) attachEntries(kind string, pages []notebookPage) ([]notebookPage, 
 
 // noteLost says, on the standard error, which pages are lost pages, and
 // why. With an address, it names only the lost pages of that address.
+// It gives one line for each address, which names each page by its title
+// (#399, #403).
 func (r *run) noteLost(pages []notebookPage, address string) {
+	var bases []string
+	lost := map[string][]notebookPage{}
 	for _, p := range pages {
 		if !p.lost || address != "" && p.base != address && p.address != address {
 			continue
 		}
-		why := "two devices made a page at %s offline; the store keeps the other one there, and this one reads at %s"
-		if !slices.ContainsFunc(pages, func(o notebookPage) bool { return !o.lost && o.address == p.base }) {
-			why = "two devices made a page at %s offline, and the other one is gone; this one reads at %s"
+		if lost[p.base] == nil {
+			bases = append(bases, p.base)
 		}
-		if p.checkpoint == (nostr.ID{}) {
-			why = "these entries name a head of %s that is gone, as a delete on another device leaves them; they read at %s"
-		}
-		fmt.Fprintf(r.stdio.Err, why+"\n", terminal.EscapeLine(p.base), terminal.EscapeLine(p.address))
+		lost[p.base] = append(lost[p.base], p)
 	}
+	for _, base := range bases {
+		var heads, orphans []string
+		for _, p := range lost[base] {
+			where := fmt.Sprintf("%s reads at %s", titled(p.title), terminal.EscapeLine(p.address))
+			if p.checkpoint == (nostr.ID{}) {
+				orphans = append(orphans, fmt.Sprintf("entries of a page of %s that a delete on another device did not know read at %s", terminal.EscapeLine(base), terminal.EscapeLine(p.address)))
+				continue
+			}
+			heads = append(heads, where)
+		}
+		if len(heads) > 0 {
+			i := slices.IndexFunc(pages, func(o notebookPage) bool { return !o.lost && o.address == base })
+			kept := "the page there is gone"
+			if i >= 0 {
+				kept = "the store keeps " + titled(pages[i].title) + " there"
+			}
+			n := len(heads)
+			if i >= 0 {
+				n++
+			}
+			fmt.Fprintf(r.stdio.Err, "%d pages were made at %s offline; %s; %s\n", n, terminal.EscapeLine(base), kept, strings.Join(heads, "; "))
+		}
+		for _, line := range orphans {
+			fmt.Fprintln(r.stdio.Err, line)
+		}
+	}
+}
+
+// titled is a title of a page in quotes, for a line of the log.
+func titled(title string) string {
+	if title == "" {
+		return "a page with no title"
+	}
+	return strconv.Quote(terminal.EscapeLine(title))
 }
 
 // findPage finds the page of an address: a live page, today's page, or a
@@ -803,14 +837,18 @@ func (r *run) deletePage(n *Notebook, dTemplate string) error {
 	if up == nil || r.flags.DryRun {
 		return nil
 	}
-	return r.moveUp(n.Kind, d, old, up)
+	gone := ""
+	if page != nil && !page.lost {
+		gone = page.title
+	}
+	return r.moveUp(n.Kind, d, old, up, gone)
 }
 
 // moveUp makes the head of a lost page the draft at its address again, as
 // it was written, when the page there is deleted. Nothing then takes its
 // checkpoint for one that a failed write left, and its entries, which name
 // its head id, read at the address.
-func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage) error {
+func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage, gone string) error {
 	text, err := r.joined(up.entry)
 	if err != nil {
 		return err
@@ -827,7 +865,8 @@ func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage) error {
 	if _, err := scoped.publishSealed(&Publish{Kind: kind, D: d, Revise: "entry", at: at, Content: Content{Text: "{{up_text}}"}, Tags: tags}); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.stdio.Err, "the page at %s moved up from %s\n", terminal.EscapeLine(up.base), terminal.EscapeLine(up.address))
+	fmt.Fprintf(r.stdio.Err, "%s is deleted, so %s, made at %s offline too, moved up from %s to %s\n",
+		titled(gone), titled(up.title), terminal.EscapeLine(up.base), terminal.EscapeLine(up.address), terminal.EscapeLine(up.base))
 	return nil
 }
 

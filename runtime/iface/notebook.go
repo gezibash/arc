@@ -454,7 +454,8 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		return r.notebookSections(entries, n.Section)
 	}
 	if n.Op == "list" {
-		r.noteLost(allPages, "")
+		// Only the pages that ls shows get a notice.
+		r.noteLost(pages, "")
 		// A failed write leaves no page to list, so name its address here.
 		if err := r.reportUnnamed(n.Kind); err != nil {
 			return nil, err
