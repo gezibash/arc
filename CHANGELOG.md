@@ -22,6 +22,18 @@ All notable changes to ARC are recorded here. The format follows
   `~/.local/state/arc-dm`. So it follows the arc that it runs: a newer
   arc-dm with an older arc does not see a home in `~/.arc`. Upgrade arc and
   arc-dm together; they ship in one tarball.
+- **Upgrade first:** upgrade each arc and arc-dm on a machine before you use
+  any of them, or set `ARC_HOME`. An older arc does not see `~/.arc`. When
+  it finds no home in `~/.config/arc`, it tells you to run `arc keys gen`,
+  and that makes a second identity there.
+- If `~/.arc` and `~/.config/arc` both hold an identity, each command warns
+  once and names both folders. arc uses `~/.arc`.
+- If arc cannot read `~/.arc` or `~/.config/arc`, for example after
+  `sudo arc`, each command fails with an error that names the folder. arc
+  never uses the identity of the other folder in its place, and never makes
+  a new one. A `default` file that arc cannot read is an error too, not a
+  missing identity, and `arc keys gen`, `recover` and `add` stop before they
+  write a key.
 - `arc install` refuses the name of an entry of the arc home as the name of
   an app.
 

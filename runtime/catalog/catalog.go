@@ -255,6 +255,23 @@ func Find(s EventReader, provider nostr.PubKey, id string) (Offer, error) {
 	return offers[0], nil
 }
 
+// After is the time to sign a new announcement of a capability: now, or one
+// second after the newest announcement of the author that the store holds.
+// Two announcements of one second tie, and the store keeps the one with the
+// lower ID, so a new one at that second can lose to the old one.
+func After(s EventReader, author nostr.PubKey, id string, now nostr.Timestamp) (nostr.Timestamp, error) {
+	events, err := s.Query(nostr.Filter{Kinds: []nostr.Kind{Kind}, Authors: []nostr.PubKey{author}, Tags: nostr.TagMap{"d": {id}}})
+	if err != nil {
+		return 0, err
+	}
+	for _, event := range events {
+		if event.CreatedAt >= now {
+			now = event.CreatedAt + 1
+		}
+	}
+	return now, nil
+}
+
 // Install is one capability that the citizen trusts.
 type Install struct {
 	Provider string `json:"provider"`

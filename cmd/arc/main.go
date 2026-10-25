@@ -32,6 +32,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -114,8 +115,21 @@ func rootDir(command *cobra.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return defaultRoot(user), nil
+	dir, err := defaultRoot(user)
+	if err != nil {
+		return "", err
+	}
+	if old := filepath.Join(user, ".config", "arc"); dir != old && holdsIdentity(dir) && holdsIdentity(old) {
+		if _, warned := homeWarned.LoadOrStore(command.Root(), true); !warned {
+			fmt.Fprintf(command.ErrOrStderr(), "arc: warning: both %s and %s hold an identity. arc uses %s, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.\n", dir, old, dir, old)
+		}
+	}
+	return dir, nil
 }
+
+// homeWarned holds each run of arc, by its root command, that warned of
+// two homes already. arc finds its home more than once in one command.
+var homeWarned sync.Map
 
 // homeNames are the entries that arc keeps at the top of its home. An app
 // that keeps data in ~/.arc/<app> never uses one of these names, and
@@ -125,26 +139,38 @@ var homeNames = []string{"citizens", "default", "device", "relay.db", "wake", "w
 // defaultRoot is ~/.arc. A home that an older arc made in ~/.config/arc
 // stays in use, until ~/.arc holds an entry of arc. arc moves no file, and
 // it never looks for a home in the working directory: a cloned repository
-// can hold a .arc with the key of someone else.
-func defaultRoot(user string) string {
+// can hold a .arc with the key of someone else. A home that arc cannot
+// read stops arc: arc never uses the next home in its place.
+func defaultRoot(user string) (string, error) {
 	home := filepath.Join(user, ".arc")
-	if holdsHome(home) {
-		return home
-	}
-	if old := filepath.Join(user, ".config", "arc"); holdsHome(old) {
-		return old
-	}
-	return home
-}
-
-// holdsHome says whether dir holds an entry of arc.
-func holdsHome(dir string) bool {
-	for _, name := range homeNames {
-		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
-			return true
+	for _, dir := range []string{home, filepath.Join(user, ".config", "arc")} {
+		holds, err := holdsHome(dir)
+		if err != nil || holds {
+			return dir, err
 		}
 	}
-	return false
+	return home, nil
+}
+
+// holdsHome says whether dir holds an entry of arc. Only an entry that is
+// not there is missing: a folder that arc cannot read is an error.
+func holdsHome(dir string) (bool, error) {
+	for _, name := range homeNames {
+		_, err := os.Lstat(filepath.Join(dir, name))
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("cannot read the home %s, and arc uses no other home in its place: %w. Fix its permissions, or give --home or ARC_HOME", dir, err)
+		}
+	}
+	return false, nil
+}
+
+// holdsIdentity says whether dir holds an identity of arc.
+func holdsIdentity(dir string) bool {
+	entries, err := os.ReadDir(filepath.Join(dir, "citizens"))
+	return err == nil && len(entries) > 0
 }
 
 // home is the directory of the identity that the command uses. It holds the
