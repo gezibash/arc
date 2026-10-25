@@ -561,7 +561,7 @@ type settings struct {
 
 func newFlags(name string) (*flag.FlagSet, *settings) {
 	flags := flag.NewFlagSet("arc-dm "+name, flag.ContinueOnError)
-	s := &settings{}
+	s := &settings{arc: arcprogram.Arc{Warnings: os.Stderr}}
 	flags.StringVar(&s.arc.Program, "arc", "arc", "the arc program")
 	flags.StringVar(&s.arc.Home, "home", "", "the arc home (default: the home that arc picks)")
 	flags.StringVar(&s.state, "state", "", "the state directory (default DM_STATE, or ~/.local/state/arc-dm)")
