@@ -421,3 +421,96 @@ func TestAnUnreadableDefaultStopsKeysGen(t *testing.T) {
 		t.Fatalf("arc keys gen kept %d identities, want the 1 from before", len(entries))
 	}
 }
+
+// A ~/.arc that holds only a wake.toml does not hide the identity of an
+// older home (#408).
+func TestALoneWakeFileDoesNotHideTheOlderIdentity(t *testing.T) {
+	home := user(t)
+	older := identity(t, filepath.Join(home, ".config", "arc"))
+	if err := os.MkdirAll(filepath.Join(home, ".arc"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".arc", "wake.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := whoami(t); got != older {
+		t.Errorf("arc picked %s, want the identity %s of ~/.config/arc", got, older)
+	}
+}
+
+// Each home, default file and folder of identities that arc cannot read
+// has one error, which names the folder and the rule that chose it, and
+// what fixes it (#408, #411).
+func TestEachUnreadablePartOfAHomeHasOneError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder of mode 000")
+	}
+	home := user(t)
+	dot := filepath.Join(home, ".arc")
+	identity(t, dot)
+	lock := func(path string) {
+		t.Helper()
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o700) })
+	}
+	check := func(what string, want []string, args ...string) {
+		t.Helper()
+		_, _, err := runErr(t, args...)
+		if err == nil {
+			t.Fatalf("%s: arc %v worked", what, args)
+		}
+		for _, part := range want {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("%s: arc %v said %q, want %q in it", what, args, err, part)
+			}
+		}
+	}
+
+	// (c): only the default file is unreadable; the home is readable.
+	lock(filepath.Join(dot, "default"))
+	for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+		check("an unreadable default", []string{"cannot read the default identity in " + dot + ", chosen by ~/.arc", "Fix the permissions of " + filepath.Join(dot, "default")}, args...)
+	}
+	_ = os.Chmod(filepath.Join(dot, "default"), 0o600)
+
+	// The folder of identities.
+	lock(filepath.Join(dot, "citizens"))
+	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens") + ", chosen by ~/.arc"}, "keys", "list")
+	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens"), "chosen by ~/.arc"}, "whoami")
+	_ = os.Chmod(filepath.Join(dot, "citizens"), 0o700)
+
+	// (a) and (b): the home itself, chosen by default and by --home.
+	flag := t.TempDir()
+	identity(t, flag)
+	lock(flag)
+	check("an unreadable --home", []string{"cannot read the home " + flag + ", chosen by --home", "Fix its permissions"}, "--home", flag, "whoami")
+	lock(dot)
+	check("an unreadable ~/.arc", []string{"cannot read the home " + dot + ", chosen by ~/.arc", "Fix its permissions"}, "whoami")
+}
+
+// --home ~root/x names the home of another user: arc refuses it, and makes
+// no folder named ~root (#411).
+func TestAHomeOfAnotherUserIsRefused(t *testing.T) {
+	user(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	for _, dir := range []string{"~root/x", "~nosuchuser/x"} {
+		if _, _, err := runErr(t, "--home", dir, "keys", "gen"); err == nil || !strings.Contains(err.Error(), "names the home of another user") {
+			t.Errorf("--home %s gave %v", dir, err)
+		}
+	}
+	if entries, _ := os.ReadDir(work); len(entries) != 0 {
+		t.Errorf("arc made %v in the working directory", entries)
+	}
+}
+
+// keys ls lists the identities, as keys list does (#408).
+func TestKeysLsLists(t *testing.T) {
+	home := user(t)
+	name := identity(t, filepath.Join(home, ".arc"))
+	if out, err := runDefault(t, "keys", "ls"); err != nil || !strings.Contains(out, name) {
+		t.Errorf("keys ls printed %q, %v; want %s", out, err, name)
+	}
+}

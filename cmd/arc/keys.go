@@ -316,7 +316,7 @@ func chosen(command *cobra.Command) (string, string, error) {
 		name, source = strings.TrimSpace(string(body)), "the default"
 	} else if !errors.Is(err, os.ErrNotExist) {
 		// A home that arc cannot read is not a home with no identity.
-		return "", "", fmt.Errorf("cannot read the home %s, chosen by %s: %w", root, why, err)
+		return "", "", unreadableDefault(root, why, err)
 	}
 	if name == "" {
 		return "", "", fmt.Errorf("no identity in %s, chosen by %s: make one with arc keys gen, or add one with arc keys add", root, why)
@@ -326,7 +326,10 @@ func chosen(command *cobra.Command) (string, string, error) {
 		return "", "", fmt.Errorf("no identity %q on this machine: see arc keys list", name)
 	}
 	if _, err := os.Stat(dir); err != nil {
-		return "", "", fmt.Errorf("no identity %q on this machine: see arc keys list", name)
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", "", unreadableIdentities(root, why, err)
+		}
+		return "", "", fmt.Errorf("no identity %q in %s, chosen by %s: see arc keys list", name, root, why)
 	}
 	return dir, source, nil
 }
@@ -372,12 +375,12 @@ func defaultName(root string) string {
 // that does not answer, leaves nothing behind. The first identity becomes the
 // default. A caller that made the key passes it as known, so a sealed key does
 // not ask for its passphrase again.
-func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys.Key, err error) {
+func addCitizen(ctx context.Context, root, why, text string, known *keys.Key) (_ keys.Key, err error) {
 	// A default that arc cannot read stops the add before it writes a key:
 	// keys gen shows the seed only after the add.
 	body, err := os.ReadFile(defaultPath(root))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return keys.Key{}, fmt.Errorf("cannot read the default identity: %w", err)
+		return keys.Key{}, unreadableDefault(root, why, err)
 	}
 	first := strings.TrimSpace(string(body)) == ""
 	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
@@ -543,7 +546,11 @@ func keysCommand() *cobra.Command {
 					return errors.New("give the key on standard input, or a bunker:// URI")
 				}
 			}
-			k, err := addCitizen(command.Context(), root, text, nil)
+			_, why, err := rootSource(command)
+			if err != nil {
+				return err
+			}
+			k, err := addCitizen(command.Context(), root, why, text, nil)
 			if err != nil {
 				return err
 			}
@@ -565,13 +572,16 @@ func keysCommand() *cobra.Command {
 	}
 
 	list := &cobra.Command{
-		Use: "list", Short: "List the identities of this machine", Args: cobra.NoArgs,
+		Use: "list", Aliases: []string{"ls"}, Short: "List the identities of this machine", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			root, err := rootDir(command)
+			root, why, err := rootSource(command)
 			if err != nil {
 				return err
 			}
 			all, err := listCitizens(root)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return unreadableIdentities(root, why, err)
+			}
 			if err != nil {
 				return err
 			}
@@ -705,7 +715,11 @@ func keepSeedKey(command *cobra.Command, root string, k keys.Key) (keys.Key, err
 			return keys.Key{}, err
 		}
 	}
-	return addCitizen(command.Context(), root, text, &k)
+	_, why, err := rootSource(command)
+	if err != nil {
+		return keys.Key{}, err
+	}
+	return addCitizen(command.Context(), root, why, text, &k)
 }
 
 // seedPassphrase returns the BIP-39 passphrase when --seed-passphrase asks

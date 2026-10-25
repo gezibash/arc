@@ -92,7 +92,7 @@ func root() *cobra.Command {
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 	}
-	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.arc, or ~/.config/arc when an older arc made it)")
+	command.PersistentFlags().String("home", "", "the directory of arc; arc takes --home, then ARC_HOME, then ~/.arc, then ~/.config/arc when an older arc made it")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(), contactsCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
@@ -136,7 +136,7 @@ func rootSource(command *cobra.Command) (string, string, error) {
 		}
 	}
 	if dir == old {
-		return dir, "~/.config/arc, the home of an older arc", nil
+		return dir, olderHome, nil
 	}
 	return dir, "~/.arc", nil
 }
@@ -154,6 +154,10 @@ func absHome(user, dir string) (string, error) {
 		dir = user
 	} else if rest, ok := strings.CutPrefix(dir, "~/"); ok {
 		dir = filepath.Join(user, rest)
+	} else if strings.HasPrefix(dir, "~") {
+		// ~root is the home of another user in a shell, so a folder of that
+		// name here would be one rm -rf away from it (#411).
+		return "", fmt.Errorf("the home %q names the home of another user: arc expands only ~ and ~/; give the whole path", dir)
 	}
 	return filepath.Abs(dir)
 }
@@ -174,28 +178,66 @@ var homeNames = []string{"citizens", "default", "device", "relay.db", "wake", "w
 // read stops arc: arc never uses the next home in its place.
 func defaultRoot(user string) (string, error) {
 	home := filepath.Join(user, ".arc")
-	for _, dir := range []string{home, filepath.Join(user, ".config", "arc")} {
-		holds, err := holdsHome(dir)
-		if err != nil || holds {
-			return dir, err
+	old := filepath.Join(user, ".config", "arc")
+	holds, err := holdsHome(home, "~/.arc")
+	if err != nil {
+		return home, err
+	}
+	if holds {
+		// A ~/.arc with entries but no identity, such as a lone wake.toml,
+		// does not hide the identity of an older home (#408).
+		if !holdsIdentity(home) && holdsIdentity(old) {
+			return old, nil
 		}
+		return home, nil
+	}
+	if holds, err = holdsHome(old, olderHome); err != nil || holds {
+		return old, err
 	}
 	return home, nil
 }
 
+// olderHome is the rule that chose ~/.config/arc.
+const olderHome = "~/.config/arc, the home of an older arc"
+
 // holdsHome says whether dir holds an entry of arc. Only an entry that is
-// not there is missing: a folder that arc cannot read is an error.
-func holdsHome(dir string) (bool, error) {
+// not there is missing: a folder that arc cannot read is an error. why is
+// the rule that would choose dir.
+func holdsHome(dir, why string) (bool, error) {
 	for _, name := range homeNames {
 		_, err := os.Lstat(filepath.Join(dir, name))
 		if err == nil {
 			return true, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("cannot read the home %s, and arc uses no other home in its place: %w. Fix its permissions, or give --home or ARC_HOME", dir, err)
+			return false, unreadableHome(dir, why, err)
 		}
 	}
 	return false, nil
+}
+
+// The three errors of a home that arc cannot read. Each case has one
+// wording, which names the folder and the rule that chose it, and says
+// what fixes it (#408).
+
+func unreadableHome(dir, why string, err error) error {
+	return fmt.Errorf("cannot read the home %s, chosen by %s, and arc uses no other home in its place: %w. Fix its permissions, or give --home or ARC_HOME", dir, why, err)
+}
+
+// unreadableDefault is the error of a default file that arc cannot read,
+// or of its home, when the home is what arc cannot read.
+func unreadableDefault(root, why string, err error) error {
+	if _, dirErr := os.ReadDir(root); dirErr != nil && !errors.Is(dirErr, os.ErrNotExist) {
+		return unreadableHome(root, why, dirErr)
+	}
+	return fmt.Errorf("cannot read the default identity in %s, chosen by %s: %w. Fix the permissions of %s, or give --key or ARC_KEY", root, why, err, defaultPath(root))
+}
+
+func unreadableIdentities(root, why string, err error) error {
+	if _, dirErr := os.ReadDir(root); dirErr != nil && !errors.Is(dirErr, os.ErrNotExist) {
+		return unreadableHome(root, why, dirErr)
+	}
+	return fmt.Errorf("cannot read the identities in %s, chosen by %s: %w. Fix the permissions of that folder", citizensDir(root), why, err)
 }
 
 // holdsIdentity says whether dir holds an identity of arc.

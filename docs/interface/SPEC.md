@@ -3,7 +3,7 @@
 - Status: built
 - Layers: core, sdk, runtime, app
 - Owns: core/draft, core/wire, sdk/provider
-- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory|TestWhoamiShowsTheHomeInUse|TestKeysGenSaysWhereItWrote|TestAHomeWithATildeIsInTheUserHome|TestTheHomeIsAnAbsoluteCleanPath|TestAFailedWhoamiNamesTheHome|TestTwoHomesWithAnIdentityWarn|TestAnUnreadableDotArcStopsArc|TestAnUnreadableOlderHomeStopsArc|TestAnUnreadableDefaultIsNoMissingIdentity|TestAnUnreadableDefaultStopsKeysGen|TestTwoDevicesThatAppendOfflineKeepBothEntries|TestTwoOfflineNewsKeepTheirOwnPages|TestABurstKeepsTimeOrderWithTheOtherDevice|TestADeleteAndAnOfflineAppendEndClear|TestALostPageLivesOnItsOwn|TestAPageNumberTooLargeIsRefused|TestADeleteOfTheLivePageKeepsTheLostPage|TestFixTakesTheAddressesOfHistory|TestAHeadFixStaysWhenTheLostPageMovesUp|TestTwoDevicesThatAddOfflineKeepBothTexts|TestEntriesOfOneSecondKeepTheirOrder|TestNewWritesTheNextPage|TestAddWritesToTodaysPage|TestAMissingPageAndTheReservedWords|TestAFixReplacesAnEntryAndTheHistoryKeepsBoth|TestADeleteTakesEachEntry|TestLsOrdersByTheNewestEntry|TestAnAppendIsAnEntry|TestAWriteFillsInTheFrontMatter|TestAnAppCommandDoesNotWaitForATerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestInterface|TestDevicePages|TestStorageLargeFile|TestAFileIsOneBody|TestAFileInPartsStillReads|TestABodyOpensOnlyWithTheKeyOfItsApp|TestAValueCannotReachTheTerminal|TestAValueCannotHideText|TestHelpIsEscaped|TestDescribeIsEscaped|TestAReplyThatDoesNotFitCannotReachTheTerminal|TestTheTextOfAFormatCannotReachTheTerminal|TestACleanValueGetsNoNote|TestTheErrorOfAMemberCannotReachTheTerminal|TestAnOlderHomeStillWorks|TestANewHomeIsDotArc|TestDotArcWinsOverTheOlderHome|TestARelayKeepsItsOlderHome|TestTheFlagAndTheVariableWin|TestNoHomeFromTheWorkingDirectory|TestWhoamiShowsTheHomeInUse|TestKeysGenSaysWhereItWrote|TestAHomeWithATildeIsInTheUserHome|TestTheHomeIsAnAbsoluteCleanPath|TestAFailedWhoamiNamesTheHome|TestALoneWakeFileDoesNotHideTheOlderIdentity|TestEachUnreadablePartOfAHomeHasOneError|TestAHomeOfAnotherUserIsRefused|TestKeysLsLists|TestTwoHomesWithAnIdentityWarn|TestAnUnreadableDotArcStopsArc|TestAnUnreadableOlderHomeStopsArc|TestAnUnreadableDefaultIsNoMissingIdentity|TestAnUnreadableDefaultStopsKeysGen|TestTwoDevicesThatAppendOfflineKeepBothEntries|TestTwoOfflineNewsKeepTheirOwnPages|TestABurstKeepsTimeOrderWithTheOtherDevice|TestADeleteAndAnOfflineAppendEndClear|TestALostPageLivesOnItsOwn|TestAPageNumberTooLargeIsRefused|TestADeleteOfTheLivePageKeepsTheLostPage|TestFixTakesTheAddressesOfHistory|TestAHeadFixStaysWhenTheLostPageMovesUp|TestTwoDevicesThatAddOfflineKeepBothTexts|TestEntriesOfOneSecondKeepTheirOrder|TestNewWritesTheNextPage|TestAddWritesToTodaysPage|TestAMissingPageAndTheReservedWords|TestAFixReplacesAnEntryAndTheHistoryKeepsBoth|TestADeleteTakesEachEntry|TestLsOrdersByTheNewestEntry|TestAnAppendIsAnEntry|TestAWriteFillsInTheFrontMatter|TestAnAppCommandDoesNotWaitForATerminal)$' ./internal/proof/ ./runtime/iface/ ./core/draft/ ./cmd/arc/
 - Unverified: No test runs a manifest command against a relay other than a local relay. No test opens a page in another Nostr client: no other client holds the content key. No test runs the import of old pages on a store of 1,000 pages. No test opens a body in another Nostr client: NIP-37 has no body. No test runs the Docker image with a volume at the older home `/home/arc/.config/arc`. No test runs arc with a home that root owns: a folder of mode 000 stands in for it. No test syncs entries between two devices through a real storage citizen: the entry tests copy the events between two stores. No test runs `arc sync --repair` on a lost page that moved up; the rule of section 4.7 of the storage spec keeps it by reasoning. An older arc that deletes the page at an address deletes the head of a lost page there too. No test measures `read` on a notebook of 10,000 entries, which opens each entry.
 
 Phases A to F are built, see section 8. `arc` runs them, and
@@ -807,7 +807,8 @@ arc picks its home in this order:
 
 1. `--home <dir>`.
 2. `ARC_HOME`.
-3. `~/.arc`, if it holds an entry of arc.
+3. `~/.arc`, if it holds an entry of arc, unless it holds no identity and
+   `~/.config/arc` holds one: a lone `wake.toml` does not hide an identity.
 4. `~/.config/arc`, if it holds an entry of arc. An older arc made its home
    there, and it stays in use.
 5. `~/.arc`, for a new home.
@@ -819,13 +820,16 @@ arc MUST NOT move a file between the two homes. arc MUST NOT look for a
 home in the working directory or a parent of it: a cloned repository can
 hold a `.arc` with the key of someone else. A home of `--home` or
 `ARC_HOME` that starts with `~/`, or is `~`, is in the user's home, as a
-shell expands it. arc uses the clean absolute path, and keeps the name of
+shell expands it. arc MUST refuse one that starts with `~` and then
+anything but `/`, such as `~root/x`: a shell reads it as the home of
+another user. arc uses the clean absolute path, and keeps the name of
 a symlink. `arc whoami` prints the home in
 use, and the rule of this list that chose it, on its fourth line, after the
 name, the key and the rule that chose the identity. `arc keys gen` and
 `arc keys recover` print the home that they wrote, on the standard error.
-An error of no identity names the home and its rule, and a home that arc
-cannot read says so.
+An error of no identity names the home and its rule. A home, a `default`
+file or a `citizens` folder that arc cannot read gives one error for each,
+which names the folder and its rule, and says what fixes it.
 If arc cannot read a home of
 steps 3 and 4, for example a folder of mode 000 or a folder that root owns
 after `sudo arc`, arc MUST fail with an error that names the folder. It
