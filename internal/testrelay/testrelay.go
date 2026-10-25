@@ -167,7 +167,7 @@ func Serve(t *testing.T, listener net.Listener) {
 	relay.UseEventstore(newStore(t), 500)
 	sealed.Protect(relay)
 	relay.Negentropy = true
-	relay.Info.SupportedNIPs = append(relay.Info.SupportedNIPs, 77)
+	relay.Info.SupportedNIPs = slices.Clip(append(relay.Info.SupportedNIPs, 77))
 	server := &http.Server{Handler: relay}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
@@ -271,7 +271,7 @@ func start(t *testing.T, negentropy bool, held ...nostr.Event) string {
 	sealed.Protect(relay)
 	if negentropy {
 		relay.Negentropy = true
-		relay.Info.SupportedNIPs = append(relay.Info.SupportedNIPs, 77)
+		relay.Info.SupportedNIPs = slices.Clip(append(relay.Info.SupportedNIPs, 77))
 	}
 
 	server := httptest.NewServer(relay)
