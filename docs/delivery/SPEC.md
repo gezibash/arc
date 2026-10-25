@@ -832,6 +832,13 @@ A provider announces a capability with an addressable event of kind 30272:
 Announcements are public. Nodes keep them and sync them. A new version of the
 manifest replaces the old one, because the event is addressable.
 
+Two announcements of one second tie, and a store keeps the one with the lower
+ID. Before `arc announce` signs, it therefore reads the announcements of that
+capability that the store and the relays hold. It MUST sign the new one at
+least one second after the newest of them. An older client signs at the
+current second, so its new version can lose to an announcement of the same
+second. A reader needs no change.
+
 An announcement is one event, so its JSON holds at most 65,536 bytes, see
 section 3.4. If the announcement of a manifest is larger, the provider MUST
 refuse to sign it. The error gives the size of the event and the size of
