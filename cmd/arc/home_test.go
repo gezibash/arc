@@ -220,3 +220,84 @@ func TestKeysGenSaysWhereItWrote(t *testing.T) {
 		t.Errorf("keys gen said %q, want %q", errs, want)
 	}
 }
+
+// homeLine is the last line of arc whoami: the home in use.
+func homeLine(t *testing.T, args ...string) string {
+	t.Helper()
+	out, errs, err := runErr(t, append(args, "whoami")...)
+	if err != nil {
+		t.Fatalf("arc %v whoami: %v\n%s", args, err, errs)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	return lines[len(lines)-1]
+}
+
+// A home of --home or ARC_HOME that starts with ~ is in the user's home, as
+// the shell would expand it; bash does not expand ~ after = (Otto's test of
+// #410: --home=~/tgen made a folder named ~ in the working directory).
+func TestAHomeWithATildeIsInTheUserHome(t *testing.T) {
+	home := user(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	if _, errs, err := runErr(t, "--home=~/tgen", "keys", "gen"); err != nil {
+		t.Fatalf("arc --home=~/tgen keys gen: %v\n%s", err, errs)
+	} else if want := "wrote the identity in " + filepath.Join(home, "tgen"); !strings.Contains(errs, want) {
+		t.Errorf("keys gen said %q, want %q", errs, want)
+	}
+	if exists(filepath.Join(work, "~")) {
+		t.Error("arc made a folder named ~ in the working directory")
+	}
+	if got, want := homeLine(t, "--home=~/tgen"), "home "+filepath.Join(home, "tgen")+", chosen by --home"; got != want {
+		t.Errorf("whoami says %q, want %q", got, want)
+	}
+	t.Setenv("ARC_HOME", "~/tgen")
+	if got, want := homeLine(t), "home "+filepath.Join(home, "tgen")+", chosen by ARC_HOME"; got != want {
+		t.Errorf("whoami says %q, want %q", got, want)
+	}
+}
+
+// The home is printed as a clean absolute path. A symlink keeps its own name.
+func TestTheHomeIsAnAbsoluteCleanPath(t *testing.T) {
+	user(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	for _, dir := range []string{"relgen", "homes//./flagH", "../" + filepath.Base(work) + "/homes/x"} {
+		identity(t, filepath.Join(work, filepath.Clean(dir)))
+		want := "home " + filepath.Join(work, filepath.Clean(dir)) + ", chosen by --home"
+		if strings.HasPrefix(dir, "..") {
+			want = "home " + filepath.Join(work, "homes", "x") + ", chosen by --home"
+		}
+		if got := homeLine(t, "--home", dir); got != want {
+			t.Errorf("--home %s: whoami says %q, want %q", dir, got, want)
+		}
+	}
+	if err := os.Symlink(filepath.Join(work, "relgen"), filepath.Join(work, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := homeLine(t, "--home", "link/"), "home "+filepath.Join(work, "link")+", chosen by --home"; got != want {
+		t.Errorf("a symlinked home: whoami says %q, want %q", got, want)
+	}
+}
+
+// When whoami finds no identity, it names the home and its rule. A home that
+// it cannot read says so, and does not ask for a new identity.
+func TestAFailedWhoamiNamesTheHome(t *testing.T) {
+	home := user(t)
+	_, _, err := runErr(t, "whoami")
+	if err == nil || !strings.Contains(err.Error(), "no identity in "+filepath.Join(home, ".arc")+", chosen by ~/.arc") {
+		t.Errorf("whoami in a fresh home gave %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder of mode 000")
+	}
+	locked := t.TempDir()
+	identity(t, locked)
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	_, _, err = runErr(t, "--home", locked, "whoami")
+	if err == nil || !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), locked) || strings.Contains(err.Error(), "make one") {
+		t.Errorf("whoami of a home that it cannot read gave %v", err)
+	}
+}

@@ -111,21 +111,41 @@ func rootDir(command *cobra.Command) (string, error) {
 // rootSource is rootDir, and the rule that chose it: --home, ARC_HOME,
 // ~/.arc, or the home of an older arc.
 func rootSource(command *cobra.Command) (string, string, error) {
-	if dir, _ := command.Flags().GetString("home"); dir != "" {
-		return dir, "--home", nil
-	}
-	if dir := os.Getenv("ARC_HOME"); dir != "" {
-		return dir, "ARC_HOME", nil
-	}
 	user, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", err
+	}
+	for _, given := range []struct{ dir, why string }{
+		{flagString(command, "home"), "--home"},
+		{os.Getenv("ARC_HOME"), "ARC_HOME"},
+	} {
+		if given.dir != "" {
+			dir, err := absHome(user, given.dir)
+			return dir, given.why, err
+		}
 	}
 	dir := defaultRoot(user)
 	if dir == filepath.Join(user, ".config", "arc") {
 		return dir, "~/.config/arc, the home of an older arc", nil
 	}
 	return dir, "~/.arc", nil
+}
+
+func flagString(command *cobra.Command, name string) string {
+	value, _ := command.Flags().GetString(name)
+	return value
+}
+
+// absHome is a home that --home or ARC_HOME gives, as a clean absolute
+// path. A leading ~ is the user's home, as a shell expands it: bash does
+// not expand it after =, as in --home=~/arc. A symlink keeps its own name.
+func absHome(user, dir string) (string, error) {
+	if dir == "~" {
+		dir = user
+	} else if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		dir = filepath.Join(user, rest)
+	}
+	return filepath.Abs(dir)
 }
 
 // homeNames are the entries that arc keeps at the top of its home. An app

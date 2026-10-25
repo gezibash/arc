@@ -303,7 +303,7 @@ func publicPath(dir string) string   { return filepath.Join(dir, "public") }
 // chosen returns the directory of the identity that the command uses, and
 // what chose it: --key, ARC_KEY, or the default.
 func chosen(command *cobra.Command) (string, string, error) {
-	root, err := rootDir(command)
+	root, why, err := rootSource(command)
 	if err != nil {
 		return "", "", err
 	}
@@ -314,9 +314,12 @@ func chosen(command *cobra.Command) (string, string, error) {
 		name, source = env, "ARC_KEY"
 	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
 		name, source = strings.TrimSpace(string(body)), "the default"
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// A home that arc cannot read is not a home with no identity.
+		return "", "", fmt.Errorf("cannot read the home %s, chosen by %s: %w", root, why, err)
 	}
 	if name == "" {
-		return "", "", errors.New("no identity: make one with arc keys gen, or add one with arc keys add")
+		return "", "", fmt.Errorf("no identity in %s, chosen by %s: make one with arc keys gen, or add one with arc keys add", root, why)
 	}
 	dir := filepath.Join(citizensDir(root), name)
 	if !validName(name) {
