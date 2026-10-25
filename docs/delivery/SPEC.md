@@ -414,6 +414,18 @@ node races both families, IPv6 first, and starts IPv4 after 300 ms.
 `TestACallMovesToIPv4WhenIPv6Stalls` and
 `TestSyncUsesOneConnectionPerRelay` prove this.
 
+One relay that never answers MUST NOT stall a command when another relay
+answers (#439). A pull asks each relay at once. After the first answer, it
+waits at most 500 ms for the others, and then stops them. When a relay of
+the session did not connect, each send, query, NIP-77 session or live call
+to it in the next 30 seconds fails at once with the same error. A watch
+still tries to connect, so a provider watches again as soon as its relay
+is back. A relay that gave no answer in time counts as unreached: a command
+that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
+and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
+`TestARelayThatDidNotConnectFailsAtOnce` and `TestOfflineJournalIsQuiet`
+prove this.
+
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
 the NIP-17 list, kind 10050. Each list names every relay of the citizen. A
 citizen does not publish the private NIP-37 list, kind 10013, because no

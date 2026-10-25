@@ -203,6 +203,9 @@ func TestOfflineJournalIsQuiet(t *testing.T) {
 	for range 2 {
 		home.try("", "relay", "add", "ws://"+closedPort(t))
 	}
+	// A relay that takes each connection and never answers times out: it
+	// folds into the same line (#439).
+	home.try("", "relay", "add", "ws://"+silentRelay(t))
 
 	const offline = "arc: no relay answered, so this uses what this machine holds\n"
 	for _, step := range []struct {
@@ -240,4 +243,36 @@ func closedPort(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return addr
+}
+
+// silentRelay is a local address that takes each connection and never
+// answers, as a relay behind a black hole does.
+func silentRelay(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns := make(chan net.Conn, 64)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			conns <- c
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		for {
+			select {
+			case c := <-conns:
+				_ = c.Close()
+			default:
+				return
+			}
+		}
+	})
+	return l.Addr().String()
 }

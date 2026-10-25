@@ -195,13 +195,17 @@ func (s *Session) warnOffline() {
 	})
 }
 
-// offline says whether each error in err is a dial or a name lookup that
-// failed, so that no relay heard the request.
+// offline says whether each error in err is a dial, a name lookup or an
+// address that failed, or a relay that gave no answer in time, so that no
+// relay answered the request (#396, #439).
 func offline(err error) bool {
+	if err == context.DeadlineExceeded { //nolint:errorlint // a leaf of the walk below
+		return true
+	}
 	// Each branch of a joined error must be offline, and errors.As takes
 	// the first branch that matches, so walk the tree by hand.
 	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
-	case *net.OpError, *net.DNSError:
+	case *net.OpError, *net.DNSError, *net.AddrError:
 		return true
 	case interface{ Unwrap() []error }:
 		errs := e.Unwrap()

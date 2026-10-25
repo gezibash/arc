@@ -3,6 +3,8 @@ package relay_test
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,5 +207,69 @@ func TestACallAfterAPauseLeavesASilentConnection(t *testing.T) {
 	}
 	if got := conns.Accepted(); got != 2 {
 		t.Errorf("the relay accepted %d connections, want 2", got)
+	}
+}
+
+// blackhole is a relay that takes each connection and never answers.
+func blackhole(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+	})
+	return "ws://" + l.Addr().String()
+}
+
+// A relay that did not connect is down for a while: the next fetch fails at
+// once with the same error, so one dead relay stalls one call of a command,
+// not each one (#439). A watch still tries, so that a provider watches again
+// as soon as its relay is back. After downFor, a fetch tries again.
+func TestARelayThatDidNotConnectFailsAtOnce(t *testing.T) {
+	defer relay.SetStallLimit(200 * time.Millisecond)()
+	defer relay.SetDownFor(2 * time.Second)()
+	r := relay.New(blackhole(t), keyer.NewPlainKeySigner(nostr.Generate()))
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, err := r.Fetch(ctx, filter); err == nil {
+		t.Fatal("a fetch from a relay that never answers worked")
+	}
+	start := time.Now()
+	_, err := r.Fetch(t.Context(), filter)
+	if err == nil || !strings.Contains(err.Error(), "arc asks again after") || time.Since(start) > 100*time.Millisecond {
+		t.Fatalf("the second fetch took %s and gave %v, want the error of the first at once", time.Since(start), err)
+	}
+	wctx, wcancel := context.WithTimeout(t.Context(), time.Second)
+	defer wcancel()
+	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc asks again after") {
+		t.Errorf("a watch did not try the relay: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+	again, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	defer stop()
+	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc asks again after") {
+		t.Errorf("a fetch after downFor did not try again: %v", err)
 	}
 }

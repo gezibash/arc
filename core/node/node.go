@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/store"
@@ -218,9 +219,9 @@ func (n *Node) Pull(ctx context.Context, filter nostr.Filter, transports []trans
 	var reports []Report
 	var errs []error
 
-	for _, t := range transports {
+	for i, got := range fetchAll(ctx, filter, transports) {
+		t, batch, err := transports[i], got.batch, got.err
 		report := Report{Transport: t.Name()}
-		batch, err := t.Fetch(ctx, filter)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -232,6 +233,62 @@ func (n *Node) Pull(ctx context.Context, filter nostr.Filter, transports []trans
 		reports = append(reports, report)
 	}
 	return reports, errs
+}
+
+// PullGrace is how long a pull waits for the other transports after the
+// first one answered. A relay that never answers then stalls a command for
+// at most this time, not for its whole timeout (#439).
+const PullGrace = 500 * time.Millisecond
+
+// fetched is the answer of one transport to a pull.
+type fetched struct {
+	batch transport.Batch
+	err   error
+}
+
+// fetchAll asks each transport at once. After the first answer, it waits
+// PullGrace for the others, and then stops them: their result is an error
+// that says so. It returns the results in the order of the transports.
+func fetchAll(ctx context.Context, filter nostr.Filter, transports []transport.Transport) []fetched {
+	results := make([]fetched, len(transports))
+	if len(transports) == 1 {
+		results[0].batch, results[0].err = transports[0].Fetch(ctx, filter)
+		return results
+	}
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	done := make(chan int, len(transports))
+	for i, t := range transports {
+		go func() {
+			results[i].batch, results[i].err = t.Fetch(ctx, filter)
+			done <- i
+		}()
+	}
+	var grace <-chan time.Time
+	stopped := false
+	for range transports {
+		select {
+		case i := <-done:
+			if results[i].err == nil && grace == nil {
+				grace = time.After(PullGrace)
+			}
+			continue
+		case <-grace:
+		}
+		// The grace ended: stop the transports that still ask, and wait
+		// for each to return.
+		stop()
+		stopped = true
+		<-done
+	}
+	if stopped {
+		for i, t := range transports {
+			if errors.Is(results[i].err, context.Canceled) {
+				results[i] = fetched{err: fmt.Errorf("%s gave no answer within %s after another relay answered", t.Name(), PullGrace)}
+			}
+		}
+	}
+	return results
 }
 
 // Unreached is the error of a pull that no transport answered, or nil. A

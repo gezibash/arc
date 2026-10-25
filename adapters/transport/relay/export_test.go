@@ -35,3 +35,11 @@ func SetIdleCheck(d time.Duration) func() {
 	idleCheck = d
 	return func() { idleCheck = old }
 }
+
+// SetDownFor changes how long a fetch fails at once after a connect failed,
+// and returns a function that puts the old value back.
+func SetDownFor(d time.Duration) func() {
+	old := downFor
+	downFor = d
+	return func() { downFor = old }
+}
