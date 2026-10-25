@@ -531,7 +531,9 @@ func newRelay(path string, p limits.Policy, ring *rings.Config, logger *slog.Log
 	rl := khatru.NewRelay()
 	rl.UseEventstore(db, 500)
 	rl.Negentropy = true
-	rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
+	// khatru copies Info for each NIP-11 request and appends to the copy;
+	// with no spare room, each append copies, and requests do not race (#425).
+	rl.Info.SupportedNIPs = slices.Clip(append(rl.Info.SupportedNIPs, 77))
 	readers := sealed.Protect(rl)
 	limits.Apply(rl, db.DB, p)
 	connections.Watch(rl)

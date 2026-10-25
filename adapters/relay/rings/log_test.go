@@ -42,6 +42,10 @@ func TestTheLogSaysWhyARelayDoesNotRing(t *testing.T) {
 		name   string
 		cfg    Config
 		reason string
+		// wait is the wait that the line gives, if any. The clock of the
+		// harness is the wall clock, so time that the test takes comes off
+		// it: a slow run under the race detector logged 4m59s (#415).
+		wait time.Duration
 		// before makes the state in which the next wrap for bob does not
 		// ring.
 		before func(h *harness, bob keys.Key)
@@ -75,7 +79,8 @@ func TestTheLogSaysWhyARelayDoesNotRing(t *testing.T) {
 		},
 		{
 			name:   "citizen bucket",
-			reason: `reason="citizen bucket empty, waits" wait=5m0s`,
+			reason: `reason="citizen bucket empty, waits" wait=`,
+			wait:   5 * time.Minute,
 			before: func(h *harness, bob keys.Key) {
 				if code, body := h.register(bob, Request{URL: "https://example.com/hook", Burst: 1, Key: ringKey}); code != http.StatusOK {
 					h.t.Fatalf("register: %d %s", code, body)
@@ -130,6 +135,13 @@ func TestTheLogSaysWhyARelayDoesNotRing(t *testing.T) {
 			line := h.logLine(`msg="no ring"`, "citizen="+bob.Public.Hex()[:8]+" ", c.reason)
 			if !strings.Contains(line, "level=INFO") {
 				t.Errorf("the line is not at Info: %s", line)
+			}
+			if c.wait > 0 {
+				_, after, _ := strings.Cut(line, " wait=")
+				wait, err := time.ParseDuration(strings.TrimSpace(after))
+				if err != nil || wait > c.wait || wait < c.wait-5*time.Second {
+					t.Errorf("the line gives wait %q, want %s, less the time that the test took: %s", after, c.wait, line)
+				}
 			}
 			h.tick()
 			if n := len(h.calls()); n != 0 {

@@ -1,6 +1,7 @@
 package iface
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
@@ -892,6 +894,7 @@ func (r *run) watch(q *Query) error {
 		}
 		stored = r.openAll(q, events)
 		slices.Reverse(stored)
+		inOrder(stored)
 	case "public", "group":
 		if filter, relays, err = r.plainFilter(q, visibility); err != nil {
 			return err
@@ -917,19 +920,47 @@ func (r *run) watch(q *Query) error {
 	if err != nil {
 		return err
 	}
-	for received := range live {
-		if received.Err != nil {
-			return received.Err
+	for open := true; open; {
+		received, ok := <-live
+		if !ok {
+			break
 		}
-		event := received.Event
-		if !filter.Matches(event) {
-			continue
+		// A poll of the store sends its events one after another, and a tie
+		// in seconds leaves their order to chance: take the events that come
+		// at once, and show them in time order (#420).
+		batch := []transport.Received{received}
+		timer := time.NewTimer(watchBatch)
+	collect:
+		for {
+			select {
+			case more, ok := <-live:
+				if !ok {
+					open = false
+					break collect
+				}
+				batch = append(batch, more)
+			case <-timer.C:
+				break collect
+			}
 		}
+		timer.Stop()
 		var entries []*entry
+		for _, received := range batch {
+			if received.Err != nil {
+				return received.Err
+			}
+			event := received.Event
+			if !filter.Matches(event) {
+				continue
+			}
+			if visibility == "sealed" {
+				entries = append(entries, r.openAll(q, []nostr.Event{event})...)
+			} else {
+				entries = append(entries, r.plainAll(q, []nostr.Event{event})...)
+			}
+		}
 		if visibility == "sealed" {
-			entries = r.openAll(q, []nostr.Event{event})
-		} else {
-			entries = r.plainAll(q, []nostr.Event{event})
+			inOrder(entries)
 		}
 		if err := r.show(entries); err != nil {
 			return err
@@ -939,6 +970,30 @@ func (r *run) watch(q *Query) error {
 		return nil
 	}
 	return errors.New("every relay ended the watch")
+}
+
+// watchBatch is how long a watch waits for more events after one comes.
+const watchBatch = 100 * time.Millisecond
+
+// inOrder sorts sealed records by time. The time of an entry of a notebook
+// is its ms tag, and a head comes before the entries of its second.
+func inOrder(entries []*entry) {
+	key := func(e *entry) (int64, int) {
+		ms := int64(number(e.rec["created"])) * 1000
+		tags, _ := e.rec["tags"].(map[string]any)
+		if v, err := strconv.ParseInt(str(tags["ms"]), 10, 64); err == nil && v/1000 == ms/1000 {
+			return v, 1
+		}
+		return ms, 0
+	}
+	slices.SortStableFunc(entries, func(a, b *entry) int {
+		ka, pa := key(a)
+		kb, pb := key(b)
+		if ka != kb {
+			return cmp.Compare(ka, kb)
+		}
+		return pa - pb
+	})
 }
 
 // show runs the pipeline on entries and writes them. Then the exit rules of
