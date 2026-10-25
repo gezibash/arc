@@ -289,7 +289,7 @@ The two ends then use the data channel. The sender follows section 3.4.
 | `arc relay turn` fails | Stops | `no direct path, and no path through the relay: arc relay turn: <reason>` |
 | The quota is too small | Stops before the attempt | The quota and the need, in MiB |
 | The TURN server gave no address | Stops | `no direct path, and no path through the relay: the TURN server of the relay gave no address` |
-| No path in the relay attempt | Stops | `no direct path, and no path through the relay: no direct path` |
+| No path in the relay attempt | Stops | `no direct path, and no path through the relay: the data channel did not open through the TURN server <URLs>` |
 | The receiver closes the channel while the sender waits | The sender stops | `the receiver closed the channel` |
 
 An answerer that does not see the data channel open closes its end after
