@@ -3,6 +3,8 @@
 // the most common black hole, a relay that connects and then says nothing.
 // It listens on MUTERELAY_LISTEN, and prints its URL.
 //
+// With MUTERELAY_NOTICE it sends that NOTICE first on each connection, and
+// with MUTERELAY_MODE=all it answers each message as an empty relay.
 // With MUTERELAY_MODE=mail it answers each message except a read of mail
 // (kind 1059, or a filter on #p): a relay that is silent for one kind. It
 // has no events, so a REQ gets EOSE, an EVENT gets OK, and a NEG-OPEN gets
@@ -29,7 +31,8 @@ func main() {
 		os.Exit(2)
 	}
 	fmt.Printf("ws://%s\n", l.Addr())
-	mail := os.Getenv("MUTERELAY_MODE") == "mail"
+	mode := os.Getenv("MUTERELAY_MODE")
+	text := os.Getenv("MUTERELAY_NOTICE")
 	accepts := os.Getenv("MUTERELAY_ACCEPTS")
 	_ = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
@@ -43,18 +46,45 @@ func main() {
 			}
 		}
 		ctx := context.Background()
+		if text != "" {
+			body, _ := json.Marshal([]any{"NOTICE", text})
+			_ = conn.Write(ctx, websocket.MessageText, body)
+		}
 		for {
 			_, msg, err := conn.Read(ctx)
 			if err != nil {
 				return
 			}
-			if mail {
-				if answer := answerAllButMail(msg); answer != nil {
-					_ = conn.Write(ctx, websocket.MessageText, answer)
+			var answer []byte
+			switch mode {
+			case "mail":
+				answer = answerAllButMail(msg)
+			case "all":
+				if answer = answerAllButMail(msg); answer == nil {
+					answer = endOfStored(msg)
 				}
+			}
+			if answer != nil {
+				_ = conn.Write(ctx, websocket.MessageText, answer)
 			}
 		}
 	}))
+}
+
+// endOfStored is EOSE for a REQ, or nil for each other message.
+func endOfStored(msg []byte) []byte {
+	var parts []json.RawMessage
+	if json.Unmarshal(msg, &parts) != nil || len(parts) < 2 {
+		return nil
+	}
+	var verb, sub string
+	_ = json.Unmarshal(parts[0], &verb)
+	_ = json.Unmarshal(parts[1], &sub)
+	if verb != "REQ" {
+		return nil
+	}
+	body, _ := json.Marshal([]any{"EOSE", sub})
+	return body
 }
 
 // filter is the part of a filter that says whether it reads mail.
