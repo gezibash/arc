@@ -18,6 +18,46 @@ import (
 func LiveCall(ctx context.Context, signer keys.Signer, provider nostr.PubKey, request call.Request, targets []transport.Transport, timeout time.Duration) (call.Reply, time.Duration, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	type answer struct {
+		reply   call.Reply
+		elapsed time.Duration
+		via     string
+	}
+	got, err := retryUnheard(ctx, func() (answer, error) {
+		reply, elapsed, via, err := liveCall(ctx, signer, provider, request, targets)
+		return answer{reply, elapsed, via}, err
+	})
+	return got.reply, got.elapsed, got.via, err
+}
+
+// unheardWait is how long a call or a session open tries again when no
+// provider heard it. A relay that ended the watch of a provider has a new
+// watch within a few seconds, and in that time each live event reaches no
+// one (#424).
+const unheardWait = 6 * time.Second
+
+// unheardStep is the time between two tries.
+const unheardStep = 250 * time.Millisecond
+
+// retryUnheard runs try again while it fails because no one heard it, for
+// at most unheardWait. A try that no one heard reached no provider, so to
+// repeat it never repeats an operation.
+func retryUnheard[T any](ctx context.Context, try func() (T, error)) (T, error) {
+	deadline := time.Now().Add(unheardWait)
+	for {
+		got, err := try()
+		if err == nil || !errors.Is(err, transport.ErrNoListener) || time.Now().After(deadline) {
+			return got, err
+		}
+		select {
+		case <-time.After(unheardStep):
+		case <-ctx.Done():
+			return got, err
+		}
+	}
+}
+
+func liveCall(ctx context.Context, signer keys.Signer, provider nostr.PubKey, request call.Request, targets []transport.Transport) (call.Reply, time.Duration, string, error) {
 	var failures []error
 	for _, t := range targets {
 		exchange, ok := t.(call.Exchanger)

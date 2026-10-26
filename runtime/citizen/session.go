@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"fiatjaf.com/nostr"
@@ -56,6 +58,8 @@ type Session struct {
 	// kept holds the relay of each URL that NewRelay gave.
 	keptMu sync.Mutex
 	kept   map[string]relay.Relay
+	// offline warns once that no relay answered.
+	offline sync.Once
 }
 
 type Config struct {
@@ -171,6 +175,43 @@ func (s *Session) warnf(format string, args ...any) {
 		}
 	}
 	fmt.Fprintf(s.Errors, format, safe...)
+}
+
+// warnUnreached warns of a pull that no relay answered, after which the
+// command uses what this machine holds. When the network reached no relay,
+// it says so in one short line, once in a session: the error of each relay
+// is a few hundred characters, and each pull of one command repeats it
+// (#396). A relay that answered with a refusal keeps its reason.
+func (s *Session) warnUnreached(err error, uses string) {
+	if !offline(err) {
+		s.warnf("%v\n%s\n", err, uses)
+		return
+	}
+	s.warnOffline()
+}
+
+// warnOffline says once in a session that the network reached no relay.
+func (s *Session) warnOffline() {
+	s.offline.Do(func() {
+		s.warnf("arc: no relay answered, so this uses what this machine holds\n")
+	})
+}
+
+// offline says whether each error in err is a dial or a name lookup that
+// failed, so that no relay heard the request.
+func offline(err error) bool {
+	// Each branch of a joined error must be offline, and errors.As takes
+	// the first branch that matches, so walk the tree by hand.
+	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
+	case *net.OpError, *net.DNSError:
+		return true
+	case interface{ Unwrap() []error }:
+		errs := e.Unwrap()
+		return len(errs) > 0 && !slices.ContainsFunc(errs, func(err error) bool { return !offline(err) })
+	case interface{ Unwrap() error }:
+		return offline(e.Unwrap())
+	}
+	return false
 }
 
 // noticeLimit is the most characters of a relay NOTICE that arc prints,
