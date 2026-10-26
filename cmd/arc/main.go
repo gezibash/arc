@@ -1054,6 +1054,7 @@ func syncCommand() *cobra.Command {
 				refreshDevices(command.Context(), sess, command.ErrOrStderr())
 			}
 			failed := false
+			var unreached []string
 			for _, t := range targets {
 				// Self data goes to a directory that the citizen carries,
 				// but never to a relay.
@@ -1096,6 +1097,12 @@ func syncCommand() *cobra.Command {
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
+				if err != nil && citizen.Unreachable(err) {
+					// A relay that gave no answer gets one word at the
+					// end, not its whole error (#439).
+					unreached = append(unreached, terminal.EscapeLine(t.Name()))
+					continue
+				}
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
 					failed = true
@@ -1128,6 +1135,9 @@ func syncCommand() *cobra.Command {
 			}
 			if failed {
 				return errors.New("some transports failed")
+			}
+			if len(unreached) > 0 {
+				return fmt.Errorf("no answer from %s; arc syncs with %s again at the next sync", strings.Join(unreached, ", "), plural(len(unreached), "it", "them"))
 			}
 			return nil
 		},

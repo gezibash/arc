@@ -233,9 +233,13 @@ func (r Relay) Close() error {
 	return r.kept.drop(conn)
 }
 
-// errNoAnswer is the cause of the timeout of a call of the relay: the
+// callTimeout is Timeout, the time that a send, a query or a NIP-77
+// session gives the relay. A test makes it short.
+var callTimeout = Timeout
+
+// ErrNoAnswer is the cause of the timeout of a call of the relay: the
 // relay, not the caller, ended the call.
-var errNoAnswer = errors.New("the relay gave no answer in time")
+var ErrNoAnswer = errors.New("the relay gave no answer in time")
 
 // downFor is how long a fetch fails at once after a connect failed.
 var downFor = 30 * time.Second
@@ -251,7 +255,19 @@ func (k *kept) isDown() error {
 	if k.down == nil || time.Now().After(k.downUntil) {
 		return nil
 	}
-	return fmt.Errorf("%w; arc asks again after %s", k.down, k.downUntil.Format(time.TimeOnly))
+	return fmt.Errorf("%w; arc asks again in %s", k.down, time.Until(k.downUntil).Round(time.Second))
+}
+
+// silent marks the relay down when a call on a connection that it took
+// gave no EOSE, OK or CLOSED within the relay's own timeout (#439). A
+// refusal is an answer, and the deadline of the caller is not the relay's.
+func (k *kept) silent(ctx context.Context, err error) {
+	if err == nil || answered(err) || !errors.Is(context.Cause(ctx), ErrNoAnswer) {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.down, k.downUntil = err, time.Now().Add(downFor)
 }
 
 // failedToReach says whether err is a dial, a lookup or an address that
@@ -318,7 +334,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			// that stopped says nothing about the relay.
 			// Only the relay's own timeout, or a dial that failed, marks it
 			// down: never a refusal, nor the deadline of the caller.
-			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), errNoAnswer) {
+			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), ErrNoAnswer) {
 				k.down, k.downUntil = err, time.Now().Add(downFor)
 			}
 			return nil, false, nil, err
@@ -335,6 +351,11 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 		if err != nil && !answered(err) && !errors.Is(err, context.Canceled) {
 			_ = k.drop(conn)
 		}
+		// A relay that connected, and then gave no EOSE, OK or CLOSED
+		// within its own timeout, is down as one that did not connect: each
+		// call to it would wait the whole timeout again (#439). A refusal
+		// is an answer, and the deadline of the caller is not the relay's.
+		k.silent(ctx, err)
 	}, nil
 }
 
@@ -392,6 +413,7 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err = r.publish(ctx, conn, event); err != nil && !refused(err) {
 		_ = k.drop(conn)
 	}
+	k.silent(ctx, err)
 	return r.named(err)
 }
 
@@ -501,7 +523,7 @@ func (s *sessions) dispatch(data string) {
 
 // Send publishes one event. A relay that already holds it accepts it again.
 func (r Relay) Send(ctx context.Context, event nostr.Event) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, Timeout, errNoAnswer)
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	if r.kept != nil {
@@ -662,7 +684,7 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 	if err := r.kept.isDown(); err != nil {
 		return transport.Batch{}, err
 	}
-	ctx, cancel := context.WithTimeoutCause(ctx, Timeout, errNoAnswer)
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	conn, _, done, err := r.open(ctx)
@@ -842,7 +864,7 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	if err := r.kept.isDown(); err != nil {
 		return nil, nil, true, err
 	}
-	ctx, cancel := context.WithTimeoutCause(ctx, Timeout, errNoAnswer)
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	info, err := r.information(ctx)

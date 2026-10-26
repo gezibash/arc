@@ -1,11 +1,13 @@
 package proof
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -275,4 +277,47 @@ func silentRelay(t *testing.T) string {
 		}
 	})
 	return l.Addr().String()
+}
+
+// muteRelayURL runs a relay that takes each WebSocket connection and never
+// answers on it, the most common black hole, and returns its URL.
+func muteRelayURL(t *testing.T) string {
+	t.Helper()
+	command := exec.Command(program("muterelay"))
+	command.Env = append(os.Environ(), "MUTERELAY_LISTEN=127.0.0.1:0")
+	out, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(line)
+}
+
+// A relay that connects and never answers costs a sync one timeout, not
+// one for each of its queries in series (#439): the first query that it
+// does not answer marks it down. The sync says so in one line.
+func TestSyncWaitsForAMuteRelayOnce(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", url)
+	home.try("", "relay", "add", muteRelayURL(t))
+	start := time.Now()
+	got := home.try("", "sync")
+	took := time.Since(start)
+	if took > 25*time.Second {
+		t.Errorf("arc sync took %s with a mute relay, want about one timeout of 15 s", took)
+	}
+	if !strings.Contains(got.Stderr, "no answer from ws://") || strings.Count(got.Stderr, "\n") != 1 {
+		t.Errorf("arc sync with a mute relay wrote %q, want one line that names it", got.Stderr)
+	}
+	t.Logf("ok: arc sync took %s with a mute relay", took.Round(100*time.Millisecond))
 }

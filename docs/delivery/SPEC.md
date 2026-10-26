@@ -420,12 +420,16 @@ waits at most 500 ms for the others, and then stops them. When a relay of
 the session did not connect, each send, query, NIP-77 session or live call
 to it in the next 30 seconds fails at once with the same error. Only the
 relay's own timeout or a dial that failed marks it down, never a refusal or
-the deadline of the caller. A watch
+the deadline of the caller. A relay that took the connection, and then gave
+no EOSE, OK or CLOSED within its own timeout, is down in the same way. A
+first attempt that raced both address families and reached neither within
+4 seconds ends the connect: the host is behind a black hole. `arc sync`
+names each relay that gave no answer in one line at its end. A watch
 still tries to connect, so a provider watches again as soon as its relay
 is back. A relay that gave no answer in time counts as unreached: a command
 that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
 and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
-`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown` and `TestOfflineJournalIsQuiet`
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`
 prove this.
 
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
