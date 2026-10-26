@@ -448,7 +448,7 @@ func sinceFilter(ctx context.Context, sess *citizen.Session, since string, msgs 
 		return func(m mail.Message) bool { return !m.At.Before(at) }, nil
 	}
 	if !slices.ContainsFunc(msgs, func(m mail.Message) bool { return m.ID == since }) {
-		return nil, fmt.Errorf("--since %q is not an RFC 3339 time or the id of a message in the inbox", since)
+		return nil, fmt.Errorf("--since \"%s\" is not an RFC 3339 time or the id of a message in the inbox", since)
 	}
 	order, err := sess.ReceiptOrder(ctx)
 	if err != nil {

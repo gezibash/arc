@@ -845,14 +845,14 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	}
 	decrypt, _ := command.Flags().GetString("decrypt")
 	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
-		return fmt.Errorf("--decrypt is none, self or all, not %q", decrypt)
+		return fmt.Errorf("--decrypt is none, self or all, not \"%s\"", decrypt)
 	}
 	var allowed []nostr.Kind
 	texts, _ := command.Flags().GetStringArray("allow-kind")
 	for _, text := range texts {
 		n, err := strconv.Atoi(text)
 		if err != nil {
-			return fmt.Errorf("--allow-kind %q is not a kind", text)
+			return fmt.Errorf("--allow-kind \"%s\" is not a kind", text)
 		}
 		allowed = append(allowed, nostr.Kind(n))
 	}

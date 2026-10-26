@@ -890,7 +890,7 @@ func turnSetting(command *cobra.Command) (*turn.Config, error) {
 	minPort, err1 := strconv.ParseUint(low, 10, 16)
 	maxPort, err2 := strconv.ParseUint(high, 10, 16)
 	if !ok || err1 != nil || err2 != nil || minPort == 0 || maxPort < minPort {
-		return nil, fmt.Errorf("--turn-ports %q is not a range such as 49152-49251", ports)
+		return nil, fmt.Errorf("--turn-ports \"%s\" is not a range such as 49152-49251", ports)
 	}
 	secret := os.Getenv("TURN_SECRET")
 	if secret == "" {
@@ -903,13 +903,13 @@ func turnSetting(command *cobra.Command) (*turn.Config, error) {
 	}
 	ip := net.ParseIP(address)
 	if ip == nil || ip.IsUnspecified() {
-		return nil, fmt.Errorf("TURN needs the public IP address of this machine: set --turn-ip (not %q)", address)
+		return nil, fmt.Errorf("TURN needs the public IP address of this machine: set --turn-ip (not \"%s\")", address)
 	}
 	quota, _ := flags.GetInt64("turn-quota")
 	urls, _ := flags.GetStringArray("turn-url")
 	for _, u := range urls {
 		if !strings.HasPrefix(u, "turn:") && !strings.HasPrefix(u, "turns:") {
-			return nil, fmt.Errorf("--turn-url %q is not a turn: or turns: URL", u)
+			return nil, fmt.Errorf("--turn-url \"%s\" is not a turn: or turns: URL", u)
 		}
 	}
 	return &turn.Config{Secret: secret, PublicIP: ip, MinPort: uint16(minPort), MaxPort: uint16(maxPort), Quota: quota << 20, URLs: urls}, nil

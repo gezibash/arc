@@ -359,7 +359,7 @@ func (i Installs) Remove(name string) (Install, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return Install{}, fmt.Errorf("catalog: nothing installed as %q", name)
+		return Install{}, fmt.Errorf("catalog: nothing installed as \"%s\"", name)
 	case 1:
 	default:
 		return Install{}, fmt.Errorf("catalog: %q names %d installs; remove the others by their names first", name, len(matches))

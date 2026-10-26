@@ -1014,3 +1014,20 @@ func TestARemovedStorageInstallIsNamedEscaped(t *testing.T) {
 		t.Errorf("arc sync printed %q, want the removed install named escaped", out)
 	}
 }
+
+// An argument that a user typed is escaped once in an error, at the print:
+// an error holds it as given, so a newline in it shows as \n, not \\n.
+func TestAnArgumentIsEscapedOnceInAnError(t *testing.T) {
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	ok(t, home, "", "relay", "add", "ws://127.0.0.1:1")
+	for _, args := range [][]string{
+		{"apps", "remove", "x\ny"},
+		{"message", "watch", "--since", "x\ny"},
+	} {
+		_, err := run(t, home, "", args...)
+		if err == nil || !strings.Contains(terminal.EscapeLine(err.Error()), `"x\ny"`) {
+			t.Errorf("arc %q gave %q, want the argument escaped once", args, err)
+		}
+	}
+}

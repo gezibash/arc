@@ -123,7 +123,7 @@ func installed(installs catalog.Installs, name string) (catalog.Install, error) 
 			return e, nil
 		}
 	}
-	return catalog.Install{}, fmt.Errorf("nothing installed as %q: see arc apps list", name)
+	return catalog.Install{}, fmt.Errorf("nothing installed as \"%s\": see arc apps list", name)
 }
 
 func showOffer(out io.Writer, o catalog.Offer) {
