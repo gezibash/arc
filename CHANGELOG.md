@@ -60,8 +60,9 @@ All notable changes to ARC are recorded here. The format follows
 - **Breaking:** the relays that gave no answer are down for each process
   of the home, for 30 s by the wall clock, in `relays-down.json`. The next
   command skips them at once, and `arc sync` says when it tries each again.
-  A refused connection marks nothing, and a mark further ahead than 30 s
-  is no mark. An older arc keeps no file, so it waits for each such relay
+  Only a failure that cost time marks a relay: a refused connection, or one
+  that the host closed or reset at once, marks nothing, and a mark further
+  ahead than 30 s is no mark. An older arc keeps no file, so it waits for each such relay
   in each command (#444).
 - In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
   shared disk can take longer than 200 ms for one sync of the store. The

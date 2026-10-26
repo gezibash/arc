@@ -227,8 +227,10 @@ func TestOfflineJournalIsQuiet(t *testing.T) {
 			t.Fatalf("arc %s offline: %v\n%s", strings.Join(step.args, " "), got.Err, got.Stderr)
 		}
 		// The home keeps the silent relay down after the first command:
-		// the next commands do not wait for it again (#439).
-		if took := time.Since(start); step.args[1] != "write" && took > 2*time.Second {
+		// the next commands do not wait for it again (#439). 10 s is far
+		// below the 20 s that a silent relay costs, and holds a command of
+		// the race build on a busy runner.
+		if took := time.Since(start); step.args[1] != "write" && took > 10*time.Second {
 			t.Errorf("arc %s offline took %s after the home marked the silent relay down", strings.Join(step.args, " "), took)
 		}
 		if got.Stderr != offline {

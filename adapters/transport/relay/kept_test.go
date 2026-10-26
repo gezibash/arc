@@ -526,3 +526,44 @@ func TestAWatchEndSaysWhoEndedIt(t *testing.T) {
 		t.Errorf("a watch that its caller stopped was told as %v", ended.got)
 	}
 }
+
+// A host that takes the connection and closes it at once answered at once:
+// a mark would save no wait, and would skip the relay after it comes back.
+// It marks nothing, in this process or for the other processes of the home
+// (#444). arc relay add marked such a relay for 30 s, so arc serve skipped
+// it when it came back.
+func TestAConnectionClosedAtOnceIsNotDown(t *testing.T) {
+	// A close sends FIN, and the client reads EOF; a close with no linger
+	// sends RST, and the client reads a reset of the connection.
+	for _, reset := range []bool{false, true} {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = l.Close() })
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				if reset {
+					_ = c.(*net.TCPConn).SetLinger(0)
+				}
+				_ = c.Close()
+			}
+		}()
+		store := &marks{}
+		r := relay.New("ws://"+l.Addr().String(), keyer.NewPlainKeySigner(nostr.Generate()))
+		r.ShareDown(store)
+		for range 2 {
+			_, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
+			if _, down := errors.AsType[*relay.DownError](err); err == nil || down {
+				t.Fatalf("reset %t: a fetch from a host that closes at once gave %v, want its own error", reset, err)
+			}
+		}
+		if len(store.marked) > 0 {
+			t.Errorf("reset %t: a host that closes at once was marked down: %v", reset, store.marked)
+		}
+	}
+}

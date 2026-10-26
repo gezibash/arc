@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -362,9 +361,12 @@ func (k *kept) silent(ctx context.Context, conn *nostr.Relay, err error) (up boo
 	return false
 }
 
-// failedToReach says whether err is a dial, a lookup or an address that
-// failed, or a first attempt that stalled: an answer of the relay, such as
-// a refusal, is not. reach tries the other address family after any failed
+// failedToReach says whether err is a first attempt that cost time and
+// reached no relay: one that stalled, a dial or a lookup that timed out, or
+// a lookup or an address that failed. A mark of a relay exists to save
+// that time. A host that refused, closed or reset the connection answered
+// at once: a mark would save nothing, and would skip the relay after it
+// came back (#444). reach tries the other address family after any failed
 // attempt, so only its first attempt says whether the relay answered.
 func failedToReach(err error) bool {
 	for e := err; e != nil; {
@@ -376,15 +378,10 @@ func failedToReach(err error) bool {
 		}
 		e = errors.Unwrap(e)
 	}
-	// A refused connection is an answer of the host, which costs nothing
-	// to ask again: a relay that starts on the port is used at once (#444).
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return false
-	}
-	var op *net.OpError
+	var timeout net.Error
 	var dns *net.DNSError
 	var addr *net.AddrError
-	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
+	return errors.Is(err, ErrStalled) || errors.As(err, &timeout) && timeout.Timeout() || errors.As(err, &dns) || errors.As(err, &addr)
 }
 
 // hear keeps that the relay answered on conn.
