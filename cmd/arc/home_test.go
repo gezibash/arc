@@ -866,7 +866,7 @@ func TestAnInstalledNameIsEscapedAndABadStorageNameIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key := strings.Repeat("cd", 32)
+	key := keys.Generate().Public.Hex()
 	for _, as := range []string{"s\narc: fake forged", "s\u202ex", "s\u0085x", "s\u200bx", strings.Repeat("s", 65)} {
 		_, _, err := runErr(t, "keys", "storage", "add", key, "--as", as)
 		if err == nil || err.Error() != "--as: a storage name has 1 to 64 bytes, and no control character and no format character" {
