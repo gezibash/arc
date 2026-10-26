@@ -102,6 +102,9 @@ func Open(cfg Config) (*Session, error) {
 			}
 			if sess.Errors != nil {
 				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
+				r.OnWatchEnd(func(by, why string) {
+					sess.warnf("arc: info: a watch of %s ended, closed by %s: %s\n", url, by, why)
+				})
 				r.OnAuthFailure(func(err error) {
 					sess.warnf("%s: could not authenticate before it read mail, so the relay does not count the read for rings: %s\n", url, err)
 				})
