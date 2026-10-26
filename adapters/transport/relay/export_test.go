@@ -62,3 +62,6 @@ func SetQuickFor(d time.Duration) func() {
 	quickFor = d
 	return func() { quickFor = old }
 }
+
+// HostClosed runs hostClosed.
+var HostClosed = hostClosed

@@ -3,10 +3,12 @@ package citizen
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -163,5 +165,14 @@ func TestAMarkFarAheadIsNoMark(t *testing.T) {
 	}
 	if _, _, ok := d.Down("ws://near"); !ok {
 		t.Error("a mark 10 s ahead does not count")
+	}
+}
+
+// A broken pipe while arc writes its request is a connection that the host
+// closed at once, and the line of sync says so (#444).
+func TestABrokenPipeIsAClosedConnection(t *testing.T) {
+	err := &net.OpError{Op: "write", Net: "tcp", Err: os.NewSyscallError("write", syscall.EPIPE)}
+	if got := UnreachedReason(err); got != "the connection was closed" {
+		t.Errorf("a broken pipe has the reason %q, want the connection was closed", got)
 	}
 }

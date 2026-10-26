@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -568,6 +571,32 @@ func TestAConnectionClosedAtOnceIsNotDown(t *testing.T) {
 		quickFailures(t, r, fmt.Sprintf("a host that closes at once (reset %t)", reset), "the connection was closed")
 		if len(store.marked) > 0 {
 			t.Errorf("reset %t: a host that closes at once was marked down for the other processes: %v", reset, store.marked)
+		}
+	}
+}
+
+// Each form in which a host closes or resets a connection at once counts
+// as one: which form the client reads depends on timing, and a write of
+// the request can meet a broken pipe (#444). A refusal and a timeout are
+// not such a close.
+func TestEachFormOfACloseAtOnceCounts(t *testing.T) {
+	op := func(call string, errno syscall.Errno) error {
+		return &net.OpError{Op: call, Net: "tcp", Err: os.NewSyscallError(call, errno)}
+	}
+	for _, c := range []struct {
+		name   string
+		err    error
+		closed bool
+	}{
+		{"EOF", fmt.Errorf("Get: %w", io.EOF), true},
+		{"a reset", op("read", syscall.ECONNRESET), true},
+		{"a broken pipe", op("write", syscall.EPIPE), true},
+		{"an idle connection that the server closed", errors.New("Get: http: server closed idle connection"), true},
+		{"a refusal", op("connect", syscall.ECONNREFUSED), false},
+		{"a timeout", context.DeadlineExceeded, false},
+	} {
+		if got := relay.HostClosed(c.err); got != c.closed {
+			t.Errorf("%s: hostClosed is %t, want %t", c.name, got, c.closed)
 		}
 	}
 }

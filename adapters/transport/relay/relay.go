@@ -341,8 +341,9 @@ func closedAtOnce(err error) bool {
 }
 
 // ClosedError is a connect that the host took and closed or reset at once,
-// before the WebSocket handshake. The client reads EOF, a reset, or, on
-// Linux, an idle connection that the server closed, as timing falls; each
+// before the WebSocket handshake. The client reads EOF, a reset, a broken
+// pipe while it still writes its request, or, on Linux, an idle connection
+// that the server closed, as timing falls; each
 // says the same, so a caller tests for this one type (#444).
 type ClosedError struct{ Err error }
 
@@ -354,7 +355,7 @@ func (e *ClosedError) Unwrap() error { return e.Err }
 // reset. net/http does not export its error for an idle connection that the
 // server closed, so its text says it.
 func hostClosed(err error) bool {
-	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "server closed idle connection")
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "server closed idle connection")
 }
 
 func (e *DownError) Unwrap() error { return e.Err }

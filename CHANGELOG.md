@@ -69,6 +69,9 @@ All notable changes to ARC are recorded here. The format follows
   ahead than 30 s is no mark. A command reads the marks once, so a mark
   that runs out in the middle of it does not make it dial the relay. A
   connection that failed at once is remembered in the process for 5 s. A
+  host that closes a connection at once (EOF, a reset, a broken pipe, or
+  an idle connection that the server closed) gets one line, "the
+  connection was closed". A
   file that arc cannot write gives one warning, also in arc-dm. An older
   arc keeps no file, so it waits for each such relay in each command
   (#444).

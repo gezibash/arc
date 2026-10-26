@@ -273,7 +273,7 @@ func UnreachedReason(err error) string {
 // at once.
 func closedByHost(err error) bool {
 	_, closed := errors.AsType[*relay.ClosedError](err)
-	return closed || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
+	return closed || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 // Unreachable says whether no relay heard the request of err: a dial, a
