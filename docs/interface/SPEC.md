@@ -431,8 +431,12 @@ The words `next`, `today` and `at` MUST NOT name a page.
 
 **Front matter.** `write` fills in each missing field of the front matter:
 `notebook` and `page` from the address, and `title` from the `title`
-template, else from the first `# ` heading of the text, else from the UTC
-date. A field that is given MUST match the address, and a title that is
+template, else from the first `# ` heading of the text, else from its
+first line that holds more than blanks, with no Markdown heading marker,
+and cut to 79 characters and an ellipsis when it is longer than 80. Only a
+page of `today` gets the date as its title: the title passes a heading or
+a line that is a date, so that the text never changes which page `today`
+names. A text of dates only, with no title, fails, and asks for a title. A field that is given MUST match the address, and a title that is
 given MUST match the `title` template.
 
 | Op | Templates | Effect |
@@ -461,6 +465,8 @@ at `<address>-<head id>` on each device, with no write: its head is the
 checkpoint, and a lost page with no head has the entries alone. `ls`
 lists it, with page number 0, so the `next` and `prev` operations and a
 `next` address pass it. `ls` and `read` say on the standard error why the page is lost.
+A filtered `ls` names only the addresses that it shows, but it counts the
+pages of an address, and finds its live page, in the whole journal.
 `append`, `fix`, `history` and `delete` take its address. Its entries
 keep the address of the page in their `page` tag, and the id of the lost
 head. `fix` also takes an entry by the address of its `page` tag, as
