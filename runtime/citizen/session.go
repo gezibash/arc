@@ -139,6 +139,7 @@ func Open(cfg Config) (*Session, error) {
 		return nil, err
 	}
 	sess.Mail.Indexers = sess.Indexers
+	sess.Mail.Unanswered = offline
 	sess.Mail.Contacts = sess.Contacts()
 	sess.Mail.InboxRelay = func(url string) transport.Transport {
 		return relay.Relay{URL: url, Signer: keyer.NewPlainKeySigner(nostr.Generate())}
@@ -318,6 +319,17 @@ func RefusedLine(name string, err error) (line string, ok bool) {
 		reason = string(runes[:noticeLimit]) + "…"
 	}
 	return name + ": the relay refused: " + reason + "; arc syncs with it again at the next sync", true
+}
+
+// StoppedLine is the line of sync for the relay name, which took some
+// wraps and then gave no answer. ok is false for each other error (#465).
+// The line is raw: the caller escapes it once, where it prints it.
+func StoppedLine(name string, err error) (line string, ok bool) {
+	stopped, ok := errors.AsType[*mail.StoppedError](err)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%s: stopped answering after it took %d of %d waiting wraps; arc syncs with it again at the next sync", name, stopped.Sent, stopped.Waiting), true
 }
 
 // Unusable says whether each relay of err gave no answer or refused, so

@@ -75,6 +75,10 @@ All notable changes to ARC are recorded here. The format follows
   file that arc cannot write gives one warning, also in arc-dm. An older
   arc keeps no file, so it waits for each such relay in each command
   (#444).
+- A relay that stops answering partway through `arc sync` gets one line
+  that says how many waiting wraps it took, and the sync fails. The wraps
+  that did not go wait for the next sync. An older arc printed "refused
+  not sent" for each wrap and exited 0 (#465).
 - In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
   shared disk can take longer than 200 ms for one sync of the store. The
   200 ms target stays for a run on a machine of its own. The count of the

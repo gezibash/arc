@@ -13,11 +13,15 @@
 // ...", and with MUTERELAY_MODE=403 it refuses the WebSocket upgrade with
 // HTTP 403. MUTERELAY_REASON replaces the reason of a refusal, and with
 // MUTERELAY_MODE=mailclosed it answers as with mail, but refuses a read of
-// mail with that reason. With MUTERELAY_ACCEPTS it writes one line to that file for each
-// connection that it takes.
+// mail with that reason. With MUTERELAY_MODE=quiet it answers as an empty
+// relay until it took MUTERELAY_QUIET_AFTER events, and then answers
+// nothing, on each connection: a relay that stops answering partway
+// through a sync. With MUTERELAY_ACCEPTS it writes one line to that file
+// for each connection that it takes.
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -26,6 +30,8 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
+	"sync/atomic"
 
 	"github.com/coder/websocket"
 )
@@ -38,6 +44,8 @@ func main() {
 	}
 	fmt.Printf("ws://%s\n", l.Addr())
 	mode := os.Getenv("MUTERELAY_MODE")
+	quietAfter, _ := strconv.Atoi(os.Getenv("MUTERELAY_QUIET_AFTER"))
+	var took atomic.Int32
 	reason := cmp.Or(os.Getenv("MUTERELAY_REASON"), "blocked: this relay serves no one")
 	text := os.Getenv("MUTERELAY_NOTICE")
 	accepts := os.Getenv("MUTERELAY_ACCEPTS")
@@ -82,6 +90,13 @@ func main() {
 				}
 			case "auth":
 				answer = refuse(msg, "auth-required: this relay serves only its members")
+			case "quiet":
+				if int(took.Load()) < quietAfter {
+					answer = answerAll(msg)
+					if answer != nil && bytes.HasPrefix(answer, []byte(`["OK"`)) {
+						took.Add(1)
+					}
+				}
 			}
 			if answer != nil {
 				_ = conn.Write(ctx, websocket.MessageText, answer)
@@ -91,6 +106,35 @@ func main() {
 			}
 		}
 	}))
+}
+
+// answerAll is the answer of an empty relay to one message: EOSE to a REQ,
+// NEG-ERR to a NEG-OPEN, and OK to an EVENT.
+func answerAll(msg []byte) []byte {
+	var parts []json.RawMessage
+	if json.Unmarshal(msg, &parts) != nil || len(parts) < 2 {
+		return nil
+	}
+	var verb, sub string
+	_ = json.Unmarshal(parts[0], &verb)
+	_ = json.Unmarshal(parts[1], &sub)
+	var answer []any
+	switch verb {
+	case "REQ":
+		answer = []any{"EOSE", sub}
+	case "NEG-OPEN":
+		answer = []any{"NEG-ERR", sub, "blocked: this relay has no negentropy"}
+	case "EVENT":
+		var event struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(parts[1], &event)
+		answer = []any{"OK", event.ID, true, ""}
+	default:
+		return nil
+	}
+	body, _ := json.Marshal(answer)
+	return body
 }
 
 // endOfStored is EOSE for a REQ, or nil for each other message.
