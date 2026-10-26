@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList|TestAnnounceReplacesAnAnnouncementOfTheSameSecond|TestACallThatNoOneHeardTriesAgain|TestALostReplyAfterAnUnheardCallIsNotRepeated|TestADeadlineInARetryGivesTheUnheardResult|TestADeadlineAfterASubmittedTryKeepsItsResult)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/ ./cmd/arc/ ./runtime/citizen/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList|TestAnnounceReplacesAnAnnouncementOfTheSameSecond|TestACallThatNoOneHeardTriesAgain|TestALostReplyAfterAnUnheardCallIsNotRepeated|TestADeadlineInARetryGivesTheUnheardResult|TestADeadlineAfterASubmittedTryKeepsItsResult|TestATryThatCannotEndBeforeTheDeadlineIsNotStarted|TestATryThatStartedAndWasCutOffKeepsItsUnknownOutcome)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/ ./cmd/arc/ ./runtime/citizen/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -902,6 +902,15 @@ Receipt and processing are separate:
   automatically executed again. The same conservative rule applies to
   historical receipts without a processing journal. This does not promise
   exactly-once effects in an external service.
+- At most once holds for one provider for each identity and capability.
+  One home MUST serve a capability with one `arc serve` at a time: a
+  second one waits up to 10 seconds for a lock in the identity folder, says
+  so once, and then exits with an error. The system frees the lock of a
+  serve that ends, also on SIGKILL (#447). Two devices of one citizen that
+  serve the same capability can both run a request: each one watches the
+  identity, and a request names no device. `docs/proposals/one-provider.md`
+  proposes a fix. `TestOneHomeRunsEachRequestOnce` proves the rule for one
+  home.
 
 Outgoing calls commit their outbox and forwarding state before any send.
 Live replay protection remembers request IDs for the live window. Each request
