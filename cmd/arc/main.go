@@ -1222,6 +1222,12 @@ func syncCommand() *cobra.Command {
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
+				if line, ok := citizen.StoppedLine(terminal.EscapeLine(t.Name()), err); ok {
+					// The relay took some wraps, and then gave no answer:
+					// one line names it, and the rest wait (#465).
+					unreached = append(unreached, line)
+					continue
+				}
 				if err != nil && citizen.Unreachable(err) {
 					// The relay answered the question of Reach, so only
 					// its mail gave no answer: say so, in a few words at
