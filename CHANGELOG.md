@@ -57,6 +57,10 @@ All notable changes to ARC are recorded here. The format follows
   older arc still asks one relay at a time and waits for each (#442).
 - A relay that takes the connection and never answers no longer costs
   about 30 s for each waiting message in `arc sync` (#442).
+- In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
+  shared disk can take longer than 200 ms for one sync of the store. The
+  200 ms target stays for a run on a machine of its own. The count of the
+  store writes before a ring stays as it is (#452).
 
 ## [0.37.0] - 2026-10-19
 
