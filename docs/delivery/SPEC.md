@@ -837,9 +837,29 @@ ID. Before `arc announce` signs, it therefore reads the announcements of that
 capability that the store and the relays hold. It MUST sign the new one at
 least one second after the newest of them. An older client signs at the
 current second, so its new version can lose to an announcement of the same
-second. A reader needs no change.
-`TestAnnounceReplacesAnAnnouncementOfTheSameSecond` in `cmd/arc` proves
-this.
+second. A reader needs no change. If no relay answers, or the citizen has
+no relay, `arc announce` cannot know the newest announcement, and MUST
+refuse, and keep nothing.
+`arc serve` starts as before, but MUST sign no announcement until a relay
+answered for the announcements that the relays hold. Until then it says so
+once on the standard error, and asks again. Then it MUST sign each of its
+announcements, also each one again, at least one second after the newest
+that its store holds, never at the bare clock (#422). An announcement that a store holds can be
+dated at most 10 minutes after the clock of the machine: above that,
+`arc announce` MUST refuse to sign, and name the clocks to check. Else one
+announcement far in the future would hold each new one as far ahead.
+`arc serve` MUST NOT stop for it, as a wrong clock or a hostile relay would
+then stop the service: it signs nothing, says once how far ahead the
+announcement is and when it announces again, and announces once the clock
+is within the 10 minutes. While `arc serve` waits, that line and the line
+that no relay has answered are the only ones that it writes (#445).
+`TestAnnounceReplacesAnAnnouncementOfTheSameSecond`,
+`TestAnnounceRefusesWhenNoRelayAnswers`,
+`TestServeAnnouncesAfterTheNewestAnnouncement`, `TestServeSignsNothingBeforeARelayAnswers` and
+`TestTheAnnouncerSignsNothingBlind`, `TestAnnounceRefusesWithNoRelay`,
+`TestTheAnnouncerWaitsForAnAnnouncementFarAhead` and
+`TestServeSaysOneLineWhileNoRelayAnswers` in `cmd/arc`, and
+`TestAnAnnouncementFarAheadStopsANewOne` in `runtime/catalog`, prove this.
 
 An announcement is one event, so its JSON holds at most 65,536 bytes, see
 section 3.4. If the announcement of a manifest is larger, the provider MUST
