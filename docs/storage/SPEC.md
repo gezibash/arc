@@ -1329,7 +1329,7 @@ count. When there are such blobs, the line says `removed <n> blobs of parts
 and checkpoints that no page names` before it. A repair that deletes such
 parts from the store prints `self data: repair removed <n> parts and <m>
 checkpoints that no page names, as a write that failed leaves them; the
-next arc sync --repair frees them on your storage citizens`. Measured in `TestStorageDeletesReplaced`, with
+next arc sync --repair frees any that went to your storage citizens`. Measured in `TestStorageDeletesReplaced`, with
 three storage citizens, k = 2, and pieces of 2,093 bytes: after 8 writes
 of one page, each storage citizen held 17 blobs of 35,581 bytes. The
 repair removed 7 blobs, and each storage citizen then held 10 blobs of

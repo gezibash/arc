@@ -458,7 +458,7 @@ func (r *run) removeUnnamed(coordinate string, events []nostr.Event) error {
 // removed says how many parts and checkpoints that no page names a delete
 // removed, and what frees them on the storage citizens.
 func (r *run) removed(events []nostr.Event) {
-	fmt.Fprintf(r.stdio.Err, "removed %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n", counted(events))
+	fmt.Fprintf(r.stdio.Err, "removed %s that no page names, as a write that failed leaves them; the next arc sync --repair frees any that went to your storage citizens\n", counted(events))
 }
 
 // counted says how many parts and checkpoints the events are.
