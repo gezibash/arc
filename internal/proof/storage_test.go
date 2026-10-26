@@ -655,7 +655,7 @@ func TestARunningWriteKeepsItsParts(t *testing.T) {
 
 	write, resume := paused("long/notes/1")
 	out := later.run("sync", "--repair")
-	if strings.Contains(out, "that no page names") {
+	if strings.Contains(out, "repair removed") {
 		t.Fatalf("a repair 2 hours later deleted parts of a write that runs:\n%s", out)
 	}
 	write2Done := make(chan error, 1)
