@@ -466,17 +466,18 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 		}
 		// Each relay gets the wrap at once, so relays that give no answer
 		// cost one wait in all, not one each (#442).
+		var todo []transport.Transport
+		for _, t := range targets {
+			if !slices.Contains(entry.SentTo, t.Name()) && !slices.ContainsFunc(todo, func(o transport.Transport) bool { return o.Name() == t.Name() }) {
+				todo = append(todo, t)
+			}
+		}
 		var (
 			mu   sync.Mutex
 			wg   sync.WaitGroup
 			sent bool
-			seen = map[string]bool{}
 		)
-		for _, t := range targets {
-			if seen[t.Name()] || slices.Contains(entry.SentTo, t.Name()) {
-				continue
-			}
-			seen[t.Name()] = true
+		for _, t := range todo {
 			wg.Go(func() {
 				if t.Send(ctx, events[0]) == nil {
 					mu.Lock()
