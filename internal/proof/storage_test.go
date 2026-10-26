@@ -655,7 +655,7 @@ func TestARunningWriteKeepsItsParts(t *testing.T) {
 
 	write, resume := paused("long/notes/1")
 	out := later.run("sync", "--repair")
-	if strings.Contains(out, "that no page names") {
+	if strings.Contains(out, "repair removed") {
 		t.Fatalf("a repair 2 hours later deleted parts of a write that runs:\n%s", out)
 	}
 	write2Done := make(chan error, 1)
@@ -681,4 +681,23 @@ func TestARunningWriteKeepsItsParts(t *testing.T) {
 		t.Fatalf("a repair 2 hours after a killed write did not delete its 5 parts:\n%s", out)
 	}
 	t.Log("ok: after SIGKILL, a repair 2 hours later deletes the 5 parts of the write")
+
+	// A lock that arc cannot open fails closed, and says what to do.
+	lock := filepath.Join(laptop.home, "citizens")
+	entries, err := os.ReadDir(lock)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("the laptop holds %d identities: %v", len(entries), err)
+	}
+	lock = filepath.Join(lock, entries[0].Name(), "store", "writes.lock")
+	if err := os.Chmod(lock, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(lock, 0o600) })
+	for _, args := range [][]string{{"sync", "--repair"}, {"journal", "write", "long/notes/3", "--title", "Short"}} {
+		got := later.try("short page\n", args...)
+		if got.Err == nil || !strings.Contains(got.Stderr, "arc cannot open the lock of writes "+lock) || !strings.Contains(got.Stderr, "remove the file") {
+			t.Errorf("arc %s with a lock of mode 000: %v\n%s", strings.Join(args, " "), got.Err, got.Stderr)
+		}
+	}
+	t.Log("ok: a lock of mode 000 stops a write and a repair, with a message that names it")
 }
