@@ -595,7 +595,7 @@ func (r *run) reportUnnamed(kind string) error {
 		fmt.Fprintln(r.stdio.Err, line)
 	}
 	if len(lost) > 0 {
-		fmt.Fprintf(r.stdio.Err, "%s that no page names are at addresses that arc cannot name: a write that failed before it kept a checkpoint leaves them\n", counted(lost))
+		fmt.Fprintf(r.stdio.Err, "%s that no page names are left by a write that was interrupted: arc cannot name their address; a repair frees them after an hour\n", counted(lost))
 	}
 	return nil
 }
