@@ -59,7 +59,7 @@ func (c *citizen) must(id, stdin string, words ...string) string {
 }
 
 const page = "hrs/ablations/1"
-const pageHeader = "---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n"
+const pageHeader = "---\ntitle: LR sweep\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n"
 
 func TestAJournalPageIsWrittenReadAndAppended(t *testing.T) {
 	c := newCitizen(t)
@@ -106,7 +106,7 @@ func TestAFailedWriteToStdoutIsAnError(t *testing.T) {
 
 func TestThePageIsADraftOfAnArticle(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n", "write", page, "--title", "T")
+	c.must("journal", "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\nshort page\n", "write", page, "--title", "T")
 	wraps := testutil.Must(c.env.store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.Kind}}))
 	if len(wraps) != 1 {
 		t.Fatalf("the store holds %d drafts", len(wraps))
@@ -124,7 +124,7 @@ func TestThePageIsADraftOfAnArticle(t *testing.T) {
 			opened = value
 		}
 	}
-	if opened.Event.Kind != 30023 || opened.Event.Tags.GetD() != page || opened.Event.Content != "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nshort page\n" || opened.Parts() != nil {
+	if opened.Event.Kind != 30023 || opened.Event.Tags.GetD() != page || opened.Event.Content != "---\ntitle: T\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\nshort page\n" || opened.Parts() != nil {
 		t.Errorf("the draft holds %+v", opened.Event)
 	}
 }
@@ -212,9 +212,9 @@ func TestAMissingPartKeepsTheTextBeforeIt(t *testing.T) {
 
 func TestListSearchHistoryAndDelete(t *testing.T) {
 	c := newCitizen(t)
-	c.must("journal", "---\ntitle: Warmup\npage: 2\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\nwarmup helps\n", "write", "hrs/ablations/2", "--title", "Warmup")
+	c.must("journal", "---\ntitle: Warmup\npage: 2\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\nwarmup helps\n", "write", "hrs/ablations/2", "--title", "Warmup")
 	c.must("journal", pageHeader+"the learning rate sweep\n", "write", page, "--title", "LR sweep")
-	c.must("journal", "---\ntitle: Shopping\npage: 1\nnotebook: home/list\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\ngroceries\n", "write", "home/list/1")
+	c.must("journal", "---\ntitle: Shopping\npage: 1\nnotebook: home/list\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\ngroceries\n", "write", "home/list/1")
 	c.must("journal", "", "append", page, "second", "revision")
 
 	if got := c.must("journal", "", "ls", "hrs/"); !strings.HasPrefix(got, "hrs/ablations/1\t") || strings.Contains(got, "home/") || strings.Count(got, "\n") != 2 {

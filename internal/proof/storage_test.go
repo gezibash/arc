@@ -1,12 +1,15 @@
 package proof
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -607,4 +610,75 @@ func relayKinds(t *testing.T, url, home string, kinds ...nostr.Kind) []nostr.Eve
 		t.Fatalf("the relay did not answer: %v", err)
 	}
 	return batch.Events
+}
+
+// TestARunningWriteKeepsItsParts runs a real arc journal write of a long
+// page, and stops it after 5 of its events, before its draft. The write
+// holds the lock of writes (storage spec, section 4.7). A repair 2 hours
+// later keeps its parts and sends none of them, and the write then ends
+// with a page that reads whole. A second write stops at the same point and
+// gets SIGKILL: the next repair 2 hours later deletes its 5 parts.
+func TestARunningWriteKeepsItsParts(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	laptop := arc(t, filepath.Join(work, "laptop")).with(loopback...).using(program("arc-test"))
+	laptop.run("keys", "gen")
+	laptop.run("relay", "add", url)
+	storeKey := storageCitizen(t, work, url, laptop)
+	laptop.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
+	laptop.run("install", laptop.key(), "journal", "--yes")
+	laptop.run("install", storeKey, "storage", "--yes")
+	laptop.run("sync")
+	later := laptop.with("ARC_TEST_NOW_OFFSET=2h")
+
+	page := strings.Repeat("a line of the long page\n", 40_000)
+	paused := func(address string) (*exec.Cmd, string) {
+		t.Helper()
+		resume := filepath.Join(work, "resume-"+strings.ReplaceAll(address, "/", "-"))
+		write := laptop.with("ARC_TEST_PAUSE_PUBLISH=5:"+resume).command("journal", "write", address, "--title", "Long")
+		write.Stdin = strings.NewReader(page)
+		errs, err := write.StderrPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := write.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = write.Process.Kill(); _ = write.Wait() })
+		line, err := bufio.NewReader(errs).ReadString('\n')
+		if err != nil || !strings.Contains(line, "the write waits after 5 events") {
+			t.Fatalf("the write did not wait: %q, %v", line, err)
+		}
+		go func() { _, _ = io.Copy(io.Discard, errs) }()
+		return write, resume
+	}
+
+	write, resume := paused("long/notes/1")
+	out := later.run("sync", "--repair")
+	if strings.Contains(out, "that no page names") {
+		t.Fatalf("a repair 2 hours later deleted parts of a write that runs:\n%s", out)
+	}
+	write2Done := make(chan error, 1)
+	if err := os.WriteFile(resume, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() { write2Done <- write.Wait() }()
+	if err := <-write2Done; err != nil {
+		t.Fatalf("the write that waited failed after the repair: %v", err)
+	}
+	if got := laptop.run("journal", "read", "long/notes/1"); !strings.HasSuffix(got, page) {
+		t.Fatalf("the page of the write that waited reads %d bytes, want the whole page", len(got))
+	}
+	t.Log("ok: a repair 2 hours later keeps the parts of a write that runs, and the page reads whole")
+
+	killed, _ := paused("long/notes/2")
+	if err := killed.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = killed.Wait()
+	out = later.run("sync", "--repair")
+	if !strings.Contains(out, "repair removed 5 parts and 0 checkpoints that no page names") {
+		t.Fatalf("a repair 2 hours after a killed write did not delete its 5 parts:\n%s", out)
+	}
+	t.Log("ok: after SIGKILL, a repair 2 hours later deletes the 5 parts of the write")
 }

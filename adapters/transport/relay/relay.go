@@ -535,7 +535,7 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	defer cancel()
 
 	if r.kept != nil {
-		return r.sendKept(ctx, event)
+		return unheard(r.sendKept(ctx, event))
 	}
 	conn, err := r.connect(ctx, &sessions{})
 	if err != nil {
@@ -543,7 +543,16 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	return r.named(r.publish(ctx, conn, event))
+	return unheard(r.named(r.publish(ctx, conn, event)))
+}
+
+// unheard marks the answer of a relay that no one got a live event, which
+// khatru gives when no watch matched it: the event reached no one.
+func unheard(err error) error {
+	if err != nil && strings.Contains(err.Error(), "mute: no one was listening") {
+		return transport.NoListener(err)
+	}
+	return err
 }
 
 // publish sends one event on a connection. If the relay asks for
@@ -837,7 +846,7 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 	if err := r.publish(ctx, conn, event); err != nil {
 		// This explicit refusal means no subscriber received the ephemeral event.
 		if err.Error() == "msg: mute: no one was listening for this" {
-			return nostr.Event{}, &transport.NotSubmittedError{Err: err}
+			return nostr.Event{}, transport.NoListener(err)
 		}
 
 		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)

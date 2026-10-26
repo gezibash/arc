@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList|TestAnnounceReplacesAnAnnouncementOfTheSameSecond)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList|TestAnnounceReplacesAnAnnouncementOfTheSameSecond|TestACallThatNoOneHeardTriesAgain|TestALostReplyAfterAnUnheardCallIsNotRepeated)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/ ./cmd/arc/ ./runtime/citizen/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -899,6 +899,16 @@ The manifest declares the class of each command:
 A live call subscribes, waits until the relay has taken the subscription, and
 only then sends, all on one connection, because a relay never stores the
 ephemeral reply.
+
+A relay that has no watch for a live event answers that no one was
+listening: no one got the event. The relay transport MUST report it as not
+submitted, with `transport.ErrNoListener`. A provider has no watch for a
+few seconds after its relay ends the watch, so the caller MAY send a live
+call or a session open that no one heard again, for at most 6 seconds. It
+MUST NOT send again after any other error of a submitted request. A
+provider whose watch ran more than 10 seconds and ended MUST watch again at
+once (#424). An older caller fails at once with an open whose outcome is
+unknown.
 
 Receipt and processing are separate:
 

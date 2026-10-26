@@ -23,15 +23,15 @@ func writeNotebookPage(c *citizen, book string, page int, title, body string) {
 func TestNotebookManagedTimestampsAndOrdinals(t *testing.T) {
 	c := newCitizen(t)
 	c.env.now = time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
-	input := "---\ntitle: First\npage: 1\nnotebook: arc/research\ncreated_at: 2000-01-01T00:00:00Z\nupdated_at: 2000-01-01T00:00:00Z\n---\n# First\n"
+	input := "---\ntitle: First\npage: 1\nnotebook: arc/research\ncreated_at: 2000-01-01T00:00:00.000Z\nupdated_at: 2000-01-01T00:00:00.000Z\n---\n# First\n"
 	c.must("journal", input, "write", "arc/research/1")
-	want := "---\ntitle: First\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-28T10:00:00Z\nupdated_at: 2026-09-28T10:00:00Z\n---\n# First\n"
+	want := "---\ntitle: First\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-28T10:00:00.000Z\nupdated_at: 2026-09-28T10:00:00.000Z\n---\n# First\n"
 	if got := c.must("journal", "", "read", "arc/research/1"); got != want {
 		t.Fatal(got)
 	}
 	c.env.now = time.Date(2026, 9, 29, 9, 15, 0, 0, time.UTC)
 	c.must("journal", "", "append", "arc/research/1", "later")
-	want = "---\ntitle: First\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-28T10:00:00Z\nupdated_at: 2026-09-29T09:15:00Z\n---\n# First\nlater\n"
+	want = "---\ntitle: First\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-28T10:00:00.000Z\nupdated_at: 2026-09-29T09:15:00.000Z\n---\n# First\nlater\n"
 	if got := c.must("journal", "", "read", "arc/research/1"); got != want {
 		t.Fatal(got)
 	}
@@ -75,7 +75,7 @@ func TestNotebookChronologyFiltersAndNumericNavigation(t *testing.T) {
 		t.Fatal(listing)
 	}
 	listing = c.must("journal", "", "ls", "--notebook", "arc/research", "--from", "2026-09-28", "--to", "2026-09-28", "--title", "RESULT", "--page", "2")
-	if strings.Count(listing, "\n") != 1 || !strings.HasPrefix(listing, "arc/research/2\tSecond result\t2026-09-28T23:59:59Z") {
+	if strings.Count(listing, "\n") != 1 || !strings.HasPrefix(listing, "arc/research/2\tSecond result\t2026-09-28T23:59:59.000Z") {
 		t.Fatal(listing)
 	}
 	if got := c.must("journal", "", "select", "--notebook", "arc/research", "--page", "2", "--section", "method"); got != "# Method\nsecond\n" {
@@ -107,7 +107,7 @@ func TestNotebookIndexTocAndSectionReferences(t *testing.T) {
 	writeNotebookPage(c, "arc/research", 1, "Result", body)
 	index := c.must("journal", "", "index", "arc/research")
 	prefix := "journal+arc://" + c.env.Me().Hex() + "/arc/research/1"
-	if !strings.Contains(index, "| 1 | Result | 2026-09-29T12:00:00Z | 2026-09-29T12:00:00Z |") || !strings.Contains(index, "## Index\n") || !strings.Contains(index, "## Table of contents\n") {
+	if !strings.Contains(index, "| 1 | Result | 2026-09-29T12:00:00.000Z | 2026-09-29T12:00:00.000Z |") || !strings.Contains(index, "## Index\n") || !strings.Contains(index, "## Table of contents\n") {
 		t.Fatal(index)
 	}
 	toc := c.must("journal", "", "toc", "arc/research")
@@ -274,17 +274,17 @@ func TestNotebookWriteCostDoesNotGrowWithTheNotebook(t *testing.T) {
 func TestNotebookTailTreatsTimestampChangesAsAppend(t *testing.T) {
 	m := specManifests(t)["journal"]
 	r := &run{in: Installed{Manifest: m}}
-	header := "---\ntitle: Notes\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-28T12:00:00Z\nupdated_at: 2026-09-28T12:00:00Z\n---\n"
+	header := "---\ntitle: Notes\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-28T12:00:00.000Z\nupdated_at: 2026-09-28T12:00:00.000Z\n---\n"
 	feed := func(text string) []*entry {
 		return r.tail([]*entry{{d: "one", rec: Record{"kind": "page", "text": text}}})
 	}
 	feed(header + "first\n")
-	later := strings.Replace(header, "updated_at: 2026-09-28T12:00:00Z", "updated_at: 2026-09-29T12:00:00Z", 1)
+	later := strings.Replace(header, "updated_at: 2026-09-28T12:00:00.000Z", "updated_at: 2026-09-29T12:00:00.000Z", 1)
 	got := feed(later + "first\nsecond\n")
 	if len(got) != 1 || got[0].rec["text"] != "second\n" {
 		t.Fatalf("append tail %+v", got)
 	}
-	if got := feed(strings.Replace(later, "2026-09-29T12:00:00Z", "2026-09-29T13:00:00Z", 1) + "first\nsecond\n"); len(got) != 0 {
+	if got := feed(strings.Replace(later, "2026-09-29T12:00:00.000Z", "2026-09-29T13:00:00.000Z", 1) + "first\nsecond\n"); len(got) != 0 {
 		t.Fatal("timestamp-only change was emitted")
 	}
 	renamed := strings.Replace(later, "title: Notes", "title: Renamed", 1) + "first\nsecond\n"
@@ -296,14 +296,14 @@ func TestNotebookTailTreatsTimestampChangesAsAppend(t *testing.T) {
 
 func TestNotebookTimestampGrowthKeepsMultipartContentWithinBounds(t *testing.T) {
 	c := newCitizen(t)
-	header := "---\ntitle: Full piece\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n"
+	header := "---\ntitle: Full piece\npage: 1\nnotebook: arc/research\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n"
 	body := header + strings.Repeat("x", draft.PartSize-len(header)-1) + "\n" + strings.Repeat("y\n", draft.PartSize) + "last\n"
 	c.must("journal", body, "write", "arc/research/1")
 	c.env.now = time.Date(2026, 9, 29, 13, 0, 0, 123456789, time.UTC)
 	c.must("journal", "", "append", "arc/research/1", "appended")
 	// The head is never revised: read shows the time of the entry, in
 	// milliseconds, as its ms tag has it.
-	want := strings.Replace(body, "updated_at: 2026-09-29T12:00:00Z", "updated_at: 2026-09-29T13:00:00.123Z", 1) + "appended\n"
+	want := strings.Replace(body, "updated_at: 2026-09-29T12:00:00.000Z", "updated_at: 2026-09-29T13:00:00.123Z", 1) + "appended\n"
 	if got := c.must("journal", "", "read", "arc/research/1"); got != want {
 		t.Fatal("timestamp update lost or reordered content")
 	}

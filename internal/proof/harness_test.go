@@ -54,6 +54,14 @@ func run(m *testing.M) int {
 			return 1
 		}
 	}
+	// arc-test is arc with the hooks of the tag arctest, such as a write
+	// that waits between two events.
+	command := exec.Command("go", "build", "-tags", "arctest", "-o", filepath.Join(programs, "arc-test"), "./cmd/arc")
+	command.Dir = repo
+	if output, err := command.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build -tags arctest ./cmd/arc: %v\n%s", err, output)
+		return 1
+	}
 	return m.Run()
 }
 
