@@ -2,13 +2,13 @@ package citizen
 
 import (
 	"encoding/json"
-
 	"fmt"
-	"github.com/gezibash/arc/adapters/transport/relay"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gezibash/arc/adapters/transport/relay"
 )
 
 // relaysDown keeps the relays of one home that did not connect, in the
