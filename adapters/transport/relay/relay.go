@@ -299,9 +299,9 @@ func (k *kept) isDown(url string) error {
 }
 
 // failedToReach says whether err is a dial, a lookup or an address that
-// failed: an answer of the relay, such as a refusal, is not. reach tries
-// the other address family after any failed attempt, so only its first
-// attempt says whether the relay answered.
+// failed, or a first attempt that stalled: an answer of the relay, such as
+// a refusal, is not. reach tries the other address family after any failed
+// attempt, so only its first attempt says whether the relay answered.
 func failedToReach(err error) bool {
 	for e := err; e != nil; {
 		if joined, ok := e.(interface{ Unwrap() []error }); ok {
