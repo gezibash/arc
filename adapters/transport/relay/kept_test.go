@@ -14,6 +14,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
+	"github.com/coder/websocket"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/internal/testrelay"
 )
@@ -261,18 +262,18 @@ func TestARelayThatDidNotConnectFailsAtOnce(t *testing.T) {
 	}
 	start := time.Now()
 	_, err := r.Fetch(t.Context(), filter)
-	if err == nil || !strings.Contains(err.Error(), "arc asks again after") || time.Since(start) > 100*time.Millisecond {
+	if err == nil || !strings.Contains(err.Error(), "arc asks again in") || time.Since(start) > 100*time.Millisecond {
 		t.Fatalf("the second fetch took %s and gave %v, want the error of the first at once", time.Since(start), err)
 	}
 	wctx, wcancel := context.WithTimeout(t.Context(), time.Second)
 	defer wcancel()
-	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc asks again after") {
+	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc asks again in") {
 		t.Errorf("a watch did not try the relay: %v", err)
 	}
 	time.Sleep(2 * time.Second)
 	again, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
-	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc asks again after") {
+	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc asks again in") {
 		t.Errorf("a fetch after downFor did not try again: %v", err)
 	}
 }
@@ -294,5 +295,44 @@ func TestARefusalIsNotDown(t *testing.T) {
 	}
 	if asked.Load() < 2 {
 		t.Errorf("the relay was asked %d times, want each fetch to ask it", asked.Load())
+	}
+}
+
+// muteRelay takes each WebSocket connection, and never answers on it.
+func muteRelay(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+	var conns atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		conns.Add(1)
+		for {
+			if _, _, err := conn.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http"), &conns
+}
+
+// A relay that connects and then gives no EOSE, OK or CLOSED within its
+// own timeout is down: the next query and send fail at once, on no new
+// connection, and the error folds as one that no relay answered (#439).
+func TestARelayThatConnectsAndNeverAnswersIsDown(t *testing.T) {
+	defer relay.SetCallTimeout(300 * time.Millisecond)()
+	url, conns := muteRelay(t)
+	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}}
+	if _, err := r.Fetch(t.Context(), filter); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a query to a relay that never answers gave %v, want its timeout", err)
+	}
+	start := time.Now()
+	_, err := r.Fetch(t.Context(), filter)
+	sendErr := r.Send(t.Context(), note(t, "hello"))
+	if err == nil || sendErr == nil || time.Since(start) > 100*time.Millisecond || conns.Load() != 1 {
+		t.Errorf("after a timeout, a query and a send took %s, gave %v and %v, on %d connections; want both at once, on 1", time.Since(start), err, sendErr, conns.Load())
 	}
 }

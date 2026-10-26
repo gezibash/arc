@@ -196,11 +196,15 @@ func (s *Session) warnOffline() {
 	})
 }
 
+// Unreachable says whether no relay heard the request of err: a dial, a
+// lookup or an address that failed, or a relay that gave no answer in time.
+func Unreachable(err error) bool { return offline(err) }
+
 // offline says whether each error in err is a dial, a name lookup or an
 // address that failed, or a relay that gave no answer in time, so that no
 // relay answered the request (#396, #439).
 func offline(err error) bool {
-	if err == context.DeadlineExceeded || err == relay.ErrStalled { //nolint:errorlint // leaves of the walk below
+	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer { //nolint:errorlint // leaves of the walk below
 		return true
 	}
 	// Each branch of a joined error must be offline, and errors.As takes

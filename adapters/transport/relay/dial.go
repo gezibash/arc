@@ -85,6 +85,12 @@ func reach(ctx context.Context, rawURL string, try func(context.Context, *http.C
 	if ctx.Err() != nil {
 		return err
 	}
+	// A first attempt that raced both families, and reached neither within
+	// stallLimit, tried each address already: a host behind a black hole.
+	// Another attempt would wait the rest of the timeout (#439).
+	if used == "" && network == "tcp" && errors.Is(err, ErrStalled) {
+		return err
+	}
 
 	other := "tcp4"
 	switch {

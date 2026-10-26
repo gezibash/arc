@@ -43,3 +43,14 @@ func SetDownFor(d time.Duration) func() {
 	downFor = d
 	return func() { downFor = old }
 }
+
+// Reach runs reach, for a test that gives it an attempt of its own.
+var Reach = reach
+
+// SetCallTimeout changes the time that a call gives the relay, and returns
+// a function that puts the old one back.
+func SetCallTimeout(d time.Duration) func() {
+	old := callTimeout
+	callTimeout = d
+	return func() { callTimeout = old }
+}
