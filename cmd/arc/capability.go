@@ -191,7 +191,7 @@ func serve(command *cobra.Command, args []string) error {
 	announce := gate.announce
 	// While it waits, the line of the announcer is the only one: each
 	// relay that does not answer would else warn again every 3 s (#445).
-	quiet := slog.New(waitingHandler{Handler: log.Handler(), waiting: gate.waiting})
+	quiet := slog.New(slog.NewTextHandler(waitingWriter{to: command.ErrOrStderr(), waiting: gate.waiting}, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := announce(); err != nil {
 		return err
 	}
@@ -912,15 +912,15 @@ func (a *announcer) announce() error {
 // for the clock to reach an announcement far ahead of it.
 func (a *announcer) waiting() bool { return !a.known.Load() || a.ahead.Load() }
 
-// waitingHandler drops each record while waiting says so.
-type waitingHandler struct {
-	slog.Handler
+// waitingWriter drops what a logger writes while waiting says so.
+type waitingWriter struct {
+	to      io.Writer
 	waiting func() bool
 }
 
-func (h waitingHandler) Handle(ctx context.Context, record slog.Record) error {
-	if h.waiting() {
-		return nil
+func (w waitingWriter) Write(p []byte) (int, error) {
+	if w.waiting() {
+		return len(p), nil
 	}
-	return h.Handler.Handle(ctx, record)
+	return w.to.Write(p)
 }
