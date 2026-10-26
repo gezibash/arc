@@ -2,6 +2,7 @@ package citizen
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -174,5 +175,24 @@ func TestABrokenPipeIsAClosedConnection(t *testing.T) {
 	err := &net.OpError{Op: "write", Net: "tcp", Err: os.NewSyscallError("write", syscall.EPIPE)}
 	if got := UnreachedReason(err); got != "the connection was closed" {
 		t.Errorf("a broken pipe has the reason %q, want the connection was closed", got)
+	}
+}
+
+// A step of sync says nothing about a relay that was skipped for a close
+// at once in this process: the line of sync for the relay says it. The
+// skip holds the close, which holds the joined dial errors, and on Linux
+// one of them is only text ("server closed idle connection"); Unusable
+// walked down to it, and the step printed raw lines (#444, CI run
+// 40347034388).
+func TestASkipForACloseAtOnceIsUnusable(t *testing.T) {
+	dial := errors.Join(
+		errors.New(`Get "http://127.0.0.1:1": http: server closed idle connection`),
+		&net.AddrError{Err: "no suitable address found", Addr: "127.0.0.1"},
+	)
+	closed := &relay.ClosedError{Err: fmt.Errorf("relay ws://127.0.0.1:1: %w", dial)}
+	skipped := &relay.DownError{URL: "ws://127.0.0.1:1", Why: "the connection was closed", Until: time.Now().Add(5 * time.Second), Err: closed}
+	err := fmt.Errorf("the import of the drafts on the relays is not complete: no relay answered: %w", errors.Join(skipped))
+	if !Unusable(err) {
+		t.Errorf("a pull that a skip for a close at once ended is not Unusable: %v", err)
 	}
 }

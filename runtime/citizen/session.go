@@ -335,10 +335,13 @@ func StoppedLine(name string, err error) (line string, ok bool) {
 // Unusable says whether each relay of err gave no answer or refused, so
 // that the one line of sync for each relay says all there is (#463).
 func Unusable(err error) bool {
-	return err != nil && every(err, func(err error) bool {
+	// offline walks each branch itself, and takes a skip or a close at once
+	// whole: below them lie the joined errors of the dial, where one can be
+	// only text (#444).
+	return err != nil && (offline(err) || every(err, func(err error) bool {
 		_, refused := relay.Refusal(err)
 		return refused || offline(err)
-	})
+	}))
 }
 
 // every says whether leaf holds for each branch of the joined errors in
