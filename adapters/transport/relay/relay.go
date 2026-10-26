@@ -128,6 +128,12 @@ type kept struct {
 	// streak was told.
 	authFailed func(err error)
 	told       bool
+	// watchEnded gets who ended a watch and why, when a watch ends before
+	// its caller stops it.
+	watchEnded func(by, why string)
+	// closed holds why arc closed each connection that it closed. mu
+	// guards it.
+	closed map[*nostr.Relay]string
 
 	// mu guards conn and used. A call holds it while it connects.
 	mu   sync.Mutex
@@ -199,6 +205,17 @@ func (r Relay) OnAuthFailure(failed func(err error)) {
 	}
 }
 
+// OnWatchEnd makes a Relay from New give who ended a watch, and why, each
+// time a watch ends before its caller stops it (#437): the relay with a
+// CLOSED message, the relay or the network that ended the connection, or
+// arc that closed the connection, also for failed pings. Call it before the
+// first call to the relay.
+func (r Relay) OnWatchEnd(ended func(by, why string)) {
+	if r.kept != nil {
+		r.kept.watchEnded = ended
+	}
+}
+
 // Tags returns the tags of the NIP-11 document of the relay.
 func (r Relay) Tags(ctx context.Context) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
@@ -238,7 +255,7 @@ func (r Relay) Close() error {
 	r.kept.mu.Lock()
 	conn := r.kept.conn
 	r.kept.mu.Unlock()
-	return r.kept.drop(conn)
+	return r.kept.drop(conn, "Close of the relay")
 }
 
 // callTimeout is Timeout, the time that a send, a query or a NIP-77
@@ -370,7 +387,6 @@ func failedToReach(err error) bool {
 	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
 }
 
-// drop closes conn. If conn is the kept connection, the next call connects.
 // hear keeps that the relay answered on conn.
 func (k *kept) hear(conn *nostr.Relay) {
 	k.mu.Lock()
@@ -387,7 +403,9 @@ func (k *kept) heardOn(conn *nostr.Relay) bool {
 	return k.heard == conn
 }
 
-func (k *kept) drop(conn *nostr.Relay) error {
+// drop closes conn, and keeps why. If conn is the kept connection, the next
+// call connects.
+func (k *kept) drop(conn *nostr.Relay, why string) error {
 	if conn == nil {
 		return nil
 	}
@@ -395,8 +413,37 @@ func (k *kept) drop(conn *nostr.Relay) error {
 	if k.conn == conn {
 		k.conn = nil
 	}
+	k.because(conn, why)
 	k.mu.Unlock()
 	return conn.Close()
+}
+
+// because keeps why arc closes conn. The caller holds mu.
+func (k *kept) because(conn *nostr.Relay, why string) {
+	// A connection with no watch keeps its reason until here: a few dozen
+	// reasons are enough for the watches that end.
+	if k.closed == nil || len(k.closed) > 64 {
+		k.closed = map[*nostr.Relay]string{}
+	}
+	k.closed[conn] = why
+}
+
+// endedBy says who ended the connection of a watch, and why.
+func (k *kept) endedBy(conn *nostr.Relay) (string, string) {
+	cause := context.Cause(conn.Context())
+	k.mu.Lock()
+	why, ok := k.closed[conn]
+	delete(k.closed, conn)
+	k.mu.Unlock()
+	switch {
+	case ok:
+		return "arc", why
+	case errors.Is(cause, nostr.ErrPingFailed):
+		return "arc", "3 pings of the connection failed"
+	case cause != nil:
+		return "the relay or the network", cause.Error()
+	}
+	return "unknown", "the subscription ended"
 }
 
 // open returns the connection for one call. For a Relay from New, it is the
@@ -415,6 +462,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.conn != nil && k.conn.IsConnected() && time.Since(k.used) > idleCheck && !alive(ctx, k.conn) {
+		k.because(k.conn, fmt.Sprintf("the connection was idle %s, and gave no answer to a check within %s", time.Since(k.used).Round(time.Second), reuseWait))
 		_ = k.conn.Close()
 	}
 	if k.conn != nil && k.conn.IsConnected() {
@@ -462,7 +510,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 		// deadline, can come from a connection that stalled, so the next call
 		// opens a new one.
 		if err != nil && !answered(err) && !errors.Is(err, context.Canceled) {
-			_ = k.drop(conn)
+			_ = k.drop(conn, "a call on the connection failed: "+err.Error())
 		}
 	}, nil
 }
@@ -511,7 +559,7 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 			k.hear(conn)
 			return r.named(err)
 		}
-		_ = k.drop(conn)
+		_ = k.drop(conn, "a send on the reused connection got no answer: "+err.Error())
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -522,7 +570,7 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err = r.publish(ctx, conn, event); err == nil || refused(err) {
 		k.hear(conn)
 	} else if !k.silent(ctx, conn, err) {
-		_ = k.drop(conn)
+		_ = k.drop(conn, "a send failed: "+err.Error())
 	}
 	return r.named(err)
 }
@@ -1211,6 +1259,9 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 				// A closed channel means that the subscription ended. Reading
 				// on would return empty events at once, forever.
 				if !ok {
+					if r.kept != nil && r.kept.watchEnded != nil && ctx.Err() == nil {
+						r.kept.watchEnded(r.kept.endedBy(conn))
+					}
 					return
 				}
 				select {
@@ -1218,7 +1269,10 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 				case <-ctx.Done():
 					return
 				}
-			case <-sub.ClosedReason:
+			case reason := <-sub.ClosedReason:
+				if r.kept != nil && r.kept.watchEnded != nil && ctx.Err() == nil {
+					r.kept.watchEnded("the relay", "CLOSED: "+reason)
+				}
 				return
 			case <-ctx.Done():
 				return

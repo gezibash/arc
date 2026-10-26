@@ -444,3 +444,85 @@ func TestAMarkFarAheadIsNoMark(t *testing.T) {
 		t.Fatalf("a relay with a mark of the year 2100 gave %v, want a fetch", err)
 	}
 }
+
+// endings collects what OnWatchEnd gives.
+type endings struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (e *endings) add(by, why string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.got = append(e.got, by+": "+why)
+}
+
+func (e *endings) wait(t *testing.T) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		e.mu.Lock()
+		if len(e.got) > 0 {
+			defer e.mu.Unlock()
+			return e.got[0]
+		}
+		e.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no watch end was told")
+	return ""
+}
+
+// A watch that ends before its caller stops it says who ended it, and why
+// (#437): arc, when it closes the kept connection, here because a check of
+// a connection that the relay no longer reads got no answer; the relay or
+// the network, when the connection drops. A watch that its caller stops
+// tells nothing.
+func TestAWatchEndSaysWhoEndedIt(t *testing.T) {
+	defer relay.SetIdleCheck(0)()
+	defer relay.SetReuseWait(200 * time.Millisecond)()
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}}
+
+	url, conns := testrelay.StartTracked(t)
+	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	var ended endings
+	r.OnWatchEnd(ended.add)
+	if _, err := r.Watch(t.Context(), filter); err != nil {
+		t.Fatal(err)
+	}
+	conns.Silence()
+	_, _ = r.Fetch(t.Context(), filter)
+	if got := ended.wait(t); !strings.HasPrefix(got, "arc: the connection was idle") {
+		t.Errorf("a watch that the idle check ended was told as %q", got)
+	}
+
+	url, conns = testrelay.StartTracked(t)
+	r = relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	ended = endings{}
+	r.OnWatchEnd(ended.add)
+	if _, err := r.Watch(t.Context(), filter); err != nil {
+		t.Fatal(err)
+	}
+	conns.Drop()
+	if got := ended.wait(t); !strings.HasPrefix(got, "the relay or the network: ") {
+		t.Errorf("a watch whose connection dropped was told as %q", got)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	r = relay.New(testrelay.Start(t), keyer.NewPlainKeySigner(nostr.Generate()))
+	ended = endings{}
+	r.OnWatchEnd(ended.add)
+	events, err := r.Watch(ctx, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	for range events {
+	}
+	time.Sleep(100 * time.Millisecond)
+	ended.mu.Lock()
+	defer ended.mu.Unlock()
+	if len(ended.got) != 0 {
+		t.Errorf("a watch that its caller stopped was told as %v", ended.got)
+	}
+}
