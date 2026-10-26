@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -92,5 +93,236 @@ func TestAnnounceReplacesAnAnnouncementOfTheSameSecond(t *testing.T) {
 		if len(batch.Events) != 1 || strings.Contains(batch.Events[0].Content, "Old files") || batch.Events[0].CreatedAt <= before.CreatedAt {
 			t.Fatalf("%s ahead: the relay holds %d announcements, and the old one was signed at %d; want only the new one, signed later", ahead, len(batch.Events), before.CreatedAt)
 		}
+	}
+}
+
+// identityOf loads the one identity of a home.
+func identityOf(t *testing.T, home string) signerIdentity {
+	t.Helper()
+	mine, err := listCitizens(home)
+	if err != nil || len(mine) != 1 {
+		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
+	}
+	id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// With no relay that answers, arc announce cannot know the newest
+// announcement that the relays hold, so it refuses, and keeps nothing: one
+// of the same second could tie with an older one (#422).
+func TestAnnounceRefusesWhenNoRelayAnswers(t *testing.T) {
+	url, kill := testrelay.StartKillable(t)
+	home := t.TempDir()
+	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
+		if err := arc(t, home, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	kill()
+	err := arc(t, home, "announce", filepath.Join("..", "..", "apps", "files", "manifest.json"))
+	if err == nil || !strings.Contains(err.Error(), "no relay answered, so arc cannot know the newest announcement") {
+		t.Fatalf("arc announce with no relay gave %v, want a refusal", err)
+	}
+}
+
+// arc serve signs its announcement after the newest one that it knows,
+// here one that the relay holds from 2 seconds ahead: else the relay keeps
+// the older manifest (#422).
+func TestServeAnnouncesAfterTheNewestAnnouncement(t *testing.T) {
+	url := testrelay.Start(t)
+	home := t.TempDir()
+	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
+		if err := arc(t, home, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	id := identityOf(t, home)
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := bytes.Replace(manifest, []byte(`"title": "Exec"`), []byte(`"title": "Old exec"`), 1)
+	before, err := catalog.AnnounceManifest(context.Background(), id.signer, old, nostr.Timestamp(time.Now().Add(2*time.Second).Unix()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (relay.Relay{URL: url}).Send(context.Background(), before); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	out, done := serving(t, ctx, home)
+	t.Cleanup(func() { cancel(); <-done })
+	if !waitFor(out, "serves", 20*time.Second) {
+		t.Fatalf("arc serve did not serve: %s", out.String())
+	}
+	batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{id.key.Public}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Events) != 1 || batch.Events[0].ID == before.ID || batch.Events[0].CreatedAt <= before.CreatedAt {
+		t.Fatalf("the relay holds %d announcements, the old one signed at %d; want only the one of arc serve, signed later", len(batch.Events), before.CreatedAt)
+	}
+}
+
+// While no relay answers, arc serve signs no announcement: it cannot know
+// the newest. It says so once. When the relay comes up, holding one from 2
+// seconds ahead, arc serve signs after it (#422).
+func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
+	home := t.TempDir()
+	if err := arc(t, home, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	id := identityOf(t, home)
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ahead, err := catalog.AnnounceManifest(context.Background(), id.signer, bytes.Replace(manifest, []byte(`"title": "Exec"`), []byte(`"title": "Old exec"`), 1), nostr.Timestamp(time.Now().Add(2*time.Second).Unix()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	url, up := testrelay.StartDownHolding(t, ahead)
+	if err := arc(t, home, "relay", "add", url); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	out, errs, done := servingWithErrors(t, ctx, home)
+	t.Cleanup(func() { cancel(); <-done })
+	if !waitFor(errs, "is not announced yet: no relay has answered", 5*time.Second) {
+		t.Fatalf("arc serve did not say that it waits: %q", out.String())
+	}
+	time.Sleep(4 * time.Second)
+	if n := strings.Count(errs.String(), "is not announced yet"); n != 1 {
+		t.Errorf("arc serve said %d times that it waits, want once", n)
+	}
+	up()
+	if !waitFor(out, "serves", 15*time.Second) {
+		t.Fatalf("arc serve did not serve after the relay came up: %q", out.String())
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{id.key.Public}})
+		if err == nil && len(batch.Events) == 1 && batch.Events[0].ID != ahead.ID && batch.Events[0].CreatedAt > ahead.CreatedAt {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the relay holds %v, %v; want only the announcement of arc serve, after the one from ahead", batch.Events, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// The announcer of arc serve signs nothing before a relay answers, says so
+// once, and then signs at the time after the newest, never at the clock.
+func TestTheAnnouncerSignsNothingBlind(t *testing.T) {
+	answers := []bool{false, false, true}
+	var signed []nostr.Timestamp
+	said := 0
+	a := &announcer{
+		pull: func() error {
+			ok := answers[0]
+			answers = answers[1:]
+			if !ok {
+				return errors.New("no relay answered")
+			}
+			return nil
+		},
+		at:   func() (nostr.Timestamp, error) { return 1_900_000_000, nil },
+		sign: func(at nostr.Timestamp) error { signed = append(signed, at); return nil },
+		say:  func(string) { said++ },
+	}
+	for range 3 {
+		if err := a.announce(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(signed) != 1 || signed[0] != 1_900_000_000 || said != 1 {
+		t.Errorf("the announcer signed at %v and said %d times, want one signature at the time after the newest, after one word", signed, said)
+	}
+}
+
+// With no relay at all, arc announce refuses, as when no relay answers,
+// and keeps nothing to publish later (#445).
+func TestAnnounceRefusesWithNoRelay(t *testing.T) {
+	home := t.TempDir()
+	if err := arc(t, home, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	err := arc(t, home, "announce", filepath.Join("..", "..", "apps", "files", "manifest.json"))
+	if err == nil || !strings.Contains(err.Error(), "no relay answered, so arc cannot know the newest announcement") {
+		t.Fatalf("arc announce with no relay gave %v, want a refusal", err)
+	}
+	url := testrelay.Start(t)
+	if err := arc(t, home, "relay", "add", url); err != nil {
+		t.Fatal(err)
+	}
+	_ = arc(t, home, "sync")
+	batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{identityOf(t, home).key.Public}})
+	if err != nil || len(batch.Events) != 0 {
+		t.Errorf("the refused announcement went out later: %d, %v", len(batch.Events), err)
+	}
+}
+
+// An announcement far ahead of this clock holds the new one back, but the
+// announcer only waits: it says so once, with the gap in words, and signs
+// when the clock reaches the cap (#445).
+func TestTheAnnouncerWaitsForAnAnnouncementFarAhead(t *testing.T) {
+	ahead := true
+	var signed int
+	var said []string
+	a := &announcer{
+		pull: func() error { return nil },
+		at: func() (nostr.Timestamp, error) {
+			if ahead {
+				return 0, &catalog.AheadError{ID: "exec", Ahead: 15 * time.Minute}
+			}
+			return 1_900_000_000, nil
+		},
+		sign: func(nostr.Timestamp) error { signed++; return nil },
+		say:  func(text string) { said = append(said, text) },
+	}
+	for range 3 {
+		if err := a.announce(); err != nil {
+			t.Fatalf("an announcement far ahead stopped the announcer: %v", err)
+		}
+	}
+	if signed != 0 || !a.waiting() || len(said) != 1 || !strings.Contains(said[0], "an announcement is 15m0s ahead of this clock; arc announces again in 5m0s") {
+		t.Errorf("with one far ahead, the announcer signed %d, waits %v, and said %q", signed, a.waiting(), said)
+	}
+	ahead = false
+	if err := a.announce(); err != nil || signed != 1 || a.waiting() {
+		t.Errorf("once the clock reached it, the announcer gave %v, signed %d, waits %v", err, signed, a.waiting())
+	}
+}
+
+// While its only relay is down, arc serve says one line, that it waits:
+// the warnings of each watch and of the relay list stay quiet (#445).
+func TestServeSaysOneLineWhileNoRelayAnswers(t *testing.T) {
+	home := t.TempDir()
+	if err := arc(t, home, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	if err := arc(t, home, "relay", "add", "ws://"+deadAddress(t)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	_, out, done := servingWithErrors(t, ctx, home)
+	time.Sleep(8 * time.Second)
+	cancel()
+	<-done
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	var other []string
+	for _, line := range lines {
+		if !strings.Contains(line, "is not announced yet") && !strings.Contains(line, "the service is stopping") {
+			other = append(other, line)
+		}
+	}
+	if len(other) != 0 || !strings.Contains(out.String(), "is not announced yet") {
+		t.Errorf("arc serve with its only relay down said %q, want only that it waits", out.String())
 	}
 }
