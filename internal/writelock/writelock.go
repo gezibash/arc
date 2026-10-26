@@ -57,6 +57,10 @@ func open(dir string) (*os.File, error) {
 	switch {
 	case errors.Is(err, syscall.ELOOP):
 		return nil, fmt.Errorf("the lock of writes %s is a symbolic link, and arc does not follow it: remove it, and arc makes it again", path)
+	case errors.Is(err, syscall.EISDIR):
+		// Linux refuses O_CREATE on a folder with EISDIR; macOS
+		// opens it, and the Stat below refuses it.
+		return nil, notPlain(path)
 	case errors.Is(err, os.ErrPermission):
 		return nil, fmt.Errorf("arc cannot open the lock of writes %s: %w. Each write of self data takes it: give the folder %s and the file back to this user, with mode 700 and 600, or remove the file, and arc makes it again", path, err, dir)
 	case err != nil:
@@ -64,7 +68,11 @@ func open(dir string) (*os.File, error) {
 	}
 	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
 		_ = file.Close()
-		return nil, fmt.Errorf("the lock of writes %s is not a plain file: remove it, and arc makes it again", path)
+		return nil, notPlain(path)
 	}
 	return file, nil
+}
+
+func notPlain(path string) error {
+	return fmt.Errorf("the lock of writes %s is not a plain file: remove it, and arc makes it again", path)
 }
