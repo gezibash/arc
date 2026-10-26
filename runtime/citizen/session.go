@@ -62,6 +62,11 @@ type Session struct {
 	kept   map[string]relay.Relay
 	// offline warns once that no relay answered.
 	offline sync.Once
+	// errMu makes one write at a time on Errors. A watch ends in its own
+	// goroutine, and can end after the command. errClosed says that Close
+	// ran: no line goes to Errors after it.
+	errMu     sync.Mutex
+	errClosed bool
 }
 
 type Config struct {
@@ -101,7 +106,7 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", terminal.EscapeLine(url), notice(text)) })
+				r.OnNotice(func(text string) { sess.printNotice(url, text) })
 				r.OnWatchEnd(func(by, why string) {
 					sess.warnf("arc: info: a watch of %s ended, closed by %s: %s\n", url, by, why)
 				})
@@ -136,6 +141,9 @@ func Open(cfg Config) (*Session, error) {
 	return sess, nil
 }
 func (s *Session) Close() {
+	s.errMu.Lock()
+	s.errClosed = true
+	s.errMu.Unlock()
 	s.keptMu.Lock()
 	for _, r := range s.kept {
 		_ = r.Close()
@@ -179,7 +187,18 @@ func (s *Session) warnf(format string, args ...any) {
 			safe[i] = arg
 		}
 	}
-	fmt.Fprintf(s.Errors, format, safe...)
+	s.writeErr(format, safe...)
+}
+
+// writeErr writes one line on Errors, unless the session is closed. A line
+// after Close, such as of a watch that ended after its command, is dropped
+// (#438).
+func (s *Session) writeErr(format string, args ...any) {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	if s.Errors != nil && !s.errClosed {
+		fmt.Fprintf(s.Errors, format, args...)
+	}
 }
 
 // warnUnreached warns of a pull that no relay answered, after which the
@@ -243,6 +262,13 @@ func offline(err error) bool {
 // noticeLimit is the most characters of a relay NOTICE that arc prints,
 // after it escapes the text. A notice that rings fail has about 150.
 const noticeLimit = 300
+
+// printNotice prints a NOTICE of the relay url. The URL and the text each
+// are escaped once: writeErr escapes nothing, and notice escapes and cuts
+// the text (#443, #464).
+func (s *Session) printNotice(url, text string) {
+	s.writeErr("%s: %s\n", terminal.EscapeLine(url), notice(text))
+}
 
 // notice is the text of a relay NOTICE as a terminal can show it: on one
 // line, escaped, and cut to noticeLimit characters. The relay chooses the
