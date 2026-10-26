@@ -36,6 +36,13 @@ All notable changes to ARC are recorded here. The format follows
   write a key.
 - `arc install` refuses the name of an entry of the arc home as the name of
   an app.
+- **Breaking:** an open or a call that no provider hears is not submitted,
+  and arc tries it again for at most 6 s (docs/sessions/SPEC.md,
+  docs/delivery/SPEC.md). It tries again only when no one listened, so a
+  request that went out is never submitted twice. An older caller still
+  fails at once (#436).
+  - A call whose deadline ends while no provider hears it says so and names
+    the relay of the provider, not the deadline of the caller (#453).
 
 ## [0.37.0] - 2026-10-19
 
