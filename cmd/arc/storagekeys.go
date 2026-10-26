@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/runtime/catalog"
@@ -132,14 +133,18 @@ func putStorage(ctx context.Context, out io.Writer, sess *citizen.Session, list 
 	for _, e := range removed {
 		fmt.Fprintf(out, "storage list: removed %s, gone since %s\n", terminal.EscapeLine(e.Name), e.Since.Time().UTC().Format("2006-01-02"))
 	}
-	fmt.Fprintf(out, "storage list: %s is %s\n", name, state)
+	fmt.Fprintf(out, "storage list: %s is %s\n", terminal.EscapeLine(name), state)
 	if state == storage.StateDraining {
-		fmt.Fprintf(out, "each sync sends %s a drain request, and repair moves its pieces; the signer marks it gone when it holds none\n", name)
+		fmt.Fprintf(out, "each sync sends %s a drain request, and repair moves its pieces; the signer marks it gone when it holds none\n", terminal.EscapeLine(name))
 	}
 	return nil
 }
 
 func addStorage(command *cobra.Command, args []string) error {
+	as, _ := command.Flags().GetString("as")
+	if err := checkStorageName(as); err != nil {
+		return err
+	}
 	key, token, err := storage.ParseInvite(args[0])
 	if err != nil {
 		return err
@@ -158,7 +163,6 @@ func addStorage(command *cobra.Command, args []string) error {
 		return fmt.Errorf("--note has %d bytes; the most is %d", len(note), storage.MaxNote)
 	}
 	show, _ := command.Flags().GetBool("show-key")
-	as, _ := command.Flags().GetString("as")
 
 	sess, err := open(command)
 	if err != nil {
@@ -207,7 +211,7 @@ func addStorage(command *cobra.Command, args []string) error {
 	}
 	targets, err := sess.PushGrants(ctx, installs, list)
 	for _, install := range targets {
-		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", install.As)
+		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", terminal.EscapeLine(install.As))
 	}
 	if err != nil {
 		return fmt.Errorf("%w; run arc sync to try again", err)
@@ -242,8 +246,20 @@ func installStorage(command *cobra.Command, sess *citizen.Session, installs cata
 	if err := installs.Add(offer, as); err != nil {
 		return "", err
 	}
-	fmt.Fprintf(command.OutOrStdout(), "installed %s\n", as)
+	fmt.Fprintf(command.OutOrStdout(), "installed %s\n", terminal.EscapeLine(as))
 	return as, nil
+}
+
+// checkStorageName refuses an installed name that the storage list cannot
+// hold, before arc asks the storage citizen: else arc would install the
+// storage citizen, and the list would not name it. A name holds no control
+// character and no format character, such as a bidi mark, so that it shows
+// as itself in each line that names it (#441).
+func checkStorageName(as string) error {
+	if as == "" || len(as) > storage.MaxEntryName || strings.ContainsFunc(as, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
+		return fmt.Errorf("--as: a storage name has 1 to %d bytes, and no control character and no format character", storage.MaxEntryName)
+	}
+	return nil
 }
 
 // accountPending and accountAdmitted are the lines that arc keys storage add

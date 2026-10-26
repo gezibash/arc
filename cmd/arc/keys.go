@@ -607,6 +607,9 @@ func keysCommand() *cobra.Command {
 
 	use := &cobra.Command{
 		Use: "use <name>", Short: "Make one identity the default", Args: cobra.ExactArgs(1),
+		Long: "Give the raw name of the identity, quoted for the shell. arc keys list\n" +
+			"shows a name with an escape for each character that could change the\n" +
+			"terminal, such as \\n for a newline: that escape is not the name.",
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := rootDir(command)
 			if err != nil {
@@ -627,7 +630,10 @@ func keysCommand() *cobra.Command {
 		Use:   "remove <name>",
 		Short: "Remove one identity from this machine",
 		Long: "This removes the key, and the store, the relays and the installs of\n" +
-			"the identity. A key that no other machine holds is lost for good.",
+			"the identity. A key that no other machine holds is lost for good.\n\n" +
+			"Give the raw name of the identity, quoted for the shell. arc keys list\n" +
+			"shows a name with an escape for each character that could change the\n" +
+			"terminal, such as \\n for a newline: that escape is not the name.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := rootDir(command)
@@ -832,6 +838,10 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	url, _ := command.Flags().GetString("relay")
 	if url == "" {
 		return errors.New("name the relay with --relay")
+	}
+	// A bad URL fails now, and not at each try to reach the relay.
+	if err := checkRelayURL(url); err != nil {
+		return fmt.Errorf("--relay: %w", err)
 	}
 	decrypt, _ := command.Flags().GetString("decrypt")
 	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
