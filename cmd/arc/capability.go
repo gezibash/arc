@@ -22,6 +22,7 @@ import (
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/mail"
+	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/relaylist"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/transport"
@@ -162,9 +163,17 @@ func serve(command *cobra.Command, args []string) error {
 	defer stop()
 
 	// A caller needs a current announcement before a live call, so the
-	// provider signs it again each catalog.Refresh.
+	// provider signs it again each catalog.Refresh. Each one is at least a
+	// second newer than the newest that this machine knows, so that it
+	// never ties with an older one of the same second (#422). The first
+	// asks the relays for the ones that they hold.
+	sess.Node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {definition.ID}}}, sess.Relays)
 	announce := func() error {
-		announcement, err := catalog.AnnounceProvider(ctx, sess.Signer, definition, nostr.Now())
+		at, err := catalog.After(sess.Node.Store, sess.Key.Public, definition.ID, nostr.Now())
+		if err != nil {
+			return err
+		}
+		announcement, err := catalog.AnnounceProvider(ctx, sess.Signer, definition, at)
 		if err != nil {
 			return err
 		}
@@ -797,7 +806,11 @@ func announceCmd() *cobra.Command {
 			// A new announcement replaces the old one only if it is newer.
 			// The relays can hold one that this store does not.
 			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {m.ID}}}
-			sess.Node.Pull(command.Context(), mine, sess.Relays)
+			// With no answer, arc cannot know the newest announcement: one
+			// of the same second would tie, and the older could win (#422).
+			if err := node.Unreached(sess.Node.Pull(command.Context(), mine, sess.Relays)); err != nil {
+				return fmt.Errorf("no relay answered, so arc cannot know the newest announcement of %s that the relays hold: announce it when a relay answers: %w", terminal.EscapeLine(m.ID), err)
+			}
 			at, err := catalog.After(sess.Node.Store, sess.Key.Public, m.ID, nostr.Now())
 			if err != nil {
 				return err

@@ -837,9 +837,14 @@ ID. Before `arc announce` signs, it therefore reads the announcements of that
 capability that the store and the relays hold. It MUST sign the new one at
 least one second after the newest of them. An older client signs at the
 current second, so its new version can lose to an announcement of the same
-second. A reader needs no change.
-`TestAnnounceReplacesAnAnnouncementOfTheSameSecond` in `cmd/arc` proves
-this.
+second. A reader needs no change. If no relay answers, `arc announce`
+cannot know the newest announcement, and MUST refuse, and keep nothing.
+`arc serve` MUST sign each of its announcements, also each one again, at
+least one second after the newest that its store holds, after it asked the
+relays once at its start (#422).
+`TestAnnounceReplacesAnAnnouncementOfTheSameSecond`,
+`TestAnnounceRefusesWhenNoRelayAnswers` and
+`TestServeAnnouncesAfterTheNewestAnnouncement` in `cmd/arc` prove this.
 
 An announcement is one event, so its JSON holds at most 65,536 bytes, see
 section 3.4. If the announcement of a manifest is larger, the provider MUST
