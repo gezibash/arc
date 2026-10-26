@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -281,7 +282,21 @@ type DownError struct {
 }
 
 func (e *DownError) Error() string {
-	return fmt.Sprintf("relay %s did not connect: %s; arc asks again in %s", e.URL, e.Why, time.Until(e.Until).Round(time.Second))
+	return fmt.Sprintf("relay %s is skipped: %s at the last try; arc tries it again in %s", e.URL, e.Why, e.Again())
+}
+
+// Again is the time until arc tries the relay again.
+func (e *DownError) Again() time.Duration {
+	return max(time.Until(e.Until), 0).Round(time.Second)
+}
+
+// downReason is the short reason that a relay is down: a host that does not
+// exist, or no answer. A refusal never marks a relay down.
+func downReason(err error) string {
+	if dns, ok := errors.AsType[*net.DNSError](err); ok && dns.IsNotFound {
+		return "no such host"
+	}
+	return "no answer"
 }
 
 func (e *DownError) Unwrap() error { return e.Err }
@@ -296,10 +311,13 @@ func (k *kept) isDown(url string) error {
 	down, until, shared := k.down, k.downUntil, k.shared
 	k.mu.Unlock()
 	if down != nil && time.Now().Before(until) {
-		return &DownError{URL: url, Why: down.Error(), Until: until, Err: down}
+		return &DownError{URL: url, Why: downReason(down), Until: until, Err: down}
 	}
 	if shared != nil {
-		if until, why, ok := shared.Down(url); ok && time.Now().Before(until) {
+		// A mark further ahead than downFor did not come from this arc,
+		// whose marks end downFor after they are made: it is no mark, or
+		// one wrong clock would skip a relay for ever (#444).
+		if until, why, ok := shared.Down(url); ok && time.Now().Before(until) && time.Until(until) <= downFor {
 			return &DownError{URL: url, Why: why, Until: until}
 		}
 	}
@@ -322,7 +340,7 @@ func (k *kept) silent(ctx context.Context, conn *nostr.Relay, err error) (up boo
 	defer k.mu.Unlock()
 	k.down, k.downUntil = err, time.Now().Add(downFor)
 	if k.shared != nil && conn != nil {
-		k.shared.MarkDown(conn.URL, k.downUntil, err.Error())
+		k.shared.MarkDown(conn.URL, k.downUntil, downReason(err))
 	}
 	return false
 }
@@ -340,6 +358,11 @@ func failedToReach(err error) bool {
 			break
 		}
 		e = errors.Unwrap(e)
+	}
+	// A refused connection is an answer of the host, which costs nothing
+	// to ask again: a relay that starts on the port is used at once (#444).
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return false
 	}
 	var op *net.OpError
 	var dns *net.DNSError
@@ -410,7 +433,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), ErrNoAnswer) {
 				k.down, k.downUntil = err, time.Now().Add(downFor)
 				if k.shared != nil {
-					k.shared.MarkDown(r.URL, k.downUntil, err.Error())
+					k.shared.MarkDown(r.URL, k.downUntil, downReason(err))
 				}
 			}
 			return nil, false, nil, err

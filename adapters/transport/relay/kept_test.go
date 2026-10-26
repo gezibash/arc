@@ -263,18 +263,18 @@ func TestARelayThatDidNotConnectFailsAtOnce(t *testing.T) {
 	}
 	start := time.Now()
 	_, err := r.Fetch(t.Context(), filter)
-	if err == nil || !strings.Contains(err.Error(), "arc asks again in") || time.Since(start) > 100*time.Millisecond {
+	if err == nil || !strings.Contains(err.Error(), "arc tries it again in") || time.Since(start) > 100*time.Millisecond {
 		t.Fatalf("the second fetch took %s and gave %v, want the error of the first at once", time.Since(start), err)
 	}
 	wctx, wcancel := context.WithTimeout(t.Context(), time.Second)
 	defer wcancel()
-	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc asks again in") {
+	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc tries it again in") {
 		t.Errorf("a watch did not try the relay: %v", err)
 	}
 	time.Sleep(2 * time.Second)
 	again, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
-	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc asks again in") {
+	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc tries it again in") {
 		t.Errorf("a fetch after downFor did not try again: %v", err)
 	}
 }
@@ -383,5 +383,64 @@ func TestARelayThatIgnoresOneKindIsUp(t *testing.T) {
 	}
 	if _, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}}); err != nil {
 		t.Errorf("after a query of the kind that it ignores, the relay is down for each query: %v", err)
+	}
+}
+
+// marks is a DownStore in memory. It keeps each mark, and answers each
+// look with the one mark of lookup.
+type marks struct {
+	mu     sync.Mutex
+	marked []string
+	lookup time.Time
+}
+
+func (m *marks) Down(string) (time.Time, string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lookup, "no answer", !m.lookup.IsZero()
+}
+
+func (m *marks) MarkDown(url string, _ time.Time, why string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.marked = append(m.marked, url+" "+why)
+}
+
+func (m *marks) Up(string) {}
+
+// A closed port refuses the connection: an answer of the host. It marks
+// nothing, in this process or for the other processes of the home, so a
+// relay that starts on the port is used at once (#444).
+func TestAClosedPortIsNotDown(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "ws://" + l.Addr().String()
+	_ = l.Close()
+	store := &marks{}
+	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	r.ShareDown(store)
+	for range 2 {
+		_, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
+		if _, down := errors.AsType[*relay.DownError](err); err == nil || down {
+			t.Fatalf("a fetch from a closed port gave %v, want its refusal", err)
+		}
+	}
+	if len(store.marked) > 0 {
+		t.Errorf("a closed port was marked down: %v", store.marked)
+	}
+}
+
+// A mark further ahead than downFor did not come from arc, whose marks end
+// downFor after they are made. It is no mark, so a clock that was wrong
+// once, or an edited file, does not skip a relay for ever (#444).
+func TestAMarkFarAheadIsNoMark(t *testing.T) {
+	url := testrelay.Start(t)
+	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	defer func() { _ = r.Close() }()
+	r.ShareDown(&marks{lookup: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)})
+	if _, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}}); err != nil {
+		t.Fatalf("a relay with a mark of the year 2100 gave %v, want a fetch", err)
 	}
 }

@@ -1174,7 +1174,7 @@ func syncCommand() *cobra.Command {
 			}
 			for _, t := range targets {
 				if err := reached[t.Name()]; err != nil && citizen.Unreachable(err) {
-					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err))
+					unreached = append(unreached, citizen.UnreachedLine(terminal.EscapeLine(t.Name()), err))
 					continue
 				}
 				// Self data goes to a directory that the citizen carries,
@@ -1222,7 +1222,7 @@ func syncCommand() *cobra.Command {
 					// The relay answered the question of Reach, so only
 					// its mail gave no answer: say so, in a few words at
 					// the end, not its whole error (#439, #442).
-					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err)+" for mail")
+					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err)+" for mail; arc syncs with it again at the next sync")
 					continue
 				}
 				if err != nil {
@@ -1260,9 +1260,9 @@ func syncCommand() *cobra.Command {
 			// error of the sync when nothing else failed.
 			for i, relay := range unreached {
 				if i < len(unreached)-1 || failed {
-					fmt.Fprintln(command.ErrOrStderr(), "arc: "+relay+"; arc syncs with it again at the next sync")
+					fmt.Fprintln(command.ErrOrStderr(), "arc: "+relay)
 				} else {
-					return errors.New(relay + "; arc syncs with it again at the next sync")
+					return errors.New(relay)
 				}
 			}
 			if failed {

@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gezibash/arc/adapters/transport/relay"
 )
 
 // A file of down relays that is missing, does not parse, or lies in a
@@ -90,5 +93,51 @@ func TestDownRelaysOfManyProcessesKeepAWholeFile(t *testing.T) {
 	d.MarkDown("ws://old", time.Now().Add(-time.Second), "down")
 	if _, ok := d.read()["ws://old"]; ok {
 		t.Error("a record whose time passed stays in the file")
+	}
+}
+
+// The relays that one command marks at once all land in the file: one
+// command that found two silent relays kept one, so the next command
+// waited for the other again (#444).
+func TestTheMarksOfOneCommandAllLand(t *testing.T) {
+	d := relaysDown{path: filepath.Join(t.TempDir(), "relays-down.json")}
+	const relays = 20
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range relays {
+		wg.Go(func() {
+			<-start
+			d.MarkDown(fmt.Sprintf("ws://relay-%d", i), time.Now().Add(time.Minute), "no answer")
+		})
+	}
+	close(start)
+	wg.Wait()
+	if got := len(d.read()); got != relays {
+		t.Errorf("%d relays marked at once left %d marks, want each one", relays, got)
+	}
+}
+
+// A file that arc cannot write says so, with its path and what to do, so
+// that a command that waits again does not wait without a reason (#444).
+func TestAFileThatCannotBeWrittenGivesANote(t *testing.T) {
+	dir := t.TempDir()
+	var notes []error
+	d := relaysDown{path: filepath.Join(dir, "relays-down.json"), note: func(err error) { notes = append(notes, err) }}
+	if err := os.Mkdir(d.path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d.MarkDown("ws://a", time.Now().Add(time.Minute), "no answer")
+	if len(notes) != 1 || !strings.Contains(notes[0].Error(), d.path) || !strings.Contains(notes[0].Error(), "remove it") {
+		t.Errorf("a folder at the file gave the notes %v, want one that names it and says to remove it", notes)
+	}
+}
+
+// A relay that an earlier command marked is skipped: its line says so, and
+// when arc tries it again, not that it syncs at the next sync (#444).
+func TestASkippedRelaySaysWhenArcTriesItAgain(t *testing.T) {
+	err := &relay.DownError{URL: "ws://a", Why: "no answer", Until: time.Now().Add(20 * time.Second)}
+	got := UnreachedLine("ws://a", err)
+	if !strings.Contains(got, "ws://a: skipped: no answer at the last try; arc tries it again in 2") || strings.Contains(got, "next sync") {
+		t.Errorf("a skipped relay has the line %q, want that it is skipped and when arc tries it again", got)
 	}
 }

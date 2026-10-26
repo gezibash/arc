@@ -57,6 +57,12 @@ All notable changes to ARC are recorded here. The format follows
   older arc still asks one relay at a time and waits for each (#442).
 - A relay that takes the connection and never answers no longer costs
   about 30 s for each waiting message in `arc sync` (#442).
+- **Breaking:** the relays that gave no answer are down for each process
+  of the home, for 30 s by the wall clock, in `relays-down.json`. The next
+  command skips them at once, and `arc sync` says when it tries each again.
+  A refused connection marks nothing, and a mark further ahead than 30 s
+  is no mark. An older arc keeps no file, so it waits for each such relay
+  in each command (#444).
 
 ## [0.37.0] - 2026-10-19
 

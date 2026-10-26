@@ -62,6 +62,8 @@ type Session struct {
 	kept   map[string]relay.Relay
 	// offline warns once that no relay answered.
 	offline sync.Once
+	// downFile says once that relays-down.json cannot be written.
+	downFile sync.Once
 }
 
 type Config struct {
@@ -97,7 +99,7 @@ func Open(cfg Config) (*Session, error) {
 		r, ok := sess.kept[url]
 		if !ok {
 			r = relay.New(url, sess.Signer)
-			r.ShareDown(relaysDown{path: filepath.Join(cfg.Home, "relays-down.json")})
+			r.ShareDown(relaysDown{path: filepath.Join(cfg.Home, "relays-down.json"), note: sess.noteDownFile})
 			if sess.delegation != nil {
 				r.Delegation = sess.delegation
 			}
@@ -194,10 +196,28 @@ func (s *Session) warnUnreached(err error, uses string) {
 }
 
 // warnOffline says once in a session that the network reached no relay.
+// noteDownFile says once that the home cannot keep the relays that gave
+// no answer, so each command waits for them again (#444).
+func (s *Session) noteDownFile(err error) {
+	s.downFile.Do(func() {
+		s.warnf("%v; each command waits for them again\n", err)
+	})
+}
+
 func (s *Session) warnOffline() {
 	s.offline.Do(func() {
 		s.warnf("arc: no relay answered, so this uses what this machine holds\n")
 	})
+}
+
+// UnreachedLine is the line of sync for the relay name, which gave no
+// answer with err. A relay that is skipped for a mark of an earlier
+// command says so, and when arc tries it again (#444).
+func UnreachedLine(name string, err error) string {
+	if down, ok := errors.AsType[*relay.DownError](err); ok && down.Err == nil {
+		return fmt.Sprintf("%s: skipped: %s at the last try; arc tries it again in %s", name, terminal.EscapeLine(down.Why), down.Again())
+	}
+	return name + ": " + UnreachedReason(err) + "; arc syncs with it again at the next sync"
 }
 
 // UnreachedReason is the short reason of an error that Unreachable takes:
