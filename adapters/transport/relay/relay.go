@@ -133,6 +133,10 @@ type kept struct {
 	conn *nostr.Relay
 	// used is when a call last took conn.
 	used time.Time
+	// heard is conn once the relay answered on it. A connection that
+	// never answered has no answer to lose, so a stalled send does not
+	// open a new one (#442).
+	heard *nostr.Relay
 	// down is the error of the last connect that failed, until downUntil:
 	// a fetch in that time fails at once with it (#439).
 	down      error
@@ -297,6 +301,22 @@ func failedToReach(err error) bool {
 }
 
 // drop closes conn. If conn is the kept connection, the next call connects.
+// hear keeps that the relay answered on conn.
+func (k *kept) hear(conn *nostr.Relay) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.conn == conn {
+		k.heard = conn
+	}
+}
+
+// heardOn says whether the relay answered on conn.
+func (k *kept) heardOn(conn *nostr.Relay) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.heard == conn
+}
+
 func (k *kept) drop(conn *nostr.Relay) error {
 	if conn == nil {
 		return nil
@@ -355,6 +375,9 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 		// call to it would wait the whole timeout again (#439). One that
 		// answers a probe then is up: only that call got no answer, as from
 		// a relay that ignores one kind.
+		if err == nil || answered(err) {
+			k.hear(conn)
+		}
 		if k.silent(ctx, conn, err) {
 			return
 		}
@@ -403,12 +426,13 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err != nil {
 		return err
 	}
-	if reused {
+	if reused && k.heardOn(conn) {
 		first, cancel := context.WithTimeout(ctx, reuseWait)
 		err := r.publish(first, conn, event)
 		cancel()
 		// A refusal is an answer of the relay: the connection works.
 		if err == nil || refused(err) {
+			k.hear(conn)
 			return r.named(err)
 		}
 		_ = k.drop(conn)
@@ -419,7 +443,9 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 			return err
 		}
 	}
-	if err = r.publish(ctx, conn, event); err != nil && !refused(err) && !k.silent(ctx, conn, err) {
+	if err = r.publish(ctx, conn, event); err == nil || refused(err) {
+		k.hear(conn)
+	} else if !k.silent(ctx, conn, err) {
 		_ = k.drop(conn)
 	}
 	return r.named(err)

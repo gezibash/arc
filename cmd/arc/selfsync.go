@@ -74,6 +74,11 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 	if n > 0 {
 		fmt.Fprintf(cfg.Out, "imported %d drafts from the relays into this machine\n", n)
 	}
+	// No relay answered: sync names each relay once at its end, and the
+	// next sync imports the drafts (#442).
+	if err != nil && citizen.Unreachable(err) {
+		err = nil
+	}
 	if err != nil {
 		fmt.Fprintf(cfg.Errs, "%s\nthe next arc sync tries again\n", terminal.EscapeLine(err.Error()))
 	}

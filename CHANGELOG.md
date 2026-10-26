@@ -43,6 +43,17 @@ All notable changes to ARC are recorded here. The format follows
   fails at once (#436).
   - A call whose deadline ends while no provider hears it says so and names
     the relay of the provider, not the deadline of the caller (#453).
+- **Breaking:** one relay that never answers does not stall a command
+  while another relay answers (docs/delivery/SPEC.md). A pull asks each
+  relay at once and waits at most 500 ms after the first answer. A send
+  and a publish give the event to each relay at once. A relay that did
+  not connect, or that connected and gave no answer to a probe, is down
+  for 30 s, so the other calls of the command fail at once on it.
+  Finding a relay that gives no answer takes about 20 s, once. `arc sync`
+  names each such relay in one line of plain words, with its reason. An
+  older arc still asks one relay at a time and waits for each (#442).
+- A relay that takes the connection and never answers no longer costs
+  about 30 s for each waiting message in `arc sync` (#442).
 
 ## [0.37.0] - 2026-10-19
 

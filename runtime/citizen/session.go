@@ -249,10 +249,14 @@ func notice(text string) string { return terminal.EscapeLineCut(text, noticeLimi
 // Reach asks each relay of the session one question at once, which each
 // relay answers at once: the event of no ID. A relay that does not answer
 // is then down for a while, so the calls that follow fail at once on it.
-func (s *Session) Reach(ctx context.Context) {
+// It returns the error of each relay, in the order of s.Relays, nil for
+// a relay that answered.
+func (s *Session) Reach(ctx context.Context) []error {
+	errs := make([]error, len(s.Relays))
 	var wg sync.WaitGroup
-	for _, t := range s.Relays {
-		wg.Go(func() { _, _ = t.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{{}}}) })
+	for i, t := range s.Relays {
+		wg.Go(func() { _, errs[i] = t.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{{}}}) })
 	}
 	wg.Wait()
+	return errs
 }

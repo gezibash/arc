@@ -1160,14 +1160,23 @@ func syncCommand() *cobra.Command {
 				refreshDevices(command.Context(), sess, command.ErrOrStderr())
 			}
 			failed := false
+			// unreached has one plain line for each relay that gave no
+			// answer, and no line of Go text (#442).
 			var unreached []string
 			// Ask each relay once, all at once: a relay that does not answer
 			// is then down, and the steps below skip it, so silent relays
 			// cost one deadline in total, not one each (#442).
+			reached := map[string]error{}
 			if dir == "" {
-				sess.Reach(command.Context())
+				for i, err := range sess.Reach(command.Context()) {
+					reached[sess.Relays[i].Name()] = err
+				}
 			}
 			for _, t := range targets {
+				if err := reached[t.Name()]; err != nil && citizen.Unreachable(err) {
+					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err))
+					continue
+				}
 				// Self data goes to a directory that the citizen carries,
 				// but never to a relay.
 				if dir != "" {
@@ -1210,9 +1219,10 @@ func syncCommand() *cobra.Command {
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
 				if err != nil && citizen.Unreachable(err) {
-					// A relay that gave no answer gets one word at the
-					// end, not its whole error (#439).
-					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err))
+					// The relay answered the question of Reach, so only
+					// its mail gave no answer: say so, in a few words at
+					// the end, not its whole error (#439, #442).
+					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err)+" for mail")
 					continue
 				}
 				if err != nil {
@@ -1227,7 +1237,8 @@ func syncCommand() *cobra.Command {
 				}
 			}
 			if dir == "" && len(sess.Relays) > 0 {
-				if sent, err := sess.Mail.Forward(command.Context()); err != nil {
+				// A relay that gave no answer is named once at the end.
+				if sent, err := sess.Mail.Forward(command.Context()); err != nil && !citizen.Unreachable(err) {
 					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("mail: the waiting messages were not sent to the relays of their recipients: %v", err)))
 					failed = true
 				} else if sent > 0 {
@@ -1245,17 +1256,17 @@ func syncCommand() *cobra.Command {
 					failed = true
 				}
 			}
-			if failed {
-				return errors.New("some transports failed")
-			}
 			// One line for each relay that gave no answer, the last as the
-			// error of the sync.
+			// error of the sync when nothing else failed.
 			for i, relay := range unreached {
-				if i < len(unreached)-1 {
+				if i < len(unreached)-1 || failed {
 					fmt.Fprintln(command.ErrOrStderr(), "arc: "+relay+"; arc syncs with it again at the next sync")
 				} else {
 					return errors.New(relay + "; arc syncs with it again at the next sync")
 				}
+			}
+			if failed {
+				return errors.New("some transports failed")
 			}
 			return nil
 		},

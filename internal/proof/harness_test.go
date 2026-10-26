@@ -46,6 +46,7 @@ func run(m *testing.M) int {
 		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
 		"arc-releases": "./apps/releases/cmd/arc-releases",
 		"arc-storage":  "./apps/storage/cmd/arc-storage",
+		"arc-dm":       "./apps/dm/cmd/arc-dm",
 		"slowcall":     "./internal/proof/testdata/slowcall",
 		"muterelay":    "./internal/proof/testdata/muterelay",
 	} {
