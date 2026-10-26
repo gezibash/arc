@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"math"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -136,6 +137,9 @@ type kept struct {
 	// a fetch in that time fails at once with it (#439).
 	down      error
 	downUntil time.Time
+	// shared keeps the relays that did not connect for the other
+	// processes of the same home, or nil.
+	shared DownStore
 
 	// info is the NIP-11 document, after the first fetch that worked.
 	infoMu sync.Mutex
@@ -239,18 +243,79 @@ var errNoAnswer = errors.New("the relay gave no answer in time")
 // downFor is how long a fetch fails at once after a connect failed.
 var downFor = 30 * time.Second
 
-// isDown is the error of the last connect that failed, while it is newer
-// than downFor, or nil.
-func (k *kept) isDown() error {
+// DownStore keeps the relays that did not connect, so that the other
+// processes of the same home do not wait for them again. A store that
+// fails says so as no record: it never fails a call.
+type DownStore interface {
+	// Down returns until when a relay is down, and why, if it is.
+	Down(url string) (until time.Time, why string, ok bool)
+	// MarkDown keeps that a relay is down until a time.
+	MarkDown(url string, until time.Time, why string)
+	// Up forgets that a relay is down.
+	Up(url string)
+}
+
+// ShareDown makes a Relay from New keep the relays that did not connect in
+// s, and read them there, for downFor. Call it before the first call.
+func (r Relay) ShareDown(s DownStore) {
+	if r.kept != nil {
+		r.kept.shared = s
+	}
+}
+
+// DownError is the error of a call to a relay that did not connect a short
+// time before, in this process or in another process of the same home.
+type DownError struct {
+	URL, Why string
+	Until    time.Time
+	// Err is the error of the connect, in this process, or nil.
+	Err error
+}
+
+func (e *DownError) Error() string {
+	return fmt.Sprintf("relay %s did not connect: %s; arc asks again after %s", e.URL, e.Why, e.Until.Format(time.TimeOnly))
+}
+
+func (e *DownError) Unwrap() error { return e.Err }
+
+// isDown is the error of the last connect to url that failed, while it is
+// newer than downFor, or nil.
+func (k *kept) isDown(url string) error {
 	if k == nil {
 		return nil
 	}
 	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.down == nil || time.Now().After(k.downUntil) {
-		return nil
+	down, until, shared := k.down, k.downUntil, k.shared
+	k.mu.Unlock()
+	if down != nil && time.Now().Before(until) {
+		return &DownError{URL: url, Why: down.Error(), Until: until, Err: down}
 	}
-	return fmt.Errorf("%w; arc asks again after %s", k.down, k.downUntil.Format(time.TimeOnly))
+	if shared != nil {
+		if until, why, ok := shared.Down(url); ok && time.Now().Before(until) {
+			return &DownError{URL: url, Why: why, Until: until}
+		}
+	}
+	return nil
+}
+
+// failedToReach says whether err is a dial, a lookup or an address that
+// failed: an answer of the relay, such as a refusal, is not. reach tries
+// the other address family after any failed attempt, so only its first
+// attempt says whether the relay answered.
+func failedToReach(err error) bool {
+	for e := err; e != nil; {
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			if errs := joined.Unwrap(); len(errs) > 0 {
+				err = errs[0]
+			}
+			break
+		}
+		e = errors.Unwrap(e)
+	}
+	var op *net.OpError
+	var dns *net.DNSError
+	var addr *net.AddrError
+	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
 }
 
 // drop closes conn. If conn is the kept connection, the next call connects.
@@ -295,10 +360,18 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			// A relay that did not connect is down for a while: the other
 			// calls of a command do not wait for it again (#439). A caller
 			// that stopped says nothing about the relay.
-			if ctx.Err() == nil || errors.Is(context.Cause(ctx), errNoAnswer) {
+			// Only the relay's own timeout, or a dial that failed, marks it
+			// down: never a refusal, nor the deadline of the caller.
+			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), errNoAnswer) {
 				k.down, k.downUntil = err, time.Now().Add(downFor)
+				if k.shared != nil {
+					k.shared.MarkDown(r.URL, k.downUntil, err.Error())
+				}
 			}
 			return nil, false, nil, err
+		}
+		if k.down != nil && k.shared != nil {
+			k.shared.Up(r.URL)
 		}
 		k.down = nil
 	}
@@ -342,7 +415,7 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := k.isDown(); err != nil {
+	if err := k.isDown(r.URL); err != nil {
 		return err
 	}
 
@@ -636,7 +709,7 @@ func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.F
 // many events one query returns, so Fetch asks again for older events until a
 // page brings nothing new.
 func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, error) {
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return transport.Batch{}, err
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, Timeout, errNoAnswer)
@@ -749,7 +822,7 @@ func closed(reason string) error {
 // sends, all on one connection. An answer to a live call is ephemeral, and a
 // relay never stores it, so a subscription that came after it would miss it.
 func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (answer nostr.Event, err error) {
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
 	conn, _, done, err := r.open(ctx)
@@ -816,7 +889,7 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return nil, nil, true, err
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, Timeout, errNoAnswer)

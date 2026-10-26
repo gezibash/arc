@@ -218,9 +218,15 @@ func TestOfflineJournalIsQuiet(t *testing.T) {
 		{"", []string{"journal", "read", "notes/day/1"}, "first page"},
 		{"", []string{"journal", "ls"}, "notes/day/1"},
 	} {
+		start := time.Now()
 		got := home.try(step.stdin, step.args...)
 		if got.Err != nil {
 			t.Fatalf("arc %s offline: %v\n%s", strings.Join(step.args, " "), got.Err, got.Stderr)
+		}
+		// The home keeps the silent relay down after the first command:
+		// the next commands do not wait for it again (#439).
+		if took := time.Since(start); step.args[1] != "write" && took > 2*time.Second {
+			t.Errorf("arc %s offline took %s after the home marked the silent relay down", strings.Join(step.args, " "), took)
 		}
 		if got.Stderr != offline {
 			t.Errorf("arc %s offline wrote %d characters on the standard error, want the one line %q:\n%s", strings.Join(step.args, " "), len(got.Stderr), offline, got.Stderr)

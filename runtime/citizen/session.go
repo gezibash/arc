@@ -93,6 +93,7 @@ func Open(cfg Config) (*Session, error) {
 		r, ok := sess.kept[url]
 		if !ok {
 			r = relay.New(url, sess.Signer)
+			r.ShareDown(relaysDown{path: filepath.Join(cfg.Home, "relays-down.json")})
 			if sess.delegation != nil {
 				r.Delegation = sess.delegation
 			}
@@ -199,13 +200,13 @@ func (s *Session) warnOffline() {
 // address that failed, or a relay that gave no answer in time, so that no
 // relay answered the request (#396, #439).
 func offline(err error) bool {
-	if err == context.DeadlineExceeded { //nolint:errorlint // a leaf of the walk below
+	if err == context.DeadlineExceeded || err == relay.ErrStalled { //nolint:errorlint // leaves of the walk below
 		return true
 	}
 	// Each branch of a joined error must be offline, and errors.As takes
 	// the first branch that matches, so walk the tree by hand.
 	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
-	case *net.OpError, *net.DNSError, *net.AddrError:
+	case *net.OpError, *net.DNSError, *net.AddrError, *relay.DownError:
 		return true
 	case interface{ Unwrap() []error }:
 		errs := e.Unwrap()
