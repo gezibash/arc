@@ -265,7 +265,7 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	list, listed, err := sess.FollowStorageList(ctx, cfg.Installs, cfg.Out, cfg.Errs)
 	// A relay that gave no answer is named once at the end of sync.
-	if err != nil && !offline(err) {
+	if err != nil && !Unusable(err) {
 		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 	}
 	if listed && !sess.Remote {

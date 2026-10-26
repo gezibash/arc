@@ -432,8 +432,11 @@ first asks each relay that probe, all at once, so that relays that give no
 answer cost one timeout in all. It names each relay that gave no answer in
 one line of plain words at its end, with its reason: a refused connection,
 a host that does not exist, no answer, or no answer for mail from a relay
-that answered the probe. That line is the only line about the relay, with
-or without a relay that answers. A send and a publish give the event to
+that answered the probe. A relay that refused the probe, by a CLOSED, an
+OK that is false, a request for authentication that arc cannot answer, or
+an HTTP status other than 101 for the WebSocket, gets one line that says
+that the relay refused, with its reason, escaped (#463). That line is the
+only line about the relay, with or without a relay that answers. A send and a publish give the event to
 each relay at once, so relays that give no answer cost one wait in all. A
 send opens a new connection after a stall only on a connection where the
 relay answered before. A watch
