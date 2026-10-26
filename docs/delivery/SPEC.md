@@ -447,8 +447,13 @@ first asks each relay that probe, all at once, so that relays that give no
 answer cost one timeout in all. It names each relay that gave no answer in
 one line of plain words at its end, with its reason: a refused connection,
 a host that does not exist, a connection that the host closed or reset, no
-answer, or no answer for mail from a relay that answered the probe. That line is the only line about the relay, with
-or without a relay that answers. A send and a publish give the event to
+answer, or no answer for mail from a relay that answered the probe. A relay
+that refused the probe, by a CLOSED, an OK that is false, a request for
+authentication that arc cannot answer, or an HTTP status other than 101 for
+the WebSocket, gets one line that says that the relay refused, with its
+reason (#463). A relay that a mark skips says so (#444). Each line is built
+raw and escaped once, where it is printed. That line is the only line about
+the relay, with or without a relay that answers. A send and a publish give the event to
 each relay at once, so relays that give no answer cost one wait in all. A
 send opens a new connection after a stall only on a connection where the
 relay answered before. A
@@ -461,7 +466,7 @@ still tries to connect, so a provider watches again as soon as its relay
 is back. A relay that gave no answer in time counts as unreached: a command
 that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
 and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
-`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestABrokenFileOfDownRelaysIsNoRecord`, `TestDownRelaysOfManyProcessesKeepAWholeFile`, `TestAClosedPortIsNotDown`, `TestAConnectionClosedAtOnceIsNotDown`, `TestARelayThatClosesAtOnceGetsOneLineInEachSync`, `TestASyncReadsTheMarksOfTheHomeOnce`, `TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync`, `TestTheNoteOfAnUnwritableMarkFileReachesArcDM`, `TestAMarkFarAheadIsNoMark`, `TestTheMarksOfOneCommandAllLand`, `TestAFileThatCannotBeWrittenGivesANote`, `TestASkippedRelaySaysWhenArcTriesItAgain`
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestABrokenFileOfDownRelaysIsNoRecord`, `TestDownRelaysOfManyProcessesKeepAWholeFile`, `TestAClosedPortIsNotDown`, `TestAConnectionClosedAtOnceIsNotDown`, `TestARelayThatClosesAtOnceGetsOneLineInEachSync`, `TestASyncReadsTheMarksOfTheHomeOnce`, `TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync`, `TestTheNoteOfAnUnwritableMarkFileReachesArcDM`, `TestAMarkFarAheadIsNoMark`, `TestTheMarksOfOneCommandAllLand`, `TestAFileThatCannotBeWrittenGivesANote`, `TestASkippedRelaySaysWhenArcTriesItAgain`, `TestARefusalReasonIsEscapedOnce`
 prove this.
 
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and

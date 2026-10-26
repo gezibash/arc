@@ -74,9 +74,9 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 	if n > 0 {
 		fmt.Fprintf(cfg.Out, "imported %d drafts from the relays into this machine\n", n)
 	}
-	// No relay answered: sync names each relay once at its end, and the
-	// next sync imports the drafts (#442).
-	if err != nil && citizen.Unreachable(err) {
+	// No relay answered, or each refused: sync names each relay once at
+	// its end, and the next sync imports the drafts (#442, #463).
+	if err != nil && citizen.Unusable(err) {
 		err = nil
 	}
 	if err != nil {
@@ -99,8 +99,9 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 // date, so that the store learns of each revocation before it takes self
 // data. Without the signer, the kept list serves.
 func refreshDevices(ctx context.Context, sess *citizen.Session, errs io.Writer) {
-	// A relay that gave no answer is named once at the end of sync.
-	if _, _, err := sess.DeviceList(ctx); err != nil && !citizen.Unreachable(err) {
+	// A relay that gave no answer or refused is named once at the end of
+	// sync.
+	if _, _, err := sess.DeviceList(ctx); err != nil && !citizen.Unusable(err) {
 		fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("the device list did not come, so the list on this machine serves: %v", err)))
 	}
 }

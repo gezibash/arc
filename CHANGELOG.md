@@ -57,6 +57,10 @@ All notable changes to ARC are recorded here. The format follows
   older arc still asks one relay at a time and waits for each (#442).
 - A relay that takes the connection and never answers no longer costs
   about 30 s for each waiting message in `arc sync` (#442).
+- A relay that refuses (a CLOSED such as "blocked: ...", a request for
+  authentication that arc cannot answer, or HTTP 403 for the WebSocket)
+  gets one line in `arc sync` that says that it refused, with its reason,
+  in place of four lines of raw errors (#463).
 - **Breaking:** the relays that gave no answer are down for each process
   of the home, for 30 s by the wall clock, in `relays-down.json`. The next
   command skips them at once, and `arc sync` says when it tries each again.

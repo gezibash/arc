@@ -422,11 +422,12 @@ func unlistRelays(t *testing.T, m machine, n int) {
 }
 
 // rawErrorText is text of Go errors that a line for the user never holds.
-var rawErrorText = []string{"context deadline exceeded", "failed to WebSocket dial", "error opening websocket", "dial tcp", "i/o timeout", "no relay answered: relay"}
+var rawErrorText = []string{"context deadline exceeded", "failed to WebSocket dial", "error opening websocket", "dial tcp", "i/o timeout", "no relay answered: relay", "again over tcp", "can't AUTH", "the relay closed the query"}
 
-// A sync names each relay that gave no answer in one line of plain words,
-// whatever kind of relay it is, and with or without a relay that answers
-// (#442). Each layout has one bad relay, so the sync writes one line.
+// A sync names each relay that gave no answer, or refused, in one line of
+// plain words, whatever kind of relay it is, and with or without a relay
+// that answers (#442, #463). Each layout has one bad relay, so the sync
+// writes one line.
 func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
 	work := t.TempDir()
 	live := startRelay(t, filepath.Join(work, "relay"))
@@ -444,6 +445,9 @@ func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
 		{"a name that the DNS never answers", "no answer", func() string { return "ws://no-such-relay.test" }, mute},
 		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }, ""},
 		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }, ""},
+		{"a relay that closes each query as blocked", "the relay refused: blocked: this relay serves no one", func() string { return muteRelay(t, "MUTERELAY_MODE=closed") }, ""},
+		{"a relay that asks for authentication and sends no challenge", "the relay refused: it asks for authentication", func() string { return muteRelay(t, "MUTERELAY_MODE=auth") }, ""},
+		{"a relay that refuses the WebSocket with HTTP 403", "the relay refused: HTTP 403 for the WebSocket", func() string { return muteRelay(t, "MUTERELAY_MODE=403") }, ""},
 	}
 	for i, layout := range layouts {
 		for _, withLive := range []bool{false, true} {
@@ -535,6 +539,57 @@ func dnsServer(t *testing.T, notFound bool) string {
 		}
 	}()
 	return conn.LocalAddr().String()
+}
+
+// hostileReason is a reason of a refusal with terminal escapes, a bidi
+// override and line breaks in it.
+const hostileReason = "blocked: cato\x1b[31mRED \u202eevil\n\r\x1b[2K"
+
+// A reason that a relay chose reaches the screen escaped once: the line of
+// sync holds it raw, and is escaped where it is printed. It was escaped
+// twice, so that each backslash of an escape came out doubled (#464). Each
+// printed line must be exactly the line with the reason escaped once.
+func TestARefusalReasonIsEscapedOnce(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	refuses := func(mode string) func() string {
+		return func() string { return muteRelay(t, "MUTERELAY_MODE="+mode, "MUTERELAY_REASON="+hostileReason) }
+	}
+	line := func(name string) string {
+		return "arc: " + terminal.EscapeLine(name+": the relay refused: "+hostileReason+"; arc syncs with it again at the next sync")
+	}
+	for i, layout := range []struct {
+		name string
+		live bool
+		bad  []func() string
+		mail bool
+	}{
+		{"a relay that refuses alone", false, []func() string{refuses("closed")}, false},
+		{"a relay that refuses beside a live relay", true, []func() string{refuses("closed")}, false},
+		{"two relays that refuse", false, []func() string{refuses("closed"), refuses("closed")}, false},
+		{"a relay that refuses only mail", false, []func() string{refuses("mailclosed")}, true},
+	} {
+		home := arc(t, filepath.Join(work, fmt.Sprintf("home-%d", i)))
+		home.run("keys", "gen")
+		if layout.live {
+			home.run("relay", "add", live)
+		}
+		var want []string
+		for _, bad := range layout.bad {
+			url := bad()
+			listRelays(t, home, url)
+			if layout.mail {
+				url += " for mail"
+			}
+			want = append(want, line(url))
+		}
+		got := strings.Split(strings.TrimRight(home.try("", "sync").Stderr, "\n"), "\n")
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: arc sync wrote\n%s\nwant\n%s", layout.name, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
 }
 
 // A NOTICE of a relay that starts with arc-ring: reaches the screen, on one
