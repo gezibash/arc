@@ -68,6 +68,10 @@ All notable changes to ARC are recorded here. The format follows
   shared disk can take longer than 200 ms for one sync of the store. The
   200 ms target stays for a run on a machine of its own. The count of the
   store writes before a ring stays as it is (#452).
+- A watch that ends after its command no longer writes its line after the
+  command closed its session. Each line of a session is written one at a
+  time. The race detector found the watch-end line of #438 writing while a
+  test read the output (#438).
 
 ## [0.37.0] - 2026-10-19
 
