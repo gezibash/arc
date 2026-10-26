@@ -94,7 +94,8 @@ func syncSelf(ctx context.Context, sess *citizen.Session, cfg citizen.SelfSync, 
 // date, so that the store learns of each revocation before it takes self
 // data. Without the signer, the kept list serves.
 func refreshDevices(ctx context.Context, sess *citizen.Session, errs io.Writer) {
-	if _, _, err := sess.DeviceList(ctx); err != nil {
+	// A relay that gave no answer is named once at the end of sync.
+	if _, _, err := sess.DeviceList(ctx); err != nil && !citizen.Unreachable(err) {
 		fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("the device list did not come, so the list on this machine serves: %v", err)))
 	}
 }

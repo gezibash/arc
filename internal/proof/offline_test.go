@@ -300,26 +300,31 @@ func muteRelayURL(t *testing.T) string {
 	return strings.TrimSpace(line)
 }
 
-// A relay that connects and never answers costs a sync one timeout, not
-// one for each of its queries in series (#439): the first query that it
-// does not answer marks it down. The sync says so in one line.
+// Relays that connect and never answer cost a sync one timeout in all, not
+// one for each of their queries, nor one for each relay (#439, #442): sync
+// asks each relay at once first, and a relay that gives no answer, nor to
+// a probe, is down. The sync names each relay that gave no answer in one
+// line, with its reason.
 func TestSyncWaitsForAMuteRelayOnce(t *testing.T) {
 	work := t.TempDir()
 	url := startRelay(t, filepath.Join(work, "relay"))
 	home := arc(t, filepath.Join(work, "home"))
 	home.run("keys", "gen")
 	home.run("relay", "add", url)
-	home.try("", "relay", "add", muteRelayURL(t))
+	listRelays(t, home, muteRelayURL(t), muteRelayURL(t), "ws://"+closedPort(t))
 	start := time.Now()
 	got := home.try("", "sync")
 	took := time.Since(start)
-	if took > 25*time.Second {
-		t.Errorf("arc sync took %s with a mute relay, want about one timeout of 15 s", took)
+	// One timeout of 15 s and one probe of 5 s, for both mute relays at once.
+	if took > 30*time.Second {
+		t.Errorf("arc sync took %s with two mute relays, want about one timeout of 15 s and a probe of 5 s", took)
 	}
-	if !strings.Contains(got.Stderr, "no answer from ws://") || strings.Count(got.Stderr, "\n") != 1 {
-		t.Errorf("arc sync with a mute relay wrote %q, want one line that names it", got.Stderr)
+	// One line for each relay that gave no answer, with its reason: the
+	// closed port keeps the refusal.
+	if strings.Count(got.Stderr, ": no answer; arc syncs with it again") != 2 || strings.Count(got.Stderr, ": the connection was refused; arc syncs with it again") != 1 || strings.Count(got.Stderr, "\n") != 3 {
+		t.Errorf("arc sync with two mute relays and a closed port wrote %q, want one line for each, with its reason", got.Stderr)
 	}
-	t.Logf("ok: arc sync took %s with a mute relay", took.Round(100*time.Millisecond))
+	t.Logf("ok: arc sync took %s with two mute relays and a closed port", took.Round(100*time.Millisecond))
 }
 
 // Each message that waits for the relays of its recipient costs a sync
@@ -333,21 +338,68 @@ func TestPendingMessagesWaitForAMuteRelayOnce(t *testing.T) {
 	home := arc(t, filepath.Join(work, "home"))
 	home.run("keys", "gen")
 	home.run("relay", "add", url)
-	home.try("", "relay", "add", muteRelayURL(t))
-	sync := func(messages int) time.Duration {
-		t.Helper()
+	// A recipient with no relay list keeps its message waiting. The
+	// messages go out before the mute relay is listed, so that each send
+	// does not wait for it.
+	send := func(messages int) {
 		for range messages {
-			// A recipient with no relay list keeps its message waiting.
 			home.try("", "message", "send", keys.Generate().Public.Hex(), "hello")
 		}
+	}
+	timed := func() time.Duration {
 		start := time.Now()
 		home.try("", "sync")
 		return time.Since(start)
 	}
-	one := sync(1)
-	six := sync(5)
+	send(1)
+	listRelays(t, home, muteRelayURL(t))
+	one := timed()
+	unlistRelays(t, home, 1)
+	send(5)
+	listRelays(t, home, muteRelayURL(t))
+	six := timed()
 	if six > one+10*time.Second {
 		t.Errorf("a sync with 6 waiting messages took %s, and with 1 took %s: each message waits for the mute relay", six, one)
 	}
 	t.Logf("ok: a sync took %s with 1 waiting message, and %s with 6", one.Round(100*time.Millisecond), six.Round(100*time.Millisecond))
+}
+
+// relaysFile is the relay list of the one identity of a home.
+func relaysFile(t *testing.T, m machine) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(m.home, "citizens"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("the home holds %d identities: %v", len(entries), err)
+	}
+	return filepath.Join(m.home, "citizens", entries[0].Name(), "relays")
+}
+
+// listRelays adds relays to the list of a home as arc relay add keeps
+// them, without the publish of the relay list, which would wait for a relay
+// that does not answer.
+func listRelays(t *testing.T, m machine, urls ...string) {
+	t.Helper()
+	file, err := os.OpenFile(relaysFile(t, m), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	for _, url := range urls {
+		if _, err := file.WriteString(url + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// unlistRelays removes the last n relays of the list of a home.
+func unlistRelays(t *testing.T, m machine, n int) {
+	t.Helper()
+	body, err := os.ReadFile(relaysFile(t, m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+	if err := os.WriteFile(relaysFile(t, m), []byte(strings.Join(lines[:len(lines)-n], "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

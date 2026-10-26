@@ -258,16 +258,22 @@ func (k *kept) isDown() error {
 	return fmt.Errorf("%w; arc asks again in %s", k.down, time.Until(k.downUntil).Round(time.Second))
 }
 
-// silent marks the relay down when a call on a connection that it took
-// gave no EOSE, OK or CLOSED within the relay's own timeout (#439). A
+// silent judges a call on a connection that the relay took, and that gave
+// no EOSE, OK or CLOSED within the relay's own timeout (#439). It asks the
+// relay one question that each relay answers at once: a relay that answers
+// is up, and silent says so; one that does not is down for downFor. A
 // refusal is an answer, and the deadline of the caller is not the relay's.
-func (k *kept) silent(ctx context.Context, err error) {
+func (k *kept) silent(ctx context.Context, conn *nostr.Relay, err error) (up bool) {
 	if err == nil || answered(err) || !errors.Is(context.Cause(ctx), ErrNoAnswer) {
-		return
+		return false
+	}
+	if conn != nil && conn.IsConnected() && alive(context.Background(), conn) {
+		return true
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.down, k.downUntil = err, time.Now().Add(downFor)
+	return false
 }
 
 // failedToReach says whether err is a dial, a lookup or an address that
@@ -344,6 +350,14 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 	k.used = time.Now()
 	conn = k.conn
 	return conn, reused, func(err error) {
+		// A relay that connected, and then gave no EOSE, OK or CLOSED
+		// within its own timeout, is down as one that did not connect: each
+		// call to it would wait the whole timeout again (#439). One that
+		// answers a probe then is up: only that call got no answer, as from
+		// a relay that ignores one kind.
+		if k.silent(ctx, conn, err) {
+			return
+		}
 		// An answer of the relay shows that the connection works. A caller
 		// that stopped says nothing about it. Any other failure, also a
 		// deadline, can come from a connection that stalled, so the next call
@@ -351,11 +365,6 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 		if err != nil && !answered(err) && !errors.Is(err, context.Canceled) {
 			_ = k.drop(conn)
 		}
-		// A relay that connected, and then gave no EOSE, OK or CLOSED
-		// within its own timeout, is down as one that did not connect: each
-		// call to it would wait the whole timeout again (#439). A refusal
-		// is an answer, and the deadline of the caller is not the relay's.
-		k.silent(ctx, err)
 	}, nil
 }
 
@@ -410,10 +419,9 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 			return err
 		}
 	}
-	if err = r.publish(ctx, conn, event); err != nil && !refused(err) {
+	if err = r.publish(ctx, conn, event); err != nil && !refused(err) && !k.silent(ctx, conn, err) {
 		_ = k.drop(conn)
 	}
-	k.silent(ctx, err)
 	return r.named(err)
 }
 
