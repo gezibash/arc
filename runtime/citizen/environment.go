@@ -229,7 +229,7 @@ func (e *Environment) Fetch(ctx context.Context, filter nostr.Filter, urls []str
 		return found, nil
 	}
 	if err := node.Unreached(e.Session.Node.Pull(ctx, filter, e.Session.Relays)); err != nil {
-		e.Session.warnf("%v\nthis shows what this machine holds\n", err)
+		e.Session.warnUnreached(err, "this shows what this machine holds")
 	}
 	return e.Session.Node.Store.Query(filter)
 }

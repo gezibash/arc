@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,4 +186,58 @@ func openRoots(t *testing.T, path string, key keys.Key) map[uint32][32]byte {
 		held[gen] = [32]byte(root)
 	}
 	return held
+}
+
+// TestOfflineJournalIsQuiet proves that a journal command that works with
+// no relay prints one short line about the relays, and not the error of
+// each relay (#396). The home is fresh: it holds no roots event.
+func TestOfflineJournalIsQuiet(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", url)
+	home.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
+	home.run("install", home.key(), "journal", "--yes")
+	home.run("relay", "rm", url)
+	for range 2 {
+		home.try("", "relay", "add", "ws://"+closedPort(t))
+	}
+
+	const offline = "arc: no relay answered, so this uses what this machine holds\n"
+	for _, step := range []struct {
+		stdin string
+		args  []string
+		out   string
+	}{
+		{"first page", []string{"journal", "write", "notes/day/1"}, ""},
+		{"", []string{"journal", "add", "notes/day", "second line"}, ""},
+		{"", []string{"journal", "read", "notes/day/1"}, "first page"},
+		{"", []string{"journal", "ls"}, "notes/day/1"},
+	} {
+		got := home.try(step.stdin, step.args...)
+		if got.Err != nil {
+			t.Fatalf("arc %s offline: %v\n%s", strings.Join(step.args, " "), got.Err, got.Stderr)
+		}
+		if got.Stderr != offline {
+			t.Errorf("arc %s offline wrote %d characters on the standard error, want the one line %q:\n%s", strings.Join(step.args, " "), len(got.Stderr), offline, got.Stderr)
+		}
+		if !strings.Contains(got.Stdout, step.out) {
+			t.Errorf("arc %s offline printed %q, want %q in it", strings.Join(step.args, " "), got.Stdout, step.out)
+		}
+	}
+}
+
+// closedPort is a local address where nothing listens.
+func closedPort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return addr
 }

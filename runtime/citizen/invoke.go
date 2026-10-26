@@ -35,7 +35,7 @@ func newestAnnouncements(ctx context.Context, sess *Session, provider nostr.PubK
 	}
 	filter := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
 	if err := node.Unreached(sess.Node.Pull(ctx, filter, sess.Relays)); err != nil {
-		sess.warnf("%v\nthis uses the announcement that this machine holds\n", err)
+		sess.warnUnreached(err, "this uses the announcement that this machine holds")
 	}
 }
 
@@ -117,7 +117,7 @@ func (sess *Session) Installed(ctx context.Context, installs catalog.Installs, n
 	if err := node.Unreached(sess.Node.Pull(ctx, nostr.Filter{
 		Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}, Tags: nostr.TagMap{"d": {install.ID}},
 	}, sess.Relays)); err != nil {
-		sess.warnf("%v\nthis uses the announcement that this machine holds\n", err)
+		sess.warnUnreached(err, "this uses the announcement that this machine holds")
 	}
 	offer, err := sess.FindOffer(ctx, provider, install.ID)
 	if err != nil {
