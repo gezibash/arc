@@ -423,7 +423,9 @@ relay's own timeout or a dial that failed marks it down, never a refusal or
 the deadline of the caller. A relay that took the connection, and then gave
 no EOSE, OK or CLOSED within its own timeout, is down in the same way,
 unless it answers a probe at once, the event of no ID, within 5 seconds: a
-relay that ignores one kind is up, and only that call fails. A
+relay that ignores one kind is up, and only that call fails. To find a
+relay that gives no answer thus takes about 20 seconds, the timeout of 15
+and the probe of 5, once; an older arc waited 15 seconds for each call. A
 first attempt that raced both address families and reached neither within
 4 seconds ends the connect: the host is behind a black hole. `arc sync`
 first asks each relay that probe, all at once, so that relays that give no
