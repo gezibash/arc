@@ -327,3 +327,33 @@ func TestSyncWaitsForAMuteRelayOnce(t *testing.T) {
 	}
 	t.Logf("ok: arc sync took %s with a mute relay", took.Round(100*time.Millisecond))
 }
+
+// Each message that waits for the relays of its recipient costs a sync
+// the lookup of those relays. With a mute relay listed, that cost one
+// timeout for each message, one after another (#442). After the first
+// timeout the mute relay is down, so a sync with 6 waiting messages takes
+// about as long as a sync with 1.
+func TestPendingMessagesWaitForAMuteRelayOnce(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", url)
+	home.try("", "relay", "add", muteRelayURL(t))
+	sync := func(messages int) time.Duration {
+		t.Helper()
+		for range messages {
+			// A recipient with no relay list keeps its message waiting.
+			home.try("", "message", "send", keys.Generate().Public.Hex(), "hello")
+		}
+		start := time.Now()
+		home.try("", "sync")
+		return time.Since(start)
+	}
+	one := sync(1)
+	six := sync(5)
+	if six > one+10*time.Second {
+		t.Errorf("a sync with 6 waiting messages took %s, and with 1 took %s: each message waits for the mute relay", six, one)
+	}
+	t.Logf("ok: a sync took %s with 1 waiting message, and %s with 6", one.Round(100*time.Millisecond), six.Round(100*time.Millisecond))
+}
