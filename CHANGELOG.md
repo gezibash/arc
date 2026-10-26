@@ -43,6 +43,9 @@ All notable changes to ARC are recorded here. The format follows
   fails at once (#436).
   - A call whose deadline ends while no provider hears it says so and names
     the relay of the provider, not the deadline of the caller (#453).
+  - arc does not start a try that cannot end before the deadline of the
+    caller, so the deadline never cuts off a try after its request went
+    out.
 - **Breaking:** one relay that never answers does not stall a command
   while another relay answers (docs/delivery/SPEC.md). A pull asks each
   relay at once and waits at most 500 ms after the first answer. A send
