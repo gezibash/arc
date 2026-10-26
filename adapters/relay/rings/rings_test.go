@@ -41,6 +41,8 @@ var publicIP = netip.MustParseAddr("203.0.113.10")
 type hit struct {
 	auth, id, body string
 	at             time.Time
+	// tx is the last write of the store when the ring came.
+	tx int
 }
 
 type safeBuffer struct {
@@ -82,7 +84,7 @@ func start(t *testing.T, cfg Config) *harness {
 
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		h.hits <- hit{auth: r.Header.Get("Authorization"), id: r.Header.Get(IDHeader), body: string(body), at: time.Now()}
+		h.hits <- hit{auth: r.Header.Get("Authorization"), id: r.Header.Get(IDHeader), body: string(body), at: time.Now(), tx: h.lastWrite()}
 		w.WriteHeader(int(h.status.Load()))
 	}))
 	target.StartTLS()
@@ -1105,5 +1107,34 @@ func TestAReadWithFewRingsLeftGetsANotice(t *testing.T) {
 		if got := h.notices(bob, bob.Public, 3); len(got) != 1 || got[0] != want {
 			t.Fatalf("bob's three reads on one connection got %q, want [%q]", got, want)
 		}
+	}
+}
+
+// lastWrite is the ID of the last write of the store of the rings.
+func (h *harness) lastWrite() int {
+	tx, err := h.db.Begin(false)
+	if err != nil {
+		return -1
+	}
+	defer func() { _ = tx.Rollback() }()
+	return tx.ID()
+}
+
+// The way from a wrap to its ring writes the store twice: the wrap itself,
+// and the ring ID, which a restart must find. Each write syncs the disk,
+// and each sync of a busy disk made a ring late (#451).
+func TestAWrapWritesTheStoreTwiceBeforeItsRing(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	h.mustRegister(bob)
+	before := h.lastWrite()
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	select {
+	case hit := <-h.hits:
+		if writes := hit.tx - before; writes != 2 {
+			t.Errorf("the store took %d writes on the way to the ring, want 2: the wrap and the ring ID", writes)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no ring came")
 	}
 }
