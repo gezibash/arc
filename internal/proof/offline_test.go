@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -289,8 +290,14 @@ func silentRelay(t *testing.T) string {
 // answers on it, the most common black hole, and returns its URL.
 func muteRelayURL(t *testing.T) string {
 	t.Helper()
+	return muteRelay(t)
+}
+
+// muteRelay runs muterelay with env, and returns its URL.
+func muteRelay(t *testing.T, env ...string) string {
+	t.Helper()
 	command := exec.Command(program("muterelay"))
-	command.Env = append(os.Environ(), "MUTERELAY_LISTEN=127.0.0.1:0")
+	command.Env = append(append(os.Environ(), "MUTERELAY_LISTEN=127.0.0.1:0"), env...)
 	out, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -385,7 +392,7 @@ func relaysFile(t *testing.T, m machine) string {
 // that does not answer.
 func listRelays(t *testing.T, m machine, urls ...string) {
 	t.Helper()
-	file, err := os.OpenFile(relaysFile(t, m), os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(relaysFile(t, m), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,4 +415,81 @@ func unlistRelays(t *testing.T, m machine, n int) {
 	if err := os.WriteFile(relaysFile(t, m), []byte(strings.Join(lines[:len(lines)-n], "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// rawErrorText is text of Go errors that a line for the user never holds.
+var rawErrorText = []string{"context deadline exceeded", "failed to WebSocket dial", "error opening websocket", "dial tcp", "i/o timeout", "no relay answered: relay"}
+
+// A sync names each relay that gave no answer in one line of plain words,
+// whatever kind of relay it is, and with or without a relay that answers
+// (#442). Each layout has one bad relay, so the sync writes one line.
+func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	layouts := []struct {
+		name, reason string
+		url          func() string
+	}{
+		{"a relay that takes the WebSocket and never answers", "no answer", func() string { return muteRelayURL(t) }},
+		{"a host that takes the connection and never answers", "no answer", func() string { return "ws://" + silentRelay(t) }},
+		{"a host that does not exist", "no such host", func() string { return "ws://no-such-host.invalid" }},
+		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }},
+		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }},
+	}
+	for i, layout := range layouts {
+		for _, withLive := range []bool{false, true} {
+			home := arc(t, filepath.Join(work, fmt.Sprintf("home-%d-%t", i, withLive)))
+			home.run("keys", "gen")
+			if withLive {
+				home.run("relay", "add", live)
+			}
+			bad := layout.url()
+			listRelays(t, home, bad)
+			got := home.try("", "sync")
+			want := bad + ": " + layout.reason + "; arc syncs with it again at the next sync"
+			lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+			if len(lines) != 1 || !strings.Contains(lines[0], want) {
+				t.Errorf("%s, with a live relay %t: arc sync wrote %q, want one line that says %q", layout.name, withLive, got.Stderr, want)
+			}
+			for _, raw := range rawErrorText {
+				if strings.Contains(got.Stderr, raw) {
+					t.Errorf("%s, with a live relay %t: arc sync wrote %q, which holds the Go text %q", layout.name, withLive, got.Stderr, raw)
+				}
+			}
+		}
+	}
+}
+
+// An arc-dm send to relays that connect and never answer waits for them
+// once, all at once, and dials each of them once: the wrap goes to each
+// relay at once, and a connection that never answered is not dialled
+// again (#442). With a live relay, two mute relays and a closed port, it
+// took two waits of 20 s, and dialled each mute relay twice.
+func TestADMSendDialsEachMuteRelayOnce(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", live)
+	peer := keys.Generate().Public.Hex()
+	home.run("message", "send", peer, "hello")
+	accepts := []string{filepath.Join(work, "accepts-1"), filepath.Join(work, "accepts-2")}
+	listRelays(t, home, muteRelay(t, "MUTERELAY_ACCEPTS="+accepts[0]), muteRelay(t, "MUTERELAY_ACCEPTS="+accepts[1]), "ws://"+closedPort(t))
+	start := time.Now()
+	got := home.using(program("arc-dm")).try("", "--arc", program("arc"), "--state", filepath.Join(work, "dm"), "send", peer, "again")
+	took := time.Since(start)
+	if got.Err != nil {
+		t.Fatalf("arc-dm send: %v\n%s", got.Err, got.Stderr)
+	}
+	// One timeout of 15 s and one probe of 5 s, for both mute relays at once.
+	if took > 30*time.Second {
+		t.Errorf("arc-dm send took %s with two mute relays, want about one timeout of 15 s and a probe of 5 s", took)
+	}
+	for _, file := range accepts {
+		body, _ := os.ReadFile(file)
+		if dials := strings.Count(string(body), "accept\n"); dials != 1 {
+			t.Errorf("arc-dm send dialled a mute relay %d times, want once", dials)
+		}
+	}
+	t.Logf("ok: arc-dm send took %s with two mute relays and a closed port", took.Round(100*time.Millisecond))
 }

@@ -6,6 +6,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 
 	"fiatjaf.com/nostr"
 )
@@ -73,3 +74,18 @@ type NotSubmittedError struct{ Err error }
 
 func (e *NotSubmittedError) Error() string { return e.Err.Error() }
 func (e *NotSubmittedError) Unwrap() error { return e.Err }
+
+// ErrNoListener is the answer of a relay that had no watch for an event
+// that it does not keep, such as a live wrap: no one got the event. A
+// provider whose relay ended its watch has none for a few seconds.
+var ErrNoListener = errors.New("no one was listening")
+
+// NoListener is err, the answer of a relay that no one got the event, as a
+// NotSubmittedError that matches ErrNoListener.
+func NoListener(err error) error { return &NotSubmittedError{Err: noListener{err}} }
+
+type noListener struct{ err error }
+
+func (e noListener) Error() string        { return e.err.Error() }
+func (e noListener) Unwrap() error        { return e.err }
+func (e noListener) Is(target error) bool { return target == ErrNoListener }

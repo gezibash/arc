@@ -18,6 +18,62 @@ import (
 func LiveCall(ctx context.Context, signer keys.Signer, provider nostr.PubKey, request call.Request, targets []transport.Transport, timeout time.Duration) (call.Reply, time.Duration, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	type answer struct {
+		reply   call.Reply
+		elapsed time.Duration
+		via     string
+	}
+	got, err := retryUnheard(ctx, func() (answer, error) {
+		reply, elapsed, via, err := liveCall(ctx, signer, provider, request, targets)
+		return answer{reply, elapsed, via}, err
+	})
+	return got.reply, got.elapsed, got.via, err
+}
+
+// unheardWait is how long a call or a session open tries again when no
+// provider heard it. A relay that ended the watch of a provider has a new
+// watch within a few seconds, and in that time each live event reaches no
+// one (#424).
+const unheardWait = 6 * time.Second
+
+// unheardStep is the time between two tries.
+const unheardStep = 250 * time.Millisecond
+
+// retryUnheard runs try again while it fails because no one heard it, for
+// at most unheardWait. A try that no one heard reached no provider, so to
+// repeat it never repeats an operation.
+func retryUnheard[T any](ctx context.Context, try func() (T, error)) (T, error) {
+	deadline := time.Now().Add(unheardWait)
+	var last T
+	var lastErr error
+	for {
+		got, err := try()
+		// A try that the deadline of the caller cut off says less than the
+		// try before it, which no one heard and which names the relay of
+		// the provider: give that one. A try that submitted its request
+		// keeps its own result, whose outcome may be unknown (#453).
+		if err != nil && lastErr != nil && ctx.Err() != nil && notSubmitted(err) {
+			return last, lastErr
+		}
+		if err == nil || !errors.Is(err, transport.ErrNoListener) || time.Now().After(deadline) {
+			return got, err
+		}
+		last, lastErr = got, err
+		select {
+		case <-time.After(unheardStep):
+		case <-ctx.Done():
+			return got, err
+		}
+	}
+}
+
+// notSubmitted says whether a try submitted no request.
+func notSubmitted(err error) bool {
+	_, ok := errors.AsType[*transport.NotSubmittedError](err)
+	return ok
+}
+
+func liveCall(ctx context.Context, signer keys.Signer, provider nostr.PubKey, request call.Request, targets []transport.Transport) (call.Reply, time.Duration, string, error) {
 	var failures []error
 	for _, t := range targets {
 		exchange, ok := t.(call.Exchanger)

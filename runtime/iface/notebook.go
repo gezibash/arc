@@ -114,7 +114,7 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 	if !notebookPattern.MatchString(str(fields["notebook"])) {
 		return "", errors.New("frontmatter: notebook must be project/notebook")
 	}
-	now := r.env.Now().UTC().Format(time.RFC3339Nano)
+	now := r.env.Now().UTC().Format(timeFormat)
 	created := now
 	if old != nil && !old.Deleted {
 		before, _, err := frontmatter(old.Event.Content)
@@ -140,7 +140,7 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 					first = stamp
 				}
 			}
-			created = time.Unix(first, 0).UTC().Format(time.RFC3339Nano)
+			created = time.Unix(first, 0).UTC().Format(timeFormat)
 		}
 	}
 	header := content[:len(content)-len(body)]
@@ -235,11 +235,16 @@ func pageMeta(p *notebookPage) {
 	e.rec["legacy"] = p.page == 0 || p.created.IsZero()
 }
 
+// timeFormat is the one form of a time of the journal: UTC, with three
+// digits of milliseconds, so that times line up (#400). Reads also take
+// RFC 3339 times of other precision, as older pages have them.
+const timeFormat = "2006-01-02T15:04:05.000Z07:00"
+
 func stamp(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format(timeFormat)
 }
 
 // dateBound treats --to YYYY-MM-DD as the whole UTC day, not just midnight.
@@ -449,7 +454,8 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		return r.notebookSections(entries, n.Section)
 	}
 	if n.Op == "list" {
-		r.noteLost(allPages, "")
+		// Only the pages that ls shows get a notice.
+		r.noteLost(allPages, pages, "")
 		// A failed write leaves no page to list, so name its address here.
 		if err := r.reportUnnamed(n.Kind); err != nil {
 			return nil, err

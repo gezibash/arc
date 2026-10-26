@@ -214,7 +214,8 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 
 	values, flags, err := bind(ctx, command, rest, env, stdio.In)
 	if err != nil {
-		return fmt.Errorf("%w\nusage: %s", err, usage(in, command))
+		// arc writes an error on one line, so the usage follows on it (#398).
+		return fmt.Errorf("%w; usage: %s", err, usage(in, command))
 	}
 	if flags.Help {
 		fmt.Fprint(stdio.Out, commandHelp(in, command))

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -48,10 +49,14 @@ func (n *Node) Publish(ctx context.Context, event nostr.Event, transports []tran
 		return result, nil, err
 	}
 
-	sent := make([]Sent, 0, len(transports))
-	for _, t := range transports {
-		sent = append(sent, Sent{Transport: t.Name(), Err: t.Send(ctx, event)})
+	// Each transport gets the event at once, so transports that give no
+	// answer cost one wait in all, not one each (#442).
+	sent := make([]Sent, len(transports))
+	var wg sync.WaitGroup
+	for i, t := range transports {
+		wg.Go(func() { sent[i] = Sent{Transport: t.Name(), Err: t.Send(ctx, event)} })
 	}
+	wg.Wait()
 	return result, sent, nil
 }
 

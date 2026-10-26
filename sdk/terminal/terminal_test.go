@@ -256,3 +256,13 @@ func TestEscapeLineFit(t *testing.T) {
 		t.Errorf("EscapeLineFit changed a short line: %q", got)
 	}
 }
+
+// EscapeLineData keeps the escapes that a program wrote, such as arc on
+// its standard error, and still escapes each control character, so a line
+// that went through two programs is escaped once.
+func TestEscapeLineData(t *testing.T) {
+	in := `arc: a path h\narc: x` + "\x1b[2J\nnext"
+	if got, want := EscapeLineData(in), `arc: a path h\narc: x\x1b[2J\nnext`; got != want {
+		t.Errorf("EscapeLineData(%q) = %q, want %q", in, got, want)
+	}
+}

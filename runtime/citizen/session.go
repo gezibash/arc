@@ -47,6 +47,8 @@ type Session struct {
 	NewRelay func(string) transport.Transport
 	Errors   io.Writer
 	store    *store.Store
+	// storeDir is the folder of the store, which holds the lock of writes.
+	storeDir string
 	receipts kv.Store
 	roots    kv.Store
 	signers  *signers
@@ -78,7 +80,7 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
 	sess.bodies = bodies.Dir{Path: filepath.Join(cfg.Home, "store", "bodies")}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
 	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
@@ -248,10 +250,14 @@ func notice(text string) string { return terminal.EscapeLineCut(text, noticeLimi
 // Reach asks each relay of the session one question at once, which each
 // relay answers at once: the event of no ID. A relay that does not answer
 // is then down for a while, so the calls that follow fail at once on it.
-func (s *Session) Reach(ctx context.Context) {
+// It returns the error of each relay, in the order of s.Relays, nil for
+// a relay that answered.
+func (s *Session) Reach(ctx context.Context) []error {
+	errs := make([]error, len(s.Relays))
 	var wg sync.WaitGroup
-	for _, t := range s.Relays {
-		wg.Go(func() { _, _ = t.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{{}}}) })
+	for i, t := range s.Relays {
+		wg.Go(func() { _, errs[i] = t.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{{}}}) })
 	}
 	wg.Wait()
+	return errs
 }

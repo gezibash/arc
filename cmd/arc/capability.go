@@ -76,6 +76,15 @@ func serve(command *cobra.Command, args []string) error {
 		return err
 	}
 	id, limit := definition.ID, definition.MaxBytes
+	dir, err := home(command)
+	if err != nil {
+		return err
+	}
+	release, err := holdServe(command.ErrOrStderr(), dir, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	sess, err := open(command)
 	if err != nil {
@@ -88,10 +97,6 @@ func serve(command *cobra.Command, args []string) error {
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	dir, err := home(command)
-	if err != nil {
-		return err
-	}
 	relays, err := readRelays(dir)
 	if err != nil {
 		return err
@@ -430,21 +435,30 @@ func watchAll(ctx context.Context, server *call.Server, relays []transport.Trans
 func keepServing(ctx context.Context, server *call.Server, r transport.Live, report func(error), log *slog.Logger) {
 	for {
 		began := false
+		var start time.Time
 		err := server.ServeLive(ctx, r, func() {
-			began = true
+			began, start = true, time.Now()
 			report(nil)
 		})
 		if ctx.Err() != nil {
 			return
 		}
+		// While no watch runs, each call to this provider reaches no one,
+		// so a watch that ran a while starts again at once (#424). A watch
+		// that ends at once waits, so that a relay that ends each watch
+		// does not get a new one in a loop.
+		wait := 3 * time.Second
 		if began {
 			log.Warn("the relay ended the watch; watching again", "relay", r.Name(), "error", err)
+			if time.Since(start) > 10*time.Second {
+				wait = 0
+			}
 		} else {
 			report(err)
 			log.Warn("the relay did not take the watch; trying again", "relay", r.Name(), "error", err)
 		}
 		select {
-		case <-time.After(3 * time.Second):
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return
 		}

@@ -411,8 +411,15 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		for _, text := range rest {
 			total += len(text)
 		}
-		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft of %d bytes names %d parts, and the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
-			float64(total)/1e6, size, len(ids), draft.MaxContent)
+		// NIP-44 pads what it seals in steps, so the sealed size names a
+		// step: give the size of the draft too, which grows with the page
+		// (#398).
+		plain, err := json.Marshal(inner)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft names %d parts in %d bytes, which are %d bytes once sealed and padded; the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
+			float64(total)/1e6, len(ids), len(plain), size, draft.MaxContent)
 	}
 	if err := r.env.Publish(r.ctx, append(append(events, wrap), saved...), nil); err != nil {
 		return nil, r.failedWrite(err, p.Kind, d, inner, old, append(events, saved...))
@@ -458,7 +465,7 @@ func (r *run) removeUnnamed(coordinate string, events []nostr.Event) error {
 // removed says how many parts and checkpoints that no page names a delete
 // removed, and what frees them on the storage citizens.
 func (r *run) removed(events []nostr.Event) {
-	fmt.Fprintf(r.stdio.Err, "removed %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n", counted(events))
+	fmt.Fprintf(r.stdio.Err, "removed %s that no page names, as a write that failed leaves them; the next arc sync --repair frees any that went to your storage citizens\n", counted(events))
 }
 
 // counted says how many parts and checkpoints the events are.
@@ -595,7 +602,7 @@ func (r *run) reportUnnamed(kind string) error {
 		fmt.Fprintln(r.stdio.Err, line)
 	}
 	if len(lost) > 0 {
-		fmt.Fprintf(r.stdio.Err, "%s that no page names are at addresses that arc cannot name: a write that failed before it kept a checkpoint leaves them\n", counted(lost))
+		fmt.Fprintf(r.stdio.Err, "%s that no page names are left by a write that was interrupted: arc cannot name their address; a repair frees them after an hour\n", counted(lost))
 	}
 	return nil
 }
