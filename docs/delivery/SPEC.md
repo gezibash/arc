@@ -841,10 +841,14 @@ second. A reader needs no change. If no relay answers, `arc announce`
 cannot know the newest announcement, and MUST refuse, and keep nothing.
 `arc serve` MUST sign each of its announcements, also each one again, at
 least one second after the newest that its store holds, after it asked the
-relays once at its start (#422).
+relays once at its start (#422). An announcement that a store holds can be
+dated at most 10 minutes after the clock of the machine: above that, both
+MUST refuse to sign, and name the clocks to check. Else one announcement
+far in the future would hold each new one as far ahead.
 `TestAnnounceReplacesAnAnnouncementOfTheSameSecond`,
 `TestAnnounceRefusesWhenNoRelayAnswers` and
-`TestServeAnnouncesAfterTheNewestAnnouncement` in `cmd/arc` prove this.
+`TestServeAnnouncesAfterTheNewestAnnouncement` in `cmd/arc`, and
+`TestAnAnnouncementFarAheadStopsANewOne` in `runtime/catalog`, prove this.
 
 An announcement is one event, so its JSON holds at most 65,536 bytes, see
 section 3.4. If the announcement of a manifest is larger, the provider MUST

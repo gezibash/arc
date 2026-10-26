@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
@@ -173,3 +174,29 @@ func TestRefusesAManifestOfALaterVersion(t *testing.T) {
 		t.Error("a manifest of version 2 was read")
 	}
 }
+
+// An announcement dated more than MaxSkew after the clock stops a new one:
+// else each new one would be signed after it, as far ahead as it claims.
+// Within MaxSkew, the new one is signed one second after it (#422).
+func TestAnAnnouncementFarAheadStopsANewOne(t *testing.T) {
+	k := keys.Generate()
+	now := nostr.Now()
+	for _, c := range []struct {
+		ahead time.Duration
+		fails bool
+	}{{catalog.MaxSkew - time.Minute, false}, {catalog.MaxSkew + time.Minute, true}} {
+		event := nostr.Event{Kind: catalog.Kind, CreatedAt: now + nostr.Timestamp(c.ahead/time.Second), Tags: nostr.Tags{{"d", "app"}}}
+		if err := event.Sign(k.Secret); err != nil {
+			t.Fatal(err)
+		}
+		at, err := catalog.After(heldEvents{event}, k.Public, "app", now)
+		if c.fails != (err != nil) || !c.fails && at != event.CreatedAt+1 {
+			t.Errorf("an announcement %s ahead gave %d, %v", c.ahead, at, err)
+		}
+	}
+}
+
+// heldEvents is a store that holds some events.
+type heldEvents []nostr.Event
+
+func (h heldEvents) Query(nostr.Filter) ([]nostr.Event, error) { return h, nil }
