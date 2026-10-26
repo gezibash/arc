@@ -71,7 +71,11 @@ does not give a client program a way to read the keys of the arc home.
   that gives a writer for warnings MUST get each warning once in the
   program, on one line. arc escaped the line: the client escapes each
   control character that is left, and keeps each backslash as one, so no
-  escape of arc is escaped twice (`terminal.EscapeLineData`). An older client program gets each warning
+  escape of arc is escaped twice (`terminal.EscapeLineData`).
+  A client program trusts the arc program that it runs: a backslash in its
+  output stays as arc wrote it. A program that stands in for arc on the
+  PATH already controls far more than what the client shows, so the client
+  does not guard against one. An older client program gets each warning
   inside the text of a failure, and none on a success.
 
 ### 3.2 The message line
