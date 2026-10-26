@@ -902,6 +902,15 @@ Receipt and processing are separate:
   automatically executed again. The same conservative rule applies to
   historical receipts without a processing journal. This does not promise
   exactly-once effects in an external service.
+- At most once holds for one provider for each identity and capability.
+  One home MUST serve a capability with one `arc serve` at a time: a
+  second one waits up to 10 seconds for a lock in the identity folder, says
+  so once, and then exits with an error. The system frees the lock of a
+  serve that ends, also on SIGKILL (#447). Two devices of one citizen that
+  serve the same capability can both run a request: each one watches the
+  identity, and a request names no device. `docs/proposals/one-provider.md`
+  proposes a fix. `TestOneHomeRunsEachRequestOnce` proves the rule for one
+  home.
 
 Outgoing calls commit their outbox and forwarding state before any send.
 Live replay protection remembers request IDs for the live window. Each request
