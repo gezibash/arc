@@ -290,6 +290,11 @@ func TestAStoppedWriteSendsNoParts(t *testing.T) {
 	if r.Repair.UnnamedParts != 0 {
 		t.Fatalf("a repair deleted %d young parts that a write could still name", r.Repair.UnnamedParts)
 	}
+	// It says that it kept the 3 orphans and the 2 parts of the write
+	// that runs, and not the parts of the page that its draft names.
+	if r.Repair.UnnamedKept != 5 {
+		t.Errorf("a repair kept %d young parts that no page names, want 5", r.Repair.UnnamedKept)
+	}
 	b.keeps(orphans...)
 	b.held(4, 4, 4)
 

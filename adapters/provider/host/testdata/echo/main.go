@@ -2,7 +2,8 @@
 // answers with the body that it receives, and fails a body that says "fail".
 // A body "call <address> <body>" calls that capability through the host, and
 // answers with what came back. A body "env <name>" answers with that
-// environment variable.
+// environment variable. With ECHO_LOG, it appends the body of each request
+// to that file, one line each, so that a test counts each run.
 package main
 
 import (
@@ -23,6 +24,12 @@ type echo struct {
 func (e *echo) SetCaller(caller provider.Caller) { e.caller = caller }
 
 func (e *echo) HandleRequest(ctx context.Context, request provider.Request) (string, error) {
+	if path := os.Getenv("ECHO_LOG"); path != "" {
+		if file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+			_, _ = file.WriteString(request.Message + "\n")
+			_ = file.Close()
+		}
+	}
 	switch request.Message {
 	case "fail":
 		return "", provider.Error("refused_on_purpose")

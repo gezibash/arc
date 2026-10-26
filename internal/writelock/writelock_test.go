@@ -3,6 +3,8 @@ package writelock
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,5 +58,54 @@ func TestAKilledWriterHoldsNothing(t *testing.T) {
 	_ = writer.Wait()
 	if busy, err := Busy(dir); err != nil || busy {
 		t.Fatalf("after SIGKILL of the writer: busy %v, %v", busy, err)
+	}
+}
+
+// A lock that arc cannot use fails closed, with an error that names it and
+// says what to do: a lock of mode 000, a symbolic link, whose target arc
+// never makes, a folder, and a store folder that arc cannot write.
+func TestALockThatArcCannotUseFailsClearly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens a file of mode 000")
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		want  string
+	}{
+		{"mode 000", func(t *testing.T, dir string) {
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0); err != nil {
+				t.Fatal(err)
+			}
+		}, "or remove the file, and arc makes it again"},
+		{"a symbolic link", func(t *testing.T, dir string) {
+			if err := os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}, "is a symbolic link, and arc does not follow it"},
+		{"a folder", func(t *testing.T, dir string) {
+			if err := os.Mkdir(filepath.Join(dir, name), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}, "is not a plain file"},
+		{"a store folder of mode 555", func(t *testing.T, dir string) {
+			if err := os.Chmod(dir, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		}, "give the folder"},
+	} {
+		dir := t.TempDir()
+		c.setup(t, dir)
+		_, holdErr := Hold(dir)
+		_, busyErr := Busy(dir)
+		for _, err := range []error{holdErr, busyErr} {
+			if err == nil || !strings.Contains(err.Error(), filepath.Join(dir, name)) || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s: %v, want an error that names the lock and says %q", c.name, err, c.want)
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "elsewhere")); err == nil {
+			t.Errorf("%s: arc made the target of the link", c.name)
+		}
 	}
 }
