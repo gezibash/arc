@@ -109,7 +109,7 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { sess.writeErr("%s: %s\n", url, notice(text)) })
+				r.OnNotice(func(text string) { sess.printNotice(url, text) })
 				r.OnWatchEnd(func(by, why string) {
 					sess.warnf("arc: info: a watch of %s ended, closed by %s: %s\n", url, by, why)
 				})
@@ -283,6 +283,13 @@ func offline(err error) bool {
 // noticeLimit is the most characters of a relay NOTICE that arc prints,
 // after it escapes the text. A notice that rings fail has about 150.
 const noticeLimit = 300
+
+// printNotice prints a NOTICE of the relay url. The URL and the text each
+// are escaped once: writeErr escapes nothing, and notice escapes and cuts
+// the text (#443, #464).
+func (s *Session) printNotice(url, text string) {
+	s.writeErr("%s: %s\n", terminal.EscapeLine(url), notice(text))
+}
 
 // notice is the text of a relay NOTICE as a terminal can show it: on one
 // line, escaped, and cut to noticeLimit characters. The relay chooses the

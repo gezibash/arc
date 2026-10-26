@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheInboxOnlyAtItsStart|TestTheOutboxIsReadAtMostOnceEachRefreshFromTheEndOfTheLast|TestTheWatchForgetsMissedIds|TestALiveAddDoesNotSortTheStore|TestAWatchHoldsAReplyUntilItReadsTheOutbox|TestTheHeldQueueIsCapped|TestOneSendersJunkDoesNotHideAValidReply|TestRotatingKeysDoNotHideAValidReply|TestQuickHonestRepliesKeepQuotesAndOrder|TestASenderOverItsQuotaPrintsItsOldest|TestSmallHoldersWaitForTheRead|TestManyKeysDoNotHideAnHonestSender|TestAnEarlyReplyMarksNoParentMissed|TestASealedKeyAsksOnTheTerminal|TestAHangupEndsEachArc|TestSIGTERMEndsEachArc|TestAKilledArcDmLeavesNoArcOnLinux|TestAShownMissingIdIsRefused|TestOnlyPlainHeadsShowEarly|TestAFailedReadMarksNothingMissed|TestAWatchReadTimesOut|TestAfterAFailedReadNothingShowsAsMissing|TestAnAlwaysHungOutboxShowsRepliesPlain|TestAWatchSavesShownIdsAtItsEnd|TestACallEndsWhenArcEnds|TestACallOutlivesTheEndOfOtherThreads|TestAPanicInAWatchEndsItsArc|TestAWatchOutlivesTheEndOfOtherThreads|TestReplyRefusesAnIdShownAsMissing|TestABusyGroupDoesNotHideAValidReply|TestAnOverflowReadsAnOldOutbox|TestCraftedCollisionsStayFast|TestASecondInterruptEndsTheWatch|TestTheEndOfAWatchReadsTheOutbox|TestALiveFloodIsLinear|TestAWatchShowsAHeldReplyAtItsEnd|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank|TestRepliesShowSoonWhileTheOutboxHangs|TestTakeNeverReads|TestReadsRecoverAfterAFailure|TestReadsBackOffFromTheEndOfTheLastRead|TestACompactionDuringAReadKeepsALateReplyWaiting|TestASaveRemovesTheTemporaryFileOfAKilledSave|TestAKilledWatchKeepsTheIdsThatAReadShowed|TestAWarningOfArcShowsOnceAndAnErrorIsOneLine|TestEscapeLineData)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestANoticeLineIsEscapedOnce|TestARelayNoticeReachesTheScreenEscapedOnce|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheInboxOnlyAtItsStart|TestTheOutboxIsReadAtMostOnceEachRefreshFromTheEndOfTheLast|TestTheWatchForgetsMissedIds|TestALiveAddDoesNotSortTheStore|TestAWatchHoldsAReplyUntilItReadsTheOutbox|TestTheHeldQueueIsCapped|TestOneSendersJunkDoesNotHideAValidReply|TestRotatingKeysDoNotHideAValidReply|TestQuickHonestRepliesKeepQuotesAndOrder|TestASenderOverItsQuotaPrintsItsOldest|TestSmallHoldersWaitForTheRead|TestManyKeysDoNotHideAnHonestSender|TestAnEarlyReplyMarksNoParentMissed|TestASealedKeyAsksOnTheTerminal|TestAHangupEndsEachArc|TestSIGTERMEndsEachArc|TestAKilledArcDmLeavesNoArcOnLinux|TestAShownMissingIdIsRefused|TestOnlyPlainHeadsShowEarly|TestAFailedReadMarksNothingMissed|TestAWatchReadTimesOut|TestAfterAFailedReadNothingShowsAsMissing|TestAnAlwaysHungOutboxShowsRepliesPlain|TestAWatchSavesShownIdsAtItsEnd|TestACallEndsWhenArcEnds|TestACallOutlivesTheEndOfOtherThreads|TestAPanicInAWatchEndsItsArc|TestAWatchOutlivesTheEndOfOtherThreads|TestReplyRefusesAnIdShownAsMissing|TestABusyGroupDoesNotHideAValidReply|TestAnOverflowReadsAnOldOutbox|TestCraftedCollisionsStayFast|TestASecondInterruptEndsTheWatch|TestTheEndOfAWatchReadsTheOutbox|TestALiveFloodIsLinear|TestAWatchShowsAHeldReplyAtItsEnd|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank|TestRepliesShowSoonWhileTheOutboxHangs|TestTakeNeverReads|TestReadsRecoverAfterAFailure|TestReadsBackOffFromTheEndOfTheLastRead|TestACompactionDuringAReadKeepsALateReplyWaiting|TestASaveRemovesTheTemporaryFileOfAKilledSave|TestAKilledWatchKeepsTheIdsThatAReadShowed|TestAWarningOfArcShowsOnceAndAnErrorIsOneLine|TestEscapeLineData|TestNoHostileNameForgesALine|TestALineThatIsNoRelayURLIsSkippedAndMarked|TestARelayURLWithAFormatCharacterIsRefused|TestAnInstalledNameIsEscapedAndABadStorageNameIsRefused|TestSyncEscapesTheDirectory|TestConfirmationsEscapeTheNameOnce|TestTheTurnErrorsAreOneLine|TestKeysUseTakesTheRawName)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/... ./internal/proof/
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -71,7 +71,11 @@ does not give a client program a way to read the keys of the arc home.
   that gives a writer for warnings MUST get each warning once in the
   program, on one line. arc escaped the line: the client escapes each
   control character that is left, and keeps each backslash as one, so no
-  escape of arc is escaped twice (`terminal.EscapeLineData`). An older client program gets each warning
+  escape of arc is escaped twice (`terminal.EscapeLineData`).
+  A client program trusts the arc program that it runs: a backslash in its
+  output stays as arc wrote it. A program that stands in for arc on the
+  PATH already controls far more than what the client shows, so the client
+  does not guard against one. An older client program gets each warning
   inside the text of a failure, and none on a success.
 
 ### 3.2 The message line
@@ -196,6 +200,30 @@ agent, or make `file.exe` look like `file.png`.
   | A backslash | two backslashes, so a typed `\x1b` shows as `\\x1b` |
   | Each other character, including the joiners U+200C and U+200D, and the marks U+200E, U+200F and U+061C | itself |
 
+- arc MUST also escape each name or path that a user or the file system
+  controls where it prints it, such as the home, the name of an identity
+  folder, a device name or the name of a storage citizen: a path can hold
+  a newline. `arc relay add` and `arc keys bunker --relay` MUST refuse a
+  URL with a space, a control character or a format character (Unicode
+  category Cf, such as a bidi mark), because the list holds one relay on
+  each line, and a format character can make a relay look like another
+  (#441). A relay list that an older arc wrote can hold a line that is not
+  a ws:// or wss:// URL: arc MUST skip such a line when it uses the list.
+  `arc relay ls` shows it as `not a relay URL, skipped: "<escaped line>"`
+  and says once on standard error to remove it with `arc relay rm`, which
+  takes the line as the list holds it. `arc keys storage add` MUST refuse
+  an installed name (`--as`) that is empty, longer than the 64 bytes that
+  the storage list holds, or that holds a control or format character,
+  before it asks the storage citizen. An escaped name is not the name:
+  `arc keys use` and `arc keys remove` take the raw name, quoted for the
+  shell, and their help says so. An error holds a name as it came, in
+  quotes, and arc escapes it once where it prints the error.
+  `TestNoHostileNameForgesALine`,
+  `TestALineThatIsNoRelayURLIsSkippedAndMarked`,
+  `TestARelayURLWithAFormatCharacterIsRefused`,
+  `TestAnInstalledNameIsEscapedAndABadStorageNameIsRefused`,
+  `TestSyncEscapesTheDirectory`, `TestConfirmationsEscapeTheNameOnce`,
+  `TestTheTurnErrorsAreOneLine` and `TestKeysUseTakesTheRawName` prove it.
 - One variation selector after a visible character stays, because emoji
   use it, and one of U+E0100 to U+E01EF after an ideograph, because names
   use it. A backslash counts as a visible character, whether it is written

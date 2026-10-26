@@ -1,11 +1,28 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+	"unicode"
 
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/keyer"
+	"github.com/gezibash/arc/adapters/keyfile"
+	"github.com/gezibash/arc/adapters/relay/limits"
+	transportrelay "github.com/gezibash/arc/adapters/transport/relay"
+	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/sdk/storage"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -652,8 +669,8 @@ func TestALinkThatLeadsToNoHomeWarns(t *testing.T) {
 		if err != nil || !strings.Contains(out, older) {
 			t.Fatalf("with ~/.arc -> %s, arc whoami: %v, %q", target, err, out)
 		}
-		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc uses "+old+", because ") {
-			t.Errorf("with ~/.arc -> %s, arc warned %q, want the home in use and why", target, errs)
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "is a link that leads to no home of arc. arc uses "+old) || strings.Contains(errs, "both") {
+			t.Errorf("with ~/.arc -> %s, arc warned %q, want its own words for a link", target, errs)
 		}
 	}
 }
@@ -667,5 +684,333 @@ func TestTheRefusalOfATildeHomeIsEscapedOnce(t *testing.T) {
 	}
 	if got := terminal.EscapeLine(err.Error()); !strings.Contains(got, `"~x\ny/z"`) {
 		t.Errorf("the escaped refusal is %q, want \\n once", got)
+	}
+}
+
+// forgedOrRaw says whether out holds a line that a hostile name forged, a
+// raw control character, or a raw embedding, override or isolate.
+func forgedOrRaw(out string) bool {
+	return strings.Contains("\n"+out, "\narc: fake") || strings.ContainsFunc(out, func(r rune) bool {
+		return r != '\n' && unicode.IsControl(r) || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069
+	})
+}
+
+// No name or path that a user or the file system controls forges a line of
+// arc, or reaches the terminal raw (#441): a HOME with a newline, an
+// identity folder with one, and a relay URL with one, which arc refuses.
+func TestNoHostileNameForgesALine(t *testing.T) {
+	home := hostileHome(t)
+	dot := filepath.Join(home, ".arc")
+	for _, args := range [][]string{{"keys", "gen"}, {"whoami"}, {"keys", "list"}} {
+		out, errs, err := runErr(t, args...)
+		if err != nil {
+			t.Fatalf("arc %s: %v", strings.Join(args, " "), err)
+		}
+		if forgedOrRaw(out + errs) {
+			t.Errorf("arc %s with a hostile HOME printed %q", strings.Join(args, " "), out+errs)
+		}
+	}
+	hostile := filepath.Join(citizensDir(dot), "x\narc: fake forged\x1b[2J")
+	if err := os.MkdirAll(hostile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, errs, err := runErr(t, "keys", "list")
+	if err != nil || forgedOrRaw(out+errs) || !strings.Contains(out, `x\narc: fake forged\x1b[2J`) {
+		t.Errorf("arc keys list with a hostile identity folder printed %q, %v", out+errs, err)
+	}
+	if _, _, err := runErr(t, "relay", "add", "ws://a.example\narc: fake forged"); err == nil || !strings.Contains(err.Error(), "no space, no control character and no format character") {
+		t.Errorf("arc relay add of a URL with a newline gave %v, want a refusal", err)
+	}
+	if relays, _ := readRelays(dot); len(relays) != 0 {
+		t.Errorf("the refused URL left the relays %q", relays)
+	}
+
+	// A list that an older arc wrote can already hold such a URL: each
+	// line that names it is escaped, and nothing fails.
+	if err := os.WriteFile(relaysPath(filepath.Join(citizensDir(dot), defaultName(dot))), []byte("ws://x\x1b]0;pwned\x07.invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"relay", "ls"}, {"sync"}} {
+		out, errs, _ := runErr(t, args...)
+		if forgedOrRaw(out + errs) {
+			t.Errorf("arc %s with a hostile relay on the list printed %q", strings.Join(args, " "), out+errs)
+		}
+	}
+	if out, _, err := runErr(t, "relay", "ls"); err != nil || !strings.Contains(out, `ws://x\x1b]0;pwned\x07.invalid`) {
+		t.Errorf("arc relay ls showed %q, %v, want the relay escaped", out, err)
+	}
+}
+
+// A bad name in the default file is escaped once, at the edge (#443).
+func TestABadDefaultNameIsEscapedOnce(t *testing.T) {
+	home := user(t)
+	dot := filepath.Join(home, ".arc")
+	identity(t, dot)
+	if err := os.WriteFile(defaultPath(dot), []byte("x\nafter"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runErr(t, "whoami")
+	if err == nil || !strings.Contains(terminal.EscapeLine(err.Error()), `"x\nafter"`) {
+		t.Errorf("the error of a bad default name is %v, want it escaped once", err)
+	}
+}
+
+// hostileRelay starts a relay in the test, and returns a home of a
+// citizen that uses it.
+func hostileRelay(t *testing.T) (string, string) {
+	t.Helper()
+	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeDB)
+	server := httptest.NewServer(rl)
+	t.Cleanup(server.Close)
+	url := "ws" + strings.TrimPrefix(server.URL, "http")
+	home, _ := providerHome(t, url)
+	return home, url
+}
+
+// identityDir is the folder of the default identity of a home.
+func identityDir(home string) string {
+	return filepath.Join(citizensDir(home), defaultName(home))
+}
+
+// A relay list that an older arc wrote can hold a line that is not a relay
+// URL, such as the second half of a URL that held a newline (#441). arc
+// relay ls marks it, escaped, and says once how to remove it; arc skips it
+// when it uses the list; arc relay add keeps it; arc relay rm removes it by
+// its raw text.
+func TestALineThatIsNoRelayURLIsSkippedAndMarked(t *testing.T) {
+	home := user(t)
+	if _, _, err := runErr(t, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	dir := identityDir(filepath.Join(home, ".arc"))
+	raw := "arc: fake forged\u202e\x1b[2J"
+	if err := os.WriteFile(relaysPath(dir), []byte("ws://127.0.0.1:1\n"+raw+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errs, err := runErr(t, "relay", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ws://127.0.0.1:1\nnot a relay URL, skipped: \"arc: fake forged\\u202e\\x1b[2J\"\n"
+	if out != want {
+		t.Errorf("arc relay ls printed %q, want %q", out, want)
+	}
+	if forgedOrRaw(out+errs) || strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc relay rm") {
+		t.Errorf("arc relay ls warned %q, want one line that names arc relay rm", errs)
+	}
+
+	// arc uses only the relay URL: the error names no forged line.
+	if _, _, err := runErr(t, "relay", "turn"); err == nil || strings.Contains(err.Error(), "fake forged") {
+		t.Errorf("arc relay turn used the line that is no relay URL: %v", err)
+	}
+
+	if _, _, err := runErr(t, "relay", "add", "ws://127.0.0.1:2"); err != nil {
+		t.Fatal(err)
+	}
+	if lines, _ := readURLs(relaysPath(dir)); !slices.Contains(lines, raw) {
+		t.Errorf("arc relay add dropped the line that is no relay URL: %q", lines)
+	}
+	if _, _, err := runErr(t, "relay", "rm", raw); err != nil {
+		t.Fatal(err)
+	}
+	if lines, _ := readURLs(relaysPath(dir)); !slices.Equal(lines, []string{"ws://127.0.0.1:1", "ws://127.0.0.1:2"}) {
+		t.Errorf("after arc relay rm, the list holds %q", lines)
+	}
+}
+
+// arc relay add and arc keys bunker --relay refuse a relay URL with a bidi
+// or other format character, as well as a control character or a space
+// (#441). The bunker fails at once, and does not try to reach the relay.
+func TestARelayURLWithAFormatCharacterIsRefused(t *testing.T) {
+	user(t)
+	if _, _, err := runErr(t, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	for _, url := range []string{"ws://a\u202e.example", "ws://a\u200b.example", "ws://a\u2066.example", "ws://a\n.example", "ws://a .example"} {
+		if _, _, err := runErr(t, "relay", "add", url); err == nil || !strings.Contains(err.Error(), "no space, no control character and no format character") {
+			t.Errorf("arc relay add %q gave %v, want a refusal", url, err)
+		}
+		done := make(chan error, 1)
+		go func() { _, _, err := runErr(t, "keys", "bunker", "--relay", url); done <- err }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "--relay: a relay URL holds no space") {
+				t.Errorf("arc keys bunker --relay %q gave %v, want a refusal", url, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("arc keys bunker --relay %q did not fail at once", url)
+		}
+	}
+}
+
+// A name that a user gave to --as of arc keys storage add, or that an
+// older arc installed, is escaped in arc apps list (#441). arc keys storage
+// add refuses a name that the storage list cannot hold, before it asks the
+// storage citizen, and installs nothing.
+func TestAnInstalledNameIsEscapedAndABadStorageNameIsRefused(t *testing.T) {
+	home := user(t)
+	if _, _, err := runErr(t, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	dir := identityDir(filepath.Join(home, ".arc"))
+	installs := `[{"provider":"` + strings.Repeat("ab", 32) + `","id":"storage","name":"n","as":"s\narc: fake forged\u202e\u001b[2J"}]`
+	if err := os.WriteFile(filepath.Join(dir, "installs.json"), []byte(installs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errs, err := runErr(t, "apps", "list")
+	if err != nil || forgedOrRaw(out+errs) || !strings.HasPrefix(out, `arc s\narc: fake forged\u202e\x1b[2J -> n/storage`) {
+		t.Errorf("arc apps list printed %q, %v, want the name escaped", out+errs, err)
+	}
+	if err := os.Remove(filepath.Join(dir, "installs.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	key := keys.Generate().Public.Hex()
+	for _, as := range []string{"s\narc: fake forged", "s\u202ex", "s\u0085x", "s\u200bx", strings.Repeat("s", 65)} {
+		_, _, err := runErr(t, "keys", "storage", "add", key, "--as", as)
+		if err == nil || err.Error() != "--as: a storage name has 1 to 64 bytes, and no control character and no format character" {
+			t.Errorf("arc keys storage add --as %q gave %v, want one refusal line", as, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "installs.json")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("arc keys storage add --as %q installed: %v", as, err)
+		}
+	}
+}
+
+// arc sync --dir names the directory, escaped, on standard output (#441).
+func TestSyncEscapesTheDirectory(t *testing.T) {
+	user(t)
+	if _, _, err := runErr(t, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "d\narc: fake forged\x1b[2J")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, errs, _ := runErr(t, "sync", "--dir", dir)
+	if forgedOrRaw(out+errs) || !strings.Contains(out, terminal.EscapeLine(dir)+": mail received") {
+		t.Errorf("arc sync --dir printed %q, want the directory escaped", out+errs)
+	}
+}
+
+// The confirmation lines of arc keys devices add and arc keys storage rm
+// --gone escape the name, which a format or C1 character can hold, as the
+// lists allow it (#441). A revoke of an unknown name and a bad relay URL
+// give the name escaped once at the print (#443).
+func TestConfirmationsEscapeTheNameOnce(t *testing.T) {
+	home, url := hostileRelay(t)
+	name := "p\u202ex\u0085y"
+	device := keys.Generate()
+	out, err := run(t, home, "", "keys", "devices", "add", device.Public.Hex(), "--name", name)
+	if err != nil || forgedOrRaw(out) || !strings.Contains(out, `added p\u202ex\u0085y  `+device.Public.Hex()) {
+		t.Errorf("arc keys devices add printed %q, %v, want the name escaped", out, err)
+	}
+
+	_, err = run(t, home, "", "keys", "devices", "revoke", "q\n"+name)
+	if err == nil || !strings.Contains(terminal.EscapeLine(err.Error()), `no device "q\np\u202ex\u0085y" on the list`) {
+		t.Errorf("arc keys devices revoke gave %v, want the name escaped once", err)
+	}
+	_, err = run(t, home, "", "relay", "turn", "ws://x\ny")
+	if err == nil || !strings.Contains(terminal.EscapeLine(err.Error()), `"ws://x\ny" is not a relay URL`) {
+		t.Errorf("arc relay turn of a bad URL gave %v, want it escaped once", err)
+	}
+
+	// A storage list that names a storage citizen with such a name.
+	key, err := keyfile.Load(keyPath(identityDir(home)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := storage.List{}.Put(storage.ListEntry{Key: keys.Generate().Public, Name: name, State: storage.StateActive, Since: nostr.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	event, err := storage.SealList(ctx, keyer.NewPlainKeySigner(key.Secret), list, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (transportrelay.Relay{URL: url, Signer: key}).Send(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run(t, home, "", "keys", "storage", "rm", name, "--gone")
+	if err != nil || forgedOrRaw(out) || !strings.Contains(out, `storage list: p\u202ex\u0085y is gone`) {
+		t.Errorf("arc keys storage rm --gone printed %q, %v, want the name escaped", out, err)
+	}
+}
+
+// The errors of arc relay turn are on one line, joined with "; " (#443).
+func TestTheTurnErrorsAreOneLine(t *testing.T) {
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	ok(t, home, "", "relay", "add", "ws://127.0.0.1:1")
+	ok(t, home, "", "relay", "add", "ws://127.0.0.1:2")
+	_, err := run(t, home, "", "relay", "turn")
+	if err == nil || strings.Contains(err.Error(), "\n") || strings.Count(err.Error(), "; ") != 1 {
+		t.Errorf("arc relay turn gave %q, want two errors on one line", err)
+	}
+}
+
+// An escaped name of arc keys list is not the name. The help of arc keys
+// use and arc keys remove says to give the raw name, and the raw name,
+// quoted for the shell, works (#441).
+func TestKeysUseTakesTheRawName(t *testing.T) {
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	for _, use := range []string{"use", "remove"} {
+		if help := ok(t, home, "", "keys", use, "--help"); !strings.Contains(help, "Give the raw name of the identity, quoted for the shell") {
+			t.Errorf("arc keys %s --help says nothing of the raw name:\n%s", use, help)
+		}
+	}
+	name := "x\ny"
+	if err := os.MkdirAll(filepath.Join(citizensDir(home), name), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, home, "", "keys", "use", `x\ny`); err == nil {
+		t.Error("arc keys use took the escaped name")
+	}
+	if out := ok(t, home, "", "keys", "use", name); out != "the default is x\\ny\n" {
+		t.Errorf("arc keys use of the raw name printed %q", out)
+	}
+}
+
+// An install that an older arc made under a hostile name, of a storage
+// citizen that the storage list says is gone: arc sync removes it, and
+// names it escaped on one line (#443).
+func TestARemovedStorageInstallIsNamedEscaped(t *testing.T) {
+	home, url := hostileRelay(t)
+	name := "p\u202ex\narc: fake forged"
+	gone := keys.Generate().Public
+	installs, err := json.Marshal([]catalog.Install{{Provider: gone.Hex(), ID: citizen.StorageApp, Name: "Storage", As: name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir(home), "installs.json"), installs, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := keyfile.Load(keyPath(identityDir(home)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := storage.List{}.Put(storage.ListEntry{Key: gone, Name: "gone-one", State: storage.StateGone, Since: nostr.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	event, err := storage.SealList(ctx, keyer.NewPlainKeySigner(key.Secret), list, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (transportrelay.Relay{URL: url, Signer: key}).Send(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := run(t, home, "", "sync")
+	if forgedOrRaw(out) || !strings.Contains(out, `removed p\u202ex\narc: fake forged: the storage list says it is gone`) {
+		t.Errorf("arc sync printed %q, want the removed install named escaped", out)
 	}
 }

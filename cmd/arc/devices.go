@@ -80,7 +80,7 @@ func accountCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			storage, ok := keys.ParsePublic(args[0])
 			if !ok {
-				return fmt.Errorf("%q is not the key of a storage citizen", args[0])
+				return fmt.Errorf("\"%s\" is not the key of a storage citizen", args[0])
 			}
 			sess, err := open(command)
 			if err != nil {
@@ -118,7 +118,7 @@ func devicesCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			key, err := nostr.PubKeyFromHex(args[0])
 			if err != nil {
-				return fmt.Errorf("%q is not a device key of 64 hex characters: %w", args[0], err)
+				return fmt.Errorf("\"%s\" is not a device key of 64 hex characters: %w", args[0], err)
 			}
 			name, _ := command.Flags().GetString("name")
 			return changeDevices(command, func(_ *citizen.Session, l devices.List) (devices.List, string, error) {
@@ -140,7 +140,7 @@ func devicesCommand() *cobra.Command {
 			return changeDevices(command, func(sess *citizen.Session, l devices.List) (devices.List, string, error) {
 				d, ok := l.Find(args[0])
 				if !ok {
-					return l, "", fmt.Errorf("no device %q on the list: see arc keys devices", args[0])
+					return l, "", fmt.Errorf("no device \"%s\" on the list: see arc keys devices", args[0])
 				}
 				// The revoked key never holds the generation after the
 				// newest one, which the signer makes next.
@@ -179,7 +179,7 @@ func listDevices(command *cobra.Command, _ []string) error {
 		fmt.Fprintln(command.OutOrStdout(), "the device list is empty: the bunker admits no device")
 	}
 	for _, d := range l.Devices {
-		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", d.Name, d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly)) //arc:raw-ok a device name that this citizen chose
+		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", terminal.EscapeLine(d.Name), d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly))
 	}
 	return nil
 }
@@ -206,7 +206,8 @@ func changeDevices(command *cobra.Command, change func(*citizen.Session, devices
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(command.OutOrStdout(), said)
+	// said names the device, which a user or an older list chose.
+	fmt.Fprintln(command.OutOrStdout(), terminal.EscapeLine(said))
 	root, err := sess.PublishDataRoots(command.Context(), l)
 	if err != nil {
 		return fmt.Errorf("the device list changed, but the data roots did not: %w; run arc keys roots on the signer to try again", err)
@@ -218,7 +219,7 @@ func changeDevices(command *cobra.Command, change func(*citizen.Session, devices
 	}
 	targets, err := sess.PushGrants(command.Context(), installs, l)
 	for _, install := range targets {
-		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", install.As)
+		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", terminal.EscapeLine(install.As))
 	}
 	if err != nil {
 		return fmt.Errorf("the device list changed, but %w; run arc sync on the signer to try again", err)
