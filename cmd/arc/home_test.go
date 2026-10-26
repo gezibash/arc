@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // user makes a fresh user home, with no ARC_HOME and no ARC_KEY.
@@ -332,8 +334,8 @@ func TestTwoHomesWithAnIdentityWarn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("arc %s: %v", strings.Join(args, " "), err)
 		}
-		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, dotArc) || !strings.Contains(errs, old) {
-			t.Errorf("arc %s did not warn once, with both homes: %q", strings.Join(args, " "), errs)
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, old) || !strings.Contains(errs, "arc uses "+dotArc+", because it holds an identity") {
+			t.Errorf("arc %s did not warn once, with both homes and the one in use: %q", strings.Join(args, " "), errs)
 		}
 	}
 	t.Setenv("ARC_HOME", dotArc)
@@ -419,5 +421,251 @@ func TestAnUnreadableDefaultStopsKeysGen(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("arc keys gen kept %d identities, want the 1 from before", len(entries))
+	}
+}
+
+// A ~/.arc that holds only a wake.toml does not hide the identity of an
+// older home (#408). arc warns that it uses the older home and why, and
+// writes nothing to ~/.arc.
+func TestALoneWakeFileDoesNotHideTheOlderIdentity(t *testing.T) {
+	home := user(t)
+	dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+	older := identity(t, old)
+	if err := os.MkdirAll(dotArc, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dotArc, "wake.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errs, err := runErr(t, "whoami")
+	if err != nil || !strings.Contains(out, older) {
+		t.Fatalf("arc whoami: %v, want the identity %s of ~/.config/arc in %q", err, older, out)
+	}
+	if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc uses "+old+", because "+dotArc+" holds no identity") {
+		t.Errorf("arc whoami did not warn once with the home in use and why: %q", errs)
+	}
+	if _, _, err := runErr(t, "keys", "gen"); err != nil {
+		t.Fatalf("arc keys gen: %v", err)
+	}
+	entries, err := os.ReadDir(dotArc)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "wake.toml" {
+		t.Errorf("arc wrote to %s, which it does not use: %v, %v", dotArc, entries, err)
+	}
+}
+
+// Each home, default file and folder of identities that arc cannot read
+// has one error, which names the folder and the rule that chose it, and
+// what fixes it (#408, #411).
+func TestEachUnreadablePartOfAHomeHasOneError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder of mode 000")
+	}
+	home := user(t)
+	dot := filepath.Join(home, ".arc")
+	identity(t, dot)
+	lock := func(path string) {
+		t.Helper()
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o700) })
+	}
+	check := func(what string, want []string, args ...string) {
+		t.Helper()
+		_, _, err := runErr(t, args...)
+		if err == nil {
+			t.Fatalf("%s: arc %v worked", what, args)
+		}
+		for _, part := range want {
+			if !strings.Contains(err.Error(), part) {
+				t.Errorf("%s: arc %v said %q, want %q in it", what, args, err, part)
+			}
+		}
+	}
+
+	// (c): only the default file is unreadable; the home is readable.
+	lock(filepath.Join(dot, "default"))
+	for _, args := range [][]string{{"whoami"}, {"keys", "gen"}, {"keys", "list"}, {"keys", "ls"}} {
+		check("an unreadable default", []string{"cannot read the default identity in " + dot + ", chosen by ~/.arc", "Fix the permissions of " + filepath.Join(dot, "default")}, args...)
+	}
+	_ = os.Chmod(filepath.Join(dot, "default"), 0o600)
+
+	// The folder of identities.
+	lock(filepath.Join(dot, "citizens"))
+	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens") + ", chosen by ~/.arc"}, "keys", "list")
+	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens"), "chosen by ~/.arc"}, "whoami")
+	check("unreadable identities", []string{"cannot read the identities in " + filepath.Join(dot, "citizens"), "chosen by ~/.arc"}, "keys", "gen")
+	// A folder of identities that arc reads but cannot add to.
+	if err := os.Chmod(filepath.Join(dot, "citizens"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	check("read-only identities", []string{"cannot add an identity to " + filepath.Join(dot, "citizens") + ", chosen by ~/.arc", "Fix the permissions of that folder"}, "keys", "gen")
+	_ = os.Chmod(filepath.Join(dot, "citizens"), 0o700)
+
+	// (a) and (b): the home itself, chosen by default and by --home.
+	flag := t.TempDir()
+	identity(t, flag)
+	lock(flag)
+	check("an unreadable --home", []string{"cannot read the home " + flag + ", chosen by --home", "Fix its permissions"}, "--home", flag, "whoami")
+	lock(dot)
+	check("an unreadable ~/.arc", []string{"cannot read the home " + dot + ", chosen by ~/.arc", "Fix its permissions"}, "whoami")
+}
+
+// --home ~root/x names the home of another user: arc refuses it, and makes
+// no folder named ~root (#411).
+func TestAHomeOfAnotherUserIsRefused(t *testing.T) {
+	user(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	for _, dir := range []string{"~root/x", "~nosuchuser/x", "~+/x", "~-/x"} {
+		if _, _, err := runErr(t, "--home", dir, "keys", "gen"); err == nil || !strings.Contains(err.Error(), "arc expands only ~ and ~/") {
+			t.Errorf("--home %s gave %v", dir, err)
+		}
+	}
+	if entries, _ := os.ReadDir(work); len(entries) != 0 {
+		t.Errorf("arc made %v in the working directory", entries)
+	}
+}
+
+// keys ls lists the identities, as keys list does (#408).
+func TestKeysLsLists(t *testing.T) {
+	home := user(t)
+	name := identity(t, filepath.Join(home, ".arc"))
+	if out, err := runDefault(t, "keys", "ls"); err != nil || !strings.Contains(out, name) {
+		t.Errorf("keys ls printed %q, %v; want %s", out, err, name)
+	}
+}
+
+// A lone ~/.arc/wake.toml gives way to an older home only when arc can read
+// that home. An unreadable ~/.config/arc, or its folder of identities, stops
+// arc, and keys gen writes no second identity in ~/.arc, which would hide
+// the first once the permissions are fixed.
+func TestAnUnreadableOlderHomeBesideALoneWakeFileStopsArc(t *testing.T) {
+	for _, part := range []string{"", "citizens"} {
+		home := user(t)
+		dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+		identity(t, old)
+		if err := os.MkdirAll(dotArc, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dotArc, "wake.toml"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		lock(t, filepath.Join(old, part))
+		want := "cannot read the home " + old
+		if part != "" {
+			want = "cannot read the identities in " + filepath.Join(old, "citizens")
+		}
+		for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+			if _, _, err := runErr(t, args...); err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("with %s locked, arc %s gave %v, want %q", filepath.Join(old, part), strings.Join(args, " "), err, want)
+			}
+		}
+		if entries, err := os.ReadDir(dotArc); err != nil || len(entries) != 1 {
+			t.Errorf("with %s locked, arc wrote to %s: %v, %v", filepath.Join(old, part), dotArc, entries, err)
+		}
+	}
+}
+
+// A ~/.arc that is a plain file, or a loop of symbolic links, stops arc
+// with an error that says so. arc never uses the identity of ~/.config/arc
+// in its place, and writes nothing.
+func TestADotArcThatIsNoFolderStopsArc(t *testing.T) {
+	for _, shape := range []string{"file", "loop"} {
+		home := user(t)
+		dotArc, old := filepath.Join(home, ".arc"), filepath.Join(home, ".config", "arc")
+		other := identity(t, old)
+		var err error
+		want := "It is not a folder"
+		if shape == "file" {
+			err = os.WriteFile(dotArc, nil, 0o600)
+		} else {
+			err, want = os.Symlink(dotArc, dotArc), "It is a loop of symbolic links"
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"whoami"}, {"keys", "gen"}} {
+			out, _, err := runErr(t, args...)
+			if err == nil || strings.Contains(out, other) || !strings.Contains(err.Error(), "cannot read the home "+dotArc) || !strings.Contains(err.Error(), want) {
+				t.Errorf("a ~/.arc that is a %s: arc %s printed %q, %v; want %q", shape, strings.Join(args, " "), out, err, want)
+			}
+		}
+		if entries, _ := os.ReadDir(citizensDir(old)); len(entries) != 1 {
+			t.Errorf("a ~/.arc that is a %s: ~/.config/arc holds %d identities, want 1", shape, len(entries))
+		}
+	}
+}
+
+// hostileHome is a HOME whose name holds a newline, a forged line of arc
+// and control characters.
+func hostileHome(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "h\narc: fake forged\x1b[2J\r\x07")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("ARC_HOME", "")
+	t.Setenv("ARC_KEY", "")
+	return dir
+}
+
+// Both warnings of two homes escape each path on one line: a HOME with a
+// newline and control characters forges no line of arc (#431).
+func TestTheWarningsOfTwoHomesAreOneEscapedLine(t *testing.T) {
+	for _, lone := range []bool{false, true} {
+		home := hostileHome(t)
+		identity(t, filepath.Join(home, ".config", "arc"))
+		if lone {
+			if err := os.MkdirAll(filepath.Join(home, ".arc"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".arc", "wake.toml"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			identity(t, filepath.Join(home, ".arc"))
+		}
+		_, errs, err := runErr(t, "whoami")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(errs, "\n") != 1 || !strings.HasPrefix(errs, "arc: warning: ") || strings.ContainsAny(errs, "\x1b\r\x07") || strings.Contains(errs, "\narc: fake") ||
+			!strings.Contains(errs, `h\narc: fake forged\x1b[2J\x0d\x07`) {
+			t.Errorf("with a lone ~/.arc %v, the warning is %q, want one escaped line", lone, errs)
+		}
+	}
+}
+
+// A ~/.arc that is a dangling link, or a link to ".", gives way to the
+// identity of ~/.config/arc, and warns, as a lone wake.toml does.
+func TestALinkThatLeadsToNoHomeWarns(t *testing.T) {
+	for _, target := range []string{"nowhere", "."} {
+		home := user(t)
+		old := filepath.Join(home, ".config", "arc")
+		older := identity(t, old)
+		if err := os.Symlink(target, filepath.Join(home, ".arc")); err != nil {
+			t.Fatal(err)
+		}
+		out, errs, err := runErr(t, "whoami")
+		if err != nil || !strings.Contains(out, older) {
+			t.Fatalf("with ~/.arc -> %s, arc whoami: %v, %q", target, err, out)
+		}
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc uses "+old+", because ") {
+			t.Errorf("with ~/.arc -> %s, arc warned %q, want the home in use and why", target, errs)
+		}
+	}
+}
+
+// The refusal of a ~ home names the home escaped once (#431).
+func TestTheRefusalOfATildeHomeIsEscapedOnce(t *testing.T) {
+	user(t)
+	_, _, err := runErr(t, "--home", "~x\ny/z", "whoami")
+	if err == nil || !strings.Contains(err.Error(), "\"~x\ny/z\"") {
+		t.Fatalf("the refusal is %v, want the home as given, for the edge to escape once", err)
+	}
+	if got := terminal.EscapeLine(err.Error()); !strings.Contains(got, `"~x\ny/z"`) {
+		t.Errorf("the escaped refusal is %q, want \\n once", got)
 	}
 }
