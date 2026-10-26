@@ -426,19 +426,27 @@ var rawErrorText = []string{"context deadline exceeded", "failed to WebSocket di
 func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
 	work := t.TempDir()
 	live := startRelay(t, filepath.Join(work, "relay"))
+	// A name that does not exist gets its answer from a DNS server of the
+	// test, not from the DNS of the machine, which can be slow (#442).
+	notFound, mute := dnsServer(t, true), dnsServer(t, false)
 	layouts := []struct {
 		name, reason string
 		url          func() string
+		dns          string
 	}{
-		{"a relay that takes the WebSocket and never answers", "no answer", func() string { return muteRelayURL(t) }},
-		{"a host that takes the connection and never answers", "no answer", func() string { return "ws://" + silentRelay(t) }},
-		{"a host that does not exist", "no such host", func() string { return "ws://no-such-host.invalid" }},
-		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }},
-		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }},
+		{"a relay that takes the WebSocket and never answers", "no answer", func() string { return muteRelayURL(t) }, ""},
+		{"a host that takes the connection and never answers", "no answer", func() string { return "ws://" + silentRelay(t) }, ""},
+		{"a host that does not exist", "no such host", func() string { return "ws://no-such-relay.test" }, notFound},
+		{"a name that the DNS never answers", "no answer", func() string { return "ws://no-such-relay.test" }, mute},
+		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }, ""},
+		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }, ""},
 	}
 	for i, layout := range layouts {
 		for _, withLive := range []bool{false, true} {
-			home := arc(t, filepath.Join(work, fmt.Sprintf("home-%d-%t", i, withLive)))
+			home := arc(t, filepath.Join(work, fmt.Sprintf("home-%d-%t", i, withLive))).using(program("arc-test"))
+			if layout.dns != "" {
+				home = home.with("ARC_TEST_DNS=" + layout.dns)
+			}
 			home.run("keys", "gen")
 			if withLive {
 				home.run("relay", "add", live)
@@ -492,4 +500,35 @@ func TestADMSendDialsEachMuteRelayOnce(t *testing.T) {
 		}
 	}
 	t.Logf("ok: arc-dm send took %s with two mute relays and a closed port", took.Round(100*time.Millisecond))
+}
+
+// dnsServer is a DNS server on a local port for arc-test. When notFound,
+// it answers each question at once that the name does not exist; else it
+// never answers. It returns its address.
+func dnsServer(t *testing.T, notFound bool) string {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, from, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if !notFound || n < 12 {
+				continue
+			}
+			// The same ID and question, with the flags of an answer that
+			// says the name does not exist (RCODE 3), and no records.
+			answer := append([]byte(nil), buf[:n]...)
+			answer[2], answer[3] = 0x81, 0x83
+			clear(answer[6:12])
+			_, _ = conn.WriteTo(answer, from)
+		}
+	}()
+	return conn.LocalAddr().String()
 }

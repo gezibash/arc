@@ -63,6 +63,10 @@ All notable changes to ARC are recorded here. The format follows
   A refused connection marks nothing, and a mark further ahead than 30 s
   is no mark. An older arc keeps no file, so it waits for each such relay
   in each command (#444).
+- In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
+  shared disk can take longer than 200 ms for one sync of the store. The
+  200 ms target stays for a run on a machine of its own. The count of the
+  store writes before a ring stays as it is (#452).
 
 ## [0.37.0] - 2026-10-19
 
