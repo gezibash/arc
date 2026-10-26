@@ -47,6 +47,7 @@ func run(m *testing.M) int {
 		"arc-releases": "./apps/releases/cmd/arc-releases",
 		"arc-storage":  "./apps/storage/cmd/arc-storage",
 		"slowcall":     "./internal/proof/testdata/slowcall",
+		"echo":         "./adapters/provider/host/testdata/echo",
 	} {
 		if err := build(filepath.Join(programs, name), pkg, ""); err != nil {
 			fmt.Fprintln(os.Stderr, err)

@@ -78,6 +78,15 @@ func serve(command *cobra.Command, args []string) error {
 		return err
 	}
 	id, limit := definition.ID, definition.MaxBytes
+	dir, err := home(command)
+	if err != nil {
+		return err
+	}
+	release, err := holdServe(command.ErrOrStderr(), dir, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	sess, err := open(command)
 	if err != nil {
@@ -90,10 +99,6 @@ func serve(command *cobra.Command, args []string) error {
 	}
 
 	log := slog.New(slog.NewTextHandler(command.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo}))
-	dir, err := home(command)
-	if err != nil {
-		return err
-	}
 	relays, err := readRelays(dir)
 	if err != nil {
 		return err
