@@ -62,8 +62,12 @@ All notable changes to ARC are recorded here. The format follows
   command skips them at once, and `arc sync` says when it tries each again.
   Only a failure that cost time marks a relay: a refused connection, or one
   that the host closed or reset at once, marks nothing, and a mark further
-  ahead than 30 s is no mark. An older arc keeps no file, so it waits for each such relay
-  in each command (#444).
+  ahead than 30 s is no mark. A command reads the marks once, so a mark
+  that runs out in the middle of it does not make it dial the relay. A
+  connection that failed at once is remembered in the process for 5 s. A
+  file that arc cannot write gives one warning, also in arc-dm. An older
+  arc keeps no file, so it waits for each such relay in each command
+  (#444).
 - In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
   shared disk can take longer than 200 ms for one sync of the store. The
   200 ms target stays for a run on a machine of its own. The count of the

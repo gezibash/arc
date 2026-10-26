@@ -661,3 +661,33 @@ func TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync(t *testing.T) {
 		}
 	}
 }
+
+// A relays-down.json that arc cannot write gives one note, in arc sync and
+// in arc-dm send alike: arc-dm passes on only the warnings of arc, so the
+// note of arc-dm send was lost (#444, ut-444c F-NOTE-DM).
+func TestTheNoteOfAnUnwritableMarkFileReachesArcDM(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", live)
+	peer := keys.Generate().Public.Hex()
+	home.run("message", "send", peer, "hello")
+	listRelays(t, home, "ws://"+silentRelay(t))
+	file := filepath.Join(filepath.Dir(relaysFile(t, home)), "relays-down.json")
+	if err := os.Mkdir(file, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	note := "arc: warning: arc cannot keep the relays that gave no answer in " + file + ": make it a file that arc can write, or remove it; each command waits for them again"
+	for _, step := range []struct {
+		what string
+		got  result
+	}{
+		{"arc sync", home.try("", "sync")},
+		{"arc-dm send", home.using(program("arc-dm")).try("", "--arc", program("arc"), "--state", filepath.Join(work, "dm"), "send", peer, "again")},
+	} {
+		if n := strings.Count(step.got.Stderr, note+"\n"); n != 1 {
+			t.Errorf("%s wrote the note %d times, want once:\n%s", step.what, n, step.got.Stderr)
+		}
+	}
+}

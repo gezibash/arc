@@ -425,10 +425,17 @@ time in `relays-down.json`, by the wall clock. A mark that ends more than
 relay down: the relay's own timeout, a first attempt that stalled, a dial or
 a lookup that timed out, or a lookup or an address that failed. A refusal, a
 refused connection, a connection that the host closed or reset at once, and
-the deadline of the caller mark nothing: a mark exists to save a wait. The marks that one process makes at once all land in the
-file. A relay that a mark of an earlier command skips gets its own line in
-`arc sync`: it is skipped, and arc tries it again in the time that the mark
-has left. A relay that took the connection, and then gave
+the deadline of the caller mark nothing: a mark exists to save a wait. A
+connection that failed at once, refused, closed or reset, is remembered in
+this process only, for 5 seconds, so the calls of one command do not dial
+the relay again. The marks that one process makes at once all land in the
+file. A process reads the marks once, and uses that look for 30 seconds: a
+command shorter than that skips what the home marked when it began, and a
+mark that runs out or comes in the middle of it changes nothing. A longer
+process, such as `arc serve`, looks again after 30 seconds. A relay that a
+mark of an earlier command skips gets its own line in `arc sync`: it is
+skipped, and arc tries it again in the time that the mark has left, or at
+the next command when the mark ran out during this one. A relay that took the connection, and then gave
 no EOSE, OK or CLOSED within its own timeout, is down in the same way,
 unless it answers a probe at once, the event of no ID, within 5 seconds: a
 relay that ignores one kind is up, and only that call fails. To find a
@@ -439,20 +446,22 @@ first attempt that raced both address families and reached neither within
 first asks each relay that probe, all at once, so that relays that give no
 answer cost one timeout in all. It names each relay that gave no answer in
 one line of plain words at its end, with its reason: a refused connection,
-a host that does not exist, no answer, or no answer for mail from a relay
-that answered the probe. That line is the only line about the relay, with
+a host that does not exist, a connection that the host closed or reset, no
+answer, or no answer for mail from a relay that answered the probe. That line is the only line about the relay, with
 or without a relay that answers. A send and a publish give the event to
 each relay at once, so relays that give no answer cost one wait in all. A
 send opens a new connection after a stall only on a connection where the
 relay answered before. A
 file that is missing, does not parse or cannot be written marks nothing,
 and two processes that write it at once leave a whole file. A file that
-arc cannot write gives one note for each command, with its path. A watch
+arc cannot write gives one note for each command, with its path, as a
+warning of arc ("arc: warning: "), so that a program that runs arc, such as
+arc-dm, gives the same note. A watch
 still tries to connect, so a provider watches again as soon as its relay
 is back. A relay that gave no answer in time counts as unreached: a command
 that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
 and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
-`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestABrokenFileOfDownRelaysIsNoRecord`, `TestDownRelaysOfManyProcessesKeepAWholeFile`, `TestAClosedPortIsNotDown`, `TestAConnectionClosedAtOnceIsNotDown`, `TestAMarkFarAheadIsNoMark`, `TestTheMarksOfOneCommandAllLand`, `TestAFileThatCannotBeWrittenGivesANote`, `TestASkippedRelaySaysWhenArcTriesItAgain`
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestABrokenFileOfDownRelaysIsNoRecord`, `TestDownRelaysOfManyProcessesKeepAWholeFile`, `TestAClosedPortIsNotDown`, `TestAConnectionClosedAtOnceIsNotDown`, `TestARelayThatClosesAtOnceGetsOneLineInEachSync`, `TestASyncReadsTheMarksOfTheHomeOnce`, `TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync`, `TestTheNoteOfAnUnwritableMarkFileReachesArcDM`, `TestAMarkFarAheadIsNoMark`, `TestTheMarksOfOneCommandAllLand`, `TestAFileThatCannotBeWrittenGivesANote`, `TestASkippedRelaySaysWhenArcTriesItAgain`
 prove this.
 
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and

@@ -225,7 +225,9 @@ func (s *Session) warnUnreached(err error, uses string) {
 // no answer, so each command waits for them again (#444).
 func (s *Session) noteDownFile(err error) {
 	s.downFile.Do(func() {
-		s.warnf("%v; each command waits for them again\n", err)
+		// A program that runs arc, such as arc-dm, passes on each line
+		// that starts with "arc: warning: ", so it gives the same note.
+		s.warnf("arc: warning: %v; each command waits for them again\n", err)
 	})
 }
 
