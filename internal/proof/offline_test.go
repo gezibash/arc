@@ -533,6 +533,39 @@ func dnsServer(t *testing.T, notFound bool) string {
 	return conn.LocalAddr().String()
 }
 
+// A relay that stops answering partway through a sync gets one line that
+// says so, the sync fails, and no line for each wrap that did not go: it
+// printed "refused not sent <id>" for each wrap, said nothing of the relay,
+// and exited 0 (#465). The relay takes the first 2 wraps, then answers
+// nothing.
+func TestARelayThatStopsAnsweringInASyncGetsOneLine(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", url)
+	// A recipient with no relay list keeps its messages waiting.
+	for range 5 {
+		home.try("", "message", "send", keys.Generate().Public.Hex(), "hello")
+	}
+	unlistRelays(t, home, 1)
+	quiet := muteRelay(t, "MUTERELAY_MODE=quiet", "MUTERELAY_QUIET_AFTER=2")
+	listRelays(t, home, quiet)
+	got := home.try("", "sync")
+	if got.Err == nil {
+		t.Errorf("a sync with a relay that stopped answering exited 0")
+	}
+	lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], quiet+": stopped answering after it took 2 of ") {
+		t.Errorf("arc sync wrote %q, want one line that says that %s stopped answering after it took 2 wraps", got.Stderr, quiet)
+	}
+	for _, raw := range append(rawErrorText, "not sent", "refused") {
+		if strings.Contains(got.Stderr, raw) {
+			t.Errorf("arc sync wrote %q, which holds %q", got.Stderr, raw)
+		}
+	}
+}
+
 // hostileReason is a reason of a refusal with terminal escapes, a bidi
 // override and line breaks in it.
 const hostileReason = "blocked: cato\x1b[31mRED \u202eevil\n\r\x1b[2K"

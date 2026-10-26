@@ -61,6 +61,10 @@ All notable changes to ARC are recorded here. The format follows
   authentication that arc cannot answer, or HTTP 403 for the WebSocket)
   gets one line in `arc sync` that says that it refused, with its reason,
   in place of four lines of raw errors (#463).
+- A relay that stops answering partway through `arc sync` gets one line
+  that says how many waiting wraps it took, and the sync fails. The wraps
+  that did not go wait for the next sync. An older arc printed "refused
+  not sent" for each wrap and exited 0 (#465).
 - In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
   shared disk can take longer than 200 ms for one sync of the store. The
   200 ms target stays for a run on a machine of its own. The count of the

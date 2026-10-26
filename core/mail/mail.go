@@ -155,6 +155,10 @@ type Mail struct {
 	// Indexers are relays that hold relay lists. Mail looks up the NIP-17
 	// list of a recipient there when its own relays do not hold it.
 	Indexers []transport.Transport
+	// Unanswered says whether an error of a send means that the transport
+	// gave no answer, so that the sends after it would wait in vain. A sync
+	// then stops sending to that transport (#465). Nil keeps each send.
+	Unanswered func(error) bool
 	// InboxRelay constructs a transport for a discovered NIP-17 inbox URL.
 	// The application supplies its relay adapter and anonymous authentication.
 	InboxRelay func(string) transport.Transport
@@ -1123,6 +1127,23 @@ func (m *Mail) evict() error {
 	})
 }
 
+// StoppedError says that a transport stopped answering partway through the
+// sends of a sync. The wraps that did not go wait for the next sync.
+type StoppedError struct {
+	// Transport is the name of the transport.
+	Transport string
+	// Sent is the number of wraps that it took, of Waiting.
+	Sent, Waiting int
+	// Err is the error of the send that got no answer.
+	Err error
+}
+
+func (e *StoppedError) Error() string {
+	return fmt.Sprintf("%s stopped answering after it took %d of %d wraps: %v", e.Transport, e.Sent, e.Waiting, e.Err)
+}
+
+func (e *StoppedError) Unwrap() error { return e.Err }
+
 // give sends the transport every wrap that this node moves. A carrier gets
 // the courier form only, with its hop limit, because the relay form names the
 // recipient. A relay gets each wrap once.
@@ -1132,6 +1153,13 @@ func (m *Mail) give(ctx context.Context, t transport.Transport, carrier transpor
 		return err
 	}
 
+	waiting := 0
+	for _, entry := range entries {
+		if !isCarrier && !slices.Contains(entry.SentTo, t.Name()) {
+			waiting++
+		}
+	}
+	sent := 0
 	for _, entry := range entries {
 		if isCarrier && !entry.Courier {
 			continue
@@ -1157,11 +1185,18 @@ func (m *Mail) give(ctx context.Context, t transport.Transport, carrier transpor
 		} else {
 			err = t.Send(ctx, events[0])
 		}
+		// A relay that gave no answer would make each wrap after this one
+		// wait or fail the same way: stop, and keep the rest for the next
+		// sync. It refused nothing, so no wrap counts as refused (#465).
+		if err != nil && !isCarrier && m.Unanswered != nil && m.Unanswered(err) {
+			return &StoppedError{Transport: t.Name(), Sent: sent, Waiting: waiting, Err: err}
+		}
 		if err != nil {
 			report.Refused = append(report.Refused, "not sent "+entry.Wrap+": "+err.Error())
 			continue
 		}
 		report.Sent++
+		sent++
 
 		if !isCarrier {
 			entry.SentTo = append(entry.SentTo, t.Name())
