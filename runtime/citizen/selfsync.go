@@ -459,6 +459,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		}
 		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, coded %d blobs of format 1 into pieces, %sremoved %d blobs of replaced records, deleted %d; %d bytes down, %d bytes up\n",
 			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Coded, unnamed, rep.Replaced, rep.Deleted, rep.Down, rep.Up)
+		if rep.UnnamedKept > 0 {
+			fmt.Fprintf(cfg.Out, "self data: repair kept %d parts and checkpoints that no page names, because a write may still keep them: they are younger than an hour, or a write holds the lock of writes\n", rep.UnnamedKept)
+		}
 		if rep.UnnamedParts+rep.UnnamedCheckpoints > 0 {
 			count := func(n int, one string) string {
 				if n == 1 {
@@ -466,7 +469,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 				}
 				return fmt.Sprintf("%d %ss", n, one)
 			}
-			fmt.Fprintf(cfg.Out, "self data: repair removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n",
+			fmt.Fprintf(cfg.Out, "self data: repair removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees any that went to your storage citizens\n",
 				count(rep.UnnamedParts, "part"), count(rep.UnnamedCheckpoints, "checkpoint"))
 		}
 	} else {

@@ -49,6 +49,7 @@ func run(m *testing.M) int {
 		"arc-dm":       "./apps/dm/cmd/arc-dm",
 		"slowcall":     "./internal/proof/testdata/slowcall",
 		"muterelay":    "./internal/proof/testdata/muterelay",
+		"echo":         "./adapters/provider/host/testdata/echo",
 	} {
 		if err := build(filepath.Join(programs, name), pkg, ""); err != nil {
 			fmt.Fprintln(os.Stderr, err)
