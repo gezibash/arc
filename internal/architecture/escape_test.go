@@ -235,7 +235,7 @@ var remoteNames = []string{
 
 // escapes are the functions of sdk/terminal that give text that is safe to
 // print.
-var escapes = []string{"Escape", "EscapeLine", "EscapeLineCut", "EscapeData", "EscapeJSON", "Strip"}
+var escapes = []string{"Escape", "EscapeLine", "EscapeLineCut", "EscapeLineData", "EscapeData", "EscapeJSON", "Strip"}
 
 type rawPrint struct {
 	file string

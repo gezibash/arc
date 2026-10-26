@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strconv"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -25,8 +26,10 @@ const unnamedBatch = 512
 //
 //   - this device signed it. In a sync, a part of another device can
 //     arrive before its draft.
-//   - the storage citizens hold its blob at the start of the sync, so it
-//     is older than one sync, and a write that still runs keeps its parts.
+//   - it is old enough that no write still runs that keeps it: the storage
+//     citizens hold its blob at the start of the sync, so it is older than
+//     one sync, or it has no blob, because write held it back, and it is
+//     older than unnamedAge.
 //   - no page names it. A checkpoint is unnamed when its address has no
 //     draft, or a blank one. A part is unnamed when no draft and no
 //     checkpoint that stays names it in a parts tag, after each one is
@@ -46,6 +49,14 @@ func (r *run) unnamed(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A write that runs now can hold parts of any age before its draft:
+	// then only events with a blob go.
+	writing := false
+	if r.s.Writing != nil {
+		if writing, err = r.s.Writing(); err != nil {
+			return err
+		}
+	}
 	// The candidates of each address.
 	byAddress := map[string][]nostr.Event{}
 	for _, e := range mine {
@@ -53,14 +64,14 @@ func (r *run) unnamed(ctx context.Context) error {
 		if _, sealed := draft.Gen(e); !sealed || a == nil || draft.Owner(e) != r.s.Citizen {
 			continue
 		}
-		if r.blobs[r.current.BlobID(e.ID)] == nil {
+		if r.blobs[r.current.BlobID(e.ID)] == nil && (writing || r.s.now().Sub(e.CreatedAt.Time()) < unnamedAge) {
 			continue
 		}
 		byAddress[a[1]] = append(byAddress[a[1]], e)
 	}
 	var gone []nostr.Event
 	for coordinate, candidates := range byAddress {
-		named, ok, err := r.named(ctx, coordinate)
+		named, ok, err := r.namedOnce(ctx, coordinate)
 		if err != nil {
 			return err
 		}
@@ -101,6 +112,50 @@ func (r *run) unnamed(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// unnamedAge is the age after which a part or a checkpoint with no blob,
+// which no page names, is left by a write that stopped. A write keeps its
+// parts and its draft within seconds.
+const unnamedAge = time.Hour
+
+// namedSet is a result of named.
+type namedSet struct {
+	ids map[string]bool
+	ok  bool
+}
+
+// namedOnce is named, once for each address in a sync: a page of many
+// parts opens its draft once.
+func (r *run) namedOnce(ctx context.Context, coordinate string) (map[string]bool, bool, error) {
+	if got, done := r.namedOf[coordinate]; done {
+		return got.ids, got.ok, nil
+	}
+	ids, ok, err := r.named(ctx, coordinate)
+	if err != nil {
+		return nil, false, err
+	}
+	r.namedOf[coordinate] = namedSet{ids: ids, ok: ok}
+	return ids, ok, nil
+}
+
+// heldBack says whether write holds back a record: a part or a checkpoint
+// that this device signed and that no page names (#397). A write that
+// stops half way, as with SIGKILL, keeps parts before its draft, and the
+// store saves each one on its own, so they would go to the storage
+// citizens. A write that still runs when the sync starts has its parts
+// held back too; the next sync finds its draft, and sends them. A record
+// whose page does not open goes out, as before.
+func (r *run) heldBack(ctx context.Context, e nostr.Event) (bool, error) {
+	if r.s.Opener == nil || e.Kind != draft.PartKind && e.Kind != draft.CheckpointKind || e.PubKey != r.s.Device.Public() {
+		return false, nil
+	}
+	a := e.Tags.Find("a")
+	if _, sealed := draft.Gen(e); !sealed || a == nil || draft.Owner(e) != r.s.Citizen {
+		return false, nil
+	}
+	named, ok, err := r.namedOnce(ctx, a[1])
+	return ok && !named[e.ID.Hex()], err
 }
 
 // named returns the IDs of the events of one address that a page names:

@@ -91,7 +91,7 @@ func (r *run) pageEntries(kind string) (map[string][]pageEntry, error) {
 		}
 		p.e = entryOf(opened, name)
 		p.e.rec["device"] = opened.Wrap.PubKey.Hex()
-		p.e.rec["at"] = p.at().Format(time.RFC3339Nano)
+		p.e.rec["at"] = p.at().Format(timeFormat)
 		p.e.rec["fixes"] = ""
 		if p.corrects != "" {
 			p.e.rec["fixes"] = "\tfixes " + p.corrects
@@ -219,21 +219,64 @@ func (r *run) attachEntries(kind string, pages []notebookPage) ([]notebookPage, 
 }
 
 // noteLost says, on the standard error, which pages are lost pages, and
-// why. With an address, it names only the lost pages of that address.
-func (r *run) noteLost(pages []notebookPage, address string) {
-	for _, p := range pages {
-		if !p.lost || address != "" && p.base != address && p.address != address {
+// why. It names the addresses of the lost pages in shown, and with an
+// address, only that address. It gives one line for each address, which
+// names each page by its title (#399, #403). It counts the pages of an
+// address in all, the pages of the whole journal: a filter of ls can hide
+// the live page.
+func (r *run) noteLost(all, shown []notebookPage, address string) {
+	var bases []string
+	for _, p := range shown {
+		if !p.lost || address != "" && p.base != address && p.address != address || slices.Contains(bases, p.base) {
 			continue
 		}
-		why := "two devices made a page at %s offline; the store keeps the other one there, and this one reads at %s"
-		if !slices.ContainsFunc(pages, func(o notebookPage) bool { return !o.lost && o.address == p.base }) {
-			why = "two devices made a page at %s offline, and the other one is gone; this one reads at %s"
-		}
-		if p.checkpoint == (nostr.ID{}) {
-			why = "these entries name a head of %s that is gone, as a delete on another device leaves them; they read at %s"
-		}
-		fmt.Fprintf(r.stdio.Err, why+"\n", terminal.EscapeLine(p.base), terminal.EscapeLine(p.address))
+		bases = append(bases, p.base)
 	}
+	lost := map[string][]notebookPage{}
+	for _, p := range all {
+		if p.lost && slices.Contains(bases, p.base) {
+			lost[p.base] = append(lost[p.base], p)
+		}
+	}
+	pages := all
+	for _, base := range bases {
+		var heads, orphans []string
+		for _, p := range lost[base] {
+			where := fmt.Sprintf("%s reads at %s", titled(p.title), terminal.EscapeLine(p.address))
+			if p.checkpoint == (nostr.ID{}) {
+				orphans = append(orphans, fmt.Sprintf("entries of a page of %s that a delete on another device did not know read at %s", terminal.EscapeLine(base), terminal.EscapeLine(p.address)))
+				continue
+			}
+			heads = append(heads, where)
+		}
+		if len(heads) > 0 {
+			i := slices.IndexFunc(pages, func(o notebookPage) bool { return !o.lost && o.address == base })
+			kept := "the page there is gone"
+			if i >= 0 {
+				kept = "the store keeps " + titled(pages[i].title) + " there"
+			}
+			n := len(heads)
+			if i >= 0 {
+				n++
+			}
+			made := fmt.Sprintf("%d pages were made", n)
+			if n == 1 {
+				made = "1 page was made"
+			}
+			fmt.Fprintf(r.stdio.Err, "%s at %s offline; %s; %s\n", made, terminal.EscapeLine(base), kept, strings.Join(heads, "; "))
+		}
+		for _, line := range orphans {
+			fmt.Fprintln(r.stdio.Err, line)
+		}
+	}
+}
+
+// titled is a title of a page in quotes, for a line of the log.
+func titled(title string) string {
+	if title == "" {
+		return "a page with no title"
+	}
+	return `"` + terminal.EscapeLine(title) + `"`
 }
 
 // findPage finds the page of an address: a live page, today's page, or a
@@ -259,7 +302,7 @@ func (r *run) findPages(kind, address string, allow ...string) (*notebookPage, [
 	}
 	for i := range pages {
 		if pages[i].address == resolved || !pages[i].lost && pages[i].hid != "" && pages[i].address+"-"+pages[i].hid == resolved {
-			r.noteLost(pages, pages[i].base)
+			r.noteLost(pages, pages, pages[i].base)
 			return &pages[i], pages, nil
 		}
 	}
@@ -308,7 +351,7 @@ func (r *run) pageText(head *entry, addresses []string, entries []pageEntry) (st
 	newest := entries[len(entries)-1].at()
 	if fields, _, err := frontmatter(text); err == nil {
 		if head, err := time.Parse(time.RFC3339Nano, str(fields["updated_at"])); err != nil || newest.After(head) {
-			text = setField(text, "updated_at", newest.Format(time.RFC3339Nano))
+			text = setField(text, "updated_at", newest.Format(timeFormat))
 		}
 	}
 	var b strings.Builder
@@ -538,11 +581,20 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	case title == "":
 		title = heading(body)
 	}
+	if isDate(title) && title != n.Title && str(fields["title"]) == "" {
+		// A title that the text gives must not change which page today
+		// names: only today's page has the date as its title.
+		title = ""
+	}
 	if strings.TrimSpace(body) == "" && title == "" {
 		return "", errors.New("no text: give the page on the standard input, or give a --title")
 	}
 	if title == "" {
-		title = r.today()
+		// The first line, and not the date: only today's page has the date
+		// as its title, so that today names one page (#398).
+		if title = firstLine(body); title == "" {
+			return "", errors.New("no title: each line of the text is a date, which only the page of today takes as its title; give a --title")
+		}
 	}
 	for key, want := range map[string]string{"notebook": book, "page": number} {
 		if given := str(fields[key]); given != "" && given != want {
@@ -578,6 +630,23 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		return "", err
 	}
 	return address, nil
+}
+
+// firstLine is the first line of the text that holds more than blanks,
+// with no Markdown heading marker, and cut to 80 characters with an
+// ellipsis. It passes a line that is a date: only today's page has the
+// date as its title, and a title of the text must not change which page
+// today names.
+func firstLine(body string) string {
+	for line := range strings.SplitSeq(body, "\n") {
+		if line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#")); line != "" && !isDate(line) {
+			if r := []rune(line); len(r) > 80 {
+				line = string(r[:79]) + "…"
+			}
+			return line
+		}
+	}
+	return ""
 }
 
 // heading is the text of the first "# " heading.
@@ -700,13 +769,31 @@ func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
 		}
 	}
 	for _, e := range out {
-		e.rec["at"] = time.Unix(int64(number(e.rec["created"])), 0).UTC().Format(time.RFC3339)
+		e.rec["at"] = stamp(checkpointAt(e))
 		e.rec["fixes"] = ""
 	}
 	for _, p := range page.entries {
 		out = append(out, p.e)
 	}
 	return out, nil
+}
+
+// isDate says whether text is a date, as the title of today's page is.
+func isDate(text string) bool {
+	_, err := time.Parse("2006-01-02", text)
+	return err == nil
+}
+
+// checkpointAt is the time of a version of a head: the updated_at of its
+// front matter, in milliseconds as read and ls show it, else the second of
+// its event.
+func checkpointAt(e *entry) time.Time {
+	if fields, _, err := frontmatter(str(e.rec["content"])); err == nil {
+		if at, err := time.Parse(time.RFC3339Nano, str(fields["updated_at"])); err == nil {
+			return at
+		}
+	}
+	return time.Unix(int64(number(e.rec["created"])), 0)
 }
 
 // deletePage deletes a page. The head goes as a delete action deletes a
@@ -803,14 +890,18 @@ func (r *run) deletePage(n *Notebook, dTemplate string) error {
 	if up == nil || r.flags.DryRun {
 		return nil
 	}
-	return r.moveUp(n.Kind, d, old, up)
+	gone := ""
+	if page != nil && !page.lost {
+		gone = page.title
+	}
+	return r.moveUp(n.Kind, d, old, up, gone)
 }
 
 // moveUp makes the head of a lost page the draft at its address again, as
 // it was written, when the page there is deleted. Nothing then takes its
 // checkpoint for one that a failed write left, and its entries, which name
 // its head id, read at the address.
-func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage) error {
+func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage, gone string) error {
 	text, err := r.joined(up.entry)
 	if err != nil {
 		return err
@@ -827,7 +918,8 @@ func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage) error {
 	if _, err := scoped.publishSealed(&Publish{Kind: kind, D: d, Revise: "entry", at: at, Content: Content{Text: "{{up_text}}"}, Tags: tags}); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.stdio.Err, "the page at %s moved up from %s\n", terminal.EscapeLine(up.base), terminal.EscapeLine(up.address))
+	fmt.Fprintf(r.stdio.Err, "%s is deleted, so %s, made at %s offline too, moved up from %s to %s\n",
+		titled(gone), titled(up.title), terminal.EscapeLine(up.base), terminal.EscapeLine(up.address), terminal.EscapeLine(up.base))
 	return nil
 }
 

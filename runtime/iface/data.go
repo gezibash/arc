@@ -411,8 +411,15 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		for _, text := range rest {
 			total += len(text)
 		}
-		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft of %d bytes names %d parts, and the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
-			float64(total)/1e6, size, len(ids), draft.MaxContent)
+		// NIP-44 pads what it seals in steps, so the sealed size names a
+		// step: give the size of the draft too, which grows with the page
+		// (#398).
+		plain, err := json.Marshal(inner)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft names %d parts in %d bytes, which are %d bytes once sealed and padded; the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
+			float64(total)/1e6, len(ids), len(plain), size, draft.MaxContent)
 	}
 	if err := r.env.Publish(r.ctx, append(append(events, wrap), saved...), nil); err != nil {
 		return nil, r.failedWrite(err, p.Kind, d, inner, old, append(events, saved...))

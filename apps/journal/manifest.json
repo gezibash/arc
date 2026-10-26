@@ -35,7 +35,8 @@
       ],
       "action": {
         "notebook": {"op": "write", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "text": "{{body}}", "title": "{{title}}"}
-      }
+      },
+      "output": {"format": "address"}
     },
     {
       "path": ["new"],
@@ -106,7 +107,8 @@
       ],
       "action": {
         "notebook": {"op": "fix", "kind": "page", "d": "{{address|keyed:page}}", "address": "{{address}}", "text": "{{text|join}}\n"}
-      }
+      },
+      "output": {"format": "address"}
     },
     {
       "path": ["read"],
