@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/call"
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/transport"
@@ -27,6 +28,11 @@ func (sess *Session) OpenSessionAddress(ctx context.Context, installs catalog.In
 		return nil, err
 	}
 	request := call.Request{Capability: offer.ID, Method: offer.Method, Path: path, Body: body}
+	return retryUnheard(ctx, func() (*session.Stream, error) { return sess.openOn(ctx, provider, request, mode, targets) })
+}
+
+// openOn opens a session on the first target that submits the open.
+func (sess *Session) openOn(ctx context.Context, provider nostr.PubKey, request call.Request, mode session.Mode, targets []transport.Transport) (*session.Stream, error) {
 	var failures []error
 	for _, target := range targets {
 		live, ok := target.(transport.Live)

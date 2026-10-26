@@ -3,6 +3,7 @@ package selfsync
 import (
 	"context"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -96,13 +97,13 @@ func (b *pageBench) deletions() int {
 }
 
 // A write that stopped after its parts and before its draft leaves parts
-// that no page names. A repair deletes the parts that this device signed,
-// once the storage citizens hold them, with a deletion that names each
-// part. The next repair frees their blobs, and says so in the words of
-// journal delete. A page whose draft names its parts stays (issue #379).
+// that no page names. An older arc gave them to the storage citizens. A
+// repair deletes the parts that this device signed, once the storage
+// citizens hold them, with a deletion that names each part. The next
+// repair frees their blobs, and says so in the words of journal delete. A
+// page whose draft names its parts stays (issue #379).
 func TestRepairFreesPartsThatNoPageNames(t *testing.T) {
 	b := newPageBench(t)
-	b.sealedPages()
 	s := b.sealer(b.citizen.Secret)
 	at := nostr.Now() - 10
 	live := b.parts(s, "live", 2, at)
@@ -111,8 +112,11 @@ func TestRepairFreesPartsThatNoPageNames(t *testing.T) {
 	orphans := b.parts(s, "crashed", 3, at)
 	b.save(orphans...)
 
+	// A device that does not open its pages sends each part, as an older
+	// arc did.
 	b.sync(b.device, false, b.sides)
 	b.held(7, 7, 7)
+	b.sealedPages()
 	r := b.sync(b.device, true, b.sides)
 	if r.Repair.UnnamedParts != 3 || r.Repair.UnnamedCheckpoints != 0 {
 		t.Fatalf("the repair deleted %d parts and %d checkpoints that no page names; want 3 and 0", r.Repair.UnnamedParts, r.Repair.UnnamedCheckpoints)
@@ -139,12 +143,13 @@ func TestRepairFreesPartsThatNoPageNames(t *testing.T) {
 // fail on it.
 func TestRepairSplitsTheDeletionOfManyParts(t *testing.T) {
 	b := newPageBench(t)
-	b.sealedPages()
 	const n = 1000
 	orphans := b.parts(b.sealer(b.citizen.Secret), "crashed", n, nostr.Now()-10)
 	b.save(orphans...)
 
+	// As an older arc did, the first sync sends each part.
 	b.sync(b.device, false, b.sides)
+	b.sealedPages()
 	r := b.sync(b.device, true, b.sides)
 	if r.Repair.UnnamedParts != n {
 		t.Fatalf("the repair deleted %d parts that no page names; want %d", r.Repair.UnnamedParts, n)
@@ -256,4 +261,62 @@ type noList struct{}
 
 func (noList) Standing(nostr.PubKey, nostr.PubKey) store.Standing {
 	return store.Standing{NoList: true}
+}
+
+// A write that stops after its parts and before its draft, as with
+// SIGKILL, leaves parts that no page names. No sync sends them to the
+// storage citizens. A repair keeps them while a write could still run,
+// and deletes them after unnamedAge. A write that still runs when a sync
+// starts has its parts held back, and the next sync sends them with the
+// draft (#397).
+func TestAStoppedWriteSendsNoParts(t *testing.T) {
+	b := newPageBench(t)
+	b.sealedPages()
+	s := b.sealer(b.citizen.Secret)
+	now := time.Now()
+	b.device.Now = func() time.Time { return now }
+	at := nostr.Timestamp(now.Unix() - 10)
+	live := b.parts(s, "live", 2, at)
+	wrap, checkpoint := b.version(s, "live", live, at)
+	b.save(append(live, wrap, checkpoint)...)
+	orphans := b.parts(s, "crashed", 3, at)
+	b.save(orphans...)
+	running := b.parts(s, "running", 2, at)
+	b.save(running...)
+
+	b.sync(b.device, false, b.sides)
+	b.held(4, 4, 4)
+	r := b.sync(b.device, true, b.sides)
+	if r.Repair.UnnamedParts != 0 {
+		t.Fatalf("a repair deleted %d young parts that a write could still name", r.Repair.UnnamedParts)
+	}
+	b.keeps(orphans...)
+	b.held(4, 4, 4)
+
+	// The running write keeps its draft: the next sync sends its parts.
+	runningWrap, runningCheckpoint := b.version(s, "running", running, at)
+	b.save(runningWrap, runningCheckpoint)
+	b.sync(b.device, false, b.sides)
+	b.held(8, 8, 8)
+
+	now = now.Add(2 * unnamedAge)
+	// A write that runs now, however slow, can hold parts of any age.
+	b.device.Writing = func() (bool, error) { return true, nil }
+	if r = b.sync(b.device, true, b.sides); r.Repair.UnnamedParts != 0 {
+		t.Fatalf("a repair during a write deleted %d parts with no blob", r.Repair.UnnamedParts)
+	}
+	b.keeps(orphans...)
+	b.device.Writing = func() (bool, error) { return false, nil }
+	r = b.sync(b.device, true, b.sides)
+	if r.Repair.UnnamedParts != 3 {
+		t.Fatalf("a repair after unnamedAge deleted %d parts that no page names; want 3", r.Repair.UnnamedParts)
+	}
+	for _, p := range orphans {
+		if got, _ := b.local.Query(nostr.Filter{IDs: []nostr.ID{p.ID}}); len(got) != 0 {
+			t.Fatal("a part of the stopped write stays in the store")
+		}
+	}
+	b.keeps(append(append(live, wrap, checkpoint), append(running, runningWrap, runningCheckpoint)...)...)
+	// Only the deletion goes out: 8 records and 1 deletion.
+	b.held(9, 9, 9)
 }
