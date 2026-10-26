@@ -35,6 +35,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
@@ -177,6 +178,10 @@ func twoHomes(user, dir string) string {
 		// Anything at ~/.arc: entries of arc, or a link that leads to no
 		// home, as a dangling link or a link to ".".
 		if _, err := os.Lstat(home); err == nil {
+			// A link that leads to no home is not a second home.
+			if holds, _ := holdsHome(home, "~/.arc"); !holds {
+				return fmt.Sprintf("%s is a link that leads to no home of arc. arc uses %s, and reads and writes nothing through %s. Remove the link, or point it at a home, or set ARC_HOME.", home, old, home)
+			}
 			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and reads and writes nothing in %s. Set ARC_HOME to choose the home.", home, old, old, home, home)
 		}
 	}
@@ -314,13 +319,43 @@ func keyPath(dir string) string      { return filepath.Join(dir, "key") }
 func relaysPath(dir string) string   { return filepath.Join(dir, "relays") }
 func indexersPath(dir string) string { return filepath.Join(dir, "indexers") }
 
-func readRelays(dir string) ([]string, error) { return readURLs(relaysPath(dir)) }
+// readRelays returns the relays that arc uses. A list that an older arc
+// wrote can hold a line that is not a relay URL, such as the second half
+// of a URL that held a newline (#441). arc skips such a line; arc relay ls
+// shows it, and arc relay rm removes it.
+func readRelays(dir string) ([]string, error) { return relayURLs(readURLs(relaysPath(dir))) }
 
 func writeRelays(dir string, urls []string) error { return writeURLs(dir, relaysPath(dir), urls) }
 
 // An indexer relay holds only relay lists. A citizen publishes its NIP-65
 // and NIP-17 lists there, and looks up the lists of others there.
-func readIndexers(dir string) ([]string, error) { return readURLs(indexersPath(dir)) }
+func readIndexers(dir string) ([]string, error) { return relayURLs(readURLs(indexersPath(dir))) }
+
+// isRelayURL says whether a line of a relay list is a ws:// or wss:// URL.
+func isRelayURL(line string) bool {
+	return strings.HasPrefix(line, "ws://") || strings.HasPrefix(line, "wss://")
+}
+
+// relayURLs keeps the lines that are relay URLs.
+func relayURLs(lines []string, err error) ([]string, error) {
+	return slices.DeleteFunc(lines, func(line string) bool { return !isRelayURL(line) }), err
+}
+
+// checkRelayURL refuses a relay URL that is not ws:// or wss://, or that
+// holds a space, a control character or a format character. The list keeps
+// one relay on each line: a newline would add a second relay. A control
+// character would reach the terminal in each line that names the relay,
+// and a bidi or invisible character could make it look like another relay
+// (#441).
+func checkRelayURL(url string) error {
+	if !isRelayURL(url) {
+		return errors.New("a relay is a ws:// or wss:// URL")
+	}
+	if strings.ContainsFunc(url, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) }) {
+		return errors.New("a relay URL holds no space, no control character and no format character")
+	}
+	return nil
+}
 
 func writeIndexers(dir string, urls []string) error {
 	return writeURLs(dir, indexersPath(dir), urls)
@@ -363,18 +398,20 @@ func relayCommand() *cobra.Command {
 			"lists there, and looks up the relay lists of other citizens there.",
 		RunE: func(command *cobra.Command, args []string) error {
 			url := args[0]
-			if !strings.HasPrefix(url, "ws://") && !strings.HasPrefix(url, "wss://") {
-				return errors.New("a relay is a ws:// or wss:// URL")
+			if err := checkRelayURL(url); err != nil {
+				return err
 			}
 			dir, err := home(command)
 			if err != nil {
 				return err
 			}
-			relays, err := readRelays(dir)
+			// add, rm and ls read each line, so that a write keeps the
+			// lines that arc skips.
+			relays, err := readURLs(relaysPath(dir))
 			if err != nil {
 				return err
 			}
-			indexers, err := readIndexers(dir)
+			indexers, err := readURLs(indexersPath(dir))
 			if err != nil {
 				return err
 			}
@@ -415,11 +452,11 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				relays, err := readRelays(dir)
+				relays, err := readURLs(relaysPath(dir))
 				if err != nil {
 					return err
 				}
-				indexers, err := readIndexers(dir)
+				indexers, err := readURLs(indexersPath(dir))
 				if err != nil {
 					return err
 				}
@@ -441,22 +478,36 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				urls, err := readRelays(dir)
+				urls, err := readURLs(relaysPath(dir))
 				if err != nil {
 					return err
 				}
-				indexers, err := readIndexers(dir)
+				indexers, err := readURLs(indexersPath(dir))
 				if err != nil {
 					return err
 				}
 				if len(urls) == 0 {
 					fmt.Fprintln(command.OutOrStdout(), "no relays: add one with arc relay add <url>")
 				}
+				// A list of an older arc can hold any character, and a
+				// line that is not a relay URL, which arc skips.
+				skipped := false
+				show := func(url, suffix string) {
+					if !isRelayURL(url) {
+						fmt.Fprintf(command.OutOrStdout(), "not a relay URL, skipped: \"%s\"%s\n", terminal.EscapeLine(url), suffix)
+						skipped = true
+						return
+					}
+					fmt.Fprintln(command.OutOrStdout(), terminal.EscapeLine(url)+suffix)
+				}
 				for _, url := range urls {
-					fmt.Fprintln(command.OutOrStdout(), url)
+					show(url, "")
 				}
 				for _, url := range indexers {
-					fmt.Fprintln(command.OutOrStdout(), url+"  (index)")
+					show(url, "  (index)")
+				}
+				if skipped {
+					fmt.Fprintln(command.ErrOrStderr(), "arc: the relay list holds a line that is not a relay URL, which arc skips; remove it with arc relay rm and the line as the list holds it, quoted for the shell")
 				}
 				return nil
 			},
@@ -526,7 +577,13 @@ func fetchAnyTURN(ctx context.Context, dir string, relays []string) ([]byte, err
 	if first != nil {
 		return first, nil
 	}
-	return nil, errors.Join(problems...)
+	// One line: arc prints an error on one line, so a newline of
+	// errors.Join would show as \n.
+	texts := make([]string, len(problems))
+	for i, problem := range problems {
+		texts[i] = problem.Error()
+	}
+	return nil, errors.New(strings.Join(texts, "; "))
 }
 
 // fetchTURN asks a relay for a TURN credential, signed with the key of the
@@ -590,7 +647,7 @@ func turnURL(relay string) (string, error) { return relayHTTP(relay, turn.Path) 
 func relayHTTP(relay, path string) (string, error) {
 	u, err := url.Parse(relay)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("%q is not a relay URL", relay)
+		return "", fmt.Errorf("\"%s\" is not a relay URL", relay)
 	}
 	switch u.Scheme {
 	case "ws":
@@ -1191,7 +1248,7 @@ func syncCommand() *cobra.Command {
 						continue
 					}
 					fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
-						report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
+						terminal.EscapeLine(report.Transport), report.Received, report.Sent, report.Duplicate+report.Superseded)
 					for _, reason := range report.Refused {
 						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 					}
@@ -1207,10 +1264,10 @@ func syncCommand() *cobra.Command {
 					}
 					bodies, err := sess.SyncBodies(dir)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
+						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 						failed = true
 					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
-						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
+						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", terminal.EscapeLine(report.Transport), bodies.Received, bodies.Sent)
 						for _, sum := range bodies.Missing {
 							fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("  the body %s is on neither side; the device that wrote it holds it", sum)))
 						}
@@ -1218,7 +1275,7 @@ func syncCommand() *cobra.Command {
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", t.Name(), offers.Received) //arc:raw-ok the name of a transport of arc
+					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", terminal.EscapeLine(t.Name()), offers.Received)
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
@@ -1234,12 +1291,12 @@ func syncCommand() *cobra.Command {
 					continue
 				}
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
+					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 					failed = true
 					continue
 				}
 				fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
-					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
+					terminal.EscapeLine(mails.Transport), mails.Received, mails.Delivered, mails.Carried, mails.Sent)
 				for _, reason := range mails.Refused {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 				}
@@ -1346,11 +1403,11 @@ func dropDeleted(ctx context.Context, out io.Writer, n *node.Node, filters []nos
 		return err
 	}
 	if !held {
-		fmt.Fprintf(out, "%s: %d events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request\n", report.Transport, len(report.Deleted))
+		fmt.Fprintf(out, "%s: %d events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request\n", terminal.EscapeLine(report.Transport), len(report.Deleted))
 		return nil
 	}
 	removed, err := d.Remove(report.Deleted)
-	fmt.Fprintf(out, "%s: %d events of deleted pages left out, %d removed from the directory\n", report.Transport, len(report.Deleted), removed)
+	fmt.Fprintf(out, "%s: %d events of deleted pages left out, %d removed from the directory\n", terminal.EscapeLine(report.Transport), len(report.Deleted), removed)
 	return err
 }
 

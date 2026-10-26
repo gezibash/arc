@@ -583,3 +583,28 @@ func TestARefusalReasonIsEscapedOnce(t *testing.T) {
 		}
 	}
 }
+
+// A NOTICE of a relay that starts with arc-ring: reaches the screen, on one
+// line, with its text escaped once (#443, #464). No command had shown one.
+func TestARelayNoticeReachesTheScreenEscapedOnce(t *testing.T) {
+	const text = "arc-ring: the rings of this citizen fail\x1b[2K\u202eevil\nsecond line"
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	url := muteRelay(t, "MUTERELAY_MODE=all", "MUTERELAY_NOTICE="+text)
+	listRelays(t, home, url)
+	got := home.try("", "sync")
+	want := terminal.EscapeLine(url) + ": " + terminal.EscapeLine(text)
+	shown := 0
+	for line := range strings.SplitSeq(strings.TrimRight(got.Stderr, "\n"), "\n") {
+		if !strings.Contains(line, "arc-ring") {
+			continue
+		}
+		shown++
+		if line != want {
+			t.Errorf("the notice line is %q, want %q", line, want)
+		}
+	}
+	if shown == 0 {
+		t.Errorf("arc sync wrote %q, want the notice of the relay", got.Stderr)
+	}
+}

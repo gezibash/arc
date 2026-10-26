@@ -181,7 +181,7 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 			if _, err := installs.Remove(install.As); err != nil {
 				return list, true, err
 			}
-			fmt.Fprintf(out, "removed %s: the storage list says it is gone\n", install.As)
+			fmt.Fprintf(out, "removed %s: the storage list says it is gone\n", terminal.EscapeLine(install.As))
 		case entry.Used() && !have:
 			if other, taken := names[entry.Name]; taken {
 				fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("%s: the storage list names it, but this machine uses the name for %s of %s; remove that install to sync with it", entry.Name, other.ID, other.Provider)))
