@@ -932,6 +932,9 @@ sync of `arc serve` repairs: at its start and on each tick. `arc sync`
 repairs only with `--repair`. Without it, `arc sync` counts the blobs that
 need repair, and prints
 `self data: <n> blobs need repair; arc serve repairs them on its tick, or run arc sync --repair`.
+`arc sync --repair --dir` MUST fail before it syncs: a directory holds no
+pieces, so a repair there would audit nothing and print nothing about it
+(#404).
 
 Reason: decision 4 of
 [the storage network proposal](../proposals/storage-network.md). A phone
