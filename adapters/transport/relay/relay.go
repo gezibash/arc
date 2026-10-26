@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"math"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -253,6 +254,26 @@ func (k *kept) isDown() error {
 	return fmt.Errorf("%w; arc asks again after %s", k.down, k.downUntil.Format(time.TimeOnly))
 }
 
+// failedToReach says whether err is a dial, a lookup or an address that
+// failed, or a first attempt that stalled: an answer of the relay, such as
+// a refusal, is not. reach tries the other address family after any failed
+// attempt, so only its first attempt says whether the relay answered.
+func failedToReach(err error) bool {
+	for e := err; e != nil; {
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			if errs := joined.Unwrap(); len(errs) > 0 {
+				err = errs[0]
+			}
+			break
+		}
+		e = errors.Unwrap(e)
+	}
+	var op *net.OpError
+	var dns *net.DNSError
+	var addr *net.AddrError
+	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
+}
+
 // drop closes conn. If conn is the kept connection, the next call connects.
 func (k *kept) drop(conn *nostr.Relay) error {
 	if conn == nil {
@@ -295,7 +316,9 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			// A relay that did not connect is down for a while: the other
 			// calls of a command do not wait for it again (#439). A caller
 			// that stopped says nothing about the relay.
-			if ctx.Err() == nil || errors.Is(context.Cause(ctx), errNoAnswer) {
+			// Only the relay's own timeout, or a dial that failed, marks it
+			// down: never a refusal, nor the deadline of the caller.
+			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), errNoAnswer) {
 				k.down, k.downUntil = err, time.Now().Add(downFor)
 			}
 			return nil, false, nil, err

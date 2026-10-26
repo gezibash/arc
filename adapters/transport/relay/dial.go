@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -21,6 +22,10 @@ import (
 // waits for the whole deadline. After stallLimit, the second attempt uses
 // the other family.
 var stallLimit = 4 * time.Second
+
+// ErrStalled is the error of a first attempt that did not end within
+// stallLimit: the relay gave no answer.
+var ErrStalled = errors.New("no answer within the stall limit")
 
 // families holds the relay hosts that IPv4 reached, as "tcp4". It lasts as
 // long as the process. A host that IPv6 reached gets no entry: a dial that
@@ -67,8 +72,11 @@ func reach(ctx context.Context, rawURL string, try func(context.Context, *http.C
 	host := u.Hostname()
 
 	network := family(host)
-	first, cancel := context.WithTimeout(ctx, stallLimit)
+	first, cancel := context.WithTimeoutCause(ctx, stallLimit, ErrStalled)
 	used, err := attempt(first, network, try)
+	if err != nil && errors.Is(context.Cause(first), ErrStalled) {
+		err = fmt.Errorf("%w: %w", ErrStalled, err)
+	}
 	cancel()
 	if err == nil {
 		remember(host, used)

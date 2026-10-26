@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -271,5 +274,25 @@ func TestARelayThatDidNotConnectFailsAtOnce(t *testing.T) {
 	defer stop()
 	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc asks again after") {
 		t.Errorf("a fetch after downFor did not try again: %v", err)
+	}
+}
+
+// A relay that refuses the connection answered: it is not down, and the
+// next fetch asks it again (#439).
+func TestARefusalIsNotDown(t *testing.T) {
+	var asked atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked.Add(1)
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+	r := relay.New("ws"+strings.TrimPrefix(server.URL, "http"), keyer.NewPlainKeySigner(nostr.Generate()))
+	for range 2 {
+		if _, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}}); err == nil {
+			t.Fatal("a fetch from a relay that refuses worked")
+		}
+	}
+	if asked.Load() < 2 {
+		t.Errorf("the relay was asked %d times, want each fetch to ask it", asked.Load())
 	}
 }

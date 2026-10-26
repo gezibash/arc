@@ -199,7 +199,7 @@ func (s *Session) warnOffline() {
 // address that failed, or a relay that gave no answer in time, so that no
 // relay answered the request (#396, #439).
 func offline(err error) bool {
-	if err == context.DeadlineExceeded { //nolint:errorlint // a leaf of the walk below
+	if err == context.DeadlineExceeded || err == relay.ErrStalled { //nolint:errorlint // leaves of the walk below
 		return true
 	}
 	// Each branch of a joined error must be offline, and errors.As takes

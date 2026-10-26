@@ -418,12 +418,14 @@ One relay that never answers MUST NOT stall a command when another relay
 answers (#439). A pull asks each relay at once. After the first answer, it
 waits at most 500 ms for the others, and then stops them. When a relay of
 the session did not connect, each send, query, NIP-77 session or live call
-to it in the next 30 seconds fails at once with the same error. A watch
+to it in the next 30 seconds fails at once with the same error. Only the
+relay's own timeout or a dial that failed marks it down, never a refusal or
+the deadline of the caller. A watch
 still tries to connect, so a provider watches again as soon as its relay
 is back. A relay that gave no answer in time counts as unreached: a command
 that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
 and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
-`TestARelayThatDidNotConnectFailsAtOnce` and `TestOfflineJournalIsQuiet`
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown` and `TestOfflineJournalIsQuiet`
 prove this.
 
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
