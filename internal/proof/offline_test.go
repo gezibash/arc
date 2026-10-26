@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -444,6 +445,7 @@ func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
 		{"a host that does not exist", "no such host", func() string { return "ws://no-such-relay.test" }, notFound},
 		{"a name that the DNS never answers", "no answer", func() string { return "ws://no-such-relay.test" }, mute},
 		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }, ""},
+		{"a host that closes each connection at once", "the connection was closed", func() string { return closingRelay(t) }, ""},
 		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }, ""},
 		{"a relay that closes each query as blocked", "the relay refused: blocked: this relay serves no one", func() string { return muteRelay(t, "MUTERELAY_MODE=closed") }, ""},
 		{"a relay that asks for authentication and sends no challenge", "the relay refused: it asks for authentication", func() string { return muteRelay(t, "MUTERELAY_MODE=auth") }, ""},
@@ -660,9 +662,18 @@ func TestARelayThatClosesAtOnceGetsOneLineInEachSync(t *testing.T) {
 // home, until the time until, as an earlier command would.
 func markDown(t *testing.T, m machine, url string, until time.Time) {
 	t.Helper()
+	markDownWhy(t, m, url, until, "no answer")
+}
+
+// markDownWhy is markDown with the reason why.
+func markDownWhy(t *testing.T, m machine, url string, until time.Time, why string) {
+	t.Helper()
 	path := filepath.Join(filepath.Dir(relaysFile(t, m)), "relays-down.json")
-	body := fmt.Sprintf(`{%q:{"until":%d,"why":"no answer"}}`, url, until.Unix())
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+	body, err := json.Marshal(map[string]any{url: map[string]any{"until": until.Unix(), "why": why}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -744,5 +755,22 @@ func TestTheNoteOfAnUnwritableMarkFileReachesArcDM(t *testing.T) {
 		if n := strings.Count(step.got.Stderr, note+"\n"); n != 1 {
 			t.Errorf("%s wrote the note %d times, want once:\n%s", step.what, n, step.got.Stderr)
 		}
+	}
+}
+
+// The reason of a mark is text that any process of the home, or a person,
+// wrote in relays-down.json. The skipped line of sync shows it escaped
+// once (#444, #464).
+func TestAHostileReasonOfAMarkIsEscapedOnce(t *testing.T) {
+	const why = "no answer\x1b[2K\u202e\nforged line"
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	url := muteRelayURL(t)
+	listRelays(t, home, url)
+	markDownWhy(t, home, url, time.Now().Add(20*time.Second), why)
+	got := strings.TrimRight(home.try("", "sync").Stderr, "\n")
+	want := "arc: " + terminal.EscapeLine(url+": skipped: "+why+" at the last try; arc tries it again in ")
+	if strings.Contains(got, "\n") || !strings.HasPrefix(got, want) || !strings.HasSuffix(got, "s") {
+		t.Errorf("the sync wrote %q, want one line %q followed by the time", got, want)
 	}
 }
