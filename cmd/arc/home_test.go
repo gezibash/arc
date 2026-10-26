@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -667,5 +668,42 @@ func TestTheRefusalOfATildeHomeIsEscapedOnce(t *testing.T) {
 	}
 	if got := terminal.EscapeLine(err.Error()); !strings.Contains(got, `"~x\ny/z"`) {
 		t.Errorf("the escaped refusal is %q, want \\n once", got)
+	}
+}
+
+// forgedOrRaw says whether out holds a line that a hostile name forged, or
+// a raw control character.
+func forgedOrRaw(out string) bool {
+	return strings.Contains("\n"+out, "\narc: fake") || strings.ContainsFunc(out, func(r rune) bool { return r != '\n' && unicode.IsControl(r) })
+}
+
+// No name or path that a user or the file system controls forges a line of
+// arc, or reaches the terminal raw (#441): a HOME with a newline, an
+// identity folder with one, and a relay URL with one, which arc refuses.
+func TestNoHostileNameForgesALine(t *testing.T) {
+	home := hostileHome(t)
+	dot := filepath.Join(home, ".arc")
+	for _, args := range [][]string{{"keys", "gen"}, {"whoami"}, {"keys", "list"}} {
+		out, errs, err := runErr(t, args...)
+		if err != nil {
+			t.Fatalf("arc %s: %v", strings.Join(args, " "), err)
+		}
+		if forgedOrRaw(out + errs) {
+			t.Errorf("arc %s with a hostile HOME printed %q", strings.Join(args, " "), out+errs)
+		}
+	}
+	hostile := filepath.Join(citizensDir(dot), "x\narc: fake forged\x1b[2J")
+	if err := os.MkdirAll(hostile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, errs, err := runErr(t, "keys", "list")
+	if err != nil || forgedOrRaw(out+errs) || !strings.Contains(out, `x\narc: fake forged\x1b[2J`) {
+		t.Errorf("arc keys list with a hostile identity folder printed %q, %v", out+errs, err)
+	}
+	if _, _, err := runErr(t, "relay", "add", "ws://a.example\narc: fake forged"); err == nil || !strings.Contains(err.Error(), "no space and no control character") {
+		t.Errorf("arc relay add of a URL with a newline gave %v, want a refusal", err)
+	}
+	if relays, _ := readRelays(dot); len(relays) != 0 {
+		t.Errorf("the refused URL left the relays %q", relays)
 	}
 }

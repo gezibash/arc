@@ -35,6 +35,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
@@ -365,6 +366,12 @@ func relayCommand() *cobra.Command {
 			url := args[0]
 			if !strings.HasPrefix(url, "ws://") && !strings.HasPrefix(url, "wss://") {
 				return errors.New("a relay is a ws:// or wss:// URL")
+			}
+			// The list keeps one relay on each line: a newline would add
+			// a second relay, and a control character would reach the
+			// terminal in each line that names the relay (#441).
+			if strings.ContainsFunc(url, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
+				return errors.New("a relay URL holds no space and no control character")
 			}
 			dir, err := home(command)
 			if err != nil {
