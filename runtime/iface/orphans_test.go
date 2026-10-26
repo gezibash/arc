@@ -151,7 +151,7 @@ func TestAFailedWriteNamesTheAddressOfItsParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errs, "3 parts that no page names are at addresses that arc cannot name") {
+	if !strings.Contains(errs, "3 parts that no page names are left by a write that was interrupted: arc cannot name their address; a repair frees them after an hour") {
 		t.Errorf("ls does not count the parts of the failed write: %q", errs)
 	}
 
