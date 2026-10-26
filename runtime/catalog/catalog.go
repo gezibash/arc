@@ -270,7 +270,7 @@ func After(s EventReader, author nostr.PubKey, id string, now nostr.Timestamp) (
 		// there: the clock of this machine, or of the one that signed it,
 		// is wrong (#422).
 		if event.CreatedAt > clock+nostr.Timestamp(MaxSkew/time.Second) {
-			return 0, fmt.Errorf("the newest announcement of %s is dated %s, more than %s after the clock of this machine: check the clock of this machine, and of the machine that signed it", id, event.CreatedAt.Time().UTC().Format(time.RFC3339), MaxSkew)
+			return 0, &AheadError{ID: id, Ahead: time.Duration(event.CreatedAt-clock) * time.Second}
 		}
 		if event.CreatedAt >= now {
 			now = event.CreatedAt + 1
@@ -282,6 +282,17 @@ func After(s EventReader, author nostr.PubKey, id string, now nostr.Timestamp) (
 // MaxSkew is how far after the clock of this machine an announcement can
 // be dated, so that a new one is signed after it.
 const MaxSkew = 10 * time.Minute
+
+// AheadError is the error of an announcement dated more than MaxSkew after
+// the clock of this machine.
+type AheadError struct {
+	ID    string
+	Ahead time.Duration
+}
+
+func (e *AheadError) Error() string {
+	return fmt.Sprintf("the newest announcement of %s is %s ahead of the clock of this machine, more than %s: check the clock of this machine, and of the machine that signed it", e.ID, e.Ahead, MaxSkew)
+}
 
 // Install is one capability that the citizen trusts.
 type Install struct {

@@ -191,13 +191,13 @@ func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
-	out, done := serving(t, ctx, home)
+	out, errs, done := servingWithErrors(t, ctx, home)
 	t.Cleanup(func() { cancel(); <-done })
-	if !waitFor(out, "is not announced yet: no relay has answered", 5*time.Second) {
+	if !waitFor(errs, "is not announced yet: no relay has answered", 5*time.Second) {
 		t.Fatalf("arc serve did not say that it waits: %q", out.String())
 	}
 	time.Sleep(4 * time.Second)
-	if n := strings.Count(out.String(), "is not announced yet"); n != 1 {
+	if n := strings.Count(errs.String(), "is not announced yet"); n != 1 {
 		t.Errorf("arc serve said %d times that it waits, want once", n)
 	}
 	up()
@@ -243,5 +243,86 @@ func TestTheAnnouncerSignsNothingBlind(t *testing.T) {
 	}
 	if len(signed) != 1 || signed[0] != 1_900_000_000 || said != 1 {
 		t.Errorf("the announcer signed at %v and said %d times, want one signature at the time after the newest, after one word", signed, said)
+	}
+}
+
+// With no relay at all, arc announce refuses, as when no relay answers,
+// and keeps nothing to publish later (#445).
+func TestAnnounceRefusesWithNoRelay(t *testing.T) {
+	home := t.TempDir()
+	if err := arc(t, home, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	err := arc(t, home, "announce", filepath.Join("..", "..", "apps", "files", "manifest.json"))
+	if err == nil || !strings.Contains(err.Error(), "no relay answered, so arc cannot know the newest announcement") {
+		t.Fatalf("arc announce with no relay gave %v, want a refusal", err)
+	}
+	url := testrelay.Start(t)
+	if err := arc(t, home, "relay", "add", url); err != nil {
+		t.Fatal(err)
+	}
+	_ = arc(t, home, "sync")
+	batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{identityOf(t, home).key.Public}})
+	if err != nil || len(batch.Events) != 0 {
+		t.Errorf("the refused announcement went out later: %d, %v", len(batch.Events), err)
+	}
+}
+
+// An announcement far ahead of this clock holds the new one back, but the
+// announcer only waits: it says so once, with the gap in words, and signs
+// when the clock reaches the cap (#445).
+func TestTheAnnouncerWaitsForAnAnnouncementFarAhead(t *testing.T) {
+	ahead := true
+	var signed int
+	var said []string
+	a := &announcer{
+		pull: func() error { return nil },
+		at: func() (nostr.Timestamp, error) {
+			if ahead {
+				return 0, &catalog.AheadError{ID: "exec", Ahead: 15 * time.Minute}
+			}
+			return 1_900_000_000, nil
+		},
+		sign: func(nostr.Timestamp) error { signed++; return nil },
+		say:  func(text string) { said = append(said, text) },
+	}
+	for range 3 {
+		if err := a.announce(); err != nil {
+			t.Fatalf("an announcement far ahead stopped the announcer: %v", err)
+		}
+	}
+	if signed != 0 || !a.waiting() || len(said) != 1 || !strings.Contains(said[0], "an announcement is 15m0s ahead of this clock; arc announces again in 5m0s") {
+		t.Errorf("with one far ahead, the announcer signed %d, waits %v, and said %q", signed, a.waiting(), said)
+	}
+	ahead = false
+	if err := a.announce(); err != nil || signed != 1 || a.waiting() {
+		t.Errorf("once the clock reached it, the announcer gave %v, signed %d, waits %v", err, signed, a.waiting())
+	}
+}
+
+// While its only relay is down, arc serve says one line, that it waits:
+// the warnings of each watch and of the relay list stay quiet (#445).
+func TestServeSaysOneLineWhileNoRelayAnswers(t *testing.T) {
+	home := t.TempDir()
+	if err := arc(t, home, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	if err := arc(t, home, "relay", "add", "ws://"+deadAddress(t)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	_, out, done := servingWithErrors(t, ctx, home)
+	time.Sleep(8 * time.Second)
+	cancel()
+	<-done
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	var other []string
+	for _, line := range lines {
+		if !strings.Contains(line, "is not announced yet") && !strings.Contains(line, "the service is stopping") {
+			other = append(other, line)
+		}
+	}
+	if len(other) != 0 || !strings.Contains(out.String(), "is not announced yet") {
+		t.Errorf("arc serve with its only relay down said %q, want only that it waits", out.String())
 	}
 }

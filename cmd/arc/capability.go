@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -88,7 +89,7 @@ func serve(command *cobra.Command, args []string) error {
 		return err
 	}
 
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := slog.New(slog.NewTextHandler(command.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo}))
 	dir, err := home(command)
 	if err != nil {
 		return err
@@ -170,8 +171,7 @@ func serve(command *cobra.Command, args []string) error {
 	// the newest, and signs nothing: it says so once, and asks again.
 	announced := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {definition.ID}}}
 	gate := &announcer{
-		known: len(sess.Relays) == 0,
-		pull:  func() error { return node.Unreached(sess.Node.Pull(ctx, announced, sess.Relays)) },
+		pull: func() error { return node.Unreached(sess.Node.Pull(ctx, announced, sess.Relays)) },
 		at: func() (nostr.Timestamp, error) {
 			return catalog.After(sess.Node.Store, sess.Key.Public, definition.ID, nostr.Now())
 		},
@@ -187,14 +187,17 @@ func serve(command *cobra.Command, args []string) error {
 			fmt.Fprintln(command.ErrOrStderr(), "arc: info: "+terminal.EscapeLine(fmt.Sprintf("%s %s", definition.ID, text)))
 		},
 	}
+	gate.known.Store(len(sess.Relays) == 0)
 	announce := gate.announce
-	known := func() bool { return gate.known }
+	// While it waits, the line of the announcer is the only one: each
+	// relay that does not answer would else warn again every 3 s (#445).
+	quiet := slog.New(waitingHandler{Handler: log.Handler(), waiting: gate.waiting})
 	if err := announce(); err != nil {
 		return err
 	}
 	// A caller that shares no relay with this provider finds its read
 	// relays in this list. An indexer that was down gets it on a later tick.
-	owed := publishRelayList(ctx, sess)
+	owed := publishRelayList(ctx, sess, command.ErrOrStderr(), gate.waiting)
 
 	// A watch takes the mail of a live relay as it arrives. A tick syncs a
 	// directory, or a relay that cannot watch, because neither can push.
@@ -220,12 +223,12 @@ func serve(command *cobra.Command, args []string) error {
 			if _, err := sess.Node.Sync(ctx, mine, r); err != nil {
 				log.Debug("the announcement did not sync", "transport", r.Name(), "error", err)
 			}
-		}, log)
+		}, quiet)
 	}
 
 	// Say "serves" only when a relay has the watch, so that a caller that
 	// waits for the line can call at once.
-	missing, err := watchAll(ctx, server, sess.Relays, log)
+	missing, err := watchAll(ctx, server, sess.Relays, quiet)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "the service is stopping")
 		return nil
@@ -278,7 +281,7 @@ func serve(command *cobra.Command, args []string) error {
 	for {
 		// While no relay answered, the announcement waits: ask again soon.
 		var unknown <-chan time.Time
-		if !known() {
+		if gate.waiting() {
 			unknown = time.After(3 * time.Second)
 		}
 		select {
@@ -763,7 +766,7 @@ func callCapability(command *cobra.Command, args []string) error {
 // publishRelayList tells other citizens which relays this citizen reads and
 // writes on, as NIP-65 defines, and which relays it reads its mail on, as
 // NIP-17 defines. It returns the indexers that did not get each list.
-func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Transport {
+func publishRelayList(ctx context.Context, sess *citizen.Session, errs io.Writer, quiet func() bool) []transport.Transport {
 	// The lists go to the relays and to the indexers.
 	type list struct {
 		event nostr.Event
@@ -773,13 +776,13 @@ func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Tr
 	var lists []list
 	outbox, err := relaylist.Make(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the NIP-65 relay list was not signed: %v", err)))
+		fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("the NIP-65 relay list was not signed: %v", err)))
 	} else {
 		lists = append(lists, list{outbox, public})
 	}
 	inbox, err := mail.RelayList(ctx, sess.Signer, sess.URLs, nostr.Now())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the relay list was not signed: %v", err)))
+		fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("the relay list was not signed: %v", err)))
 	} else {
 		lists = append(lists, list{inbox, public})
 	}
@@ -788,7 +791,9 @@ func publishRelayList(ctx context.Context, sess *citizen.Session) []transport.Tr
 		_, sent, _ := sess.Node.Publish(ctx, l.event, l.to)
 		for i, s := range sent {
 			if s.Err != nil {
-				fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the relay list did not reach %s: %v", s.Transport, s.Err)))
+				if quiet == nil || !quiet() {
+					fmt.Fprintln(errs, terminal.EscapeLine(fmt.Sprintf("the relay list did not reach %s: %v", s.Transport, s.Err)))
+				}
 				// The relays come first in l.to, and the indexers after them.
 				if i >= len(sess.Relays) && !slices.Contains(owed, l.to[i]) {
 					owed = append(owed, l.to[i])
@@ -826,6 +831,10 @@ func announceCmd() *cobra.Command {
 			mine := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {m.ID}}}
 			// With no answer, arc cannot know the newest announcement: one
 			// of the same second would tie, and the older could win (#422).
+			// With no relay at all, no relay answers either (#445).
+			if len(sess.Relays) == 0 {
+				return fmt.Errorf("no relay answered, so arc cannot know the newest announcement of %s that the relays hold: announce it when a relay answers: this citizen has no relay; add one with arc relay add", terminal.EscapeLine(m.ID))
+			}
 			if err := node.Unreached(sess.Node.Pull(command.Context(), mine, sess.Relays)); err != nil {
 				return fmt.Errorf("no relay answered, so arc cannot know the newest announcement of %s that the relays hold: announce it when a relay answers: %w", terminal.EscapeLine(m.ID), err)
 			}
@@ -858,7 +867,9 @@ func announceCmd() *cobra.Command {
 // announcements that the relays hold, arc cannot know the newest: it signs
 // nothing, and says so once.
 type announcer struct {
-	known, told bool
+	// known and ahead are read by the watches of other goroutines.
+	known, ahead atomic.Bool
+	told         bool
 	// pull asks the relays for the announcements, and is nil when one
 	// answered.
 	pull func() error
@@ -869,10 +880,10 @@ type announcer struct {
 }
 
 func (a *announcer) announce() error {
-	if !a.known {
-		a.known = a.pull() == nil
+	if !a.known.Load() {
+		a.known.Store(a.pull() == nil)
 	}
-	if !a.known {
+	if !a.known.Load() {
 		if !a.told {
 			a.say("is not announced yet: no relay has answered, so arc cannot know the newest announcement; it asks again")
 			a.told = true
@@ -880,8 +891,36 @@ func (a *announcer) announce() error {
 		return nil
 	}
 	at, err := a.at()
+	// An announcement far ahead of this clock, from a wrong clock or a
+	// hostile relay, holds the new one back, but arc serve keeps serving:
+	// to stop would turn it into an outage. It says so once (#445).
+	if ahead, ok := errors.AsType[*catalog.AheadError](err); ok {
+		if !a.ahead.Load() {
+			a.say(fmt.Sprintf("is not announced: an announcement is %s ahead of this clock; arc announces again in %s", ahead.Ahead, ahead.Ahead-catalog.MaxSkew))
+		}
+		a.ahead.Store(true)
+		return nil
+	}
+	a.ahead.Store(false)
 	if err != nil {
 		return err
 	}
 	return a.sign(at)
+}
+
+// waiting says whether the announcer waits: for a relay that answers, or
+// for the clock to reach an announcement far ahead of it.
+func (a *announcer) waiting() bool { return !a.known.Load() || a.ahead.Load() }
+
+// waitingHandler drops each record while waiting says so.
+type waitingHandler struct {
+	slog.Handler
+	waiting func() bool
+}
+
+func (h waitingHandler) Handle(ctx context.Context, record slog.Record) error {
+	if h.waiting() {
+		return nil
+	}
+	return h.Handler.Handle(ctx, record)
 }
