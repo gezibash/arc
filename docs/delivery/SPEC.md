@@ -414,6 +414,36 @@ node races both families, IPv6 first, and starts IPv4 after 300 ms.
 `TestACallMovesToIPv4WhenIPv6Stalls` and
 `TestSyncUsesOneConnectionPerRelay` prove this.
 
+One relay that never answers MUST NOT stall a command when another relay
+answers (#439). A pull asks each relay at once. After the first answer, it
+waits at most 500 ms for the others, and then stops them. When a relay of
+the session did not connect, each send, query, NIP-77 session or live call
+to it in the next 30 seconds fails at once with the same error. Only the
+relay's own timeout or a dial that failed marks it down, never a refusal or
+the deadline of the caller. A relay that took the connection, and then gave
+no EOSE, OK or CLOSED within its own timeout, is down in the same way,
+unless it answers a probe at once, the event of no ID, within 5 seconds: a
+relay that ignores one kind is up, and only that call fails. To find a
+relay that gives no answer thus takes about 20 seconds, the timeout of 15
+and the probe of 5, once; an older arc waited 15 seconds for each call. A
+first attempt that raced both address families and reached neither within
+4 seconds ends the connect: the host is behind a black hole. `arc sync`
+first asks each relay that probe, all at once, so that relays that give no
+answer cost one timeout in all. It names each relay that gave no answer in
+one line of plain words at its end, with its reason: a refused connection,
+a host that does not exist, no answer, or no answer for mail from a relay
+that answered the probe. That line is the only line about the relay, with
+or without a relay that answers. A send and a publish give the event to
+each relay at once, so relays that give no answer cost one wait in all. A
+send opens a new connection after a stall only on a connection where the
+relay answered before. A watch
+still tries to connect, so a provider watches again as soon as its relay
+is back. A relay that gave no answer in time counts as unreached: a command
+that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
+and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`
+prove this.
+
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
 the NIP-17 list, kind 10050. Each list names every relay of the citizen. A
 citizen does not publish the private NIP-37 list, kind 10013, because no

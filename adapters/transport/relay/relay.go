@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"math"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -138,6 +139,14 @@ type kept struct {
 	conn *nostr.Relay
 	// used is when a call last took conn.
 	used time.Time
+	// heard is conn once the relay answered on it. A connection that
+	// never answered has no answer to lose, so a stalled send does not
+	// open a new one (#442).
+	heard *nostr.Relay
+	// down is the error of the last connect that failed, until downUntil:
+	// a fetch in that time fails at once with it (#439).
+	down      error
+	downUntil time.Time
 
 	// info is the NIP-11 document, after the first fetch that worked.
 	infoMu sync.Mutex
@@ -245,6 +254,85 @@ func (r Relay) Close() error {
 	return r.kept.drop(conn, "Close of the relay")
 }
 
+// callTimeout is Timeout, the time that a send, a query or a NIP-77
+// session gives the relay. A test makes it short.
+var callTimeout = Timeout
+
+// ErrNoAnswer is the cause of the timeout of a call of the relay: the
+// relay, not the caller, ended the call.
+var ErrNoAnswer = errors.New("the relay gave no answer in time")
+
+// downFor is how long a fetch fails at once after a connect failed.
+var downFor = 30 * time.Second
+
+// isDown is the error of the last connect that failed, while it is newer
+// than downFor, or nil.
+func (k *kept) isDown() error {
+	if k == nil {
+		return nil
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.down == nil || time.Now().After(k.downUntil) {
+		return nil
+	}
+	return fmt.Errorf("%w; arc asks again in %s", k.down, time.Until(k.downUntil).Round(time.Second))
+}
+
+// silent judges a call on a connection that the relay took, and that gave
+// no EOSE, OK or CLOSED within the relay's own timeout (#439). It asks the
+// relay one question that each relay answers at once: a relay that answers
+// is up, and silent says so; one that does not is down for downFor. A
+// refusal is an answer, and the deadline of the caller is not the relay's.
+func (k *kept) silent(ctx context.Context, conn *nostr.Relay, err error) (up bool) {
+	if err == nil || answered(err) || !errors.Is(context.Cause(ctx), ErrNoAnswer) {
+		return false
+	}
+	if conn != nil && conn.IsConnected() && alive(context.Background(), conn) {
+		return true
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.down, k.downUntil = err, time.Now().Add(downFor)
+	return false
+}
+
+// failedToReach says whether err is a dial, a lookup or an address that
+// failed, or a first attempt that stalled: an answer of the relay, such as
+// a refusal, is not. reach tries the other address family after any failed
+// attempt, so only its first attempt says whether the relay answered.
+func failedToReach(err error) bool {
+	for e := err; e != nil; {
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			if errs := joined.Unwrap(); len(errs) > 0 {
+				err = errs[0]
+			}
+			break
+		}
+		e = errors.Unwrap(e)
+	}
+	var op *net.OpError
+	var dns *net.DNSError
+	var addr *net.AddrError
+	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
+}
+
+// hear keeps that the relay answered on conn.
+func (k *kept) hear(conn *nostr.Relay) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.conn == conn {
+		k.heard = conn
+	}
+}
+
+// heardOn says whether the relay answered on conn.
+func (k *kept) heardOn(conn *nostr.Relay) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.heard == conn
+}
+
 // drop closes conn, and keeps why. If conn is the kept connection, the next
 // call connects.
 func (k *kept) drop(conn *nostr.Relay, why string) error {
@@ -315,12 +403,32 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			k.conn = nil
 		}
 		if k.conn, err = r.connect(ctx, k.sessions); err != nil {
+			// A relay that did not connect is down for a while: the other
+			// calls of a command do not wait for it again (#439). A caller
+			// that stopped says nothing about the relay.
+			// Only the relay's own timeout, or a dial that failed, marks it
+			// down: never a refusal, nor the deadline of the caller.
+			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), ErrNoAnswer) {
+				k.down, k.downUntil = err, time.Now().Add(downFor)
+			}
 			return nil, false, nil, err
 		}
+		k.down = nil
 	}
 	k.used = time.Now()
 	conn = k.conn
 	return conn, reused, func(err error) {
+		// A relay that connected, and then gave no EOSE, OK or CLOSED
+		// within its own timeout, is down as one that did not connect: each
+		// call to it would wait the whole timeout again (#439). One that
+		// answers a probe then is up: only that call got no answer, as from
+		// a relay that ignores one kind.
+		if err == nil || answered(err) {
+			k.hear(conn)
+		}
+		if k.silent(ctx, conn, err) {
+			return
+		}
 		// An answer of the relay shows that the connection works. A caller
 		// that stopped says nothing about it. Any other failure, also a
 		// deadline, can come from a connection that stalled, so the next call
@@ -358,17 +466,21 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := k.isDown(); err != nil {
+		return err
+	}
 
 	conn, reused, _, err := r.open(ctx)
 	if err != nil {
 		return err
 	}
-	if reused {
+	if reused && k.heardOn(conn) {
 		first, cancel := context.WithTimeout(ctx, reuseWait)
 		err := r.publish(first, conn, event)
 		cancel()
 		// A refusal is an answer of the relay: the connection works.
 		if err == nil || refused(err) {
+			k.hear(conn)
 			return r.named(err)
 		}
 		_ = k.drop(conn, "a send on the reused connection got no answer: "+err.Error())
@@ -379,7 +491,9 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 			return err
 		}
 	}
-	if err = r.publish(ctx, conn, event); err != nil && !refused(err) {
+	if err = r.publish(ctx, conn, event); err == nil || refused(err) {
+		k.hear(conn)
+	} else if !k.silent(ctx, conn, err) {
 		_ = k.drop(conn, "a send failed: "+err.Error())
 	}
 	return r.named(err)
@@ -491,7 +605,7 @@ func (s *sessions) dispatch(data string) {
 
 // Send publishes one event. A relay that already holds it accepts it again.
 func (r Relay) Send(ctx context.Context, event nostr.Event) error {
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	if r.kept != nil {
@@ -658,7 +772,10 @@ func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.F
 // many events one query returns, so Fetch asks again for older events until a
 // page brings nothing new.
 func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, error) {
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	if err := r.kept.isDown(); err != nil {
+		return transport.Batch{}, err
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	conn, _, done, err := r.open(ctx)
@@ -768,6 +885,9 @@ func closed(reason string) error {
 // sends, all on one connection. An answer to a live call is ephemeral, and a
 // relay never stores it, so a subscription that came after it would miss it.
 func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (answer nostr.Event, err error) {
+	if err := r.kept.isDown(); err != nil {
+		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
+	}
 	conn, _, done, err := r.open(ctx)
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
@@ -832,7 +952,10 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	if err := r.kept.isDown(); err != nil {
+		return nil, nil, true, err
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	info, err := r.information(ctx)

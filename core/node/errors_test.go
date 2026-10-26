@@ -3,7 +3,9 @@ package node_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/node"
@@ -48,5 +50,42 @@ func TestPersistenceFailureIsReportedByPullAndWatch(t *testing.T) {
 	}
 	if _, ok := <-ch; ok {
 		t.Fatal("failed watch continued")
+	}
+}
+
+// silent is a relay that takes a request and never answers, until the
+// caller stops it.
+type silent struct{}
+
+func (silent) Name() string                            { return "silent relay" }
+func (silent) Send(context.Context, nostr.Event) error { return nil }
+func (silent) Fetch(ctx context.Context, _ nostr.Filter) (transport.Batch, error) {
+	<-ctx.Done()
+	return transport.Batch{}, ctx.Err()
+}
+
+type keepsAll struct{}
+
+func (keepsAll) Save(nostr.Event) (store.Result, error) {
+	return store.Result{Outcome: store.Stored}, nil
+}
+func (keepsAll) Query(nostr.Filter) ([]nostr.Event, error) { return nil, nil }
+func (keepsAll) Has(nostr.ID) (bool, error)                { return false, nil }
+
+// A relay that never answers stalls a pull for at most PullGrace after
+// another relay answered, wherever it is in the list (#439). The pull keeps
+// what the other relay gave, and says that the silent one gave no answer.
+func TestASilentRelayStallsAPullOnlyForTheGrace(t *testing.T) {
+	n := &node.Node{Store: keepsAll{}}
+	answers := oneEvent{event: nostr.Event{Content: "kept"}}
+	for _, order := range [][]transport.Transport{{silent{}, answers}, {answers, silent{}}} {
+		start := time.Now()
+		reports, errs := n.Pull(context.Background(), nostr.Filter{}, order)
+		if took := time.Since(start); took > node.PullGrace+time.Second {
+			t.Errorf("a pull with a silent relay took %s", took)
+		}
+		if len(reports) != 1 || reports[0].Received != 1 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "silent relay gave no answer within") {
+			t.Errorf("the pull gave %+v and %v, want the event of one relay and the silence of the other", reports, errs)
+		}
 	}
 }

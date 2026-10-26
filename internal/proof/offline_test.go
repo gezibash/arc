@@ -1,11 +1,14 @@
 package proof
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -203,6 +206,9 @@ func TestOfflineJournalIsQuiet(t *testing.T) {
 	for range 2 {
 		home.try("", "relay", "add", "ws://"+closedPort(t))
 	}
+	// A relay that takes each connection and never answers times out: it
+	// folds into the same line (#439).
+	home.try("", "relay", "add", "ws://"+silentRelay(t))
 
 	const offline = "arc: no relay answered, so this uses what this machine holds\n"
 	for _, step := range []struct {
@@ -240,4 +246,283 @@ func closedPort(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return addr
+}
+
+// silentRelay is a local address that takes each connection and never
+// answers, as a relay behind a black hole does.
+func silentRelay(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns := make(chan net.Conn, 64)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			conns <- c
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		for {
+			select {
+			case c := <-conns:
+				_ = c.Close()
+			default:
+				return
+			}
+		}
+	})
+	return l.Addr().String()
+}
+
+// muteRelayURL runs a relay that takes each WebSocket connection and never
+// answers on it, the most common black hole, and returns its URL.
+func muteRelayURL(t *testing.T) string {
+	t.Helper()
+	return muteRelay(t)
+}
+
+// muteRelay runs muterelay with env, and returns its URL.
+func muteRelay(t *testing.T, env ...string) string {
+	t.Helper()
+	command := exec.Command(program("muterelay"))
+	command.Env = append(append(os.Environ(), "MUTERELAY_LISTEN=127.0.0.1:0"), env...)
+	out, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(line)
+}
+
+// Relays that connect and never answer cost a sync one timeout in all, not
+// one for each of their queries, nor one for each relay (#439, #442): sync
+// asks each relay at once first, and a relay that gives no answer, nor to
+// a probe, is down. The sync names each relay that gave no answer in one
+// line, with its reason.
+func TestSyncWaitsForAMuteRelayOnce(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", url)
+	listRelays(t, home, muteRelayURL(t), muteRelayURL(t), "ws://"+closedPort(t))
+	start := time.Now()
+	got := home.try("", "sync")
+	took := time.Since(start)
+	// One timeout of 15 s and one probe of 5 s, for both mute relays at once.
+	if took > 30*time.Second {
+		t.Errorf("arc sync took %s with two mute relays, want about one timeout of 15 s and a probe of 5 s", took)
+	}
+	// One line for each relay that gave no answer, with its reason: the
+	// closed port keeps the refusal.
+	if strings.Count(got.Stderr, ": no answer; arc syncs with it again") != 2 || strings.Count(got.Stderr, ": the connection was refused; arc syncs with it again") != 1 || strings.Count(got.Stderr, "\n") != 3 {
+		t.Errorf("arc sync with two mute relays and a closed port wrote %q, want one line for each, with its reason", got.Stderr)
+	}
+	t.Logf("ok: arc sync took %s with two mute relays and a closed port", took.Round(100*time.Millisecond))
+}
+
+// Each message that waits for the relays of its recipient costs a sync
+// the lookup of those relays. With a mute relay listed, that cost one
+// timeout for each message, one after another (#442). After the first
+// timeout the mute relay is down, so a sync with 6 waiting messages takes
+// about as long as a sync with 1.
+func TestPendingMessagesWaitForAMuteRelayOnce(t *testing.T) {
+	work := t.TempDir()
+	url := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", url)
+	// A recipient with no relay list keeps its message waiting. The
+	// messages go out before the mute relay is listed, so that each send
+	// does not wait for it.
+	send := func(messages int) {
+		for range messages {
+			home.try("", "message", "send", keys.Generate().Public.Hex(), "hello")
+		}
+	}
+	timed := func() time.Duration {
+		start := time.Now()
+		home.try("", "sync")
+		return time.Since(start)
+	}
+	send(1)
+	listRelays(t, home, muteRelayURL(t))
+	one := timed()
+	unlistRelays(t, home, 1)
+	send(5)
+	listRelays(t, home, muteRelayURL(t))
+	six := timed()
+	if six > one+10*time.Second {
+		t.Errorf("a sync with 6 waiting messages took %s, and with 1 took %s: each message waits for the mute relay", six, one)
+	}
+	t.Logf("ok: a sync took %s with 1 waiting message, and %s with 6", one.Round(100*time.Millisecond), six.Round(100*time.Millisecond))
+}
+
+// relaysFile is the relay list of the one identity of a home.
+func relaysFile(t *testing.T, m machine) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(m.home, "citizens"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("the home holds %d identities: %v", len(entries), err)
+	}
+	return filepath.Join(m.home, "citizens", entries[0].Name(), "relays")
+}
+
+// listRelays adds relays to the list of a home as arc relay add keeps
+// them, without the publish of the relay list, which would wait for a relay
+// that does not answer.
+func listRelays(t *testing.T, m machine, urls ...string) {
+	t.Helper()
+	file, err := os.OpenFile(relaysFile(t, m), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	for _, url := range urls {
+		if _, err := file.WriteString(url + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// unlistRelays removes the last n relays of the list of a home.
+func unlistRelays(t *testing.T, m machine, n int) {
+	t.Helper()
+	body, err := os.ReadFile(relaysFile(t, m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+	if err := os.WriteFile(relaysFile(t, m), []byte(strings.Join(lines[:len(lines)-n], "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rawErrorText is text of Go errors that a line for the user never holds.
+var rawErrorText = []string{"context deadline exceeded", "failed to WebSocket dial", "error opening websocket", "dial tcp", "i/o timeout", "no relay answered: relay"}
+
+// A sync names each relay that gave no answer in one line of plain words,
+// whatever kind of relay it is, and with or without a relay that answers
+// (#442). Each layout has one bad relay, so the sync writes one line.
+func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	// A name that does not exist gets its answer from a DNS server of the
+	// test, not from the DNS of the machine, which can be slow (#442).
+	notFound, mute := dnsServer(t, true), dnsServer(t, false)
+	layouts := []struct {
+		name, reason string
+		url          func() string
+		dns          string
+	}{
+		{"a relay that takes the WebSocket and never answers", "no answer", func() string { return muteRelayURL(t) }, ""},
+		{"a host that takes the connection and never answers", "no answer", func() string { return "ws://" + silentRelay(t) }, ""},
+		{"a host that does not exist", "no such host", func() string { return "ws://no-such-relay.test" }, notFound},
+		{"a name that the DNS never answers", "no answer", func() string { return "ws://no-such-relay.test" }, mute},
+		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }, ""},
+		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }, ""},
+	}
+	for i, layout := range layouts {
+		for _, withLive := range []bool{false, true} {
+			home := arc(t, filepath.Join(work, fmt.Sprintf("home-%d-%t", i, withLive))).using(program("arc-test"))
+			if layout.dns != "" {
+				home = home.with("ARC_TEST_DNS=" + layout.dns)
+			}
+			home.run("keys", "gen")
+			if withLive {
+				home.run("relay", "add", live)
+			}
+			bad := layout.url()
+			listRelays(t, home, bad)
+			got := home.try("", "sync")
+			want := bad + ": " + layout.reason + "; arc syncs with it again at the next sync"
+			lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+			if len(lines) != 1 || !strings.Contains(lines[0], want) {
+				t.Errorf("%s, with a live relay %t: arc sync wrote %q, want one line that says %q", layout.name, withLive, got.Stderr, want)
+			}
+			for _, raw := range rawErrorText {
+				if strings.Contains(got.Stderr, raw) {
+					t.Errorf("%s, with a live relay %t: arc sync wrote %q, which holds the Go text %q", layout.name, withLive, got.Stderr, raw)
+				}
+			}
+		}
+	}
+}
+
+// An arc-dm send to relays that connect and never answer waits for them
+// once, all at once, and dials each of them once: the wrap goes to each
+// relay at once, and a connection that never answered is not dialled
+// again (#442). With a live relay, two mute relays and a closed port, it
+// took two waits of 20 s, and dialled each mute relay twice.
+func TestADMSendDialsEachMuteRelayOnce(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", live)
+	peer := keys.Generate().Public.Hex()
+	home.run("message", "send", peer, "hello")
+	accepts := []string{filepath.Join(work, "accepts-1"), filepath.Join(work, "accepts-2")}
+	listRelays(t, home, muteRelay(t, "MUTERELAY_ACCEPTS="+accepts[0]), muteRelay(t, "MUTERELAY_ACCEPTS="+accepts[1]), "ws://"+closedPort(t))
+	start := time.Now()
+	got := home.using(program("arc-dm")).try("", "--arc", program("arc"), "--state", filepath.Join(work, "dm"), "send", peer, "again")
+	took := time.Since(start)
+	if got.Err != nil {
+		t.Fatalf("arc-dm send: %v\n%s", got.Err, got.Stderr)
+	}
+	// One timeout of 15 s and one probe of 5 s, for both mute relays at once.
+	if took > 30*time.Second {
+		t.Errorf("arc-dm send took %s with two mute relays, want about one timeout of 15 s and a probe of 5 s", took)
+	}
+	for _, file := range accepts {
+		body, _ := os.ReadFile(file)
+		if dials := strings.Count(string(body), "accept\n"); dials != 1 {
+			t.Errorf("arc-dm send dialled a mute relay %d times, want once", dials)
+		}
+	}
+	t.Logf("ok: arc-dm send took %s with two mute relays and a closed port", took.Round(100*time.Millisecond))
+}
+
+// dnsServer is a DNS server on a local port for arc-test. When notFound,
+// it answers each question at once that the name does not exist; else it
+// never answers. It returns its address.
+func dnsServer(t *testing.T, notFound bool) string {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, from, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if !notFound || n < 12 {
+				continue
+			}
+			// The same ID and question, with the flags of an answer that
+			// says the name does not exist (RCODE 3), and no records.
+			answer := append([]byte(nil), buf[:n]...)
+			answer[2], answer[3] = 0x81, 0x83
+			clear(answer[6:12])
+			_, _ = conn.WriteTo(answer, from)
+		}
+	}()
+	return conn.LocalAddr().String()
 }
