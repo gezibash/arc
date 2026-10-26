@@ -653,8 +653,8 @@ func TestALinkThatLeadsToNoHomeWarns(t *testing.T) {
 		if err != nil || !strings.Contains(out, older) {
 			t.Fatalf("with ~/.arc -> %s, arc whoami: %v, %q", target, err, out)
 		}
-		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "arc uses "+old+", because ") {
-			t.Errorf("with ~/.arc -> %s, arc warned %q, want the home in use and why", target, errs)
+		if strings.Count(errs, "\n") != 1 || !strings.Contains(errs, "is a link that leads to no home of arc. arc uses "+old) || strings.Contains(errs, "both") {
+			t.Errorf("with ~/.arc -> %s, arc warned %q, want its own words for a link", target, errs)
 		}
 	}
 }
@@ -720,5 +720,19 @@ func TestNoHostileNameForgesALine(t *testing.T) {
 	}
 	if out, _, err := runErr(t, "relay", "ls"); err != nil || !strings.Contains(out, `ws://x\x1b]0;pwned\x07.invalid`) {
 		t.Errorf("arc relay ls showed %q, %v, want the relay escaped", out, err)
+	}
+}
+
+// A bad name in the default file is escaped once, at the edge (#443).
+func TestABadDefaultNameIsEscapedOnce(t *testing.T) {
+	home := user(t)
+	dot := filepath.Join(home, ".arc")
+	identity(t, dot)
+	if err := os.WriteFile(defaultPath(dot), []byte("x\nafter"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runErr(t, "whoami")
+	if err == nil || !strings.Contains(terminal.EscapeLine(err.Error()), `"x\nafter"`) {
+		t.Errorf("the error of a bad default name is %v, want it escaped once", err)
 	}
 }

@@ -329,7 +329,7 @@ func chosen(command *cobra.Command) (string, string, error) {
 		if !errors.Is(err, os.ErrNotExist) {
 			return "", "", unreadableIdentities(root, why, err)
 		}
-		return "", "", fmt.Errorf("no identity %q in %s, chosen by %s: see arc keys list", name, root, why)
+		return "", "", fmt.Errorf("no identity \"%s\" in %s, chosen by %s: see arc keys list", name, root, why)
 	}
 	return dir, source, nil
 }

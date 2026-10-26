@@ -178,6 +178,10 @@ func twoHomes(user, dir string) string {
 		// Anything at ~/.arc: entries of arc, or a link that leads to no
 		// home, as a dangling link or a link to ".".
 		if _, err := os.Lstat(home); err == nil {
+			// A link that leads to no home is not a second home.
+			if holds, _ := holdsHome(home, "~/.arc"); !holds {
+				return fmt.Sprintf("%s is a link that leads to no home of arc. arc uses %s, and reads and writes nothing through %s. Remove the link, or point it at a home, or set ARC_HOME.", home, old, home)
+			}
 			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and reads and writes nothing in %s. Set ARC_HOME to choose the home.", home, old, old, home, home)
 		}
 	}
