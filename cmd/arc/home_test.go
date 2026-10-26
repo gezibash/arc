@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http/httptest"
@@ -19,6 +20,8 @@ import (
 	"github.com/gezibash/arc/adapters/relay/limits"
 	transportrelay "github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/storage"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -972,5 +975,42 @@ func TestKeysUseTakesTheRawName(t *testing.T) {
 	}
 	if out := ok(t, home, "", "keys", "use", name); out != "the default is x\\ny\n" {
 		t.Errorf("arc keys use of the raw name printed %q", out)
+	}
+}
+
+// An install that an older arc made under a hostile name, of a storage
+// citizen that the storage list says is gone: arc sync removes it, and
+// names it escaped on one line (#443).
+func TestARemovedStorageInstallIsNamedEscaped(t *testing.T) {
+	home, url := hostileRelay(t)
+	name := "p\u202ex\narc: fake forged"
+	gone := keys.Generate().Public
+	installs, err := json.Marshal([]catalog.Install{{Provider: gone.Hex(), ID: citizen.StorageApp, Name: "Storage", As: name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir(home), "installs.json"), installs, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := keyfile.Load(keyPath(identityDir(home)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := storage.List{}.Put(storage.ListEntry{Key: gone, Name: "gone-one", State: storage.StateGone, Since: nostr.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	event, err := storage.SealList(ctx, keyer.NewPlainKeySigner(key.Secret), list, nostr.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (transportrelay.Relay{URL: url, Signer: key}).Send(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := run(t, home, "", "sync")
+	if forgedOrRaw(out) || !strings.Contains(out, `removed p\u202ex\narc: fake forged: the storage list says it is gone`) {
+		t.Errorf("arc sync printed %q, want the removed install named escaped", out)
 	}
 }
