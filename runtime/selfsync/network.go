@@ -79,6 +79,8 @@ type run struct {
 	keys    map[uint32]Keys
 	failed  map[uint32]error
 	blobs   map[string]*mapped
+	// namedOf holds what named returned for each address in this sync.
+	namedOf map[string]namedSet
 	seen    map[string]bool
 	olds    oldState
 	listed  bool
@@ -100,7 +102,7 @@ type run struct {
 func (s *Syncer) SyncAll(ctx context.Context, sides []Side) (Report, error) {
 	r := &run{s: s, sides: sides, states: make([]state, len(sides)), open: make([]bool, len(sides)),
 		old: make([]bool, len(sides)), idKeys: make([][]byte, len(sides)),
-		keys: map[uint32]Keys{}, failed: map[uint32]error{}, blobs: map[string]*mapped{}, written: map[string]bool{}}
+		keys: map[uint32]Keys{}, failed: map[uint32]error{}, blobs: map[string]*mapped{}, written: map[string]bool{}, namedOf: map[string]namedSet{}}
 	r.report.Sides = make([]SideReport, len(sides))
 	seen, err := s.loadSeen()
 	if err != nil {
@@ -751,6 +753,15 @@ func (r *run) write(ctx context.Context) error {
 		for _, event := range chunk {
 			id := r.current.BlobID(event.ID)
 			m := r.blobs[id]
+			if m == nil {
+				held, err := r.heldBack(ctx, event)
+				if err != nil {
+					return err
+				}
+				if held {
+					continue
+				}
+			}
 			// The body of a wrap is read only for a blob that goes out:
 			// a file of 63 MiB is not read on each sync.
 			var whole []byte

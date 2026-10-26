@@ -47,7 +47,7 @@ func TestJournalFrontmatterRejectsInvalidWritesWithoutStoring(t *testing.T) {
 // heading, else from the date (proposal journal-v2, section 4.3; Cato's
 // finding 2 of 2026-10-19: --title did not work).
 func TestAWriteFillsInTheFrontMatter(t *testing.T) {
-	stamps := "created_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n"
+	stamps := "created_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n"
 	for name, tc := range map[string]struct {
 		in    string
 		flags []string
@@ -55,9 +55,9 @@ func TestAWriteFillsInTheFrontMatter(t *testing.T) {
 	}{
 		"title flag":   {"plain text\n", []string{"--title", "From the flag"}, "---\ntitle: From the flag\nnotebook: hrs/ablations\npage: 1\n" + stamps + "plain text\n"},
 		"heading":      {"# Decisions\nbody\n", nil, "---\ntitle: Decisions\nnotebook: hrs/ablations\npage: 1\n" + stamps + "# Decisions\nbody\n"},
-		"date":         {"no heading\n", nil, "---\ntitle: 2026-09-29\nnotebook: hrs/ablations\npage: 1\n" + stamps + "no heading\n"},
+		"first line":   {"no heading\n", nil, "---\ntitle: no heading\nnotebook: hrs/ablations\npage: 1\n" + stamps + "no heading\n"},
 		"partial":      {"---\ntitle: Notes\ntype: decision\n---\nbody\n", nil, "---\ntitle: Notes\ntype: decision\nnotebook: hrs/ablations\npage: 1\n" + stamps + "body\n"},
-		"empty title":  {"---\ntitle: \n---\nNotes\n", nil, "---\ntitle: 2026-09-29\nnotebook: hrs/ablations\npage: 1\n" + stamps + "Notes\n"},
+		"empty title":  {"---\ntitle: \n---\nNotes\n", nil, "---\ntitle: Notes\nnotebook: hrs/ablations\npage: 1\n" + stamps + "Notes\n"},
 		"quoted title": {"text\n", []string{"--title", "\"Quoted\" start"}, "---\ntitle: \"\\\"Quoted\\\" start\"\nnotebook: hrs/ablations\npage: 1\n" + stamps + "text\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestJournalFrontmatterTitleAppendAndFailedReplacement(t *testing.T) {
 		t.Fatal(got)
 	}
 	c.must("journal", "", "append", page, "next")
-	want := "---\ntitle: \"Memory: decisions\"\ntype: decision\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n# Decisions\nnext\n"
+	want := "---\ntitle: \"Memory: decisions\"\ntype: decision\npage: 1\nnotebook: hrs/ablations\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n# Decisions\nnext\n"
 	if got := c.must("journal", "", "read", page); got != want {
 		t.Fatalf("roundtrip %q", got)
 	}
@@ -167,10 +167,10 @@ func TestJournalFrontmatterSeparatesNotebooks(t *testing.T) {
 	second := "---\ntitle: Session status\npage: 1\nnotebook: arc/status\n---\nProviders migrated.\n"
 	c.must("journal", first, "write", "arc/architecture/1")
 	c.must("journal", second, "write", "arc/status/1")
-	if got := c.must("journal", "", "read", "arc/architecture/1"); got != strings.Replace(first, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n", 1) {
+	if got := c.must("journal", "", "read", "arc/architecture/1"); got != strings.Replace(first, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n", 1) {
 		t.Fatal(got)
 	}
-	if got := c.must("journal", "", "read", "arc/status/1"); got != strings.Replace(second, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00Z\nupdated_at: 2026-09-29T12:00:00Z\n---\n", 1) {
+	if got := c.must("journal", "", "read", "arc/status/1"); got != strings.Replace(second, "\n---\n", "\ncreated_at: 2026-09-29T12:00:00.000Z\nupdated_at: 2026-09-29T12:00:00.000Z\n---\n", 1) {
 		t.Fatal(got)
 	}
 	if got := c.must("journal", "", "ls", "arc/architecture/"); !strings.HasPrefix(got, "arc/architecture/1\tArchitecture decision\t") || strings.Contains(got, "arc/status/") {
