@@ -128,3 +128,28 @@ func TestADeadlineAfterASubmittedTryKeepsItsResult(t *testing.T) {
 		t.Errorf("a submitted try cut off by the deadline gave %v after %d tries, want its unknown outcome", err, tries)
 	}
 }
+
+// A try that cannot end before the deadline of the caller is not started:
+// the deadline would cut it off after its request went out, with an
+// unknown outcome, where the try before it says that no one heard. The
+// clock of the test moves 2 s at each try, and the caller has 5 s, so the
+// third try would end after the deadline.
+func TestATryThatCannotEndBeforeTheDeadlineIsNotStarted(t *testing.T) {
+	now := time.Now()
+	clock = func() time.Time { return now }
+	t.Cleanup(func() { clock = time.Now })
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(5*time.Second))
+	defer cancel()
+	tries := 0
+	_, err := retryUnheard(ctx, func() (int, error) {
+		tries++
+		now = now.Add(2 * time.Second)
+		if deadline, _ := ctx.Deadline(); now.After(deadline) {
+			return 0, errors.New("call outcome unknown via ws://caller; the operation may have executed")
+		}
+		return 0, unheardAt("ws://provider")
+	})
+	if tries != 2 || !strings.Contains(err.Error(), "ws://provider") {
+		t.Errorf("after %d tries the call gave %v, want 2 tries and the unheard try at the relay of the provider", tries, err)
+	}
+}
