@@ -153,3 +153,29 @@ func TestATryThatCannotEndBeforeTheDeadlineIsNotStarted(t *testing.T) {
 		t.Errorf("after %d tries the call gave %v, want 2 tries and the unheard try at the relay of the provider", tries, err)
 	}
 }
+
+// A try that could end before the deadline starts. When it then takes
+// longer, and the deadline cuts it off after its request went out, the
+// call still says that its outcome is unknown: arc never hides it behind
+// the try that no one heard (#455).
+func TestATryThatStartedAndWasCutOffKeepsItsUnknownOutcome(t *testing.T) {
+	now := time.Now()
+	clock = func() time.Time { return now }
+	t.Cleanup(func() { clock = time.Now })
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(5*time.Second))
+	defer cancel()
+	tries := 0
+	uncertain := errors.New("call outcome unknown via ws://caller; the operation may have executed")
+	_, err := retryUnheard(ctx, func() (int, error) {
+		tries++
+		if tries == 1 {
+			now = now.Add(time.Second)
+			return 0, unheardAt("ws://provider")
+		}
+		now = now.Add(5 * time.Second)
+		return 0, uncertain
+	})
+	if tries != 2 || !errors.Is(err, uncertain) {
+		t.Errorf("after %d tries the call gave %v, want 2 tries and the unknown outcome", tries, err)
+	}
+}
