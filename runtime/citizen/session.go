@@ -261,10 +261,17 @@ func UnreachedReason(err error) string {
 		return "the connection was refused"
 	case errors.As(err, &dns) && dns.IsNotFound:
 		return "no such host"
-	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET):
+	case closedByHost(err):
 		return "the connection was closed"
 	}
 	return "no answer"
+}
+
+// closedByHost says whether err is a connect that the host closed or reset
+// at once.
+func closedByHost(err error) bool {
+	_, closed := errors.AsType[*relay.ClosedError](err)
+	return closed || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
 // Unreachable says whether no relay heard the request of err: a dial, a
@@ -284,7 +291,7 @@ func offline(err error) bool {
 	// Each branch of a joined error must be offline, and errors.As takes
 	// the first branch that matches, so walk the tree by hand.
 	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
-	case *net.OpError, *net.DNSError, *net.AddrError, *relay.DownError:
+	case *net.OpError, *net.DNSError, *net.AddrError, *relay.DownError, *relay.ClosedError:
 		return true
 	case interface{ Unwrap() []error }:
 		errs := e.Unwrap()

@@ -335,7 +335,25 @@ var quickFor = 5 * time.Second
 // closedAtOnce says whether err is a connection that the host refused,
 // closed or reset at once.
 func closedAtOnce(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	_, closed := errors.AsType[*ClosedError](err)
+	return closed || errors.Is(err, syscall.ECONNREFUSED) || hostClosed(err)
+}
+
+// ClosedError is a connect that the host took and closed or reset at once,
+// before the WebSocket handshake. The client reads EOF, a reset, or, on
+// Linux, an idle connection that the server closed, as timing falls; each
+// says the same, so a caller tests for this one type (#444).
+type ClosedError struct{ Err error }
+
+func (e *ClosedError) Error() string { return e.Err.Error() }
+
+func (e *ClosedError) Unwrap() error { return e.Err }
+
+// hostClosed says whether err holds a connection that the host closed or
+// reset. net/http does not export its error for an idle connection that the
+// server closed, so its text says it.
+func hostClosed(err error) bool {
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "server closed idle connection")
 }
 
 func (e *DownError) Unwrap() error { return e.Err }
@@ -642,7 +660,13 @@ func (r Relay) connect(ctx context.Context, s *sessions) (*nostr.Relay, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
+		err = fmt.Errorf("relay %s: %w", r.URL, err)
+		// A stall or a timeout cost time, and a refusal has its own reason.
+		var timeout net.Error
+		if hostClosed(err) && !errors.Is(err, ErrStalled) && !errors.Is(err, syscall.ECONNREFUSED) && !(errors.As(err, &timeout) && timeout.Timeout()) {
+			err = &ClosedError{Err: err}
+		}
+		return nil, err
 	}
 	return conn, nil
 }
