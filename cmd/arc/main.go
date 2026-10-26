@@ -1055,6 +1055,12 @@ func syncCommand() *cobra.Command {
 			}
 			failed := false
 			var unreached []string
+			// Ask each relay once, all at once: a relay that does not answer
+			// is then down, and the steps below skip it, so silent relays
+			// cost one deadline in total, not one each (#442).
+			if dir == "" {
+				sess.Reach(command.Context())
+			}
 			for _, t := range targets {
 				// Self data goes to a directory that the citizen carries,
 				// but never to a relay.
@@ -1100,7 +1106,7 @@ func syncCommand() *cobra.Command {
 				if err != nil && citizen.Unreachable(err) {
 					// A relay that gave no answer gets one word at the
 					// end, not its whole error (#439).
-					unreached = append(unreached, terminal.EscapeLine(t.Name()))
+					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err))
 					continue
 				}
 				if err != nil {
@@ -1136,8 +1142,14 @@ func syncCommand() *cobra.Command {
 			if failed {
 				return errors.New("some transports failed")
 			}
-			if len(unreached) > 0 {
-				return fmt.Errorf("no answer from %s; arc syncs with %s again at the next sync", strings.Join(unreached, ", "), plural(len(unreached), "it", "them"))
+			// One line for each relay that gave no answer, the last as the
+			// error of the sync.
+			for i, relay := range unreached {
+				if i < len(unreached)-1 {
+					fmt.Fprintln(command.ErrOrStderr(), "arc: "+relay+"; arc syncs with it again at the next sync")
+				} else {
+					return errors.New(relay + "; arc syncs with it again at the next sync")
+				}
 			}
 			return nil
 		},

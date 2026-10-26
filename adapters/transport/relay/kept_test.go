@@ -2,6 +2,7 @@ package relay_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -334,5 +335,53 @@ func TestARelayThatConnectsAndNeverAnswersIsDown(t *testing.T) {
 	sendErr := r.Send(t.Context(), note(t, "hello"))
 	if err == nil || sendErr == nil || time.Since(start) > 100*time.Millisecond || conns.Load() != 1 {
 		t.Errorf("after a timeout, a query and a send took %s, gave %v and %v, on %d connections; want both at once, on 1", time.Since(start), err, sendErr, conns.Load())
+	}
+}
+
+// pickyRelay answers each query with its EOSE, except one for kind 1059:
+// that one it never answers.
+func pickyRelay(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		ctx := context.Background()
+		for {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			var message []json.RawMessage
+			if json.Unmarshal(data, &message) != nil || len(message) < 3 {
+				continue
+			}
+			var verb, id string
+			_ = json.Unmarshal(message[0], &verb)
+			_ = json.Unmarshal(message[1], &id)
+			if verb != "REQ" || strings.Contains(string(message[2]), "1059") {
+				continue
+			}
+			reply, _ := json.Marshal([]string{"EOSE", id})
+			if conn.Write(ctx, websocket.MessageText, reply) != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	return "ws" + strings.TrimPrefix(server.URL, "http")
+}
+
+// A relay that answers each query but one kind is up: the query of that
+// kind fails on its timeout, and each other query still works (#442).
+func TestARelayThatIgnoresOneKindIsUp(t *testing.T) {
+	defer relay.SetCallTimeout(300 * time.Millisecond)()
+	r := relay.New(pickyRelay(t), keyer.NewPlainKeySigner(nostr.Generate()))
+	if _, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1059}}); err == nil {
+		t.Fatal("a query that the relay ignores worked")
+	}
+	if _, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}}); err != nil {
+		t.Errorf("after a query of the kind that it ignores, the relay is down for each query: %v", err)
 	}
 }
