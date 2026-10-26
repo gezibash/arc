@@ -165,21 +165,30 @@ func serve(command *cobra.Command, args []string) error {
 	// A caller needs a current announcement before a live call, so the
 	// provider signs it again each catalog.Refresh. Each one is at least a
 	// second newer than the newest that this machine knows, so that it
-	// never ties with an older one of the same second (#422). The first
-	// asks the relays for the ones that they hold.
-	sess.Node.Pull(ctx, nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {definition.ID}}}, sess.Relays)
-	announce := func() error {
-		at, err := catalog.After(sess.Node.Store, sess.Key.Public, definition.ID, nostr.Now())
-		if err != nil {
+	// never ties with an older one of the same second (#422). Until a relay
+	// answers for the announcements that the relays hold, arc cannot know
+	// the newest, and signs nothing: it says so once, and asks again.
+	announced := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{sess.Key.Public}, Tags: nostr.TagMap{"d": {definition.ID}}}
+	gate := &announcer{
+		known: len(sess.Relays) == 0,
+		pull:  func() error { return node.Unreached(sess.Node.Pull(ctx, announced, sess.Relays)) },
+		at: func() (nostr.Timestamp, error) {
+			return catalog.After(sess.Node.Store, sess.Key.Public, definition.ID, nostr.Now())
+		},
+		sign: func(at nostr.Timestamp) error {
+			announcement, err := catalog.AnnounceProvider(ctx, sess.Signer, definition, at)
+			if err != nil {
+				return err
+			}
+			_, _, err = sess.Node.Publish(ctx, announcement, sess.Relays)
 			return err
-		}
-		announcement, err := catalog.AnnounceProvider(ctx, sess.Signer, definition, at)
-		if err != nil {
-			return err
-		}
-		_, _, err = sess.Node.Publish(ctx, announcement, sess.Relays)
-		return err
+		},
+		say: func(text string) {
+			fmt.Fprintln(command.ErrOrStderr(), "arc: info: "+terminal.EscapeLine(fmt.Sprintf("%s %s", definition.ID, text)))
+		},
 	}
+	announce := gate.announce
+	known := func() bool { return gate.known }
 	if err := announce(); err != nil {
 		return err
 	}
@@ -267,7 +276,16 @@ func serve(command *cobra.Command, args []string) error {
 	refresh := time.NewTicker(catalog.Refresh)
 	defer refresh.Stop()
 	for {
+		// While no relay answered, the announcement waits: ask again soon.
+		var unknown <-chan time.Time
+		if !known() {
+			unknown = time.After(3 * time.Second)
+		}
 		select {
+		case <-unknown:
+			if err := announce(); err != nil {
+				log.Warn("the announcement was not signed", "error", err)
+			}
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "the service is stopping")
 			return nil
@@ -832,4 +850,38 @@ func announceCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// announcer signs the announcements of arc serve. Each is at least a second
+// newer than the newest that the store holds, so that it never ties with an
+// older one of the same second (#422). Until a relay answers for the
+// announcements that the relays hold, arc cannot know the newest: it signs
+// nothing, and says so once.
+type announcer struct {
+	known, told bool
+	// pull asks the relays for the announcements, and is nil when one
+	// answered.
+	pull func() error
+	// at is the time to sign at, after the newest in the store.
+	at   func() (nostr.Timestamp, error)
+	sign func(at nostr.Timestamp) error
+	say  func(text string)
+}
+
+func (a *announcer) announce() error {
+	if !a.known {
+		a.known = a.pull() == nil
+	}
+	if !a.known {
+		if !a.told {
+			a.say("is not announced yet: no relay has answered, so arc cannot know the newest announcement; it asks again")
+			a.told = true
+		}
+		return nil
+	}
+	at, err := a.at()
+	if err != nil {
+		return err
+	}
+	return a.sign(at)
 }

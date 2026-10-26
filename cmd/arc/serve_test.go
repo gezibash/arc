@@ -64,6 +64,7 @@ func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan er
 	out := &output{}
 	command := root()
 	command.SetOut(out)
+	command.SetErr(out)
 	command.SetArgs([]string{"--home", home, "serve", "exec://" + echo + "?manifest=" + filepath.Join(dir, "manifest.json")})
 	result := make(chan error, 1)
 	go func() { result <- command.ExecuteContext(ctx) }()
