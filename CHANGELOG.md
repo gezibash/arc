@@ -46,6 +46,10 @@ All notable changes to ARC are recorded here. The format follows
   - arc does not start a try that cannot end before the deadline of the
     caller, so the deadline never cuts off a try after its request went
     out.
+- In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
+  shared disk can take longer than 200 ms for one sync of the store. The
+  200 ms target stays for a run on a machine of its own. The count of the
+  store writes before a ring stays as it is (#452).
 
 ## [0.37.0] - 2026-10-19
 
