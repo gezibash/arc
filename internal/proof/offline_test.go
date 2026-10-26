@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -223,9 +225,17 @@ func TestOfflineJournalIsQuiet(t *testing.T) {
 		{"", []string{"journal", "read", "notes/day/1"}, "first page"},
 		{"", []string{"journal", "ls"}, "notes/day/1"},
 	} {
+		start := time.Now()
 		got := home.try(step.stdin, step.args...)
 		if got.Err != nil {
 			t.Fatalf("arc %s offline: %v\n%s", strings.Join(step.args, " "), got.Err, got.Stderr)
+		}
+		// The home keeps the silent relay down after the first command:
+		// the next commands do not wait for it again (#439). 10 s is far
+		// below the 20 s that a silent relay costs, and holds a command of
+		// the race build on a busy runner.
+		if took := time.Since(start); step.args[1] != "write" && took > 10*time.Second {
+			t.Errorf("arc %s offline took %s after the home marked the silent relay down", strings.Join(step.args, " "), took)
 		}
 		if got.Stderr != offline {
 			t.Errorf("arc %s offline wrote %d characters on the standard error, want the one line %q:\n%s", strings.Join(step.args, " "), len(got.Stderr), offline, got.Stderr)
@@ -436,6 +446,7 @@ func TestSyncNamesABadRelayInOneLineInEachLayout(t *testing.T) {
 		{"a host that does not exist", "no such host", func() string { return "ws://no-such-relay.test" }, notFound},
 		{"a name that the DNS never answers", "no answer", func() string { return "ws://no-such-relay.test" }, mute},
 		{"a closed port", "the connection was refused", func() string { return "ws://" + closedPort(t) }, ""},
+		{"a host that closes each connection at once", "the connection was closed", func() string { return closingRelay(t) }, ""},
 		{"a relay that never answers a read of mail", "no answer for mail", func() string { return muteRelay(t, "MUTERELAY_MODE=mail") }, ""},
 		{"a relay that closes each query as blocked", "the relay refused: blocked: this relay serves no one", func() string { return muteRelay(t, "MUTERELAY_MODE=closed") }, ""},
 		{"a relay that asks for authentication and sends no challenge", "the relay refused: it asks for authentication", func() string { return muteRelay(t, "MUTERELAY_MODE=auth") }, ""},
@@ -556,8 +567,9 @@ func TestARelayThatStopsAnsweringInASyncGetsOneLine(t *testing.T) {
 		t.Errorf("a sync with a relay that stopped answering exited 0")
 	}
 	lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
-	if len(lines) != 1 || !strings.Contains(lines[0], quiet+": stopped answering after it took 2 of ") {
-		t.Errorf("arc sync wrote %q, want one line that says that %s stopped answering after it took 2 wraps", got.Stderr, quiet)
+	want := regexp.MustCompile("^arc: " + regexp.QuoteMeta(quiet) + ": stopped answering after it took 2 of [0-9]+ waiting wraps; arc syncs with it again at the next sync$")
+	if len(lines) != 1 || !want.MatchString(lines[0]) {
+		t.Errorf("arc sync wrote %q, want the one line %s", got.Stderr, want)
 	}
 	for _, raw := range append(rawErrorText, "not sent", "refused") {
 		if strings.Contains(got.Stderr, raw) {
@@ -639,5 +651,161 @@ func TestARelayNoticeReachesTheScreenEscapedOnce(t *testing.T) {
 	}
 	if shown == 0 {
 		t.Errorf("arc sync wrote %q, want the notice of the relay", got.Stderr)
+	}
+}
+
+// closingRelay is a local address that takes each connection and closes it
+// at once, as a relay that is down behind a proxy does. The client reads
+// EOF or a reset, as timing falls.
+func closingRelay(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return "ws://" + l.Addr().String()
+}
+
+// A relay that closes each connection at once gets one plain line in each
+// sync: whether the client reads EOF or a reset depends on timing, and with
+// EOF each step of the sync printed its own Go error (#444, ut-444c F-EOF).
+func TestARelayThatClosesAtOnceGetsOneLineInEachSync(t *testing.T) {
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	url := closingRelay(t)
+	listRelays(t, home, url)
+	want := "arc: " + url + ": the connection was closed; arc syncs with it again at the next sync"
+	for i := range 20 {
+		got := home.try("", "sync")
+		if lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n"); len(lines) != 1 || lines[0] != want {
+			t.Fatalf("sync %d wrote %q, want the one line %q", i+1, got.Stderr, want)
+		}
+	}
+}
+
+// markDown writes a mark of the relay url in the relays-down.json of a
+// home, until the time until, as an earlier command would.
+func markDown(t *testing.T, m machine, url string, until time.Time) {
+	t.Helper()
+	markDownWhy(t, m, url, until, "no answer")
+}
+
+// markDownWhy is markDown with the reason why.
+func markDownWhy(t *testing.T, m machine, url string, until time.Time, why string) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(relaysFile(t, m)), "relays-down.json")
+	body, err := json.Marshal(map[string]any{url: map[string]any{"until": until.Unix(), "why": why}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A sync reads the marks of the home once. A relay that a mark skips at
+// the start stays skipped for the whole sync, even when the mark runs out
+// in the middle: the sync dialled it then, waited 20 s more, and said that
+// it skipped it (#444, ut-444c F-STAG). Two mute relays, one marked for
+// 10 s, cost one wait of about 20 s.
+func TestASyncReadsTheMarksOfTheHomeOnce(t *testing.T) {
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	marked, unmarked := muteRelayURL(t), muteRelayURL(t)
+	listRelays(t, home, marked, unmarked)
+	markDown(t, home, marked, time.Now().Add(10*time.Second))
+	start := time.Now()
+	got := home.try("", "sync")
+	took := time.Since(start)
+	if took > 30*time.Second {
+		t.Errorf("a sync with one marked and one unmarked mute relay took %s, want one wait of about 20 s", took)
+	}
+	lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+	slices.Sort(lines)
+	// The line comes at the end of the sync, when the mark of 10 s can
+	// have run out: it then says that the next command tries the relay.
+	skipped := "arc: " + marked + ": skipped: no answer at the last try; arc tries it again "
+	waited := "arc: " + unmarked + ": no answer; arc syncs with it again at the next sync"
+	if len(lines) != 2 || !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, skipped) }) || !slices.Contains(lines, waited) {
+		t.Errorf("the sync wrote %q, want that it skipped %s and waited for %s", got.Stderr, marked, unmarked)
+	}
+	t.Logf("ok: the sync took %s", took.Round(100*time.Millisecond))
+}
+
+// A mark 15 s ahead skips the relay, with how long the mark has left. A
+// mark 30 to 31 s ahead of a live relay counts at the start, so the sync
+// skips the relay in each step: it called a live relay "no answer for mail"
+// when the mark began to count in the middle of the sync (ut-444c F-LATE).
+func TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	for _, ahead := range []time.Duration{15 * time.Second, 30500 * time.Millisecond} {
+		home := arc(t, filepath.Join(work, ahead.String()))
+		home.run("keys", "gen")
+		listRelays(t, home, live)
+		markDown(t, home, live, time.Now().Add(ahead))
+		got := home.try("", "sync")
+		lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+		skipped := "arc: " + live + ": skipped: no answer at the last try; arc tries it again in "
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], skipped) || strings.Contains(got.Stderr, "for mail") {
+			t.Errorf("a mark %s ahead: the sync wrote %q, want the one line %q...", ahead, got.Stderr, skipped)
+		}
+	}
+}
+
+// A relays-down.json that arc cannot write gives one note, in arc sync and
+// in arc-dm send alike: arc-dm passes on only the warnings of arc, so the
+// note of arc-dm send was lost (#444, ut-444c F-NOTE-DM).
+func TestTheNoteOfAnUnwritableMarkFileReachesArcDM(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	home := arc(t, filepath.Join(work, "home"))
+	home.run("keys", "gen")
+	home.run("relay", "add", live)
+	peer := keys.Generate().Public.Hex()
+	home.run("message", "send", peer, "hello")
+	listRelays(t, home, "ws://"+silentRelay(t))
+	file := filepath.Join(filepath.Dir(relaysFile(t, home)), "relays-down.json")
+	if err := os.Mkdir(file, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	note := "arc: warning: arc cannot keep the relays that gave no answer in " + file + ": make it a file that arc can write, or remove it; each command waits for them again"
+	for _, step := range []struct {
+		what string
+		got  result
+	}{
+		{"arc sync", home.try("", "sync")},
+		{"arc-dm send", home.using(program("arc-dm")).try("", "--arc", program("arc"), "--state", filepath.Join(work, "dm"), "send", peer, "again")},
+	} {
+		if n := strings.Count(step.got.Stderr, note+"\n"); n != 1 {
+			t.Errorf("%s wrote the note %d times, want once:\n%s", step.what, n, step.got.Stderr)
+		}
+	}
+}
+
+// The reason of a mark is text that any process of the home, or a person,
+// wrote in relays-down.json. The skipped line of sync shows it escaped
+// once (#444, #464).
+func TestAHostileReasonOfAMarkIsEscapedOnce(t *testing.T) {
+	const why = "no answer\x1b[2K\u202e\nforged line"
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	url := muteRelayURL(t)
+	listRelays(t, home, url)
+	markDownWhy(t, home, url, time.Now().Add(20*time.Second), why)
+	got := strings.TrimRight(home.try("", "sync").Stderr, "\n")
+	want := "arc: " + terminal.EscapeLine(url+": skipped: "+why+" at the last try; arc tries it again in ")
+	if strings.Contains(got, "\n") || !strings.HasPrefix(got, want) || !strings.HasSuffix(got, "s") {
+		t.Errorf("the sync wrote %q, want one line %q followed by the time", got, want)
 	}
 }

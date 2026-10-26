@@ -61,6 +61,20 @@ All notable changes to ARC are recorded here. The format follows
   authentication that arc cannot answer, or HTTP 403 for the WebSocket)
   gets one line in `arc sync` that says that it refused, with its reason,
   in place of four lines of raw errors (#463).
+- **Breaking:** the relays that gave no answer are down for each process
+  of the home, for 30 s by the wall clock, in `relays-down.json`. The next
+  command skips them at once, and `arc sync` says when it tries each again.
+  Only a failure that cost time marks a relay: a refused connection, or one
+  that the host closed or reset at once, marks nothing, and a mark further
+  ahead than 30 s is no mark. A command reads the marks once, so a mark
+  that runs out in the middle of it does not make it dial the relay. A
+  connection that failed at once is remembered in the process for 5 s. A
+  host that closes a connection at once (EOF, a reset, a broken pipe, or
+  an idle connection that the server closed) gets one line, "the
+  connection was closed". A
+  file that arc cannot write gives one warning, also in arc-dm. An older
+  arc keeps no file, so it waits for each such relay in each command
+  (#444).
 - A relay that stops answering partway through `arc sync` gets one line
   that says how many waiting wraps it took, and the sync fails. The wraps
   that did not go wait for the next sync. An older arc printed "refused

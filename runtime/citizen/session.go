@@ -62,6 +62,8 @@ type Session struct {
 	kept   map[string]relay.Relay
 	// offline warns once that no relay answered.
 	offline sync.Once
+	// downFile says once that relays-down.json cannot be written.
+	downFile sync.Once
 	// errMu makes one write at a time on Errors. A watch ends in its own
 	// goroutine, and can end after the command. errClosed says that Close
 	// ran: no line goes to Errors after it.
@@ -96,12 +98,16 @@ func Open(cfg Config) (*Session, error) {
 	}
 	// Each relay keeps one connection for its sends. One URL gives one relay,
 	// so a long run does not open a connection for each call.
+	// One look at relays-down.json for each command: each relay of the
+	// session skips what the home marked when the command began (#444).
+	down := relaysDown{path: filepath.Join(cfg.Home, "relays-down.json"), note: sess.noteDownFile, snap: &downSnapshot{}}
 	sess.NewRelay = func(url string) transport.Transport {
 		sess.keptMu.Lock()
 		defer sess.keptMu.Unlock()
 		r, ok := sess.kept[url]
 		if !ok {
 			r = relay.New(url, sess.Signer)
+			r.ShareDown(down)
 			if sess.delegation != nil {
 				r.Delegation = sess.delegation
 			}
@@ -216,10 +222,37 @@ func (s *Session) warnUnreached(err error, uses string) {
 }
 
 // warnOffline says once in a session that the network reached no relay.
+// noteDownFile says once that the home cannot keep the relays that gave
+// no answer, so each command waits for them again (#444).
+func (s *Session) noteDownFile(err error) {
+	s.downFile.Do(func() {
+		// A program that runs arc, such as arc-dm, passes on each line
+		// that starts with "arc: warning: ", so it gives the same note.
+		s.warnf("arc: warning: %v; each command waits for them again\n", err)
+	})
+}
+
 func (s *Session) warnOffline() {
 	s.offline.Do(func() {
 		s.warnf("arc: no relay answered, so this uses what this machine holds\n")
 	})
+}
+
+// UnreachedLine is the line of sync for the relay name, which gave no
+// answer with err. A relay that is skipped for a mark of an earlier
+// command says so, and when arc tries it again (#444). The line is raw,
+// with the reason that the mark holds: the caller escapes it once, where
+// it prints it (#464).
+func UnreachedLine(name string, err error) string {
+	if down, ok := errors.AsType[*relay.DownError](err); ok && down.Err == nil {
+		// The mark can run out while the command skips the relay: the next
+		// command tries it (#444).
+		if down.Again() <= 0 {
+			return fmt.Sprintf("%s: skipped: %s at the last try; arc tries it again at the next command", name, down.Why)
+		}
+		return fmt.Sprintf("%s: skipped: %s at the last try; arc tries it again in %s", name, down.Why, down.Again())
+	}
+	return name + ": " + UnreachedReason(err) + "; arc syncs with it again at the next sync"
 }
 
 // UnreachedReason is the short reason of an error that Unreachable takes:
@@ -231,8 +264,17 @@ func UnreachedReason(err error) string {
 		return "the connection was refused"
 	case errors.As(err, &dns) && dns.IsNotFound:
 		return "no such host"
+	case closedByHost(err):
+		return "the connection was closed"
 	}
 	return "no answer"
+}
+
+// closedByHost says whether err is a connect that the host closed or reset
+// at once.
+func closedByHost(err error) bool {
+	_, closed := errors.AsType[*relay.ClosedError](err)
+	return closed || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 // Unreachable says whether no relay heard the request of err: a dial, a
@@ -243,13 +285,16 @@ func Unreachable(err error) bool { return offline(err) }
 // address that failed, or a relay that gave no answer in time, so that no
 // relay answered the request (#396, #439).
 func offline(err error) bool {
-	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer { //nolint:errorlint // leaves of the walk below
+	// A host that closed the connection at once, with EOF or a reset,
+	// answered nothing either; which of the two the client reads depends on
+	// timing, so both count (#444).
+	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer || err == io.EOF || err == io.ErrUnexpectedEOF { //nolint:errorlint // leaves of the walk below
 		return true
 	}
 	// Each branch of a joined error must be offline, and errors.As takes
 	// the first branch that matches, so walk the tree by hand.
 	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
-	case *net.OpError, *net.DNSError, *net.AddrError:
+	case *net.OpError, *net.DNSError, *net.AddrError, *relay.DownError, *relay.ClosedError:
 		return true
 	case interface{ Unwrap() []error }:
 		errs := e.Unwrap()
@@ -273,26 +318,30 @@ func RefusedLine(name string, err error) (line string, ok bool) {
 	if runes := []rune(reason); len(runes) > noticeLimit {
 		reason = string(runes[:noticeLimit]) + "…"
 	}
-	return name + ": the relay refused: " + reason, true
+	return name + ": the relay refused: " + reason + "; arc syncs with it again at the next sync", true
 }
 
 // StoppedLine is the line of sync for the relay name, which took some
 // wraps and then gave no answer. ok is false for each other error (#465).
+// The line is raw: the caller escapes it once, where it prints it.
 func StoppedLine(name string, err error) (line string, ok bool) {
 	stopped, ok := errors.AsType[*mail.StoppedError](err)
 	if !ok {
 		return "", false
 	}
-	return fmt.Sprintf("%s: stopped answering after it took %d of %d waiting wraps", name, stopped.Sent, stopped.Waiting), true
+	return fmt.Sprintf("%s: stopped answering after it took %d of %d waiting wraps; arc syncs with it again at the next sync", name, stopped.Sent, stopped.Waiting), true
 }
 
 // Unusable says whether each relay of err gave no answer or refused, so
 // that the one line of sync for each relay says all there is (#463).
 func Unusable(err error) bool {
-	return err != nil && every(err, func(err error) bool {
+	// offline walks each branch itself, and takes a skip or a close at once
+	// whole: below them lie the joined errors of the dial, where one can be
+	// only text (#444).
+	return err != nil && (offline(err) || every(err, func(err error) bool {
 		_, refused := relay.Refusal(err)
 		return refused || offline(err)
-	})
+	}))
 }
 
 // every says whether leaf holds for each branch of the joined errors in

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -148,6 +149,9 @@ type kept struct {
 	// a fetch in that time fails at once with it (#439).
 	down      error
 	downUntil time.Time
+	// shared keeps the relays that did not connect for the other
+	// processes of the same home, or nil.
+	shared DownStore
 
 	// info is the NIP-11 document, after the first fetch that worked.
 	infoMu sync.Mutex
@@ -266,18 +270,117 @@ var ErrNoAnswer = errors.New("the relay gave no answer in time")
 // downFor is how long a fetch fails at once after a connect failed.
 var downFor = 30 * time.Second
 
-// isDown is the error of the last connect that failed, while it is newer
-// than downFor, or nil.
-func (k *kept) isDown() error {
+// DownFor is how long a relay that did not answer stays down.
+func DownFor() time.Duration { return downFor }
+
+// DownStore keeps the relays that did not connect, so that the other
+// processes of the same home do not wait for them again. A store that
+// fails says so as no record: it never fails a call.
+type DownStore interface {
+	// Down returns until when a relay is down, and why, if it is.
+	Down(url string) (until time.Time, why string, ok bool)
+	// MarkDown keeps that a relay is down until a time.
+	MarkDown(url string, until time.Time, why string)
+	// Up forgets that a relay is down.
+	Up(url string)
+}
+
+// ShareDown makes a Relay from New keep the relays that did not connect in
+// s, and read them there, for downFor. Call it before the first call.
+func (r Relay) ShareDown(s DownStore) {
+	if r.kept != nil {
+		r.kept.shared = s
+	}
+}
+
+// DownError is the error of a call to a relay that did not connect a short
+// time before, in this process or in another process of the same home.
+type DownError struct {
+	URL, Why string
+	Until    time.Time
+	// Err is the error of the connect, in this process, or nil.
+	Err error
+}
+
+func (e *DownError) Error() string {
+	return fmt.Sprintf("relay %s is skipped: %s at the last try; arc tries it again in %s", e.URL, e.Why, e.Again())
+}
+
+// Again is the time until arc tries the relay again.
+func (e *DownError) Again() time.Duration {
+	return max(time.Until(e.Until), 0).Round(time.Second)
+}
+
+// downReason is the short reason that a relay is down: a host that does not
+// exist, or no answer. A refusal never marks a relay down.
+func downReason(err error) string {
+	if dns, ok := errors.AsType[*net.DNSError](err); ok && dns.IsNotFound {
+		return "no such host"
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "the connection was refused"
+	}
+	if closedAtOnce(err) {
+		return "the connection was closed"
+	}
+	return "no answer"
+}
+
+// quickFor is how long this process remembers a connect that failed at
+// once: a refused connection, or one that the host closed or reset. The
+// calls of one command then do not dial the relay again for each call, and
+// a long process, such as arc serve, uses the relay soon after it comes
+// back. Such a failure is never kept for the other processes (#444).
+var quickFor = 5 * time.Second
+
+// closedAtOnce says whether err is a connection that the host refused,
+// closed or reset at once.
+func closedAtOnce(err error) bool {
+	_, closed := errors.AsType[*ClosedError](err)
+	return closed || errors.Is(err, syscall.ECONNREFUSED) || hostClosed(err)
+}
+
+// ClosedError is a connect that the host took and closed or reset at once,
+// before the WebSocket handshake. The client reads EOF, a reset, a broken
+// pipe while it still writes its request, or, on Linux, an idle connection
+// that the server closed, as timing falls; each
+// says the same, so a caller tests for this one type (#444).
+type ClosedError struct{ Err error }
+
+func (e *ClosedError) Error() string { return e.Err.Error() }
+
+func (e *ClosedError) Unwrap() error { return e.Err }
+
+// hostClosed says whether err holds a connection that the host closed or
+// reset. net/http does not export its error for an idle connection that the
+// server closed, so its text says it.
+func hostClosed(err error) bool {
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "server closed idle connection")
+}
+
+func (e *DownError) Unwrap() error { return e.Err }
+
+// isDown is the error of the last connect to url that failed, while it is
+// newer than downFor, or nil.
+func (k *kept) isDown(url string) error {
 	if k == nil {
 		return nil
 	}
 	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.down == nil || time.Now().After(k.downUntil) {
-		return nil
+	down, until, shared := k.down, k.downUntil, k.shared
+	k.mu.Unlock()
+	if down != nil && time.Now().Before(until) {
+		return &DownError{URL: url, Why: downReason(down), Until: until, Err: down}
 	}
-	return fmt.Errorf("%w; arc asks again in %s", k.down, time.Until(k.downUntil).Round(time.Second))
+	// The store says which marks count: it reads them once for the whole
+	// command, so a mark that runs out in the middle of it does not make
+	// the command dial a relay that it skipped (#444).
+	if shared != nil {
+		if until, why, ok := shared.Down(url); ok {
+			return &DownError{URL: url, Why: why, Until: until}
+		}
+	}
+	return nil
 }
 
 // silent judges a call on a connection that the relay took, and that gave
@@ -295,12 +398,18 @@ func (k *kept) silent(ctx context.Context, conn *nostr.Relay, err error) (up boo
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.down, k.downUntil = err, time.Now().Add(downFor)
+	if k.shared != nil && conn != nil {
+		k.shared.MarkDown(conn.URL, k.downUntil, downReason(err))
+	}
 	return false
 }
 
-// failedToReach says whether err is a dial, a lookup or an address that
-// failed, or a first attempt that stalled: an answer of the relay, such as
-// a refusal, is not. reach tries the other address family after any failed
+// failedToReach says whether err is a first attempt that cost time and
+// reached no relay: one that stalled, a dial or a lookup that timed out, or
+// a lookup or an address that failed. A mark of a relay exists to save
+// that time. A host that refused, closed or reset the connection answered
+// at once: a mark would save nothing, and would skip the relay after it
+// came back (#444). reach tries the other address family after any failed
 // attempt, so only its first attempt says whether the relay answered.
 func failedToReach(err error) bool {
 	for e := err; e != nil; {
@@ -312,10 +421,10 @@ func failedToReach(err error) bool {
 		}
 		e = errors.Unwrap(e)
 	}
-	var op *net.OpError
+	var timeout net.Error
 	var dns *net.DNSError
 	var addr *net.AddrError
-	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
+	return errors.Is(err, ErrStalled) || errors.As(err, &timeout) && timeout.Timeout() || errors.As(err, &dns) || errors.As(err, &addr)
 }
 
 // hear keeps that the relay answered on conn.
@@ -411,8 +520,16 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			// down: never a refusal, nor the deadline of the caller.
 			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), ErrNoAnswer) {
 				k.down, k.downUntil = err, time.Now().Add(downFor)
+				if k.shared != nil {
+					k.shared.MarkDown(r.URL, k.downUntil, downReason(err))
+				}
+			} else if ctx.Err() == nil && closedAtOnce(err) {
+				k.down, k.downUntil = err, time.Now().Add(quickFor)
 			}
 			return nil, false, nil, err
+		}
+		if k.down != nil && k.shared != nil {
+			k.shared.Up(r.URL)
 		}
 		k.down = nil
 	}
@@ -467,7 +584,7 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := k.isDown(); err != nil {
+	if err := k.isDown(r.URL); err != nil {
 		return err
 	}
 
@@ -575,7 +692,13 @@ func (r Relay) connect(ctx context.Context, s *sessions) (*nostr.Relay, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
+		err = fmt.Errorf("relay %s: %w", r.URL, err)
+		// A stall or a timeout cost time, and a refusal has its own reason.
+		var timeout net.Error
+		if hostClosed(err) && !errors.Is(err, ErrStalled) && !errors.Is(err, syscall.ECONNREFUSED) && !(errors.As(err, &timeout) && timeout.Timeout()) {
+			err = &ClosedError{Err: err}
+		}
+		return nil, err
 	}
 	return conn, nil
 }
@@ -803,7 +926,7 @@ func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.F
 // many events one query returns, so Fetch asks again for older events until a
 // page brings nothing new.
 func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, error) {
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return transport.Batch{}, err
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
@@ -920,7 +1043,7 @@ func closed(reason string) error {
 // sends, all on one connection. An answer to a live call is ephemeral, and a
 // relay never stores it, so a subscription that came after it would miss it.
 func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (answer nostr.Event, err error) {
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
 	conn, _, done, err := r.open(ctx)
@@ -987,7 +1110,7 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return nil, nil, true, err
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
