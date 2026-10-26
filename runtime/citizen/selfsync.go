@@ -369,7 +369,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	var empty []int
 	usages := make([]*storage.Usage, len(opened))
 	for i, o := range opened {
-		as := targets[i].install.As
+		as := terminal.EscapeLine(targets[i].install.As)
 		_, _ = cfg.Out.Write(o.said.Bytes())
 		_, _ = cfg.Errs.Write(o.notes.Bytes())
 		side := report.Sides[i]
@@ -622,7 +622,7 @@ func openPipe(syncer *selfsync.Syncer, name, as string, policy direct.Policy, no
 // the signer ends a drain, for an entry that the list names active: a
 // device can hold an older list. It reports if the account takes no put.
 func (sess *Session) setDrain(ctx context.Context, conn *storage.Conn, t target, out, notes io.Writer) (bool, error) {
-	as := t.install.As
+	as := terminal.EscapeLine(t.install.As)
 	switch {
 	case t.state == storage.StateDraining:
 		usage, err := conn.Drain(ctx, false)
@@ -669,7 +669,7 @@ func usageLine(u storage.Usage) string {
 func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.List, targets []target, opened []opening, usages []*storage.Usage, empty []int) error {
 	var gone []int
 	for _, i := range empty {
-		as := targets[i].install.As
+		as := terminal.EscapeLine(targets[i].install.As)
 		usage := usages[i]
 		if usage == nil {
 			return fmt.Errorf("%s: the usage did not come, so it stays draining", as)
@@ -701,7 +701,7 @@ func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.Li
 		return fmt.Errorf("the storage list did not change, so %s stays draining: %w", strings.Join(names, ", "), err)
 	}
 	for _, i := range gone {
-		as := targets[i].install.As
+		as := terminal.EscapeLine(targets[i].install.As)
 		fmt.Fprintf(cfg.Out, "storage list: %s is gone; each device removes its install at its next sync\n", as)
 		// The pipe ends first: the close ends each pipe of the account.
 		opened[i].conn.Close()

@@ -706,4 +706,19 @@ func TestNoHostileNameForgesALine(t *testing.T) {
 	if relays, _ := readRelays(dot); len(relays) != 0 {
 		t.Errorf("the refused URL left the relays %q", relays)
 	}
+
+	// A list that an older arc wrote can already hold such a URL: each
+	// line that names it is escaped, and nothing fails.
+	if err := os.WriteFile(relaysPath(filepath.Join(citizensDir(dot), defaultName(dot))), []byte("ws://x\x1b]0;pwned\x07.invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"relay", "ls"}, {"sync"}} {
+		out, errs, _ := runErr(t, args...)
+		if forgedOrRaw(out + errs) {
+			t.Errorf("arc %s with a hostile relay on the list printed %q", strings.Join(args, " "), out+errs)
+		}
+	}
+	if out, _, err := runErr(t, "relay", "ls"); err != nil || !strings.Contains(out, `ws://x\x1b]0;pwned\x07.invalid`) {
+		t.Errorf("arc relay ls showed %q, %v, want the relay escaped", out, err)
+	}
 }

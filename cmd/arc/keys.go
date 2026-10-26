@@ -907,9 +907,9 @@ func serveBunker(command *cobra.Command, _ []string) error {
 
 	// With a device list, the secret admits nobody, so the URI leaves it out.
 	if g.listed() {
-		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s\n", pk.Hex(), url)
+		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s\n", pk.Hex(), terminal.EscapeLine(url))
 	} else {
-		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), url, secret)
+		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), terminal.EscapeLine(url), secret)
 	}
 	go watchDevices(ctx, relay.Relay{URL: url, Signer: id.key}, id.key, g, log)
 	for {

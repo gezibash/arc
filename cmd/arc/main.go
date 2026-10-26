@@ -460,10 +460,11 @@ func relayCommand() *cobra.Command {
 					fmt.Fprintln(command.OutOrStdout(), "no relays: add one with arc relay add <url>")
 				}
 				for _, url := range urls {
-					fmt.Fprintln(command.OutOrStdout(), url)
+					// A list of an older arc can hold any character.
+					fmt.Fprintln(command.OutOrStdout(), terminal.EscapeLine(url))
 				}
 				for _, url := range indexers {
-					fmt.Fprintln(command.OutOrStdout(), url+"  (index)")
+					fmt.Fprintln(command.OutOrStdout(), terminal.EscapeLine(url)+"  (index)")
 				}
 				return nil
 			},
@@ -1187,7 +1188,7 @@ func syncCommand() *cobra.Command {
 					}
 					bodies, err := sess.SyncBodies(dir)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
+						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 						failed = true
 					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
 						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
@@ -1198,12 +1199,12 @@ func syncCommand() *cobra.Command {
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", t.Name(), offers.Received) //arc:raw-ok the name of a transport of arc
+					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", terminal.EscapeLine(t.Name()), offers.Received)
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
+					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 					failed = true
 					continue
 				}

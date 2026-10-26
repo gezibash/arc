@@ -93,7 +93,7 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
+				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", terminal.EscapeLine(url), notice(text)) })
 				r.OnAuthFailure(func(err error) {
 					sess.warnf("%s: could not authenticate before it read mail, so the relay does not count the read for rings: %s\n", url, err)
 				})
