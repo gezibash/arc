@@ -2,12 +2,14 @@ package citizen
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"path/filepath"
 	"slices"
 	"sync"
+	"syscall"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -200,13 +202,34 @@ func (s *Session) warnOffline() {
 	})
 }
 
-// offline says whether each error in err is a dial or a name lookup that
-// failed, so that no relay heard the request.
+// UnreachedReason is the short reason of an error that Unreachable takes:
+// the refusal of a connection, a host that does not exist, or no answer.
+func UnreachedReason(err error) string {
+	var dns *net.DNSError
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "the connection was refused"
+	case errors.As(err, &dns) && dns.IsNotFound:
+		return "no such host"
+	}
+	return "no answer"
+}
+
+// Unreachable says whether no relay heard the request of err: a dial, a
+// lookup or an address that failed, or a relay that gave no answer in time.
+func Unreachable(err error) bool { return offline(err) }
+
+// offline says whether each error in err is a dial, a name lookup or an
+// address that failed, or a relay that gave no answer in time, so that no
+// relay answered the request (#396, #439).
 func offline(err error) bool {
+	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer { //nolint:errorlint // leaves of the walk below
+		return true
+	}
 	// Each branch of a joined error must be offline, and errors.As takes
 	// the first branch that matches, so walk the tree by hand.
 	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
-	case *net.OpError, *net.DNSError:
+	case *net.OpError, *net.DNSError, *net.AddrError:
 		return true
 	case interface{ Unwrap() []error }:
 		errs := e.Unwrap()
@@ -225,3 +248,18 @@ const noticeLimit = 300
 // line, escaped, and cut to noticeLimit characters. The relay chooses the
 // text.
 func notice(text string) string { return terminal.EscapeLineCut(text, noticeLimit) }
+
+// Reach asks each relay of the session one question at once, which each
+// relay answers at once: the event of no ID. A relay that does not answer
+// is then down for a while, so the calls that follow fail at once on it.
+// It returns the error of each relay, in the order of s.Relays, nil for
+// a relay that answered.
+func (s *Session) Reach(ctx context.Context) []error {
+	errs := make([]error, len(s.Relays))
+	var wg sync.WaitGroup
+	for i, t := range s.Relays {
+		wg.Go(func() { _, errs[i] = t.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{{}}}) })
+	}
+	wg.Wait()
+	return errs
+}

@@ -464,13 +464,30 @@ func (m *Mail) sendPrepared(ctx context.Context, to nostr.PubKey, entries []carr
 		if err != nil || len(events) == 0 {
 			continue
 		}
-		sent := false
+		// Each relay gets the wrap at once, so relays that give no answer
+		// cost one wait in all, not one each (#442).
+		var todo []transport.Transport
 		for _, t := range targets {
-			if !slices.Contains(entry.SentTo, t.Name()) && t.Send(ctx, events[0]) == nil {
-				entry.SentTo = append(entry.SentTo, t.Name())
-				sent = true
+			if !slices.Contains(entry.SentTo, t.Name()) && !slices.ContainsFunc(todo, func(o transport.Transport) bool { return o.Name() == t.Name() }) {
+				todo = append(todo, t)
 			}
 		}
+		var (
+			mu   sync.Mutex
+			wg   sync.WaitGroup
+			sent bool
+		)
+		for _, t := range todo {
+			wg.Go(func() {
+				if t.Send(ctx, events[0]) == nil {
+					mu.Lock()
+					entry.SentTo = append(entry.SentTo, t.Name())
+					sent = true
+					mu.Unlock()
+				}
+			})
+		}
+		wg.Wait()
 		// Failure to record a receipt can only repeat a wrap, never lose a call.
 		_ = m.put(carryBucket, entry.Wrap, entry)
 		// The outbox counts this send as an attempt, as a sync counts its

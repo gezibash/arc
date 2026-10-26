@@ -46,6 +46,17 @@ All notable changes to ARC are recorded here. The format follows
   - arc does not start a try that cannot end before the deadline of the
     caller, so the deadline never cuts off a try after its request went
     out.
+- **Breaking:** one relay that never answers does not stall a command
+  while another relay answers (docs/delivery/SPEC.md). A pull asks each
+  relay at once and waits at most 500 ms after the first answer. A send
+  and a publish give the event to each relay at once. A relay that did
+  not connect, or that connected and gave no answer to a probe, is down
+  for 30 s, so the other calls of the command fail at once on it.
+  Finding a relay that gives no answer takes about 20 s, once. `arc sync`
+  names each such relay in one line of plain words, with its reason. An
+  older arc still asks one relay at a time and waits for each (#442).
+- A relay that takes the connection and never answers no longer costs
+  about 30 s for each waiting message in `arc sync` (#442).
 - In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
   shared disk can take longer than 200 ms for one sync of the store. The
   200 ms target stays for a run on a machine of its own. The count of the
