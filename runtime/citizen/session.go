@@ -243,12 +243,17 @@ func offline(err error) bool {
 // RefusedLine is the line of sync for the relay name, which refused with
 // err: a CLOSED, an OK that is false, a request for authentication, or an
 // HTTP status for the WebSocket. ok is false for each other error (#463).
+// The line holds the reason raw, cut to noticeLimit characters: the caller
+// escapes it once, where it prints it (#464).
 func RefusedLine(name string, err error) (line string, ok bool) {
 	reason, ok := relay.Refusal(err)
 	if !ok {
 		return "", false
 	}
-	return name + ": the relay refused: " + notice(reason), true
+	if runes := []rune(reason); len(runes) > noticeLimit {
+		reason = string(runes[:noticeLimit]) + "…"
+	}
+	return name + ": the relay refused: " + reason, true
 }
 
 // Unusable says whether each relay of err gave no answer or refused, so
