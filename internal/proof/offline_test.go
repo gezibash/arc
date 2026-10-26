@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	boltkv "github.com/gezibash/arc/adapters/kv/bolt"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/kv"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // TestOfflineDevice proves that a device opens the data roots that it holds
@@ -560,6 +562,57 @@ func TestARelayThatStopsAnsweringInASyncGetsOneLine(t *testing.T) {
 	for _, raw := range append(rawErrorText, "not sent", "refused") {
 		if strings.Contains(got.Stderr, raw) {
 			t.Errorf("arc sync wrote %q, which holds %q", got.Stderr, raw)
+		}
+	}
+}
+
+// hostileReason is a reason of a refusal with terminal escapes, a bidi
+// override and line breaks in it.
+const hostileReason = "blocked: cato\x1b[31mRED \u202eevil\n\r\x1b[2K"
+
+// A reason that a relay chose reaches the screen escaped once: the line of
+// sync holds it raw, and is escaped where it is printed. It was escaped
+// twice, so that each backslash of an escape came out doubled (#464). Each
+// printed line must be exactly the line with the reason escaped once.
+func TestARefusalReasonIsEscapedOnce(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	refuses := func(mode string) func() string {
+		return func() string { return muteRelay(t, "MUTERELAY_MODE="+mode, "MUTERELAY_REASON="+hostileReason) }
+	}
+	line := func(name string) string {
+		return "arc: " + terminal.EscapeLine(name+": the relay refused: "+hostileReason+"; arc syncs with it again at the next sync")
+	}
+	for i, layout := range []struct {
+		name string
+		live bool
+		bad  []func() string
+		mail bool
+	}{
+		{"a relay that refuses alone", false, []func() string{refuses("closed")}, false},
+		{"a relay that refuses beside a live relay", true, []func() string{refuses("closed")}, false},
+		{"two relays that refuse", false, []func() string{refuses("closed"), refuses("closed")}, false},
+		{"a relay that refuses only mail", false, []func() string{refuses("mailclosed")}, true},
+	} {
+		home := arc(t, filepath.Join(work, fmt.Sprintf("home-%d", i)))
+		home.run("keys", "gen")
+		if layout.live {
+			home.run("relay", "add", live)
+		}
+		var want []string
+		for _, bad := range layout.bad {
+			url := bad()
+			listRelays(t, home, url)
+			if layout.mail {
+				url += " for mail"
+			}
+			want = append(want, line(url))
+		}
+		got := strings.Split(strings.TrimRight(home.try("", "sync").Stderr, "\n"), "\n")
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: arc sync wrote\n%s\nwant\n%s", layout.name, strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 	}
 }

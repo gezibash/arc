@@ -9,15 +9,18 @@
 // NEG-ERR. With MUTERELAY_MODE=closed it refuses each message with the
 // reason "blocked: ...", with MUTERELAY_MODE=auth with "auth-required:
 // ...", and with MUTERELAY_MODE=403 it refuses the WebSocket upgrade with
-// HTTP 403. With MUTERELAY_MODE=quiet it answers as an empty relay until
-// it took MUTERELAY_QUIET_AFTER events, and then answers nothing, on each
-// connection: a relay that stops answering partway through a sync. With
-// MUTERELAY_ACCEPTS it writes one line to that file for each connection
-// that it takes.
+// HTTP 403. MUTERELAY_REASON replaces the reason of a refusal, and with
+// MUTERELAY_MODE=mailclosed it answers as with mail, but refuses a read of
+// mail with that reason. With MUTERELAY_MODE=quiet it answers as an empty
+// relay until it took MUTERELAY_QUIET_AFTER events, and then answers
+// nothing, on each connection: a relay that stops answering partway
+// through a sync. With MUTERELAY_ACCEPTS it writes one line to that file
+// for each connection that it takes.
 package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -41,6 +44,7 @@ func main() {
 	mode := os.Getenv("MUTERELAY_MODE")
 	quietAfter, _ := strconv.Atoi(os.Getenv("MUTERELAY_QUIET_AFTER"))
 	var took atomic.Int32
+	reason := cmp.Or(os.Getenv("MUTERELAY_REASON"), "blocked: this relay serves no one")
 	accepts := os.Getenv("MUTERELAY_ACCEPTS")
 	_ = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if mode == "403" {
@@ -68,7 +72,11 @@ func main() {
 			case "mail":
 				answer = answerAllButMail(msg)
 			case "closed":
-				answer = refuse(msg, "blocked: this relay serves no one")
+				answer = refuse(msg, reason)
+			case "mailclosed":
+				if answer = answerAllButMail(msg); answer == nil {
+					answer = refuse(msg, reason)
+				}
 			case "auth":
 				answer = refuse(msg, "auth-required: this relay serves only its members")
 			case "quiet":

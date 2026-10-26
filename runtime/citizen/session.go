@@ -62,6 +62,11 @@ type Session struct {
 	kept   map[string]relay.Relay
 	// offline warns once that no relay answered.
 	offline sync.Once
+	// errMu makes one write at a time on Errors. A watch ends in its own
+	// goroutine, and can end after the command. errClosed says that Close
+	// ran: no line goes to Errors after it.
+	errMu     sync.Mutex
+	errClosed bool
 }
 
 type Config struct {
@@ -101,7 +106,7 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
+				r.OnNotice(func(text string) { sess.writeErr("%s: %s\n", url, notice(text)) })
 				r.OnWatchEnd(func(by, why string) {
 					sess.warnf("arc: info: a watch of %s ended, closed by %s: %s\n", url, by, why)
 				})
@@ -137,6 +142,9 @@ func Open(cfg Config) (*Session, error) {
 	return sess, nil
 }
 func (s *Session) Close() {
+	s.errMu.Lock()
+	s.errClosed = true
+	s.errMu.Unlock()
 	s.keptMu.Lock()
 	for _, r := range s.kept {
 		_ = r.Close()
@@ -180,7 +188,18 @@ func (s *Session) warnf(format string, args ...any) {
 			safe[i] = arg
 		}
 	}
-	fmt.Fprintf(s.Errors, format, safe...)
+	s.writeErr(format, safe...)
+}
+
+// writeErr writes one line on Errors, unless the session is closed. A line
+// after Close, such as of a watch that ended after its command, is dropped
+// (#438).
+func (s *Session) writeErr(format string, args ...any) {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	if s.Errors != nil && !s.errClosed {
+		fmt.Fprintf(s.Errors, format, args...)
+	}
 }
 
 // warnUnreached warns of a pull that no relay answered, after which the
@@ -244,12 +263,17 @@ func offline(err error) bool {
 // RefusedLine is the line of sync for the relay name, which refused with
 // err: a CLOSED, an OK that is false, a request for authentication, or an
 // HTTP status for the WebSocket. ok is false for each other error (#463).
+// The line holds the reason raw, cut to noticeLimit characters: the caller
+// escapes it once, where it prints it (#464).
 func RefusedLine(name string, err error) (line string, ok bool) {
 	reason, ok := relay.Refusal(err)
 	if !ok {
 		return "", false
 	}
-	return name + ": the relay refused: " + notice(reason), true
+	if runes := []rune(reason); len(runes) > noticeLimit {
+		reason = string(runes[:noticeLimit]) + "…"
+	}
+	return name + ": the relay refused: " + reason, true
 }
 
 // StoppedLine is the line of sync for the relay name, which took some

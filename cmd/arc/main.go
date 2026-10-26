@@ -1174,10 +1174,10 @@ func syncCommand() *cobra.Command {
 			}
 			for _, t := range targets {
 				if err := reached[t.Name()]; err != nil && citizen.Unreachable(err) {
-					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err))
+					unreached = append(unreached, t.Name()+": "+citizen.UnreachedReason(err))
 					continue
 				}
-				if line, ok := citizen.RefusedLine(terminal.EscapeLine(t.Name()), reached[t.Name()]); ok {
+				if line, ok := citizen.RefusedLine(t.Name(), reached[t.Name()]); ok {
 					unreached = append(unreached, line)
 					continue
 				}
@@ -1232,10 +1232,10 @@ func syncCommand() *cobra.Command {
 					// The relay answered the question of Reach, so only
 					// its mail gave no answer: say so, in a few words at
 					// the end, not its whole error (#439, #442).
-					unreached = append(unreached, terminal.EscapeLine(t.Name())+": "+citizen.UnreachedReason(err)+" for mail")
+					unreached = append(unreached, t.Name()+": "+citizen.UnreachedReason(err)+" for mail")
 					continue
 				}
-				if line, ok := citizen.RefusedLine(terminal.EscapeLine(t.Name())+" for mail", err); ok {
+				if line, ok := citizen.RefusedLine(t.Name()+" for mail", err); ok {
 					unreached = append(unreached, line)
 					continue
 				}
@@ -1271,10 +1271,12 @@ func syncCommand() *cobra.Command {
 				}
 			}
 			// One line for each relay that gave no answer, the last as the
-			// error of the sync when nothing else failed.
+			// error of the sync when nothing else failed. A line holds raw
+			// text that a relay chose, and is escaped once, where it is
+			// printed: errorLine escapes the error of the command (#464).
 			for i, relay := range unreached {
 				if i < len(unreached)-1 || failed {
-					fmt.Fprintln(command.ErrOrStderr(), "arc: "+relay+"; arc syncs with it again at the next sync")
+					fmt.Fprintln(command.ErrOrStderr(), "arc: "+terminal.EscapeLine(relay+"; arc syncs with it again at the next sync"))
 				} else {
 					return errors.New(relay + "; arc syncs with it again at the next sync")
 				}
