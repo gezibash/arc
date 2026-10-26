@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -558,5 +559,105 @@ func TestARelayNoticeReachesTheScreenEscapedOnce(t *testing.T) {
 	}
 	if shown == 0 {
 		t.Errorf("arc sync wrote %q, want the notice of the relay", got.Stderr)
+	}
+}
+
+// closingRelay is a local address that takes each connection and closes it
+// at once, as a relay that is down behind a proxy does. The client reads
+// EOF or a reset, as timing falls.
+func closingRelay(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return "ws://" + l.Addr().String()
+}
+
+// A relay that closes each connection at once gets one plain line in each
+// sync: whether the client reads EOF or a reset depends on timing, and with
+// EOF each step of the sync printed its own Go error (#444, ut-444c F-EOF).
+func TestARelayThatClosesAtOnceGetsOneLineInEachSync(t *testing.T) {
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	url := closingRelay(t)
+	listRelays(t, home, url)
+	want := "arc: " + url + ": the connection was closed; arc syncs with it again at the next sync"
+	for i := range 20 {
+		got := home.try("", "sync")
+		if lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n"); len(lines) != 1 || lines[0] != want {
+			t.Fatalf("sync %d wrote %q, want the one line %q", i+1, got.Stderr, want)
+		}
+	}
+}
+
+// markDown writes a mark of the relay url in the relays-down.json of a
+// home, until the time until, as an earlier command would.
+func markDown(t *testing.T, m machine, url string, until time.Time) {
+	t.Helper()
+	path := filepath.Join(filepath.Dir(relaysFile(t, m)), "relays-down.json")
+	body := fmt.Sprintf(`{%q:{"until":%d,"why":"no answer"}}`, url, until.Unix())
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A sync reads the marks of the home once. A relay that a mark skips at
+// the start stays skipped for the whole sync, even when the mark runs out
+// in the middle: the sync dialled it then, waited 20 s more, and said that
+// it skipped it (#444, ut-444c F-STAG). Two mute relays, one marked for
+// 10 s, cost one wait of about 20 s.
+func TestASyncReadsTheMarksOfTheHomeOnce(t *testing.T) {
+	home := arc(t, t.TempDir())
+	home.run("keys", "gen")
+	marked, unmarked := muteRelayURL(t), muteRelayURL(t)
+	listRelays(t, home, marked, unmarked)
+	markDown(t, home, marked, time.Now().Add(10*time.Second))
+	start := time.Now()
+	got := home.try("", "sync")
+	took := time.Since(start)
+	if took > 30*time.Second {
+		t.Errorf("a sync with one marked and one unmarked mute relay took %s, want one wait of about 20 s", took)
+	}
+	lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+	slices.Sort(lines)
+	// The line comes at the end of the sync, when the mark of 10 s can
+	// have run out: it then says that the next command tries the relay.
+	skipped := "arc: " + marked + ": skipped: no answer at the last try; arc tries it again "
+	waited := "arc: " + unmarked + ": no answer; arc syncs with it again at the next sync"
+	if len(lines) != 2 || !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, skipped) }) || !slices.Contains(lines, waited) {
+		t.Errorf("the sync wrote %q, want that it skipped %s and waited for %s", got.Stderr, marked, unmarked)
+	}
+	t.Logf("ok: the sync took %s", took.Round(100*time.Millisecond))
+}
+
+// A mark 15 s ahead skips the relay, with how long the mark has left. A
+// mark 30 to 31 s ahead of a live relay counts at the start, so the sync
+// skips the relay in each step: it called a live relay "no answer for mail"
+// when the mark began to count in the middle of the sync (ut-444c F-LATE).
+func TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync(t *testing.T) {
+	work := t.TempDir()
+	live := startRelay(t, filepath.Join(work, "relay"))
+	for _, ahead := range []time.Duration{15 * time.Second, 30500 * time.Millisecond} {
+		home := arc(t, filepath.Join(work, ahead.String()))
+		home.run("keys", "gen")
+		listRelays(t, home, live)
+		markDown(t, home, live, time.Now().Add(ahead))
+		got := home.try("", "sync")
+		lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
+		skipped := "arc: " + live + ": skipped: no answer at the last try; arc tries it again in "
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], skipped) || strings.Contains(got.Stderr, "for mail") {
+			t.Errorf("a mark %s ahead: the sync wrote %q, want the one line %q...", ahead, got.Stderr, skipped)
+		}
 	}
 }

@@ -54,3 +54,11 @@ func SetCallTimeout(d time.Duration) func() {
 	callTimeout = d
 	return func() { callTimeout = old }
 }
+
+// SetQuickFor changes how long this process remembers a connect that
+// failed at once, and returns a function that puts the old value back.
+func SetQuickFor(d time.Duration) func() {
+	old := quickFor
+	quickFor = d
+	return func() { quickFor = old }
+}

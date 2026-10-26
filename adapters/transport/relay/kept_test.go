@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -409,9 +410,11 @@ func (m *marks) MarkDown(url string, _ time.Time, why string) {
 func (m *marks) Up(string) {}
 
 // A closed port refuses the connection: an answer of the host. It marks
-// nothing, in this process or for the other processes of the home, so a
-// relay that starts on the port is used at once (#444).
+// nothing for the other processes of the home, and this process remembers
+// it only for quickFor, so a relay that starts on the port is used soon
+// (#444).
 func TestAClosedPortIsNotDown(t *testing.T) {
+	defer relay.SetQuickFor(2 * time.Second)()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -421,27 +424,32 @@ func TestAClosedPortIsNotDown(t *testing.T) {
 	store := &marks{}
 	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
 	r.ShareDown(store)
-	for range 2 {
-		_, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
-		if _, down := errors.AsType[*relay.DownError](err); err == nil || down {
-			t.Fatalf("a fetch from a closed port gave %v, want its refusal", err)
-		}
-	}
+	quickFailures(t, r, "a closed port", "the connection was refused")
 	if len(store.marked) > 0 {
-		t.Errorf("a closed port was marked down: %v", store.marked)
+		t.Errorf("a closed port was marked down for the other processes: %v", store.marked)
 	}
 }
 
-// A mark further ahead than downFor did not come from arc, whose marks end
-// downFor after they are made. It is no mark, so a clock that was wrong
-// once, or an edited file, does not skip a relay for ever (#444).
-func TestAMarkFarAheadIsNoMark(t *testing.T) {
-	url := testrelay.Start(t)
-	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
-	defer func() { _ = r.Close() }()
-	r.ShareDown(&marks{lookup: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)})
-	if _, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}}); err != nil {
-		t.Fatalf("a relay with a mark of the year 2100 gave %v, want a fetch", err)
+// quickFailures checks a relay whose connect fails at once: the first fetch
+// dials and fails, the next one in quickFor fails at once with the same
+// reason, and one after quickFor dials again.
+func quickFailures(t *testing.T, r relay.Relay, what, reason string) {
+	t.Helper()
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}}
+	if _, err := r.Fetch(t.Context(), filter); err == nil {
+		t.Fatalf("a fetch from %s worked", what)
+	} else if _, down := errors.AsType[*relay.DownError](err); down {
+		t.Fatalf("the first fetch from %s gave %v, want its own error", what, err)
+	}
+	_, err := r.Fetch(t.Context(), filter)
+	if down, ok := errors.AsType[*relay.DownError](err); !ok || down.Err == nil || !strings.Contains(err.Error(), reason) {
+		t.Errorf("a fetch from %s right after gave %v, want it to fail at once: %s", what, err, reason)
+	}
+	time.Sleep(2200 * time.Millisecond)
+	if _, err := r.Fetch(t.Context(), filter); err == nil {
+		t.Fatalf("a fetch from %s worked", what)
+	} else if _, down := errors.AsType[*relay.DownError](err); down {
+		t.Errorf("a fetch from %s after quickFor gave %v, want it to dial again", what, err)
 	}
 }
 
@@ -533,6 +541,7 @@ func TestAWatchEndSaysWhoEndedIt(t *testing.T) {
 // (#444). arc relay add marked such a relay for 30 s, so arc serve skipped
 // it when it came back.
 func TestAConnectionClosedAtOnceIsNotDown(t *testing.T) {
+	defer relay.SetQuickFor(2 * time.Second)()
 	// A close sends FIN, and the client reads EOF; a close with no linger
 	// sends RST, and the client reads a reset of the connection.
 	for _, reset := range []bool{false, true} {
@@ -556,14 +565,9 @@ func TestAConnectionClosedAtOnceIsNotDown(t *testing.T) {
 		store := &marks{}
 		r := relay.New("ws://"+l.Addr().String(), keyer.NewPlainKeySigner(nostr.Generate()))
 		r.ShareDown(store)
-		for range 2 {
-			_, err := r.Fetch(t.Context(), nostr.Filter{Kinds: []nostr.Kind{1}})
-			if _, down := errors.AsType[*relay.DownError](err); err == nil || down {
-				t.Fatalf("reset %t: a fetch from a host that closes at once gave %v, want its own error", reset, err)
-			}
-		}
+		quickFailures(t, r, fmt.Sprintf("a host that closes at once (reset %t)", reset), "the connection was closed")
 		if len(store.marked) > 0 {
-			t.Errorf("reset %t: a host that closes at once was marked down: %v", reset, store.marked)
+			t.Errorf("reset %t: a host that closes at once was marked down for the other processes: %v", reset, store.marked)
 		}
 	}
 }

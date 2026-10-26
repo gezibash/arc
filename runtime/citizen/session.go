@@ -98,13 +98,16 @@ func Open(cfg Config) (*Session, error) {
 	}
 	// Each relay keeps one connection for its sends. One URL gives one relay,
 	// so a long run does not open a connection for each call.
+	// One look at relays-down.json for each command: each relay of the
+	// session skips what the home marked when the command began (#444).
+	down := relaysDown{path: filepath.Join(cfg.Home, "relays-down.json"), note: sess.noteDownFile, snap: &downSnapshot{}}
 	sess.NewRelay = func(url string) transport.Transport {
 		sess.keptMu.Lock()
 		defer sess.keptMu.Unlock()
 		r, ok := sess.kept[url]
 		if !ok {
 			r = relay.New(url, sess.Signer)
-			r.ShareDown(relaysDown{path: filepath.Join(cfg.Home, "relays-down.json"), note: sess.noteDownFile})
+			r.ShareDown(down)
 			if sess.delegation != nil {
 				r.Delegation = sess.delegation
 			}
@@ -237,6 +240,11 @@ func (s *Session) warnOffline() {
 // command says so, and when arc tries it again (#444).
 func UnreachedLine(name string, err error) string {
 	if down, ok := errors.AsType[*relay.DownError](err); ok && down.Err == nil {
+		// The mark can run out while the command skips the relay: the next
+		// command tries it (#444).
+		if down.Again() <= 0 {
+			return fmt.Sprintf("%s: skipped: %s at the last try; arc tries it again at the next command", name, terminal.EscapeLine(down.Why))
+		}
 		return fmt.Sprintf("%s: skipped: %s at the last try; arc tries it again in %s", name, terminal.EscapeLine(down.Why), down.Again())
 	}
 	return name + ": " + UnreachedReason(err) + "; arc syncs with it again at the next sync"
@@ -251,6 +259,8 @@ func UnreachedReason(err error) string {
 		return "the connection was refused"
 	case errors.As(err, &dns) && dns.IsNotFound:
 		return "no such host"
+	case errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET):
+		return "the connection was closed"
 	}
 	return "no answer"
 }
@@ -263,7 +273,10 @@ func Unreachable(err error) bool { return offline(err) }
 // address that failed, or a relay that gave no answer in time, so that no
 // relay answered the request (#396, #439).
 func offline(err error) bool {
-	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer { //nolint:errorlint // leaves of the walk below
+	// A host that closed the connection at once, with EOF or a reset,
+	// answered nothing either; which of the two the client reads depends on
+	// timing, so both count (#444).
+	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer || err == io.EOF || err == io.ErrUnexpectedEOF { //nolint:errorlint // leaves of the walk below
 		return true
 	}
 	// Each branch of a joined error must be offline, and errors.As takes

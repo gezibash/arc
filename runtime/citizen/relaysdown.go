@@ -2,7 +2,9 @@ package citizen
 
 import (
 	"encoding/json"
+
 	"fmt"
+	"github.com/gezibash/arc/adapters/transport/relay"
 	"os"
 	"path/filepath"
 	"sync"
@@ -20,6 +22,28 @@ import (
 type relaysDown struct {
 	path string
 	note func(error)
+	// snap, when set, is one look at the file for relay.DownFor: a command
+	// shorter than that, such as a sync, skips what the home marked when it
+	// began, and a mark that runs out or comes in the middle of it changes
+	// nothing (#444). A process that runs longer, such as arc serve, looks
+	// again after DownFor. Without snap, each look reads the file.
+	snap *downSnapshot
+}
+
+// downSnapshot is the marks that counted at the time at.
+type downSnapshot struct {
+	mu    sync.Mutex
+	at    time.Time
+	marks map[string]downRecord
+}
+
+// counts says whether a mark counts at the time at: it ends after at, and
+// at most relay.DownFor later. A mark further ahead did not come from arc,
+// whose marks end DownFor after they are made: it is no mark, or one wrong
+// clock would skip a relay for ever.
+func counts(r downRecord, at time.Time) bool {
+	until := time.Unix(r.Until, 0)
+	return until.After(at) && until.Sub(at) <= relay.DownFor()+time.Second
 }
 
 // relaysDownMu makes the read and the write of one change one step in this
@@ -82,7 +106,23 @@ func (d relaysDown) save(all map[string]downRecord) error {
 }
 
 func (d relaysDown) Down(url string) (time.Time, string, bool) {
-	r, ok := d.read()[url]
+	var r downRecord
+	var ok bool
+	if d.snap != nil {
+		d.snap.mu.Lock()
+		if now := time.Now(); d.snap.marks == nil || now.Sub(d.snap.at) > relay.DownFor() {
+			d.snap.at, d.snap.marks = now, map[string]downRecord{}
+			for url, r := range d.read() {
+				if counts(r, now) {
+					d.snap.marks[url] = r
+				}
+			}
+		}
+		r, ok = d.snap.marks[url]
+		d.snap.mu.Unlock()
+	} else if r, ok = d.read()[url]; ok && !counts(r, time.Now()) {
+		ok = false
+	}
 	return time.Unix(r.Until, 0), r.Why, ok
 }
 

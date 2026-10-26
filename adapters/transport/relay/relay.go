@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -268,6 +269,9 @@ var ErrNoAnswer = errors.New("the relay gave no answer in time")
 // downFor is how long a fetch fails at once after a connect failed.
 var downFor = 30 * time.Second
 
+// DownFor is how long a relay that did not answer stays down.
+func DownFor() time.Duration { return downFor }
+
 // DownStore keeps the relays that did not connect, so that the other
 // processes of the same home do not wait for them again. A store that
 // fails says so as no record: it never fails a call.
@@ -312,7 +316,26 @@ func downReason(err error) string {
 	if dns, ok := errors.AsType[*net.DNSError](err); ok && dns.IsNotFound {
 		return "no such host"
 	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "the connection was refused"
+	}
+	if closedAtOnce(err) {
+		return "the connection was closed"
+	}
 	return "no answer"
+}
+
+// quickFor is how long this process remembers a connect that failed at
+// once: a refused connection, or one that the host closed or reset. The
+// calls of one command then do not dial the relay again for each call, and
+// a long process, such as arc serve, uses the relay soon after it comes
+// back. Such a failure is never kept for the other processes (#444).
+var quickFor = 5 * time.Second
+
+// closedAtOnce says whether err is a connection that the host refused,
+// closed or reset at once.
+func closedAtOnce(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (e *DownError) Unwrap() error { return e.Err }
@@ -329,11 +352,11 @@ func (k *kept) isDown(url string) error {
 	if down != nil && time.Now().Before(until) {
 		return &DownError{URL: url, Why: downReason(down), Until: until, Err: down}
 	}
+	// The store says which marks count: it reads them once for the whole
+	// command, so a mark that runs out in the middle of it does not make
+	// the command dial a relay that it skipped (#444).
 	if shared != nil {
-		// A mark further ahead than downFor did not come from this arc,
-		// whose marks end downFor after they are made: it is no mark, or
-		// one wrong clock would skip a relay for ever (#444).
-		if until, why, ok := shared.Down(url); ok && time.Now().Before(until) && time.Until(until) <= downFor {
+		if until, why, ok := shared.Down(url); ok {
 			return &DownError{URL: url, Why: why, Until: until}
 		}
 	}
@@ -480,6 +503,8 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 				if k.shared != nil {
 					k.shared.MarkDown(r.URL, k.downUntil, downReason(err))
 				}
+			} else if ctx.Err() == nil && closedAtOnce(err) {
+				k.down, k.downUntil = err, time.Now().Add(quickFor)
 			}
 			return nil, false, nil, err
 		}

@@ -27,7 +27,7 @@ func TestABrokenFileOfDownRelaysIsNoRecord(t *testing.T) {
 	if _, _, ok := d.Down("ws://a"); ok {
 		t.Fatal("a file that does not parse holds a record")
 	}
-	d.MarkDown("ws://a", time.Now().Add(time.Minute), "down")
+	d.MarkDown("ws://a", time.Now().Add(10*time.Second), "down")
 	if _, why, ok := d.Down("ws://a"); !ok || why != "down" {
 		t.Fatalf("a record over a broken file did not keep: %q, %v", why, ok)
 	}
@@ -36,7 +36,7 @@ func TestABrokenFileOfDownRelaysIsNoRecord(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(locked.path), 0o500); err != nil {
 			t.Fatal(err)
 		}
-		locked.MarkDown("ws://a", time.Now().Add(time.Minute), "down")
+		locked.MarkDown("ws://a", time.Now().Add(10*time.Second), "down")
 		if _, _, ok := locked.Down("ws://a"); ok {
 			t.Error("a folder that arc cannot write holds a record")
 		}
@@ -69,7 +69,7 @@ func TestDownRelaysOfManyProcessesKeepAWholeFile(t *testing.T) {
 		writers.Go(func() {
 			d := relaysDown{path: path}
 			for j := range 20 {
-				d.MarkDown(fmt.Sprintf("ws://%d-%d", i, j), time.Now().Add(time.Minute), "down")
+				d.MarkDown(fmt.Sprintf("ws://%d-%d", i, j), time.Now().Add(10*time.Second), "down")
 				d.Up(fmt.Sprintf("ws://%d-%d", i, j-1))
 			}
 		})
@@ -107,7 +107,7 @@ func TestTheMarksOfOneCommandAllLand(t *testing.T) {
 	for i := range relays {
 		wg.Go(func() {
 			<-start
-			d.MarkDown(fmt.Sprintf("ws://relay-%d", i), time.Now().Add(time.Minute), "no answer")
+			d.MarkDown(fmt.Sprintf("ws://relay-%d", i), time.Now().Add(10*time.Second), "no answer")
 		})
 	}
 	close(start)
@@ -126,7 +126,7 @@ func TestAFileThatCannotBeWrittenGivesANote(t *testing.T) {
 	if err := os.Mkdir(d.path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	d.MarkDown("ws://a", time.Now().Add(time.Minute), "no answer")
+	d.MarkDown("ws://a", time.Now().Add(10*time.Second), "no answer")
 	if len(notes) != 1 || !strings.Contains(notes[0].Error(), d.path) || !strings.Contains(notes[0].Error(), "remove it") {
 		t.Errorf("a folder at the file gave the notes %v, want one that names it and says to remove it", notes)
 	}
@@ -139,5 +139,29 @@ func TestASkippedRelaySaysWhenArcTriesItAgain(t *testing.T) {
 	got := UnreachedLine("ws://a", err)
 	if !strings.Contains(got, "ws://a: skipped: no answer at the last try; arc tries it again in 2") || strings.Contains(got, "next sync") {
 		t.Errorf("a skipped relay has the line %q, want that it is skipped and when arc tries it again", got)
+	}
+}
+
+// A mark further ahead than the window of a mark did not come from arc,
+// whose marks end relay.DownFor after they are made. It is no mark, so a
+// clock that was wrong once, or an edited file, does not skip a relay for
+// ever (#444).
+func TestAMarkFarAheadIsNoMark(t *testing.T) {
+	d := relaysDown{path: filepath.Join(t.TempDir(), "relays-down.json"), snap: &downSnapshot{}}
+	body, err := json.Marshal(map[string]downRecord{
+		"ws://far":  {Until: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), Why: "no answer"},
+		"ws://near": {Until: time.Now().Add(10 * time.Second).Unix(), Why: "no answer"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := d.Down("ws://far"); ok {
+		t.Error("a mark of the year 2100 counts")
+	}
+	if _, _, ok := d.Down("ws://near"); !ok {
+		t.Error("a mark 10 s ahead does not count")
 	}
 }
