@@ -259,6 +259,56 @@ func offline(err error) bool {
 	return false
 }
 
+// RefusedLine is the line of sync for the relay name, which refused with
+// err: a CLOSED, an OK that is false, a request for authentication, or an
+// HTTP status for the WebSocket. ok is false for each other error (#463).
+// The line holds the reason raw, cut to noticeLimit characters: the caller
+// escapes it once, where it prints it (#464).
+func RefusedLine(name string, err error) (line string, ok bool) {
+	reason, ok := relay.Refusal(err)
+	if !ok {
+		return "", false
+	}
+	if runes := []rune(reason); len(runes) > noticeLimit {
+		reason = string(runes[:noticeLimit]) + "…"
+	}
+	return name + ": the relay refused: " + reason, true
+}
+
+// Unusable says whether each relay of err gave no answer or refused, so
+// that the one line of sync for each relay says all there is (#463).
+func Unusable(err error) bool {
+	return err != nil && every(err, func(err error) bool {
+		_, refused := relay.Refusal(err)
+		return refused || offline(err)
+	})
+}
+
+// every says whether leaf holds for each branch of the joined errors in
+// err. A branch with no joined error under it is a leaf.
+func every(err error, leaf func(error) bool) bool {
+	switch e := err.(type) { //nolint:errorlint // walks every branch, as offline does
+	case interface{ Unwrap() []error }:
+		errs := e.Unwrap()
+		return len(errs) > 0 && !slices.ContainsFunc(errs, func(err error) bool { return !every(err, leaf) })
+	case interface{ Unwrap() error }:
+		if joined(e.Unwrap()) {
+			return every(e.Unwrap(), leaf)
+		}
+	}
+	return leaf(err)
+}
+
+// joined says whether err holds a joined error.
+func joined(err error) bool {
+	for ; err != nil; err = errors.Unwrap(err) {
+		if _, ok := err.(interface{ Unwrap() []error }); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // noticeLimit is the most characters of a relay NOTICE that arc prints,
 // after it escapes the text. A notice that rings fail has about 150.
 const noticeLimit = 300

@@ -11,6 +11,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -503,6 +504,36 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 // an event.
 func refused(err error) bool { return strings.HasPrefix(err.Error(), "msg: ") }
 
+// upgradeStatus finds the HTTP status of a relay that refused the WebSocket.
+var upgradeStatus = regexp.MustCompile(`expected handshake response status code 101 but got (\d{3})`)
+
+// Refusal is the reason of a relay that refused a call: the reason of a
+// CLOSED or of an OK that is false, a request for authentication, or an
+// HTTP status other than 101 for the WebSocket. ok is false for each other
+// error, such as a relay that gave no answer (#463). The relay chooses
+// the reason: a caller escapes it before it prints it.
+func Refusal(err error) (reason string, ok bool) {
+	if err == nil {
+		return "", false
+	}
+	var answer answerError
+	switch {
+	case errors.As(err, &answer):
+		return answer.reason, true
+	case errors.Is(err, errAuthRequired):
+		return "it asks for authentication", true
+	}
+	if m := upgradeStatus.FindStringSubmatch(err.Error()); m != nil {
+		return "HTTP " + m[1] + " for the WebSocket", true
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if text, ok := strings.CutPrefix(e.Error(), "msg: "); ok {
+			return text, true
+		}
+	}
+	return "", false
+}
+
 // answerError is the reason of a CLOSED message: an answer of the relay.
 type answerError struct{ reason string }
 
@@ -799,7 +830,11 @@ func (r Relay) fetch(ctx context.Context, conn *nostr.Relay, filter nostr.Filter
 		if errors.Is(err, errAuthRequired) && r.Signer != nil {
 			// The relay serves sealed data only to its author: answer the
 			// challenge, and ask again.
-			if err = r.authenticate(ctx, conn); err == nil {
+			if aerr := r.authenticate(ctx, conn); aerr != nil {
+				// The relay still asked for authentication: keep that it
+				// refused, with why the answer failed (#463).
+				err = fmt.Errorf("%w, and arc could not answer: %v", errAuthRequired, aerr)
+			} else {
 				events, err = stored(ctx, conn, page)
 			}
 		}

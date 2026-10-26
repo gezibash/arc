@@ -8,11 +8,17 @@
 // With MUTERELAY_MODE=mail it answers each message except a read of mail
 // (kind 1059, or a filter on #p): a relay that is silent for one kind. It
 // has no events, so a REQ gets EOSE, an EVENT gets OK, and a NEG-OPEN gets
-// NEG-ERR. With MUTERELAY_ACCEPTS it writes one line to that file for each
+// NEG-ERR. With MUTERELAY_MODE=closed it refuses each message with the
+// reason "blocked: ...", with MUTERELAY_MODE=auth with "auth-required:
+// ...", and with MUTERELAY_MODE=403 it refuses the WebSocket upgrade with
+// HTTP 403. MUTERELAY_REASON replaces the reason of a refusal, and with
+// MUTERELAY_MODE=mailclosed it answers as with mail, but refuses a read of
+// mail with that reason. With MUTERELAY_ACCEPTS it writes one line to that file for each
 // connection that it takes.
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,9 +38,14 @@ func main() {
 	}
 	fmt.Printf("ws://%s\n", l.Addr())
 	mode := os.Getenv("MUTERELAY_MODE")
+	reason := cmp.Or(os.Getenv("MUTERELAY_REASON"), "blocked: this relay serves no one")
 	text := os.Getenv("MUTERELAY_NOTICE")
 	accepts := os.Getenv("MUTERELAY_ACCEPTS")
 	_ = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "403" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -59,10 +70,21 @@ func main() {
 			switch mode {
 			case "mail":
 				answer = answerAllButMail(msg)
+			case "closed":
+				answer = refuse(msg, reason)
+			case "mailclosed":
+				if answer = answerAllButMail(msg); answer == nil {
+					answer = refuse(msg, reason)
+				}
 			case "all":
 				if answer = answerAllButMail(msg); answer == nil {
 					answer = endOfStored(msg)
 				}
+			case "auth":
+				answer = refuse(msg, "auth-required: this relay serves only its members")
+			}
+			if answer != nil {
+				_ = conn.Write(ctx, websocket.MessageText, answer)
 			}
 			if answer != nil {
 				_ = conn.Write(ctx, websocket.MessageText, answer)
@@ -134,6 +156,35 @@ func answerAllButMail(msg []byte) []byte {
 		}
 		_ = json.Unmarshal(parts[1], &event)
 		answer = []any{"OK", event.ID, true, ""}
+	default:
+		return nil
+	}
+	body, _ := json.Marshal(answer)
+	return body
+}
+
+// refuse is the refusal of one message with reason, or nil for a message
+// that needs no answer.
+func refuse(msg []byte, reason string) []byte {
+	var parts []json.RawMessage
+	if json.Unmarshal(msg, &parts) != nil || len(parts) < 2 {
+		return nil
+	}
+	var verb, sub string
+	_ = json.Unmarshal(parts[0], &verb)
+	_ = json.Unmarshal(parts[1], &sub)
+	var answer []any
+	switch verb {
+	case "REQ", "COUNT":
+		answer = []any{"CLOSED", sub, reason}
+	case "NEG-OPEN":
+		answer = []any{"NEG-ERR", sub, reason}
+	case "EVENT":
+		var event struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(parts[1], &event)
+		answer = []any{"OK", event.ID, false, reason}
 	default:
 		return nil
 	}
