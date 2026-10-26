@@ -3,6 +3,7 @@ package citizen
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,5 +74,57 @@ func TestALostReplyAfterAnUnheardCallIsNotRepeated(t *testing.T) {
 	_, _, _, err := LiveCall(context.Background(), keys.Generate(), keys.Generate().Public, call.Request{Body: "increment"}, []transport.Transport{p}, 10*time.Second)
 	if err == nil || count != 1 || p.attempts != 2 {
 		t.Fatalf("err=%v executions=%d attempts=%d, want one execution", err, count, p.attempts)
+	}
+}
+
+// unheardAt is the answer of a relay where no provider listens.
+func unheardAt(relay string) error {
+	return transport.NoListener(errors.New(relay + ": msg: mute: no one was listening for this"))
+}
+
+// When the deadline of the caller cuts off a try after one that no one
+// heard, the call gives the try before it, which names the relay of the
+// provider, never the context error of the caller (#453). The test
+// cancels the context from inside the tries, so no timing decides it.
+func TestADeadlineInARetryGivesTheUnheardResult(t *testing.T) {
+	for _, where := range []string{"in a try", "between tries"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		tries := 0
+		_, err := retryUnheard(ctx, func() (int, error) {
+			tries++
+			if tries == 1 {
+				if where == "between tries" {
+					cancel()
+				}
+				return 0, unheardAt("ws://provider")
+			}
+			cancel()
+			return 0, &transport.NotSubmittedError{Err: ctx.Err()}
+		})
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "ws://provider") || errors.Is(err, context.Canceled) {
+			t.Errorf("a deadline %s gave %v, want the unheard try at the relay of the provider", where, err)
+		}
+	}
+}
+
+// A try that submitted its request keeps its own result when the deadline
+// cuts it off: its outcome is unknown, and the call never says that no one
+// got it (#436).
+func TestADeadlineAfterASubmittedTryKeepsItsResult(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tries := 0
+	uncertain := errors.New("call outcome unknown via ws://provider; the operation may have executed")
+	_, err := retryUnheard(ctx, func() (int, error) {
+		tries++
+		if tries == 1 {
+			return 0, unheardAt("ws://provider")
+		}
+		cancel()
+		return 0, uncertain
+	})
+	if !errors.Is(err, uncertain) || tries != 2 {
+		t.Errorf("a submitted try cut off by the deadline gave %v after %d tries, want its unknown outcome", err, tries)
 	}
 }

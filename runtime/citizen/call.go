@@ -44,17 +44,33 @@ const unheardStep = 250 * time.Millisecond
 // repeat it never repeats an operation.
 func retryUnheard[T any](ctx context.Context, try func() (T, error)) (T, error) {
 	deadline := time.Now().Add(unheardWait)
+	var last T
+	var lastErr error
 	for {
 		got, err := try()
+		// A try that the deadline of the caller cut off says less than the
+		// try before it, which no one heard and which names the relay of
+		// the provider: give that one. A try that submitted its request
+		// keeps its own result, whose outcome may be unknown (#453).
+		if err != nil && lastErr != nil && ctx.Err() != nil && notSubmitted(err) {
+			return last, lastErr
+		}
 		if err == nil || !errors.Is(err, transport.ErrNoListener) || time.Now().After(deadline) {
 			return got, err
 		}
+		last, lastErr = got, err
 		select {
 		case <-time.After(unheardStep):
 		case <-ctx.Done():
 			return got, err
 		}
 	}
+}
+
+// notSubmitted says whether a try submitted no request.
+func notSubmitted(err error) bool {
+	_, ok := errors.AsType[*transport.NotSubmittedError](err)
+	return ok
 }
 
 func liveCall(ctx context.Context, signer keys.Signer, provider nostr.PubKey, request call.Request, targets []transport.Transport) (call.Reply, time.Duration, string, error) {
