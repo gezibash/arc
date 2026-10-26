@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -566,8 +567,9 @@ func TestARelayThatStopsAnsweringInASyncGetsOneLine(t *testing.T) {
 		t.Errorf("a sync with a relay that stopped answering exited 0")
 	}
 	lines := strings.Split(strings.TrimRight(got.Stderr, "\n"), "\n")
-	if len(lines) != 1 || !strings.Contains(lines[0], quiet+": stopped answering after it took 2 of ") {
-		t.Errorf("arc sync wrote %q, want one line that says that %s stopped answering after it took 2 wraps", got.Stderr, quiet)
+	want := regexp.MustCompile("^arc: " + regexp.QuoteMeta(quiet) + ": stopped answering after it took 2 of [0-9]+ waiting wraps; arc syncs with it again at the next sync$")
+	if len(lines) != 1 || !want.MatchString(lines[0]) {
+		t.Errorf("arc sync wrote %q, want the one line %s", got.Stderr, want)
 	}
 	for _, raw := range append(rawErrorText, "not sent", "refused") {
 		if strings.Contains(got.Stderr, raw) {
