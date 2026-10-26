@@ -39,15 +39,21 @@ const unheardWait = 6 * time.Second
 // unheardStep is the time between two tries.
 const unheardStep = 250 * time.Millisecond
 
+// clock is the time of retryUnheard. A test sets it to see when a try
+// would end.
+var clock = time.Now
+
 // retryUnheard runs try again while it fails because no one heard it, for
 // at most unheardWait. A try that no one heard reached no provider, so to
 // repeat it never repeats an operation.
 func retryUnheard[T any](ctx context.Context, try func() (T, error)) (T, error) {
-	deadline := time.Now().Add(unheardWait)
+	deadline := clock().Add(unheardWait)
 	var last T
 	var lastErr error
 	for {
+		start := clock()
 		got, err := try()
+		took := clock().Sub(start)
 		// A try that the deadline of the caller cut off says less than the
 		// try before it, which no one heard and which names the relay of
 		// the provider: give that one. A try that submitted its request
@@ -55,7 +61,13 @@ func retryUnheard[T any](ctx context.Context, try func() (T, error)) (T, error) 
 		if err != nil && lastErr != nil && ctx.Err() != nil && notSubmitted(err) {
 			return last, lastErr
 		}
-		if err == nil || !errors.Is(err, transport.ErrNoListener) || time.Now().After(deadline) {
+		if err == nil || !errors.Is(err, transport.ErrNoListener) || clock().After(deadline) {
+			return got, err
+		}
+		// A try that cannot end before the deadline of the caller would be
+		// cut off after its request went out, with an outcome that is
+		// unknown. The try that no one heard says more: give it.
+		if end, ok := ctx.Deadline(); ok && end.Sub(clock()) < unheardStep+took {
 			return got, err
 		}
 		last, lastErr = got, err
