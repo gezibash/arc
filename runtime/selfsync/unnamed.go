@@ -59,15 +59,29 @@ func (r *run) unnamed(ctx context.Context) error {
 	}
 	// The candidates of each address.
 	byAddress := map[string][]nostr.Event{}
+	// kept holds the events of each address that a write may still keep.
+	kept := map[string][]nostr.Event{}
 	for _, e := range mine {
 		a := e.Tags.Find("a")
 		if _, sealed := draft.Gen(e); !sealed || a == nil || draft.Owner(e) != r.s.Citizen {
 			continue
 		}
 		if r.blobs[r.current.BlobID(e.ID)] == nil && (writing || r.s.now().Sub(e.CreatedAt.Time()) < unnamedAge) {
+			kept[a[1]] = append(kept[a[1]], e)
 			continue
 		}
 		byAddress[a[1]] = append(byAddress[a[1]], e)
+	}
+	for coordinate, events := range kept {
+		named, ok, err := r.namedOnce(ctx, coordinate)
+		if err != nil {
+			return err
+		}
+		for _, e := range events {
+			if ok && !named[e.ID.Hex()] {
+				r.report.Repair.UnnamedKept++
+			}
+		}
 	}
 	var gone []nostr.Event
 	for coordinate, candidates := range byAddress {

@@ -43,6 +43,9 @@ All notable changes to ARC are recorded here. The format follows
   fails at once (#436).
   - A call whose deadline ends while no provider hears it says so and names
     the relay of the provider, not the deadline of the caller (#453).
+  - arc does not start a try that cannot end before the deadline of the
+    caller, so the deadline never cuts off a try after its request went
+    out.
 
 ## [0.37.0] - 2026-10-19
 
