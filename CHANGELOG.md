@@ -22,8 +22,57 @@ All notable changes to ARC are recorded here. The format follows
   `~/.local/state/arc-dm`. So it follows the arc that it runs: a newer
   arc-dm with an older arc does not see a home in `~/.arc`. Upgrade arc and
   arc-dm together; they ship in one tarball.
+- **Upgrade first:** upgrade each arc and arc-dm on a machine before you use
+  any of them, or set `ARC_HOME`. An older arc does not see `~/.arc`. When
+  it finds no home in `~/.config/arc`, it tells you to run `arc keys gen`,
+  and that makes a second identity there.
+- If `~/.arc` and `~/.config/arc` both hold an identity, each command warns
+  once and names both folders. arc uses `~/.arc`.
+- If arc cannot read `~/.arc` or `~/.config/arc`, for example after
+  `sudo arc`, each command fails with an error that names the folder. arc
+  never uses the identity of the other folder in its place, and never makes
+  a new one. A `default` file that arc cannot read is an error too, not a
+  missing identity, and `arc keys gen`, `recover` and `add` stop before they
+  write a key.
 - `arc install` refuses the name of an entry of the arc home as the name of
   an app.
+- **Breaking:** an open or a call that no provider hears is not submitted,
+  and arc tries it again for at most 6 s (docs/sessions/SPEC.md,
+  docs/delivery/SPEC.md). It tries again only when no one listened, so a
+  request that went out is never submitted twice. An older caller still
+  fails at once (#436).
+  - A call whose deadline ends while no provider hears it says so and names
+    the relay of the provider, not the deadline of the caller (#453).
+  - arc does not start a try that cannot end before the deadline of the
+    caller, so the deadline never cuts off a try after its request went
+    out.
+- **Breaking:** one relay that never answers does not stall a command
+  while another relay answers (docs/delivery/SPEC.md). A pull asks each
+  relay at once and waits at most 500 ms after the first answer. A send
+  and a publish give the event to each relay at once. A relay that did
+  not connect, or that connected and gave no answer to a probe, is down
+  for 30 s, so the other calls of the command fail at once on it.
+  Finding a relay that gives no answer takes about 20 s, once. `arc sync`
+  names each such relay in one line of plain words, with its reason. An
+  older arc still asks one relay at a time and waits for each (#442).
+- A relay that takes the connection and never answers no longer costs
+  about 30 s for each waiting message in `arc sync` (#442).
+- A relay that refuses (a CLOSED such as "blocked: ...", a request for
+  authentication that arc cannot answer, or HTTP 403 for the WebSocket)
+  gets one line in `arc sync` that says that it refused, with its reason,
+  in place of four lines of raw errors (#463).
+- A relay that stops answering partway through `arc sync` gets one line
+  that says how many waiting wraps it took, and the sync fails. The wraps
+  that did not go wait for the next sync. An older arc printed "refused
+  not sent" for each wrap and exited 0 (#465).
+- In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
+  shared disk can take longer than 200 ms for one sync of the store. The
+  200 ms target stays for a run on a machine of its own. The count of the
+  store writes before a ring stays as it is (#452).
+- A watch that ends after its command no longer writes its line after the
+  command closed its session. Each line of a session is written one at a
+  time. The race detector found the watch-end line of #438 writing while a
+  test read the output (#438).
 
 ## [0.37.0] - 2026-10-19
 

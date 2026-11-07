@@ -167,7 +167,7 @@ func Serve(t *testing.T, listener net.Listener) {
 	relay.UseEventstore(newStore(t), 500)
 	sealed.Protect(relay)
 	relay.Negentropy = true
-	relay.Info.SupportedNIPs = append(relay.Info.SupportedNIPs, 77)
+	relay.Info.SupportedNIPs = slices.Clip(append(relay.Info.SupportedNIPs, 77))
 	server := &http.Server{Handler: relay}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
@@ -213,8 +213,20 @@ func StartPlain(t *testing.T) string {
 // test ends.
 func StartDown(t *testing.T) (string, func()) {
 	t.Helper()
+	return StartDownHolding(t)
+}
+
+// StartDownHolding is StartDown for a relay that holds events already when
+// it comes up.
+func StartDownHolding(t *testing.T, events ...nostr.Event) (string, func()) {
+	t.Helper()
 
 	db := newStore(t)
+	for _, event := range events {
+		if err := db.SaveEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
 	relay := khatru.NewRelay()
 	relay.Log = log.New(io.Discard, "", 0)
 	relay.UseEventstore(db, 500)
@@ -271,7 +283,7 @@ func start(t *testing.T, negentropy bool, held ...nostr.Event) string {
 	sealed.Protect(relay)
 	if negentropy {
 		relay.Negentropy = true
-		relay.Info.SupportedNIPs = append(relay.Info.SupportedNIPs, 77)
+		relay.Info.SupportedNIPs = slices.Clip(append(relay.Info.SupportedNIPs, 77))
 	}
 
 	server := httptest.NewServer(relay)

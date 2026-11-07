@@ -222,7 +222,7 @@ func (w watchedListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &conn{Conn: c}, nil
+	return &conn{Conn: c, accepted: time.Now()}, nil
 }
 
 // conn records the first read or write error after the upgrade. The HTTP
@@ -230,15 +230,20 @@ func (w watchedListener) Accept() (net.Conn, error) {
 // the WebSocket, so the record starts only at the upgrade.
 type conn struct {
 	net.Conn
-	mu      sync.Mutex
-	since   time.Time
-	err     error
-	closing bool // the relay closed the connection
+	// accepted is when the listener took the connection. The duration of
+	// a connection counts from it: the upgrade comes after the reply that
+	// a client already reads, so a duration from the upgrade could be
+	// shorter than the connection was open for the client (#454).
+	accepted time.Time
+	mu       sync.Mutex
+	started  bool
+	err      error
+	closing  bool // the relay closed the connection
 }
 
 func (c *conn) start() {
 	c.mu.Lock()
-	c.since = time.Now()
+	c.started = true
 	c.mu.Unlock()
 }
 
@@ -247,7 +252,7 @@ func (c *conn) stop() (time.Duration, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closing = true
-	return time.Since(c.since), c.err
+	return time.Since(c.accepted), c.err
 }
 
 func (c *conn) record(err error) {
@@ -255,7 +260,7 @@ func (c *conn) record(err error) {
 		return
 	}
 	c.mu.Lock()
-	if !c.since.IsZero() && !c.closing && c.err == nil {
+	if c.started && !c.closing && c.err == nil {
 		c.err = err
 	}
 	c.mu.Unlock()

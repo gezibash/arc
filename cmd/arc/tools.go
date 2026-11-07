@@ -104,10 +104,11 @@ func appsCommand() *cobra.Command {
 
 // runName is how the citizen runs an install.
 func runName(e catalog.Install) string {
+	// The installed name is any text that a user gave to --as.
 	if e.As != "" {
-		return "arc " + e.As
+		return "arc " + terminal.EscapeLine(e.As)
 	}
-	return "arc call " + e.Name
+	return "arc call " + terminal.EscapeLine(e.Name)
 }
 
 // installed finds one install by the name that runs it, or by the petname of

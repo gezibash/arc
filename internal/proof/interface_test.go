@@ -396,7 +396,9 @@ func TestInterface(t *testing.T) {
 	if page := desktop.try("", "journal", "read", "hrs/ablations/1").Stdout; page != "" {
 		t.Fatalf("an old stick brought the deleted page back:\n%s", page)
 	}
-	contains(desktop.run("journal", "history", "hrs/ablations/1"), "no revisions", "the history outlived the delete")
+	if gone := desktop.try("", "journal", "history", "hrs/ablations/1"); gone.Err == nil || !strings.Contains(gone.Stderr, "no such page hrs/ablations/1") {
+		t.Fatalf("the history outlived the delete:\n%s\n%s", gone.Stdout, gone.Stderr)
+	}
 	t.Log("ok: delete removes the page and its history, and an old stick does not bring it back")
 
 	// With no relay, the page crosses a stick.

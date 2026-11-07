@@ -35,7 +35,9 @@ func (sess *Session) DataRoot(ctx context.Context) (devices.Root, error) {
 	if len(held) == 0 {
 		return devices.Root{}, err
 	}
-	if err != nil {
+	if err != nil && offline(err) {
+		sess.warnOffline()
+	} else if err != nil {
 		sess.warnf("arc: the newest data roots did not come: %v\n", err)
 	}
 	gen := slices.Max(slices.Collect(maps.Keys(held)))
@@ -167,9 +169,9 @@ func (sess *Session) NewestRoots(ctx context.Context) (devices.Roots, bool, erro
 	if err != nil {
 		return devices.Roots{}, false, err
 	}
-	unreached := node.Unreached(reports, errs)
-	if len(events) == 0 && unreached != nil {
-		return devices.Roots{}, false, fmt.Errorf("this machine holds no data roots, and %w", unreached)
+	missed := node.Unreached(reports, errs)
+	if len(events) == 0 && missed != nil {
+		return devices.Roots{}, false, fmt.Errorf("this machine holds no data roots, and %w", missed)
 	}
 	var newest *nostr.Event
 	var roots devices.Roots

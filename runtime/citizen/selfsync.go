@@ -20,6 +20,7 @@ import (
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
+	"github.com/gezibash/arc/internal/writelock"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/selfsync"
@@ -263,7 +264,8 @@ func (sess *Session) ImportDrafts(ctx context.Context, dir string, again bool) (
 // the installs.
 func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	list, listed, err := sess.FollowStorageList(ctx, cfg.Installs, cfg.Out, cfg.Errs)
-	if err != nil {
+	// A relay that gave no answer is named once at the end of sync.
+	if err != nil && !Unusable(err) {
 		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
 	}
 	if listed && !sess.Remote {
@@ -325,6 +327,8 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Keys:    once(sess.selfKeysAt),
 		Devices: onceList(sess.DeviceList),
 		Opener:  sess.pageOpener(cfg.Installs),
+		Writing: func() (bool, error) { return writelock.Busy(sess.storeDir) },
+		Now:     testNow(),
 		State:   cfg.Dir,
 		Repair:  cfg.Repair,
 		// On the path turn, each pipe goes through TURN, so a rebuild may too.
@@ -369,7 +373,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	var empty []int
 	usages := make([]*storage.Usage, len(opened))
 	for i, o := range opened {
-		as := targets[i].install.As
+		as := terminal.EscapeLine(targets[i].install.As)
 		_, _ = cfg.Out.Write(o.said.Bytes())
 		_, _ = cfg.Errs.Write(o.notes.Bytes())
 		side := report.Sides[i]
@@ -455,6 +459,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		}
 		fmt.Fprintf(cfg.Out, "self data: repair rebuilt %d pieces, moved %d, sealed %d records again, coded %d blobs of format 1 into pieces, %sremoved %d blobs of replaced records, deleted %d; %d bytes down, %d bytes up\n",
 			rep.Rebuilt, rep.Moved, rep.Sealed, rep.Coded, unnamed, rep.Replaced, rep.Deleted, rep.Down, rep.Up)
+		if rep.UnnamedKept > 0 {
+			fmt.Fprintf(cfg.Out, "self data: repair kept %d parts and checkpoints that no page names, because a write may still keep them: they are younger than an hour, or a write holds the lock of writes\n", rep.UnnamedKept)
+		}
 		if rep.UnnamedParts+rep.UnnamedCheckpoints > 0 {
 			count := func(n int, one string) string {
 				if n == 1 {
@@ -462,7 +469,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 				}
 				return fmt.Sprintf("%d %ss", n, one)
 			}
-			fmt.Fprintf(cfg.Out, "self data: repair removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n",
+			fmt.Fprintf(cfg.Out, "self data: repair removed %s and %s that no page names, as a write that failed leaves them; the next arc sync --repair frees any that went to your storage citizens\n",
 				count(rep.UnnamedParts, "part"), count(rep.UnnamedCheckpoints, "checkpoint"))
 		}
 	} else {
@@ -622,7 +629,7 @@ func openPipe(syncer *selfsync.Syncer, name, as string, policy direct.Policy, no
 // the signer ends a drain, for an entry that the list names active: a
 // device can hold an older list. It reports if the account takes no put.
 func (sess *Session) setDrain(ctx context.Context, conn *storage.Conn, t target, out, notes io.Writer) (bool, error) {
-	as := t.install.As
+	as := terminal.EscapeLine(t.install.As)
 	switch {
 	case t.state == storage.StateDraining:
 		usage, err := conn.Drain(ctx, false)
@@ -669,7 +676,7 @@ func usageLine(u storage.Usage) string {
 func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.List, targets []target, opened []opening, usages []*storage.Usage, empty []int) error {
 	var gone []int
 	for _, i := range empty {
-		as := targets[i].install.As
+		as := terminal.EscapeLine(targets[i].install.As)
 		usage := usages[i]
 		if usage == nil {
 			return fmt.Errorf("%s: the usage did not come, so it stays draining", as)
@@ -701,7 +708,7 @@ func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.Li
 		return fmt.Errorf("the storage list did not change, so %s stays draining: %w", strings.Join(names, ", "), err)
 	}
 	for _, i := range gone {
-		as := targets[i].install.As
+		as := terminal.EscapeLine(targets[i].install.As)
 		fmt.Fprintf(cfg.Out, "storage list: %s is gone; each device removes its install at its next sync\n", as)
 		// The pipe ends first: the close ends each pipe of the account.
 		opened[i].conn.Close()

@@ -1,6 +1,7 @@
 package iface
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
@@ -252,11 +254,19 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		return nil, err
 	}
 
-	old, err := r.current(d)
-	if err != nil {
-		return nil, err
+	// An entry has a d tag of its own, and is never revised: there is no
+	// old version to read, and no checkpoint to keep.
+	isEntry := p.Revise == "entry"
+	var old *draft.Draft
+	if !isEntry {
+		if old, err = r.current(d); err != nil {
+			return nil, err
+		}
 	}
 	now := after(old, nostr.Timestamp(r.env.Now().Unix()))
+	if p.at != 0 {
+		now = p.at
+	}
 	var keep []string
 	var keptLines []int
 	head := content
@@ -283,9 +293,12 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 			}
 		}
 	}
-	head, err = r.notebookHeader(p, head, old)
-	if err != nil {
-		return nil, err
+	// An entry, and a head that moves to its address, keep their text as
+	// it is.
+	if !isEntry {
+		if head, err = r.notebookHeader(p, head, old); err != nil {
+			return nil, err
+		}
 	}
 	tags, err = r.enforceFrontmatter(p, head, tags)
 	if err != nil {
@@ -379,22 +392,37 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 	} else if wrap, err = k.Wrap(r.ctx, d, inner, now); err != nil {
 		return nil, err
 	}
-	checkpoint, err := k.Checkpoint(r.ctx, d, inner, now)
-	if err != nil {
-		return nil, err
+	var saved []nostr.Event
+	if !isEntry {
+		checkpoint, err := k.Checkpoint(r.ctx, d, inner, now)
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, checkpoint)
 	}
 	// The store saves the parts first. A draft that it then refuses would
 	// leave parts that nothing names, so check its size before any save.
-	if size := max(len(wrap.Content), len(checkpoint.Content)); size > draft.MaxContent {
+	size := len(wrap.Content)
+	for _, event := range saved {
+		size = max(size, len(event.Content))
+	}
+	if size > draft.MaxContent {
 		total := len(head) + len(keep)*draft.PartSize
 		for _, text := range rest {
 			total += len(text)
 		}
-		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft of %d bytes names %d parts, and the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
-			float64(total)/1e6, size, len(ids), draft.MaxContent)
+		// NIP-44 pads what it seals in steps, so the sealed size names a
+		// step: give the size of the draft too, which grows with the page
+		// (#398).
+		plain, err := json.Marshal(inner)
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("the page is %.1f MB, too large to keep: its draft names %d parts in %d bytes, which are %d bytes once sealed and padded; the store keeps at most %d bytes in one event; split it into pages of at most about 3 MB",
+			float64(total)/1e6, len(ids), len(plain), size, draft.MaxContent)
 	}
-	if err := r.env.Publish(r.ctx, append(events, wrap, checkpoint), nil); err != nil {
-		return nil, r.failedWrite(err, p.Kind, d, inner, old, append(events, checkpoint))
+	if err := r.env.Publish(r.ctx, append(append(events, wrap), saved...), nil); err != nil {
+		return nil, r.failedWrite(err, p.Kind, d, inner, old, append(events, saved...))
 	}
 
 	opened, err := r.opener().Open(r.ctx, wrap)
@@ -437,7 +465,7 @@ func (r *run) removeUnnamed(coordinate string, events []nostr.Event) error {
 // removed says how many parts and checkpoints that no page names a delete
 // removed, and what frees them on the storage citizens.
 func (r *run) removed(events []nostr.Event) {
-	fmt.Fprintf(r.stdio.Err, "removed %s that no page names, as a write that failed leaves them; the next arc sync --repair frees them on your storage citizens\n", counted(events))
+	fmt.Fprintf(r.stdio.Err, "removed %s that no page names, as a write that failed leaves them; the next arc sync --repair frees any that went to your storage citizens\n", counted(events))
 }
 
 // counted says how many parts and checkpoints the events are.
@@ -467,7 +495,7 @@ func counted(events []nostr.Event) string {
 // or "" when the manifest has no such command.
 func (r *run) deleteCommand(kind, address string) string {
 	for _, c := range r.in.Manifest.Commands {
-		if c.Action.Delete != nil && c.Action.Delete.Kind == kind {
+		if c.Action.Delete != nil && c.Action.Delete.Kind == kind || c.Action.Notebook != nil && c.Action.Notebook.Op == "delete" && c.Action.Notebook.Kind == kind {
 			return strings.Join(append(append([]string{"arc", r.in.Name}, c.Path...), address), " ")
 		}
 	}
@@ -574,7 +602,7 @@ func (r *run) reportUnnamed(kind string) error {
 		fmt.Fprintln(r.stdio.Err, line)
 	}
 	if len(lost) > 0 {
-		fmt.Fprintf(r.stdio.Err, "%s that no page names are at addresses that arc cannot name: a write that failed before it kept a checkpoint leaves them\n", counted(lost))
+		fmt.Fprintf(r.stdio.Err, "%s that no page names are left by a write that was interrupted: arc cannot name their address; a repair frees them after an hour\n", counted(lost))
 	}
 	return nil
 }
@@ -633,7 +661,11 @@ func (r *run) content(c Content) (string, error) {
 	return string(body), err
 }
 
-func (r *run) remove(dl *Delete) ([]*entry, error) {
+func (r *run) remove(dl *Delete) ([]*entry, error) { return r.removeKeeping(dl, nil) }
+
+// removeKeeping deletes a draft and its history, except the events of the
+// IDs in keep, such as the head of a lost page at the same address.
+func (r *run) removeKeeping(dl *Delete, keep []string) ([]*entry, error) {
 	if err := r.sealedOnly(dl.Kind, "delete"); err != nil {
 		return nil, err
 	}
@@ -655,6 +687,7 @@ func (r *run) remove(dl *Delete) ([]*entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	history = slices.DeleteFunc(history, func(e nostr.Event) bool { return slices.Contains(keep, e.ID.Hex()) })
 	if len(wraps) == 0 || wraps[0].Content == "" {
 		if len(history) == 0 {
 			return nil, fmt.Errorf("there is nothing to delete")
@@ -868,6 +901,7 @@ func (r *run) watch(q *Query) error {
 		}
 		stored = r.openAll(q, events)
 		slices.Reverse(stored)
+		inOrder(stored)
 	case "public", "group":
 		if filter, relays, err = r.plainFilter(q, visibility); err != nil {
 			return err
@@ -893,19 +927,47 @@ func (r *run) watch(q *Query) error {
 	if err != nil {
 		return err
 	}
-	for received := range live {
-		if received.Err != nil {
-			return received.Err
+	for open := true; open; {
+		received, ok := <-live
+		if !ok {
+			break
 		}
-		event := received.Event
-		if !filter.Matches(event) {
-			continue
+		// A poll of the store sends its events one after another, and a tie
+		// in seconds leaves their order to chance: take the events that come
+		// at once, and show them in time order (#420).
+		batch := []transport.Received{received}
+		timer := time.NewTimer(watchBatch)
+	collect:
+		for {
+			select {
+			case more, ok := <-live:
+				if !ok {
+					open = false
+					break collect
+				}
+				batch = append(batch, more)
+			case <-timer.C:
+				break collect
+			}
 		}
+		timer.Stop()
 		var entries []*entry
+		for _, received := range batch {
+			if received.Err != nil {
+				return received.Err
+			}
+			event := received.Event
+			if !filter.Matches(event) {
+				continue
+			}
+			if visibility == "sealed" {
+				entries = append(entries, r.openAll(q, []nostr.Event{event})...)
+			} else {
+				entries = append(entries, r.plainAll(q, []nostr.Event{event})...)
+			}
+		}
 		if visibility == "sealed" {
-			entries = r.openAll(q, []nostr.Event{event})
-		} else {
-			entries = r.plainAll(q, []nostr.Event{event})
+			inOrder(entries)
 		}
 		if err := r.show(entries); err != nil {
 			return err
@@ -915,6 +977,30 @@ func (r *run) watch(q *Query) error {
 		return nil
 	}
 	return errors.New("every relay ended the watch")
+}
+
+// watchBatch is how long a watch waits for more events after one comes.
+const watchBatch = 100 * time.Millisecond
+
+// inOrder sorts sealed records by time. The time of an entry of a notebook
+// is its ms tag, and a head comes before the entries of its second.
+func inOrder(entries []*entry) {
+	key := func(e *entry) (int64, int) {
+		ms := int64(number(e.rec["created"])) * 1000
+		tags, _ := e.rec["tags"].(map[string]any)
+		if v, err := strconv.ParseInt(str(tags["ms"]), 10, 64); err == nil && v/1000 == ms/1000 {
+			return v, 1
+		}
+		return ms, 0
+	}
+	slices.SortStableFunc(entries, func(a, b *entry) int {
+		ka, pa := key(a)
+		kb, pb := key(b)
+		if ka != kb {
+			return cmp.Compare(ka, kb)
+		}
+		return pa - pb
+	})
 }
 
 // show runs the pipeline on entries and writes them. Then the exit rules of

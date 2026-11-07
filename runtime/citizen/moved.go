@@ -101,11 +101,11 @@ func (sess *Session) moveDrafts(ctx context.Context, cfg SelfSync, kept map[nost
 			deleted += n
 		}
 		if deleted > 0 {
-			fmt.Fprintf(cfg.Out, "%s: deleted %d old drafts and private relay lists from the relay\n", t.Name(), deleted) //arc:raw-ok the name of a transport of arc
+			fmt.Fprintf(cfg.Out, "%s: deleted %d old drafts and private relay lists from the relay\n", terminal.EscapeLine(t.Name()), deleted)
 		}
 		if waiting > 0 {
 			done = false
-			fmt.Fprintf(cfg.Out, "%s: %d drafts stay until the storage citizens hold them\n", t.Name(), waiting) //arc:raw-ok the name of a transport of arc
+			fmt.Fprintf(cfg.Out, "%s: %d drafts stay until the storage citizens hold them\n", terminal.EscapeLine(t.Name()), waiting)
 		}
 	}
 	if done {

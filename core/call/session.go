@@ -134,6 +134,12 @@ func OpenSession(ctx context.Context, me keys.Signer, to nostr.PubKey, request R
 		if remote, ok := errors.AsType[session.RemoteError](err); ok {
 			return nil, remote
 		}
+		// An open that the transport did not submit, such as one that no
+		// provider heard, has a known outcome: the provider never got it.
+		// An answer of the provider replaced the error of the send above.
+		if _, ok := errors.AsType[*transport.NotSubmittedError](err); ok {
+			return nil, err
+		}
 		return nil, fmt.Errorf("session open failed; outcome may be unknown: %w", err)
 	}
 	return stream, nil

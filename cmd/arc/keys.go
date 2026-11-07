@@ -303,7 +303,7 @@ func publicPath(dir string) string   { return filepath.Join(dir, "public") }
 // chosen returns the directory of the identity that the command uses, and
 // what chose it: --key, ARC_KEY, or the default.
 func chosen(command *cobra.Command) (string, string, error) {
-	root, err := rootDir(command)
+	root, why, err := rootSource(command)
 	if err != nil {
 		return "", "", err
 	}
@@ -314,16 +314,22 @@ func chosen(command *cobra.Command) (string, string, error) {
 		name, source = env, "ARC_KEY"
 	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
 		name, source = strings.TrimSpace(string(body)), "the default"
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// A home that arc cannot read is not a home with no identity.
+		return "", "", unreadableDefault(root, why, err)
 	}
 	if name == "" {
-		return "", "", errors.New("no identity: make one with arc keys gen, or add one with arc keys add")
+		return "", "", fmt.Errorf("no identity in %s, chosen by %s: make one with arc keys gen, or add one with arc keys add", root, why)
 	}
 	dir := filepath.Join(citizensDir(root), name)
 	if !validName(name) {
-		return "", "", fmt.Errorf("no identity %q on this machine: see arc keys list", name)
+		return "", "", fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 	}
 	if _, err := os.Stat(dir); err != nil {
-		return "", "", fmt.Errorf("no identity %q on this machine: see arc keys list", name)
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", "", unreadableIdentities(root, why, err)
+		}
+		return "", "", fmt.Errorf("no identity \"%s\" in %s, chosen by %s: see arc keys list", name, root, why)
 	}
 	return dir, source, nil
 }
@@ -369,13 +375,20 @@ func defaultName(root string) string {
 // that does not answer, leaves nothing behind. The first identity becomes the
 // default. A caller that made the key passes it as known, so a sealed key does
 // not ask for its passphrase again.
-func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys.Key, err error) {
+func addCitizen(ctx context.Context, root, why, text string, known *keys.Key) (_ keys.Key, err error) {
+	// A default that arc cannot read stops the add before it writes a key:
+	// keys gen shows the seed only after the add.
+	body, err := os.ReadFile(defaultPath(root))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return keys.Key{}, unreadableDefault(root, why, err)
+	}
+	first := strings.TrimSpace(string(body)) == ""
 	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
-		return keys.Key{}, err
+		return keys.Key{}, unwritableIdentities(root, why, err)
 	}
 	staging, err := os.MkdirTemp(citizensDir(root), ".adding-")
 	if err != nil {
-		return keys.Key{}, err
+		return keys.Key{}, unwritableIdentities(root, why, err)
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
 
@@ -416,7 +429,7 @@ func addCitizen(ctx context.Context, root, text string, known *keys.Key) (_ keys
 		}
 		return keys.Key{}, err
 	}
-	if defaultName(root) == "" {
+	if first {
 		if err := os.WriteFile(defaultPath(root), []byte(name+"\n"), 0o600); err != nil {
 			return keys.Key{}, err
 		}
@@ -458,6 +471,7 @@ func keysCommand() *cobra.Command {
 			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
+			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
 			showSeed(command.ErrOrStderr(), words, passphrase != "")
 			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
@@ -495,6 +509,7 @@ func keysCommand() *cobra.Command {
 			if _, err := keepSeedKey(command, root, k); err != nil {
 				return err
 			}
+			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
 			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 			return nil
 		},
@@ -531,7 +546,11 @@ func keysCommand() *cobra.Command {
 					return errors.New("give the key on standard input, or a bunker:// URI")
 				}
 			}
-			k, err := addCitizen(command.Context(), root, text, nil)
+			_, why, err := rootSource(command)
+			if err != nil {
+				return err
+			}
+			k, err := addCitizen(command.Context(), root, why, text, nil)
 			if err != nil {
 				return err
 			}
@@ -553,13 +572,16 @@ func keysCommand() *cobra.Command {
 	}
 
 	list := &cobra.Command{
-		Use: "list", Short: "List the identities of this machine", Args: cobra.NoArgs,
+		Use: "list", Aliases: []string{"ls"}, Short: "List the identities of this machine", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			root, err := rootDir(command)
+			root, why, err := rootSource(command)
 			if err != nil {
 				return err
 			}
 			all, err := listCitizens(root)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return unreadableIdentities(root, why, err)
+			}
 			if err != nil {
 				return err
 			}
@@ -567,13 +589,17 @@ func keysCommand() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no identities: make one with arc keys gen")
 				return nil
 			}
-			active := defaultName(root)
+			body, err := os.ReadFile(defaultPath(root))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return unreadableDefault(root, why, err)
+			}
+			active := strings.TrimSpace(string(body))
 			for _, c := range all {
 				mark := " "
 				if c.name == active {
 					mark = "*"
 				}
-				fmt.Fprintf(command.OutOrStdout(), "%s %s  %s\n", mark, c.name, c.public)
+				fmt.Fprintf(command.OutOrStdout(), "%s %s  %s\n", mark, terminal.EscapeLine(c.name), terminal.EscapeLine(c.public))
 			}
 			return nil
 		},
@@ -581,18 +607,21 @@ func keysCommand() *cobra.Command {
 
 	use := &cobra.Command{
 		Use: "use <name>", Short: "Make one identity the default", Args: cobra.ExactArgs(1),
+		Long: "Give the raw name of the identity, quoted for the shell. arc keys list\n" +
+			"shows a name with an escape for each character that could change the\n" +
+			"terminal, such as \\n for a newline: that escape is not the name.",
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := rootDir(command)
 			if err != nil {
 				return err
 			}
 			if _, err := os.Stat(filepath.Join(citizensDir(root), args[0])); err != nil || !validName(args[0]) {
-				return fmt.Errorf("no identity %q on this machine: see arc keys list", args[0])
+				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", args[0])
 			}
 			if err := os.WriteFile(defaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "the default is %s\n", args[0])
+			fmt.Fprintf(command.OutOrStdout(), "the default is %s\n", terminal.EscapeLine(args[0]))
 			return nil
 		},
 	}
@@ -601,7 +630,10 @@ func keysCommand() *cobra.Command {
 		Use:   "remove <name>",
 		Short: "Remove one identity from this machine",
 		Long: "This removes the key, and the store, the relays and the installs of\n" +
-			"the identity. A key that no other machine holds is lost for good.",
+			"the identity. A key that no other machine holds is lost for good.\n\n" +
+			"Give the raw name of the identity, quoted for the shell. arc keys list\n" +
+			"shows a name with an escape for each character that could change the\n" +
+			"terminal, such as \\n for a newline: that escape is not the name.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := rootDir(command)
@@ -611,10 +643,10 @@ func keysCommand() *cobra.Command {
 			name := args[0]
 			dir := filepath.Join(citizensDir(root), name)
 			if _, err := os.Stat(dir); err != nil || !validName(name) {
-				return fmt.Errorf("no identity %q on this machine: see arc keys list", name)
+				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 			}
 			if yes, _ := command.Flags().GetBool("yes"); !yes {
-				fmt.Fprintf(command.OutOrStdout(), "Remove %s, its key and its store? [y/N] ", name)
+				fmt.Fprintf(command.OutOrStdout(), "Remove %s, its key and its store? [y/N] ", terminal.EscapeLine(name))
 				answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					return errors.New("nothing was removed")
@@ -628,7 +660,7 @@ func keysCommand() *cobra.Command {
 					return err
 				}
 			}
-			fmt.Fprintf(command.OutOrStdout(), "removed %s\n", name)
+			fmt.Fprintf(command.OutOrStdout(), "removed %s\n", terminal.EscapeLine(name))
 			return nil
 		},
 	}
@@ -673,7 +705,12 @@ func whoamiCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\nchosen by %s\n", filepath.Base(dir), strings.TrimSpace(string(public)), source)
+			root, why, err := rootSource(command)
+			if err != nil {
+				return err
+			}
+			// A folder can hold any character, such as a newline in HOME.
+			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\nchosen by %s\nhome %s, chosen by %s\n", terminal.EscapeLine(filepath.Base(dir)), terminal.EscapeLine(strings.TrimSpace(string(public))), source, terminal.EscapeLine(root), terminal.EscapeLine(why))
 			return nil
 		},
 	}
@@ -689,7 +726,11 @@ func keepSeedKey(command *cobra.Command, root string, k keys.Key) (keys.Key, err
 			return keys.Key{}, err
 		}
 	}
-	return addCitizen(command.Context(), root, text, &k)
+	_, why, err := rootSource(command)
+	if err != nil {
+		return keys.Key{}, err
+	}
+	return addCitizen(command.Context(), root, why, text, &k)
 }
 
 // seedPassphrase returns the BIP-39 passphrase when --seed-passphrase asks
@@ -798,6 +839,10 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	if url == "" {
 		return errors.New("name the relay with --relay")
 	}
+	// A bad URL fails now, and not at each try to reach the relay.
+	if err := checkRelayURL(url); err != nil {
+		return fmt.Errorf("--relay: %w", err)
+	}
 	decrypt, _ := command.Flags().GetString("decrypt")
 	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
 		return fmt.Errorf("--decrypt is none, self or all, not %q", decrypt)
@@ -872,9 +917,9 @@ func serveBunker(command *cobra.Command, _ []string) error {
 
 	// With a device list, the secret admits nobody, so the URI leaves it out.
 	if g.listed() {
-		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s\n", pk.Hex(), url)
+		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s\n", pk.Hex(), terminal.EscapeLine(url))
 	} else {
-		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), url, secret)
+		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), terminal.EscapeLine(url), secret)
 	}
 	go watchDevices(ctx, relay.Relay{URL: url, Signer: id.key}, id.key, g, log)
 	for {

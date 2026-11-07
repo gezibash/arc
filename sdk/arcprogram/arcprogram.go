@@ -17,9 +17,11 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // MaxLine is the longest JSON line that this package reads from arc. A
@@ -32,6 +34,10 @@ type Arc struct {
 	Program string
 	// Home is the arc home. The default is the home that arc picks.
 	Home string
+	// Warnings gets each warning that arc writes, such as the warning of
+	// two homes, once in a program: arc writes it at each command. Nil
+	// discards them, except in the Notes of a watch.
+	Warnings io.Writer
 }
 
 // Command makes a command of the arc program, in the arc home.
@@ -204,8 +210,9 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	command.WaitDelay = 5 * time.Second
 	problems := &tail{}
 	command.Stderr = problems
+	notes := &noteLines{arc: a, notes: opts.Notes}
 	if opts.Notes != nil {
-		command.Stderr = io.MultiWriter(problems, opts.Notes)
+		command.Stderr = io.MultiWriter(problems, notes)
 	}
 	out, err := command.StdoutPipe()
 	if err != nil {
@@ -252,6 +259,7 @@ func (a Arc) Watch(ctx context.Context, opts WatchOptions, fn func(Message) erro
 	}
 	result := command.Wait()
 	waited = true
+	notes.flush()
 	switch {
 	case failed != nil:
 		return failed
@@ -299,6 +307,7 @@ func (a Arc) output(ctx context.Context, stdin io.Reader, args ...string) ([]byt
 		err = command.Wait()
 	}
 	runtime.UnlockOSThread()
+	a.warn(string(problems.buf))
 	if errors.Is(err, exec.ErrWaitDelay) {
 		// arc ended well; a child of it held the output open.
 		err = nil
@@ -371,11 +380,75 @@ func (t *tail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// reason is what arc wrote, or the error of the process if arc wrote
-// nothing.
+// reason is what arc wrote, on one line and with no warning, or the error
+// of the process if arc wrote nothing else.
 func (t *tail) reason(err error) string {
-	if text := strings.TrimSpace(string(t.buf)); text != "" {
-		return text
+	var lines []string
+	for line := range strings.Lines(string(t.buf)) {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, warningPrefix) {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > 0 {
+		return strings.Join(lines, "; ")
 	}
 	return err.Error()
+}
+
+// warningPrefix starts each warning that arc writes on standard error.
+const warningPrefix = "arc: warning: "
+
+// warned holds each warning that a.Warnings got, in this program.
+var warned sync.Map
+
+// warn writes each warning in text to a.Warnings, once in a program.
+func (a Arc) warn(text string) {
+	if a.Warnings == nil {
+		return
+	}
+	for line := range strings.Lines(text) {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, warningPrefix) {
+			continue
+		}
+		if _, done := warned.LoadOrStore(line, true); !done {
+			fmt.Fprintln(a.Warnings, terminal.EscapeLineData(line))
+		}
+	}
+}
+
+// noteLines passes what arc writes during a watch to its notes, line by
+// line. With a.Warnings, a warning goes there instead, once in a program.
+type noteLines struct {
+	arc   Arc
+	notes io.Writer
+	part  []byte
+}
+
+func (n *noteLines) Write(p []byte) (int, error) {
+	n.part = append(n.part, p...)
+	for {
+		end := bytes.IndexByte(n.part, '\n')
+		if end < 0 {
+			return len(p), nil
+		}
+		n.line(n.part[:end+1])
+		n.part = n.part[end+1:]
+	}
+}
+
+// flush passes a last line with no newline.
+func (n *noteLines) flush() {
+	if len(n.part) > 0 && n.notes != nil {
+		n.line(n.part)
+	}
+	n.part = nil
+}
+
+func (n *noteLines) line(line []byte) {
+	if n.arc.Warnings != nil && bytes.HasPrefix(line, []byte(warningPrefix)) {
+		n.arc.warn(string(line))
+		return
+	}
+	_, _ = n.notes.Write(line)
 }

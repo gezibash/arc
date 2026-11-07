@@ -910,7 +910,7 @@ func TestTheErrorLineIsEscaped(t *testing.T) {
 	}
 	out := stderr.String()
 	if strings.Count(out, "\n") != 1 || strings.Contains(out, "\narc: forged") || strings.ContainsAny(out, "\x1b\x07\u202e\U000e0068") ||
-		!strings.Contains(out, `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`) {
+		!strings.Contains(out, `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068; arc: forged line`) {
 		t.Errorf("arc-transfer printed %q, want one escaped line", out)
 	}
 }

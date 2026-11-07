@@ -29,6 +29,7 @@ section 3.7.
 | 3274 | regular | ARC | An acknowledgement of mail, inside a gift wrap. | code | [delivery, section 4.2](delivery/SPEC.md) |
 | 3275 | regular | ARC | One continuation part of sealed content longer than 32 KiB. A device key signs it, and a `p` tag names the citizen. It stays on the device and on storage citizens. An ARC relay refuses it. | code | [interface, section 3.9.2](interface/SPEC.md), [storage, section 7](storage/SPEC.md) |
 | 3276 | regular | ARC | Core session frames, inside live wraps. | code | [sessions](sessions/SPEC.md) |
+| 4272 | regular | ARC | A journal entry, inside a NIP-37 draft: one text that a device added to a page. Regular, because an entry is never revised; a `d` tag of its own on the draft keeps each entry. It has tags that only ARC reads, `page` and `corrects`, so a kind of its own keeps tools that read kind 1 from misreading it. | manifest | [interface, section 3.9.3](interface/SPEC.md), [journal app](../apps/journal/README.md) |
 | 9734 | regular | NIP-57 | Zap request. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 9735 | regular | NIP-57 | Zap receipt. No manifest can name it. | reserved | [interface, section 6](interface/SPEC.md) |
 | 10002 | replaceable | NIP-65 | The relay list of a citizen. | code | [delivery, section 3.8](delivery/SPEC.md) |

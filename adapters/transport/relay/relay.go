@@ -9,7 +9,9 @@ import (
 	"io"
 	"iter"
 	"math"
+	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -126,12 +128,26 @@ type kept struct {
 	// streak was told.
 	authFailed func(err error)
 	told       bool
+	// watchEnded gets who ended a watch and why, when a watch ends before
+	// its caller stops it.
+	watchEnded func(by, why string)
+	// closed holds why arc closed each connection that it closed. mu
+	// guards it.
+	closed map[*nostr.Relay]string
 
 	// mu guards conn and used. A call holds it while it connects.
 	mu   sync.Mutex
 	conn *nostr.Relay
 	// used is when a call last took conn.
 	used time.Time
+	// heard is conn once the relay answered on it. A connection that
+	// never answered has no answer to lose, so a stalled send does not
+	// open a new one (#442).
+	heard *nostr.Relay
+	// down is the error of the last connect that failed, until downUntil:
+	// a fetch in that time fails at once with it (#439).
+	down      error
+	downUntil time.Time
 
 	// info is the NIP-11 document, after the first fetch that worked.
 	infoMu sync.Mutex
@@ -186,6 +202,17 @@ func (r Relay) OnAuthFailure(failed func(err error)) {
 	}
 }
 
+// OnWatchEnd makes a Relay from New give who ended a watch, and why, each
+// time a watch ends before its caller stops it (#437): the relay with a
+// CLOSED message, the relay or the network that ended the connection, or
+// arc that closed the connection, also for failed pings. Call it before the
+// first call to the relay.
+func (r Relay) OnWatchEnd(ended func(by, why string)) {
+	if r.kept != nil {
+		r.kept.watchEnded = ended
+	}
+}
+
 // Tags returns the tags of the NIP-11 document of the relay.
 func (r Relay) Tags(ctx context.Context) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
@@ -225,11 +252,91 @@ func (r Relay) Close() error {
 	r.kept.mu.Lock()
 	conn := r.kept.conn
 	r.kept.mu.Unlock()
-	return r.kept.drop(conn)
+	return r.kept.drop(conn, "Close of the relay")
 }
 
-// drop closes conn. If conn is the kept connection, the next call connects.
-func (k *kept) drop(conn *nostr.Relay) error {
+// callTimeout is Timeout, the time that a send, a query or a NIP-77
+// session gives the relay. A test makes it short.
+var callTimeout = Timeout
+
+// ErrNoAnswer is the cause of the timeout of a call of the relay: the
+// relay, not the caller, ended the call.
+var ErrNoAnswer = errors.New("the relay gave no answer in time")
+
+// downFor is how long a fetch fails at once after a connect failed.
+var downFor = 30 * time.Second
+
+// isDown is the error of the last connect that failed, while it is newer
+// than downFor, or nil.
+func (k *kept) isDown() error {
+	if k == nil {
+		return nil
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.down == nil || time.Now().After(k.downUntil) {
+		return nil
+	}
+	return fmt.Errorf("%w; arc asks again in %s", k.down, time.Until(k.downUntil).Round(time.Second))
+}
+
+// silent judges a call on a connection that the relay took, and that gave
+// no EOSE, OK or CLOSED within the relay's own timeout (#439). It asks the
+// relay one question that each relay answers at once: a relay that answers
+// is up, and silent says so; one that does not is down for downFor. A
+// refusal is an answer, and the deadline of the caller is not the relay's.
+func (k *kept) silent(ctx context.Context, conn *nostr.Relay, err error) (up bool) {
+	if err == nil || answered(err) || !errors.Is(context.Cause(ctx), ErrNoAnswer) {
+		return false
+	}
+	if conn != nil && conn.IsConnected() && alive(context.Background(), conn) {
+		return true
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.down, k.downUntil = err, time.Now().Add(downFor)
+	return false
+}
+
+// failedToReach says whether err is a dial, a lookup or an address that
+// failed, or a first attempt that stalled: an answer of the relay, such as
+// a refusal, is not. reach tries the other address family after any failed
+// attempt, so only its first attempt says whether the relay answered.
+func failedToReach(err error) bool {
+	for e := err; e != nil; {
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			if errs := joined.Unwrap(); len(errs) > 0 {
+				err = errs[0]
+			}
+			break
+		}
+		e = errors.Unwrap(e)
+	}
+	var op *net.OpError
+	var dns *net.DNSError
+	var addr *net.AddrError
+	return errors.As(err, &op) || errors.As(err, &dns) || errors.As(err, &addr) || errors.Is(err, ErrStalled)
+}
+
+// hear keeps that the relay answered on conn.
+func (k *kept) hear(conn *nostr.Relay) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.conn == conn {
+		k.heard = conn
+	}
+}
+
+// heardOn says whether the relay answered on conn.
+func (k *kept) heardOn(conn *nostr.Relay) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.heard == conn
+}
+
+// drop closes conn, and keeps why. If conn is the kept connection, the next
+// call connects.
+func (k *kept) drop(conn *nostr.Relay, why string) error {
 	if conn == nil {
 		return nil
 	}
@@ -237,8 +344,37 @@ func (k *kept) drop(conn *nostr.Relay) error {
 	if k.conn == conn {
 		k.conn = nil
 	}
+	k.because(conn, why)
 	k.mu.Unlock()
 	return conn.Close()
+}
+
+// because keeps why arc closes conn. The caller holds mu.
+func (k *kept) because(conn *nostr.Relay, why string) {
+	// A connection with no watch keeps its reason until here: a few dozen
+	// reasons are enough for the watches that end.
+	if k.closed == nil || len(k.closed) > 64 {
+		k.closed = map[*nostr.Relay]string{}
+	}
+	k.closed[conn] = why
+}
+
+// endedBy says who ended the connection of a watch, and why.
+func (k *kept) endedBy(conn *nostr.Relay) (string, string) {
+	cause := context.Cause(conn.Context())
+	k.mu.Lock()
+	why, ok := k.closed[conn]
+	delete(k.closed, conn)
+	k.mu.Unlock()
+	switch {
+	case ok:
+		return "arc", why
+	case errors.Is(cause, nostr.ErrPingFailed):
+		return "arc", "3 pings of the connection failed"
+	case cause != nil:
+		return "the relay or the network", cause.Error()
+	}
+	return "unknown", "the subscription ended"
 }
 
 // open returns the connection for one call. For a Relay from New, it is the
@@ -257,6 +393,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.conn != nil && k.conn.IsConnected() && time.Since(k.used) > idleCheck && !alive(ctx, k.conn) {
+		k.because(k.conn, fmt.Sprintf("the connection was idle %s, and gave no answer to a check within %s", time.Since(k.used).Round(time.Second), reuseWait))
 		_ = k.conn.Close()
 	}
 	if k.conn != nil && k.conn.IsConnected() {
@@ -267,18 +404,38 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 			k.conn = nil
 		}
 		if k.conn, err = r.connect(ctx, k.sessions); err != nil {
+			// A relay that did not connect is down for a while: the other
+			// calls of a command do not wait for it again (#439). A caller
+			// that stopped says nothing about the relay.
+			// Only the relay's own timeout, or a dial that failed, marks it
+			// down: never a refusal, nor the deadline of the caller.
+			if ctx.Err() == nil && failedToReach(err) || errors.Is(context.Cause(ctx), ErrNoAnswer) {
+				k.down, k.downUntil = err, time.Now().Add(downFor)
+			}
 			return nil, false, nil, err
 		}
+		k.down = nil
 	}
 	k.used = time.Now()
 	conn = k.conn
 	return conn, reused, func(err error) {
+		// A relay that connected, and then gave no EOSE, OK or CLOSED
+		// within its own timeout, is down as one that did not connect: each
+		// call to it would wait the whole timeout again (#439). One that
+		// answers a probe then is up: only that call got no answer, as from
+		// a relay that ignores one kind.
+		if err == nil || answered(err) {
+			k.hear(conn)
+		}
+		if k.silent(ctx, conn, err) {
+			return
+		}
 		// An answer of the relay shows that the connection works. A caller
 		// that stopped says nothing about it. Any other failure, also a
 		// deadline, can come from a connection that stalled, so the next call
 		// opens a new one.
 		if err != nil && !answered(err) && !errors.Is(err, context.Canceled) {
-			_ = k.drop(conn)
+			_ = k.drop(conn, "a call on the connection failed: "+err.Error())
 		}
 	}, nil
 }
@@ -310,20 +467,24 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := k.isDown(); err != nil {
+		return err
+	}
 
 	conn, reused, _, err := r.open(ctx)
 	if err != nil {
 		return err
 	}
-	if reused {
+	if reused && k.heardOn(conn) {
 		first, cancel := context.WithTimeout(ctx, reuseWait)
 		err := r.publish(first, conn, event)
 		cancel()
 		// A refusal is an answer of the relay: the connection works.
 		if err == nil || refused(err) {
+			k.hear(conn)
 			return r.named(err)
 		}
-		_ = k.drop(conn)
+		_ = k.drop(conn, "a send on the reused connection got no answer: "+err.Error())
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -331,8 +492,10 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 			return err
 		}
 	}
-	if err = r.publish(ctx, conn, event); err != nil && !refused(err) {
-		_ = k.drop(conn)
+	if err = r.publish(ctx, conn, event); err == nil || refused(err) {
+		k.hear(conn)
+	} else if !k.silent(ctx, conn, err) {
+		_ = k.drop(conn, "a send failed: "+err.Error())
 	}
 	return r.named(err)
 }
@@ -340,6 +503,36 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 // refused says whether an error is the answer of a relay that did not take
 // an event.
 func refused(err error) bool { return strings.HasPrefix(err.Error(), "msg: ") }
+
+// upgradeStatus finds the HTTP status of a relay that refused the WebSocket.
+var upgradeStatus = regexp.MustCompile(`expected handshake response status code 101 but got (\d{3})`)
+
+// Refusal is the reason of a relay that refused a call: the reason of a
+// CLOSED or of an OK that is false, a request for authentication, or an
+// HTTP status other than 101 for the WebSocket. ok is false for each other
+// error, such as a relay that gave no answer (#463). The relay chooses
+// the reason: a caller escapes it before it prints it.
+func Refusal(err error) (reason string, ok bool) {
+	if err == nil {
+		return "", false
+	}
+	var answer answerError
+	switch {
+	case errors.As(err, &answer):
+		return answer.reason, true
+	case errors.Is(err, errAuthRequired):
+		return "it asks for authentication", true
+	}
+	if m := upgradeStatus.FindStringSubmatch(err.Error()); m != nil {
+		return "HTTP " + m[1] + " for the WebSocket", true
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if text, ok := strings.CutPrefix(e.Error(), "msg: "); ok {
+			return text, true
+		}
+	}
+	return "", false
+}
 
 // answerError is the reason of a CLOSED message: an answer of the relay.
 type answerError struct{ reason string }
@@ -443,11 +636,11 @@ func (s *sessions) dispatch(data string) {
 
 // Send publishes one event. A relay that already holds it accepts it again.
 func (r Relay) Send(ctx context.Context, event nostr.Event) error {
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	if r.kept != nil {
-		return r.sendKept(ctx, event)
+		return unheard(r.sendKept(ctx, event))
 	}
 	conn, err := r.connect(ctx, &sessions{})
 	if err != nil {
@@ -455,7 +648,16 @@ func (r Relay) Send(ctx context.Context, event nostr.Event) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	return r.named(r.publish(ctx, conn, event))
+	return unheard(r.named(r.publish(ctx, conn, event)))
+}
+
+// unheard marks the answer of a relay that no one got a live event, which
+// khatru gives when no watch matched it: the event reached no one.
+func unheard(err error) error {
+	if err != nil && strings.Contains(err.Error(), "mute: no one was listening") {
+		return transport.NoListener(err)
+	}
+	return err
 }
 
 // publish sends one event on a connection. If the relay asks for
@@ -601,7 +803,10 @@ func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.F
 // many events one query returns, so Fetch asks again for older events until a
 // page brings nothing new.
 func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, error) {
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	if err := r.kept.isDown(); err != nil {
+		return transport.Batch{}, err
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	conn, _, done, err := r.open(ctx)
@@ -625,7 +830,11 @@ func (r Relay) fetch(ctx context.Context, conn *nostr.Relay, filter nostr.Filter
 		if errors.Is(err, errAuthRequired) && r.Signer != nil {
 			// The relay serves sealed data only to its author: answer the
 			// challenge, and ask again.
-			if err = r.authenticate(ctx, conn); err == nil {
+			if aerr := r.authenticate(ctx, conn); aerr != nil {
+				// The relay still asked for authentication: keep that it
+				// refused, with why the answer failed (#463).
+				err = fmt.Errorf("%w, and arc could not answer: %v", errAuthRequired, aerr)
+			} else {
 				events, err = stored(ctx, conn, page)
 			}
 		}
@@ -711,6 +920,9 @@ func closed(reason string) error {
 // sends, all on one connection. An answer to a live call is ephemeral, and a
 // relay never stores it, so a subscription that came after it would miss it.
 func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (answer nostr.Event, err error) {
+	if err := r.kept.isDown(); err != nil {
+		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
+	}
 	conn, _, done, err := r.open(ctx)
 	if err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
@@ -743,7 +955,7 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 	if err := r.publish(ctx, conn, event); err != nil {
 		// This explicit refusal means no subscriber received the ephemeral event.
 		if err.Error() == "msg: mute: no one was listening for this" {
-			return nostr.Event{}, &transport.NotSubmittedError{Err: err}
+			return nostr.Event{}, transport.NoListener(err)
 		}
 
 		return nostr.Event{}, fmt.Errorf("relay %s: %w", r.URL, err)
@@ -775,7 +987,10 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	if err := r.kept.isDown(); err != nil {
+		return nil, nil, true, err
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
 	defer cancel()
 
 	info, err := r.information(ctx)
@@ -1003,6 +1218,9 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 				// A closed channel means that the subscription ended. Reading
 				// on would return empty events at once, forever.
 				if !ok {
+					if r.kept != nil && r.kept.watchEnded != nil && ctx.Err() == nil {
+						r.kept.watchEnded(r.kept.endedBy(conn))
+					}
 					return
 				}
 				select {
@@ -1010,7 +1228,10 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 				case <-ctx.Done():
 					return
 				}
-			case <-sub.ClosedReason:
+			case reason := <-sub.ClosedReason:
+				if r.kept != nil && r.kept.watchEnded != nil && ctx.Err() == nil {
+					r.kept.watchEnded("the relay", "CLOSED: "+reason)
+				}
 				return
 			case <-ctx.Done():
 				return

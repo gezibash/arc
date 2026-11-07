@@ -534,7 +534,7 @@ func TestArgumentTypes(t *testing.T) {
 		{Arg{Type: "lines"}, "9:3", nil, "ends before"},
 		{Arg{Type: "lines"}, ":", nil, "not a range"},
 		{Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b", "a/b", ""},
-		{Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b/c", nil, "does not match"},
+		{Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b/c", nil, "is not an address"},
 		{Arg{Type: "path"}, "iface_test.go", nil, "never replaces"},
 	}
 	for _, c := range cases {

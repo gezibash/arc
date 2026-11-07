@@ -120,6 +120,10 @@ type Syncer struct {
 	TURN bool
 	// Now gives the time of the audits. Nil is time.Now.
 	Now func() time.Time
+	// Writing says whether a write of self data runs on this machine now.
+	// A repair then keeps each part with no blob, whatever its age. Nil
+	// means no write runs.
+	Writing func() (bool, error)
 }
 
 func (s *Syncer) now() time.Time {

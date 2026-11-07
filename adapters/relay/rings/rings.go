@@ -409,8 +409,14 @@ func (r *Rings) wrap(event nostr.Event) {
 			continue
 		}
 		s.wrap(now, false, event.ID.Hex())
-		r.save(pk, s)
+		// A ring that starts now saves the state, with this wrap in it,
+		// before it calls: one save on the way to the ring, not two. Each
+		// save syncs the disk, and a busy disk made a ring late (#451).
+		busy := r.busy[pk]
 		why, wait := r.schedule(pk)
+		if busy || !r.busy[pk] {
+			r.save(pk, s)
+		}
 		switch {
 		case why == "":
 		case wait > 0:

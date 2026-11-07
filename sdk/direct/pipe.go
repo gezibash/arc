@@ -395,7 +395,7 @@ func Accept(ctx context.Context, c AcceptConfig, o Offer) (*Pipe, string, error)
 		local, err = Describe(pc, local)
 	}
 	if err == nil && options.TURN != nil && !strings.Contains(local.SDP, "typ relay") {
-		err = errors.New("the TURN server of the relay gave no address")
+		err = errors.New("the TURN server of the relay gave no address" + options.gather.reason())
 	}
 	if err != nil {
 		_ = p.Close()

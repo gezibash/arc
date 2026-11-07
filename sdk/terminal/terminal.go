@@ -242,6 +242,14 @@ func runeWidth(r rune) int {
 // backslash as one backslash, so the rest of the text stays as it was.
 func EscapeData(text string) string { return mode{backslash: true, limit: -1}.apply(text) }
 
+// EscapeLineData is EscapeLine for a line that a program escaped already,
+// such as a line that arc writes on its standard error: it keeps a
+// backslash as one backslash, so that an escape of arc is not escaped
+// twice. It still escapes each other character that EscapeLine escapes.
+func EscapeLineData(text string) string {
+	return mode{oneLine: true, backslash: true, limit: -1}.apply(text)
+}
+
 // Strip removes each character that Escape escapes, except a backslash,
 // and keeps the rest as it is. It is for the output of an app, which a
 // person can read on a terminal and a program can read through a pipe:

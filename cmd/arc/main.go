@@ -32,8 +32,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore/boltdb"
@@ -91,7 +93,7 @@ func root() *cobra.Command {
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 	}
-	command.PersistentFlags().String("home", "", "the directory of arc (ARC_HOME, default ~/.arc, or ~/.config/arc when an older arc made it)")
+	command.PersistentFlags().String("home", "", "the directory of arc; arc takes --home, then ARC_HOME, then ~/.arc, then ~/.config/arc when an older arc made it; a ~/.arc with no identity gives way to a ~/.config/arc with one")
 	command.PersistentFlags().String("key", "", "the identity to use, by petname (ARC_KEY)")
 	command.AddCommand(keysCommand(), whoamiCommand(), relayCommand(), messageCommand(), contactsCommand(),
 		serveCmd(), announceCmd(), discoverCmd(), installCmd(), callCmd(), sessionCmd(), syncCommand(),
@@ -104,18 +106,91 @@ func root() *cobra.Command {
 // rootDir is the directory of arc. It holds one directory for each identity,
 // and the files of a relay that this machine runs.
 func rootDir(command *cobra.Command) (string, error) {
-	if dir, _ := command.Flags().GetString("home"); dir != "" {
-		return dir, nil
-	}
-	if dir := os.Getenv("ARC_HOME"); dir != "" {
-		return dir, nil
-	}
+	dir, _, err := rootSource(command)
+	return dir, err
+}
+
+// rootSource is rootDir, and the rule that chose it: --home, ARC_HOME,
+// ~/.arc, or the home of an older arc.
+func rootSource(command *cobra.Command) (string, string, error) {
 	user, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return defaultRoot(user), nil
+	for _, given := range []struct{ dir, why string }{
+		{flagString(command, "home"), "--home"},
+		{os.Getenv("ARC_HOME"), "ARC_HOME"},
+	} {
+		if given.dir != "" {
+			dir, err := absHome(user, given.dir)
+			return dir, given.why, err
+		}
+	}
+	dir, err := defaultRoot(user)
+	if err != nil {
+		return "", "", err
+	}
+	old := filepath.Join(user, ".config", "arc")
+	if warning := twoHomes(user, dir); warning != "" {
+		if _, warned := homeWarned.LoadOrStore(command.Root(), true); !warned {
+			// A path can hold any character, such as a newline in HOME.
+			fmt.Fprintln(command.ErrOrStderr(), "arc: warning: "+terminal.EscapeLine(warning))
+		}
+	}
+	if dir == old {
+		return dir, olderHome, nil
+	}
+	return dir, "~/.arc", nil
 }
+
+func flagString(command *cobra.Command, name string) string {
+	value, _ := command.Flags().GetString(name)
+	return value
+}
+
+// absHome is a home that --home or ARC_HOME gives, as a clean absolute
+// path. A leading ~ is the user's home, as a shell expands it: bash does
+// not expand it after =, as in --home=~/arc. A symlink keeps its own name.
+func absHome(user, dir string) (string, error) {
+	if dir == "~" {
+		dir = user
+	} else if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		dir = filepath.Join(user, rest)
+	} else if strings.HasPrefix(dir, "~") {
+		// A shell expands ~root to the home of a user, and ~+ to the working
+		// directory, so a folder of that name here would be one rm -rf away
+		// from the folder that it names there (#411).
+		return "", fmt.Errorf("the home \"%s\" starts with a ~ that a shell expands to another folder: arc expands only ~ and ~/; give the whole path", dir)
+	}
+	return filepath.Abs(dir)
+}
+
+// twoHomes is the warning when both default homes exist, which says the
+// home that arc uses and why, or "" when one home exists. arc writes
+// nothing to the other home.
+func twoHomes(user, dir string) string {
+	home := filepath.Join(user, ".arc")
+	old := filepath.Join(user, ".config", "arc")
+	switch {
+	case dir == home && holdsIdentity(home) && holdsIdentity(old):
+		return fmt.Sprintf("both %s and %s hold an identity. arc uses %s, because it holds an identity, and an older arc or arc-dm uses %s. Upgrade each arc and arc-dm on this machine, or set ARC_HOME.", home, old, home, old)
+	case dir == old && holdsIdentity(old):
+		// Anything at ~/.arc: entries of arc, or a link that leads to no
+		// home, as a dangling link or a link to ".".
+		if _, err := os.Lstat(home); err == nil {
+			// A link that leads to no home is not a second home.
+			if holds, _ := holdsHome(home, "~/.arc"); !holds {
+				return fmt.Sprintf("%s is a link that leads to no home of arc. arc uses %s, and reads and writes nothing through %s. Remove the link, or point it at a home, or set ARC_HOME.", home, old, home)
+			}
+			return fmt.Sprintf("both %s and %s exist. arc uses %s, because %s holds no identity, and reads and writes nothing in %s. Set ARC_HOME to choose the home.", home, old, old, home, home)
+		}
+	}
+	return ""
+}
+
+// homeWarned holds each run of arc, by its root command, that warned of
+// two homes already. arc finds its home more than once in one command.
+var homeWarned sync.Map
 
 // homeNames are the entries that arc keeps at the top of its home. An app
 // that keeps data in ~/.arc/<app> never uses one of these names, and
@@ -125,26 +200,112 @@ var homeNames = []string{"citizens", "default", "device", "relay.db", "wake", "w
 // defaultRoot is ~/.arc. A home that an older arc made in ~/.config/arc
 // stays in use, until ~/.arc holds an entry of arc. arc moves no file, and
 // it never looks for a home in the working directory: a cloned repository
-// can hold a .arc with the key of someone else.
-func defaultRoot(user string) string {
+// can hold a .arc with the key of someone else. A home that arc cannot
+// read stops arc: arc never uses the next home in its place.
+func defaultRoot(user string) (string, error) {
 	home := filepath.Join(user, ".arc")
-	if holdsHome(home) {
-		return home
+	old := filepath.Join(user, ".config", "arc")
+	holds, err := holdsHome(home, "~/.arc")
+	if err != nil {
+		return home, err
 	}
-	if old := filepath.Join(user, ".config", "arc"); holdsHome(old) {
-		return old
+	if holds {
+		// A ~/.arc with entries but no identity, such as a lone wake.toml,
+		// does not hide the identity of an older home (#408). An older home
+		// that arc cannot read stops arc: else keys gen would make a second
+		// identity in ~/.arc, which then hides the first.
+		if mine, err := identityIn(home, "~/.arc"); err != nil || mine {
+			return home, err
+		}
+		older, err := identityIn(old, olderHome)
+		if err != nil {
+			return old, err
+		}
+		if older {
+			return old, nil
+		}
+		return home, nil
 	}
-	return home
+	if holds, err = holdsHome(old, olderHome); err != nil || holds {
+		return old, err
+	}
+	return home, nil
 }
 
-// holdsHome says whether dir holds an entry of arc.
-func holdsHome(dir string) bool {
+// olderHome is the rule that chose ~/.config/arc.
+const olderHome = "~/.config/arc, the home of an older arc"
+
+// holdsHome says whether dir holds an entry of arc. Only an entry that is
+// not there is missing: a folder that arc cannot read is an error. why is
+// the rule that would choose dir.
+func holdsHome(dir, why string) (bool, error) {
 	for _, name := range homeNames {
-		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
-			return true
+		_, err := os.Lstat(filepath.Join(dir, name))
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, unreadableHome(dir, why, err)
 		}
 	}
-	return false
+	return false, nil
+}
+
+// The three errors of a home that arc cannot read. Each case has one
+// wording, which names the folder and the rule that chose it, and says
+// what fixes it (#408).
+
+func unreadableHome(dir, why string, err error) error {
+	fix := "Fix its permissions"
+	switch {
+	case errors.Is(err, syscall.ENOTDIR):
+		fix = "It is not a folder: move it away"
+	case errors.Is(err, syscall.ELOOP):
+		fix = "It is a loop of symbolic links: remove the link"
+	}
+	return fmt.Errorf("cannot read the home %s, chosen by %s, and arc uses no other home in its place: %w. %s, or give --home or ARC_HOME", dir, why, err, fix)
+}
+
+// unreadableDefault is the error of a default file that arc cannot read,
+// or of its home, when the home is what arc cannot read.
+func unreadableDefault(root, why string, err error) error {
+	if _, dirErr := os.ReadDir(root); dirErr != nil && !errors.Is(dirErr, os.ErrNotExist) {
+		return unreadableHome(root, why, dirErr)
+	}
+	return fmt.Errorf("cannot read the default identity in %s, chosen by %s: %w. Fix the permissions of %s, or give --key or ARC_KEY", root, why, err, defaultPath(root))
+}
+
+func unreadableIdentities(root, why string, err error) error {
+	if _, dirErr := os.ReadDir(root); dirErr != nil && !errors.Is(dirErr, os.ErrNotExist) {
+		return unreadableHome(root, why, dirErr)
+	}
+	return fmt.Errorf("cannot read the identities in %s, chosen by %s: %w. Fix the permissions of that folder", citizensDir(root), why, err)
+}
+
+// identityIn says whether dir holds an identity of arc. Only a folder of
+// identities that is not there is missing: one that arc cannot read is an
+// error. why is the rule that would choose dir.
+func identityIn(dir, why string) (bool, error) {
+	entries, err := os.ReadDir(citizensDir(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, unreadableIdentities(dir, why, err)
+	}
+	return len(entries) > 0, nil
+}
+
+// unwritableIdentities is the error of a folder of identities that arc
+// can read but cannot add to.
+func unwritableIdentities(root, why string, err error) error {
+	return fmt.Errorf("cannot add an identity to %s, chosen by %s: %w. Fix the permissions of that folder", citizensDir(root), why, err)
+}
+
+// holdsIdentity says whether dir holds an identity of arc.
+func holdsIdentity(dir string) bool {
+	entries, err := os.ReadDir(filepath.Join(dir, "citizens"))
+	return err == nil && len(entries) > 0
 }
 
 // home is the directory of the identity that the command uses. It holds the
@@ -158,13 +319,43 @@ func keyPath(dir string) string      { return filepath.Join(dir, "key") }
 func relaysPath(dir string) string   { return filepath.Join(dir, "relays") }
 func indexersPath(dir string) string { return filepath.Join(dir, "indexers") }
 
-func readRelays(dir string) ([]string, error) { return readURLs(relaysPath(dir)) }
+// readRelays returns the relays that arc uses. A list that an older arc
+// wrote can hold a line that is not a relay URL, such as the second half
+// of a URL that held a newline (#441). arc skips such a line; arc relay ls
+// shows it, and arc relay rm removes it.
+func readRelays(dir string) ([]string, error) { return relayURLs(readURLs(relaysPath(dir))) }
 
 func writeRelays(dir string, urls []string) error { return writeURLs(dir, relaysPath(dir), urls) }
 
 // An indexer relay holds only relay lists. A citizen publishes its NIP-65
 // and NIP-17 lists there, and looks up the lists of others there.
-func readIndexers(dir string) ([]string, error) { return readURLs(indexersPath(dir)) }
+func readIndexers(dir string) ([]string, error) { return relayURLs(readURLs(indexersPath(dir))) }
+
+// isRelayURL says whether a line of a relay list is a ws:// or wss:// URL.
+func isRelayURL(line string) bool {
+	return strings.HasPrefix(line, "ws://") || strings.HasPrefix(line, "wss://")
+}
+
+// relayURLs keeps the lines that are relay URLs.
+func relayURLs(lines []string, err error) ([]string, error) {
+	return slices.DeleteFunc(lines, func(line string) bool { return !isRelayURL(line) }), err
+}
+
+// checkRelayURL refuses a relay URL that is not ws:// or wss://, or that
+// holds a space, a control character or a format character. The list keeps
+// one relay on each line: a newline would add a second relay. A control
+// character would reach the terminal in each line that names the relay,
+// and a bidi or invisible character could make it look like another relay
+// (#441).
+func checkRelayURL(url string) error {
+	if !isRelayURL(url) {
+		return errors.New("a relay is a ws:// or wss:// URL")
+	}
+	if strings.ContainsFunc(url, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) }) {
+		return errors.New("a relay URL holds no space, no control character and no format character")
+	}
+	return nil
+}
 
 func writeIndexers(dir string, urls []string) error {
 	return writeURLs(dir, indexersPath(dir), urls)
@@ -207,18 +398,20 @@ func relayCommand() *cobra.Command {
 			"lists there, and looks up the relay lists of other citizens there.",
 		RunE: func(command *cobra.Command, args []string) error {
 			url := args[0]
-			if !strings.HasPrefix(url, "ws://") && !strings.HasPrefix(url, "wss://") {
-				return errors.New("a relay is a ws:// or wss:// URL")
+			if err := checkRelayURL(url); err != nil {
+				return err
 			}
 			dir, err := home(command)
 			if err != nil {
 				return err
 			}
-			relays, err := readRelays(dir)
+			// add, rm and ls read each line, so that a write keeps the
+			// lines that arc skips.
+			relays, err := readURLs(relaysPath(dir))
 			if err != nil {
 				return err
 			}
-			indexers, err := readIndexers(dir)
+			indexers, err := readURLs(indexersPath(dir))
 			if err != nil {
 				return err
 			}
@@ -259,11 +452,11 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				relays, err := readRelays(dir)
+				relays, err := readURLs(relaysPath(dir))
 				if err != nil {
 					return err
 				}
-				indexers, err := readIndexers(dir)
+				indexers, err := readURLs(indexersPath(dir))
 				if err != nil {
 					return err
 				}
@@ -285,22 +478,36 @@ func relayCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				urls, err := readRelays(dir)
+				urls, err := readURLs(relaysPath(dir))
 				if err != nil {
 					return err
 				}
-				indexers, err := readIndexers(dir)
+				indexers, err := readURLs(indexersPath(dir))
 				if err != nil {
 					return err
 				}
 				if len(urls) == 0 {
 					fmt.Fprintln(command.OutOrStdout(), "no relays: add one with arc relay add <url>")
 				}
+				// A list of an older arc can hold any character, and a
+				// line that is not a relay URL, which arc skips.
+				skipped := false
+				show := func(url, suffix string) {
+					if !isRelayURL(url) {
+						fmt.Fprintf(command.OutOrStdout(), "not a relay URL, skipped: \"%s\"%s\n", terminal.EscapeLine(url), suffix)
+						skipped = true
+						return
+					}
+					fmt.Fprintln(command.OutOrStdout(), terminal.EscapeLine(url)+suffix)
+				}
 				for _, url := range urls {
-					fmt.Fprintln(command.OutOrStdout(), url)
+					show(url, "")
 				}
 				for _, url := range indexers {
-					fmt.Fprintln(command.OutOrStdout(), url+"  (index)")
+					show(url, "  (index)")
+				}
+				if skipped {
+					fmt.Fprintln(command.ErrOrStderr(), "arc: the relay list holds a line that is not a relay URL, which arc skips; remove it with arc relay rm and the line as the list holds it, quoted for the shell")
 				}
 				return nil
 			},
@@ -370,7 +577,13 @@ func fetchAnyTURN(ctx context.Context, dir string, relays []string) ([]byte, err
 	if first != nil {
 		return first, nil
 	}
-	return nil, errors.Join(problems...)
+	// One line: arc prints an error on one line, so a newline of
+	// errors.Join would show as \n.
+	texts := make([]string, len(problems))
+	for i, problem := range problems {
+		texts[i] = problem.Error()
+	}
+	return nil, errors.New(strings.Join(texts, "; "))
 }
 
 // fetchTURN asks a relay for a TURN credential, signed with the key of the
@@ -434,7 +647,7 @@ func turnURL(relay string) (string, error) { return relayHTTP(relay, turn.Path) 
 func relayHTTP(relay, path string) (string, error) {
 	u, err := url.Parse(relay)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("%q is not a relay URL", relay)
+		return "", fmt.Errorf("\"%s\" is not a relay URL", relay)
 	}
 	switch u.Scheme {
 	case "ws":
@@ -457,7 +670,7 @@ func announceRelays(command *cobra.Command) {
 	}
 	defer sess.Close()
 	if len(sess.Relays) > 0 {
-		publishRelayList(command.Context(), sess)
+		publishRelayList(command.Context(), sess, os.Stderr, nil)
 	}
 }
 
@@ -474,7 +687,9 @@ func newRelay(path string, p limits.Policy, ring *rings.Config, logger *slog.Log
 	rl := khatru.NewRelay()
 	rl.UseEventstore(db, 500)
 	rl.Negentropy = true
-	rl.Info.SupportedNIPs = append(rl.Info.SupportedNIPs, 77)
+	// khatru copies Info for each NIP-11 request and appends to the copy;
+	// with no spare room, each append copies, and requests do not race (#425).
+	rl.Info.SupportedNIPs = slices.Clip(append(rl.Info.SupportedNIPs, 77))
 	readers := sealed.Protect(rl)
 	limits.Apply(rl, db.DB, p)
 	connections.Watch(rl)
@@ -545,6 +760,7 @@ func serveCommand() *cobra.Command {
 					// The TURN server answers STUN binding requests too.
 					host, _, _ := net.SplitHostPort(stunAddress)
 					turnConfig.RelayHost = host
+					turnConfig.Logger = logger
 					if address, _ := command.Flags().GetString("turn-tcp"); address != "" {
 						if turnConfig.TCP, err = net.Listen("tcp", address); err != nil {
 							_ = conn.Close()
@@ -969,6 +1185,13 @@ func syncCommand() *cobra.Command {
 			"disk you carry.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			// A directory holds events, not the pieces of a storage citizen,
+			// so a repair through it has nothing to audit (#404).
+			if repair, _ := command.Flags().GetBool("repair"); repair {
+				if dir, _ := command.Flags().GetString("dir"); dir != "" {
+					return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: run arc sync --repair and arc sync --dir apart")
+				}
+			}
 			sess, err := open(command)
 			if err != nil {
 				return err
@@ -994,7 +1217,27 @@ func syncCommand() *cobra.Command {
 				refreshDevices(command.Context(), sess, command.ErrOrStderr())
 			}
 			failed := false
+			// unreached has one plain line for each relay that gave no
+			// answer or refused, and no line of Go text (#442, #463).
+			var unreached []string
+			// Ask each relay once, all at once: a relay that does not answer
+			// is then down, and the steps below skip it, so silent relays
+			// cost one deadline in total, not one each (#442).
+			reached := map[string]error{}
+			if dir == "" {
+				for i, err := range sess.Reach(command.Context()) {
+					reached[sess.Relays[i].Name()] = err
+				}
+			}
 			for _, t := range targets {
+				if err := reached[t.Name()]; err != nil && citizen.Unreachable(err) {
+					unreached = append(unreached, t.Name()+": "+citizen.UnreachedReason(err))
+					continue
+				}
+				if line, ok := citizen.RefusedLine(t.Name(), reached[t.Name()]); ok {
+					unreached = append(unreached, line)
+					continue
+				}
 				// Self data goes to a directory that the citizen carries,
 				// but never to a relay.
 				if dir != "" {
@@ -1005,7 +1248,7 @@ func syncCommand() *cobra.Command {
 						continue
 					}
 					fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
-						report.Transport, report.Received, report.Sent, report.Duplicate+report.Superseded)
+						terminal.EscapeLine(report.Transport), report.Received, report.Sent, report.Duplicate+report.Superseded)
 					for _, reason := range report.Refused {
 						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 					}
@@ -1021,10 +1264,10 @@ func syncCommand() *cobra.Command {
 					}
 					bodies, err := sess.SyncBodies(dir)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
+						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 						failed = true
 					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
-						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", report.Transport, bodies.Received, bodies.Sent)
+						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", terminal.EscapeLine(report.Transport), bodies.Received, bodies.Sent)
 						for _, sum := range bodies.Missing {
 							fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("  the body %s is on neither side; the device that wrote it holds it", sum)))
 						}
@@ -1032,23 +1275,41 @@ func syncCommand() *cobra.Command {
 				}
 
 				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", t.Name(), offers.Received) //arc:raw-ok the name of a transport of arc
+					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", terminal.EscapeLine(t.Name()), offers.Received)
 				}
 
 				mails, err := sess.Mail.Sync(command.Context(), t)
+				if line, ok := citizen.StoppedLine(terminal.EscapeLine(t.Name()), err); ok {
+					// The relay took some wraps, and then gave no answer:
+					// one line names it, and the rest wait (#465).
+					unreached = append(unreached, line)
+					continue
+				}
+				if err != nil && citizen.Unreachable(err) {
+					// The relay answered the question of Reach, so only
+					// its mail gave no answer: say so, in a few words at
+					// the end, not its whole error (#439, #442).
+					unreached = append(unreached, t.Name()+": "+citizen.UnreachedReason(err)+" for mail")
+					continue
+				}
+				if line, ok := citizen.RefusedLine(t.Name()+" for mail", err); ok {
+					unreached = append(unreached, line)
+					continue
+				}
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", t.Name(), terminal.EscapeLine(err.Error())) //arc:raw-ok the name of a transport of arc
+					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 					failed = true
 					continue
 				}
 				fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
-					mails.Transport, mails.Received, mails.Delivered, mails.Carried, mails.Sent)
+					terminal.EscapeLine(mails.Transport), mails.Received, mails.Delivered, mails.Carried, mails.Sent)
 				for _, reason := range mails.Refused {
 					fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
 				}
 			}
 			if dir == "" && len(sess.Relays) > 0 {
-				if sent, err := sess.Mail.Forward(command.Context()); err != nil {
+				// A relay that gave no answer is named once at the end.
+				if sent, err := sess.Mail.Forward(command.Context()); err != nil && !citizen.Unusable(err) {
 					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("mail: the waiting messages were not sent to the relays of their recipients: %v", err)))
 					failed = true
 				} else if sent > 0 {
@@ -1064,6 +1325,17 @@ func syncCommand() *cobra.Command {
 				cfg.Repair, cfg.RepairTURN = repair, turn
 				if syncSelf(command.Context(), sess, cfg, again) != nil {
 					failed = true
+				}
+			}
+			// One line for each relay that gave no answer, the last as the
+			// error of the sync when nothing else failed. A line holds raw
+			// text that a relay chose, and is escaped once, where it is
+			// printed: errorLine escapes the error of the command (#464).
+			for i, relay := range unreached {
+				if i < len(unreached)-1 || failed {
+					fmt.Fprintln(command.ErrOrStderr(), "arc: "+terminal.EscapeLine(relay+"; arc syncs with it again at the next sync"))
+				} else {
+					return errors.New(relay + "; arc syncs with it again at the next sync")
 				}
 			}
 			if failed {
@@ -1137,11 +1409,11 @@ func dropDeleted(ctx context.Context, out io.Writer, n *node.Node, filters []nos
 		return err
 	}
 	if !held {
-		fmt.Fprintf(out, "%s: %d events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request\n", report.Transport, len(report.Deleted))
+		fmt.Fprintf(out, "%s: %d events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request\n", terminal.EscapeLine(report.Transport), len(report.Deleted))
 		return nil
 	}
 	removed, err := d.Remove(report.Deleted)
-	fmt.Fprintf(out, "%s: %d events of deleted pages left out, %d removed from the directory\n", report.Transport, len(report.Deleted), removed)
+	fmt.Fprintf(out, "%s: %d events of deleted pages left out, %d removed from the directory\n", terminal.EscapeLine(report.Transport), len(report.Deleted), removed)
 	return err
 }
 

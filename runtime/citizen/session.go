@@ -2,10 +2,14 @@ package citizen
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
+	"slices"
 	"sync"
+	"syscall"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -43,6 +47,8 @@ type Session struct {
 	NewRelay func(string) transport.Transport
 	Errors   io.Writer
 	store    *store.Store
+	// storeDir is the folder of the store, which holds the lock of writes.
+	storeDir string
 	receipts kv.Store
 	roots    kv.Store
 	signers  *signers
@@ -54,6 +60,13 @@ type Session struct {
 	// kept holds the relay of each URL that NewRelay gave.
 	keptMu sync.Mutex
 	kept   map[string]relay.Relay
+	// offline warns once that no relay answered.
+	offline sync.Once
+	// errMu makes one write at a time on Errors. A watch ends in its own
+	// goroutine, and can end after the command. errClosed says that Close
+	// ran: no line goes to Errors after it.
+	errMu     sync.Mutex
+	errClosed bool
 }
 
 type Config struct {
@@ -72,7 +85,7 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
 	sess.bodies = bodies.Dir{Path: filepath.Join(cfg.Home, "store", "bodies")}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
 	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
@@ -93,7 +106,10 @@ func Open(cfg Config) (*Session, error) {
 				r.Delegation = sess.delegation
 			}
 			if sess.Errors != nil {
-				r.OnNotice(func(text string) { fmt.Fprintf(sess.Errors, "%s: %s\n", url, notice(text)) })
+				r.OnNotice(func(text string) { sess.printNotice(url, text) })
+				r.OnWatchEnd(func(by, why string) {
+					sess.warnf("arc: info: a watch of %s ended, closed by %s: %s\n", url, by, why)
+				})
 				r.OnAuthFailure(func(err error) {
 					sess.warnf("%s: could not authenticate before it read mail, so the relay does not count the read for rings: %s\n", url, err)
 				})
@@ -117,6 +133,7 @@ func Open(cfg Config) (*Session, error) {
 		return nil, err
 	}
 	sess.Mail.Indexers = sess.Indexers
+	sess.Mail.Unanswered = offline
 	sess.Mail.Contacts = sess.Contacts()
 	sess.Mail.InboxRelay = func(url string) transport.Transport {
 		return relay.Relay{URL: url, Signer: keyer.NewPlainKeySigner(nostr.Generate())}
@@ -125,6 +142,9 @@ func Open(cfg Config) (*Session, error) {
 	return sess, nil
 }
 func (s *Session) Close() {
+	s.errMu.Lock()
+	s.errClosed = true
+	s.errMu.Unlock()
 	s.keptMu.Lock()
 	for _, r := range s.kept {
 		_ = r.Close()
@@ -168,14 +188,165 @@ func (s *Session) warnf(format string, args ...any) {
 			safe[i] = arg
 		}
 	}
-	fmt.Fprintf(s.Errors, format, safe...)
+	s.writeErr(format, safe...)
+}
+
+// writeErr writes one line on Errors, unless the session is closed. A line
+// after Close, such as of a watch that ended after its command, is dropped
+// (#438).
+func (s *Session) writeErr(format string, args ...any) {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	if s.Errors != nil && !s.errClosed {
+		fmt.Fprintf(s.Errors, format, args...)
+	}
+}
+
+// warnUnreached warns of a pull that no relay answered, after which the
+// command uses what this machine holds. When the network reached no relay,
+// it says so in one short line, once in a session: the error of each relay
+// is a few hundred characters, and each pull of one command repeats it
+// (#396). A relay that answered with a refusal keeps its reason.
+func (s *Session) warnUnreached(err error, uses string) {
+	if !offline(err) {
+		s.warnf("%v\n%s\n", err, uses)
+		return
+	}
+	s.warnOffline()
+}
+
+// warnOffline says once in a session that the network reached no relay.
+func (s *Session) warnOffline() {
+	s.offline.Do(func() {
+		s.warnf("arc: no relay answered, so this uses what this machine holds\n")
+	})
+}
+
+// UnreachedReason is the short reason of an error that Unreachable takes:
+// the refusal of a connection, a host that does not exist, or no answer.
+func UnreachedReason(err error) string {
+	var dns *net.DNSError
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "the connection was refused"
+	case errors.As(err, &dns) && dns.IsNotFound:
+		return "no such host"
+	}
+	return "no answer"
+}
+
+// Unreachable says whether no relay heard the request of err: a dial, a
+// lookup or an address that failed, or a relay that gave no answer in time.
+func Unreachable(err error) bool { return offline(err) }
+
+// offline says whether each error in err is a dial, a name lookup or an
+// address that failed, or a relay that gave no answer in time, so that no
+// relay answered the request (#396, #439).
+func offline(err error) bool {
+	if err == context.DeadlineExceeded || err == relay.ErrStalled || err == relay.ErrNoAnswer { //nolint:errorlint // leaves of the walk below
+		return true
+	}
+	// Each branch of a joined error must be offline, and errors.As takes
+	// the first branch that matches, so walk the tree by hand.
+	switch e := err.(type) { //nolint:errorlint // walks every branch, as the comment above says
+	case *net.OpError, *net.DNSError, *net.AddrError:
+		return true
+	case interface{ Unwrap() []error }:
+		errs := e.Unwrap()
+		return len(errs) > 0 && !slices.ContainsFunc(errs, func(err error) bool { return !offline(err) })
+	case interface{ Unwrap() error }:
+		return offline(e.Unwrap())
+	}
+	return false
+}
+
+// RefusedLine is the line of sync for the relay name, which refused with
+// err: a CLOSED, an OK that is false, a request for authentication, or an
+// HTTP status for the WebSocket. ok is false for each other error (#463).
+// The line holds the reason raw, cut to noticeLimit characters: the caller
+// escapes it once, where it prints it (#464).
+func RefusedLine(name string, err error) (line string, ok bool) {
+	reason, ok := relay.Refusal(err)
+	if !ok {
+		return "", false
+	}
+	if runes := []rune(reason); len(runes) > noticeLimit {
+		reason = string(runes[:noticeLimit]) + "…"
+	}
+	return name + ": the relay refused: " + reason, true
+}
+
+// StoppedLine is the line of sync for the relay name, which took some
+// wraps and then gave no answer. ok is false for each other error (#465).
+func StoppedLine(name string, err error) (line string, ok bool) {
+	stopped, ok := errors.AsType[*mail.StoppedError](err)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("%s: stopped answering after it took %d of %d waiting wraps", name, stopped.Sent, stopped.Waiting), true
+}
+
+// Unusable says whether each relay of err gave no answer or refused, so
+// that the one line of sync for each relay says all there is (#463).
+func Unusable(err error) bool {
+	return err != nil && every(err, func(err error) bool {
+		_, refused := relay.Refusal(err)
+		return refused || offline(err)
+	})
+}
+
+// every says whether leaf holds for each branch of the joined errors in
+// err. A branch with no joined error under it is a leaf.
+func every(err error, leaf func(error) bool) bool {
+	switch e := err.(type) { //nolint:errorlint // walks every branch, as offline does
+	case interface{ Unwrap() []error }:
+		errs := e.Unwrap()
+		return len(errs) > 0 && !slices.ContainsFunc(errs, func(err error) bool { return !every(err, leaf) })
+	case interface{ Unwrap() error }:
+		if joined(e.Unwrap()) {
+			return every(e.Unwrap(), leaf)
+		}
+	}
+	return leaf(err)
+}
+
+// joined says whether err holds a joined error.
+func joined(err error) bool {
+	for ; err != nil; err = errors.Unwrap(err) {
+		if _, ok := err.(interface{ Unwrap() []error }); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // noticeLimit is the most characters of a relay NOTICE that arc prints,
 // after it escapes the text. A notice that rings fail has about 150.
 const noticeLimit = 300
 
+// printNotice prints a NOTICE of the relay url. The URL and the text each
+// are escaped once: writeErr escapes nothing, and notice escapes and cuts
+// the text (#443, #464).
+func (s *Session) printNotice(url, text string) {
+	s.writeErr("%s: %s\n", terminal.EscapeLine(url), notice(text))
+}
+
 // notice is the text of a relay NOTICE as a terminal can show it: on one
 // line, escaped, and cut to noticeLimit characters. The relay chooses the
 // text.
 func notice(text string) string { return terminal.EscapeLineCut(text, noticeLimit) }
+
+// Reach asks each relay of the session one question at once, which each
+// relay answers at once: the event of no ID. A relay that does not answer
+// is then down for a while, so the calls that follow fail at once on it.
+// It returns the error of each relay, in the order of s.Relays, nil for
+// a relay that answered.
+func (s *Session) Reach(ctx context.Context) []error {
+	errs := make([]error, len(s.Relays))
+	var wg sync.WaitGroup
+	for i, t := range s.Relays {
+		wg.Go(func() { _, errs[i] = t.Fetch(ctx, nostr.Filter{IDs: []nostr.ID{{}}}) })
+	}
+	wg.Wait()
+	return errs
+}

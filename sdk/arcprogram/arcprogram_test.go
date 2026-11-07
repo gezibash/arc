@@ -447,3 +447,41 @@ func TestAPanicInAWatchEndsItsArc(t *testing.T) {
 		})
 	}
 }
+
+// fakeArc is an arc program that runs script and nothing else.
+func fakeArc(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "arc")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// arc warns of two homes at each command. A client gets the warning once
+// in a program, and an error that follows a warning is one line, with no
+// warning in it.
+func TestAWarningOfArcShowsOnceAndAnErrorIsOneLine(t *testing.T) {
+	// arc escaped the newline of the path itself: the client keeps that
+	// escape as it is, and does not escape it twice.
+	const warning = `arc: warning: both /h\narc: x/.arc and /h/.config/arc hold an identity. arc uses /h\narc: x/.arc, because it holds an identity`
+	key := strings.Repeat("ab", 32)
+	program := fakeArc(t, `printf '%s\n' '`+warning+`' >&2
+if [ -n "$FAIL" ]; then echo "arc: no identity in /h/.arc" >&2; echo "chosen by ~/.arc" >&2; exit 1; fi
+echo `+key)
+	var warnings strings.Builder
+	a := arcprogram.Arc{Program: program, Warnings: &warnings}
+	for range 3 {
+		if got, err := a.PublicKey(t.Context()); err != nil || got != key {
+			t.Fatalf("PublicKey: %q, %v", got, err)
+		}
+	}
+	if warnings.String() != warning+"\n" {
+		t.Errorf("three calls warned %q, want the warning once", warnings.String())
+	}
+	t.Setenv("FAIL", "1")
+	_, err := a.PublicKey(t.Context())
+	if err == nil || err.Error() != "arc whoami: arc: no identity in /h/.arc; chosen by ~/.arc" {
+		t.Errorf("the error is %q, want the lines of arc on one line, with no warning", err)
+	}
+}

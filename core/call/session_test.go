@@ -18,6 +18,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/internal/testrelay"
 )
 
@@ -377,4 +378,17 @@ func (l lateOK) Send(ctx context.Context, event nostr.Event) error {
 	}
 	<-ctx.Done()
 	return fmt.Errorf("publish: %w", context.Cause(ctx))
+}
+
+// An open that the relay says no one heard, as when no provider watches,
+// reached no one. It fails as not submitted, so that a caller may try
+// again, and never as an open with an unknown outcome (#424).
+func TestAnOpenThatNoOneHeardIsNotSubmitted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	_, err := call.OpenSession(ctx, keys.Generate(), keys.Generate().Public, call.Request{Capability: "primary"}, session.Duplex, r)
+	if _, ok := errors.AsType[*transport.NotSubmittedError](err); !ok || !errors.Is(err, transport.ErrNoListener) || strings.Contains(fmt.Sprint(err), "outcome may be unknown") {
+		t.Fatalf("an open with no provider failed with %v, want an open that no one heard", err)
+	}
 }

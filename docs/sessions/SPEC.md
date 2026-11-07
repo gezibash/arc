@@ -3,7 +3,7 @@
 - Status: built
 - Layers: core, sdk, runtime
 - Owns: core/session
-- Proof: go test -count=1 -run '^TestBundledProviderSessionsThroughCLI$' ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestBundledProviderSessionsThroughCLI|TestAnOpenThatNoOneHeardIsNotSubmitted)$' ./cmd/arc/ ./core/call/
 - Unverified: No test runs a session across a network other than loopback.
 
 ARC participants may provide and consume capabilities. Transport connections
@@ -172,6 +172,9 @@ gets a `session.Stream` that implements `io.Reader` and `io.Writer`.
 - A sequence gap, excess credit or unsupported input ends the session with
   an explicit protocol error.
 - A directory carrier fails explicitly before submission.
+- An open that the relay says no one heard fails as not submitted, never
+  with an unknown outcome: the provider never got it (delivery spec,
+  section on live calls).
 - A disconnect ends the session with an explicit error. Callers must treat
   its effects as uncertain.
 - Transport acceptance is not application completion.

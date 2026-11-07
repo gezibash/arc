@@ -24,6 +24,18 @@ const HoldWait = time.Second
 // TURN server of the relay.
 var ErrNoPath = errors.New("no direct path")
 
+// relayNoPath says that the data channel did not open through the TURN
+// server, after the TURN server gave an address. It names the server, so
+// that the error does not read as a direct attempt (#427). It is still an
+// ErrNoPath.
+type relayNoPath struct{ urls []string }
+
+func (e relayNoPath) Error() string {
+	return "the data channel did not open through the TURN server " + strings.Join(e.urls, ", ")
+}
+
+func (relayNoPath) Unwrap() error { return ErrNoPath }
+
 // NoPath is the error after the direct attempts and the relay attempt.
 func NoPath(err error) error {
 	return fmt.Errorf("no direct path, and no path through the relay: %w", err)
@@ -95,6 +107,9 @@ func (a Attempts) Run(ctx context.Context, attempt func(ctx context.Context, opt
 		return NoPath(err)
 	}
 	if err = attempt(ctx, options, 0); errors.Is(err, ErrNoPath) {
+		if err == ErrNoPath && options.TURN != nil { //nolint:errorlint // Only the bare sentinel, which says nothing of the relay; a wrapped one keeps its detail.
+			err = relayNoPath{urls: options.TURN.URLs}
+		}
 		return NoPath(err)
 	}
 	return err
@@ -142,6 +157,7 @@ func RelayOptions(ctx context.Context, turn func(context.Context) (Credential, e
 		return options, fmt.Errorf("the relay lets this citizen relay %.1f MiB more today, and this file needs about %.1f MiB", float64(credential.QuotaLeft)/(1<<20), float64(need)/(1<<20))
 	}
 	options.TURN = &webrtc.ICEServer{URLs: credential.URLs, Username: credential.Username, Credential: credential.Password}
+	options.gather = &gatherLog{}
 	return options, nil
 }
 
@@ -156,7 +172,7 @@ func OfferSTUN(ctx context.Context, options Options, local webrtc.SessionDescrip
 		return "", nil
 	}
 	if !strings.Contains(local.SDP, "typ relay") {
-		return "", NoPath(errors.New("the TURN server of the relay gave no address"))
+		return "", NoPath(errors.New("the TURN server of the relay gave no address" + options.gather.reason()))
 	}
 	stun, err := TURNSTUN(ctx, options.TURN)
 	if err != nil {

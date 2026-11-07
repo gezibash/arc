@@ -46,6 +46,14 @@ func (o *output) String() string {
 // command.
 func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan error) {
 	t.Helper()
+	out, _, result := servingWithErrors(t, ctx, home)
+	return out, result
+}
+
+// servingWithErrors is serving, and also returns what arc serve writes on
+// its standard error.
+func servingWithErrors(t *testing.T, ctx context.Context, home string) (*output, *output, <-chan error) {
+	t.Helper()
 	dir := t.TempDir()
 	echo := filepath.Join(dir, "echo")
 	build := exec.Command("go", "build", "-o", echo, "../../adapters/provider/host/testdata/echo")
@@ -63,11 +71,13 @@ func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan er
 
 	out := &output{}
 	command := root()
+	errs := &output{}
 	command.SetOut(out)
+	command.SetErr(errs)
 	command.SetArgs([]string{"--home", home, "serve", "exec://" + echo + "?manifest=" + filepath.Join(dir, "manifest.json")})
 	result := make(chan error, 1)
 	go func() { result <- command.ExecuteContext(ctx) }()
-	return out, result
+	return out, errs, result
 }
 
 // waitFor waits until the output holds text, or until the time ends.

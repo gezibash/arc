@@ -54,6 +54,9 @@ type RepairReport struct {
 	// that this device signed, that no page names, and that the repair
 	// deleted from the store. The next repair frees their blobs.
 	UnnamedParts, UnnamedCheckpoints int
+	// UnnamedKept are the parts and checkpoints that no page names, which
+	// the repair kept: a write may still run that names them.
+	UnnamedKept int
 }
 
 // migrateMax is the most blobs of format 1 that one sync moves to pieces.

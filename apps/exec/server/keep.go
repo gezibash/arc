@@ -188,39 +188,7 @@ func (s *server) attach(parent context.Context, k *keptProcess, stream *provider
 		}
 	}
 
-	go func() {
-		reader := execadapter.NewReader(stream)
-		for {
-			record, err := reader.Next()
-			// The end of session input does not close the input of the
-			// process. A later session can still write to it.
-			if errors.Is(err, io.EOF) || ctx.Err() != nil {
-				return
-			}
-			if err != nil {
-				cancel(err)
-				return
-			}
-			switch record.Type {
-			case "stdin":
-				err = k.write(record.Data)
-			case "resize":
-				if k.terminal == nil || record.Rows == 0 || record.Cols == 0 {
-					err = provider.ErrInvalidRequest
-				} else {
-					err = k.resize(record.Rows, record.Cols, false)
-				}
-			default:
-				err = provider.ErrInvalidRequest
-			}
-			if err != nil {
-				if !k.done() && !inputGone(err) {
-					cancel(err)
-				}
-				return
-			}
-		}
-	}()
+	go k.pumpInput(ctx, cancel, stream)
 
 	encoder := json.NewEncoder(stream)
 	send := func(record execadapter.Record) error {
@@ -354,6 +322,43 @@ func (k *keptProcess) done() bool {
 func (k *keptProcess) notify() {
 	close(k.changed)
 	k.changed = make(chan struct{})
+}
+
+// pumpInput writes each record of a session to the process. A record that
+// the session sent is written even when the session ends meanwhile: the
+// process outlives the session, and its input must not lose the last keys
+// of a session that detaches (#412).
+func (k *keptProcess) pumpInput(ctx context.Context, cancel context.CancelCauseFunc, in io.Reader) {
+	reader := execadapter.NewReader(in)
+	for {
+		record, err := reader.Next()
+		if err != nil {
+			// The end of session input does not close the input of the
+			// process. A later session can still write to it.
+			if !errors.Is(err, io.EOF) && ctx.Err() == nil {
+				cancel(err)
+			}
+			return
+		}
+		switch record.Type {
+		case "stdin":
+			err = k.write(record.Data)
+		case "resize":
+			if k.terminal == nil || record.Rows == 0 || record.Cols == 0 {
+				err = provider.ErrInvalidRequest
+			} else {
+				err = k.resize(record.Rows, record.Cols, false)
+			}
+		default:
+			err = provider.ErrInvalidRequest
+		}
+		if err != nil {
+			if !k.done() && !inputGone(err) {
+				cancel(err)
+			}
+			return
+		}
+	}
 }
 
 func (k *keptProcess) write(data []byte) error {

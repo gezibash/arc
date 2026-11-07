@@ -343,7 +343,13 @@ func TestAHeldSealMovesWhenAWrapWithWorkArrives(t *testing.T) {
 	rumor := private.Rumor(alice.key, mail.MessageKind, "twice", nostr.Tags{{"p", bob.key.Public.Hex()}}, time.Now())
 	seal := testutil.Must(private.Seal(ctx, alice.key, bob.key.Public, rumor))
 	expires := time.Now().Add(time.Hour)
+	// A wrap with no work still has a random ID, and one in 256 of them
+	// starts with 8 zero bits, which is work enough (#413). Take one that
+	// does not.
 	bare := testutil.Must(private.WrapSeal(seal, bob.key.Public, private.CourierForm, private.WrapKind, expires))
+	for private.WorkOf(bare) >= 8 {
+		bare = testutil.Must(private.WrapSeal(seal, bob.key.Public, private.CourierForm, private.WrapKind, expires))
+	}
 	worked := testutil.Must(private.WrapSealWork(ctx, seal, bob.key.Public, private.RelayForm, private.WrapKind, expires, 8))
 	if err := courier.Send(ctx, bare); err != nil {
 		t.Fatal(err)

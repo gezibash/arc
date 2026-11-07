@@ -63,6 +63,10 @@ type Options struct {
 	// Net replaces the network of the machine. A test sets it for an
 	// emulated link. Nil uses the network of the machine.
 	Net transport.Net
+
+	// gather keeps why the ICE agent of a relay attempt gathered no address
+	// on the TURN server. RelayOptions sets it.
+	gather *gatherLog
 }
 
 // sctpCAStep is the growth of the SCTP send window for each round trip
@@ -175,6 +179,9 @@ func NewConnection(o Options) (*webrtc.PeerConnection, error) {
 	engine.SetIncludeLoopbackCandidate(o.Loopback)
 	if o.Net != nil {
 		engine.SetNet(o.Net)
+	}
+	if o.gather != nil {
+		engine.LoggerFactory = o.gather
 	}
 	engine.SetSCTPCwndCAStep(sctpCAStep)
 	if o.MinWindow > 0 {

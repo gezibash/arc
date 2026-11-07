@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/session"
 )
 
@@ -42,6 +43,9 @@ type Kind struct {
 	// Frontmatter names nonempty fields required when this kind is published.
 	Frontmatter   []string `json:"frontmatter,omitempty"`
 	NotebookIndex string   `json:"notebook_index,omitempty"`
+	// NotebookEntry names the kind of the entries of a notebook page. A
+	// page then keeps each entry, and its head is never revised.
+	NotebookEntry string `json:"notebook_entry,omitempty"`
 }
 
 // Group is the NIP-29 group of the group kinds.
@@ -126,6 +130,8 @@ type Publish struct {
 	// the draft as its body, not into the content. Only a sealed kind has
 	// a body.
 	Body string `json:"body,omitempty"`
+	// at is the time of an entry, which a notebook sets. A manifest cannot.
+	at nostr.Timestamp
 }
 
 // bodyPattern is the one form of a body: the name of a file argument.
@@ -404,6 +410,12 @@ func (m *Manifest) check() error {
 				}
 			}
 		}
+		if kind.NotebookEntry != "" {
+			entry, ok := m.Kinds[kind.NotebookEntry]
+			if !ok || kind.NotebookEntry == name || kind.NotebookIndex == "" || entry.Visibility != "sealed" || entry.NotebookIndex != "" || entry.NotebookEntry != "" || len(entry.Frontmatter) > 0 {
+				return fmt.Errorf("kind %s: notebook_entry must name a separate sealed kind with no frontmatter, of a notebook kind", name)
+			}
+		}
 		grouped = grouped || kind.Visibility == "group"
 	}
 	if grouped && (m.Group == nil || m.Group.Relay == "" || m.Group.ID == "") {
@@ -562,7 +574,15 @@ func (m *Manifest) checkCommand(c Command) error {
 	}
 	if a.Notebook != nil {
 		actions++
-		if err := m.checkNotebook(a.Notebook, check); err != nil {
+		// The d template of a notebook action names the page address, which
+		// the notebook resolves, as address.
+		checkD := func(template string) error {
+			_, err := compile(template, func(root string) bool {
+				return root == "address" || slices.Contains(names, root)
+			})
+			return err
+		}
+		if err := m.checkNotebook(a.Notebook, check, checkD); err != nil {
 			return err
 		}
 	}

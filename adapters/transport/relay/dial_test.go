@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -96,5 +97,22 @@ func TestACallMovesToIPv4WhenIPv6Stalls(t *testing.T) {
 	}
 	if got := six.accepted.Load(); got != 1 {
 		t.Errorf("the second call dialed IPv6 again: %d connections, want 1", got)
+	}
+}
+
+// A host whose first attempt raced both address families and reached
+// neither within the stall limit is behind a black hole: reach does not
+// try it again, which would wait the rest of the timeout (#439).
+func TestABlackHoleHostIsTriedOnce(t *testing.T) {
+	defer relay.SetStallLimit(100 * time.Millisecond)()
+	tries := 0
+	start := time.Now()
+	err := relay.Reach(t.Context(), "ws://blackhole.invalid", func(ctx context.Context, _ *http.Client) error {
+		tries++
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err == nil || tries != 1 || time.Since(start) > time.Second {
+		t.Errorf("a black hole host took %d tries in %s: %v; want one try within the stall limit", tries, time.Since(start), err)
 	}
 }
