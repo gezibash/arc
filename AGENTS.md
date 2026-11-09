@@ -36,6 +36,10 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
   the secret is a signer request (docs/devices/SPEC.md, sections 3.7 and 3.8).
 - No source file holds more than 600 lines. Split a larger file by
   concern. `go test ./internal/architecture` checks it.
+- No function holds more than 100 lines, with its signature and the
+  function literals inside it. Split a longer one into steps with names.
+  `TestFunctionSize` checks it. The functions on `functionDebt` are debt:
+  never add one, and lower or remove an entry when you split it.
 - The runtime and adapters must not import concrete `apps/` packages.
   Apps use the SDK to compose with other apps.
 - Define an interface at the layer that consumes its effect. Only interfaces

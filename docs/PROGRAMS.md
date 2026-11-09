@@ -16,6 +16,12 @@ and 3.8, defines the signer protocol.
   `sdk`, `adapters`, `runtime`, `apps`, `cmd` and `internal`. It runs in
   `go test ./...` and in CI.
 
+- No function holds more than 100 lines. `TestFunctionSize` in
+  `internal/architecture` checks it. The 32 functions that were over when
+  the rule came in are on `functionDebt`, which can only shrink.
+  [Small functions and small packages](proposals/small-functions-and-packages.md)
+  is the plan to empty it.
+
 The largest source file is 586 lines (measured), of 300 source files. Before
 the rule, 18 files were over 600 lines, and the largest was 1,596 lines
 (measured at commit `9a07387`).
