@@ -137,7 +137,8 @@ Follow it for implementation, tests, documentation, and PR review.
 - CI on a pull request runs the fast checks only. The race detector runs on
   each push to main, each night, and on a pull request with the label
   `race`. Add the label when a change touches goroutines, locks, channels
-  or process lifetimes. A race failure on main is the next task.
+  or process lifetimes. A failed run on main comments on the open issue
+  with the label `ci-main`. Fixing it is the next task.
 
 ## Technical language
 

@@ -16,9 +16,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name }}
-  # A new push replaces the checks of a pull request. On main, each push
-  # finishes its race jobs, so each commit of main gets them.
+  # A new push replaces the checks of a pull request. Each other run has
+  # a group of its own: a group keeps one waiting run only, so a shared
+  # group on main would drop the race jobs of a commit between two pushes.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -256,3 +257,30 @@ jobs:
           go-version: "1.27.3"
           cache: true
       - run: bash .github/scripts/check-clean-build.sh
+
+  # A run on main has no pull request to show its failure. This job keeps
+  # one open issue with the label ci-main, and adds a comment for each
+  # failed run.
+  alert:
+    needs: [go, delivery, interface, race, clean-build]
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    name: Report a failure on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      EVENT: ${{ github.event_name }}
+      SHA: ${{ github.sha }}
+    steps:
+      - run: |
+          body="CI failed on main ($EVENT) at $SHA: $RUN"
+          issue=$(gh issue list --label ci-main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --label ci-main --title "CI fails on main" --body "$body"
+          fi
