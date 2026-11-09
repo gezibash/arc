@@ -28,10 +28,10 @@ file at commit `4b36835`. Each number has a tag:
 1. **The function rule.** No function holds more than 100 lines.
    `TestFunctionSize` in `internal/architecture` checks it. The 32 functions
    that are over today go on a list of debt. The list can only get shorter.
-2. **Split `runtime/iface` by job.** The manifest, the arguments, the
-   templates and the pure part of the line pipeline become packages of
-   their own. `runtime/iface` keeps the run of a command. Whether the
-   notebook can leave too is open; its PR measures that first.
+2. **Split `runtime/iface` by job.** The templates, the manifest and the
+   arguments become packages of their own. `runtime/iface` keeps the run of
+   a command. Whether the line pipeline and the notebook can leave too is
+   open; it depends on where the `entry` and `Record` types go.
 3. **Thin `cmd/arc`.** Each command reads its flags, opens the session,
    calls one runtime function and prints the result. The host of an app, the
    guard of the bunker, the watch of mail and the folder of the home move to
@@ -48,9 +48,10 @@ The order is 1, then 2, then 3. Steps 2 and 3 empty the list of step 1.
   folders as `TestFileSize`. It skips `_test.go` files and `testdata`.
 - The debt list names each function that is over today, with its length
   today, as the test counts it with `go/ast`, not as the awk command in
-  section 8 counts it. The test fails when a listed function grows, when a function that
-  is not listed goes over 100, and when a listed function is at or under 100
-  and stays on the list. So a split must also shorten the list.
+  section 8 counts it. The test fails when a listed function grows, when
+  a function that is not listed goes over 100, and when a listed function
+  is at or under 100 and stays on the list. So a split must also shorten
+  the list.
 - AGENTS.md gets one line, beside the file rule.
 
 The 10 longest functions today (measured):
@@ -87,26 +88,33 @@ Today only some files can leave without the `run` struct (measured,
 | The manifest: types, parse, check, consent | `manifest.go`, `manifest_check.go`, `consent.go` | 903 | 0 | Yes. No effects. |
 | The arguments: bind words to values | `args.go` | 380 | 0 | Yes. It needs only a `Resolver`. |
 | The templates: compile and render | `template.go` | 330 | 1 | Yes, without `sanitize`, which uses `run.told`. `sanitize` stays. |
-| The line pipeline: select, sort, rank, thread | `pipeline.go` | 550 | 10 | Only the pure operations. `pipeline`, `match`, `save`, `stream` and 6 more are methods of `run`, and stay. |
+| The line pipeline: select, sort, rank, thread | `pipeline.go` | 550 | 10 | No. 10 functions are methods of `run`, and the pure ones (`field`, `latest`, `sortEntries`, `thread`, `rank`) take `entry` or `Record`, which the runner defines. |
 | The notebook: pages and entries | `notebook*.go`, `page_*.go`, `entries.go`, `frontmatter.go` | 1,862 | 30 | No. See below. |
 | The runner: query, publish, remove, print | `run.go`, `data.go`, `query.go`, `publish*.go`, `remove.go`, `output.go`, `watch.go` | 2,090 | most | It is `runtime/iface`. |
 
-The planned packages are `runtime/iface/manifest`, `runtime/iface/args`,
-`runtime/iface/template` and `runtime/iface/pipeline`, in that order. Each
-one imports only the ones before it. The line counts are measured.
+The planned packages are `runtime/iface/template`, `runtime/iface/manifest`
+and `runtime/iface/args`, in that order. Each one imports only the ones
+before it: the manifest check calls `compile` of the templates 7 times, and
+the arguments bind to the `Command` of the manifest (measured). The line
+counts are measured.
 
+- The pipeline and the notebook share one question. Both use the `entry`
+  type of `data.go` and the `Record` type of `run.go`.
 - The notebook does not use only effects. It calls 10 helpers of the
   runner: `kindOf`, `joined`, `scopedWith`, `selfFilter`, `current`,
   `keyed`, `template`, `opener`, `fetchSelf` and `entryOf` (measured). They
-  work on the `entry` type of `data.go`, which the pipeline uses too. So an
-  interface of effects alone cannot replace `run` for the notebook.
-- The notebook PR measures the graph first, and then does one of two
-  things: move `entry` and its pure helpers to a leaf package that the
-  runner, the pipeline and the notebook share, or keep the notebook in
-  `runtime/iface` and only split its long functions. This proposal does not
-  choose. No count supports either choice yet.
-- The manifest, the arguments and the templates have no effects. Their
-  tests need no store.
+  work on `entry`. So an interface of effects alone cannot replace `run`
+  for the notebook.
+- One PR measures the graph of `entry` and `Record` first, and then does
+  one of two things: move them and their pure helpers to a leaf package
+  that the runner, the pipeline and the notebook share, and then move the
+  pipeline and the notebook; or keep both in `runtime/iface` and only split
+  their long functions. This proposal does not choose. No count supports
+  either choice yet.
+- The templates and the manifest have no effects. Their tests need no
+  store. The arguments need a `Resolver`, which can fetch an event.
+- A move shortens no function. So each PR that moves a part also splits
+  the long functions of that part.
 - Each step is one PR that moves one package. Callers keep the names that
   `runtime/iface` gives them today, through type aliases only while the PR
   is open; the PR changes each caller and removes the alias.
@@ -139,15 +147,20 @@ one runtime function, and print. The work moves as follows:
 | --- | --- | ---: |
 | 1 | `TestFunctionSize` and the debt list of 32 | 0 |
 | 2 | Split the 7 long cobra constructors of `cmd/arc`, `cmd/arc-signer` and `cmd/arc-relay` into one function for each subcommand | 7 |
-| 3–6 | One PR for each of `manifest`, `args`, `template` and `pipeline` | 3 (estimated) |
-| 7 | The notebook: a shared leaf for `entry`, or a split in place | 3 (estimated) |
-| 8 | `runtime/host` | 1 |
-| 9–11 | The bunker, the inbox and the home into `runtime/citizen`; the update into `runtime/release` | 4 (estimated) |
-| 12 | The rest of the list, one function at a time | The rest |
+| 3 | `template`, without `sanitize` | 0 |
+| 4 | `manifest`; split `check` and `checkCommand` | 2 |
+| 5 | `args`; split `bind` | 1 |
+| 6 | `entry` and `Record`: a shared leaf with the pipeline and the notebook, or a split in place; split `notebookAction` and `writePage` | 2 |
+| 7 | `runtime/host`; split `serve` | 1 |
+| 8–11 | The bunker, the inbox and the home into `runtime/citizen`; the update into `runtime/release`; split `serveBunker`, `watchMessages` and `update` | 3 |
+| 12 | The other 16, one function at a time | 16 |
+
+The counts name the functions on the list today (measured). They add up
+to 32.
 
 Each PR passes `go test ./...`, `mise run lint`, `mise run boundaries` and
 `mise run specs`. A PR that moves goroutines or process lifetimes, such as
-PR 8, gets the label `race`.
+PR 7, gets the label `race`.
 
 ## 6. What this does not do
 
@@ -189,8 +202,8 @@ find core sdk adapters runtime apps cmd internal -name '*.go' ! -name '*_test.go
 
 - The size of `cmd/arc` after step 3, and the time that each PR takes, are
   estimates.
-- Whether the notebook can leave `runtime/iface` is open. Its PR measures
-  the graph first.
-- The counts of methods of `run` are measured. The split of the pipeline
-  into a pure part and a part of the runner is not: the PR that moves it
-  finds the line.
+- Whether the pipeline and the notebook can leave `runtime/iface` is open.
+  PR 6 measures the graph first.
+- The counts of methods of `run` are measured. Whether a leaf package for
+  `entry` and `Record` breaks the knot of the pipeline and the notebook is
+  not: PR 6 finds out.
