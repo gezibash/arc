@@ -43,14 +43,16 @@ func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	var device keys.Key
+	var device, machine keys.Key
 	if id.remote {
 		if device, err = keyfile.Load(filepath.Join(dir, "bunker-client")); err != nil {
 			return nil, err
 		}
+	} else if machine, err = deviceKey(root); err != nil {
+		return nil, err
 	}
 	keep = true
-	sess, err := citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Holder: id.holder, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: command.ErrOrStderr(), Close: id.close})
+	sess, err := citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Holder: id.holder, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: command.ErrOrStderr(), Close: id.close, CacheKey: machine})
 	if err != nil {
 		id.done()
 	}

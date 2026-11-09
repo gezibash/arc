@@ -41,17 +41,25 @@ func main() {
 }
 
 // defaultDB is the store of a relay with no --db: relay.db in ARC_HOME, or
-// in ~/.arc. That is where arc relay serve kept it.
+// in ~/.arc. That is where arc relay serve kept it. An older arc kept it in
+// ~/.config/arc: when only that store exists, the relay does not start on
+// a new, empty one, and says which --db to give.
 func defaultDB() (string, error) {
-	dir := os.Getenv("ARC_HOME")
-	if dir == "" {
-		user, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(user, ".arc")
+	if dir := os.Getenv("ARC_HOME"); dir != "" {
+		return filepath.Join(dir, "relay.db"), nil
 	}
-	return filepath.Join(dir, "relay.db"), nil
+	user, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(user, ".arc", "relay.db")
+	older := filepath.Join(user, ".config", "arc", "relay.db")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(older); err == nil {
+			return "", fmt.Errorf("the store of this relay is %s, of an older arc; run arc-relay --db %s", older, older)
+		}
+	}
+	return path, nil
 }
 
 func relayCommand() *cobra.Command {

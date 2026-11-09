@@ -80,7 +80,7 @@ func (sess *Session) loadSigners(ctx context.Context) {
 		sess.signers.own = sess.Device.Public
 	}
 	sess.store.SetSigners(sess.signers)
-	k, err := sess.cacheKey()
+	_, err := sess.cacheKey()
 	if err != nil {
 		return
 	}
@@ -94,7 +94,7 @@ func (sess *Session) loadSigners(ctx context.Context) {
 	if sealed == nil {
 		return
 	}
-	text, err := k.Decrypt(ctx, string(sealed), k.PublicKey())
+	text, err := sess.openCache(ctx, string(sealed))
 	if err != nil {
 		sess.warnf("arc: the device list on this disk does not open: %v\n", err)
 		return

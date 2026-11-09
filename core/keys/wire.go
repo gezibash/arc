@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"fiatjaf.com/nostr"
@@ -187,6 +188,10 @@ func (r Remote) SignEvent(ctx context.Context, event *nostr.Event) error {
 	if signed.PubKey != r.Public || !signed.CheckID() || !signed.VerifySignature() {
 		return errors.New("the signer gave an event with a bad signature")
 	}
+	// The signer signs the event that it got, and no other.
+	if signed.Kind != event.Kind || signed.CreatedAt != event.CreatedAt || signed.Content != event.Content || !sameTags(signed.Tags, event.Tags) {
+		return errors.New("the signer signed another event than the one it got")
+	}
 	*event = signed
 	return nil
 }
@@ -250,4 +255,17 @@ func (r Remote) SignRelease(ctx context.Context, schema int64, encoded []byte) (
 // SignChange asks the signer to sign the change digest of a blob.
 func (r Remote) SignChange(ctx context.Context, blob string, record nostr.ID) (string, error) {
 	return r.Call(ctx, MethodSignChange, blob, record.Hex())
+}
+
+// sameTags says whether two tag lists hold the same tags, in order.
+func sameTags(a, b nostr.Tags) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !slices.Equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }

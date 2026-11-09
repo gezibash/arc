@@ -72,6 +72,8 @@ type Session struct {
 	errClosed bool
 	// closeSigner ends the signer of the session.
 	closeSigner func() error
+	// cache seals the caches on the machine that holds the citizen key.
+	cache keys.Key
 }
 
 type Config struct {
@@ -85,6 +87,9 @@ type Config struct {
 	Errors            io.Writer
 	// Close ends the signer of the session, such as a program signer.
 	Close func() error
+	// CacheKey is the key of this machine. On the machine that holds the
+	// citizen key, it seals the caches of the session.
+	CacheKey keys.Key
 }
 
 // Open composes filesystem, relay, mail and wake adapters for a local citizen.
@@ -93,7 +98,7 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{closeSigner: cfg.Close, Key: cfg.Key, Signer: cfg.Signer, Holder: cfg.Holder, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess := &Session{closeSigner: cfg.Close, cache: cfg.CacheKey, Key: cfg.Key, Signer: cfg.Signer, Holder: cfg.Holder, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
 	// A key with its secret answers the requests of its own holder.
 	if sess.Holder == nil && !cfg.Remote && cfg.Key.Secret != (nostr.SecretKey{}) {
 		sess.Holder = cfg.Key

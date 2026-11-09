@@ -112,6 +112,8 @@ read the new key file.
 ## 5. Unverified
 
 - No hardware signer exists, so no test runs one.
-- No test measures the time of a request to a program signer.
+- No test checks the time of a request to a program signer. On an Apple
+  silicon Mac, 1,000 change signatures took 259 ms through arc-signer and
+  238 ms in one process (measured once, 2026-11-09).
 - The Fly relay and aurelia still run `arc relay serve` of v0.37.0. Their
   move to `arc-relay` is part of the next release deploy.

@@ -165,6 +165,9 @@ func root() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := matches(command, k); err != nil {
+				return err
+			}
 			return serve(command, k, command.InOrStdin(), command.OutOrStdout())
 		},
 	}
@@ -236,6 +239,23 @@ func load(command *cobra.Command) (keys.Key, error) {
 		return keys.Decrypt(text, passphrase)
 	}
 	return keys.Parse(text)
+}
+
+// matches checks the key against the public file of the identity, when
+// there is one. A migration took that file on trust for a sealed key.
+func matches(command *cobra.Command, k keys.Key) error {
+	dir, _ := command.Flags().GetString("dir")
+	text, err := os.ReadFile(filepath.Join(dir, "public"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if want := strings.TrimSpace(string(text)); want != k.Public.Hex() {
+		return fmt.Errorf("signer/key holds the key %s, and the identity is %s", k.Public.Hex(), want)
+	}
+	return nil
 }
 
 // serve answers each request line, in order, until the input ends.

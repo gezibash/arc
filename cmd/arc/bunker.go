@@ -257,6 +257,10 @@ func answer(ctx context.Context, signer keys.Remote, request nostr.Event, p poli
 		response.Error = reason.Error()
 	case req.Method == "connect":
 		response.Result = "ack"
+	case req.Method == "switch_relays":
+		// NIP-46: null keeps the relays that the device uses now. The
+		// bunker watches one relay.
+		response.Result = "null"
 	default:
 		result, err := signer.Call(ctx, req.Method, req.Params...)
 		if err != nil {

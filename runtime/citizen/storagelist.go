@@ -73,7 +73,7 @@ var (
 
 // keptStorageList reads the storage list on the disk.
 func (sess *Session) keptStorageList(ctx context.Context) (storage.List, bool) {
-	k, err := sess.cacheKey()
+	_, err := sess.cacheKey()
 	if err != nil {
 		return storage.List{}, false
 	}
@@ -87,7 +87,7 @@ func (sess *Session) keptStorageList(ctx context.Context) (storage.List, bool) {
 	if sealed == nil {
 		return storage.List{}, false
 	}
-	text, err := k.Decrypt(ctx, string(sealed), k.PublicKey())
+	text, err := sess.openCache(ctx, string(sealed))
 	if err != nil {
 		sess.warnf("arc: the storage list on this disk does not open: %v\n", err)
 		return storage.List{}, false

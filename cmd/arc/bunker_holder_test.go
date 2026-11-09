@@ -71,3 +71,44 @@ func TestTheBunkerRefusesHolderRequests(t *testing.T) {
 		t.Fatalf("the bunker sent %d holder requests to the signer", asked)
 	}
 }
+
+// TestTheBunkerKeepsItsRelay answers switch_relays with null, as NIP-46
+// asks of a bunker that keeps its relays, and as the bunker of the NIP-46
+// library did.
+func TestTheBunkerKeepsItsRelay(t *testing.T) {
+	ctx := context.Background()
+	owner, device := keys.Generate(), keys.Generate()
+	signer := keys.Remote{Public: owner.Public, Call: func(context.Context, string, ...string) (string, error) {
+		return "", errors.New("the signer was asked")
+	}}
+	body, _ := json.Marshal(map[string]any{"id": "1", "method": "switch_relays", "params": []string{}})
+	sealed, err := device.Encrypt(ctx, string(body), owner.Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := nostr.Event{Kind: nostr.KindNostrConnect, CreatedAt: nostr.Now(), Content: sealed, Tags: nostr.Tags{{"p", owner.Public.Hex()}}}
+	if err := request.Sign(device.Secret); err != nil {
+		t.Fatal(err)
+	}
+	// The answer is sealed and signed through the signer, so this signer
+	// answers those requests with the key.
+	signer.Call = func(ctx context.Context, method string, params ...string) (string, error) {
+		r := owner.Answer(ctx, keys.Request{ID: "1", Method: method, Params: params})
+		if r.Error != "" {
+			return "", errors.New(r.Error)
+		}
+		return r.Result, nil
+	}
+	response, ok := answer(ctx, signer, request, policy{}, func(nostr.PubKey, string) bool { return true }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !ok {
+		t.Fatal("no answer")
+	}
+	plain, err := device.Decrypt(ctx, response.Content, owner.Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r keys.Response
+	if err := json.Unmarshal([]byte(plain), &r); err != nil || r.Result != "null" || r.Error != "" {
+		t.Fatalf("switch_relays: %+v, %v", r, err)
+	}
+}

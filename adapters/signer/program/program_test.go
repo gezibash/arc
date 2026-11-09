@@ -137,3 +137,21 @@ func TestALeftRequestKeepsTheSigner(t *testing.T) {
 		}
 	}
 }
+
+// TestAKeyOfAnotherIdentity refuses to answer for an identity whose public
+// key is not the key in signer/key, as after a migration that took a stale
+// public file.
+func TestAKeyOfAnotherIdentity(t *testing.T) {
+	program := signer(t)
+	dir := t.TempDir()
+	if out, err := run(t, program, "", nil, "gen", "--dir", dir); err != nil {
+		t.Fatalf("gen: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "public"), []byte(keys.Generate().Public.Hex()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := `{"id":"1","method":"get_public_key","params":[]}` + "\n"
+	if out, err := run(t, program, request, nil, "stdio", "--dir", dir); err == nil || !strings.Contains(out, "and the identity is") {
+		t.Fatalf("a key of another identity answered: %q, %v", out, err)
+	}
+}
