@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/keys"
@@ -135,6 +137,36 @@ func TestALeftRequestKeepsTheSigner(t *testing.T) {
 		if got, err := client.Call(context.Background(), "ping"); err != nil || got != "pong" {
 			t.Fatalf("after a left request, ping gave %q, %v", got, err)
 		}
+	}
+}
+
+// TestASignalToTheGroupKeepsTheSigner sends SIGINT and SIGTERM to the
+// signer, as a terminal does to each program of its group at Ctrl-C. arc
+// can still finish its open requests, and the signer exits only when arc
+// closes its input.
+func TestASignalToTheGroupKeepsTheSigner(t *testing.T) {
+	program := signer(t)
+	dir := t.TempDir()
+	if out, err := run(t, program, "", nil, "gen", "--dir", dir); err != nil {
+		t.Fatalf("gen: %v: %s", err, out)
+	}
+	client := &Client{Program: program, Dir: dir}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if got, err := client.Call(ctx, "ping"); err != nil || got != "pong" {
+		t.Fatalf("ping: %q, %v", got, err)
+	}
+	for _, signal := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+		if err := client.cmd.Process.Signal(signal); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(200 * time.Millisecond)
+		if got, err := client.Call(ctx, "ping"); err != nil || got != "pong" {
+			t.Fatalf("after %v, ping gave %q, %v", signal, got, err)
+		}
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("the signer did not exit 0 at the end of its input: %v", err)
 	}
 }
 

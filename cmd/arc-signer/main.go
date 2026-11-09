@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/core/keys"
@@ -168,6 +170,11 @@ func root() *cobra.Command {
 			if err := matches(command, k); err != nil {
 				return err
 			}
+			// A terminal sends Ctrl-C to arc and to this program at once.
+			// arc may still need answers while it stops, so the signer
+			// stops only at the end of its input: when arc closes it, or
+			// when arc exits.
+			signal.Ignore(os.Interrupt, syscall.SIGTERM)
 			return serve(command, k, command.InOrStdin(), command.OutOrStdout())
 		},
 	}

@@ -65,6 +65,9 @@ No event or wire format changed.
   first request of a command, and sends one JSON line for each request. It
   finds the program beside itself, then on the PATH. A command that signs
   nothing starts no signer.
+- When its key is open, `arc-signer stdio` ignores SIGINT and SIGTERM, so
+  Ctrl-C in a terminal stops `arc` first. The signer stops at the end of
+  its input: when `arc` closes it or exits.
 - The requests are those of NIP-46, and five holder requests that need the
   secret: the keyed root, the account key for a storage citizen, and the
   signatures of a storage join, a release channel and a self-data change.
