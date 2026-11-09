@@ -1,4 +1,4 @@
-package selfsync
+package keys
 
 import (
 	"bytes"

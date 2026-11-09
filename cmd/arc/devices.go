@@ -87,7 +87,7 @@ func accountCommand() *cobra.Command {
 				return err
 			}
 			defer sess.Close()
-			account, err := sess.AccountKey(storage)
+			account, err := sess.AccountKey(command.Context(), storage)
 			if err != nil {
 				return err
 			}

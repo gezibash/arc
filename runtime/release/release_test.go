@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/release"
 )
 
@@ -55,7 +56,7 @@ func releaseEntry(version, os, arch string, changes ...func(map[string]any)) map
 func TestSignAndVerify(t *testing.T) {
 	publisher, _ := newPublisher()
 
-	signed, err := release.Sign(publisher.secret, channelDocument(publisher, releaseEntry("1.2.3", "linux", "amd64")))
+	signed, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), channelDocument(publisher, releaseEntry("1.2.3", "linux", "amd64")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 	publisher, _ := newPublisher()
 	other, _ := newPublisher()
 
-	signed, err := release.Sign(publisher.secret, channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64")))
+	signed, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 	// A document that has expired is refused.
 	old := channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64"))
 	old["expires_at"] = time.Now().Add(-time.Hour).Unix()
-	expired, _ := release.Sign(publisher.secret, old)
+	expired, _ := release.Sign(context.Background(), keys.FromSecret(publisher.secret), old)
 
 	if _, err := release.Verify(expired, release.Expect{Publisher: publisher.PublicKey}); !errors.Is(err, release.ErrExpired) {
 		t.Errorf("an expired document gave %v", err)
@@ -125,7 +126,7 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 		document := channelDocument(publisher, releaseEntry("1.0.0", "linux", "amd64"))
 		change(document)
 
-		if _, err := release.Sign(publisher.secret, document); err == nil {
+		if _, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), document); err == nil {
 			t.Errorf("%s: the document signed", name)
 		}
 	}
@@ -134,7 +135,7 @@ func TestVerifyRefusesWhatItMust(t *testing.T) {
 func TestSelectsTheNewestReleaseOfThisMachine(t *testing.T) {
 	publisher, _ := newPublisher()
 
-	signed, err := release.Sign(publisher.secret, channelDocument(publisher,
+	signed, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), channelDocument(publisher,
 		releaseEntry("1.0.0", "linux", "amd64"),
 		releaseEntry("1.2.0", "linux", "amd64"),
 		releaseEntry("2.0.0", "darwin", "arm64"),
@@ -222,7 +223,7 @@ func TestReadsAChannelAndAnArchive(t *testing.T) {
 		held["install"] = map[string]any{"size": len(archive), "sha256": hex.EncodeToString(digest[:])}
 	})
 
-	signed, err := release.Sign(publisher.secret, channelDocument(publisher, entry))
+	signed, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), channelDocument(publisher, entry))
 	if err != nil {
 		t.Fatal(err)
 	}

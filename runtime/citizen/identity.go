@@ -28,7 +28,11 @@ func (sess *Session) PublishKeyedRoot(ctx context.Context) error {
 	if len(held) > 0 {
 		return nil
 	}
-	root, err := iface.KeyedRoot(sess.Key.Secret)
+	h, err := sess.holder()
+	if err != nil {
+		return err
+	}
+	root, err := h.KeyedRoot(ctx)
 	if err != nil {
 		return err
 	}
@@ -47,8 +51,8 @@ func (sess *Session) PublishKeyedRoot(ctx context.Context) error {
 // holds it, through the signer, once. It then keeps it on its disk as the
 // data root of generation 0.
 func (sess *Session) KeyedRoot(ctx context.Context) ([]byte, error) {
-	if !sess.Remote {
-		return iface.KeyedRoot(sess.Key.Secret)
+	if sess.Holder != nil {
+		return sess.Holder.KeyedRoot(ctx)
 	}
 	held, err := sess.heldRoots(ctx)
 	if err != nil {

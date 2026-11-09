@@ -86,9 +86,9 @@ func (sess *Session) selfKeysAt(ctx context.Context, gen uint32) (selfsync.Keys,
 // citizen. A device that signs through a remote signer signs with its device
 // key, which a grant set of the account key names. The storage citizen
 // never sees the citizen key.
-func (sess *Session) StorageSigner(storage nostr.PubKey) (keys.Signer, error) {
-	if !sess.Remote {
-		return selfsync.AccountKey(sess.Key.Secret, storage)
+func (sess *Session) StorageSigner(ctx context.Context, storage nostr.PubKey) (keys.Signer, error) {
+	if sess.Holder != nil {
+		return sess.Holder.AccountKey(ctx, storage)
 	}
 	if sess.Device.Public == (nostr.PubKey{}) {
 		return nil, errors.New("this machine has no device key, so it cannot call a storage citizen: run arc keys device")
@@ -98,11 +98,12 @@ func (sess *Session) StorageSigner(storage nostr.PubKey) (keys.Signer, error) {
 
 // AccountKey is the account key of this citizen for one storage citizen.
 // Only a machine with the citizen key derives it.
-func (sess *Session) AccountKey(storage nostr.PubKey) (keys.Key, error) {
-	if err := sess.RequireSigner(); err != nil {
+func (sess *Session) AccountKey(ctx context.Context, storage nostr.PubKey) (keys.Key, error) {
+	h, err := sess.holder()
+	if err != nil {
 		return keys.Key{}, err
 	}
-	return selfsync.AccountKey(sess.Key.Secret, storage)
+	return h.AccountKey(ctx, storage)
 }
 
 // PushGrants sends the grant set of the device list to each storage citizen
@@ -153,7 +154,7 @@ func (sess *Session) pushGrants(ctx context.Context, install catalog.Install, bo
 	if err != nil {
 		return err
 	}
-	account, err := selfsync.AccountKey(sess.Key.Secret, provider)
+	account, err := sess.AccountKey(ctx, provider)
 	if err != nil {
 		return err
 	}

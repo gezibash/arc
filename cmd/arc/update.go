@@ -260,7 +260,7 @@ func releaseCommand() *cobra.Command {
 			if id.remote {
 				return errRemote("signing a release")
 			}
-			signed, err := release.Sign(id.key.Secret, unsigned)
+			signed, err := release.Sign(command.Context(), id.key, unsigned)
 			if err != nil {
 				return err
 			}
