@@ -29,8 +29,9 @@ file at commit `4b36835`. Each number has a tag:
    `TestFunctionSize` in `internal/architecture` checks it. The 32 functions
    that are over today go on a list of debt. The list can only get shorter.
 2. **Split `runtime/iface` by job.** The manifest, the arguments, the
-   templates, the line pipeline and the notebook become packages of their
-   own. `runtime/iface` keeps the run of a command.
+   templates and the pure part of the line pipeline become packages of
+   their own. `runtime/iface` keeps the run of a command. Whether the
+   notebook can leave too is open; its PR measures that first.
 3. **Thin `cmd/arc`.** Each command reads its flags, opens the session,
    calls one runtime function and prints the result. The host of an app, the
    guard of the bunker, the watch of mail and the folder of the home move to
@@ -46,7 +47,8 @@ The order is 1, then 2, then 3. Steps 2 and 3 empty the list of step 1.
 - `TestFunctionSize` parses each source file with `go/ast`, in the same
   folders as `TestFileSize`. It skips `_test.go` files and `testdata`.
 - The debt list names each function that is over today, with its length
-  today. The test fails when a listed function grows, when a function that
+  today, as the test counts it with `go/ast`, not as the awk command in
+  section 8 counts it. The test fails when a listed function grows, when a function that
   is not listed goes over 100, and when a listed function is at or under 100
   and stays on the list. So a split must also shorten the list.
 - AGENTS.md gets one line, beside the file rule.
@@ -77,26 +79,34 @@ and a few more (measured, in `cmd/arc`, `runtime/citizen`,
 `runtime/capability` and `runtime/catalog`). Inside, one `run` struct ties
 every file together, so each part can reach each other part.
 
-| New package | Files today | Lines | Job | Effects |
-| --- | --- | ---: | --- | --- |
-| `runtime/iface/manifest` | `manifest.go`, `manifest_check.go`, `consent.go` | 903 | The manifest types, parse and check, consent | None |
-| `runtime/iface/template` | `template.go` | 330 | Compile and render a template | None |
-| `runtime/iface/args` | `args.go` | 380 | Bind the words of a command to values | A `Resolver` |
-| `runtime/iface/pipeline` | `pipeline.go` | 550 | Select, sort, rank and print lines | None |
-| `runtime/iface/notebook` | `notebook*.go`, `page_*.go`, `entries.go`, `frontmatter.go` | 1,862 | The pages and entries of a notebook | A narrow `Pages` store |
-| `runtime/iface` | `run.go`, `data.go`, `query.go`, `publish*.go`, `remove.go`, `output.go`, `watch.go` | 2,090 | Run one command: query, publish, remove, print | `Env` |
+Today only some files can leave without the `run` struct (measured,
+`grep -c 'func (r \*run)'` on each file):
 
-The line counts are measured. The dependency order is `manifest`, then
-`template`, `args` and `pipeline`, then `notebook`, then `iface`. No package
-imports one that comes after it.
+| Part | Files today | Lines | Methods of `run` | Can it leave today? |
+| --- | --- | ---: | ---: | --- |
+| The manifest: types, parse, check, consent | `manifest.go`, `manifest_check.go`, `consent.go` | 903 | 0 | Yes. No effects. |
+| The arguments: bind words to values | `args.go` | 380 | 0 | Yes. It needs only a `Resolver`. |
+| The templates: compile and render | `template.go` | 330 | 1 | Yes, without `sanitize`, which uses `run.told`. `sanitize` stays. |
+| The line pipeline: select, sort, rank, thread | `pipeline.go` | 550 | 10 | Only the pure operations. `pipeline`, `match`, `save`, `stream` and 6 more are methods of `run`, and stay. |
+| The notebook: pages and entries | `notebook*.go`, `page_*.go`, `entries.go`, `frontmatter.go` | 1,862 | 30 | No. See below. |
+| The runner: query, publish, remove, print | `run.go`, `data.go`, `query.go`, `publish*.go`, `remove.go`, `output.go`, `watch.go` | 2,090 | most | It is `runtime/iface`. |
 
-- The notebook is the second largest part. 30 of its functions are
-  methods of `run` (measured). They use mostly the environment, the
-  clock, the flags and the output.
-  A `Pages` interface with those effects replaces `run` for it. The
-  interface lives in `runtime/iface/notebook`, the layer that consumes it.
-- `manifest`, `template` and `pipeline` have no effects. Their tests need
-  no store.
+The planned packages are `runtime/iface/manifest`, `runtime/iface/args`,
+`runtime/iface/template` and `runtime/iface/pipeline`, in that order. Each
+one imports only the ones before it. The line counts are measured.
+
+- The notebook does not use only effects. It calls 10 helpers of the
+  runner: `kindOf`, `joined`, `scopedWith`, `selfFilter`, `current`,
+  `keyed`, `template`, `opener`, `fetchSelf` and `entryOf` (measured). They
+  work on the `entry` type of `data.go`, which the pipeline uses too. So an
+  interface of effects alone cannot replace `run` for the notebook.
+- The notebook PR measures the graph first, and then does one of two
+  things: move `entry` and its pure helpers to a leaf package that the
+  runner, the pipeline and the notebook share, or keep the notebook in
+  `runtime/iface` and only split its long functions. This proposal does not
+  choose. No count supports either choice yet.
+- The manifest, the arguments and the templates have no effects. Their
+  tests need no store.
 - Each step is one PR that moves one package. Callers keep the names that
   `runtime/iface` gives them today, through type aliases only while the PR
   is open; the PR changes each caller and removes the alias.
@@ -129,7 +139,8 @@ one runtime function, and print. The work moves as follows:
 | --- | --- | ---: |
 | 1 | `TestFunctionSize` and the debt list of 32 | 0 |
 | 2 | Split the 7 long cobra constructors of `cmd/arc`, `cmd/arc-signer` and `cmd/arc-relay` into one function for each subcommand | 7 |
-| 3–7 | One PR for each new package of `runtime/iface` | 6 |
+| 3–6 | One PR for each of `manifest`, `args`, `template` and `pipeline` | 3 (estimated) |
+| 7 | The notebook: a shared leaf for `entry`, or a split in place | 3 (estimated) |
 | 8 | `runtime/host` | 1 |
 | 9–11 | The bunker, the inbox and the home into `runtime/citizen`; the update into `runtime/release` | 4 (estimated) |
 | 12 | The rest of the list, one function at a time | The rest |
@@ -178,5 +189,8 @@ find core sdk adapters runtime apps cmd internal -name '*.go' ! -name '*_test.go
 
 - The size of `cmd/arc` after step 3, and the time that each PR takes, are
   estimates.
-- No count shows that the `Pages` interface of the notebook is small enough.
-  The PR that moves the notebook measures it first.
+- Whether the notebook can leave `runtime/iface` is open. Its PR measures
+  the graph first.
+- The counts of methods of `run` are measured. The split of the pipeline
+  into a pure part and a part of the runner is not: the PR that moves it
+  finds the line.
