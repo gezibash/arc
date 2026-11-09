@@ -93,7 +93,7 @@ func storageServer(t *testing.T, work, url string, signer machine, name, app str
 // a device sent for the drafts that it moved to a storage citizen.
 func relaySelfData(t *testing.T, url, home string) []nostr.Event {
 	t.Helper()
-	key, err := keyfiles.Load(keyfile(t, home))
+	key, err := keyfiles.Load(secretfile(t, home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestStorageJournalSync(t *testing.T) {
 	laptop := arc(t, filepath.Join(work, "laptop")).with(loopback...)
 	desktop := arc(t, filepath.Join(work, "desktop")).with(loopback...)
 	laptop.run("keys", "gen")
-	desktop.input(read(t, keyfile(t, laptop.home)), "keys", "add")
+	desktop.input(read(t, secretfile(t, laptop.home)), "keys", "add")
 	laptop.run("relay", "add", url)
 	desktop.run("relay", "add", url)
 	citizen := laptop.key()
@@ -441,7 +441,7 @@ func TestStorageImportsDrafts(t *testing.T) {
 	old.input("---\ntitle: Two\npage: 2\nnotebook: hrs/old\n---\nsecond page\n", "journal", "write", "hrs/old/2")
 	stick := filepath.Join(work, "stick")
 	old.run("sync", "--dir", stick)
-	key, err := keyfiles.Load(keyfile(t, old.home))
+	key, err := keyfiles.Load(secretfile(t, old.home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestStorageImportsDrafts(t *testing.T) {
 
 	// A new machine of the citizen, with a storage citizen.
 	fresh := arc(t, filepath.Join(work, "fresh")).with(loopback...)
-	fresh.input(read(t, keyfile(t, old.home)), "keys", "add")
+	fresh.input(read(t, secretfile(t, old.home)), "keys", "add")
 	fresh.run("relay", "add", url)
 	fresh.run("relay", "add", standard)
 	storeKey := storageCitizen(t, work, url, fresh)
@@ -578,7 +578,7 @@ func TestStorageImportsDrafts(t *testing.T) {
 	// A second new machine imports from the relay that holds only the
 	// deletions, and reads each page from the storage citizen.
 	desk := arc(t, filepath.Join(work, "desk")).with(loopback...)
-	desk.input(read(t, keyfile(t, old.home)), "keys", "add")
+	desk.input(read(t, secretfile(t, old.home)), "keys", "add")
 	desk.run("relay", "add", url)
 	desk.run("install", citizen, "journal", "--yes")
 	desk.run("install", storeKey, "storage", "--yes")
@@ -597,7 +597,7 @@ func TestStorageImportsDrafts(t *testing.T) {
 // the citizen of home.
 func relayKinds(t *testing.T, url, home string, kinds ...nostr.Kind) []nostr.Event {
 	t.Helper()
-	key, err := keyfiles.Load(keyfile(t, home))
+	key, err := keyfiles.Load(secretfile(t, home))
 	if err != nil {
 		t.Fatal(err)
 	}

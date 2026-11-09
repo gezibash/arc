@@ -129,6 +129,9 @@ type result struct {
 
 func (m machine) command(args ...string) *exec.Cmd {
 	first := []string{"--home", m.home}
+	if !strings.HasPrefix(m.program, programs+string(filepath.Separator)) {
+		forOlder(m.t, m.home)
+	}
 	if m.relayStore {
 		first = []string{"--db", filepath.Join(m.home, "relay.db")}
 	}
@@ -307,6 +310,39 @@ func line(text string, n int) string {
 		return ""
 	}
 	return lines[n-1]
+}
+
+// secretfile names the file that holds the secret of the one identity of a
+// home: signer/key of arc-signer, or the key file that an older arc wrote.
+func secretfile(t *testing.T, home string) string {
+	t.Helper()
+	path := keyfile(t, home)
+	if strings.HasPrefix(read(t, path), "program:") {
+		return filepath.Join(filepath.Dir(path), "signer", "key")
+	}
+	return path
+}
+
+// forOlder gives each identity of home a key file that an older arc reads:
+// the secret that arc-signer keeps. The next run of this arc moves it to
+// arc-signer again. An older arc does not read the key file of arc-signer,
+// and these proofs check data, not key files.
+func forOlder(t *testing.T, home string) {
+	t.Helper()
+	found, _ := filepath.Glob(filepath.Join(home, "citizens", "*", "key"))
+	for _, path := range found {
+		text, err := os.ReadFile(path)
+		if err != nil || !strings.HasPrefix(string(text), "program:") {
+			continue
+		}
+		secret, err := os.ReadFile(filepath.Join(filepath.Dir(path), "signer", "key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, secret, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // keyfile names the key file of the one identity of a home.

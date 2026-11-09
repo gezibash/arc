@@ -60,7 +60,7 @@ func TestDelivery(t *testing.T) {
 	t.Logf("ok: a relay listens on %s", url)
 
 	a.run("keys", "gen")
-	b.input(read(t, keyfile(t, a.home)), "keys", "add")
+	b.input(read(t, secretfile(t, a.home)), "keys", "add")
 	want(a.name()+"\n"+a.key() == b.name()+"\n"+b.key(), "the two machines hold different keys")
 	t.Log("ok: two machines hold one key, and separate stores")
 
@@ -185,7 +185,7 @@ func TestDelivery(t *testing.T) {
 	t.Logf("ok: a large page of %d bytes crosses the storage citizen in parts", len(big))
 
 	phone := arc(t, filepath.Join(work, "phone")).with(loopback...)
-	phone.input(read(t, keyfile(t, a.home)), "keys", "add")
+	phone.input(read(t, secretfile(t, a.home)), "keys", "add")
 	phone.run("relay", "add", url)
 	phone.run("install", author, "journal", "--yes")
 	phone.run("install", storeKey, "storage", "--yes")
@@ -418,6 +418,10 @@ exit 1
 	want(build(oldArc, "./cmd/arc", "-X main.version=0.9.0") == nil, "the old arc did not build")
 	err = build(filepath.Join(newRoot, "arc", "bin", "arc"), "./cmd/arc", "-X main.version=9.9.9")
 	want(err == nil, "the new arc did not build: %v", err)
+	// arc finds the program signer beside itself, in a release as here.
+	for _, dir := range []string{filepath.Join(work, "old"), filepath.Join(work, "stream-old"), filepath.Join(newRoot, "arc", "bin")} {
+		want(build(filepath.Join(dir, "arc-signer"), "./cmd/arc-signer", "") == nil, "arc-signer did not build in %s", dir)
+	}
 
 	// The archive holds the directory arc, as `tar -czf new.tar.gz -C new arc`.
 	var archive bytes.Buffer
