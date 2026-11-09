@@ -19,6 +19,10 @@ func TestMain(m *testing.M) {
 		}
 		defer os.RemoveAll(dir)
 		build := exec.Command("go", "build", "-o", filepath.Join(dir, "arc-signer"), "../arc-signer")
+		// The signer is built without -race: each command starts one, and a
+		// race build of it made this package pass the 10 minutes of CI.
+		// adapters/signer/program runs arc-signer with -race.
+		build.Env = append(os.Environ(), "GOFLAGS=")
 		if out, err := build.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "go build arc-signer: %v\n%s", err, out)
 			return 1
