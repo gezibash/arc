@@ -1,17 +1,25 @@
 name: CI
 
+# A pull request runs the fast checks. The race detector runs on each push
+# to main, each night, and on a pull request with the label "race".
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  # A new push replaces the checks of a pull request. On main, each push
+  # finishes its race jobs, so each commit of main gets them.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -41,15 +49,22 @@ jobs:
           if os.environ["EVENT_NAME"] == "pull_request":
               pr = event["pull_request"]
               revision = f"{pr['base']['sha']}...{pr['head']['sha']}"
-          else:
+          elif os.environ["EVENT_NAME"] == "push":
               revision = f"{event['before']}..{event['after']}"
-          # A missing base (for example a new branch) must run all checks.
-          diff = subprocess.run(
-              ["git", "diff", "--name-only", "--no-renames", "-z", revision],
-              capture_output=True,
-          )
-          code = release = diff.returncode != 0
-          for raw in diff.stdout.split(b"\0"):
+          else:
+              # The nightly run and a manual run check everything.
+              revision = None
+          changed = b""
+          code = release = revision is None
+          if revision:
+              # A missing base (for example a new branch) must run all checks.
+              diff = subprocess.run(
+                  ["git", "diff", "--name-only", "--no-renames", "-z", revision],
+                  capture_output=True,
+              )
+              code = release = diff.returncode != 0
+              changed = diff.stdout
+          for raw in changed.split(b"\0"):
               if not raw:
                   continue
               path = PurePosixPath(os.fsdecode(raw))
@@ -137,6 +152,8 @@ jobs:
       - run: go test -count=1 -run '^TestInterface' ./internal/proof/
 
   # The race detector runs in its own jobs, so the jobs above stay fast.
+  # A pull request skips them, unless it has the label "race": they take
+  # about 15 minutes. Each push to main and the nightly run have them.
   # The proofs are split into shards by .github/scripts/proof-shards.sh.
   # GOFLAGS reaches each `go build` that a test runs, so the programs that
   # the tests start also have the race detector. Each process writes its
@@ -144,8 +161,11 @@ jobs:
   # race in its exit status, so the last step fails on any report file.
   race:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     name: Race detector (${{ matrix.part }})
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true')
+      && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'race')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -159,8 +179,9 @@ jobs:
           fetch-depth: 0
       # The cache of setup-go holds no builds with the race detector. These
       # jobs keep their own build cache: one for the packages, one for the
-      # proofs. Only a push to main saves it, so the caches stay small. A
-      # pull request restores the latest cache of main.
+      # proofs. Only a run on main (a push, the nightly run or a manual run)
+      # saves it, so the caches stay small. The nightly run keeps it from
+      # expiring. A pull request restores the latest cache of main.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.3"
@@ -212,7 +233,7 @@ jobs:
           fi
       # The storage-pieces shard builds the most for the proofs: the
       # programs of this commit, and the older programs.
-      - if: ${{ github.event_name == 'push' && (matrix.part == 'packages' || matrix.part == 'storage-pieces') }}
+      - if: ${{ github.event_name != 'pull_request' && (matrix.part == 'packages' || matrix.part == 'storage-pieces') }}
         uses: actions/cache/save@v4
         with:
           path: |

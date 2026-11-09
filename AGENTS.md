@@ -134,6 +134,10 @@ Follow it for implementation, tests, documentation, and PR review.
 - Run `/code-review high` on every pull request before you ask for a merge.
   Fix each finding, or say in the PR why it stays. Run it again after a
   change that the review did not see.
+- CI on a pull request runs the fast checks only. The race detector runs on
+  each push to main, each night, and on a pull request with the label
+  `race`. Add the label when a change touches goroutines, locks, channels
+  or process lifetimes. A race failure on main is the next task.
 
 ## Technical language
 
