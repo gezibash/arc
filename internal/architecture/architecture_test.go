@@ -98,6 +98,11 @@ func forbidden(file, imported string) string {
 			if strings.HasPrefix(rest, "arc-relay/") && in("runtime") {
 				return "arc-relay holds no citizen, so it must not depend on the runtime"
 			}
+			// arc-signer holds the key and answers requests; a hardware
+			// signer does the same with no runtime.
+			if strings.HasPrefix(rest, "arc-signer/") && in("runtime") {
+				return "arc-signer answers for the key alone, so it must not depend on the runtime"
+			}
 		}
 	}
 	if layer == "core" {

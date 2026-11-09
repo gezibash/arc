@@ -70,6 +70,8 @@ type Session struct {
 	// ran: no line goes to Errors after it.
 	errMu     sync.Mutex
 	errClosed bool
+	// closeSigner ends the signer of the session.
+	closeSigner func() error
 }
 
 type Config struct {
@@ -81,6 +83,8 @@ type Config struct {
 	Device            keys.Key
 	URLs, IndexerURLs []string
 	Errors            io.Writer
+	// Close ends the signer of the session, such as a program signer.
+	Close func() error
 }
 
 // Open composes filesystem, relay, mail and wake adapters for a local citizen.
@@ -89,7 +93,7 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Holder: cfg.Holder, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess := &Session{closeSigner: cfg.Close, Key: cfg.Key, Signer: cfg.Signer, Holder: cfg.Holder, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
 	// A key with its secret answers the requests of its own holder.
 	if sess.Holder == nil && !cfg.Remote && cfg.Key.Secret != (nostr.SecretKey{}) {
 		sess.Holder = cfg.Key
@@ -172,6 +176,9 @@ func (s *Session) Close() {
 	}
 	if s.store != nil {
 		s.store.Close()
+	}
+	if s.closeSigner != nil {
+		_ = s.closeSigner()
 	}
 }
 

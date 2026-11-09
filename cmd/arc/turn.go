@@ -95,6 +95,7 @@ func fetchTURN(ctx context.Context, dir, relay string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer id.done()
 	authorization, err := turn.AuthHeader(ctx, id.signer, http.MethodGet, endpoint)
 	if err != nil {
 		return nil, err

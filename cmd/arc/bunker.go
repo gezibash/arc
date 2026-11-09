@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,10 +18,10 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/devices"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/storage"
 	"github.com/gezibash/arc/sdk/terminal"
@@ -78,7 +79,9 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if id.remote {
+	defer id.done()
+	remote, ok := id.signer.(keys.Remote)
+	if id.remote || !ok {
 		return errRemote("a bunker")
 	}
 	secret, err := bunkerSecret(dir)
@@ -117,11 +120,6 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	}
 	sess.Close()
 
-	signer := nip46.NewStaticKeySigner(id.key.Secret)
-	signer.AuthorizeRequest = func(_ bool, from nostr.PubKey, given string) bool {
-		return g.authorize(from, given)
-	}
-
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -134,12 +132,12 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	} else {
 		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), terminal.EscapeLine(url), secret)
 	}
-	go watchDevices(ctx, relay.Relay{URL: url, Signer: id.key}, id.key, g, log)
+	go watchDevices(ctx, relay.Relay{URL: url, Signer: remote}, remote, g, log)
 	for {
 		requests, err := r.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindNostrConnect}, Tags: nostr.TagMap{"p": {pk.Hex()}}, Since: nostr.Now()})
 		if err == nil {
 			for request := range requests {
-				response, ok := answer(ctx, &signer, id.key.Secret, request, policy{kinds: allowed, decrypt: decrypt, admit: g.refusal}, log)
+				response, ok := answer(ctx, remote, request, policy{kinds: allowed, decrypt: decrypt, admit: g.refusal}, g.authorize, log)
 				if ok {
 					if err := r.Send(ctx, response); err != nil {
 						log.Warn("the answer did not reach the relay", "error", err)
@@ -221,36 +219,67 @@ func (p policy) refusal(req nip46.Request, owner, from nostr.PubKey) error {
 	return nil
 }
 
-// answer handles one request. A request that the policy refuses gets a
-// refusal, and the signer never sees it.
-func answer(ctx context.Context, signer *nip46.StaticKeySigner, secret nostr.SecretKey, request nostr.Event, p policy, log *slog.Logger) (nostr.Event, bool) {
-	conversation, err := nip44.GenerateConversationKey(request.PubKey, secret)
+// answer handles one request. The request and its answer travel sealed
+// with NIP-44 between the device and the citizen key, so the program signer
+// opens, seals and signs them. A request that the policy refuses gets a
+// refusal, and the signer answers nothing for it. A holder request never
+// passes: it would give a device the powers of the owner.
+func answer(ctx context.Context, signer keys.Remote, request nostr.Event, p policy, authorize func(from nostr.PubKey, given string) bool, log *slog.Logger) (nostr.Event, bool) {
+	plain, err := signer.Decrypt(ctx, request.Content, request.PubKey)
+	if err != nil {
+		log.Debug("a request does not open", "error", err)
+		return nostr.Event{}, false
+	}
+	var req nip46.Request
+	if err := json.Unmarshal([]byte(plain), &req); err != nil {
+		return nostr.Event{}, false
+	}
+	reason := p.refusal(req, signer.Public, request.PubKey)
+	if p.admit != nil {
+		if refused := p.admit(request.PubKey); refused != nil {
+			reason = refused
+		}
+	}
+	if keys.HolderMethod(req.Method) {
+		reason = errors.New("a bunker never answers a holder request over a relay; run the command on the signer")
+	}
+	given := ""
+	if req.Method == "connect" && len(req.Params) >= 2 {
+		given = req.Params[1]
+	}
+	if reason == nil && !authorize(request.PubKey, given) {
+		reason = errors.New("unauthorized")
+	}
+	response := keys.Response{ID: req.ID}
+	switch {
+	case reason != nil:
+		log.Info("refused a request", "method", req.Method, "reason", reason, "from", request.PubKey.Hex()[:8])
+		response.Error = reason.Error()
+	case req.Method == "connect":
+		response.Result = "ack"
+	default:
+		result, err := signer.Call(ctx, req.Method, req.Params...)
+		if err != nil {
+			response.Error = err.Error()
+		} else {
+			response.Result = result
+		}
+	}
+	encoded, err := json.Marshal(response)
 	if err != nil {
 		return nostr.Event{}, false
 	}
-	session := nip46.Session{PublicKey: secret.Public(), ConversationKey: conversation}
-	if parsed, err := session.ParseRequest(request); err == nil {
-		reason := p.refusal(parsed, secret.Public(), request.PubKey)
-		if p.admit != nil {
-			if refused := p.admit(request.PubKey); refused != nil {
-				reason = refused
-			}
-		}
-		if reason != nil {
-			log.Info("refused a request", "method", parsed.Method, "reason", reason, "from", request.PubKey.Hex()[:8])
-			_, refusal, err := session.MakeResponse(parsed.ID, request.PubKey, "", reason)
-			if err != nil || refusal.Sign(secret) != nil {
-				return nostr.Event{}, false
-			}
-			return refusal, true
-		}
-	}
-	_, _, response, err := signer.HandleRequest(ctx, request)
+	sealed, err := signer.Encrypt(ctx, string(encoded), request.PubKey)
 	if err != nil {
-		log.Debug("a request failed", "error", err)
+		log.Debug("an answer does not seal", "error", err)
 		return nostr.Event{}, false
 	}
-	return response, true
+	event := nostr.Event{Kind: nostr.KindNostrConnect, CreatedAt: nostr.Now(), Content: sealed, Tags: nostr.Tags{{"p", request.PubKey.Hex()}}}
+	if err := signer.SignEvent(ctx, &event); err != nil {
+		log.Debug("an answer is not signed", "error", err)
+		return nostr.Event{}, false
+	}
+	return event, true
 }
 
 // bunkerSecret is the secret of the bunker URI. It stays the same, so a

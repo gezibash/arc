@@ -1,11 +1,10 @@
 # Devices
 
-- Status: partial
+- Status: built
 - Layers: core, adapters, runtime
 - Owns: core/devices
-- Remaining: section 3.7, The holder requests, over the program; section 3.8, The program signer.
-- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize|TestADeviceReadsSealedDataWithAToken|TestTheBunkerPolicy)$' ./internal/proof/ ./core/devices/ ./adapters/relay/sealed/ ./cmd/arc/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped and no cached storage list. No test renews a token after 3.5 days, or lets one end during a command. No test measures the wait for a signer on a slow network: a signer that answers after 15 seconds counts as silent. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
+- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize|TestADeviceReadsSealedDataWithAToken|TestTheBunkerPolicy|TestRemoteAnswers|TestRemoteRefusesAnotherKey|TestAnswerRefuses|TestProgramSigner|TestSealedKey)$' ./internal/proof/ ./core/devices/ ./adapters/relay/sealed/ ./cmd/arc/ ./core/keys/ ./adapters/signer/program/
+- Unverified: No hardware signer exists, so no test runs one. No test measures the time of a request to a program signer. No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped and no cached storage list. No test renews a token after 3.5 days, or lets one end during a command. No test measures the wait for a signer on a slow network: a signer that answers after 15 seconds counts as silent. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -275,7 +274,7 @@ with no signature of the citizen key. Section 4.13 of
 
 ### 3.7 The holder requests
 
-Not built. Some values need the secret of the citizen key, and no NIP-46
+Some values need the secret of the citizen key, and no NIP-46
 request gives them. A signer answers them as these requests. Each request
 is a NIP-46 request object, `{"id", "method", "params"}`, and each answer a
 NIP-46 response object, `{"id", "result", "error"}`. Each key and each
@@ -298,7 +297,7 @@ digest is lowercase hex.
 
 ### 3.8 The program signer
 
-Not built. A program signer is a program on the machine of the citizen. It
+A program signer is a program on the machine of the citizen. It
 holds the citizen key, and answers the NIP-46 requests and the requests of
 section 3.7 over its standard input and output.
 
@@ -319,7 +318,13 @@ section 3.7 over its standard input and output.
 - A program signer is a boundary of processes, not of users. A program of
   the same user can read the secret file. A hardware signer comes with its
   own program, which speaks the same lines and keeps the key on the device.
-- `arc-signer serve --relay <url>` is the bunker of section 3.4.
+- `arc keys bunker` stays the bunker of section 3.4. It answers devices
+  over a relay, and sends each request that it admits to the program
+  signer. NIP-44 between the device and the citizen key goes through the
+  program signer too. arc never holds the key.
+- `arc keys gen`, `recover`, `add` and `encrypt` run `arc-signer gen`,
+  `recover`, `import` and `encrypt`. arc-signer shows the seed, and asks
+  for the passphrases; arc reads only the public key.
 
 ## 4. Behavior
 
@@ -487,10 +492,12 @@ restart keeps the list.
   key, as before.
 - **An older relay** has no tag `arc-delegation`. A device does not send its
   token there, and authenticates with the citizen key, as before.
-- **A key file with a secret** stops working when `arc` reads only
-  program signers (section 3.8). `arc-signer import` moves the secret to
-  `signer/key`, and writes `program:arc-signer` to the key file. The public
-  key stays, so mail, drafts and lists on the relays stay the same.
+- **A key file with a secret**, of an older `arc`, moves to arc-signer at
+  its first use: `arc` runs `arc-signer import`, which takes the secret into
+  `signer/key`, and then writes `program:arc-signer` to the key file. The
+  public key stays, so mail, drafts and lists on the relays stay the same.
+  An older `arc` cannot read the new key file; it says that the key does
+  not parse.
 - **An older bunker** does not know the requests of section 3.7, and
   answers an error, as a new bunker does.
 - Kind 10272 stays reserved for a migration record. Kind 10273 is the

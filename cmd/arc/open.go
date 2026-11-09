@@ -25,6 +25,12 @@ func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	keep := false
+	defer func() {
+		if !keep {
+			id.done()
+		}
+	}()
 	urls, err := readRelays(dir)
 	if err != nil {
 		return nil, err
@@ -43,7 +49,12 @@ func openDir(command *cobra.Command, dir string) (*citizen.Session, error) {
 			return nil, err
 		}
 	}
-	return citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: command.ErrOrStderr()})
+	keep = true
+	sess, err := citizen.Open(citizen.Config{Home: dir, Root: root, Key: id.key, Signer: id.signer, Holder: id.holder, Remote: id.remote, Device: device, URLs: urls, IndexerURLs: indexers, Errors: command.ErrOrStderr(), Close: id.close})
+	if err != nil {
+		id.done()
+	}
+	return sess, err
 }
 
 func errRemote(what string) error {

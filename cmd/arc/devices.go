@@ -410,12 +410,12 @@ func (g *guard) listed() bool {
 // watchDevices loads each new device list that reaches the bunker's relay,
 // until ctx ends. The relay serves the sealed list only after the bunker
 // authenticates as the citizen.
-func watchDevices(ctx context.Context, r relay.Relay, k keys.Key, g *guard, log *slog.Logger) {
+func watchDevices(ctx context.Context, r relay.Relay, k keys.Signer, g *guard, log *slog.Logger) {
 	for {
-		events, err := r.Watch(ctx, devices.Filter(k.Public))
+		events, err := r.Watch(ctx, devices.Filter(k.PublicKey()))
 		if err == nil {
 			for event := range events {
-				l, err := devices.Open(ctx, k, k.Public, event)
+				l, err := devices.Open(ctx, k, k.PublicKey(), event)
 				if err != nil {
 					log.Warn("a device list does not open", "error", err)
 					continue

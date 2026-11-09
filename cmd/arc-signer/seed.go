@@ -13,23 +13,6 @@ import (
 	"golang.org/x/term"
 )
 
-// keepSeedKey keeps a key that a seed derives, sealed with NIP-49 when
-// --encrypt asks for it. The key file format does not change.
-func keepSeedKey(command *cobra.Command, root string, k keys.Key) (keys.Key, error) {
-	text := k.Secret.Hex()
-	if encrypt, _ := command.Flags().GetBool("encrypt"); encrypt {
-		var err error
-		if text, err = newPassphrase(k); err != nil {
-			return keys.Key{}, err
-		}
-	}
-	_, why, err := rootSource(command)
-	if err != nil {
-		return keys.Key{}, err
-	}
-	return addCitizen(command.Context(), root, why, text, &k)
-}
-
 // seedPassphrase returns the BIP-39 passphrase when --seed-passphrase asks
 // for one, and an empty passphrase when it does not. A new seed asks twice,
 // because a forgotten passphrase loses the key.

@@ -4,14 +4,14 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/keyfile"
-	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/adapters/signer/program"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
@@ -27,38 +27,17 @@ func keysCommand() *cobra.Command {
 	gen := &cobra.Command{
 		Use:   "gen",
 		Short: "Make an identity from a new 24-word seed, and make it the default when there is none",
-		Long: "arc makes a seed of 24 words, as BIP-39 and NIP-06 define, and derives\n" +
-			"the key from it. arc shows the words once, on standard error, and never\n" +
-			"stores them. Write them on paper: arc keys recover makes the same key\n" +
+		Long: "arc-signer, the program signer of the identity, makes a seed of 24\n" +
+			"words, as BIP-39 and NIP-06 define, and derives the key from it. It keeps\n" +
+			"the key in signer/key in the folder of the identity; arc never reads it.\n" +
+			"arc-signer shows the words once, on standard error, and never stores them. Write them on paper: arc keys recover makes the same key\n" +
 			"from them. Anyone who reads the words has the key.\n\n" +
 			"--seed-passphrase adds a BIP-39 passphrase. The words and the passphrase\n" +
 			"together give the key; without the passphrase, the words give another\n" +
 			"key. arc reads it from ARC_SEED_PASSPHRASE, or asks on the terminal.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			root, err := rootDir(command)
-			if err != nil {
-				return err
-			}
-			words, err := keys.NewSeed()
-			if err != nil {
-				return err
-			}
-			passphrase, err := seedPassphrase(command, true)
-			if err != nil {
-				return err
-			}
-			k, err := keys.FromSeed(words, passphrase)
-			if err != nil {
-				return err
-			}
-			if _, err := keepSeedKey(command, root, k); err != nil {
-				return err
-			}
-			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
-			showSeed(command.ErrOrStderr(), words, passphrase != "")
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
-			return nil
+			return makeSigned(command, "gen")
 		},
 	}
 	gen.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
@@ -74,28 +53,7 @@ func keysCommand() *cobra.Command {
 			"ARC_SEED_PASSPHRASE, or asks on the terminal.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			root, err := rootDir(command)
-			if err != nil {
-				return err
-			}
-			words, err := readSeed(command)
-			if err != nil {
-				return err
-			}
-			passphrase, err := seedPassphrase(command, false)
-			if err != nil {
-				return err
-			}
-			k, err := keys.FromSeed(words, passphrase)
-			if err != nil {
-				return err
-			}
-			if _, err := keepSeedKey(command, root, k); err != nil {
-				return err
-			}
-			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
-			return nil
+			return makeSigned(command, "recover")
 		},
 	}
 	recoverSeed.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
@@ -104,32 +62,30 @@ func keysCommand() *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add [bunker://...]",
 		Short: "Add an identity that exists already",
-		Long: "arc reads the key from standard input: 64 characters of hex, an nsec,\n" +
-			"or an ncryptsec of NIP-49. With a bunker:// URI, the identity signs\n" +
-			"through a remote signer, as NIP-46 defines, and this machine holds no\n" +
-			"secret key. An agent uses this: its owner runs arc keys bunker.",
+		Long: "arc-signer takes the key from standard input: 64 characters of hex,\n" +
+			"an nsec, or an ncryptsec of NIP-49. arc never reads it. With a bunker://\n" +
+			"URI, the identity signs through a remote signer, as NIP-46 defines, and\n" +
+			"this machine holds no secret key. An agent uses this: its owner runs\n" +
+			"arc keys bunker.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := rootDir(command)
 			if err != nil {
 				return err
 			}
-			var text string
-			if len(args) == 1 {
-				if !nip46.IsValidBunkerURL(args[0]) {
-					return errors.New("that is not a bunker:// URI; give a secret key on standard input")
-				}
-				text = args[0]
-			} else {
-				body, err := io.ReadAll(io.LimitReader(command.InOrStdin(), 4096))
+			if len(args) == 0 {
+				// arc-signer takes the key from standard input: arc never reads it.
+				k, err := addSigned(command, "import")
 				if err != nil {
 					return err
 				}
-				text = strings.TrimSpace(string(body))
-				if text == "" {
-					return errors.New("give the key on standard input, or a bunker:// URI")
-				}
+				fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
+				return nil
 			}
+			if !nip46.IsValidBunkerURL(args[0]) {
+				return errors.New("that is not a bunker:// URI; give a secret key on standard input")
+			}
+			text := args[0]
 			_, why, err := rootSource(command)
 			if err != nil {
 				return err
@@ -257,18 +213,28 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			k, err := keyfile.Load(keyPath(dir))
+			text, err := keyfile.Read(keyPath(dir))
 			if err != nil {
 				return err
 			}
-			sealed, err := newPassphrase(k)
+			if strings.HasPrefix(text, "bunker://") {
+				return errors.New("the key of this identity is on a remote signer; seal it there")
+			}
+			if !strings.HasPrefix(text, program.Prefix) {
+				if err := moveToSigner(command.Context(), dir); err != nil {
+					return err
+				}
+			}
+			path, err := program.Find(signerProgram)
 			if err != nil {
 				return err
 			}
-			if err := keyfile.Write(keyPath(dir), sealed); err != nil {
-				return err
+			run := exec.CommandContext(command.Context(), path, "encrypt", "--dir", dir)
+			run.Stdin, run.Stderr = command.InOrStdin(), command.ErrOrStderr()
+			if err := run.Run(); err != nil {
+				return fmt.Errorf("arc-signer encrypt: %w", err)
 			}
-			fmt.Fprintln(command.OutOrStdout(), "the key is sealed; arc asks for the passphrase, or reads ARC_PASSPHRASE")
+			fmt.Fprintln(command.OutOrStdout(), "the key is sealed; arc-signer asks for the passphrase, or reads ARC_PASSPHRASE")
 			return nil
 		},
 	}
@@ -298,4 +264,26 @@ func whoamiCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// makeSigned makes an identity with arc-signer gen or recover, which show
+// the seed and ask for the passphrases themselves.
+func makeSigned(command *cobra.Command, what string) error {
+	args := []string{what}
+	for _, flag := range []string{"encrypt", "seed-passphrase"} {
+		if on, _ := command.Flags().GetBool(flag); on {
+			args = append(args, "--"+flag)
+		}
+	}
+	k, err := addSigned(command, args...)
+	if err != nil {
+		return err
+	}
+	root, err := rootDir(command)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
+	fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
+	return nil
 }

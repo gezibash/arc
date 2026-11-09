@@ -17,8 +17,9 @@ and a relay, a USB stick or another machine carries it without reading it.
 See [the delivery layer](docs/delivery/SPEC.md).
 
 `arc` is the program of a citizen. It keeps your identities, talks to
-relays, calls apps and serves their interfaces. `arc-relay` runs a relay.
-Each program does one job.
+relays, calls apps and serves their interfaces. `arc-signer` holds your
+key, and `arc` asks it for each signature. `arc-relay` runs a relay. Each
+program does one job: see [the programs](docs/PROGRAMS.md).
 
 ## Install
 

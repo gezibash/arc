@@ -29,8 +29,11 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
 - `cmd/arc` is the arc program. It imports no app.
 - A role gets its own program in `cmd/arc-<role>` only when it runs on
   another machine, holds a different key, or serves for months while the
-  commands of a citizen run and exit. `cmd/arc-relay` is the relay. It
-  holds no citizen and imports no `runtime/` package.
+  commands of a citizen run and exit. `cmd/arc-relay` is the relay.
+  `cmd/arc-signer` holds the citizen key. Neither imports a `runtime/`
+  package. See [the programs](docs/PROGRAMS.md).
+- `arc` never reads, holds or derives from the citizen secret. Each use of
+  the secret is a signer request (docs/devices/SPEC.md, sections 3.7 and 3.8).
 - No source file holds more than 600 lines. Split a larger file by
   concern. `go test ./internal/architecture` checks it.
 - The runtime and adapters must not import concrete `apps/` packages.

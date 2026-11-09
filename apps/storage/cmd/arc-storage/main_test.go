@@ -77,7 +77,7 @@ func setup(m *testing.M) int {
 	env.program = filepath.Join(root, "arc-storage")
 	env.dir = filepath.Join(root, "blobs")
 	relayProgram := filepath.Join(root, "arc-relay")
-	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", relayProgram: "github.com/gezibash/arc/cmd/arc-relay", env.program: "."} {
+	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", relayProgram: "github.com/gezibash/arc/cmd/arc-relay", filepath.Join(root, "arc-signer"): "github.com/gezibash/arc/cmd/arc-signer", env.program: "."} {
 		if out, err := exec.Command("go", "build", "-o", binary, pkg).CombinedOutput(); err != nil {
 			return fail("go build %s: %v\n%s", pkg, err, out)
 		}

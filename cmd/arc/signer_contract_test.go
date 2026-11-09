@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/testrelay"
@@ -29,13 +28,20 @@ func remoteForTest(t *testing.T) (keys.Signer, keys.Key) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bunker := nip46.NewStaticKeySigner(owner.Secret)
-	bunker.AuthorizeRequest = func(bool, nostr.PubKey, string) bool { return true }
+	// The bunker answers through a program signer; here the key answers
+	// in this process, as arc-signer does at the other end of its lines.
+	bunker := keys.Remote{Public: owner.Public, Call: func(ctx context.Context, method string, params ...string) (string, error) {
+		r := owner.Answer(ctx, keys.Request{ID: "1", Method: method, Params: params})
+		if r.Error != "" {
+			return "", errors.New(r.Error)
+		}
+		return r.Result, nil
+	}}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for request := range requests {
-			response, ok := answer(ctx, &bunker, owner.Secret, request, policy{decrypt: "all"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			response, ok := answer(ctx, bunker, request, policy{decrypt: "all"}, func(nostr.PubKey, string) bool { return true }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if ok {
 				_ = r.Send(ctx, response)
 			}

@@ -8,6 +8,7 @@ show source dependencies, not the order in which a message travels.
 flowchart LR
     ARC["cmd/arc<br/>The arc program"]
     RELAY["cmd/arc-relay<br/>The relay program"]
+    SIGNER["cmd/arc-signer<br/>The program signer"]
     APPS["apps<br/>Concrete apps and their service programs"]
     RUNTIME["runtime<br/>Citizen workflows and command policy"]
     ADAPTER["adapters<br/>Transports, storage and process hosting"]
@@ -19,6 +20,8 @@ flowchart LR
     ARC --> CORE
     RELAY --> ADAPTER
     RELAY --> SDK
+    SIGNER --> ADAPTER
+    SIGNER --> CORE
     APPS --> SDK
     RUNTIME --> ADAPTER
     RUNTIME --> SDK
@@ -43,6 +46,8 @@ flowchart LR
 | `apps/<name>/` | One complete app: manifest, Arcfile, service implementation in `server/`, and its program in `cmd/arc-<name>`. Data apps can consist of a manifest. |
 | `cmd/arc` | The arc program. It imports no app. |
 | `cmd/arc-relay` | The relay program. It holds no citizen and imports no runtime package. |
+| `cmd/arc-signer` | The program signer: it holds the citizen key of one identity and answers requests over its standard streams. It imports no runtime package. |
+| `adapters/signer/program` | Runs a program signer and sends it requests. |
 | `adapters/relay/relayserver` | The ARC relay: khatru with its store, the sealed-data rule, limits, the connection log and rings. |
 | `sdk/provider`, `sdk/stdio` | The provider runtime for an app, its session types, and process standard streams. |
 | `sdk/httpadapter`, `sdk/execadapter`, `sdk/ndjson` | HTTP and process I/O mapped to ARC calls and sessions, and their record reader. |

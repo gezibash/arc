@@ -921,7 +921,8 @@ func TestConfirmationsEscapeTheNameOnce(t *testing.T) {
 	}
 
 	// A storage list that names a storage citizen with such a name.
-	key, err := keyfile.Load(keyPath(identityDir(home)))
+	// The test holds the key as the signer does, to seal a list.
+	key, err := keyfile.Load(filepath.Join(identityDir(home), "signer", "key"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -993,7 +994,8 @@ func TestARemovedStorageInstallIsNamedEscaped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(identityDir(home), "installs.json"), installs, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	key, err := keyfile.Load(keyPath(identityDir(home)))
+	// The test holds the key as the signer does, to seal a list.
+	key, err := keyfile.Load(filepath.Join(identityDir(home), "signer", "key"))
 	if err != nil {
 		t.Fatal(err)
 	}

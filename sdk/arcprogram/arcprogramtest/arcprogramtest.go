@@ -28,7 +28,7 @@ type Net struct {
 	relay *exec.Cmd
 }
 
-// Start builds the arc and arc-relay programs into dir, and starts a relay
+// Start builds the arc, arc-relay and arc-signer programs into dir, and starts a relay
 // on a free port of this machine. Close stops the relay. The build has the tag arctest,
 // so a first message to a stranger makes 8 bits of work, not 20: see
 // core/private/work_arctest.go.
@@ -39,6 +39,10 @@ func Start(dir string) (*Net, error) {
 	}
 	if out, err := exec.Command("go", "build", "-o", n.RelayProgram, "github.com/gezibash/arc/cmd/arc-relay").CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("go build arc-relay: %v\n%s", err, out)
+	}
+	// arc finds the program signer of each citizen beside itself.
+	if out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "arc-signer"), "github.com/gezibash/arc/cmd/arc-signer").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build arc-signer: %v\n%s", err, out)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "relay"), 0o700); err != nil {
 		return nil, err

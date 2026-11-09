@@ -43,6 +43,7 @@ func run(m *testing.M) int {
 	for name, pkg := range map[string]string{
 		"arc":          "./cmd/arc",
 		"arc-relay":    "./cmd/arc-relay",
+		"arc-signer":   "./cmd/arc-signer",
 		"arc-exec":     "./apps/exec/cmd/arc-exec",
 		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
 		"arc-releases": "./apps/releases/cmd/arc-releases",
