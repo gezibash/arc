@@ -27,7 +27,6 @@ var oversize = map[string]int{
 	"apps/storage/server/server.go":        862,
 	"cmd/arc/capability.go":                940,
 	"cmd/arc/keys.go":                      1251,
-	"cmd/arc/main.go":                      1462,
 	"core/mail/mail.go":                    1596,
 	"runtime/citizen/selfsync.go":          816,
 	"runtime/iface/data.go":                1437,
