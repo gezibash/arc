@@ -418,9 +418,11 @@ exit 1
 	want(build(oldArc, "./cmd/arc", "-X main.version=0.9.0") == nil, "the old arc did not build")
 	err = build(filepath.Join(newRoot, "arc", "bin", "arc"), "./cmd/arc", "-X main.version=9.9.9")
 	want(err == nil, "the new arc did not build: %v", err)
-	// arc finds the program signer beside itself, in a release as here.
-	for _, dir := range []string{filepath.Join(work, "old"), filepath.Join(work, "stream-old"), filepath.Join(newRoot, "arc", "bin")} {
-		want(build(filepath.Join(dir, "arc-signer"), "./cmd/arc-signer", "") == nil, "arc-signer did not build in %s", dir)
+	// The release holds arc-signer beside arc, as the release tarballs do.
+	// The old arcs here are this code, so they need one before the update.
+	want(build(filepath.Join(newRoot, "arc", "bin", "arc-signer"), "./cmd/arc-signer", "-X main.version=9.9.9") == nil, "the new arc-signer did not build")
+	for _, dir := range []string{filepath.Join(work, "old"), filepath.Join(work, "stream-old")} {
+		want(build(filepath.Join(dir, "arc-signer"), "./cmd/arc-signer", "-X main.version=0.9.0") == nil, "arc-signer did not build in %s", dir)
 	}
 
 	// The archive holds the directory arc, as `tar -czf new.tar.gz -C new arc`.
@@ -488,6 +490,10 @@ exit 1
 	want(check.Err == nil && strings.Contains(check.Stdout, "names arc 9.9.9"), "update check: %s%s", check.Stdout, check.Stderr)
 	apply := old.try("", "update", "apply", "--provider", relKey, "--publisher", publisherKey)
 	want(apply.Err == nil, "update apply: %s%s", apply.Stdout, apply.Stderr)
+	// The update installs the arc-signer of the release beside arc: the new
+	// arc needs it at its first run.
+	want(read(t, filepath.Join(work, "old", "arc-signer")) == read(t, filepath.Join(newRoot, "arc", "bin", "arc-signer")),
+		"the update did not install the arc-signer of the release")
 	want(strings.Contains(version(oldArc), "9.9.9"), "the program is %s", version(oldArc))
 	want(strings.Contains(version(oldArc+".previous"), "0.9.0"), "the previous program is gone")
 	t.Log("ok: an older arc reads the channel over the relay, and replaces itself")
