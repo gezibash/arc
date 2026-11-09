@@ -1,3 +1,8 @@
+// Command arc-relay runs an ARC relay: a Nostr relay that serves sealed
+// data only to its author, with write limits, and optional STUN, TURN and
+// rings. It holds no citizen key. See docs/delivery/SPEC.md.
+//
+//	arc-relay [--listen <address>] [--db <file>] [flags]
 package main
 
 import (
@@ -11,72 +16,61 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"fiatjaf.com/nostr/eventstore/boltdb"
-	"fiatjaf.com/nostr/khatru"
 	"github.com/gezibash/arc/adapters/relay/limits"
-	"github.com/gezibash/arc/adapters/relay/relaylog"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/relay/rings"
-	"github.com/gezibash/arc/adapters/relay/sealed"
 	"github.com/gezibash/arc/adapters/relay/stun"
 	"github.com/gezibash/arc/adapters/relay/turn"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
 
-// newRelay makes the relay of arc relay serve, with its store in the file at
-// path. The relay logs its connections to logger. If ring is not nil, the
-// relay offers rings. Call the returned function to close the store.
-func newRelay(path string, p limits.Policy, ring *rings.Config, logger *slog.Logger) (*khatru.Relay, *relaylog.Log, *rings.Rings, func(), error) {
-	db := &boltdb.BoltBackend{Path: path}
-	if err := db.Init(); err != nil {
-		return nil, nil, nil, nil, err
+// version is set at release time with -ldflags "-X main.version=...".
+var version = "dev"
+
+func main() {
+	if err := relayCommand().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "arc-relay: "+terminal.EscapeLine(err.Error()))
+		os.Exit(1)
 	}
-	connections := relaylog.New(logger)
-	p.Refused = connections.Refused
-	rl := khatru.NewRelay()
-	rl.UseEventstore(db, 500)
-	rl.Negentropy = true
-	// khatru copies Info for each NIP-11 request and appends to the copy;
-	// with no spare room, each append copies, and requests do not race (#425).
-	rl.Info.SupportedNIPs = slices.Clip(append(rl.Info.SupportedNIPs, 77))
-	readers := sealed.Protect(rl)
-	limits.Apply(rl, db.DB, p)
-	connections.Watch(rl)
-	var ringer *rings.Rings
-	if ring != nil {
-		config := *ring
-		config.Readers = readers
-		config.Logger = logger
-		var err error
-		if ringer, err = rings.Apply(rl, db.DB, config); err != nil {
-			db.Close()
-			return nil, nil, nil, nil, err
-		}
-	}
-	return rl, connections, ringer, db.Close, nil
 }
 
-func serveCommand() *cobra.Command {
+// defaultDB is the store of a relay with no --db: relay.db in ARC_HOME, or
+// in ~/.arc. That is where arc relay serve kept it.
+func defaultDB() (string, error) {
+	dir := os.Getenv("ARC_HOME")
+	if dir == "" {
+		user, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(user, ".arc")
+	}
+	return filepath.Join(dir, "relay.db"), nil
+}
+
+func relayCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use: "serve", Short: "Run a relay on this machine", Args: cobra.NoArgs,
+		Use: "arc-relay", Short: "Run an ARC relay on this machine", Args: cobra.NoArgs,
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(command *cobra.Command, _ []string) error {
 			listen, _ := command.Flags().GetString("listen")
 			path, _ := command.Flags().GetString("db")
 			if path == "" {
-				dir, err := rootDir(command)
-				if err != nil {
+				var err error
+				if path, err = defaultDB(); err != nil {
 					return err
 				}
-				if err := os.MkdirAll(dir, 0o700); err != nil {
-					return err
-				}
-				path = filepath.Join(dir, "relay.db")
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return err
 			}
 
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -84,7 +78,7 @@ func serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rl, connections, ringer, closeDB, err := newRelay(path, writePolicy(command), ring, logger)
+			rl, connections, ringer, closeDB, err := relayserver.New(path, writePolicy(command), ring, logger)
 			if err != nil {
 				return err
 			}
@@ -154,7 +148,7 @@ func serveCommand() *cobra.Command {
 				go ringer.Run(ctx)
 				fmt.Fprintf(command.OutOrStdout(), "relay rings citizens, at most %d rings each minute\n", ring.PerMinute)
 			}
-			server := &http.Server{Handler: relayHandler(rl, turnServer, ringer), ConnContext: connections.ConnContext}
+			server := &http.Server{Handler: relayserver.Handler(rl, turnServer, ringer), ConnContext: connections.ConnContext}
 			go func() { <-ctx.Done(); _ = server.Close() }()
 			go connections.Run(ctx, time.Minute)
 			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
@@ -164,7 +158,7 @@ func serveCommand() *cobra.Command {
 		},
 	}
 	command.Flags().String("listen", "127.0.0.1:7447", "the address to listen on")
-	command.Flags().String("db", "", "the file that holds the events (default <home>/relay.db)")
+	command.Flags().String("db", "", "the file that holds the events (default relay.db in ARC_HOME, or in ~/.arc)")
 	command.Flags().Int("max-event-bytes", 0, "refuse an event larger than this, as JSON (0: no cap on ephemeral events; a kept event has at most the protocol limit of 65,536 bytes, and a gift wrap the mail limit)")
 	command.Flags().Bool("wrap-auth", false, "take a gift wrap only after NIP-42 authentication, or with proof of work")
 	command.Flags().Int("wrap-pow", 0, "the NIP-13 difficulty that lets a gift wrap in without authentication (0: none)")
@@ -211,22 +205,6 @@ func ringSetting(command *cobra.Command) (*rings.Config, error) {
 		}
 	}
 	return &config, nil
-}
-
-// relayHandler serves the relay, and the HTTP paths of TURN and rings when
-// the relay offers them. Every other path is the relay's: khatru answers
-// 404 on a path that it does not know.
-func relayHandler(rl *khatru.Relay, turnServer *turn.Server, ringer *rings.Rings) http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("/", rl)
-	if turnServer != nil {
-		mux.Handle(turn.Path, turnServer)
-	}
-	if ringer != nil {
-		mux.Handle(rings.Path, ringer)
-		mux.Handle(rings.TestPath, ringer)
-	}
-	return mux
 }
 
 // turnSetting reads the TURN flags of a relay. It returns nil if the relay

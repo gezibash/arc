@@ -42,6 +42,7 @@ func run(m *testing.M) int {
 	defer os.RemoveAll(programs)
 	for name, pkg := range map[string]string{
 		"arc":          "./cmd/arc",
+		"arc-relay":    "./cmd/arc-relay",
 		"arc-exec":     "./apps/exec/cmd/arc-exec",
 		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
 		"arc-releases": "./apps/releases/cmd/arc-releases",
@@ -90,6 +91,9 @@ type machine struct {
 	program string
 	home    string
 	env     []string
+	// relayStore says that program is arc-relay, which keeps its store
+	// in relay.db in home and takes no --home.
+	relayStore bool
 }
 
 // arc gives the machine that keeps its home in dir.
@@ -100,6 +104,14 @@ func arc(t *testing.T, dir string) machine {
 // with adds environment variables, each as NAME=value.
 func (m machine) with(env ...string) machine {
 	m.env = append(append([]string(nil), m.env...), env...)
+	return m
+}
+
+// relay runs arc-relay with its store in relay.db in the home of m, where
+// arc relay serve kept it.
+func (m machine) relay() machine {
+	m.program = program("arc-relay")
+	m.relayStore = true
 	return m
 }
 
@@ -115,7 +127,11 @@ type result struct {
 }
 
 func (m machine) command(args ...string) *exec.Cmd {
-	command := exec.Command(m.program, append([]string{"--home", m.home}, args...)...)
+	first := []string{"--home", m.home}
+	if m.relayStore {
+		first = []string{"--db", filepath.Join(m.home, "relay.db")}
+	}
+	command := exec.Command(m.program, append(first, args...)...)
 	command.Dir = repo
 	command.Env = append(os.Environ(), m.env...)
 	return command
@@ -270,7 +286,7 @@ func (m machine) serve(args ...string) *process {
 // startRelay runs a relay that keeps its events in dir, and returns its URL.
 func startRelay(t *testing.T, dir string, flags ...string) string {
 	t.Helper()
-	p := arc(t, dir).start(append([]string{"relay", "serve", "--listen", "127.0.0.1:0"}, flags...)...)
+	p := arc(t, dir).relay().start(append([]string{"--listen", "127.0.0.1:0"}, flags...)...)
 	if !p.waitFor("relay listens on ", 10*time.Second) {
 		t.Fatalf("the relay did not start:\n%s", p.output())
 	}

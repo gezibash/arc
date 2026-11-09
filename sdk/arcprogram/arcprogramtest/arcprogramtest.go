@@ -15,24 +15,33 @@ import (
 	"github.com/gezibash/arc/sdk/arcprogram"
 )
 
-// Net is a relay on this machine, and the arc program that serves it.
+// Net is a relay on this machine, served by the arc-relay program, and the
+// arc program that uses it.
 type Net struct {
 	// Arc is the path of the arc program.
 	Arc string
+	// RelayProgram is the path of the arc-relay program.
+	RelayProgram string
 	// Relay is the URL of the relay.
 	Relay string
 	dir   string
 	relay *exec.Cmd
 }
 
-// Start builds the arc program into dir, and starts a relay on a free port
-// of this machine. Close stops the relay. The build has the tag arctest,
+// Start builds the arc and arc-relay programs into dir, and starts a relay
+// on a free port of this machine. Close stops the relay. The build has the tag arctest,
 // so a first message to a stranger makes 8 bits of work, not 20: see
 // core/private/work_arctest.go.
 func Start(dir string) (*Net, error) {
-	n := &Net{Arc: filepath.Join(dir, "arc"), dir: dir}
+	n := &Net{Arc: filepath.Join(dir, "arc"), RelayProgram: filepath.Join(dir, "arc-relay"), dir: dir}
 	if out, err := exec.Command("go", "build", "-tags", "arctest", "-o", n.Arc, "github.com/gezibash/arc/cmd/arc").CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("go build arc: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("go", "build", "-o", n.RelayProgram, "github.com/gezibash/arc/cmd/arc-relay").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build arc-relay: %v\n%s", err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "relay"), 0o700); err != nil {
+		return nil, err
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -40,9 +49,9 @@ func Start(dir string) (*Net, error) {
 	}
 	address := listener.Addr().String()
 	_ = listener.Close()
-	n.relay = exec.Command(n.Arc, "--home", filepath.Join(dir, "relay"), "relay", "serve", "--listen", address, "--stun", "none")
+	n.relay = exec.Command(n.RelayProgram, "--db", filepath.Join(dir, "relay", "relay.db"), "--listen", address, "--stun", "none")
 	if err := n.relay.Start(); err != nil {
-		return nil, fmt.Errorf("arc relay serve: %w", err)
+		return nil, fmt.Errorf("arc-relay: %w", err)
 	}
 	if !WaitUntil(10*time.Second, func() bool {
 		conn, err := net.Dial("tcp", address)

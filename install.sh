@@ -9,7 +9,7 @@
 #   ARC_BIN_DIR      Where the arc symlink goes. Default: ~/.local/bin
 #
 # The script downloads the tarball for this OS and CPU, checks it against
-# SHA256SUMS, unpacks it, and links bin/arc into ARC_BIN_DIR.
+# SHA256SUMS, unpacks it, and links bin/arc and bin/arc-relay into ARC_BIN_DIR.
 
 set -eu
 
@@ -89,7 +89,9 @@ mkdir -p "$(dirname "$INSTALL_DIR")"
 mv "$tmp/unpack/arc" "$INSTALL_DIR"
 
 mkdir -p "$BIN_DIR"
-ln -sf "$INSTALL_DIR/bin/arc" "$BIN_DIR/arc"
+for program in arc arc-relay; do
+  ln -sf "$INSTALL_DIR/bin/$program" "$BIN_DIR/$program"
+done
 
 "$BIN_DIR/arc" version
 

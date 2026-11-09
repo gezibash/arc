@@ -15,6 +15,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
@@ -27,7 +28,7 @@ import (
 // that a person can read, with each line under its header. The JSON lines
 // keep the text as it was sent (docs/clients/SPEC.md, section 3.9).
 func TestATerminalShowsNoEscapeOfASender(t *testing.T) {
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ const (
 // Held mail from a stranger, and a message that arc message watch prints,
 // reach the terminal escaped.
 func TestHeldAndWatchedTextIsEscaped(t *testing.T) {
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func forged(out string) bool { return strings.Contains("\n"+out, "\narc: forged"
 // A relay that refuses a message cannot change the terminal or forge a
 // line through the warning of arc message send.
 func TestARelayRefusalIsEscapedOnOneLine(t *testing.T) {
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

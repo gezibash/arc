@@ -22,6 +22,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/coder/websocket"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/relay/rings"
 )
 
@@ -59,7 +60,7 @@ func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 		},
 		TLS: &tls.Config{RootCAs: target.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs},
 	}
-	rl, _, ringer, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, config, slog.New(slog.DiscardHandler))
+	rl, _, ringer, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, config, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go ringer.Run(ctx)
-	server := httptest.NewServer(relayHandler(rl, nil, ringer))
+	server := httptest.NewServer(relayserver.Handler(rl, nil, ringer))
 	t.Cleanup(server.Close)
 	return "ws" + strings.TrimPrefix(server.URL, "http"), hits
 }
@@ -101,12 +102,12 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 
 	// A second relay offers no rings: it answers 404 on /ring, and ring set
 	// skips it.
-	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closePlain)
-	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 	response, err := http.Get(plainServer.URL + rings.Path)
 	if err != nil {
@@ -223,12 +224,12 @@ func TestARingCommandActsOnOneRelay(t *testing.T) {
 		}
 	}
 
-	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closePlain)
-	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 	plainURL := "ws" + strings.TrimPrefix(plainServer.URL, "http")
 	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", plainURL); err == nil || !strings.Contains(err.Error(), plainURL+" offers no rings") || strings.Contains(out, "skipped") {

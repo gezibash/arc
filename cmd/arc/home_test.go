@@ -18,6 +18,7 @@ import (
 	"fiatjaf.com/nostr/keyer"
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	transportrelay "github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/catalog"
@@ -759,7 +760,7 @@ func TestABadDefaultNameIsEscapedOnce(t *testing.T) {
 // citizen that uses it.
 func hostileRelay(t *testing.T) (string, string) {
 	t.Helper()
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

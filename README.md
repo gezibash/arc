@@ -235,14 +235,15 @@ remain available. See the [sessions of the bundled apps](apps/README.md#sessions
 ## Run a relay
 
 ```bash
-arc relay serve --listen 127.0.0.1:7447
+arc-relay --listen 127.0.0.1:7447
 ```
 
 The relay is a khatru relay. It serves NIP-42 authentication, NIP-77 sync,
 and sealed data only to its author. Flags turn on write limits: an event
 size cap, authentication or proof of work for gift wraps, a rate for each IP
 address, and a store cap.
-`arc relay serve --help` lists the flags.
+`arc-relay --help` lists the flags. The relay keeps its events in
+`relay.db` in `ARC_HOME`, or in `~/.arc`; `--db` names another file.
 
 The relay logs to standard error. It writes a WARN line for each failed
 WebSocket upgrade, each connection that closes with an error, and each

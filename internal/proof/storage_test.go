@@ -479,7 +479,7 @@ func TestStorageImportsDrafts(t *testing.T) {
 
 	// The operator updates the relay. Its store keeps what it took.
 	before.stop()
-	after := relayHome.start("relay", "serve", "--listen", strings.TrimPrefix(url, "ws://"))
+	after := relayHome.relay().start("--listen", strings.TrimPrefix(url, "ws://"))
 	if !after.waitFor("relay listens on ", 10*time.Second) {
 		t.Fatalf("the relay did not start again:\n%s", after.output())
 	}

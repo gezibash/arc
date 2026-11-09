@@ -10,7 +10,7 @@ import (
 )
 
 func relayCommand() *cobra.Command {
-	command := &cobra.Command{Use: "relay", Short: "Manage the relays of this citizen, or run one"}
+	command := &cobra.Command{Use: "relay", Short: "Manage the relays of this citizen"}
 
 	add := &cobra.Command{
 		Use: "add <url>", Short: "Send to and sync with a relay", Args: cobra.ExactArgs(1),
@@ -134,7 +134,6 @@ func relayCommand() *cobra.Command {
 		},
 		turnCommand(),
 		ringCommand(),
-		serveCommand(),
 	)
 	return command
 }

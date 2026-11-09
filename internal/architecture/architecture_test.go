@@ -94,6 +94,10 @@ func forbidden(file, imported string) string {
 			if in("apps") {
 				return "arc must not depend on a concrete app"
 			}
+			// arc-relay holds no citizen: it runs a relay and nothing else.
+			if strings.HasPrefix(rest, "arc-relay/") && in("runtime") {
+				return "arc-relay holds no citizen, so it must not depend on the runtime"
+			}
 		}
 	}
 	if layer == "core" {

@@ -3,7 +3,7 @@
 //
 //	arc keys gen | recover | add | list | use | remove | encrypt | bunker
 //	arc whoami
-//	arc relay add <url> | rm <url> | ls | turn | serve
+//	arc relay add <url> | rm <url> | ls | turn | ring
 //	arc message send | inbox | outbox | watch
 //	arc serve | announce | discover | install | call | session
 //	arc sync [--dir <path>]
