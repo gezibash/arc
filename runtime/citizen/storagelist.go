@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
@@ -204,4 +206,84 @@ func (sess *Session) FollowStorageList(ctx context.Context, installs catalog.Ins
 		}
 	}
 	return list, true, nil
+}
+
+// markGone sets gone in the storage list for each draining storage
+// citizen that holds no piece and no blob, and takes no put. Only the
+// signer does this. The usage of the account confirms that it is empty.
+// The signer then closes the account on the storage citizen, which
+// removes it.
+func (sess *Session) markGone(ctx context.Context, cfg SelfSync, list storage.List, targets []target, opened []opening, usages []*storage.Usage, empty []int) error {
+	var gone []int
+	for _, i := range empty {
+		as := terminal.EscapeLine(targets[i].install.As)
+		usage := usages[i]
+		if usage == nil {
+			return fmt.Errorf("%s: the usage did not come, so it stays draining", as)
+		}
+		if usage.Blobs != 0 {
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the listing is empty, but its usage counts %d blobs, so it stays draining", as, usage.Blobs)))
+			continue
+		}
+		entry, ok := list.Find(targets[i].install.Provider)
+		if !ok {
+			continue
+		}
+		entry.State, entry.Since = storage.StateGone, nostr.Now()
+		var err error
+		if list, err = list.Put(entry); err != nil {
+			return err
+		}
+		fmt.Fprintf(cfg.Out, "%s holds no piece now and takes no put, so the storage list marks it gone\n", as)
+		gone = append(gone, i)
+	}
+	if len(gone) == 0 {
+		return nil
+	}
+	names := make([]string, len(gone))
+	for n, i := range gone {
+		names[n] = targets[i].install.As
+	}
+	if _, err := sess.PublishStorageList(ctx, list); err != nil {
+		return fmt.Errorf("the storage list did not change, so %s stays draining: %w", strings.Join(names, ", "), err)
+	}
+	for _, i := range gone {
+		as := terminal.EscapeLine(targets[i].install.As)
+		fmt.Fprintf(cfg.Out, "storage list: %s is gone; each device removes its install at its next sync\n", as)
+		// The pipe ends first: the close ends each pipe of the account.
+		opened[i].conn.Close()
+		opened[i].conn = nil
+		provider, err := nostr.PubKeyFromHex(targets[i].install.Provider)
+		if err != nil {
+			return err
+		}
+		reply, err := sess.CloseStorage(ctx, provider)
+		switch {
+		case err != nil:
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the account stays, empty and draining: %v", as, err)))
+		case !reply.Closed:
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("%s: the account stays: %s", as, reply.Message)))
+		default:
+			fmt.Fprintf(cfg.Out, "%s: the account is closed, and the storage citizen removed it; arc keys storage add asks for a new one\n", as)
+		}
+	}
+	return nil
+}
+
+// pruneStorageList removes each entry that is gone for 30 days or more,
+// and publishes the list. Only the signer does this. If the list does not
+// publish, it returns the list as it was.
+func (sess *Session) pruneStorageList(ctx context.Context, list storage.List, cfg SelfSync) storage.List {
+	pruned, removed := list.Prune(time.Now())
+	if len(removed) == 0 {
+		return list
+	}
+	if _, err := sess.PublishStorageList(ctx, pruned); err != nil {
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: the storage list keeps its old gone entries: %v", err)))
+		return list
+	}
+	for _, e := range removed {
+		fmt.Fprintf(cfg.Out, "storage list: removed %s, gone since %s\n", e.Name, e.Since.Time().UTC().Format("2006-01-02")) //arc:raw-ok an entry of the storage list that this citizen signed
+	}
+	return pruned
 }
