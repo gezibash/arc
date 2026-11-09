@@ -19,6 +19,7 @@ import (
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
 )
@@ -188,7 +189,7 @@ func (f *fakeEnv) Keyer() nostr.Keyer { return keyer.NewPlainKeySigner(f.me) }
 // contentKey is the content key of an app under generation 0, the keyed
 // root of the citizen.
 func (f *fakeEnv) contentKey(app string) ([32]byte, error) {
-	root, err := KeyedRoot(f.me)
+	root, err := keys.KeyedRoot(f.me)
 	if err != nil {
 		return [32]byte{}, err
 	}
@@ -283,7 +284,7 @@ func (f *fakeEnv) Private(_ context.Context, kinds []nostr.Kind) ([]nostr.Event,
 	return out, nil
 }
 func (f *fakeEnv) Keyed(_ context.Context, info []byte, input string) (string, error) {
-	root, err := KeyedRoot(f.me)
+	root, err := keys.KeyedRoot(f.me)
 	if err != nil {
 		return "", err
 	}
@@ -499,7 +500,7 @@ func TestDescribeIsEscaped(t *testing.T) {
 }
 
 func TestKeyedValuesDifferByCapability(t *testing.T) {
-	secret, _ := KeyedRoot(nostr.Generate())
+	secret, _ := keys.KeyedRoot(nostr.Generate())
 	author := nostr.Generate().Public()
 	a, _ := KeyedValue(secret, keyedInfo(author, "journal", "page"), "hrs/a/b")
 	again, _ := KeyedValue(secret, keyedInfo(author, "journal", "page"), "hrs/a/b")

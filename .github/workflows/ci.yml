@@ -184,7 +184,10 @@ jobs:
       - name: Test with the race detector
         env:
           GOFLAGS: -race
-          GORACE: log_path=${{ runner.temp }}/race/report
+          # A race build sleeps 1 s at exit by default. Each arc command
+          # starts arc-signer and waits for it to exit, so the sleep adds
+          # 1 s to each command. Reports go to log_path at once.
+          GORACE: log_path=${{ runner.temp }}/race/report atexit_sleep_ms=0
           PART: ${{ matrix.part }}
         run: |
           mkdir -p "$RUNNER_TEMP/race"

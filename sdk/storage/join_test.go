@@ -1,12 +1,15 @@
 package storage
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"testing"
 
+	"fiatjaf.com/nostr"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/gezibash/arc/core/keys"
 )
 
 func newKey(t *testing.T) ([32]byte, string) {
@@ -35,7 +38,7 @@ func TestVerifyJoin(t *testing.T) {
 	_, accountHex := newKey(t)
 	_, storageHex := newKey(t)
 	_, otherHex := newKey(t)
-	sig, err := SignJoin(citizen, key32(t, accountHex), key32(t, storageHex))
+	sig, err := keys.FromSecret(nostr.SecretKey(citizen)).SignJoin(context.Background(), nostr.PubKey(key32(t, accountHex)), nostr.PubKey(key32(t, storageHex)))
 	if err != nil {
 		t.Fatal(err)
 	}

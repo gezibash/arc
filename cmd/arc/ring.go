@@ -150,6 +150,7 @@ func eachRingRelay(command *cobra.Command, do func(ctx context.Context, relay st
 	if err != nil {
 		return err
 	}
+	defer id.done()
 	out := command.OutOrStdout()
 	offered, failed := 0, 0
 	for _, relay := range relays {

@@ -165,7 +165,9 @@ message, `to` is the first recipient.
 ### 3.8 The test relay
 
 - `arcprogramtest.Start` builds `github.com/gezibash/arc/cmd/arc` with
-  `go build -tags arctest`, and runs `arc relay serve` on a free port of
+  `go build -tags arctest`, builds `github.com/gezibash/arc/cmd/arc-relay`
+  and `github.com/gezibash/arc/cmd/arc-signer` beside it, and runs
+  `arc-relay` on a free port of
   `127.0.0.1`, with no STUN server. With the tag, a first message to a
   stranger makes 8 bits of proof of work, not 20
   ([the strangers spec](../strangers/SPEC.md), section 3.5). A release

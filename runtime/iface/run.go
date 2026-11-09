@@ -79,13 +79,6 @@ const KeyedRootD = "arc-keyed-root"
 // KeyedRootKind is the kind inside that draft: application data, NIP-78.
 const KeyedRootKind = 30078
 
-// KeyedRoot derives the root of every keyed value from a secret key. A
-// machine with the key derives it; a machine that signs through NIP-46 reads
-// it from the draft that a machine with the key published.
-func KeyedRoot(secret [32]byte) ([]byte, error) {
-	return hkdf.Key(sha256.New, secret[:], nil, "arc-keyed-root-v1", 32)
-}
-
 // KeyedValue computes a keyed value, as section 3.7.1 of the spec defines.
 func KeyedValue(root []byte, info []byte, input string) (string, error) {
 	key, err := hkdf.Key(sha256.New, root, nil, string(info), 32)

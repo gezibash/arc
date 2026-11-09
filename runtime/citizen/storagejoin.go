@@ -9,7 +9,6 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/call"
-	"github.com/gezibash/arc/runtime/selfsync"
 	"github.com/gezibash/arc/sdk/storage"
 )
 
@@ -23,16 +22,17 @@ var ErrOlderStorage = errors.New("it runs an older storage app: it cannot admit 
 // over the account key and the key of the storage citizen. The reply is an
 // account, admitted or pending, or the error refused.
 func (sess *Session) JoinStorage(ctx context.Context, provider nostr.PubKey, join storage.Join, showCitizen bool) (storage.JoinReply, error) {
-	if err := sess.RequireSigner(); err != nil {
+	h, err := sess.holder()
+	if err != nil {
 		return storage.JoinReply{}, err
 	}
-	account, err := selfsync.AccountKey(sess.Key.Secret, provider)
+	account, err := h.AccountKey(ctx, provider)
 	if err != nil {
 		return storage.JoinReply{}, err
 	}
 	if showCitizen {
 		join.Citizen = sess.Key.Public.Hex()
-		if join.Sig, err = storage.SignJoin(sess.Key.Secret, account.Public, provider); err != nil {
+		if join.Sig, err = h.SignJoin(ctx, account.Public, provider); err != nil {
 			return storage.JoinReply{}, err
 		}
 	}
@@ -67,10 +67,7 @@ var errOlderClose = errors.New("it runs an older storage app, which keeps the em
 // removes an empty account at once, and refuses an account that holds a
 // blob. A later join asks for a new account.
 func (sess *Session) CloseStorage(ctx context.Context, provider nostr.PubKey) (storage.CloseReply, error) {
-	if err := sess.RequireSigner(); err != nil {
-		return storage.CloseReply{}, err
-	}
-	account, err := selfsync.AccountKey(sess.Key.Secret, provider)
+	account, err := sess.AccountKey(ctx, provider)
 	if err != nil {
 		return storage.CloseReply{}, err
 	}

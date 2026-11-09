@@ -9,6 +9,7 @@ package selfsync
 
 import (
 	"bytes"
+	"context"
 	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
@@ -21,9 +22,9 @@ import (
 	"math/bits"
 
 	"fiatjaf.com/nostr"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/sdk/storage"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -96,9 +97,6 @@ const (
 	lengthSize = 8
 )
 
-// changeContext starts the bytes that the device key signs.
-const changeContext = "arc-storage-change-v1\x00"
-
 // Envelope is the plaintext of a blob: one record, and the signature of
 // the device key that made the change.
 //
@@ -109,17 +107,11 @@ type Envelope struct {
 	Version int `json:"v"`
 	// Device is the key that signed the change.
 	Device nostr.PubKey `json:"device"`
-	// Sig is the BIP-340 signature of the device key over changeDigest.
+	// Sig is the BIP-340 signature of the device key over keys.ChangeDigest.
 	Sig    string      `json:"sig"`
 	Record nostr.Event `json:"record"`
 	// Body is the length of the body after the JSON, in version 2.
 	Body int64 `json:"body,omitempty"`
-}
-
-// changeDigest is what the device key signs: the context, the blob ID and
-// the record ID.
-func changeDigest(blobID string, record nostr.ID) [32]byte {
-	return sha256.Sum256(append(append([]byte(changeContext), blobID...), record[:]...))
 }
 
 // blobSize is the size of the blob for an envelope of n bytes: the next
@@ -135,8 +127,8 @@ func blobSize(n int) int64 {
 // Seal makes the blob of a record. The device key signs the change inside
 // the encrypted bytes. A draft wrap that names a body needs that body: the
 // encrypted bytes that its body tag names. Each other record has no body.
-func Seal(k Keys, device nostr.SecretKey, record nostr.Event, body []byte) (string, []byte, error) {
-	env := Envelope{Version: 1, Device: device.Public(), Record: record}
+func Seal(ctx context.Context, k Keys, device DeviceSigner, record nostr.Event, body []byte) (string, []byte, error) {
+	env := Envelope{Version: 1, Device: device.PublicKey(), Record: record}
 	if ref, ok := draft.Body(record); ok {
 		if err := ref.Check(body); err != nil {
 			return "", nil, err
@@ -146,13 +138,11 @@ func Seal(k Keys, device nostr.SecretKey, record nostr.Event, body []byte) (stri
 		return "", nil, errors.New("the record names no body")
 	}
 	id := k.BlobID(record.ID)
-	digest := changeDigest(id, record.ID)
-	priv, _ := btcec.PrivKeyFromBytes(device[:])
-	sig, err := schnorr.Sign(priv, digest[:])
+	sig, err := device.SignChange(ctx, id, record.ID)
 	if err != nil {
 		return "", nil, err
 	}
-	env.Sig = hex.EncodeToString(sig.Serialize())
+	env.Sig = sig
 	plain, err := json.Marshal(env)
 	if err != nil {
 		return "", nil, err
@@ -258,7 +248,7 @@ func Open(k Keys, id string, blob []byte) (Envelope, []byte, error) {
 	if err != nil {
 		return env, nil, errors.New("the device key of the change is not valid")
 	}
-	digest := changeDigest(id, env.Record.ID)
+	digest := keys.ChangeDigest(id, env.Record.ID)
 	if !sig.Verify(digest[:], pub) {
 		return env, nil, errors.New("the signature of the device does not match the change")
 	}

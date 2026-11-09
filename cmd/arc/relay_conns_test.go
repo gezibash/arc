@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 )
 
 // counting is a listener that counts the connections it accepts.
@@ -30,7 +31,7 @@ func (l *counting) Accept() (net.Conn, error) {
 // It also fetches the NIP-11 document of the relay once, over HTTP. Each new
 // connection is one more chance to fail on a lossy network.
 func TestSyncUsesOneConnectionPerRelay(t *testing.T) {
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

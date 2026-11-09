@@ -457,7 +457,7 @@ grace period, and then drop it.
 Not built.
 
 An ARC relay has a mode for gift wraps of kind 1059, set by
-`arc relay serve --stamps off|advisory|enforce`:
+`arc-relay --stamps off|advisory|enforce`:
 
 | Mode | What the relay does |
 | --- | --- |

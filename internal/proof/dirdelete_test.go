@@ -63,7 +63,7 @@ func TestADirLeavesOutTheEventsOfDeletedPages(t *testing.T) {
 	laptop.run("announce", filepath.Join(repo, "apps/journal/manifest.json"))
 	laptop.run("install", citizen, "journal", "--yes")
 	phone := arc(t, filepath.Join(work, "phone"))
-	phone.input(read(t, keyfile(t, laptop.home)), "keys", "add")
+	phone.input(read(t, secretfile(t, laptop.home)), "keys", "add")
 	phone.run("relay", "add", url)
 	phone.run("install", citizen, "journal", "--yes")
 	laptop.run("relay", "rm", url)

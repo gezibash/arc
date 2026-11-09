@@ -27,6 +27,15 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
   repository. If an app needs a helper, add the helper to `sdk/`. Do not
   import `core/`, `adapters/`, `runtime/`, `internal/` or another app.
 - `cmd/arc` is the arc program. It imports no app.
+- A role gets its own program in `cmd/arc-<role>` only when it runs on
+  another machine, holds a different key, or serves for months while the
+  commands of a citizen run and exit. `cmd/arc-relay` is the relay.
+  `cmd/arc-signer` holds the citizen key. Neither imports a `runtime/`
+  package. See [the programs](docs/PROGRAMS.md).
+- `arc` never reads, holds or derives from the citizen secret. Each use of
+  the secret is a signer request (docs/devices/SPEC.md, sections 3.7 and 3.8).
+- No source file holds more than 600 lines. Split a larger file by
+  concern. `go test ./internal/architecture` checks it.
 - The runtime and adapters must not import concrete `apps/` packages.
   Apps use the SDK to compose with other apps.
 - Define an interface at the layer that consumes its effect. Only interfaces
@@ -119,6 +128,12 @@ Follow it for implementation, tests, documentation, and PR review.
   the remaining acceptance criteria. Do not present it as transport completion.
 - Distinguish automated checks from tests on real devices.
   Report missing hardware proof before you claim the transport works.
+
+## Pull requests
+
+- Run `/code-review high` on every pull request before you ask for a merge.
+  Fix each finding, or say in the PR why it stays. Run it again after a
+  change that the review did not see.
 
 ## Technical language
 

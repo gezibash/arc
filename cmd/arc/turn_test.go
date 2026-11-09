@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/relay/turn"
 )
 
@@ -26,15 +27,15 @@ func TestTURNFromTheFirstRelayThatServesIt(t *testing.T) {
 	down := "ws://" + gone.Addr().String()
 	_ = gone.Close()
 
-	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closePlain)
-	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "turn.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "turn.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestTURNFromTheFirstRelayThatServesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = turnServer.Close() })
-	turnHTTP := httptest.NewServer(relayHandler(rl, turnServer, nil))
+	turnHTTP := httptest.NewServer(relayserver.Handler(rl, turnServer, nil))
 	t.Cleanup(turnHTTP.Close)
 
 	home := t.TempDir()
@@ -74,7 +75,7 @@ func TestTURNFromTheFirstRelayThatServesIt(t *testing.T) {
 func TestTURNPrefersARelayThatTakesTCP(t *testing.T) {
 	const tls = "turns:relay.example:443?transport=tcp"
 	serve := func(name string, config turn.Config) string {
-		rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), name+".db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+		rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), name+".db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +89,7 @@ func TestTURNPrefersARelayThatTakesTCP(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = server.Close() })
-		web := httptest.NewServer(relayHandler(rl, server, nil))
+		web := httptest.NewServer(relayserver.Handler(rl, server, nil))
 		t.Cleanup(web.Close)
 		return "ws" + strings.TrimPrefix(web.URL, "http")
 	}

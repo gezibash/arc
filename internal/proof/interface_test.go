@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fiatjaf.com/nostr"
 )
 
 // ifaceExit returns the exit status of a command: 0 for no error, and -1 if
@@ -298,7 +300,7 @@ func TestInterface(t *testing.T) {
 	// open on this machine, with the loopback address and no STUN server.
 	laptop := caller.with(loopback...)
 	desktop := home("desktop").with(loopback...)
-	desktop.input(read(t, keyfile(t, caller.home)), "keys", "add")
+	desktop.input(read(t, secretfile(t, caller.home)), "keys", "add")
 	desktop.run("relay", "add", url)
 	storeKey := storageCitizen(t, work, url, laptop)
 	sync := func() {
@@ -488,15 +490,17 @@ func TestInterface(t *testing.T) {
 	sealed := home("sealed")
 	opened := sealed.with("ARC_PASSPHRASE=correct horse")
 	identity := opened.run("keys", "gen", "--encrypt")
-	if !strings.HasPrefix(read(t, keyfile(t, sealed.home)), "ncryptsec1") {
+	if !strings.HasPrefix(read(t, secretfile(t, sealed.home)), "ncryptsec1") {
 		t.Fatal("the key file is not an ncryptsec")
 	}
 	whoami := strings.SplitN(sealed.run("whoami"), "\n", 3)
 	if len(whoami) < 2 || whoami[0]+"\n"+whoami[1] != ifaceTrim(identity) {
 		t.Fatalf("the sealed key is another identity:\nwhoami   %q\nkeys gen %q", whoami, identity)
 	}
-	opened.run("message", "outbox")
-	sealed.with("ARC_PASSPHRASE=wrong").refuse("message", "outbox")
+	// keys account asks the signer, which opens the key.
+	storageKey := nostr.Generate().Public().Hex()
+	opened.run("keys", "account", storageKey)
+	sealed.with("ARC_PASSPHRASE=wrong").refuse("keys", "account", storageKey)
 	t.Log("ok: a key sealed with a passphrase opens with it, and not without it")
 
 	// An agent signs through its owner's bunker, and holds no secret key.
@@ -518,7 +522,7 @@ func TestInterface(t *testing.T) {
 	if added[len(added)-1] != ownerKey {
 		t.Fatalf("the agent is %q, not the owner %s", added, ownerKey)
 	}
-	secret := strings.TrimSpace(read(t, keyfile(t, owner.home)))
+	secret := strings.TrimSpace(read(t, secretfile(t, owner.home)))
 	err = filepath.WalkDir(agent.home, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || !entry.Type().IsRegular() {
 			return err
