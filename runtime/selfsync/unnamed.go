@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/keyer"
 	"github.com/gezibash/arc/core/draft"
 )
 
@@ -44,7 +43,7 @@ func (r *run) unnamed(ctx context.Context) error {
 	if r.s.Opener == nil {
 		return nil
 	}
-	me := r.s.Device.Public()
+	me := r.s.Device.PublicKey()
 	mine, err := r.s.Store.Query(nostr.Filter{Kinds: []nostr.Kind{draft.CheckpointKind, draft.PartKind}, Authors: []nostr.PubKey{me}})
 	if err != nil {
 		return err
@@ -101,7 +100,7 @@ func (r *run) unnamed(ctx context.Context) error {
 	if len(gone) == 0 {
 		return nil
 	}
-	s := draft.Sealer{Citizen: r.s.Citizen, Signer: keyer.NewPlainKeySigner(r.s.Device)}
+	s := draft.Sealer{Citizen: r.s.Citizen, Signer: r.s.Device}
 	for batch := range slices.Chunk(gone, unnamedBatch) {
 		tags := nostr.Tags{}
 		for _, e := range batch {
@@ -161,7 +160,7 @@ func (r *run) namedOnce(ctx context.Context, coordinate string) (map[string]bool
 // held back too; the next sync finds its draft, and sends them. A record
 // whose page does not open goes out, as before.
 func (r *run) heldBack(ctx context.Context, e nostr.Event) (bool, error) {
-	if r.s.Opener == nil || e.Kind != draft.PartKind && e.Kind != draft.CheckpointKind || e.PubKey != r.s.Device.Public() {
+	if r.s.Opener == nil || e.Kind != draft.PartKind && e.Kind != draft.CheckpointKind || e.PubKey != r.s.Device.PublicKey() {
 		return false, nil
 	}
 	a := e.Tags.Find("a")

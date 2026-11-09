@@ -59,9 +59,13 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	// A machine that holds the citizen key signs with it. It is the signer,
 	// and is on no device list. A device that signs through the signer
 	// uses its device key.
-	signer := cfg.Device.Secret
+	var signer selfsync.DeviceSigner = cfg.Device
 	if !sess.Remote {
-		signer = sess.Key.Secret
+		h, err := sess.holder()
+		if err != nil {
+			return err
+		}
+		signer = h
 	}
 	// The signer sends the grant set first, so that a revocation reaches
 	// each storage citizen even when the signer was offline at the revoke.

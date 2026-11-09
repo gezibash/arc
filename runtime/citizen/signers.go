@@ -94,7 +94,7 @@ func (sess *Session) loadSigners(ctx context.Context) {
 	if sealed == nil {
 		return
 	}
-	text, err := k.Decrypt(ctx, string(sealed), k.Public)
+	text, err := k.Decrypt(ctx, string(sealed), k.PublicKey())
 	if err != nil {
 		sess.warnf("arc: the device list on this disk does not open: %v\n", err)
 		return
@@ -120,7 +120,7 @@ func (sess *Session) keepList(ctx context.Context, l devices.List, exists bool) 
 	if err != nil {
 		return err
 	}
-	sealed, err := k.Encrypt(ctx, string(text), k.Public)
+	sealed, err := k.Encrypt(ctx, string(text), k.PublicKey())
 	if err != nil {
 		return err
 	}

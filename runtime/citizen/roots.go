@@ -243,15 +243,14 @@ func (sess *Session) PublishDataRoots(ctx context.Context, list devices.List) (d
 
 // cacheKey seals the roots on the disk of this machine: the device key on a
 // device, and the citizen key on a machine that holds it.
-func (sess *Session) cacheKey() (keys.Key, error) {
-	k := sess.Key
-	if sess.Remote {
-		k = sess.Device
+func (sess *Session) cacheKey() (keys.Signer, error) {
+	if !sess.Remote {
+		return sess.Signer, nil
 	}
-	if k.Secret == (nostr.SecretKey{}) {
-		return keys.Key{}, errors.New("this machine has no device key to seal its data roots: run arc keys device")
+	if sess.Device.Secret == (nostr.SecretKey{}) {
+		return nil, errors.New("this machine has no device key to seal its data roots: run arc keys device")
 	}
-	return k, nil
+	return sess.Device, nil
 }
 
 // heldRoots reads the roots that this machine keeps on its disk. A root of an
@@ -276,7 +275,7 @@ func (sess *Session) heldRoots(ctx context.Context) (map[uint32][32]byte, error)
 				held[gen] = [32]byte(v)
 				return nil
 			}
-			text, err := k.Decrypt(ctx, string(v), k.Public)
+			text, err := k.Decrypt(ctx, string(v), k.PublicKey())
 			if err != nil {
 				return fmt.Errorf("the data root of generation %d on this disk does not open: %w", gen, err)
 			}
@@ -298,7 +297,7 @@ func (sess *Session) keepRoots(ctx context.Context, held map[uint32][32]byte) er
 	}
 	sealed := map[uint32]string{}
 	for gen, root := range held {
-		if sealed[gen], err = k.Encrypt(ctx, hex.EncodeToString(root[:]), k.Public); err != nil {
+		if sealed[gen], err = k.Encrypt(ctx, hex.EncodeToString(root[:]), k.PublicKey()); err != nil {
 			return err
 		}
 	}

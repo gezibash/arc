@@ -66,6 +66,13 @@ func ReleaseDigest(schema int64, encoded []byte) [32]byte {
 	return sha256.Sum256(append([]byte(ReleaseDomain+strconv.FormatInt(schema, 10)+"\x00"), encoded...))
 }
 
+// ChangeDigest is the message that the key of a change signs inside a
+// self-data blob: SHA-256("arc-storage-change-v1" || 0x00 || blob ID ||
+// record ID), with the blob ID as text and the record ID as its 32 bytes.
+func ChangeDigest(blobID string, record nostr.ID) [32]byte {
+	return sha256.Sum256(append(append([]byte("arc-storage-change-v1\x00"), blobID...), record[:]...))
+}
+
 // signDigest makes a BIP-340 signature of digest, in hex.
 func signDigest(secret nostr.SecretKey, digest [32]byte) (string, error) {
 	priv, _ := btcec.PrivKeyFromBytes(secret[:])
@@ -107,4 +114,13 @@ func (k Key) SignRelease(ctx context.Context, schema int64, encoded []byte) (str
 		return "", err
 	}
 	return signDigest(k.Secret, ReleaseDigest(schema, encoded))
+}
+
+// SignChange signs ChangeDigest with this key, and returns the signature in
+// hex.
+func (k Key) SignChange(ctx context.Context, blobID string, record nostr.ID) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return signDigest(k.Secret, ChangeDigest(blobID, record))
 }

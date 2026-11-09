@@ -13,10 +13,12 @@ import (
 // the keyed root from its draft, and calls storage citizens with its
 // device key.
 type Holder interface {
+	keys.Signer
 	KeyedRoot(ctx context.Context) ([]byte, error)
 	AccountKey(ctx context.Context, storage nostr.PubKey) (keys.Key, error)
 	SignJoin(ctx context.Context, account, storage nostr.PubKey) (string, error)
 	SignRelease(ctx context.Context, schema int64, encoded []byte) (string, error)
+	SignChange(ctx context.Context, blobID string, record nostr.ID) (string, error)
 }
 
 // holder is the Holder of this machine. A device has none.

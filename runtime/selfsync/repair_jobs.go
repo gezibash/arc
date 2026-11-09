@@ -25,7 +25,7 @@ func (r *run) runJobs(ctx context.Context, jobs []*job) error {
 		// A wrap whose body the device lacks is got and rebuilt.
 		if j.event != nil && (j.reseal || j.sl.h.K == 1) && r.hasBody(*j.event) {
 			if body, ok := r.bodyOf(*j.event); ok {
-				blob, err := r.sealRecord(*j.event, body)
+				blob, err := r.sealRecord(ctx, *j.event, body)
 				if err != nil {
 					return err
 				}

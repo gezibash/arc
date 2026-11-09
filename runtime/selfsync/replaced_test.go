@@ -54,7 +54,7 @@ func (b *pageBench) newStore() *store.Store {
 
 func (b *pageBench) syncer(local Store) *Syncer {
 	return &Syncer{
-		Citizen: b.citizen.Public, Device: b.citizen.Secret, Store: local, State: b.t.TempDir(),
+		Citizen: b.citizen.Public, Device: b.citizen, Store: local, State: b.t.TempDir(),
 		Newest:  func(context.Context) (Keys, error) { return b.keys, nil },
 		Keys:    func(context.Context, uint32) (Keys, error) { return b.keys, nil },
 		Devices: func(context.Context) (devices.List, bool, error) { return devices.List{}, false, nil },

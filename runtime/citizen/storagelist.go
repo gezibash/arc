@@ -87,7 +87,7 @@ func (sess *Session) keptStorageList(ctx context.Context) (storage.List, bool) {
 	if sealed == nil {
 		return storage.List{}, false
 	}
-	text, err := k.Decrypt(ctx, string(sealed), k.Public)
+	text, err := k.Decrypt(ctx, string(sealed), k.PublicKey())
 	if err != nil {
 		sess.warnf("arc: the storage list on this disk does not open: %v\n", err)
 		return storage.List{}, false
@@ -110,7 +110,7 @@ func (sess *Session) keepStorageList(ctx context.Context, list storage.List) err
 	if err != nil {
 		return err
 	}
-	sealed, err := k.Encrypt(ctx, string(text), k.Public)
+	sealed, err := k.Encrypt(ctx, string(text), k.PublicKey())
 	if err != nil {
 		return err
 	}

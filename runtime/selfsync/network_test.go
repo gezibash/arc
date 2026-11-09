@@ -150,7 +150,7 @@ func testSyncer(t *testing.T, citizen keys.Key, local *memStore) *Syncer {
 	t.Helper()
 	k := testKeys(t, 0)
 	return &Syncer{
-		Citizen: citizen.Public, Device: citizen.Secret, Store: local, State: t.TempDir(),
+		Citizen: citizen.Public, Device: citizen, Store: local, State: t.TempDir(),
 		Newest:  func(context.Context) (Keys, error) { return k, nil },
 		Keys:    func(context.Context, uint32) (Keys, error) { return k, nil },
 		Devices: func(context.Context) (devices.List, bool, error) { return devices.List{}, false, nil },

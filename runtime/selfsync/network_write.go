@@ -65,7 +65,7 @@ func (r *run) write(ctx context.Context) error {
 				if !ok {
 					return nil, false, nil
 				}
-				_, blob, err := Seal(r.current, r.s.Device, event, body)
+				_, blob, err := Seal(ctx, r.current, r.s.Device, event, body)
 				whole = blob
 				return blob, err == nil, err
 			}
@@ -122,8 +122,8 @@ func (r *run) write(ctx context.Context) error {
 }
 
 // sealRecord seals a record into a new blob with the newest keys.
-func (r *run) sealRecord(event nostr.Event, body []byte) ([]byte, error) {
-	_, blob, err := Seal(r.current, r.s.Device, event, body)
+func (r *run) sealRecord(ctx context.Context, event nostr.Event, body []byte) ([]byte, error) {
+	_, blob, err := Seal(ctx, r.current, r.s.Device, event, body)
 	return blob, err
 }
 
