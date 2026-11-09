@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -59,55 +58,66 @@ func checkFunctions(sizes, debt map[string]int) []string {
 	return problems
 }
 
-// functionSizes gives the length in lines of each function declaration in
-// the source files under root, by the name that functionName gives it. It
-// reads the same folders as TestFileSize.
+// functionSizes gives the length in lines of each function under root,
+// by the name that functionName gives it. It reads the same files as
+// TestFileSize.
 func functionSizes(root string) (map[string]int, error) {
 	sizes := map[string]int{}
-	for _, layer := range []string{"core", "sdk", "adapters", "runtime", "apps", "cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(root, layer), func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() && entry.Name() == "testdata" {
-				return filepath.SkipDir
-			}
-			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			relative, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			files := token.NewFileSet()
-			file, err := parser.ParseFile(files, path, nil, parser.SkipObjectResolution)
-			if err != nil {
-				return err
-			}
-			maps.Copy(sizes, fileFunctionSizes(files, file, filepath.ToSlash(relative)))
-			return nil
-		})
+	err := walkSources(root, func(path, relative string) error {
+		files := token.NewFileSet()
+		file, err := parser.ParseFile(files, path, nil, parser.SkipObjectResolution)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
-	return sizes, nil
+		maps.Copy(sizes, fileFunctionSizes(files, file, relative))
+		return nil
+	})
+	return sizes, err
 }
 
-// fileFunctionSizes gives the length of each function declaration in one
-// parsed file: from the line of func to the line of the closing brace.
+// fileFunctionSizes gives the length of each function in one parsed file:
+// a declaration from the line of func to the line of its closing brace,
+// and a package variable from its name to the end of its value when the
+// value holds a function literal. When two have one name, such as two
+// init functions, the longer one counts.
 func fileFunctionSizes(files *token.FileSet, file *ast.File, path string) map[string]int {
 	sizes := map[string]int{}
+	add := func(name string, from, to token.Pos) {
+		n := files.Position(to).Line - files.Position(from).Line + 1
+		sizes[name] = max(sizes[name], n)
+	}
 	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			continue
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Body != nil {
+				add(functionName(path, d), d.Pos(), d.End())
+			}
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, v := range value.Values {
+					if i < len(value.Names) && holdsFunction(v) {
+						add(path+":"+value.Names[i].Name, value.Names[i].Pos(), v.End())
+					}
+				}
+			}
 		}
-		first := files.Position(fn.Pos()).Line
-		last := files.Position(fn.End()).Line
-		sizes[functionName(path, fn)] = last - first + 1
 	}
 	return sizes
+}
+
+// holdsFunction says whether an expression holds a function literal.
+func holdsFunction(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(n ast.Node) bool {
+		_, lit := n.(*ast.FuncLit)
+		found = found || lit
+		return !found
+	})
+	return found
 }
 
 // functionName names a function as path:Name, and a method as
@@ -162,7 +172,8 @@ func TestCheckFunctions(t *testing.T) {
 }
 
 // TestFunctionSizeCounts counts a parsed file: a function from func to its
-// closing brace, with its literals, and each method under its type.
+// closing brace, with its literals; each method under its type; the longer
+// of two init functions; and a package variable that holds a function.
 func TestFunctionSizeCounts(t *testing.T) {
 	source := `package p
 
@@ -182,6 +193,20 @@ func (*U) m() {
 }
 
 type U struct{}
+
+func init() {
+	_ = 1
+}
+
+func init() {}
+
+var command = &struct{ run func() }{
+	run: func() {
+		_ = 1
+	},
+}
+
+var plain = 1
 `
 	files := token.NewFileSet()
 	file, err := parser.ParseFile(files, "p.go", source, 0)
@@ -189,7 +214,7 @@ type U struct{}
 		t.Fatal(err)
 	}
 	got := fileFunctionSizes(files, file, "p.go")
-	want := map[string]int{"p.go:f": 6, "p.go:T.m": 1, "p.go:U.m": 2}
+	want := map[string]int{"p.go:f": 6, "p.go:T.m": 1, "p.go:U.m": 2, "p.go:init": 3, "p.go:command": 5}
 	for name, n := range want {
 		if got[name] != n {
 			t.Errorf("%s: got %d lines, want %d (all: %v)", name, got[name], n, got)
