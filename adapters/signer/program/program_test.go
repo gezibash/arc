@@ -116,3 +116,24 @@ func TestFind(t *testing.T) {
 		}
 	}
 }
+
+// TestALeftRequestKeepsTheSigner leaves requests whose context ends, as a
+// live caller of arc serve does when it goes away. The signer keeps
+// answering the next callers, in order.
+func TestALeftRequestKeepsTheSigner(t *testing.T) {
+	program := signer(t)
+	dir := t.TempDir()
+	if out, err := run(t, program, "", nil, "gen", "--dir", dir); err != nil {
+		t.Fatalf("gen: %v: %s", err, out)
+	}
+	client := &Client{Program: program, Dir: dir}
+	t.Cleanup(func() { _ = client.Close() })
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 20 {
+		_, _ = client.Call(gone, "get_public_key")
+		if got, err := client.Call(context.Background(), "ping"); err != nil || got != "pong" {
+			t.Fatalf("after a left request, ping gave %q, %v", got, err)
+		}
+	}
+}

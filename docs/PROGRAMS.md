@@ -101,8 +101,13 @@ read the new key file.
 - `go test ./adapters/signer/program`: arc-signer makes, imports and seals
   a key, and answers over its lines; a wrong passphrase does not open it.
 - `go test ./internal/proof`: the proofs run every relay through
-  `arc-relay`, every key through `arc-signer`, and the homes of older `arc`
-  versions through the migration.
+  `arc-relay`, and every key through `arc-signer`. Where a proof runs an
+  older `arc` on a home, the next run of this `arc` moves the key file that
+  the older one reads to arc-signer.
+- `TestTheBunkerRefusesHolderRequests` in `cmd/arc`: the bunker refuses
+  each holder request of a device, and never sends it to the signer.
+- `TestALeftRequestKeepsTheSigner` in `adapters/signer/program`: a caller
+  that leaves a request does not stop the signer for the next caller.
 
 ## 5. Unverified
 

@@ -56,6 +56,9 @@ type Client struct {
 	out    *bufio.Reader
 	next   int
 	broken error
+	// late is closed when the read of a request that its caller left
+	// ends. The next request waits for it, so answers stay in order.
+	late chan struct{}
 }
 
 func (c *Client) start() error {
@@ -79,11 +82,19 @@ func (c *Client) start() error {
 	return nil
 }
 
-// Call sends one request, and returns its result. A request that ctx
-// stops stops the program: its answer can no longer be matched.
+// Call sends one request, and returns its result. When ctx ends first, the
+// caller leaves; the program keeps running, and its answer is dropped.
 func (c *Client) Call(ctx context.Context, method string, params ...string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.late != nil {
+		select {
+		case <-c.late:
+			c.late = nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if c.broken != nil {
 		return "", c.broken
 	}
@@ -103,7 +114,9 @@ func (c *Client) Call(ctx context.Context, method string, params ...string) (str
 		err      error
 	}
 	done := make(chan answer, 1)
+	ended := make(chan struct{})
 	go func() {
+		defer close(ended)
 		if _, err := c.in.Write(append(line, '\n')); err != nil {
 			done <- answer{err: err}
 			return
@@ -136,8 +149,15 @@ func (c *Client) Call(ctx context.Context, method string, params ...string) (str
 		}
 		return a.response.Result, nil
 	case <-ctx.Done():
-		c.broken = ctx.Err()
-		c.stop()
+		c.late = ended
+		go func() {
+			// A read that fails breaks the program for the next caller.
+			if a := <-done; a.err != nil {
+				c.mu.Lock()
+				c.broken = fmt.Errorf("the program signer stopped: %w", a.err)
+				c.mu.Unlock()
+			}
+		}()
 		return "", ctx.Err()
 	}
 }
