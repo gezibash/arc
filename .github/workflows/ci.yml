@@ -1,17 +1,26 @@
 name: CI
 
+# A pull request runs the fast checks. The race detector runs on each push
+# to main, each night, and on a pull request with the label "race".
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A new push replaces the checks of a pull request. Each other run has
+  # a group of its own: a group keeps one waiting run only, so a shared
+  # group on main would drop the race jobs of a commit between two pushes.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -41,15 +50,22 @@ jobs:
           if os.environ["EVENT_NAME"] == "pull_request":
               pr = event["pull_request"]
               revision = f"{pr['base']['sha']}...{pr['head']['sha']}"
-          else:
+          elif os.environ["EVENT_NAME"] == "push":
               revision = f"{event['before']}..{event['after']}"
-          # A missing base (for example a new branch) must run all checks.
-          diff = subprocess.run(
-              ["git", "diff", "--name-only", "--no-renames", "-z", revision],
-              capture_output=True,
-          )
-          code = release = diff.returncode != 0
-          for raw in diff.stdout.split(b"\0"):
+          else:
+              # The nightly run and a manual run check everything.
+              revision = None
+          changed = b""
+          code = release = revision is None
+          if revision:
+              # A missing base (for example a new branch) must run all checks.
+              diff = subprocess.run(
+                  ["git", "diff", "--name-only", "--no-renames", "-z", revision],
+                  capture_output=True,
+              )
+              code = release = diff.returncode != 0
+              changed = diff.stdout
+          for raw in changed.split(b"\0"):
               if not raw:
                   continue
               path = PurePosixPath(os.fsdecode(raw))
@@ -137,6 +153,8 @@ jobs:
       - run: go test -count=1 -run '^TestInterface' ./internal/proof/
 
   # The race detector runs in its own jobs, so the jobs above stay fast.
+  # A pull request skips them, unless it has the label "race": they take
+  # about 15 minutes. Each push to main and the nightly run have them.
   # The proofs are split into shards by .github/scripts/proof-shards.sh.
   # GOFLAGS reaches each `go build` that a test runs, so the programs that
   # the tests start also have the race detector. Each process writes its
@@ -144,8 +162,11 @@ jobs:
   # race in its exit status, so the last step fails on any report file.
   race:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}
     name: Race detector (${{ matrix.part }})
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true')
+      && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'race')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -159,8 +180,9 @@ jobs:
           fetch-depth: 0
       # The cache of setup-go holds no builds with the race detector. These
       # jobs keep their own build cache: one for the packages, one for the
-      # proofs. Only a push to main saves it, so the caches stay small. A
-      # pull request restores the latest cache of main.
+      # proofs. Only a run on main (a push, the nightly run or a manual run)
+      # saves it, so the caches stay small. The nightly run keeps it from
+      # expiring. A pull request restores the latest cache of main.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.3"
@@ -212,7 +234,7 @@ jobs:
           fi
       # The storage-pieces shard builds the most for the proofs: the
       # programs of this commit, and the older programs.
-      - if: ${{ github.event_name == 'push' && (matrix.part == 'packages' || matrix.part == 'storage-pieces') }}
+      - if: ${{ github.event_name != 'pull_request' && (matrix.part == 'packages' || matrix.part == 'storage-pieces') }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -235,3 +257,30 @@ jobs:
           go-version: "1.27.3"
           cache: true
       - run: bash .github/scripts/check-clean-build.sh
+
+  # A run on main has no pull request to show its failure. This job keeps
+  # one open issue with the label ci-main, and adds a comment for each
+  # failed run.
+  alert:
+    needs: [go, delivery, interface, race, clean-build]
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    name: Report a failure on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      EVENT: ${{ github.event_name }}
+      SHA: ${{ github.sha }}
+    steps:
+      - run: |
+          body="CI failed on main ($EVENT) at $SHA: $RUN"
+          issue=$(gh issue list --label ci-main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --label ci-main --title "CI fails on main" --body "$body"
+          fi
