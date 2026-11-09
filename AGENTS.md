@@ -129,6 +129,12 @@ Follow it for implementation, tests, documentation, and PR review.
 - Distinguish automated checks from tests on real devices.
   Report missing hardware proof before you claim the transport works.
 
+## Pull requests
+
+- Run `/code-review high` on every pull request before you ask for a merge.
+  Fix each finding, or say in the PR why it stays. Run it again after a
+  change that the review did not see.
+
 ## Technical language
 
 Use short sentences and consistent terms in specifications and status reports.
