@@ -27,6 +27,12 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
   repository. If an app needs a helper, add the helper to `sdk/`. Do not
   import `core/`, `adapters/`, `runtime/`, `internal/` or another app.
 - `cmd/arc` is the arc program. It imports no app.
+- A role gets its own program in `cmd/arc-<role>` only when it runs on
+  another machine, holds a different key, or serves for months while the
+  commands of a citizen run and exit. `cmd/arc-relay` is the relay. It
+  holds no citizen and imports no `runtime/` package.
+- No source file holds more than 600 lines. Split a larger file by
+  concern. `go test ./internal/architecture` checks it.
 - The runtime and adapters must not import concrete `apps/` packages.
   Apps use the SDK to compose with other apps.
 - Define an interface at the layer that consumes its effect. Only interfaces

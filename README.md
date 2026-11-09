@@ -16,8 +16,9 @@ ARC moves signed Nostr events. A private event is sealed to its recipient,
 and a relay, a USB stick or another machine carries it without reading it.
 See [the delivery layer](docs/delivery/SPEC.md).
 
-`arc` is the one program. It keeps your identities, talks to relays, calls
-apps, serves their interfaces, and runs a relay.
+`arc` is the program of a citizen. It keeps your identities, talks to
+relays, calls apps and serves their interfaces. `arc-relay` runs a relay.
+Each program does one job.
 
 ## Install
 

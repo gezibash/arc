@@ -7,6 +7,7 @@ show source dependencies, not the order in which a message travels.
 ```mermaid
 flowchart LR
     ARC["cmd/arc<br/>The arc program"]
+    RELAY["cmd/arc-relay<br/>The relay program"]
     APPS["apps<br/>Concrete apps and their service programs"]
     RUNTIME["runtime<br/>Citizen workflows and command policy"]
     ADAPTER["adapters<br/>Transports, storage and process hosting"]
@@ -16,6 +17,8 @@ flowchart LR
     ARC --> ADAPTER
     ARC --> SDK
     ARC --> CORE
+    RELAY --> ADAPTER
+    RELAY --> SDK
     APPS --> SDK
     RUNTIME --> ADAPTER
     RUNTIME --> SDK
@@ -39,6 +42,8 @@ flowchart LR
 | Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
 | `apps/<name>/` | One complete app: manifest, Arcfile, service implementation in `server/`, and its program in `cmd/arc-<name>`. Data apps can consist of a manifest. |
 | `cmd/arc` | The arc program. It imports no app. |
+| `cmd/arc-relay` | The relay program. It holds no citizen and imports no runtime package. |
+| `adapters/relay/relayserver` | The ARC relay: khatru with its store, the sealed-data rule, limits, the connection log and rings. |
 | `sdk/provider`, `sdk/stdio` | The provider runtime for an app, its session types, and process standard streams. |
 | `sdk/httpadapter`, `sdk/execadapter`, `sdk/ndjson` | HTTP and process I/O mapped to ARC calls and sessions, and their record reader. |
 | `sdk/providerconfig`, `sdk/strictjson`, `sdk/atomicfile`, `sdk/limitio` | Configuration files, strict JSON, atomic file writes and bounded buffers. |
