@@ -16,7 +16,7 @@ import (
 	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
@@ -80,7 +80,7 @@ func announceCmd() *cobra.Command {
 			}
 			defer sess.Close()
 
-			m, err := iface.Parse(data)
+			m, err := manifest.Parse(data)
 			if err != nil {
 				return err
 			}

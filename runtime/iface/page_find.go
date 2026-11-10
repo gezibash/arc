@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -57,7 +58,7 @@ func (r *run) headD(tmpl, address string) (string, error) {
 
 // head reads the head of a page, or nil.
 func (r *run) head(kind, d string) (*entry, error) {
-	entries, err := r.query(&Query{Kinds: []string{kind}, Authors: "me", D: d, Limit: "1"})
+	entries, err := r.query(&manifest.Query{Kinds: []string{kind}, Authors: "me", D: d, Limit: "1"})
 	if err != nil || len(entries) == 0 {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-package iface
+package manifest
 
 import (
 	"errors"
@@ -18,6 +18,20 @@ func (m *Manifest) check() error {
 	if !slices.Contains(shapes, m.Shape) {
 		return fmt.Errorf("the shape %q must be service or data", m.Shape)
 	}
+	if err := m.checkService(); err != nil {
+		return err
+	}
+	if err := m.checkKinds(); err != nil {
+		return err
+	}
+	if err := m.checkFormats(); err != nil {
+		return err
+	}
+	return m.checkCommands()
+}
+
+// checkService checks the service section against the shape.
+func (m *Manifest) checkService() error {
 	if m.Shape == "service" && m.Service == nil {
 		return errors.New("a service needs a service section")
 	}
@@ -49,10 +63,15 @@ func (m *Manifest) check() error {
 			return fmt.Errorf("the output of the service: %w", err)
 		}
 	}
+	return nil
+}
 
+// checkKinds checks each kind, its notebook kinds, and the group section
+// that a group kind needs.
+func (m *Manifest) checkKinds() error {
 	grouped := false
 	for name, kind := range m.Kinds {
-		if !namePattern.MatchString(name) {
+		if !NamePattern.MatchString(name) {
 			return fmt.Errorf("the kind name %q must be lower-case letters, digits and underscores", name)
 		}
 		if kind.Kind < 0 || kind.Kind > 65535 {
@@ -66,7 +85,7 @@ func (m *Manifest) check() error {
 		}
 		seen := map[string]bool{}
 		for _, field := range kind.Frontmatter {
-			if !namePattern.MatchString(field) || seen[field] {
+			if !NamePattern.MatchString(field) || seen[field] {
 				return fmt.Errorf("kind %s: invalid or repeated frontmatter field %q", name, field)
 			}
 			seen[field] = true
@@ -93,7 +112,11 @@ func (m *Manifest) check() error {
 	if grouped && (m.Group == nil || m.Group.Relay == "" || m.Group.ID == "") {
 		return errors.New("a group kind needs a group section with a relay and an id")
 	}
+	return nil
+}
 
+// checkFormats checks that each format compiles.
+func (m *Manifest) checkFormats() error {
 	for name, format := range m.Formats {
 		if format.Record != "" && format.Table != nil {
 			return fmt.Errorf("format %s: a format has a record or a table, not both", name)
@@ -104,7 +127,12 @@ func (m *Manifest) check() error {
 			}
 		}
 	}
+	return nil
+}
 
+// checkCommands checks that the manifest has a command, that no two
+// commands share a path, and each command.
+func (m *Manifest) checkCommands() error {
 	if len(m.Commands) == 0 && (m.Service == nil || (!session.Supports(m.Service.Interactions, session.ServerStream) && !session.Supports(m.Service.Interactions, session.Duplex))) {
 		return errors.New("the manifest has no command")
 	}
@@ -132,50 +160,10 @@ func (m *Manifest) checkCommand(c Command) error {
 		}
 	}
 
-	names := slices.Clone(builtins)
-	stdin := 0
-	positionals := 0
-	variadic := false
-	for _, a := range c.Args {
-		if !namePattern.MatchString(a.Name) || slices.Contains(names, a.Name) {
-			return fmt.Errorf("the argument name %q is not valid, or not unique", a.Name)
-		}
-		names = append(names, a.Name)
-		if !slices.Contains(argKinds, a.Kind) {
-			return fmt.Errorf("argument %s: the kind %q must be positional, option or switch", a.Name, a.Kind)
-		}
-		if !slices.Contains(argTypes, a.Type) && a.Kind != "switch" {
-			return fmt.Errorf("argument %s: the type %q does not exist", a.Name, a.Type)
-		}
-		if a.Name == "json" || a.Name == "later" || a.Name == "help" || a.Name == "dry_run" {
-			return fmt.Errorf("argument %s: every command has --%s", a.Name, a.Name)
-		}
-		switch {
-		case a.Type == "stdin":
-			stdin++
-		case a.Kind == "positional":
-			if variadic {
-				return fmt.Errorf("argument %s: only the last positional can be variadic", a.Name)
-			}
-			positionals++
-			variadic = a.Variadic
-		}
-		if a.Variadic && (a.Kind != "positional" || a.Type != "text") {
-			return fmt.Errorf("argument %s: only a positional text can be variadic", a.Name)
-		}
-		if a.Type == "address" {
-			if a.Pattern == "" {
-				return fmt.Errorf("argument %s: an address needs a pattern", a.Name)
-			}
-			if _, err := regexp.Compile(a.Pattern); err != nil {
-				return fmt.Errorf("argument %s: the pattern does not compile: %w", a.Name, err)
-			}
-		}
+	names, err := checkArgs(c)
+	if err != nil {
+		return err
 	}
-	if stdin > 1 {
-		return errors.New("a command has at most one stdin argument")
-	}
-
 	check := func(tmpl string) error {
 		_, err := template.Compile(tmpl, func(root string) bool {
 			return slices.Contains(names, root)
@@ -187,74 +175,19 @@ func (m *Manifest) checkCommand(c Command) error {
 	a := c.Action
 	if a.Call != nil {
 		actions++
-		if m.Shape != "service" {
-			return errors.New("only a service has call")
-		}
-		if !slices.Contains(classes, a.Call.Class) {
-			return fmt.Errorf("the call class %q must be live or later", a.Call.Class)
-		}
-		for _, t := range []string{a.Call.Method, a.Call.Path, a.Call.Body} {
-			if err := check(t); err != nil {
-				return err
-			}
+		if err := m.checkCall(a.Call, check); err != nil {
+			return err
 		}
 	}
 	if a.Publish != nil {
 		actions++
-		if err := m.checkKind(a.Publish.Kind); err != nil {
+		if err := m.checkPublish(c, check); err != nil {
 			return err
-		}
-		switch visibility := m.Kinds[a.Publish.Kind].Visibility; {
-		case visibility == "sealed" && a.Publish.D == "":
-			return errors.New("a publish of a sealed kind needs a d tag")
-		case visibility == "private" && len(a.Publish.To) == 0:
-			return errors.New("a publish of a private kind needs recipients in to")
-		case visibility != "private" && len(a.Publish.To) > 0:
-			return errors.New("only a private kind has recipients")
-		}
-		if a.Publish.Revise != "" && a.Publish.Revise != "replace" && a.Publish.Revise != "append" {
-			return fmt.Errorf("revise %q must be replace or append", a.Publish.Revise)
-		}
-		if a.Publish.Body != "" {
-			name := bodyArg(a.Publish)
-			if m.Kinds[a.Publish.Kind].Visibility != "sealed" {
-				return errors.New("only a publish of a sealed kind has a body")
-			}
-			if !slices.ContainsFunc(c.Args, func(arg Arg) bool { return arg.Name == name && arg.Type == "file" }) {
-				return fmt.Errorf("the body %q must name one file argument, as {{file}}", a.Publish.Body)
-			}
-			if a.Publish.Revise == "append" {
-				return errors.New("a publish with a body replaces the draft: it cannot append")
-			}
-		}
-		if a.Publish.FrontmatterAddress != "" {
-			required := m.Kinds[a.Publish.Kind].Frontmatter
-			if !slices.Contains(required, "page") || !slices.Contains(required, "notebook") {
-				return errors.New("frontmatter_address requires page and notebook fields")
-			}
-		}
-		templates := append([]string{a.Publish.D, a.Publish.Content.Text, a.Publish.FrontmatterAddress}, a.Publish.To...)
-		for _, tag := range a.Publish.Tags {
-			templates = append(templates, tag...)
-		}
-		templates = append(templates, jsonTemplates(a.Publish.Content.JSON)...)
-		for _, t := range templates {
-			if err := check(t); err != nil {
-				return err
-			}
 		}
 	}
 	if a.Notebook != nil {
 		actions++
-		// The d template of a notebook action names the page address, which
-		// the notebook resolves, as address.
-		checkD := func(tmpl string) error {
-			_, err := template.Compile(tmpl, func(root string) bool {
-				return root == "address" || slices.Contains(names, root)
-			})
-			return err
-		}
-		if err := m.checkNotebook(a.Notebook, check, checkD); err != nil {
+		if err := m.checkNotebookAction(a.Notebook, names, check); err != nil {
 			return err
 		}
 	}
@@ -272,30 +205,8 @@ func (m *Manifest) checkCommand(c Command) error {
 			continue
 		}
 		actions++
-		if len(q.Kinds) == 0 {
-			return errors.New("a query names at least one kind")
-		}
-		for _, k := range q.Kinds {
-			if err := m.checkKind(k); err != nil {
-				return err
-			}
-			if m.Kinds[k].Visibility != m.Kinds[q.Kinds[0]].Visibility {
-				return errors.New("a query reads kinds of one visibility")
-			}
-		}
-		templates := []string{q.D, q.IDs, string(q.Since), string(q.Until), string(q.Limit)}
-		switch q.Authors {
-		case "", "me", "author", "any":
-		default:
-			templates = append(templates, q.Authors)
-		}
-		for _, v := range q.Tags {
-			templates = append(templates, v)
-		}
-		for _, t := range templates {
-			if err := check(t); err != nil {
-				return err
-			}
+		if err := m.checkQuery(q, check); err != nil {
+			return err
 		}
 	}
 	if actions != 1 {
@@ -303,16 +214,171 @@ func (m *Manifest) checkCommand(c Command) error {
 	}
 
 	if c.Output.Save != nil {
-		if _, err := saveArgument(c); err != nil {
+		if _, err := SaveArgument(c); err != nil {
 			return err
 		}
 	}
 	return m.checkOutput(c.Output, a.Watch != nil, check)
 }
 
+// checkArgs checks the arguments of a command, and gives the names that
+// its templates can use: the builtins and the arguments.
+func checkArgs(c Command) ([]string, error) {
+	names := slices.Clone(builtins)
+	stdin := 0
+	positionals := 0
+	variadic := false
+	for _, a := range c.Args {
+		if !NamePattern.MatchString(a.Name) || slices.Contains(names, a.Name) {
+			return nil, fmt.Errorf("the argument name %q is not valid, or not unique", a.Name)
+		}
+		names = append(names, a.Name)
+		if !slices.Contains(argKinds, a.Kind) {
+			return nil, fmt.Errorf("argument %s: the kind %q must be positional, option or switch", a.Name, a.Kind)
+		}
+		if !slices.Contains(argTypes, a.Type) && a.Kind != "switch" {
+			return nil, fmt.Errorf("argument %s: the type %q does not exist", a.Name, a.Type)
+		}
+		if a.Name == "json" || a.Name == "later" || a.Name == "help" || a.Name == "dry_run" {
+			return nil, fmt.Errorf("argument %s: every command has --%s", a.Name, a.Name)
+		}
+		switch {
+		case a.Type == "stdin":
+			stdin++
+		case a.Kind == "positional":
+			if variadic {
+				return nil, fmt.Errorf("argument %s: only the last positional can be variadic", a.Name)
+			}
+			positionals++
+			variadic = a.Variadic
+		}
+		if a.Variadic && (a.Kind != "positional" || a.Type != "text") {
+			return nil, fmt.Errorf("argument %s: only a positional text can be variadic", a.Name)
+		}
+		if a.Type == "address" {
+			if a.Pattern == "" {
+				return nil, fmt.Errorf("argument %s: an address needs a pattern", a.Name)
+			}
+			if _, err := regexp.Compile(a.Pattern); err != nil {
+				return nil, fmt.Errorf("argument %s: the pattern does not compile: %w", a.Name, err)
+			}
+		}
+	}
+	if stdin > 1 {
+		return nil, errors.New("a command has at most one stdin argument")
+	}
+	return names, nil
+}
+
+// checkCall checks the call action of a command.
+func (m *Manifest) checkCall(call *Call, check func(string) error) error {
+	if m.Shape != "service" {
+		return errors.New("only a service has call")
+	}
+	if !slices.Contains(classes, call.Class) {
+		return fmt.Errorf("the call class %q must be live or later", call.Class)
+	}
+	for _, t := range []string{call.Method, call.Path, call.Body} {
+		if err := check(t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkPublish checks the publish action of a command, and its templates.
+func (m *Manifest) checkPublish(c Command, check func(string) error) error {
+	a := c.Action
+	if err := m.checkKind(a.Publish.Kind); err != nil {
+		return err
+	}
+	switch visibility := m.Kinds[a.Publish.Kind].Visibility; {
+	case visibility == "sealed" && a.Publish.D == "":
+		return errors.New("a publish of a sealed kind needs a d tag")
+	case visibility == "private" && len(a.Publish.To) == 0:
+		return errors.New("a publish of a private kind needs recipients in to")
+	case visibility != "private" && len(a.Publish.To) > 0:
+		return errors.New("only a private kind has recipients")
+	}
+	if a.Publish.Revise != "" && a.Publish.Revise != "replace" && a.Publish.Revise != "append" {
+		return fmt.Errorf("revise %q must be replace or append", a.Publish.Revise)
+	}
+	if a.Publish.Body != "" {
+		name := BodyArg(a.Publish)
+		if m.Kinds[a.Publish.Kind].Visibility != "sealed" {
+			return errors.New("only a publish of a sealed kind has a body")
+		}
+		if !slices.ContainsFunc(c.Args, func(arg Arg) bool { return arg.Name == name && arg.Type == "file" }) {
+			return fmt.Errorf("the body %q must name one file argument, as {{file}}", a.Publish.Body)
+		}
+		if a.Publish.Revise == "append" {
+			return errors.New("a publish with a body replaces the draft: it cannot append")
+		}
+	}
+	if a.Publish.FrontmatterAddress != "" {
+		required := m.Kinds[a.Publish.Kind].Frontmatter
+		if !slices.Contains(required, "page") || !slices.Contains(required, "notebook") {
+			return errors.New("frontmatter_address requires page and notebook fields")
+		}
+	}
+	templates := append([]string{a.Publish.D, a.Publish.Content.Text, a.Publish.FrontmatterAddress}, a.Publish.To...)
+	for _, tag := range a.Publish.Tags {
+		templates = append(templates, tag...)
+	}
+	templates = append(templates, jsonTemplates(a.Publish.Content.JSON)...)
+	for _, t := range templates {
+		if err := check(t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkNotebookAction checks the notebook action of a command. Its d
+// template names the page address, which the notebook resolves, as address.
+func (m *Manifest) checkNotebookAction(n *Notebook, names []string, check func(string) error) error {
+	checkD := func(tmpl string) error {
+		_, err := template.Compile(tmpl, func(root string) bool {
+			return root == "address" || slices.Contains(names, root)
+		})
+		return err
+	}
+	return m.checkNotebook(n, check, checkD)
+}
+
+// checkQuery checks a query or a watch of a command, and its templates.
+func (m *Manifest) checkQuery(q *Query, check func(string) error) error {
+	if len(q.Kinds) == 0 {
+		return errors.New("a query names at least one kind")
+	}
+	for _, k := range q.Kinds {
+		if err := m.checkKind(k); err != nil {
+			return err
+		}
+		if m.Kinds[k].Visibility != m.Kinds[q.Kinds[0]].Visibility {
+			return errors.New("a query reads kinds of one visibility")
+		}
+	}
+	templates := []string{q.D, q.IDs, string(q.Since), string(q.Until), string(q.Limit)}
+	switch q.Authors {
+	case "", "me", "author", "any":
+	default:
+		templates = append(templates, q.Authors)
+	}
+	for _, v := range q.Tags {
+		templates = append(templates, v)
+	}
+	for _, t := range templates {
+		if err := check(t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // A save destination is exactly one explicit path argument. Templates of
 // response fields, defaults and transformations cannot authorize file writes.
-func saveArgument(c Command) (string, error) {
+func SaveArgument(c Command) (string, error) {
 	t, err := template.Compile(c.Output.Save.To, nil)
 	if err == nil {
 		if name, ok := t.PlaceholderOnly(); ok {

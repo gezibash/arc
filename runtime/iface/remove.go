@@ -9,6 +9,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -187,11 +188,11 @@ func (r *run) reportUnnamed(kind string) error {
 	return nil
 }
 
-func (r *run) remove(dl *Delete) ([]*entry, error) { return r.removeKeeping(dl, nil) }
+func (r *run) remove(dl *manifest.Delete) ([]*entry, error) { return r.removeKeeping(dl, nil) }
 
 // removeKeeping deletes a draft and its history, except the events of the
 // IDs in keep, such as the head of a lost page at the same address.
-func (r *run) removeKeeping(dl *Delete, keep []string) ([]*entry, error) {
+func (r *run) removeKeeping(dl *manifest.Delete, keep []string) ([]*entry, error) {
 	if err := r.sealedOnly(dl.Kind, "delete"); err != nil {
 		return nil, err
 	}

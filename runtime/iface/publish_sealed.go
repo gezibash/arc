@@ -9,9 +9,10 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
-func (r *run) publishSealed(p *Publish) ([]*entry, error) {
+func (r *run) publishSealed(p *manifest.Publish) ([]*entry, error) {
 	kind := r.kindOf(p.Kind)
 	d, err := r.template(p.D)
 	if err != nil {
@@ -40,8 +41,8 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 		}
 	}
 	now := after(old, nostr.Timestamp(r.env.Now().Unix()))
-	if p.at != 0 {
-		now = p.at
+	if p.At != 0 {
+		now = p.At
 	}
 	var keep []string
 	var keptLines []int
@@ -136,7 +137,7 @@ func (r *run) publishSealed(p *Publish) ([]*entry, error) {
 
 	inner := nostr.Event{Kind: nostr.Kind(kind.Kind), CreatedAt: now, Tags: tags, Content: head, PubKey: r.env.Me()}
 	var body []byte
-	if name := bodyArg(p); name != "" {
+	if name := manifest.BodyArg(p); name != "" {
 		file, ok := r.values[name].(fileValue)
 		if !ok {
 			return nil, fmt.Errorf("the body needs the file %s", name)
@@ -222,7 +223,7 @@ func mergeTags(old, new nostr.Tags) nostr.Tags {
 
 // content renders the content of a publish: text, or a JSON object whose
 // strings are templates.
-func (r *run) content(c Content) (string, error) {
+func (r *run) content(c manifest.Content) (string, error) {
 	if c.JSON == nil {
 		return r.template(c.Text)
 	}

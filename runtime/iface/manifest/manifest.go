@@ -3,7 +3,7 @@
 //
 // A manifest names primitives, and this package runs them. A manifest holds
 // no code.
-package iface
+package manifest
 
 import (
 	"bytes"
@@ -129,16 +129,16 @@ type Publish struct {
 	// the draft as its body, not into the content. Only a sealed kind has
 	// a body.
 	Body string `json:"body,omitempty"`
-	// at is the time of an entry, which a notebook sets. A manifest cannot.
-	at nostr.Timestamp
+	// At is the time of an entry, which a notebook sets. A manifest cannot.
+	At nostr.Timestamp `json:"-"`
 }
 
 // bodyPattern is the one form of a body: the name of a file argument.
 var bodyPattern = regexp.MustCompile(`^\{\{\s*([a-z][a-z0-9_]*)\s*\}\}$`)
 
-// bodyArg is the name of the file argument that a publish takes as its
+// BodyArg is the name of the file argument that a publish takes as its
 // body, or "".
-func bodyArg(p *Publish) string {
+func BodyArg(p *Publish) string {
 	if p == nil {
 		return ""
 	}
@@ -301,7 +301,7 @@ var (
 	classes      = []string{"live", "later"}
 	parses       = []string{"text", "json", "frontmatter"}
 	idPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
-	namePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	NamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	wordPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 )
 

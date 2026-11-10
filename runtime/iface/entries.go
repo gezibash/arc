@@ -14,6 +14,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -422,9 +423,9 @@ func (r *run) addEntry(kind string, page *notebookPage, text, corrects string) e
 		}
 	}
 	scoped := r.scopedWith(Values{"entry_text": text, "entry_d": d, "entry_page": page.base, "entry_head": page.hid, "entry_corrects": corrects, "entry_ms": strconv.FormatInt(ms, 10)})
-	_, err = scoped.publishSealed(&Publish{
-		Kind: name, D: key, Revise: "entry", at: nostr.Timestamp(ms / 1000),
-		Content: Content{Text: "{{entry_text}}"},
+	_, err = scoped.publishSealed(&manifest.Publish{
+		Kind: name, D: key, Revise: "entry", At: nostr.Timestamp(ms / 1000),
+		Content: manifest.Content{Text: "{{entry_text}}"},
 		Tags:    [][]string{{"d", "{{entry_d}}"}, {"page", "{{entry_page}}"}, {"head", "{{entry_head}}"}, {"corrects", "{{entry_corrects}}"}, {"ms", "{{entry_ms}}"}},
 	})
 	return err

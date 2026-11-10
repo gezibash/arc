@@ -11,6 +11,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 // Store is what the data actions need from the citizen's machine.
@@ -63,7 +64,7 @@ type entry struct {
 	wrap *nostr.Event
 }
 
-func (r *run) kindOf(name string) Kind { return r.in.Manifest.Kinds[name] }
+func (r *run) kindOf(name string) manifest.Kind { return r.in.Manifest.Kinds[name] }
 
 // kindName finds the name of an event kind among the kinds of a query.
 func (r *run) kindName(names []string, kind nostr.Kind) string {

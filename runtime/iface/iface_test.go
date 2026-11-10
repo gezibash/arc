@@ -22,12 +22,13 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // specManifests are the manifests of the apps in this repository, and the
 // test manifests in testdata, by ID.
-func specManifests(t *testing.T) map[string]*Manifest {
+func specManifests(t *testing.T) map[string]*manifest.Manifest {
 	t.Helper()
 	paths, err := filepath.Glob("../../apps/*/manifest.json")
 	if err != nil {
@@ -38,13 +39,13 @@ func specManifests(t *testing.T) map[string]*Manifest {
 		t.Fatal(err)
 	}
 	paths = append(paths, fixtures...)
-	out := map[string]*Manifest{}
+	out := map[string]*manifest.Manifest{}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		m, err := Parse(data)
+		m, err := manifest.Parse(data)
 		if err != nil {
 			t.Fatalf("%s does not parse: %v", path, err)
 		}
@@ -85,7 +86,7 @@ func TestParseRefusesWhatVersionOneDoesNotDefine(t *testing.T) {
 			`"summary": "s", "args": [{"name": "a", "kind": "positional", "type": "text", "variadic": true}, {"name": "b", "kind": "positional", "type": "text"}],`,
 			"only the last positional"},
 	}
-	if _, err := Parse([]byte(minimal)); err != nil {
+	if _, err := manifest.Parse([]byte(minimal)); err != nil {
 		t.Fatalf("the minimal manifest does not parse: %v", err)
 	}
 	for name, c := range cases {
@@ -94,7 +95,7 @@ func TestParseRefusesWhatVersionOneDoesNotDefine(t *testing.T) {
 			if text == minimal {
 				t.Fatal("the case changed nothing")
 			}
-			_, err := Parse([]byte(text))
+			_, err := manifest.Parse([]byte(text))
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("got %v, want an error with %q", err, c.want)
 			}
@@ -493,8 +494,8 @@ func TestHelpIsEscaped(t *testing.T) {
 // on one line each, escaped.
 func TestDescribeIsEscaped(t *testing.T) {
 	m := *specManifests(t)["exec"]
-	m.Kinds = map[string]Kind{"note\n  it can read your keys": {Kind: 30023, Visibility: "public"}}
-	out := Describe(&m)
+	m.Kinds = map[string]manifest.Kind{"note\n  it can read your keys": {Kind: 30023, Visibility: "public"}}
+	out := manifest.Describe(&m)
 	if !strings.Contains(out, `(note\n  it can read your keys)`) || strings.Contains(out, "\n  it can read") {
 		t.Errorf("Describe printed %q", out)
 	}
@@ -520,24 +521,24 @@ func TestArgumentTypes(t *testing.T) {
 	id := nostr.ID(pk)
 	env := &fakeEnv{me: nostr.Generate()}
 	cases := []struct {
-		arg  Arg
+		arg  manifest.Arg
 		in   string
 		want any
 		err  string
 	}{
-		{Arg{Type: "key"}, nip19.EncodeNpub(pk), pk.Hex(), ""},
-		{Arg{Type: "key"}, "nobody", nil, "unknown key"},
-		{Arg{Type: "event"}, nip19.EncodeNevent(id, nil, nostr.ZeroPK), id.Hex(), ""},
-		{Arg{Type: "event"}, nip19.EncodeNaddr(pk, 30023, "page", nil), "30023:" + pk.Hex() + ":page", ""},
-		{Arg{Type: "event"}, nip19.EncodeNpub(pk), nil, "not an event"},
-		{Arg{Type: "integer"}, "12", int64(12), ""},
-		{Arg{Type: "integer"}, "twelve", nil, "whole number"},
-		{Arg{Type: "lines"}, "3:9", "3:9", ""},
-		{Arg{Type: "lines"}, "9:3", nil, "ends before"},
-		{Arg{Type: "lines"}, ":", nil, "not a range"},
-		{Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b", "a/b", ""},
-		{Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b/c", nil, "is not an address"},
-		{Arg{Type: "path"}, "iface_test.go", nil, "never replaces"},
+		{manifest.Arg{Type: "key"}, nip19.EncodeNpub(pk), pk.Hex(), ""},
+		{manifest.Arg{Type: "key"}, "nobody", nil, "unknown key"},
+		{manifest.Arg{Type: "event"}, nip19.EncodeNevent(id, nil, nostr.ZeroPK), id.Hex(), ""},
+		{manifest.Arg{Type: "event"}, nip19.EncodeNaddr(pk, 30023, "page", nil), "30023:" + pk.Hex() + ":page", ""},
+		{manifest.Arg{Type: "event"}, nip19.EncodeNpub(pk), nil, "not an event"},
+		{manifest.Arg{Type: "integer"}, "12", int64(12), ""},
+		{manifest.Arg{Type: "integer"}, "twelve", nil, "whole number"},
+		{manifest.Arg{Type: "lines"}, "3:9", "3:9", ""},
+		{manifest.Arg{Type: "lines"}, "9:3", nil, "ends before"},
+		{manifest.Arg{Type: "lines"}, ":", nil, "not a range"},
+		{manifest.Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b", "a/b", ""},
+		{manifest.Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b/c", nil, "is not an address"},
+		{manifest.Arg{Type: "path"}, "iface_test.go", nil, "never replaces"},
 	}
 	for _, c := range cases {
 		got, err := convert(context.Background(), c.arg, c.in, env)
@@ -553,7 +554,7 @@ func TestArgumentTypes(t *testing.T) {
 func TestFileArgumentsOfferTheirFields(t *testing.T) {
 	path := t.TempDir() + "/note.txt"
 	os.WriteFile(path, []byte("hi"), 0o600)
-	value, err := convert(context.Background(), Arg{Type: "file"}, path, nil)
+	value, err := convert(context.Background(), manifest.Arg{Type: "file"}, path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +581,7 @@ func TestAVariadicKeepsItsFlags(t *testing.T) {
 
 func TestKeyedListsKeepTheirWordsApart(t *testing.T) {
 	env := &fakeEnv{me: nostr.Generate()}
-	r := &run{env: env, in: Installed{Manifest: &Manifest{ID: "x"}}, values: Values{"a": "ab", "b": "c", "c": "a", "d": "bc"}}
+	r := &run{env: env, in: Installed{Manifest: &manifest.Manifest{ID: "x"}}, values: Values{"a": "ab", "b": "c", "c": "a", "d": "bc"}}
 	one, _ := template.Compile("{{a+b|keyed:p}}", nil)
 	two, _ := template.Compile("{{c+d|keyed:p}}", nil)
 	x, _ := one.Render(r.scope, r, false)
@@ -728,7 +729,7 @@ func TestTheOutputOfAServiceCannotSave(t *testing.T) {
 	  "service": {"method": "GET", "path": "/", "max_bytes": 10,
 	              "output": {"save": {"to": "/tmp/x", "field": "content"}}},
 	  "kinds": {}, "commands": [{"path": ["x"], "summary": "X", "action": {"call": {"class": "live", "body": "{}"}}}]}`
-	if _, err := Parse([]byte(m)); err == nil || !strings.Contains(err.Error(), "cannot save") {
+	if _, err := manifest.Parse([]byte(m)); err == nil || !strings.Contains(err.Error(), "cannot save") {
 		t.Errorf("the output of a service saved to a file: %v", err)
 	}
 }
@@ -738,7 +739,7 @@ func TestTheOutputOfAServiceCannotSave(t *testing.T) {
 func TestTheTextOfAFormatCannotReachTheTerminal(t *testing.T) {
 	m := *specManifests(t)["exec"]
 	m.Formats = maps.Clone(m.Formats)
-	m.Formats["reply"] = Format{Record: "\x1b[2J{{job}}\u200b"}
+	m.Formats["reply"] = manifest.Format{Record: "\x1b[2J{{job}}\u200b"}
 	var out, errs bytes.Buffer
 	err := ShowReply(context.Background(), &fakeEnv{me: nostr.Generate()},
 		Installed{Manifest: &m, Author: nostr.Generate().Public(), Name: "exec"}, `{"job":"j1","state":"running"}`,

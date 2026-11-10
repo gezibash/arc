@@ -22,6 +22,7 @@ import (
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
 
@@ -353,13 +354,13 @@ func TestAFileInPartsStillReads(t *testing.T) {
 
 	files := specManifests(t)["files"]
 	raw, _ := json.Marshal(files)
-	var older Manifest
+	var older manifest.Manifest
 	if err := json.Unmarshal(raw, &older); err != nil {
 		t.Fatal(err)
 	}
 	for i := range older.Commands {
 		if p := older.Commands[i].Action.Publish; p != nil {
-			p.Body, p.Content = "", Content{Text: "{{file}}"}
+			p.Body, p.Content = "", manifest.Content{Text: "{{file}}"}
 		}
 	}
 	var out, errs bytes.Buffer
@@ -603,29 +604,29 @@ func TestReservedKindsAndConsent(t *testing.T) {
 		{"0", "public", "reserved"}, {"3", "public", "reserved"}, {"31234", "sealed", "reserved"},
 		{"24133", "public", "reserved"}, {"39000", "public", "group state"}, {"9005", "public", "must be group"},
 	} {
-		if _, err := Parse([]byte(make(c.kind, c.vis))); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := manifest.Parse([]byte(make(c.kind, c.vis))); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("kind %s %s: got %v", c.kind, c.vis, err)
 		}
 	}
 
-	old, _ := Parse([]byte(make("30023", "sealed")))
-	consent := ConsentOf(old)
+	old, _ := manifest.Parse([]byte(make("30023", "sealed")))
+	consent := manifest.ConsentOf(old)
 	if got := consent.Changes(old); len(got) != 0 {
 		t.Errorf("the same manifest needs consent again: %v", got)
 	}
-	louder, _ := Parse([]byte(make("30023", "public")))
+	louder, _ := manifest.Parse([]byte(make("30023", "public")))
 	if got := consent.Changes(louder); len(got) != 1 || !strings.Contains(got[0], "public now") {
 		t.Errorf("a louder kind: %v", got)
 	}
-	other, _ := Parse([]byte(make("30024", "sealed")))
+	other, _ := manifest.Parse([]byte(make("30024", "sealed")))
 	if got := consent.Changes(other); len(got) != 1 || !strings.Contains(got[0], "30024") {
 		t.Errorf("a new kind: %v", got)
 	}
-	quieter := ConsentOf(louder)
+	quieter := manifest.ConsentOf(louder)
 	if got := quieter.Changes(old); len(got) != 0 {
 		t.Errorf("a quieter kind needs consent: %v", got)
 	}
-	if d := Describe(louder); !strings.Contains(d, "posted in public") || !strings.Contains(d, "post under your name") {
+	if d := manifest.Describe(louder); !strings.Contains(d, "posted in public") || !strings.Contains(d, "post under your name") {
 		t.Errorf("describe: %s", d)
 	}
 }

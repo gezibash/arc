@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
 
@@ -125,7 +126,7 @@ func field(rec Record, path string) any {
 	}).Lookup(path)
 }
 
-func (r *run) matchAll(rec Record, conds []Cond) (bool, error) {
+func (r *run) matchAll(rec Record, conds []manifest.Cond) (bool, error) {
 	for _, c := range conds {
 		ok, err := r.match(rec, c)
 		if err != nil || !ok {
@@ -137,7 +138,7 @@ func (r *run) matchAll(rec Record, conds []Cond) (bool, error) {
 
 // match tests one condition. A condition whose value renders empty is
 // dropped, so an optional argument can narrow a query or leave it whole.
-func (r *run) match(rec Record, c Cond) (bool, error) {
+func (r *run) match(rec Record, c manifest.Cond) (bool, error) {
 	if len(c.Any) > 0 {
 		for _, sub := range c.Any {
 			ok, err := r.match(rec, sub)
@@ -414,7 +415,7 @@ func (r *run) body(wrap nostr.Event) ([]byte, error) {
 // record of a draft with a body writes the body.
 func (r *run) save(entries []*entry) error {
 	s := r.command.Output.Save
-	name, err := saveArgument(*r.command)
+	name, err := manifest.SaveArgument(*r.command)
 	if err != nil {
 		return err
 	}

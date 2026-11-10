@@ -24,7 +24,7 @@ import (
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/runtime/capability"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/atomicfile"
 )
 
@@ -58,7 +58,7 @@ type Offer struct {
 	Package map[string]any
 	// Manifest is the manifest of interface version 1, when the
 	// announcement holds one. A manifest of the older stack leaves it nil.
-	Manifest *iface.Manifest
+	Manifest *manifest.Manifest
 	Event    nostr.Event
 }
 
@@ -90,7 +90,7 @@ func Announce(ctx context.Context, k keys.Signer, pkg map[string]any, at nostr.T
 // AnnounceManifest makes the announcement of one manifest of interface
 // version 1. Its id becomes the d tag.
 func AnnounceManifest(ctx context.Context, k keys.Signer, data []byte, at nostr.Timestamp) (nostr.Event, error) {
-	m, err := iface.Parse(data)
+	m, err := manifest.Parse(data)
 	if err != nil {
 		return nostr.Event{}, err
 	}
@@ -168,7 +168,7 @@ func Read(event nostr.Event) (Offer, error) {
 
 // readManifest opens an announcement of interface version 1.
 func readManifest(event nostr.Event, pkg map[string]any) (Offer, error) {
-	m, err := iface.Parse([]byte(event.Content))
+	m, err := manifest.Parse([]byte(event.Content))
 	if err != nil {
 		return Offer{}, fmt.Errorf("catalog: %w", err)
 	}
@@ -303,7 +303,7 @@ type Install struct {
 	As string `json:"as,omitempty"`
 	// Consent is what the citizen agreed to at install: the kinds and the
 	// group relay of the manifest.
-	Consent *iface.Consent `json:"consent,omitempty"`
+	Consent *manifest.Consent `json:"consent,omitempty"`
 }
 
 // Installs is the list of trusted capabilities, in one file.
@@ -342,7 +342,7 @@ func (i Installs) Add(offer Offer, as string) error {
 	}
 	entry := Install{Provider: offer.Provider.Hex(), ID: offer.ID, Name: offer.Name(), As: as}
 	if offer.Manifest != nil {
-		consent := iface.ConsentOf(offer.Manifest)
+		consent := manifest.ConsentOf(offer.Manifest)
 		entry.Consent = &consent
 	}
 	for _, e := range list {
