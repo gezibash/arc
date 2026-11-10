@@ -1,4 +1,4 @@
-package main
+package host
 
 import (
 	"crypto/sha256"
@@ -20,11 +20,11 @@ import (
 // capability in the same home to stop, as during a restart.
 var serveWait = 10 * time.Second
 
-// holdServe takes the lock of one capability in the identity folder dir,
+// Hold takes the lock of one capability in the identity folder dir,
 // so that two arc serve of one home never both run a request (#447). The
 // system frees it when the process ends, also on SIGKILL. While another
-// serve holds it, holdServe says so once on errs, and waits serveWait.
-func holdServe(errs io.Writer, dir, id string) (release func(), err error) {
+// serve holds it, Hold says so once on errs, and waits serveWait.
+func Hold(errs io.Writer, dir, id string) (release func(), err error) {
 	sum := sha256.Sum256([]byte(id))
 	path := filepath.Join(dir, "serve-"+hex.EncodeToString(sum[:8])+".lock")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)

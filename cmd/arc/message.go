@@ -410,7 +410,7 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	defer cancel()
 	for _, r := range relays {
 		watches.Go(func() {
-			keepMail(ctx, sess.Mail, r, func() { log.Info("watching", "relay", r.Name()) }, log)
+			sess.KeepMail(ctx, r, func() { log.Info("watching", "relay", r.Name()) }, log)
 		})
 	}
 	for {
