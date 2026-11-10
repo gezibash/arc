@@ -7,6 +7,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -90,7 +91,7 @@ func (r *run) deletePage(n *manifest.Notebook, dTemplate string) error {
 			return nil
 		}
 	}
-	scoped := r.scopedWith(Values{"address": n.Address})
+	scoped := r.scopedWith(args.Values{"address": n.Address})
 	d, err := scoped.template(dTemplate)
 	if err != nil {
 		return err
@@ -129,7 +130,7 @@ func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage, gone st
 	}
 	at++
 	tags := [][]string{{"d", "{{up_address}}"}, {"title", "{{up_title}}"}, {"head", "{{up_head}}"}}
-	scoped := r.scopedWith(Values{"up_text": text, "up_address": up.base, "up_title": up.title, "up_head": up.hid})
+	scoped := r.scopedWith(args.Values{"up_text": text, "up_address": up.base, "up_title": up.title, "up_head": up.hid})
 	if _, err := scoped.publishSealed(&manifest.Publish{Kind: kind, D: d, Revise: "entry", At: at, Content: manifest.Content{Text: "{{up_text}}"}, Tags: tags}); err != nil {
 		return err
 	}

@@ -21,7 +21,6 @@ var functionDebt = map[string]int{
 	"core/mail/requests.go:Mail.answer":                  128,
 	"runtime/bundle/bundle.go:Load":                      108,
 	"runtime/citizen/storagesync.go:Session.SyncStorage": 253,
-	"runtime/iface/args.go:bind":                         148,
 	"runtime/iface/notebook.go:run.notebookAction":       180,
 	"runtime/iface/page_write.go:run.writePage":          102,
 	"runtime/iface/publish_sealed.go:run.publishSealed":  196,

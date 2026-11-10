@@ -1,4 +1,4 @@
-package iface
+package args
 
 import (
 	"context"
@@ -53,11 +53,28 @@ type Lister interface {
 	List(name string) ([]nostr.PubKey, error)
 }
 
-// members is the value of a key argument that named a list, as hex keys.
-type members []string
+// Members is the value of a key argument that named a list, as hex keys.
+type Members []string
 
-// bind reads the words that follow a command's path.
-func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
+// Bind reads the words that follow a command's path.
+func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
+	raw, positionals, flags, err := readWords(c, words)
+	if err != nil || flags.Help {
+		return nil, flags, err
+	}
+	if err := takePositionals(c, raw, positionals); err != nil {
+		return nil, flags, err
+	}
+	values, err := valuesOf(ctx, c, raw, r, stdin)
+	if err != nil {
+		return nil, flags, err
+	}
+	return values, flags, nil
+}
+
+// readWords reads the flags of a command line. It gives the words of each
+// flag by name, and the words that are not flags in their order.
+func readWords(c *manifest.Command, words []string) (map[string][]string, []string, Flags, error) {
 	var flags Flags
 	raw := map[string][]string{}
 	var positionals []string
@@ -110,28 +127,30 @@ func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		}
 		a, ok := byName[name]
 		if !ok || a.Kind == "positional" {
-			return nil, flags, fmt.Errorf("unknown flag --%s", name)
+			return nil, nil, flags, fmt.Errorf("unknown flag --%s", name)
 		}
 		if a.Kind == "switch" {
 			if hasValue {
-				return nil, flags, fmt.Errorf("--%s takes no value", name)
+				return nil, nil, flags, fmt.Errorf("--%s takes no value", name)
 			}
 			raw[name] = []string{"true"}
 			continue
 		}
 		if !hasValue {
 			if i+1 >= len(words) {
-				return nil, flags, fmt.Errorf("--%s needs a value", name)
+				return nil, nil, flags, fmt.Errorf("--%s needs a value", name)
 			}
 			i++
 			value = words[i]
 		}
 		raw[name] = []string{value}
 	}
-	if flags.Help {
-		return nil, flags, nil
-	}
+	return raw, positionals, flags, nil
+}
 
+// takePositionals gives the words that are not flags to the positional
+// arguments, in order. A variadic argument takes the rest.
+func takePositionals(c *manifest.Command, raw map[string][]string, positionals []string) error {
 	var given []string
 	for _, a := range c.Args {
 		if a.Kind != "positional" || a.Type == "stdin" {
@@ -156,18 +175,23 @@ func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		if len(given) > 0 {
 			text += ", after " + terminal.EscapeLine(strings.Join(given, ", "))
 		}
-		return nil, flags, errors.New(text)
+		return errors.New(text)
 	}
+	return nil
+}
 
+// valuesOf converts the words of each argument to its type. It reads the
+// standard input for an argument of that type, and fills in a default.
+func valuesOf(ctx context.Context, c *manifest.Command, raw map[string][]string, r Resolver, stdin io.Reader) (Values, error) {
 	values := Values{}
 	for _, a := range c.Args {
 		if a.Type == "stdin" {
 			body, err := io.ReadAll(io.LimitReader(stdin, MaxInput+1))
 			if err != nil {
-				return nil, flags, err
+				return nil, err
 			}
 			if len(body) > MaxInput {
-				return nil, flags, fmt.Errorf("the standard input is over %d bytes", MaxInput)
+				return nil, fmt.Errorf("the standard input is over %d bytes", MaxInput)
 			}
 			values[a.Name] = string(body)
 			continue
@@ -178,7 +202,7 @@ func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		}
 		if !given {
 			if a.Required {
-				return nil, flags, fmt.Errorf("missing %s", usageOf(a))
+				return nil, fmt.Errorf("missing %s", Usage(a))
 			}
 			continue
 		}
@@ -199,11 +223,11 @@ func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 			value, err = convert(ctx, a, words[0], r)
 		}
 		if err != nil {
-			return nil, flags, fmt.Errorf("%s: %w", a.Name, err)
+			return nil, fmt.Errorf("%s: %w", a.Name, err)
 		}
 		values[a.Name] = value
 	}
-	return values, flags, nil
+	return values, nil
 }
 
 var linesPattern = regexp.MustCompile(`^([1-9][0-9]*)?:([1-9][0-9]*)?$`)
@@ -226,7 +250,7 @@ func convert(ctx context.Context, a manifest.Arg, text string, r Resolver) (any,
 				return nil, err
 			}
 			if len(list) > 0 {
-				out := make(members, len(list))
+				out := make(Members, len(list))
 				for i, pk := range list {
 					out[i] = pk.Hex()
 				}
@@ -299,9 +323,9 @@ func eventRef(text string) (string, error) {
 	return "", fmt.Errorf("%q is an %s, not an event", text, prefix)
 }
 
-// fileValue is a file that the citizen named. Templates read its name, type,
+// File is a file that the citizen named. Templates read its name, type,
 // size and sha256; the file itself renders as base64.
-type fileValue struct {
+type File struct {
 	Name   string
 	Type   string
 	Size   int64
@@ -309,7 +333,7 @@ type fileValue struct {
 	Bytes  []byte
 }
 
-func (f fileValue) Field(name string) any {
+func (f File) Field(name string) any {
 	switch name {
 	case "name":
 		return f.Name
@@ -323,36 +347,36 @@ func (f fileValue) Field(name string) any {
 	return nil
 }
 
-func (f fileValue) String() string { return base64.StdEncoding.EncodeToString(f.Bytes) }
+func (f File) String() string { return base64.StdEncoding.EncodeToString(f.Bytes) }
 
-func (f fileValue) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
+func (f File) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
 
-func readFile(path string, limit int) (fileValue, error) {
+func readFile(path string, limit int) (File, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return fileValue{}, err
+		return File{}, err
 	}
 	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
-		return fileValue{}, err
+		return File{}, err
 	}
 	if len(body) > limit {
-		return fileValue{}, fmt.Errorf("%s is over %d bytes", path, limit)
+		return File{}, fmt.Errorf("%s is over %d bytes", path, limit)
 	}
 	kind := mime.TypeByExtension(filepath.Ext(path))
 	if kind == "" {
 		kind = http.DetectContentType(body)
 	}
 	sum := sha256.Sum256(body)
-	return fileValue{
+	return File{
 		Name: filepath.Base(path), Type: kind, Size: int64(len(body)),
 		SHA256: hex.EncodeToString(sum[:]), Bytes: body,
 	}, nil
 }
 
-// usageOf writes one argument as the help shows it.
-func usageOf(a manifest.Arg) string {
+// Usage writes one argument as the help shows it.
+func Usage(a manifest.Arg) string {
 	switch {
 	case a.Kind == "switch":
 		return "--" + a.Name

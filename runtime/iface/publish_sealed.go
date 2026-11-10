@@ -9,6 +9,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
@@ -138,7 +139,7 @@ func (r *run) publishSealed(p *manifest.Publish) ([]*entry, error) {
 	inner := nostr.Event{Kind: nostr.Kind(kind.Kind), CreatedAt: now, Tags: tags, Content: head, PubKey: r.env.Me()}
 	var body []byte
 	if name := manifest.BodyArg(p); name != "" {
-		file, ok := r.values[name].(fileValue)
+		file, ok := r.values[name].(args.File)
 		if !ok {
 			return nil, fmt.Errorf("the body needs the file %s", name)
 		}
