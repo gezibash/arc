@@ -12,7 +12,6 @@ var functionDebt = map[string]int{
 	"apps/transfer/client/client.go:getter.attempt":      126,
 	"cmd/arc/bunker.go:serveBunker":                      109,
 	"cmd/arc/message.go:watchMessages":                   115,
-	"cmd/arc/serve.go:serve":                             281,
 	"cmd/arc/session.go:runSession":                      117,
 	"cmd/arc/session_exec.go:execSession":                151,
 	"cmd/arc/update.go:update":                           137,
