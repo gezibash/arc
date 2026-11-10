@@ -382,7 +382,7 @@ func kindsInUse(t *testing.T) (code, manifest, reserved map[int]string) {
 			t.Fatal(err)
 		}
 	}
-	const consent = "runtime/iface/consent.go"
+	const consent = "runtime/iface/manifest/consent.go"
 	data, err := os.ReadFile(filepath.Join(root, consent))
 	if err != nil {
 		t.Fatal(err)

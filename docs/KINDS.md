@@ -3,7 +3,7 @@
 This is the registry of every Nostr event kind that ARC reads, writes or
 reserves. `go test ./internal/specs` checks it against the code: each kind
 constant in `core/`, `runtime/` and `sdk/`, each `"kind"` in a manifest under
-`apps/`, and the reserved kinds in `runtime/iface/consent.go` must appear
+`apps/`, and the reserved kinds in `runtime/iface/manifest/consent.go` must appear
 here, and each row here must exist in one of those places.
 
 A new kind needs a row here, a reason for its class, and a spec section.
@@ -54,7 +54,7 @@ section 3.7.
 
 The `Source` column says where the test finds the kind: `code` is a literal
 constant in Go, `manifest` is a `"kind"` field under `apps/`, and `reserved`
-is the list in `runtime/iface/consent.go`. Kind 5 appears in code only as the
+is the list in `runtime/iface/manifest/consent.go`. Kind 5 appears in code only as the
 library constant `nostr.KindDeletion`, which the test does not scan.
 
 Two ranges are rules, not rows: kinds 9000 to 9020 moderate a NIP-29 group,
