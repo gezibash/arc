@@ -92,22 +92,7 @@ func (r *run) writePage(n *manifest.Notebook, dTemplate string) (string, error) 
 			return "", fmt.Errorf("frontmatter: %s %q does not match the address %s", key, given, terminal.EscapeLine(address))
 		}
 	}
-	header := "---\n---\n"
-	if len(fields) > 0 {
-		header = n.Text[:len(n.Text)-len(body)]
-	}
-	for _, key := range []string{"title", "notebook", "page"} {
-		value := quoted(map[string]string{"title": title, "notebook": book, "page": number}[key])
-		if given, ok := fields[key]; ok {
-			// A field that is given and empty takes the value in its place.
-			if strings.TrimSpace(template.Str(given)) == "" {
-				header = setField(header, key, value)
-			}
-		} else {
-			end := strings.LastIndex(header, "---")
-			header = header[:end] + key + ": " + value + "\n" + header[end:]
-		}
-	}
+	header := frontMatterOf(n.Text, body, fields, title, book, number)
 	hid := make([]byte, 8)
 	if _, err := rand.Read(hid); err != nil {
 		return "", err
@@ -121,6 +106,29 @@ func (r *run) writePage(n *manifest.Notebook, dTemplate string) (string, error) 
 		return "", err
 	}
 	return address, nil
+}
+
+// frontMatterOf is the front matter of a new page. It keeps the fields that
+// the text gives, and fills in the title, notebook and page that it does
+// not give, or gives empty.
+func frontMatterOf(text, body string, fields map[string]any, title, book, number string) string {
+	header := "---\n---\n"
+	if len(fields) > 0 {
+		header = text[:len(text)-len(body)]
+	}
+	for _, key := range []string{"title", "notebook", "page"} {
+		value := quoted(map[string]string{"title": title, "notebook": book, "page": number}[key])
+		if given, ok := fields[key]; ok {
+			// A field that is given and empty takes the value in its place.
+			if strings.TrimSpace(template.Str(given)) == "" {
+				header = setField(header, key, value)
+			}
+		} else {
+			end := strings.LastIndex(header, "---")
+			header = header[:end] + key + ": " + value + "\n" + header[end:]
+		}
+	}
+	return header
 }
 
 // firstLine is the first line of the text that holds more than blanks,

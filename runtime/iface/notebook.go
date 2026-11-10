@@ -235,87 +235,14 @@ func (r *run) notebookAction(n *manifest.Notebook) ([]*entry, error) {
 	case "write", "append", "fix", "history", "delete":
 		return r.notebookWrite(n, dTemplate)
 	case "read":
-		address, anchor, err := r.notebookAddress(n.Address)
-		if err != nil {
-			return nil, err
-		}
-		if n.Section == "" {
-			n.Section = anchor
-		}
-		if r.kindOf(n.Kind).NotebookEntry != "" {
-			p, err := r.findPage(n.Kind, address, "today")
-			if err != nil {
-				return nil, err
-			}
-			page := []notebookPage{*p}
-			if err := r.compose(page); err != nil {
-				return nil, err
-			}
-			page[0].entry.rec["entries"] = entryList(p.entries)
-			return r.notebookSections([]*entry{page[0].entry}, n.Section)
-		}
-		// Resolve the input reference before the manifest's keyed d template.
-		d, err := r.headD(dTemplate, address)
-		if err != nil {
-			return nil, err
-		}
-		head, err := r.head(n.Kind, d)
-		if err != nil {
-			return nil, err
-		}
-		if head == nil {
-			return nil, noSuchPage(address)
-		}
-		return r.notebookSections([]*entry{head}, n.Section)
+		return r.notebookRead(n, dTemplate)
 	}
 	if n.Notebook != "" && !notebookPattern.MatchString(n.Notebook) {
 		return nil, errors.New("notebook must be project/notebook")
 	}
-	from, err := dateBound(n.From, false)
+	f, err := r.notebookFilter(n)
 	if err != nil {
 		return nil, err
-	}
-	to, err := dateBound(n.To, true)
-	if err != nil {
-		return nil, err
-	}
-	if !from.IsZero() && !to.IsZero() && from.After(to) {
-		return nil, errors.New("from must not be after to")
-	}
-	page := int64(0)
-	if n.Page != "" {
-		page, err = ordinal(n.Page)
-		if err != nil {
-			return nil, err
-		}
-	}
-	limit := 0
-	if n.Limit != "" {
-		limit, err = strconv.Atoi(n.Limit)
-		if err != nil || limit < 1 {
-			return nil, errors.New("limit must be positive")
-		}
-	}
-	order := n.Order
-	if order == "" {
-		order = "created"
-	}
-	if !slices.Contains([]string{"created", "updated", "page"}, order) {
-		return nil, errors.New("order must be created, updated or page")
-	}
-	navPage := int64(0)
-	if n.Op == "next" || n.Op == "prev" {
-		address, _, err := r.notebookAddress(n.Address)
-		if err != nil {
-			return nil, err
-		}
-		slash := strings.LastIndex(address, "/")
-		n.Notebook = address[:slash]
-		navPage, err = ordinal(address[slash+1:])
-		if err != nil {
-			return nil, err
-		}
-		order = "page"
 	}
 	bodies := n.Op == "index" || n.Op == "toc"
 	pages, err := r.notebookPages(n.Kind)
@@ -325,33 +252,23 @@ func (r *run) notebookAction(n *manifest.Notebook) ([]*entry, error) {
 	allPages := slices.Clone(pages)
 	selected := pages[:0]
 	for _, p := range pages {
-		if n.Notebook != "" && p.book != n.Notebook || n.Prefix != "" && !strings.HasPrefix(p.address, n.Prefix) || page != 0 && p.page != page || n.Title != "" && !strings.Contains(strings.ToLower(p.title), strings.ToLower(n.Title)) {
-			continue
+		if f.keeps(n, p) {
+			selected = append(selected, p)
 		}
-		if (!from.IsZero() || !to.IsZero()) && p.created.IsZero() {
-			continue
-		}
-		if !from.IsZero() && p.created.Before(from) || !to.IsZero() && p.created.After(to) {
-			continue
-		}
-		if n.Op == "next" && (p.page == 0 || p.page <= navPage) || n.Op == "prev" && (p.page == 0 || p.page >= navPage) {
-			continue
-		}
-		selected = append(selected, p)
 	}
 	pages = selected
 	if n.Op == "search" {
-		return r.searchNotebook(n, allPages, pages, limit)
+		return r.searchNotebook(n, allPages, pages, f.limit)
 	}
-	sortNotebookPages(pages, order, n.Reverse == "true" || n.Op == "prev")
+	sortNotebookPages(pages, f.order, n.Reverse == "true" || n.Op == "prev")
 	if n.Op == "next" || n.Op == "prev" {
 		if len(pages) == 0 {
 			return nil, fmt.Errorf("no %s page in %s", n.Op, n.Notebook)
 		}
 		pages = pages[:1]
 	}
-	if n.Op != "search" && limit > 0 && len(pages) > limit {
-		pages = pages[:limit]
+	if n.Op != "search" && f.limit > 0 && len(pages) > f.limit {
+		pages = pages[:f.limit]
 	}
 	// Fetch parts only after metadata filters and non-search limits. A missing
 	// part in another notebook must not prevent a selected notebook from reading.
@@ -398,4 +315,119 @@ func (r *run) notebookAction(n *manifest.Notebook) ([]*entry, error) {
 		}
 	}
 	return entries, nil
+}
+
+// notebookRead reads one page, or one section of it.
+func (r *run) notebookRead(n *manifest.Notebook, dTemplate string) ([]*entry, error) {
+	address, anchor, err := r.notebookAddress(n.Address)
+	if err != nil {
+		return nil, err
+	}
+	if n.Section == "" {
+		n.Section = anchor
+	}
+	if r.kindOf(n.Kind).NotebookEntry != "" {
+		p, err := r.findPage(n.Kind, address, "today")
+		if err != nil {
+			return nil, err
+		}
+		page := []notebookPage{*p}
+		if err := r.compose(page); err != nil {
+			return nil, err
+		}
+		page[0].entry.rec["entries"] = entryList(p.entries)
+		return r.notebookSections([]*entry{page[0].entry}, n.Section)
+	}
+	// Resolve the input reference before the manifest's keyed d template.
+	d, err := r.headD(dTemplate, address)
+	if err != nil {
+		return nil, err
+	}
+	head, err := r.head(n.Kind, d)
+	if err != nil {
+		return nil, err
+	}
+	if head == nil {
+		return nil, noSuchPage(address)
+	}
+	return r.notebookSections([]*entry{head}, n.Section)
+}
+
+// pageFilter is what a list of pages asks for: dates, a page number, a
+// limit and an order. next and prev also give the page they start from.
+type pageFilter struct {
+	from, to      time.Time
+	page, navPage int64
+	limit         int
+	order         string
+}
+
+// notebookFilter reads the filter of a list of pages. For next and prev it
+// sets the notebook of the page they start from.
+func (r *run) notebookFilter(n *manifest.Notebook) (pageFilter, error) {
+	var f pageFilter
+	from, err := dateBound(n.From, false)
+	if err != nil {
+		return f, err
+	}
+	to, err := dateBound(n.To, true)
+	if err != nil {
+		return f, err
+	}
+	if !from.IsZero() && !to.IsZero() && from.After(to) {
+		return f, errors.New("from must not be after to")
+	}
+	page := int64(0)
+	if n.Page != "" {
+		page, err = ordinal(n.Page)
+		if err != nil {
+			return f, err
+		}
+	}
+	limit := 0
+	if n.Limit != "" {
+		limit, err = strconv.Atoi(n.Limit)
+		if err != nil || limit < 1 {
+			return f, errors.New("limit must be positive")
+		}
+	}
+	order := n.Order
+	if order == "" {
+		order = "created"
+	}
+	if !slices.Contains([]string{"created", "updated", "page"}, order) {
+		return f, errors.New("order must be created, updated or page")
+	}
+	navPage := int64(0)
+	if n.Op == "next" || n.Op == "prev" {
+		address, _, err := r.notebookAddress(n.Address)
+		if err != nil {
+			return f, err
+		}
+		slash := strings.LastIndex(address, "/")
+		n.Notebook = address[:slash]
+		navPage, err = ordinal(address[slash+1:])
+		if err != nil {
+			return f, err
+		}
+		order = "page"
+	}
+	return pageFilter{from: from, to: to, page: page, navPage: navPage, limit: limit, order: order}, nil
+}
+
+// keeps says if a page passes the filter.
+func (f pageFilter) keeps(n *manifest.Notebook, p notebookPage) bool {
+	if n.Notebook != "" && p.book != n.Notebook || n.Prefix != "" && !strings.HasPrefix(p.address, n.Prefix) || f.page != 0 && p.page != f.page || n.Title != "" && !strings.Contains(strings.ToLower(p.title), strings.ToLower(n.Title)) {
+		return false
+	}
+	if (!f.from.IsZero() || !f.to.IsZero()) && p.created.IsZero() {
+		return false
+	}
+	if !f.from.IsZero() && p.created.Before(f.from) || !f.to.IsZero() && p.created.After(f.to) {
+		return false
+	}
+	if n.Op == "next" && (p.page == 0 || p.page <= f.navPage) || n.Op == "prev" && (p.page == 0 || p.page >= f.navPage) {
+		return false
+	}
+	return true
 }

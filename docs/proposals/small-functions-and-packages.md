@@ -105,12 +105,13 @@ counts are measured.
   `keyed`, `template`, `opener`, `fetchSelf` and `entryOf` (measured). They
   work on `entry`. So an interface of effects alone cannot replace `run`
   for the notebook.
-- One PR measures the graph of `entry` and `Record` first, and then does
-  one of two things: move them and their pure helpers to a leaf package
-  that the runner, the pipeline and the notebook share, and then move the
-  pipeline and the notebook; or keep both in `runtime/iface` and only split
-  their long functions. This proposal does not choose. No count supports
-  either choice yet.
+- The pipeline and the notebook stay in `runtime/iface`, and only their
+  long functions are split. A leaf package for `entry` and `Record` could
+  take only the functions that are not methods of `run`. The notebook
+  files hold 30 methods of `run` and 19 other functions; `pipeline.go`
+  holds 10 and 11 (measured, `grep -c` on `^func (r \*run)` and on
+  `^func [a-zA-Z]`). So the 40 methods, and the notebook with them, would
+  stay behind.
 - The templates and the manifest have no effects. Their tests need no
   store. The arguments need a `Resolver`, which can fetch an event.
 - A move shortens no function. So each PR that moves a part also splits
@@ -150,7 +151,7 @@ one runtime function, and print. The work moves as follows:
 | 3 | `template`, without `sanitize` | 0 |
 | 4 | `manifest`; split `check` and `checkCommand` | 2 |
 | 5 | `args`; split `bind` | 1 |
-| 6 | `entry` and `Record`: a shared leaf with the pipeline and the notebook, or a split in place; split `notebookAction` and `writePage` | 2 |
+| 6 | split `notebookAction` and `writePage` in place | 2 |
 | 7 | `runtime/host`; split `serve` | 1 |
 | 8–11 | The bunker, the inbox and the home into `runtime/citizen`; the update into `runtime/release`; split `serveBunker`, `watchMessages` and `update` | 3 |
 | 12 | The other 16, one function at a time | 16 |
