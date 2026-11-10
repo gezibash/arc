@@ -51,8 +51,8 @@ func (r *run) scopedWith(values Values) *run {
 
 // headD is the d tag of the head of a page, from the d template of the
 // action.
-func (r *run) headD(template, address string) (string, error) {
-	return r.scopedWith(Values{"address": address}).template(template)
+func (r *run) headD(tmpl, address string) (string, error) {
+	return r.scopedWith(Values{"address": address}).template(tmpl)
 }
 
 // head reads the head of a page, or nil.

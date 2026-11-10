@@ -22,6 +22,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // specManifests are the manifests of the apps in this repository, and the
@@ -556,9 +557,9 @@ func TestFileArgumentsOfferTheirFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := scope(func(string) (any, bool) { return value, true })
-	tpl, _ := compile("{{f.name}} {{f.type}} {{f.size}} {{f.sha256|short}} {{f}}", nil)
-	out, err := tpl.render(s, nil, false)
+	s := template.Scope(func(string) (any, bool) { return value, true })
+	tpl, _ := template.Compile("{{f.name}} {{f.type}} {{f.size}} {{f.sha256|short}} {{f}}", nil)
+	out, err := tpl.Render(s, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,10 +581,10 @@ func TestAVariadicKeepsItsFlags(t *testing.T) {
 func TestKeyedListsKeepTheirWordsApart(t *testing.T) {
 	env := &fakeEnv{me: nostr.Generate()}
 	r := &run{env: env, in: Installed{Manifest: &Manifest{ID: "x"}}, values: Values{"a": "ab", "b": "c", "c": "a", "d": "bc"}}
-	one, _ := compile("{{a+b|keyed:p}}", nil)
-	two, _ := compile("{{c+d|keyed:p}}", nil)
-	x, _ := one.render(r.scope, r, false)
-	y, _ := two.render(r.scope, r, false)
+	one, _ := template.Compile("{{a+b|keyed:p}}", nil)
+	two, _ := template.Compile("{{c+d|keyed:p}}", nil)
+	x, _ := one.Render(r.scope, r, false)
+	y, _ := two.Render(r.scope, r, false)
 	if x == y || len(x) != 22 {
 		t.Errorf("ab+c and a+bc key to %s and %s", x, y)
 	}

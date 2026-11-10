@@ -14,6 +14,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -319,7 +320,7 @@ func (r *run) pageText(head *entry, addresses []string, entries []pageEntry) (st
 	// updated_at is never earlier than the head.
 	newest := entries[len(entries)-1].at()
 	if fields, _, err := frontmatter(text); err == nil {
-		if head, err := time.Parse(time.RFC3339Nano, str(fields["updated_at"])); err != nil || newest.After(head) {
+		if head, err := time.Parse(time.RFC3339Nano, template.Str(fields["updated_at"])); err != nil || newest.After(head) {
 			text = setField(text, "updated_at", newest.Format(timeFormat))
 		}
 	}
@@ -410,7 +411,7 @@ func (r *run) addEntry(kind string, page *notebookPage, text, corrects string) e
 		return err
 	}
 	d := page.base + "/" + hex.EncodeToString(id)
-	key, err := r.keyed(name, d)
+	key, err := r.Keyed(name, d)
 	if err != nil {
 		return err
 	}

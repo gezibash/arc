@@ -225,7 +225,7 @@ func TestNotebookIndexRepairsStaleSnapshots(t *testing.T) {
 	if !strings.Contains(index, "| 1 | Current |") || strings.Contains(index, "Obsolete") {
 		t.Fatal(index)
 	}
-	d, err := r.keyed("index", "arc/research")
+	d, err := r.Keyed("index", "arc/research")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,7 @@ import (
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // citizen is one machine with a store, and the journal and files installed.
@@ -563,7 +564,7 @@ func TestThreadOrdersReplies(t *testing.T) {
 	got := thread([]*entry{e("c", "a", 3), e("b", "root", 2), e("a", "root", 1), e("d", "b", 4)}, "tags.e")
 	var order []string
 	for _, x := range got {
-		order = append(order, str(x.rec["id"])+str(x.rec["depth"]))
+		order = append(order, template.Str(x.rec["id"])+template.Str(x.rec["depth"]))
 	}
 	if strings.Join(order, " ") != "a0 c1 b0 d1" {
 		t.Errorf("the thread is %v", order)

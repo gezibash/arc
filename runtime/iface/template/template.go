@@ -1,4 +1,4 @@
-package iface
+package template
 
 import (
 	"encoding/hex"
@@ -13,11 +13,10 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
-	"github.com/gezibash/arc/sdk/terminal"
 )
 
-// A template is text with placeholders: {{name}}, or {{name|filter|filter}}.
-type template struct {
+// A Template is text with placeholders: {{name}}, or {{name|filter|filter}}.
+type Template struct {
 	parts []part
 }
 
@@ -44,10 +43,10 @@ var filters = map[string]bool{
 	"short": false, "indent": false, "truncate": true,
 }
 
-// compile reads a template. When known is not nil, each placeholder must
+// Compile reads a template. When known is not nil, each placeholder must
 // start with a name that known accepts.
-func compile(text string, known func(string) bool) (*template, error) {
-	t := &template{}
+func Compile(text string, known func(string) bool) (*Template, error) {
+	t := &Template{}
 	for text != "" {
 		start := strings.Index(text, "{{")
 		if start < 0 {
@@ -104,19 +103,28 @@ func placeholder(expr string) (part, error) {
 	return p, nil
 }
 
-// helpers are what some filters need from outside the template.
-type helpers interface {
-	keyed(purpose, input string) (string, error)
-	eventAuthor(ref string) (string, error)
-	name(key string) string
-	sanitize(text string) string
+// PlaceholderOnly gives the name of the one placeholder of a template
+// that is nothing else: no text, no filters.
+func (t *Template) PlaceholderOnly() (string, bool) {
+	if len(t.parts) == 1 && t.parts[0].name != "" && len(t.parts[0].filters) == 0 {
+		return t.parts[0].name, true
+	}
+	return "", false
 }
 
-// scope finds the value of a name.
-type scope func(name string) (any, bool)
+// Helpers are what some filters need from outside the template.
+type Helpers interface {
+	Keyed(purpose, input string) (string, error)
+	EventAuthor(ref string) (string, error)
+	Name(key string) string
+	Sanitize(text string) string
+}
 
-// lookup finds a dotted name: the root in the scope, then each field.
-func (s scope) lookup(name string) any {
+// Scope finds the value of a name.
+type Scope func(name string) (any, bool)
+
+// Lookup finds a dotted name: the root in the scope, then each field.
+func (s Scope) Lookup(name string) any {
 	words := strings.Split(name, ".")
 	value, ok := s(words[0])
 	if !ok {
@@ -132,8 +140,8 @@ func (s scope) lookup(name string) any {
 				return nil
 			}
 			value = v[i]
-		case interface{ field(string) any }:
-			value = v.field(word)
+		case interface{ Field(string) any }:
+			value = v.Field(word)
 		default:
 			return nil
 		}
@@ -141,11 +149,11 @@ func (s scope) lookup(name string) any {
 	return value
 }
 
-// render writes the template as text. With clean, it cleans each part,
+// Render writes the template as text. With clean, it cleans each part,
 // and the result can be shown. Without clean, the result is data, such as
 // the content of an event: a caller that shows it must clean it first
 // (docs/clients/SPEC.md, section 3.9).
-func (t *template) render(s scope, h helpers, clean bool) (string, error) {
+func (t *Template) Render(s Scope, h Helpers, clean bool) (string, error) {
 	var out strings.Builder
 	for _, p := range t.parts {
 		if p.name == "" {
@@ -153,7 +161,7 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 			// party's text too (docs/clients/SPEC.md, section 3.9).
 			text := p.text
 			if clean {
-				text = h.sanitize(text)
+				text = h.Sanitize(text)
 			}
 			out.WriteString(text) //arc:raw-ok render cleans each part that it shows; a template that builds an event stays as it is
 			continue
@@ -162,26 +170,26 @@ func (t *template) render(s scope, h helpers, clean bool) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		text := str(value)
+		text := Str(value)
 		if clean {
-			text = h.sanitize(text)
+			text = h.Sanitize(text)
 		}
 		out.WriteString(text) //arc:raw-ok render cleans each part that it shows; a template that builds an event stays as it is
 	}
 	return out.String(), nil
 }
 
-func (p part) value(s scope, h helpers) (any, error) {
+func (p part) value(s Scope, h Helpers) (any, error) {
 	var value any
 	if names := strings.Split(p.name, "+"); len(names) > 1 {
 		// {{a+b}} is the list of the values of a and b.
 		list := make([]string, len(names))
 		for i, name := range names {
-			list[i] = str(s.lookup(name))
+			list[i] = Str(s.Lookup(name))
 		}
 		value = list
 	} else {
-		value = s.lookup(p.name)
+		value = s.Lookup(p.name)
 	}
 	for _, f := range p.filters {
 		var err error
@@ -192,7 +200,7 @@ func (p part) value(s scope, h helpers) (any, error) {
 	return value, nil
 }
 
-func apply(f filter, value any, h helpers) (any, error) {
+func apply(f filter, value any, h Helpers) (any, error) {
 	switch f.name {
 	case "json":
 		body, err := json.Marshal(value)
@@ -204,14 +212,14 @@ func apply(f filter, value any, h helpers) (any, error) {
 		if value == nil {
 			return nil, nil
 		}
-		return hex.EncodeToString([]byte(str(value))), nil
+		return hex.EncodeToString([]byte(Str(value))), nil
 	case "join":
 		if value == nil {
 			return nil, nil
 		}
-		return str(value), nil
+		return Str(value), nil
 	case "default":
-		if str(value) == "" {
+		if Str(value) == "" {
 			return f.arg, nil
 		}
 		return value, nil
@@ -221,16 +229,16 @@ func apply(f filter, value any, h helpers) (any, error) {
 		}
 		if list, ok := value.([]string); ok {
 			// The words of a list are keyed apart, so a+b and ab differ.
-			return h.keyed(f.arg, strings.Join(list, "\x00"))
+			return h.Keyed(f.arg, strings.Join(list, "\x00"))
 		}
-		return h.keyed(f.arg, str(value))
+		return h.Keyed(f.arg, Str(value))
 	case "event_author":
 		if value == nil {
 			return nil, nil
 		}
-		return h.eventAuthor(str(value))
+		return h.EventAuthor(Str(value))
 	case "time", "date":
-		seconds, err := strconv.ParseInt(str(value), 10, 64)
+		seconds, err := strconv.ParseInt(Str(value), 10, 64)
 		if err != nil {
 			return value, nil
 		}
@@ -240,35 +248,35 @@ func apply(f filter, value any, h helpers) (any, error) {
 		}
 		return time.Unix(seconds, 0).Local().Format(layout), nil
 	case "name":
-		if pk, err := nostr.PubKeyFromHex(str(value)); err == nil {
-			return h.name(pk.Hex()), nil
+		if pk, err := nostr.PubKeyFromHex(Str(value)); err == nil {
+			return h.Name(pk.Hex()), nil
 		}
 		return value, nil
 	case "npub":
-		if pk, err := nostr.PubKeyFromHex(str(value)); err == nil {
+		if pk, err := nostr.PubKeyFromHex(Str(value)); err == nil {
 			return nip19.EncodeNpub(pk), nil
 		}
 		return value, nil
 	case "nevent":
-		if id, err := nostr.IDFromHex(str(value)); err == nil {
+		if id, err := nostr.IDFromHex(Str(value)); err == nil {
 			return nip19.EncodeNevent(id, nil, nostr.ZeroPK), nil
 		}
 		return value, nil
 	case "short":
-		text := str(value)
+		text := Str(value)
 		if len(text) > 12 {
 			return text[:8] + "…" + text[len(text)-4:], nil
 		}
 		return text, nil
 	case "indent":
-		text := str(value)
+		text := Str(value)
 		if text == "" {
 			return text, nil
 		}
 		return "  " + strings.ReplaceAll(strings.TrimRight(text, "\n"), "\n", "\n  "), nil
 	case "truncate":
 		n, _ := strconv.Atoi(f.arg)
-		text := str(value)
+		text := Str(value)
 		if utf8.RuneCountInString(text) <= n {
 			return text, nil
 		}
@@ -278,9 +286,9 @@ func apply(f filter, value any, h helpers) (any, error) {
 	return nil, errors.New("the filter " + f.name + " does not exist")
 }
 
-// str writes a value as text. An absent value is empty, and a list joins its
+// Str writes a value as text. An absent value is empty, and a list joins its
 // words with one space.
-func str(value any) string {
+func Str(value any) string {
 	switch v := value.(type) {
 	case nil:
 		return ""
@@ -303,28 +311,10 @@ func str(value any) string {
 	case []any:
 		words := make([]string, len(v))
 		for i, item := range v {
-			words[i] = str(item)
+			words[i] = Str(item)
 		}
 		return strings.Join(words, " ")
 	}
 	body, _ := json.Marshal(value)
 	return string(body)
-}
-
-// removedNote is what arc says, once for each run, when it removed
-// characters from what an app shows.
-const removedNote = "arc: the output held characters that could change the terminal or hide text; arc removed them"
-
-// sanitize removes from a value each character that docs/clients/SPEC.md,
-// section 3.9, escapes, except a backslash: a value cannot move the
-// cursor, change the terminal, reorder a line, or hide text, and a program
-// that reads the output gets the rest of the value as it was. The first
-// time that it removes a character in a run, it says so on standard error.
-func (r *run) sanitize(text string) string {
-	clean := terminal.Strip(text)
-	if clean != text && !*r.told {
-		*r.told = true
-		fmt.Fprintln(r.stdio.Err, removedNote)
-	}
-	return clean
 }

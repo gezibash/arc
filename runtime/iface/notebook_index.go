@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 func (r *run) notebookSections(entries []*entry, section string) ([]*entry, error) {
@@ -38,7 +39,7 @@ func (r *run) notebookSections(entries []*entry, section string) ([]*entry, erro
 
 func (r *run) saveNotebookIndex(kind, book, text string) error {
 	indexKind := r.kindOf(kind).NotebookIndex
-	d, err := r.keyed(indexKind, book)
+	d, err := r.Keyed(indexKind, book)
 	if err != nil {
 		return err
 	}
@@ -140,7 +141,7 @@ func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit in
 		_, eligible := byID[p.entry.d]
 		// A new entry changes the version, so search reads the page again.
 		var version strings.Builder
-		version.WriteString(str(p.entry.rec["id"]))
+		version.WriteString(template.Str(p.entry.rec["id"]))
 		for _, e := range p.entries {
 			version.WriteString("+" + e.wrap.Hex()[:16])
 		}

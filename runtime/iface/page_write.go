@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -60,7 +61,7 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	title := str(fields["title"])
+	title := template.Str(fields["title"])
 	switch {
 	case n.Title != "" && title != "" && title != n.Title:
 		return "", errors.New("frontmatter: title conflicts with --title")
@@ -69,7 +70,7 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 	case title == "":
 		title = heading(body)
 	}
-	if isDate(title) && title != n.Title && str(fields["title"]) == "" {
+	if isDate(title) && title != n.Title && template.Str(fields["title"]) == "" {
 		// A title that the text gives must not change which page today
 		// names: only today's page has the date as its title.
 		title = ""
@@ -85,7 +86,7 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		}
 	}
 	for key, want := range map[string]string{"notebook": book, "page": number} {
-		if given := str(fields[key]); given != "" && given != want {
+		if given := template.Str(fields[key]); given != "" && given != want {
 			return "", fmt.Errorf("frontmatter: %s %q does not match the address %s", key, given, terminal.EscapeLine(address))
 		}
 	}
@@ -97,7 +98,7 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		value := quoted(map[string]string{"title": title, "notebook": book, "page": number}[key])
 		if given, ok := fields[key]; ok {
 			// A field that is given and empty takes the value in its place.
-			if strings.TrimSpace(str(given)) == "" {
+			if strings.TrimSpace(template.Str(given)) == "" {
 				header = setField(header, key, value)
 			}
 		} else {
@@ -251,7 +252,7 @@ func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
 		}
 		for _, e := range checkpoints {
 			// The checkpoint of a lost head belongs to its own page.
-			if page.hid == "" || str(field(e.rec, "tags.head")) == page.hid {
+			if page.hid == "" || template.Str(field(e.rec, "tags.head")) == page.hid {
 				out = append(out, e)
 			}
 		}
@@ -276,8 +277,8 @@ func isDate(text string) bool {
 // front matter, in milliseconds as read and ls show it, else the second of
 // its event.
 func checkpointAt(e *entry) time.Time {
-	if fields, _, err := frontmatter(str(e.rec["content"])); err == nil {
-		if at, err := time.Parse(time.RFC3339Nano, str(fields["updated_at"])); err == nil {
+	if fields, _, err := frontmatter(template.Str(e.rec["content"])); err == nil {
+		if at, err := time.Parse(time.RFC3339Nano, template.Str(fields["updated_at"])); err == nil {
 			return at
 		}
 	}

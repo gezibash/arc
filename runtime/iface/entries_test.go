@@ -14,6 +14,7 @@ import (
 	boltstore "github.com/gezibash/arc/adapters/store/bolt"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // device is a second machine of the citizen of c: the same key, and a store
@@ -786,7 +787,7 @@ func TestTheLowsOfTheJournalUserTest(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatal(err)
 		}
-		titles[str(field(rec, "tags.d"))] = str(field(rec, "tags.title"))
+		titles[template.Str(field(rec, "tags.d"))] = template.Str(field(rec, "tags.title"))
 	}
 	for address, want := range map[string]string{"hrs/log/3": "Notes of the day", "hrs/log/4": strings.Repeat("a", 79) + "…", "hrs/log/5": "notes", "hrs/log/6": "notes"} {
 		if titles[address] != want {

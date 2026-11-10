@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/core/session"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 func (m *Manifest) check() error {
@@ -41,7 +42,7 @@ func (m *Manifest) check() error {
 			return errors.New("the output of the service cannot save or tail")
 		}
 		noNames := func(t string) error {
-			_, err := compile(t, func(string) bool { return false })
+			_, err := template.Compile(t, func(string) bool { return false })
 			return err
 		}
 		if err := m.checkOutput(o, false, noNames); err != nil {
@@ -97,8 +98,8 @@ func (m *Manifest) check() error {
 		if format.Record != "" && format.Table != nil {
 			return fmt.Errorf("format %s: a format has a record or a table, not both", name)
 		}
-		for _, template := range []string{format.Header, format.Record, format.Empty} {
-			if _, err := compile(template, nil); err != nil {
+		for _, tmpl := range []string{format.Header, format.Record, format.Empty} {
+			if _, err := template.Compile(tmpl, nil); err != nil {
 				return fmt.Errorf("format %s: %w", name, err)
 			}
 		}
@@ -175,8 +176,8 @@ func (m *Manifest) checkCommand(c Command) error {
 		return errors.New("a command has at most one stdin argument")
 	}
 
-	check := func(template string) error {
-		_, err := compile(template, func(root string) bool {
+	check := func(tmpl string) error {
+		_, err := template.Compile(tmpl, func(root string) bool {
 			return slices.Contains(names, root)
 		})
 		return err
@@ -247,8 +248,8 @@ func (m *Manifest) checkCommand(c Command) error {
 		actions++
 		// The d template of a notebook action names the page address, which
 		// the notebook resolves, as address.
-		checkD := func(template string) error {
-			_, err := compile(template, func(root string) bool {
+		checkD := func(tmpl string) error {
+			_, err := template.Compile(tmpl, func(root string) bool {
 				return root == "address" || slices.Contains(names, root)
 			})
 			return err
@@ -312,11 +313,13 @@ func (m *Manifest) checkCommand(c Command) error {
 // A save destination is exactly one explicit path argument. Templates of
 // response fields, defaults and transformations cannot authorize file writes.
 func saveArgument(c Command) (string, error) {
-	t, err := compile(c.Output.Save.To, nil)
-	if err == nil && len(t.parts) == 1 && len(t.parts[0].filters) == 0 {
-		for _, a := range c.Args {
-			if a.Name == t.parts[0].name && a.Type == "path" && a.Kind != "switch" && a.Default == "" {
-				return a.Name, nil
+	t, err := template.Compile(c.Output.Save.To, nil)
+	if err == nil {
+		if name, ok := t.PlaceholderOnly(); ok {
+			for _, a := range c.Args {
+				if a.Name == name && a.Type == "path" && a.Kind != "switch" && a.Default == "" {
+					return a.Name, nil
+				}
 			}
 		}
 	}
@@ -342,7 +345,7 @@ func (m *Manifest) checkOutput(o Output, watch bool, check func(string) error) e
 			return fmt.Errorf("save decodes base64, not %q", o.Save.Decode)
 		}
 		for _, t := range []string{o.Save.To, o.Save.SHA256} {
-			if _, err := compile(t, nil); err != nil {
+			if _, err := template.Compile(t, nil); err != nil {
 				return err
 			}
 		}
@@ -374,7 +377,7 @@ func (m *Manifest) checkOutput(o Output, watch bool, check func(string) error) e
 		if rule.Code == "" {
 			return errors.New("an exit rule needs a code")
 		}
-		if _, err := compile(rule.Code, nil); err != nil {
+		if _, err := template.Compile(rule.Code, nil); err != nil {
 			return err
 		}
 		if err := conds(rule.Where); err != nil {

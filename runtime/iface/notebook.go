@@ -12,6 +12,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // Notebook is an application view over sealed pages, not a transport or a
@@ -101,14 +102,14 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 		return "", err
 	}
 	for _, key := range []string{"title", "page", "notebook"} {
-		if strings.TrimSpace(str(fields[key])) == "" {
+		if strings.TrimSpace(template.Str(fields[key])) == "" {
 			return "", fmt.Errorf("frontmatter: requires nonempty %q", key)
 		}
 	}
-	if _, err = ordinal(str(fields["page"])); err != nil {
+	if _, err = ordinal(template.Str(fields["page"])); err != nil {
 		return "", err
 	}
-	if !notebookPattern.MatchString(str(fields["notebook"])) {
+	if !notebookPattern.MatchString(template.Str(fields["notebook"])) {
 		return "", errors.New("frontmatter: notebook must be project/notebook")
 	}
 	now := r.env.Now().UTC().Format(timeFormat)
@@ -118,7 +119,7 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 		if err != nil {
 			return "", err
 		}
-		if stamp := str(before["created_at"]); stamp != "" {
+		if stamp := template.Str(before["created_at"]); stamp != "" {
 			if _, err = time.Parse(time.RFC3339Nano, stamp); err != nil {
 				return "", errors.New("stored notebook created_at is invalid")
 			}
@@ -183,12 +184,12 @@ func (r *run) notebookPages(kind string) ([]notebookPage, error) {
 	}
 	pages := []notebookPage{}
 	for _, e := range entries {
-		address := str(field(e.rec, "tags.d"))
+		address := template.Str(field(e.rec, "tags.d"))
 		slash := strings.LastIndex(address, "/")
 		if slash < 0 || !notebookPattern.MatchString(address[:slash]) {
 			continue
 		}
-		p := notebookPage{entry: e, address: address, base: address, hid: str(field(e.rec, "tags.head"))}
+		p := notebookPage{entry: e, address: address, base: address, hid: template.Str(field(e.rec, "tags.head"))}
 		pageMeta(&p)
 		pages = append(pages, p)
 	}
@@ -203,14 +204,14 @@ func (r *run) notebookPages(kind string) ([]notebookPage, error) {
 func pageMeta(p *notebookPage) {
 	e := p.entry
 	p.book = p.base[:strings.LastIndex(p.base, "/")]
-	p.title = str(field(e.rec, "tags.title"))
-	fields, _, parseErr := frontmatter(str(e.rec["content"]))
-	if parseErr == nil && str(fields["notebook"])+"/"+str(fields["page"]) == p.base {
+	p.title = template.Str(field(e.rec, "tags.title"))
+	fields, _, parseErr := frontmatter(template.Str(e.rec["content"]))
+	if parseErr == nil && template.Str(fields["notebook"])+"/"+template.Str(fields["page"]) == p.base {
 		if !p.lost {
-			p.page, _ = ordinal(str(fields["page"]))
+			p.page, _ = ordinal(template.Str(fields["page"]))
 		}
-		p.created, _ = time.Parse(time.RFC3339Nano, str(fields["created_at"]))
-		p.updated, _ = time.Parse(time.RFC3339Nano, str(fields["updated_at"]))
+		p.created, _ = time.Parse(time.RFC3339Nano, template.Str(fields["created_at"]))
+		p.updated, _ = time.Parse(time.RFC3339Nano, template.Str(fields["updated_at"]))
 	}
 	if p.updated.IsZero() && number(e.rec["created"]) > 0 {
 		p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()

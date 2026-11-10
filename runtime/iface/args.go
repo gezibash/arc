@@ -308,7 +308,7 @@ type fileValue struct {
 	Bytes  []byte
 }
 
-func (f fileValue) field(name string) any {
+func (f fileValue) Field(name string) any {
 	switch name {
 	case "name":
 		return f.Name
