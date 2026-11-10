@@ -58,6 +58,23 @@ type Members []string
 
 // Bind reads the words that follow a command's path.
 func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
+	raw, positionals, flags, err := readWords(c, words)
+	if err != nil || flags.Help {
+		return nil, flags, err
+	}
+	if err := takePositionals(c, raw, positionals); err != nil {
+		return nil, flags, err
+	}
+	values, err := valuesOf(ctx, c, raw, r, stdin)
+	if err != nil {
+		return nil, flags, err
+	}
+	return values, flags, nil
+}
+
+// readWords reads the flags of a command line. It gives the words of each
+// flag by name, and the words that are not flags in their order.
+func readWords(c *manifest.Command, words []string) (map[string][]string, []string, Flags, error) {
 	var flags Flags
 	raw := map[string][]string{}
 	var positionals []string
@@ -110,28 +127,30 @@ func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		}
 		a, ok := byName[name]
 		if !ok || a.Kind == "positional" {
-			return nil, flags, fmt.Errorf("unknown flag --%s", name)
+			return nil, nil, flags, fmt.Errorf("unknown flag --%s", name)
 		}
 		if a.Kind == "switch" {
 			if hasValue {
-				return nil, flags, fmt.Errorf("--%s takes no value", name)
+				return nil, nil, flags, fmt.Errorf("--%s takes no value", name)
 			}
 			raw[name] = []string{"true"}
 			continue
 		}
 		if !hasValue {
 			if i+1 >= len(words) {
-				return nil, flags, fmt.Errorf("--%s needs a value", name)
+				return nil, nil, flags, fmt.Errorf("--%s needs a value", name)
 			}
 			i++
 			value = words[i]
 		}
 		raw[name] = []string{value}
 	}
-	if flags.Help {
-		return nil, flags, nil
-	}
+	return raw, positionals, flags, nil
+}
 
+// takePositionals gives the words that are not flags to the positional
+// arguments, in order. A variadic argument takes the rest.
+func takePositionals(c *manifest.Command, raw map[string][]string, positionals []string) error {
 	var given []string
 	for _, a := range c.Args {
 		if a.Kind != "positional" || a.Type == "stdin" {
@@ -156,18 +175,23 @@ func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		if len(given) > 0 {
 			text += ", after " + terminal.EscapeLine(strings.Join(given, ", "))
 		}
-		return nil, flags, errors.New(text)
+		return errors.New(text)
 	}
+	return nil
+}
 
+// valuesOf converts the words of each argument to its type. It reads the
+// standard input for an argument of that type, and fills in a default.
+func valuesOf(ctx context.Context, c *manifest.Command, raw map[string][]string, r Resolver, stdin io.Reader) (Values, error) {
 	values := Values{}
 	for _, a := range c.Args {
 		if a.Type == "stdin" {
 			body, err := io.ReadAll(io.LimitReader(stdin, MaxInput+1))
 			if err != nil {
-				return nil, flags, err
+				return nil, err
 			}
 			if len(body) > MaxInput {
-				return nil, flags, fmt.Errorf("the standard input is over %d bytes", MaxInput)
+				return nil, fmt.Errorf("the standard input is over %d bytes", MaxInput)
 			}
 			values[a.Name] = string(body)
 			continue
@@ -178,7 +202,7 @@ func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		}
 		if !given {
 			if a.Required {
-				return nil, flags, fmt.Errorf("missing %s", Usage(a))
+				return nil, fmt.Errorf("missing %s", Usage(a))
 			}
 			continue
 		}
@@ -199,11 +223,11 @@ func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 			value, err = convert(ctx, a, words[0], r)
 		}
 		if err != nil {
-			return nil, flags, fmt.Errorf("%s: %w", a.Name, err)
+			return nil, fmt.Errorf("%s: %w", a.Name, err)
 		}
 		values[a.Name] = value
 	}
-	return values, flags, nil
+	return values, nil
 }
 
 var linesPattern = regexp.MustCompile(`^([1-9][0-9]*)?:([1-9][0-9]*)?$`)
