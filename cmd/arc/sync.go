@@ -29,171 +29,210 @@ func syncCommand() *cobra.Command {
 			"everything with that directory: a USB stick, a shared folder, or a\n" +
 			"disk you carry.",
 		Args: cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			// A directory holds events, not the pieces of a storage citizen,
-			// so a repair through it has nothing to audit (#404).
-			if repair, _ := command.Flags().GetBool("repair"); repair {
-				if dir, _ := command.Flags().GetString("dir"); dir != "" {
-					return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: run arc sync --repair and arc sync --dir apart")
-				}
-			}
-			sess, err := open(command)
-			if err != nil {
-				return err
-			}
-			defer sess.Close()
-			sealed := sealedFilters(sess.Key.Public)
-			repair, _ := command.Flags().GetBool("repair")
-			turn, _ := command.Flags().GetBool("turn")
-			if turn && !repair {
-				return errors.New("--turn allows TURN for repair: give it with --repair")
-			}
-
-			targets := sess.Relays
-			dir, _ := command.Flags().GetString("dir")
-			if dir != "" {
-				targets = []transport.Transport{file.Dir{Path: dir}}
-			}
-			if len(targets) == 0 {
-				return errors.New("nothing to sync with: add a relay, or give --dir")
-			}
-
-			if dir != "" {
-				refreshDevices(command.Context(), sess, command.ErrOrStderr())
-			}
-			failed := false
-			// unreached has one plain line for each relay that gave no
-			// answer or refused, and no line of Go text (#442, #463).
-			var unreached []string
-			// Ask each relay once, all at once: a relay that does not answer
-			// is then down, and the steps below skip it, so silent relays
-			// cost one deadline in total, not one each (#442).
-			reached := map[string]error{}
-			if dir == "" {
-				for i, err := range sess.Reach(command.Context()) {
-					reached[sess.Relays[i].Name()] = err
-				}
-			}
-			for _, t := range targets {
-				if err := reached[t.Name()]; err != nil && citizen.Unreachable(err) {
-					unreached = append(unreached, t.Name()+": "+citizen.UnreachedReason(err))
-					continue
-				}
-				if line, ok := citizen.RefusedLine(t.Name(), reached[t.Name()]); ok {
-					unreached = append(unreached, line)
-					continue
-				}
-				// Self data goes to a directory that the citizen carries,
-				// but never to a relay.
-				if dir != "" {
-					report, err := syncSealed(command.Context(), sess.Node, sealed, noContacts{t})
-					if err != nil {
-						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: %v", t.Name(), err)))
-						failed = true
-						continue
-					}
-					fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
-						terminal.EscapeLine(report.Transport), report.Received, report.Sent, report.Duplicate+report.Superseded)
-					for _, reason := range report.Refused {
-						fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
-					}
-					if err := dropDeleted(command.Context(), command.OutOrStdout(), sess.Node, sealed, file.Dir{Path: dir}, report); err != nil {
-						fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: the events of deleted pages stay: %v", t.Name(), err)))
-						failed = true
-					}
-					if report.Unreadable > 0 {
-						fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
-					}
-					for _, err := range report.SendFailed {
-						fmt.Fprintf(os.Stderr, "  not sent: %s\n", terminal.EscapeLine(err.Error()))
-					}
-					bodies, err := sess.SyncBodies(dir)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
-						failed = true
-					} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
-						fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", terminal.EscapeLine(report.Transport), bodies.Received, bodies.Sent)
-						for _, sum := range bodies.Missing {
-							fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("  the body %s is on neither side; the device that wrote it holds it", sum)))
-						}
-					}
-				}
-
-				if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", terminal.EscapeLine(t.Name()), offers.Received)
-				}
-
-				mails, err := sess.Mail.Sync(command.Context(), t)
-				if line, ok := citizen.StoppedLine(terminal.EscapeLine(t.Name()), err); ok {
-					// The relay took some wraps, and then gave no answer:
-					// one line names it, and the rest wait (#465).
-					unreached = append(unreached, line)
-					continue
-				}
-				if err != nil && citizen.Unreachable(err) {
-					// The relay answered the question of Reach, so only
-					// its mail gave no answer: say so, in a few words at
-					// the end, not its whole error (#439, #442).
-					unreached = append(unreached, t.Name()+": "+citizen.UnreachedReason(err)+" for mail")
-					continue
-				}
-				if line, ok := citizen.RefusedLine(t.Name()+" for mail", err); ok {
-					unreached = append(unreached, line)
-					continue
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
-					failed = true
-					continue
-				}
-				fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
-					terminal.EscapeLine(mails.Transport), mails.Received, mails.Delivered, mails.Carried, mails.Sent)
-				for _, reason := range mails.Refused {
-					fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
-				}
-			}
-			if dir == "" && len(sess.Relays) > 0 {
-				// A relay that gave no answer is named once at the end.
-				if sent, err := sess.Mail.Forward(command.Context()); err != nil && !citizen.Unusable(err) {
-					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("mail: the waiting messages were not sent to the relays of their recipients: %v", err)))
-					failed = true
-				} else if sent > 0 {
-					fmt.Fprintf(command.OutOrStdout(), "mail: sent %d waiting %s to the relays that %s recipients read\n", sent, plural(sent, "message", "messages"), plural(sent, "its", "their"))
-				}
-			}
-			if dir == "" {
-				cfg, err := selfSyncConfig(command, sess)
-				if err != nil {
-					return err
-				}
-				again, _ := command.Flags().GetBool("import")
-				cfg.Repair, cfg.RepairTURN = repair, turn
-				if syncSelf(command.Context(), sess, cfg, again) != nil {
-					failed = true
-				}
-			}
-			// One line for each relay that gave no answer, the last as the
-			// error of the sync when nothing else failed. A line holds raw
-			// text that a relay chose, and is escaped once, where it is
-			// printed: errorLine escapes the error of the command (#464).
-			for i, relay := range unreached {
-				if i < len(unreached)-1 || failed {
-					fmt.Fprintln(command.ErrOrStderr(), "arc: "+terminal.EscapeLine(relay+"; arc syncs with it again at the next sync"))
-				} else {
-					return errors.New(relay + "; arc syncs with it again at the next sync")
-				}
-			}
-			if failed {
-				return errors.New("some transports failed")
-			}
-			return nil
-		},
+		RunE: runSync,
 	}
 	command.Flags().String("dir", "", "sync with this directory instead of the relays")
 	command.Flags().Bool("import", false, "import the drafts that the relays hold again")
 	command.Flags().Bool("repair", false, "audit the pieces on the storage citizens, and rebuild, move or delete pieces; arc serve does this on each tick")
 	command.Flags().Bool("turn", false, "with --repair, let repair use a pipe through TURN; it waits for a direct path by default")
 	return command
+}
+
+// syncRun is one run of arc sync: what it syncs with, and what went wrong.
+type syncRun struct {
+	command *cobra.Command
+	sess    *citizen.Session
+	sealed  []nostr.Filter
+	dir     string
+	failed  bool
+	// unreached has one plain line for each relay that gave no
+	// answer or refused, and no line of Go text (#442, #463).
+	unreached []string
+}
+
+func runSync(command *cobra.Command, _ []string) error {
+	// A directory holds events, not the pieces of a storage citizen,
+	// so a repair through it has nothing to audit (#404).
+	if repair, _ := command.Flags().GetBool("repair"); repair {
+		if dir, _ := command.Flags().GetString("dir"); dir != "" {
+			return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: run arc sync --repair and arc sync --dir apart")
+		}
+	}
+	sess, err := open(command)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	repair, _ := command.Flags().GetBool("repair")
+	turn, _ := command.Flags().GetBool("turn")
+	if turn && !repair {
+		return errors.New("--turn allows TURN for repair: give it with --repair")
+	}
+
+	run := &syncRun{command: command, sess: sess, sealed: sealedFilters(sess.Key.Public)}
+	targets := sess.Relays
+	run.dir, _ = command.Flags().GetString("dir")
+	if run.dir != "" {
+		targets = []transport.Transport{file.Dir{Path: run.dir}}
+	}
+	if len(targets) == 0 {
+		return errors.New("nothing to sync with: add a relay, or give --dir")
+	}
+	if run.dir != "" {
+		refreshDevices(command.Context(), sess, command.ErrOrStderr())
+	}
+	// Ask each relay once, all at once: a relay that does not answer
+	// is then down, and the steps below skip it, so silent relays
+	// cost one deadline in total, not one each (#442).
+	reached := map[string]error{}
+	if run.dir == "" {
+		for i, err := range sess.Reach(command.Context()) {
+			reached[sess.Relays[i].Name()] = err
+		}
+	}
+	for _, t := range targets {
+		run.target(t, reached[t.Name()])
+	}
+	if run.dir == "" && len(sess.Relays) > 0 {
+		run.forward()
+	}
+	if run.dir == "" {
+		cfg, err := selfSyncConfig(command, sess)
+		if err != nil {
+			return err
+		}
+		again, _ := command.Flags().GetBool("import")
+		cfg.Repair, cfg.RepairTURN = repair, turn
+		if syncSelf(command.Context(), sess, cfg, again) != nil {
+			run.failed = true
+		}
+	}
+	return run.finish()
+}
+
+// target syncs with one relay or directory. reached is the answer of the
+// relay to Reach.
+func (r *syncRun) target(t transport.Transport, reached error) {
+	command, sess := r.command, r.sess
+	if reached != nil && citizen.Unreachable(reached) {
+		r.unreached = append(r.unreached, t.Name()+": "+citizen.UnreachedReason(reached))
+		return
+	}
+	if line, ok := citizen.RefusedLine(t.Name(), reached); ok {
+		r.unreached = append(r.unreached, line)
+		return
+	}
+	// Self data goes to a directory that the citizen carries,
+	// but never to a relay.
+	if r.dir != "" && !r.directory(t) {
+		return
+	}
+
+	if offers, err := sess.Node.Sync(command.Context(), announcements, t); err == nil && offers.Received > 0 {
+		fmt.Fprintf(command.OutOrStdout(), "%s: announcements received %d\n", terminal.EscapeLine(t.Name()), offers.Received)
+	}
+	r.mail(t)
+}
+
+// directory syncs the self data and the bodies with a directory. It
+// returns false when the sealed data did not sync, and the target stops.
+func (r *syncRun) directory(t transport.Transport) bool {
+	command, sess := r.command, r.sess
+	report, err := syncSealed(command.Context(), sess.Node, r.sealed, noContacts{t})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: %v", t.Name(), err)))
+		r.failed = true
+		return false
+	}
+	fmt.Fprintf(command.OutOrStdout(), "%s: sealed data received %d, sent %d, already held %d\n",
+		terminal.EscapeLine(report.Transport), report.Received, report.Sent, report.Duplicate+report.Superseded)
+	for _, reason := range report.Refused {
+		fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
+	}
+	if err := dropDeleted(command.Context(), command.OutOrStdout(), sess.Node, r.sealed, file.Dir{Path: r.dir}, report); err != nil {
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s: the events of deleted pages stay: %v", t.Name(), err)))
+		r.failed = true
+	}
+	if report.Unreadable > 0 {
+		fmt.Fprintf(os.Stderr, "  %d items did not parse\n", report.Unreadable)
+	}
+	for _, err := range report.SendFailed {
+		fmt.Fprintf(os.Stderr, "  not sent: %s\n", terminal.EscapeLine(err.Error()))
+	}
+	bodies, err := sess.SyncBodies(r.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: bodies: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
+		r.failed = true
+	} else if bodies.Sent+bodies.Received+len(bodies.Missing) > 0 {
+		fmt.Fprintf(command.OutOrStdout(), "%s: bodies received %d, sent %d\n", terminal.EscapeLine(report.Transport), bodies.Received, bodies.Sent)
+		for _, sum := range bodies.Missing {
+			fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("  the body %s is on neither side; the device that wrote it holds it", sum)))
+		}
+	}
+	return true
+}
+
+// mail syncs the mail with one target.
+func (r *syncRun) mail(t transport.Transport) {
+	command := r.command
+	mails, err := r.sess.Mail.Sync(command.Context(), t)
+	if line, ok := citizen.StoppedLine(terminal.EscapeLine(t.Name()), err); ok {
+		// The relay took some wraps, and then gave no answer:
+		// one line names it, and the rest wait (#465).
+		r.unreached = append(r.unreached, line)
+		return
+	}
+	if err != nil && citizen.Unreachable(err) {
+		// The relay answered the question of Reach, so only
+		// its mail gave no answer: say so, in a few words at
+		// the end, not its whole error (#439, #442).
+		r.unreached = append(r.unreached, t.Name()+": "+citizen.UnreachedReason(err)+" for mail")
+		return
+	}
+	if line, ok := citizen.RefusedLine(t.Name()+" for mail", err); ok {
+		r.unreached = append(r.unreached, line)
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
+		r.failed = true
+		return
+	}
+	fmt.Fprintf(command.OutOrStdout(), "%s: mail received %d, delivered %d, carried %d, sent %d\n",
+		terminal.EscapeLine(mails.Transport), mails.Received, mails.Delivered, mails.Carried, mails.Sent)
+	for _, reason := range mails.Refused {
+		fmt.Fprintf(os.Stderr, "  refused %s\n", terminal.EscapeLine(reason))
+	}
+}
+
+// forward sends the waiting mail to the relays of its recipients. A relay
+// that gave no answer is named once at the end.
+func (r *syncRun) forward() {
+	command := r.command
+	if sent, err := r.sess.Mail.Forward(command.Context()); err != nil && !citizen.Unusable(err) {
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("mail: the waiting messages were not sent to the relays of their recipients: %v", err)))
+		r.failed = true
+	} else if sent > 0 {
+		fmt.Fprintf(command.OutOrStdout(), "mail: sent %d waiting %s to the relays that %s recipients read\n", sent, plural(sent, "message", "messages"), plural(sent, "its", "their"))
+	}
+}
+
+// finish writes one line for each relay that gave no answer, the last as
+// the error of the sync when nothing else failed. A line holds raw text
+// that a relay chose, and is escaped once, where it is printed: errorLine
+// escapes the error of the command (#464).
+func (r *syncRun) finish() error {
+	for i, relay := range r.unreached {
+		if i < len(r.unreached)-1 || r.failed {
+			fmt.Fprintln(r.command.ErrOrStderr(), "arc: "+terminal.EscapeLine(relay+"; arc syncs with it again at the next sync"))
+		} else {
+			return errors.New(relay + "; arc syncs with it again at the next sync")
+		}
+	}
+	if r.failed {
+		return errors.New("some transports failed")
+	}
+	return nil
 }
 
 // sealedFilters match the self data of a citizen: drafts, their checkpoints

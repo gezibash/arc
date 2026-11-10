@@ -25,6 +25,11 @@ func messageCommand() *cobra.Command {
 			"other citizens' mail, which it cannot read.",
 	}
 
+	command.AddCommand(messageSendCommand(), messageInboxCommand(), messageHeldCommand(), messageOutboxCommand(), messageWatchCommand())
+	return command
+}
+
+func messageSendCommand() *cobra.Command {
 	send := &cobra.Command{
 		Use: "send <public key>[,<public key>...] [text...]", Short: "Send a message, to one citizen or to a group",
 		Long: "With several public keys, separated by commas, arc sends one group\n" +
@@ -91,7 +96,13 @@ func messageCommand() *cobra.Command {
 			return nil
 		},
 	}
+	send.Flags().Bool("json", false, "print the queued message as one JSON object")
+	send.Flags().String("reply", "", "reply to the message with this id, 64 hex digits; the recipients are its members")
+	addTestTags(send)
+	return send
+}
 
+func messageInboxCommand() *cobra.Command {
 	inbox := &cobra.Command{
 		Use: "inbox", Short: "List the messages you received", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -136,7 +147,11 @@ func messageCommand() *cobra.Command {
 			return nil
 		},
 	}
+	inbox.Flags().Bool("json", false, "print one JSON object for each message")
+	return inbox
+}
 
+func messageHeldCommand() *cobra.Command {
 	held := &cobra.Command{
 		Use: "held", Short: "List the messages from strangers that arc held apart",
 		Long: "A message from a key that is not a contact, without proof of work,\n" +
@@ -168,7 +183,11 @@ func messageCommand() *cobra.Command {
 			return nil
 		},
 	}
+	held.Flags().Bool("json", false, "print one JSON object for each message")
+	return held
+}
 
+func messageOutboxCommand() *cobra.Command {
 	outbox := &cobra.Command{
 		Use: "outbox", Short: "List the messages you sent, and whether they arrived", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -192,13 +211,6 @@ func messageCommand() *cobra.Command {
 			return nil
 		},
 	}
-
-	send.Flags().Bool("json", false, "print the queued message as one JSON object")
-	send.Flags().String("reply", "", "reply to the message with this id, 64 hex digits; the recipients are its members")
-	addTestTags(send)
-	inbox.Flags().Bool("json", false, "print one JSON object for each message")
-	held.Flags().Bool("json", false, "print one JSON object for each message")
 	outbox.Flags().Bool("json", false, "print one JSON object for each message, and no requests")
-	command.AddCommand(send, inbox, held, outbox, messageWatchCommand())
-	return command
+	return outbox
 }
