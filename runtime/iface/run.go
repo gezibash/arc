@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
@@ -32,7 +33,7 @@ type SearchIndex interface {
 
 // Env is what a command needs from the citizen's machine.
 type Env interface {
-	Resolver
+	args.Resolver
 	Store
 	// Me is the citizen's public key.
 	Me() nostr.PubKey
@@ -106,8 +107,8 @@ type run struct {
 	env     Env
 	in      Installed
 	command *manifest.Command
-	values  Values
-	flags   Flags
+	values  args.Values
+	flags   args.Flags
 	stdio   Stdio
 	// missing is the first part that join could not find.
 	missing error
@@ -207,7 +208,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 		return nil
 	}
 
-	values, flags, err := bind(ctx, command, rest, env, stdio.In)
+	values, flags, err := args.Bind(ctx, command, rest, env, stdio.In)
 	if err != nil {
 		// arc writes an error on one line, so the usage follows on it (#398).
 		return fmt.Errorf("%w; usage: %s", err, usage(in, command))
@@ -221,7 +222,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	// member.
 	var listed string
 	for name, value := range values {
-		if _, ok := value.(members); ok {
+		if _, ok := value.(args.Members); ok {
 			if listed != "" {
 				return fmt.Errorf("%s and %s both name a list: one command takes one list", listed, name)
 			}
@@ -234,10 +235,10 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	if command.Action.Watch != nil {
 		return fmt.Errorf("%s names a list, and a watch takes one key", listed)
 	}
-	list, _ := values[listed].(members)
+	list, _ := values[listed].(args.Members)
 	failed := 0
 	for _, member := range list {
-		one := Values{}
+		one := args.Values{}
 		maps.Copy(one, values)
 		one[listed] = member
 		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
@@ -253,7 +254,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 }
 
 // runOnce runs a command with its values.
-func runOnce(ctx context.Context, env Env, in Installed, command *manifest.Command, values Values, flags Flags, stdio Stdio) error {
+func runOnce(ctx context.Context, env Env, in Installed, command *manifest.Command, values args.Values, flags args.Flags, stdio Stdio) error {
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio, told: new(bool)}
 	if command.Action.Watch != nil {
 		return r.watch(command.Action.Watch)
@@ -547,7 +548,7 @@ func commandHelp(in Installed, c *manifest.Command) string {
 			if a.Default != "" {
 				note += ", default " + a.Default
 			}
-			fmt.Fprintf(tw, "  %s\t%s\n", terminal.EscapeLine(usageOf(a)), terminal.EscapeLine(note))
+			fmt.Fprintf(tw, "  %s\t%s\n", terminal.EscapeLine(args.Usage(a)), terminal.EscapeLine(note))
 		}
 		_ = tw.Flush()
 	}
@@ -558,7 +559,7 @@ func commandHelp(in Installed, c *manifest.Command) string {
 func usage(in Installed, c *manifest.Command) string {
 	words := append([]string{"arc", in.Name}, c.Path...)
 	for _, a := range c.Args {
-		text := usageOf(a)
+		text := args.Usage(a)
 		if !a.Required {
 			text = "[" + text + "]"
 		}
@@ -576,7 +577,7 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 		return errors.New("the service has no output")
 	}
 	command := &manifest.Command{Output: *service.Output}
-	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio, told: new(bool)}
+	r := &run{ctx: ctx, env: env, in: in, command: command, values: args.Values{}, stdio: stdio, told: new(bool)}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {
 		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, r.Sanitize(body)))

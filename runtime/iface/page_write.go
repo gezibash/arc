@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
@@ -111,7 +112,7 @@ func (r *run) writePage(n *manifest.Notebook, dTemplate string) (string, error) 
 	if _, err := rand.Read(hid); err != nil {
 		return "", err
 	}
-	scoped := r.scopedWith(Values{"head_text": header + body, "head_address": address, "head_title": title, "head_id": hex.EncodeToString(hid)})
+	scoped := r.scopedWith(args.Values{"head_text": header + body, "head_address": address, "head_title": title, "head_id": hex.EncodeToString(hid)})
 	if _, err := scoped.publishSealed(&manifest.Publish{
 		Kind: n.Kind, D: d, Revise: "replace", FrontmatterAddress: "{{head_address}}",
 		Content: manifest.Content{Text: "{{head_text}}"},
@@ -247,7 +248,7 @@ func (r *run) history(n *manifest.Notebook, dTemplate string) ([]*entry, error) 
 		if err != nil {
 			return nil, err
 		}
-		checkpoints, err := r.scopedWith(Values{"history_d": d}).query(&manifest.Query{Kinds: []string{n.Kind}, Authors: "me", D: "{{history_d}}", History: true})
+		checkpoints, err := r.scopedWith(args.Values{"history_d": d}).query(&manifest.Query{Kinds: []string{n.Kind}, Authors: "me", D: "{{history_d}}", History: true})
 		if err != nil {
 			return nil, err
 		}

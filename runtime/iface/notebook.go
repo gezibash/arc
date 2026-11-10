@@ -12,6 +12,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
@@ -64,7 +65,7 @@ func (r *run) notebookHeader(p *manifest.Publish, content string, old *draft.Dra
 		} else {
 			// For a historical numbered page, use the earliest available checkpoint.
 			saved := *r
-			saved.values = Values{"notebook_existing_d": old.D}
+			saved.values = args.Values{"notebook_existing_d": old.D}
 			history, err := saved.query(&manifest.Query{Kinds: []string{p.Kind}, Authors: "me", D: "{{notebook_existing_d}}", History: true})
 			if err != nil {
 				return "", err

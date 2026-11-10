@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
@@ -45,7 +46,7 @@ func (r *run) saveNotebookIndex(kind, book, text string) error {
 		return err
 	}
 	scoped := *r
-	scoped.values = Values{"notebook_index_content": text}
+	scoped.values = args.Values{"notebook_index_content": text}
 	_, err = scoped.publishSealed(&manifest.Publish{Kind: indexKind, D: d, Content: manifest.Content{Text: "{{notebook_index_content}}"}, Revise: "replace", Tags: [][]string{{"d", book}, {"notebook", book}, {"title", "Index of " + book}}})
 	return err
 }

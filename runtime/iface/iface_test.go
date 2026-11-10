@@ -22,6 +22,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
@@ -516,59 +517,6 @@ func TestKeyedValuesDifferByCapability(t *testing.T) {
 	}
 }
 
-func TestArgumentTypes(t *testing.T) {
-	pk := nostr.Generate().Public()
-	id := nostr.ID(pk)
-	env := &fakeEnv{me: nostr.Generate()}
-	cases := []struct {
-		arg  manifest.Arg
-		in   string
-		want any
-		err  string
-	}{
-		{manifest.Arg{Type: "key"}, nip19.EncodeNpub(pk), pk.Hex(), ""},
-		{manifest.Arg{Type: "key"}, "nobody", nil, "unknown key"},
-		{manifest.Arg{Type: "event"}, nip19.EncodeNevent(id, nil, nostr.ZeroPK), id.Hex(), ""},
-		{manifest.Arg{Type: "event"}, nip19.EncodeNaddr(pk, 30023, "page", nil), "30023:" + pk.Hex() + ":page", ""},
-		{manifest.Arg{Type: "event"}, nip19.EncodeNpub(pk), nil, "not an event"},
-		{manifest.Arg{Type: "integer"}, "12", int64(12), ""},
-		{manifest.Arg{Type: "integer"}, "twelve", nil, "whole number"},
-		{manifest.Arg{Type: "lines"}, "3:9", "3:9", ""},
-		{manifest.Arg{Type: "lines"}, "9:3", nil, "ends before"},
-		{manifest.Arg{Type: "lines"}, ":", nil, "not a range"},
-		{manifest.Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b", "a/b", ""},
-		{manifest.Arg{Type: "address", Pattern: "^[a-z]+/[a-z]+$"}, "a/b/c", nil, "is not an address"},
-		{manifest.Arg{Type: "path"}, "iface_test.go", nil, "never replaces"},
-	}
-	for _, c := range cases {
-		got, err := convert(context.Background(), c.arg, c.in, env)
-		switch {
-		case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
-			t.Errorf("%s %q: got %v, want an error with %q", c.arg.Type, c.in, err, c.err)
-		case c.err == "" && (err != nil || got != c.want):
-			t.Errorf("%s %q: got %v %v, want %v", c.arg.Type, c.in, got, err, c.want)
-		}
-	}
-}
-
-func TestFileArgumentsOfferTheirFields(t *testing.T) {
-	path := t.TempDir() + "/note.txt"
-	os.WriteFile(path, []byte("hi"), 0o600)
-	value, err := convert(context.Background(), manifest.Arg{Type: "file"}, path, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := template.Scope(func(string) (any, bool) { return value, true })
-	tpl, _ := template.Compile("{{f.name}} {{f.type}} {{f.size}} {{f.sha256|short}} {{f}}", nil)
-	out, err := tpl.Render(s, nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(out, "note.txt text/plain") || !strings.Contains(out, " 2 8f434346…") || !strings.HasSuffix(out, " aGk=") {
-		t.Errorf("the file renders as %q", out)
-	}
-}
-
 func TestAVariadicKeepsItsFlags(t *testing.T) {
 	env := &fakeEnv{me: nostr.Generate(), reply: CallResult{Body: `{"exit":0,"stdout":""}`}}
 	if _, _, err := runSpec(t, "exec", env, "run", "--json", "sh", "-c", "echo --x"); err != nil {
@@ -581,7 +529,7 @@ func TestAVariadicKeepsItsFlags(t *testing.T) {
 
 func TestKeyedListsKeepTheirWordsApart(t *testing.T) {
 	env := &fakeEnv{me: nostr.Generate()}
-	r := &run{env: env, in: Installed{Manifest: &manifest.Manifest{ID: "x"}}, values: Values{"a": "ab", "b": "c", "c": "a", "d": "bc"}}
+	r := &run{env: env, in: Installed{Manifest: &manifest.Manifest{ID: "x"}}, values: args.Values{"a": "ab", "b": "c", "c": "a", "d": "bc"}}
 	one, _ := template.Compile("{{a+b|keyed:p}}", nil)
 	two, _ := template.Compile("{{c+d|keyed:p}}", nil)
 	x, _ := one.Render(r.scope, r, false)

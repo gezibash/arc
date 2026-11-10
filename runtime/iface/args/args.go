@@ -1,4 +1,4 @@
-package iface
+package args
 
 import (
 	"context"
@@ -53,11 +53,11 @@ type Lister interface {
 	List(name string) ([]nostr.PubKey, error)
 }
 
-// members is the value of a key argument that named a list, as hex keys.
-type members []string
+// Members is the value of a key argument that named a list, as hex keys.
+type Members []string
 
-// bind reads the words that follow a command's path.
-func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
+// Bind reads the words that follow a command's path.
+func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
 	var flags Flags
 	raw := map[string][]string{}
 	var positionals []string
@@ -178,7 +178,7 @@ func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, 
 		}
 		if !given {
 			if a.Required {
-				return nil, flags, fmt.Errorf("missing %s", usageOf(a))
+				return nil, flags, fmt.Errorf("missing %s", Usage(a))
 			}
 			continue
 		}
@@ -226,7 +226,7 @@ func convert(ctx context.Context, a manifest.Arg, text string, r Resolver) (any,
 				return nil, err
 			}
 			if len(list) > 0 {
-				out := make(members, len(list))
+				out := make(Members, len(list))
 				for i, pk := range list {
 					out[i] = pk.Hex()
 				}
@@ -299,9 +299,9 @@ func eventRef(text string) (string, error) {
 	return "", fmt.Errorf("%q is an %s, not an event", text, prefix)
 }
 
-// fileValue is a file that the citizen named. Templates read its name, type,
+// File is a file that the citizen named. Templates read its name, type,
 // size and sha256; the file itself renders as base64.
-type fileValue struct {
+type File struct {
 	Name   string
 	Type   string
 	Size   int64
@@ -309,7 +309,7 @@ type fileValue struct {
 	Bytes  []byte
 }
 
-func (f fileValue) Field(name string) any {
+func (f File) Field(name string) any {
 	switch name {
 	case "name":
 		return f.Name
@@ -323,36 +323,36 @@ func (f fileValue) Field(name string) any {
 	return nil
 }
 
-func (f fileValue) String() string { return base64.StdEncoding.EncodeToString(f.Bytes) }
+func (f File) String() string { return base64.StdEncoding.EncodeToString(f.Bytes) }
 
-func (f fileValue) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
+func (f File) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
 
-func readFile(path string, limit int) (fileValue, error) {
+func readFile(path string, limit int) (File, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return fileValue{}, err
+		return File{}, err
 	}
 	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
-		return fileValue{}, err
+		return File{}, err
 	}
 	if len(body) > limit {
-		return fileValue{}, fmt.Errorf("%s is over %d bytes", path, limit)
+		return File{}, fmt.Errorf("%s is over %d bytes", path, limit)
 	}
 	kind := mime.TypeByExtension(filepath.Ext(path))
 	if kind == "" {
 		kind = http.DetectContentType(body)
 	}
 	sum := sha256.Sum256(body)
-	return fileValue{
+	return File{
 		Name: filepath.Base(path), Type: kind, Size: int64(len(body)),
 		SHA256: hex.EncodeToString(sum[:]), Bytes: body,
 	}, nil
 }
 
-// usageOf writes one argument as the help shows it.
-func usageOf(a manifest.Arg) string {
+// Usage writes one argument as the help shows it.
+func Usage(a manifest.Arg) string {
 	switch {
 	case a.Kind == "switch":
 		return "--" + a.Name

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gezibash/arc/runtime/iface/args"
 	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -43,7 +44,7 @@ func (r *run) findPages(kind, address string, allow ...string) (*notebookPage, [
 
 // scopedWith is a copy of the run whose templates know the values. A text
 // that a citizen gives goes through a value, so it is never a template.
-func (r *run) scopedWith(values Values) *run {
+func (r *run) scopedWith(values args.Values) *run {
 	scoped := *r
 	scoped.values = maps.Clone(r.values)
 	maps.Copy(scoped.values, values)
@@ -53,7 +54,7 @@ func (r *run) scopedWith(values Values) *run {
 // headD is the d tag of the head of a page, from the d template of the
 // action.
 func (r *run) headD(tmpl, address string) (string, error) {
-	return r.scopedWith(Values{"address": address}).template(tmpl)
+	return r.scopedWith(args.Values{"address": address}).template(tmpl)
 }
 
 // head reads the head of a page, or nil.
