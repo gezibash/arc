@@ -79,6 +79,12 @@ func TestNotebookChronologyFiltersAndNumericNavigation(t *testing.T) {
 	if strings.Count(listing, "\n") != 1 || !strings.HasPrefix(listing, "arc/research/2\tSecond result\t2026-09-28T23:59:59.000Z") {
 		t.Fatal(listing)
 	}
+	// The dates alone choose: page 10 is from the day before, and page 1
+	// from the day after. The last second of the day is in it.
+	listing = c.must("journal", "", "ls", "--notebook", "arc/research", "--from", "2026-09-28", "--to", "2026-09-28")
+	if strings.Count(listing, "\n") != 1 || !strings.HasPrefix(listing, "arc/research/2\t") {
+		t.Fatal(listing)
+	}
 	if got := c.must("journal", "", "select", "--notebook", "arc/research", "--page", "2", "--section", "method"); got != "# Method\nsecond\n" {
 		t.Fatal(got)
 	}
