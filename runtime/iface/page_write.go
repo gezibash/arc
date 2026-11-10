@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -18,7 +19,7 @@ import (
 // writePage makes the head of a new page: its front matter and its first
 // text, with a random head id that its entries name. It fills in the front
 // matter that the text does not give.
-func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
+func (r *run) writePage(n *manifest.Notebook, dTemplate string) (string, error) {
 	address, _, err := r.resolve(n.Kind, n.Address, "next", "today")
 	if err != nil {
 		return "", err
@@ -111,9 +112,9 @@ func (r *run) writePage(n *Notebook, dTemplate string) (string, error) {
 		return "", err
 	}
 	scoped := r.scopedWith(Values{"head_text": header + body, "head_address": address, "head_title": title, "head_id": hex.EncodeToString(hid)})
-	if _, err := scoped.publishSealed(&Publish{
+	if _, err := scoped.publishSealed(&manifest.Publish{
 		Kind: n.Kind, D: d, Revise: "replace", FrontmatterAddress: "{{head_address}}",
-		Content: Content{Text: "{{head_text}}"},
+		Content: manifest.Content{Text: "{{head_text}}"},
 		Tags:    [][]string{{"d", "{{head_address}}"}, {"title", "{{head_title}}"}, {"head", "{{head_id}}"}},
 	}); err != nil {
 		return "", err
@@ -159,7 +160,7 @@ func quoted(value string) string {
 
 // appendEntry adds an entry to a page that exists, or to today's page,
 // which it makes when it does not exist.
-func (r *run) appendEntry(n *Notebook, dTemplate string) (string, error) {
+func (r *run) appendEntry(n *manifest.Notebook, dTemplate string) (string, error) {
 	if strings.TrimSpace(n.Text) == "" {
 		return "", errors.New("no text to add")
 	}
@@ -187,7 +188,7 @@ func noSuchPage(address string) error {
 
 // fixEntry adds an entry that corrects an entry, or the head when the
 // address names a page.
-func (r *run) fixEntry(n *Notebook) (string, error) {
+func (r *run) fixEntry(n *manifest.Notebook) (string, error) {
 	if strings.TrimSpace(n.Text) == "" {
 		return "", errors.New("no text for the fix")
 	}
@@ -232,7 +233,7 @@ func (r *run) fixEntry(n *Notebook) (string, error) {
 }
 
 // history lists the checkpoints of the head, then each entry and fix.
-func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
+func (r *run) history(n *manifest.Notebook, dTemplate string) ([]*entry, error) {
 	page, err := r.findPage(n.Kind, n.Address, "today")
 	if err != nil {
 		return nil, err
@@ -246,7 +247,7 @@ func (r *run) history(n *Notebook, dTemplate string) ([]*entry, error) {
 		if err != nil {
 			return nil, err
 		}
-		checkpoints, err := r.scopedWith(Values{"history_d": d}).query(&Query{Kinds: []string{n.Kind}, Authors: "me", D: "{{history_d}}", History: true})
+		checkpoints, err := r.scopedWith(Values{"history_d": d}).query(&manifest.Query{Kinds: []string{n.Kind}, Authors: "me", D: "{{history_d}}", History: true})
 		if err != nil {
 			return nil, err
 		}

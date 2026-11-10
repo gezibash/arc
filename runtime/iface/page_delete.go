@@ -7,6 +7,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -14,7 +15,7 @@ import (
 // draft, with the entries of the page and their parts in one more request.
 // The head of a lost page is a checkpoint, so a request names it and its
 // parts, and the live page at the address stays.
-func (r *run) deletePage(n *Notebook, dTemplate string) error {
+func (r *run) deletePage(n *manifest.Notebook, dTemplate string) error {
 	// A delete names its page: it does not resolve today.
 	if _, _, err := r.resolve(n.Kind, n.Address); err != nil {
 		return err
@@ -98,7 +99,7 @@ func (r *run) deletePage(n *Notebook, dTemplate string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := scoped.removeKeeping(&Delete{Kind: n.Kind, D: dTemplate}, keep); err != nil && (page == nil || len(page.entries) == 0 || err.Error() != "there is nothing to delete") {
+	if _, err := scoped.removeKeeping(&manifest.Delete{Kind: n.Kind, D: dTemplate}, keep); err != nil && (page == nil || len(page.entries) == 0 || err.Error() != "there is nothing to delete") {
 		return err
 	}
 	if up == nil || r.flags.DryRun {
@@ -129,7 +130,7 @@ func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage, gone st
 	at++
 	tags := [][]string{{"d", "{{up_address}}"}, {"title", "{{up_title}}"}, {"head", "{{up_head}}"}}
 	scoped := r.scopedWith(Values{"up_text": text, "up_address": up.base, "up_title": up.title, "up_head": up.hid})
-	if _, err := scoped.publishSealed(&Publish{Kind: kind, D: d, Revise: "entry", at: at, Content: Content{Text: "{{up_text}}"}, Tags: tags}); err != nil {
+	if _, err := scoped.publishSealed(&manifest.Publish{Kind: kind, D: d, Revise: "entry", At: at, Content: manifest.Content{Text: "{{up_text}}"}, Tags: tags}); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.stdio.Err, "%s is deleted, so %s, made at %s offline too, moved up from %s to %s\n",
@@ -138,7 +139,7 @@ func (r *run) moveUp(kind, d string, old *draft.Draft, up *notebookPage, gone st
 }
 
 // notebookWrite runs the operations of a kind that keeps each entry.
-func (r *run) notebookWrite(n *Notebook, dTemplate string) ([]*entry, error) {
+func (r *run) notebookWrite(n *manifest.Notebook, dTemplate string) ([]*entry, error) {
 	if n.Op != "fix" {
 		address, _, err := r.notebookAddress(n.Address)
 		if err != nil {

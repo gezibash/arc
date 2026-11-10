@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/runtime/capability"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 func TestModernProviderNeedsOnlyOneManifest(t *testing.T) {
@@ -29,7 +29,7 @@ func TestModernProviderNeedsOnlyOneManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	announced, err := iface.Parse([]byte(definition.Content))
+	announced, err := manifest.Parse([]byte(definition.Content))
 	if err != nil || announced.Service.MaxBytes != 1048576 {
 		t.Fatalf("announced=%+v err=%v", announced, err)
 	}

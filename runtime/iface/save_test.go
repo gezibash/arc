@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 const saveManifest = `{"interface":1,"id":"download","shape":"service","title":"Download",
@@ -19,7 +20,7 @@ const saveManifest = `{"interface":1,"id":"download","shape":"service","title":"
 "output":{"open":{"parse":"json"},"save":{"to":"{{output}}","field":"payload"}}}]}`
 
 func TestSaveUsesOnlyTheChosenPath(t *testing.T) {
-	m, err := Parse([]byte(saveManifest))
+	m, err := manifest.Parse([]byte(saveManifest))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,12 +44,12 @@ func TestSaveUsesOnlyTheChosenPath(t *testing.T) {
 func TestSaveRequiresAnExplicitPathArgument(t *testing.T) {
 	for _, to := range []string{"/tmp/fixed", "{{payload}}", "{{output}}.suffix", "{{output|default:/tmp/fixed}}"} {
 		text := strings.Replace(saveManifest, `"to":"{{output}}"`, `"to":"`+to+`"`, 1)
-		if _, err := Parse([]byte(text)); err == nil {
+		if _, err := manifest.Parse([]byte(text)); err == nil {
 			t.Errorf("accepted destination %q", to)
 		}
 	}
 	for _, arg := range []string{`"type":"text"`, `"type":"path","default":"/tmp/fixed"`} {
-		if _, err := Parse([]byte(strings.Replace(saveManifest, `"type":"path"`, arg, 1))); err == nil {
+		if _, err := manifest.Parse([]byte(strings.Replace(saveManifest, `"type":"path"`, arg, 1))); err == nil {
 			t.Errorf("accepted %s", arg)
 		}
 	}

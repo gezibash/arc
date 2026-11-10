@@ -12,6 +12,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 func writeNotebookPage(c *citizen, book string, page int, title, body string) {
@@ -46,7 +47,7 @@ func TestNotebookManagedTimestampsAndOrdinals(t *testing.T) {
 	for _, value := range []string{"0", "01", "-1", "chapter", "9223372036854775808"} {
 		body := strings.Replace(input, "page: 1", "page: "+value, 1)
 		r := &run{env: c.env, in: Installed{Manifest: specManifests(t)["journal"]}}
-		if _, err := r.notebookHeader(&Publish{Kind: "page"}, body, nil); err == nil {
+		if _, err := r.notebookHeader(&manifest.Publish{Kind: "page"}, body, nil); err == nil {
 			t.Fatalf("header accepted page %q", value)
 		}
 		if _, err := c.run("journal", body, "write", "arc/research/"+value); err == nil {

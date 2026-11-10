@@ -9,11 +9,12 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // filter builds the filter of a query of sealed kinds.
-func (r *run) filter(q *Query) (nostr.Filter, error) {
+func (r *run) filter(q *manifest.Query) (nostr.Filter, error) {
 	me := r.env.Me()
 	switch q.Authors {
 	case "", "me":
@@ -43,7 +44,7 @@ func (r *run) filter(q *Query) (nostr.Filter, error) {
 		filter.Tags["d"] = []string{d}
 	}
 	for _, bound := range []struct {
-		template Number
+		template manifest.Number
 		set      func(nostr.Timestamp)
 	}{
 		{q.Since, func(t nostr.Timestamp) { filter.Since = t }},
@@ -64,7 +65,7 @@ func (r *run) filter(q *Query) (nostr.Filter, error) {
 	return filter, nil
 }
 
-func (r *run) limitOf(q *Query) (int, error) {
+func (r *run) limitOf(q *manifest.Query) (int, error) {
 	text, err := r.template(string(q.Limit))
 	if err != nil || text == "" {
 		return 0, err
@@ -78,7 +79,7 @@ func (r *run) limitOf(q *Query) (int, error) {
 
 // open reads each draft or checkpoint that a query found. It leaves out a
 // deleted draft, and a draft that it cannot open.
-func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
+func (r *run) openAll(q *manifest.Query, events []nostr.Event) []*entry {
 	out := []*entry{}
 	for _, event := range events {
 		opened, err := r.opener().Open(r.ctx, event)
@@ -102,7 +103,7 @@ func (r *run) openAll(q *Query, events []nostr.Event) []*entry {
 	return out
 }
 
-func (r *run) querySealed(q *Query) ([]*entry, error) {
+func (r *run) querySealed(q *manifest.Query) ([]*entry, error) {
 	filter, err := r.filter(q)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,7 @@ func plainEntry(event nostr.Event, name string) *entry {
 }
 
 // plainAll makes the records of events that a query found.
-func (r *run) plainAll(q *Query, events []nostr.Event) []*entry {
+func (r *run) plainAll(q *manifest.Query, events []nostr.Event) []*entry {
 	out := []*entry{}
 	for _, event := range events {
 		if name := r.kindName(q.Kinds, event.Kind); name != "" {
@@ -158,7 +159,7 @@ func (r *run) plainAll(q *Query, events []nostr.Event) []*entry {
 }
 
 // authors reads the authors of a query: nil means any.
-func (r *run) authors(q *Query) ([]nostr.PubKey, error) {
+func (r *run) authors(q *manifest.Query) ([]nostr.PubKey, error) {
 	switch q.Authors {
 	case "", "any":
 		return nil, nil
@@ -183,7 +184,7 @@ func (r *run) authors(q *Query) ([]nostr.PubKey, error) {
 
 // plainFilter builds the filter of a query of public or group kinds, and
 // names the relays to ask.
-func (r *run) plainFilter(q *Query, visibility string) (nostr.Filter, []string, error) {
+func (r *run) plainFilter(q *manifest.Query, visibility string) (nostr.Filter, []string, error) {
 	filter := nostr.Filter{Tags: nostr.TagMap{}}
 	for _, name := range q.Kinds {
 		filter.Kinds = append(filter.Kinds, nostr.Kind(r.kindOf(name).Kind))
@@ -230,7 +231,7 @@ func (r *run) plainFilter(q *Query, visibility string) (nostr.Filter, []string, 
 	return filter, relays, nil
 }
 
-func (r *run) query(q *Query) ([]*entry, error) {
+func (r *run) query(q *manifest.Query) ([]*entry, error) {
 	visibility, err := r.visibility(q.Kinds)
 	if err != nil {
 		return nil, err
@@ -257,7 +258,7 @@ func (r *run) query(q *Query) ([]*entry, error) {
 }
 
 // queryPrivate reads the private events that the citizen received and sent.
-func (r *run) queryPrivate(q *Query) ([]*entry, error) {
+func (r *run) queryPrivate(q *manifest.Query) ([]*entry, error) {
 	var kinds []nostr.Kind
 	for _, name := range q.Kinds {
 		kinds = append(kinds, nostr.Kind(r.kindOf(name).Kind))

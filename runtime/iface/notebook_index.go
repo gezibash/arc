@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
 
@@ -45,7 +46,7 @@ func (r *run) saveNotebookIndex(kind, book, text string) error {
 	}
 	scoped := *r
 	scoped.values = Values{"notebook_index_content": text}
-	_, err = scoped.publishSealed(&Publish{Kind: indexKind, D: d, Content: Content{Text: "{{notebook_index_content}}"}, Revise: "replace", Tags: [][]string{{"d", book}, {"notebook", book}, {"title", "Index of " + book}}})
+	_, err = scoped.publishSealed(&manifest.Publish{Kind: indexKind, D: d, Content: manifest.Content{Text: "{{notebook_index_content}}"}, Revise: "replace", Tags: [][]string{{"d", book}, {"notebook", book}, {"title", "Index of " + book}}})
 	return err
 }
 
@@ -131,7 +132,7 @@ func sortNotebookPages(pages []notebookPage, order string, reverse bool) {
 
 // searchNotebook keeps notebook semantics here. The adapter sees only generic
 // versions, selected IDs and the text of changed selected documents.
-func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit int) ([]*entry, error) {
+func (r *run) searchNotebook(n *manifest.Notebook, all, selected []notebookPage, limit int) ([]*entry, error) {
 	byID := make(map[string]notebookPage, len(selected))
 	for _, p := range selected {
 		byID[p.entry.d] = p

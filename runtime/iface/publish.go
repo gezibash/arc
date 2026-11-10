@@ -8,9 +8,10 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
-func (r *run) publish(p *Publish) ([]*entry, error) {
+func (r *run) publish(p *manifest.Publish) ([]*entry, error) {
 	switch r.kindOf(p.Kind).Visibility {
 	case "sealed":
 		return r.publishSealed(p)
@@ -23,7 +24,7 @@ func (r *run) publish(p *Publish) ([]*entry, error) {
 
 // tagsOf renders the tags of a publish, and leaves out a tag whose value is
 // empty.
-func (r *run) tagsOf(p *Publish) (nostr.Tags, error) {
+func (r *run) tagsOf(p *manifest.Publish) (nostr.Tags, error) {
 	tags := nostr.Tags{}
 	for _, tag := range p.Tags {
 		rendered := nostr.Tag{tag[0]}
@@ -42,7 +43,7 @@ func (r *run) tagsOf(p *Publish) (nostr.Tags, error) {
 }
 
 // publishPrivate seals the event to each recipient, through the mail layer.
-func (r *run) publishPrivate(p *Publish) ([]*entry, error) {
+func (r *run) publishPrivate(p *manifest.Publish) ([]*entry, error) {
 	content, err := r.content(p.Content)
 	if err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func (r *run) publishPrivate(p *Publish) ([]*entry, error) {
 }
 
 // publishPlain signs a public event, or an event of the group, and sends it.
-func (r *run) publishPlain(p *Publish) ([]*entry, error) {
+func (r *run) publishPlain(p *manifest.Publish) ([]*entry, error) {
 	content, err := r.content(p.Content)
 	if err != nil {
 		return nil, err

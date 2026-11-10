@@ -9,6 +9,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 func TestJournalFrontmatterRejectsInvalidWritesWithoutStoring(t *testing.T) {
@@ -112,7 +113,7 @@ func TestJournalFrontmatterHistoricalPagesStayReadable(t *testing.T) {
 	old.Kinds["page"] = kind
 	for i := range old.Commands {
 		if old.Commands[i].Path[0] == "write" {
-			old.Commands[i].Action = Action{Publish: &Publish{Kind: "page", D: "{{address|keyed:page}}", Revise: "replace", Content: Content{Text: "{{body}}"}, Tags: [][]string{{"d", "{{address}}"}}}}
+			old.Commands[i].Action = manifest.Action{Publish: &manifest.Publish{Kind: "page", D: "{{address|keyed:page}}", Revise: "replace", Content: manifest.Content{Text: "{{body}}"}, Tags: [][]string{{"d", "{{address}}"}}}}
 		}
 	}
 	var out bytes.Buffer
@@ -135,15 +136,15 @@ func TestJournalFrontmatterHistoricalPagesStayReadable(t *testing.T) {
 
 func TestManifestFrontmatterRequiredFields(t *testing.T) {
 	for _, fields := range [][]string{{"Title"}, {"title", "title"}, {""}} {
-		manifest := specManifests(t)["journal"]
-		kind := manifest.Kinds["page"]
+		spec := specManifests(t)["journal"]
+		kind := spec.Kinds["page"]
 		kind.Frontmatter = fields
-		manifest.Kinds["page"] = kind
-		data, err := json.Marshal(manifest)
+		spec.Kinds["page"] = kind
+		data, err := json.Marshal(spec)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = Parse(data); err == nil {
+		if _, err = manifest.Parse(data); err == nil {
 			t.Fatalf("accepted invalid required fields %v", fields)
 		}
 	}
@@ -182,7 +183,7 @@ func TestFrontmatterRejectsPlainAndPrivatePublish(t *testing.T) {
 	for _, visibility := range []string{"public", "private"} {
 		t.Run(visibility, func(t *testing.T) {
 			c := newCitizen(t)
-			m := &Manifest{Interface: 1, ID: "notes", Shape: "data", Kinds: map[string]Kind{"note": {Kind: 1, Visibility: visibility, Frontmatter: []string{"title"}}}, Commands: []Command{{Path: []string{"write"}, Args: []Arg{{Name: "body", Kind: "positional", Type: "stdin"}}, Action: Action{Publish: &Publish{Kind: "note", Content: Content{Text: "{{body}}"}}}}}}
+			m := &manifest.Manifest{Interface: 1, ID: "notes", Shape: "data", Kinds: map[string]manifest.Kind{"note": {Kind: 1, Visibility: visibility, Frontmatter: []string{"title"}}}, Commands: []manifest.Command{{Path: []string{"write"}, Args: []manifest.Arg{{Name: "body", Kind: "positional", Type: "stdin"}}, Action: manifest.Action{Publish: &manifest.Publish{Kind: "note", Content: manifest.Content{Text: "{{body}}"}}}}}}
 			if visibility == "private" {
 				m.Commands[0].Action.Publish.To = []string{"{{me}}"}
 			}
@@ -190,7 +191,7 @@ func TestFrontmatterRejectsPlainAndPrivatePublish(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m, err = Parse(data)
+			m, err = manifest.Parse(data)
 			if err != nil {
 				t.Fatal(err)
 			}

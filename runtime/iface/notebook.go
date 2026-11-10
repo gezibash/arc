@@ -12,76 +12,13 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
-
-// Notebook is an application view over sealed pages, not a transport or a
-// second persistence engine. Page and index events use the normal draft core.
-type Notebook struct {
-	Op       string `json:"op"`
-	Kind     string `json:"kind"`
-	D        string `json:"d,omitempty"`
-	Address  string `json:"address,omitempty"`
-	Notebook string `json:"notebook,omitempty"`
-	Prefix   string `json:"prefix,omitempty"`
-	Query    string `json:"query,omitempty"`
-	Syntax   string `json:"syntax,omitempty"`
-	Title    string `json:"title,omitempty"`
-	Page     string `json:"page,omitempty"`
-	From     string `json:"from,omitempty"`
-	To       string `json:"to,omitempty"`
-	Order    string `json:"order,omitempty"`
-	Reverse  string `json:"reverse,omitempty"`
-	Limit    string `json:"limit,omitempty"`
-	Section  string `json:"section,omitempty"`
-	// Text is the text of a write, an append or a fix.
-	Text string `json:"text,omitempty"`
-}
 
 var notebookPageName = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
 var notebookPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$`)
-
-func (m *Manifest) checkNotebook(n *Notebook, check, checkD func(string) error) error {
-	if err := m.checkKind(n.Kind); err != nil {
-		return err
-	}
-	if m.Kinds[n.Kind].NotebookIndex == "" {
-		return errors.New("notebook action requires a notebook_index kind")
-	}
-	ops := []string{"read", "list", "search", "select", "next", "prev", "index", "toc"}
-	writes := []string{"history", "write", "append", "fix", "delete"}
-	if m.Kinds[n.Kind].NotebookEntry != "" {
-		ops = append(ops, writes...)
-	}
-	if !slices.Contains(ops, n.Op) {
-		if slices.Contains(writes, n.Op) {
-			return fmt.Errorf("notebook %s requires a notebook_entry kind", n.Op)
-		}
-		return fmt.Errorf("invalid notebook operation %q", n.Op)
-	}
-	if slices.Contains(writes, n.Op) && (n.D == "" || n.Address == "") {
-		return fmt.Errorf("notebook %s requires d and address", n.Op)
-	}
-	if n.Op == "read" && (n.D == "" || n.Address == "") {
-		return errors.New("notebook read requires d and address")
-	}
-	if (n.Op == "next" || n.Op == "prev") && n.Address == "" {
-		return errors.New("notebook navigation requires address")
-	}
-	if (n.Op == "index" || n.Op == "toc") && n.Notebook == "" {
-		return errors.New("notebook index or toc requires notebook")
-	}
-	if err := checkD(n.D); err != nil {
-		return err
-	}
-	for _, text := range []string{n.Address, n.Notebook, n.Prefix, n.Query, n.Syntax, n.Title, n.Page, n.From, n.To, n.Order, n.Reverse, n.Limit, n.Section, n.Text} {
-		if err := check(text); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func ordinal(text string) (int64, error) {
 	n, err := strconv.ParseInt(text, 10, 64)
@@ -93,7 +30,7 @@ func ordinal(text string) (int64, error) {
 
 // notebookHeader preserves supplied content and optional metadata. The two
 // timestamps are managed by ARC; caller values cannot change original creation.
-func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (string, error) {
+func (r *run) notebookHeader(p *manifest.Publish, content string, old *draft.Draft) (string, error) {
 	if r.kindOf(p.Kind).NotebookIndex == "" {
 		return content, nil
 	}
@@ -128,7 +65,7 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 			// For a historical numbered page, use the earliest available checkpoint.
 			saved := *r
 			saved.values = Values{"notebook_existing_d": old.D}
-			history, err := saved.query(&Query{Kinds: []string{p.Kind}, Authors: "me", D: "{{notebook_existing_d}}", History: true})
+			history, err := saved.query(&manifest.Query{Kinds: []string{p.Kind}, Authors: "me", D: "{{notebook_existing_d}}", History: true})
 			if err != nil {
 				return "", err
 			}
@@ -178,7 +115,7 @@ type notebookPage struct {
 }
 
 func (r *run) notebookPages(kind string) ([]notebookPage, error) {
-	entries, err := r.query(&Query{Kinds: []string{kind}, Authors: "me"})
+	entries, err := r.query(&manifest.Query{Kinds: []string{kind}, Authors: "me"})
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +218,7 @@ func (r *run) notebookAddress(value string) (string, string, error) {
 	return address, section, nil
 }
 
-func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
+func (r *run) notebookAction(n *manifest.Notebook) ([]*entry, error) {
 	copy := *n
 	n = &copy
 	dTemplate := n.D

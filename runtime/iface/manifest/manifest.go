@@ -3,7 +3,7 @@
 //
 // A manifest names primitives, and this package runs them. A manifest holds
 // no code.
-package iface
+package manifest
 
 import (
 	"bytes"
@@ -129,16 +129,16 @@ type Publish struct {
 	// the draft as its body, not into the content. Only a sealed kind has
 	// a body.
 	Body string `json:"body,omitempty"`
-	// at is the time of an entry, which a notebook sets. A manifest cannot.
-	at nostr.Timestamp
+	// At is the time of an entry, which a notebook sets. A manifest cannot.
+	At nostr.Timestamp `json:"-"`
 }
 
 // bodyPattern is the one form of a body: the name of a file argument.
 var bodyPattern = regexp.MustCompile(`^\{\{\s*([a-z][a-z0-9_]*)\s*\}\}$`)
 
-// bodyArg is the name of the file argument that a publish takes as its
+// BodyArg is the name of the file argument that a publish takes as its
 // body, or "".
-func bodyArg(p *Publish) string {
+func BodyArg(p *Publish) string {
 	if p == nil {
 		return ""
 	}
@@ -356,3 +356,7 @@ func (m *Manifest) Find(words []string) (*Command, []string, bool) {
 	}
 	return best, words[len(best.Path):], true
 }
+
+// ValidName says whether a name of an argument, a kind or a field is
+// valid: lower-case letters, digits and underscores, from a letter.
+func ValidName(name string) bool { return namePattern.MatchString(name) }

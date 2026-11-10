@@ -10,11 +10,12 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // watch shows what a query holds now, then each new version as it arrives.
-func (r *run) watch(q *Query) error {
+func (r *run) watch(q *manifest.Query) error {
 	visibility, err := r.visibility(q.Kinds)
 	if err != nil {
 		return err

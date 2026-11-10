@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"fiatjaf.com/nostr"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 // frontmatter reads flat string fields between two delimiter lines. This is
@@ -32,7 +33,7 @@ func frontmatter(content string) (map[string]any, string, error) {
 			return fields, content[next:], nil
 		}
 		key, value, ok := strings.Cut(line, ":")
-		if !ok || !namePattern.MatchString(key) {
+		if !ok || !manifest.ValidName(key) {
 			return nil, "", fmt.Errorf("frontmatter: expected a flat key: value field")
 		}
 		if _, exists := fields[key]; exists {
@@ -64,7 +65,7 @@ func frontmatter(content string) (map[string]any, string, error) {
 
 // enforceFrontmatter runs before any event is signed or stored. Reads do not
 // apply a new manifest's write policy to historical pages.
-func (r *run) enforceFrontmatter(p *Publish, content string, tags nostr.Tags) (nostr.Tags, error) {
+func (r *run) enforceFrontmatter(p *manifest.Publish, content string, tags nostr.Tags) (nostr.Tags, error) {
 	required := r.kindOf(p.Kind).Frontmatter
 	if len(required) == 0 {
 		return tags, nil

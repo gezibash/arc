@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -67,7 +68,7 @@ type CallResult struct {
 
 // Installed is a manifest that the citizen trusts, and its author.
 type Installed struct {
-	Manifest *Manifest
+	Manifest *manifest.Manifest
 	Author   nostr.PubKey
 	// Name is what the citizen types to run it.
 	Name string
@@ -104,7 +105,7 @@ type run struct {
 	ctx     context.Context
 	env     Env
 	in      Installed
-	command *Command
+	command *manifest.Command
 	values  Values
 	flags   Flags
 	stdio   Stdio
@@ -252,7 +253,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 }
 
 // runOnce runs a command with its values.
-func runOnce(ctx context.Context, env Env, in Installed, command *Command, values Values, flags Flags, stdio Stdio) error {
+func runOnce(ctx context.Context, env Env, in Installed, command *manifest.Command, values Values, flags Flags, stdio Stdio) error {
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio, told: new(bool)}
 	if command.Action.Watch != nil {
 		return r.watch(command.Action.Watch)
@@ -273,7 +274,7 @@ func runOnce(ctx context.Context, env Env, in Installed, command *Command, value
 	return r.missing
 }
 
-func hasPositional(c *Command) bool {
+func hasPositional(c *manifest.Command) bool {
 	for _, a := range c.Args {
 		if a.Kind == "positional" && a.Type != "stdin" {
 			return true
@@ -304,7 +305,7 @@ func (r *run) act() ([]*entry, error) {
 	return nil, errors.New("the command has no action")
 }
 
-func (r *run) call(c *Call) ([]*entry, error) {
+func (r *run) call(c *manifest.Call) ([]*entry, error) {
 	service := r.in.Manifest.Service
 	request := CallRequest{Capability: r.in.Manifest.ID, Method: service.Method, Path: service.Path}
 	var err error
@@ -432,7 +433,7 @@ func (r *run) write(entries []*entry, out io.Writer) (err error) {
 	return r.format(r.in.Manifest.Formats[name], records, w)
 }
 
-func (r *run) format(f Format, records []Record, w io.Writer) error {
+func (r *run) format(f manifest.Format, records []Record, w io.Writer) error {
 	render := func(text string, s template.Scope) error {
 		if text == "" {
 			return nil
@@ -532,7 +533,7 @@ func Help(in Installed) string {
 	return b.String()
 }
 
-func commandHelp(in Installed, c *Command) string {
+func commandHelp(in Installed, c *manifest.Command) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nusage: %s\n", terminal.Escape(c.Summary), usage(in, c))
 	if len(c.Args) > 0 {
@@ -554,7 +555,7 @@ func commandHelp(in Installed, c *Command) string {
 	return b.String()
 }
 
-func usage(in Installed, c *Command) string {
+func usage(in Installed, c *manifest.Command) string {
 	words := append([]string{"arc", in.Name}, c.Path...)
 	for _, a := range c.Args {
 		text := usageOf(a)
@@ -574,7 +575,7 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 	if service == nil || service.Output == nil {
 		return errors.New("the service has no output")
 	}
-	command := &Command{Output: *service.Output}
+	command := &manifest.Command{Output: *service.Output}
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio, told: new(bool)}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/nip19"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -56,12 +57,12 @@ type Lister interface {
 type members []string
 
 // bind reads the words that follow a command's path.
-func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
+func bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
 	var flags Flags
 	raw := map[string][]string{}
 	var positionals []string
 
-	byName := map[string]Arg{}
+	byName := map[string]manifest.Arg{}
 	variadicAt := -1
 	n := 0
 	for _, a := range c.Args {
@@ -191,7 +192,7 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 		}
 		var value any
 		var err error
-		if a.Type == "file" && a.Name == bodyArg(c.Action.Publish) {
+		if a.Type == "file" && a.Name == manifest.BodyArg(c.Action.Publish) {
 			// A body goes beside the draft, so it can be larger.
 			value, err = readFile(words[0], draft.MaxBody)
 		} else {
@@ -208,7 +209,7 @@ func bind(ctx context.Context, c *Command, words []string, r Resolver, stdin io.
 var linesPattern = regexp.MustCompile(`^([1-9][0-9]*)?:([1-9][0-9]*)?$`)
 
 // convert reads one argument as its type.
-func convert(ctx context.Context, a Arg, text string, r Resolver) (any, error) {
+func convert(ctx context.Context, a manifest.Arg, text string, r Resolver) (any, error) {
 	switch a.Type {
 	case "text":
 		return text, nil
@@ -351,7 +352,7 @@ func readFile(path string, limit int) (fileValue, error) {
 }
 
 // usageOf writes one argument as the help shows it.
-func usageOf(a Arg) string {
+func usageOf(a manifest.Arg) string {
 	switch {
 	case a.Kind == "switch":
 		return "--" + a.Name
