@@ -7,6 +7,8 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/template"
+	"github.com/gezibash/arc/sdk/terminal"
 )
 
 // show runs the pipeline on entries and writes them. Then the exit rules of
@@ -106,7 +108,7 @@ func (r *run) partTexts(ids []string) ([]string, error) {
 // joined is the whole text of an entry: its content, then its parts.
 func (r *run) joined(e *entry) (string, error) {
 	texts, err := r.partTexts(e.parts)
-	return str(e.rec["content"]) + strings.Join(texts, ""), err
+	return template.Str(e.rec["content"]) + strings.Join(texts, ""), err
 }
 
 // joinedLines is a range of lines of an entry. When the entry counts its
@@ -135,7 +137,7 @@ func (r *run) joinedLines(e *entry, lines string) (string, error) {
 	var ids []string
 	for _, i := range picked {
 		if i == 0 {
-			b.WriteString(str(e.rec["content"]))
+			b.WriteString(template.Str(e.rec["content"]))
 		} else {
 			ids = append(ids, e.parts[i-1])
 		}
@@ -147,4 +149,22 @@ func (r *run) joinedLines(e *entry, lines string) (string, error) {
 	}
 	shift := pickedStart - 1
 	return selectLines(b.String(), fmt.Sprintf("%d:%d", max(first-shift, 1), last-shift)), err
+}
+
+// removedNote is what arc says, once for each run, when it removed
+// characters from what an app shows.
+const removedNote = "arc: the output held characters that could change the terminal or hide text; arc removed them"
+
+// Sanitize removes from a value each character that docs/clients/SPEC.md,
+// section 3.9, escapes, except a backslash: a value cannot move the
+// cursor, change the terminal, reorder a line, or hide text, and a program
+// that reads the output gets the rest of the value as it was. The first
+// time that it removes a character in a run, it says so on standard error.
+func (r *run) Sanitize(text string) string {
+	clean := terminal.Strip(text)
+	if clean != text && !*r.told {
+		*r.told = true
+		fmt.Fprintln(r.stdio.Err, removedNote)
+	}
+	return clean
 }

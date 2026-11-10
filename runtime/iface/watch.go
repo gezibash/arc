@@ -10,6 +10,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // watch shows what a query holds now, then each new version as it arrives.
@@ -122,7 +123,7 @@ func inOrder(entries []*entry) {
 	key := func(e *entry) (int64, int) {
 		ms := int64(number(e.rec["created"])) * 1000
 		tags, _ := e.rec["tags"].(map[string]any)
-		if v, err := strconv.ParseInt(str(tags["ms"]), 10, 64); err == nil && v/1000 == ms/1000 {
+		if v, err := strconv.ParseInt(template.Str(tags["ms"]), 10, 64); err == nil && v/1000 == ms/1000 {
 			return v, 1
 		}
 		return ms, 0

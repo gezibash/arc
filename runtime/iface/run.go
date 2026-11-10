@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -116,13 +117,13 @@ type run struct {
 	told *bool
 }
 
-func (r *run) keyed(purpose, input string) (string, error) {
+func (r *run) Keyed(purpose, input string) (string, error) {
 	return r.env.Keyed(r.ctx, keyedInfo(r.in.Author, r.in.Manifest.ID, purpose), input)
 }
 
-// eventAuthor finds the author of an event: in its coordinate, or by
+// EventAuthor finds the author of an event: in its coordinate, or by
 // fetching it from the group relay and the citizen's relays.
-func (r *run) eventAuthor(ref string) (string, error) {
+func (r *run) EventAuthor(ref string) (string, error) {
 	if parts := strings.SplitN(ref, ":", 3); len(parts) == 3 {
 		pk, err := nostr.PubKeyFromHex(parts[1])
 		return pk.Hex(), err
@@ -151,7 +152,7 @@ func (r *run) groupRelays() []string {
 	return nil
 }
 
-func (r *run) name(key string) string {
+func (r *run) Name(key string) string {
 	pk, err := nostr.PubKeyFromHex(key)
 	if err != nil {
 		return key
@@ -175,11 +176,11 @@ func (r *run) scope(name string) (any, bool) {
 
 // template renders one action template as text.
 func (r *run) template(text string) (string, error) {
-	t, err := compile(text, nil)
+	t, err := template.Compile(text, nil)
 	if err != nil {
 		return "", err
 	}
-	return t.render(r.scope, r, false)
+	return t.Render(r.scope, r, false)
 }
 
 // Stdio are the streams of one command.
@@ -348,7 +349,7 @@ var fixed = map[string]bool{"id": true, "kind": true, "author": true, "created":
 
 // open parses the content of one record into its fields.
 func open(record Record, parse string) error {
-	content := str(record["content"])
+	content := template.Str(record["content"])
 	switch parse {
 	case "text":
 		record["text"] = content
@@ -422,7 +423,7 @@ func (r *run) write(entries []*entry, out io.Writer) (err error) {
 			if !ok {
 				text = record["content"]
 			}
-			if err := line(w, r.sanitize(str(text))); err != nil {
+			if err := line(w, r.Sanitize(template.Str(text))); err != nil {
 				return err
 			}
 		}
@@ -432,15 +433,15 @@ func (r *run) write(entries []*entry, out io.Writer) (err error) {
 }
 
 func (r *run) format(f Format, records []Record, w io.Writer) error {
-	render := func(text string, s scope) error {
+	render := func(text string, s template.Scope) error {
 		if text == "" {
 			return nil
 		}
-		t, err := compile(text, nil)
+		t, err := template.Compile(text, nil)
 		if err != nil {
 			return err
 		}
-		out, err := t.render(s, r, true)
+		out, err := t.Render(s, r, true)
 		if err != nil {
 			return err
 		}
@@ -456,7 +457,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 	for _, record := range records {
 		s := r.recordScope(record)
 		if f.Table != nil {
-			if err := r.table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows)); err != nil {
+			if err := r.table(w, template.Scope(s).Lookup(f.Table.Columns), template.Scope(s).Lookup(f.Table.Rows)); err != nil {
 				return err
 			}
 			continue
@@ -471,7 +472,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 // table writes rows as aligned columns, under a line of column names.
 func (r *run) table(w io.Writer, columns, rows any) error {
 	cell := func(v any) string {
-		text := r.sanitize(str(v))
+		text := r.Sanitize(template.Str(v))
 		return strings.NewReplacer("\t", " ", "\n", " ").Replace(text)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -577,7 +578,7 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio, told: new(bool)}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {
-		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, r.sanitize(body)))
+		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, r.Sanitize(body)))
 	}
 	if err := r.write(entries, stdio.Out); err != nil {
 		return err

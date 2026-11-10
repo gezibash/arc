@@ -192,8 +192,8 @@ func (r *run) plainFilter(q *Query, visibility string) (nostr.Filter, []string, 
 	if filter.Authors, err = r.authors(q); err != nil {
 		return filter, nil, err
 	}
-	for name, template := range q.Tags {
-		value, err := r.template(template)
+	for name, tmpl := range q.Tags {
+		value, err := r.template(tmpl)
 		if err != nil {
 			return filter, nil, err
 		}
@@ -271,8 +271,8 @@ func (r *run) queryPrivate(q *Query) ([]*entry, error) {
 		return nil, err
 	}
 	tags := map[string]string{}
-	for name, template := range q.Tags {
-		if tags[name], err = r.template(template); err != nil {
+	for name, tmpl := range q.Tags {
+		if tags[name], err = r.template(tmpl); err != nil {
 			return nil, err
 		}
 	}

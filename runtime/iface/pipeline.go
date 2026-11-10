@@ -18,6 +18,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
 
 // pipeline runs the output primitives, in their fixed order. A missing part
@@ -118,10 +119,10 @@ func selectLines(text, lines string) string {
 
 // field reads a field of a record by its path.
 func field(rec Record, path string) any {
-	return scope(func(name string) (any, bool) {
+	return template.Scope(func(name string) (any, bool) {
 		v, ok := rec[name]
 		return v, ok
-	}).lookup(path)
+	}).Lookup(path)
 }
 
 func (r *run) matchAll(rec Record, conds []Cond) (bool, error) {
@@ -151,9 +152,9 @@ func (r *run) match(rec Record, c Cond) (bool, error) {
 		template string
 		pass     func(want string) bool
 	}{
-		{c.Is, func(want string) bool { return str(value) == want }},
-		{c.Not, func(want string) bool { return str(value) != want }},
-		{c.Prefix, func(want string) bool { return strings.HasPrefix(str(value), want) }},
+		{c.Is, func(want string) bool { return template.Str(value) == want }},
+		{c.Not, func(want string) bool { return template.Str(value) != want }},
+		{c.Prefix, func(want string) bool { return strings.HasPrefix(template.Str(value), want) }},
 		{c.Lacks, func(want string) bool { return !contains(value, want) }},
 	} {
 		want, err := r.template(test.template)
@@ -171,7 +172,7 @@ func contains(value any, want string) bool {
 	switch v := value.(type) {
 	case []any:
 		for _, item := range v {
-			if str(item) == want {
+			if template.Str(item) == want {
 				return true
 			}
 		}
@@ -179,7 +180,7 @@ func contains(value any, want string) bool {
 	case []string:
 		return slices.Contains(v, want)
 	}
-	return str(value) == want
+	return template.Str(value) == want
 }
 
 // latest keeps the newest record for each value of a field.
@@ -187,7 +188,7 @@ func latest(entries []*entry, by string) []*entry {
 	newest := map[string]*entry{}
 	var order []string
 	for _, e := range entries {
-		key := str(field(e.rec, by))
+		key := template.Str(field(e.rec, by))
 		old, seen := newest[key]
 		if !seen {
 			order = append(order, key)
@@ -229,12 +230,12 @@ func sortEntries(entries []*entry, by string, desc bool) {
 		a, b := field(entries[i].rec, by), field(entries[j].rec, by)
 		an, aok := asNumber(a)
 		bn, bok := asNumber(b)
-		less := str(a) < str(b)
+		less := template.Str(a) < template.Str(b)
 		if aok && bok {
 			less = an < bn
 		}
 		if desc {
-			return !less && str(a) != str(b)
+			return !less && template.Str(a) != template.Str(b)
 		}
 		return less
 	})
@@ -246,13 +247,13 @@ func sortEntries(entries []*entry, by string, desc bool) {
 func thread(entries []*entry, parent string) []*entry {
 	byID := map[string]*entry{}
 	for _, e := range entries {
-		byID[str(e.rec["id"])] = e
+		byID[template.Str(e.rec["id"])] = e
 	}
 	children := map[string][]*entry{}
 	var roots []*entry
 	for _, e := range entries {
-		p := str(field(e.rec, parent))
-		if _, ok := byID[p]; ok && p != str(e.rec["id"]) {
+		p := template.Str(field(e.rec, parent))
+		if _, ok := byID[p]; ok && p != template.Str(e.rec["id"]) {
 			children[p] = append(children[p], e)
 		} else {
 			roots = append(roots, e)
@@ -272,7 +273,7 @@ func thread(entries []*entry, parent string) []*entry {
 		seen[e] = true
 		e.rec["depth"] = int64(depth)
 		out = append(out, e)
-		kids := children[str(e.rec["id"])]
+		kids := children[template.Str(e.rec["id"])]
 		byTime(kids)
 		for _, kid := range kids {
 			walk(kid, depth+1)
@@ -310,7 +311,7 @@ func rank(entries []*entry, query string, fields []string, limit int) []*entry {
 	for i, e := range entries {
 		var text []string
 		for _, f := range fields {
-			text = append(text, words(str(field(e.rec, f)))...)
+			text = append(text, words(template.Str(field(e.rec, f)))...)
 		}
 		docs[i] = text
 		total += len(text)
@@ -363,10 +364,10 @@ func (r *run) tail(entries []*entry) []*entry {
 	}
 	var out []*entry
 	for _, e := range entries {
-		text := str(e.rec["text"])
+		text := template.Str(e.rec["text"])
 		old, seen := r.seen[e.d]
 		r.seen[e.d] = text
-		if seen && r.kindOf(str(e.rec["kind"])).NotebookIndex != "" {
+		if seen && r.kindOf(template.Str(e.rec["kind"])).NotebookIndex != "" {
 			oldFields, oldBody, oldErr := frontmatter(old)
 			newFields, newBody, newErr := frontmatter(text)
 			delete(oldFields, "created_at")
@@ -430,7 +431,7 @@ func (r *run) save(entries []*entry) error {
 				return err
 			}
 		} else {
-			data = []byte(str(field(e.rec, s.Field)))
+			data = []byte(template.Str(field(e.rec, s.Field)))
 			if s.Decode == "base64" {
 				if data, err = base64.StdEncoding.DecodeString(string(data)); err != nil {
 					return fmt.Errorf("the field %s is not base64: %w", s.Field, err)
@@ -463,7 +464,7 @@ func (r *run) save(entries []*entry) error {
 	return nil
 }
 
-func (r *run) recordScope(rec Record) scope {
+func (r *run) recordScope(rec Record) template.Scope {
 	return func(name string) (any, bool) {
 		if value, ok := rec[name]; ok {
 			return value, true
@@ -472,12 +473,12 @@ func (r *run) recordScope(rec Record) scope {
 	}
 }
 
-func (r *run) renderIn(text string, s scope) (string, error) {
-	t, err := compile(text, nil)
+func (r *run) renderIn(text string, s template.Scope) (string, error) {
+	t, err := template.Compile(text, nil)
 	if err != nil {
 		return "", err
 	}
-	return t.render(s, r, false)
+	return t.Render(s, r, false)
 }
 
 // streamable says whether a command only shows the whole text of its
@@ -516,7 +517,7 @@ func (r *run) stream(entries []*entry) error {
 		ended := true
 		write := func(text string) {
 			if text != "" && writeErr == nil {
-				_, writeErr = io.WriteString(r.stdio.Out, r.sanitize(text))
+				_, writeErr = io.WriteString(r.stdio.Out, r.Sanitize(text))
 				ended = strings.HasSuffix(text, "\n")
 			}
 		}
@@ -527,7 +528,7 @@ func (r *run) stream(entries []*entry) error {
 				r.missing = err
 			}
 		} else {
-			write(str(e.rec["content"]))
+			write(template.Str(e.rec["content"]))
 			for _, id := range e.parts {
 				texts, err := r.partTexts([]string{id})
 				if err != nil {
