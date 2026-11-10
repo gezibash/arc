@@ -71,7 +71,7 @@ func (m *Manifest) checkService() error {
 func (m *Manifest) checkKinds() error {
 	grouped := false
 	for name, kind := range m.Kinds {
-		if !NamePattern.MatchString(name) {
+		if !namePattern.MatchString(name) {
 			return fmt.Errorf("the kind name %q must be lower-case letters, digits and underscores", name)
 		}
 		if kind.Kind < 0 || kind.Kind > 65535 {
@@ -85,7 +85,7 @@ func (m *Manifest) checkKinds() error {
 		}
 		seen := map[string]bool{}
 		for _, field := range kind.Frontmatter {
-			if !NamePattern.MatchString(field) || seen[field] {
+			if !namePattern.MatchString(field) || seen[field] {
 				return fmt.Errorf("kind %s: invalid or repeated frontmatter field %q", name, field)
 			}
 			seen[field] = true
@@ -229,7 +229,7 @@ func checkArgs(c Command) ([]string, error) {
 	positionals := 0
 	variadic := false
 	for _, a := range c.Args {
-		if !NamePattern.MatchString(a.Name) || slices.Contains(names, a.Name) {
+		if !namePattern.MatchString(a.Name) || slices.Contains(names, a.Name) {
 			return nil, fmt.Errorf("the argument name %q is not valid, or not unique", a.Name)
 		}
 		names = append(names, a.Name)

@@ -33,7 +33,7 @@ func frontmatter(content string) (map[string]any, string, error) {
 			return fields, content[next:], nil
 		}
 		key, value, ok := strings.Cut(line, ":")
-		if !ok || !manifest.NamePattern.MatchString(key) {
+		if !ok || !manifest.ValidName(key) {
 			return nil, "", fmt.Errorf("frontmatter: expected a flat key: value field")
 		}
 		if _, exists := fields[key]; exists {

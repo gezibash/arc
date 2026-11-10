@@ -301,7 +301,7 @@ var (
 	classes      = []string{"live", "later"}
 	parses       = []string{"text", "json", "frontmatter"}
 	idPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
-	NamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	namePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	wordPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 )
 
@@ -356,3 +356,7 @@ func (m *Manifest) Find(words []string) (*Command, []string, bool) {
 	}
 	return best, words[len(best.Path):], true
 }
+
+// ValidName says whether a name of an argument, a kind or a field is
+// valid: lower-case letters, digits and underscores, from a letter.
+func ValidName(name string) bool { return namePattern.MatchString(name) }
