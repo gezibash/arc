@@ -100,6 +100,8 @@ func TestBindRefuses(t *testing.T) {
 	}
 }
 
+// TestHelpNeedsNoArguments asks for help with a required argument absent.
+// The flags are read in order, so a bad flag before -h still fails.
 func TestHelpNeedsNoArguments(t *testing.T) {
 	if _, _, err := Bind(context.Background(), command, []string{"--loud", "-h"}, resolver{}, nil); err == nil {
 		t.Error("an unknown flag before -h passed")
