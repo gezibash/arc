@@ -24,6 +24,11 @@ import (
 func keysCommand() *cobra.Command {
 	command := &cobra.Command{Use: "keys", Short: "Make, add, list and pick identities"}
 
+	command.AddCommand(keysGenCommand(), keysRecoverSeedCommand(), keysAddCommand(), keysListCommand(), keysUseCommand(), keysRemoveCommand(), keysEncryptCommand(), bunkerCommand(), deviceCommand(), devicesCommand(), accountCommand(), storageKeysCommand(), rootsCommand(), sealCommand(), unsealCommand())
+	return command
+}
+
+func keysGenCommand() *cobra.Command {
 	gen := &cobra.Command{
 		Use:   "gen",
 		Short: "Make an identity from a new 24-word seed, and make it the default when there is none",
@@ -42,7 +47,10 @@ func keysCommand() *cobra.Command {
 	}
 	gen.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
 	gen.Flags().Bool("seed-passphrase", false, "add a BIP-39 passphrase to the seed")
+	return gen
+}
 
+func keysRecoverSeedCommand() *cobra.Command {
 	recoverSeed := &cobra.Command{
 		Use:   "recover",
 		Short: "Make an identity again from the words of its seed",
@@ -58,7 +66,10 @@ func keysCommand() *cobra.Command {
 	}
 	recoverSeed.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
 	recoverSeed.Flags().Bool("seed-passphrase", false, "the seed has a BIP-39 passphrase")
+	return recoverSeed
+}
 
+func keysAddCommand() *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add [bunker://...]",
 		Short: "Add an identity that exists already",
@@ -110,7 +121,10 @@ func keysCommand() *cobra.Command {
 			return nil
 		},
 	}
+	return add
+}
 
+func keysListCommand() *cobra.Command {
 	list := &cobra.Command{
 		Use: "list", Aliases: []string{"ls"}, Short: "List the identities of this machine", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -144,7 +158,10 @@ func keysCommand() *cobra.Command {
 			return nil
 		},
 	}
+	return list
+}
 
+func keysUseCommand() *cobra.Command {
 	use := &cobra.Command{
 		Use: "use <name>", Short: "Make one identity the default", Args: cobra.ExactArgs(1),
 		Long: "Give the raw name of the identity, quoted for the shell. arc keys list\n" +
@@ -165,7 +182,10 @@ func keysCommand() *cobra.Command {
 			return nil
 		},
 	}
+	return use
+}
 
+func keysRemoveCommand() *cobra.Command {
 	remove := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove one identity from this machine",
@@ -205,7 +225,10 @@ func keysCommand() *cobra.Command {
 		},
 	}
 	remove.Flags().Bool("yes", false, "remove without asking")
+	return remove
+}
 
+func keysEncryptCommand() *cobra.Command {
 	encrypt := &cobra.Command{
 		Use: "encrypt", Short: "Seal the key with a passphrase, as NIP-49 defines", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -238,9 +261,7 @@ func keysCommand() *cobra.Command {
 			return nil
 		},
 	}
-
-	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand(), accountCommand(), storageKeysCommand(), rootsCommand(), sealCommand(), unsealCommand())
-	return command
+	return encrypt
 }
 
 func whoamiCommand() *cobra.Command {
