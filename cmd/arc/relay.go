@@ -12,59 +12,8 @@ import (
 func relayCommand() *cobra.Command {
 	command := &cobra.Command{Use: "relay", Short: "Manage the relays of this citizen"}
 
-	add := &cobra.Command{
-		Use: "add <url>", Short: "Send to and sync with a relay", Args: cobra.ExactArgs(1),
-		Long: "With --index, the relay is an indexer: arc publishes only its relay\n" +
-			"lists there, and looks up the relay lists of other citizens there.",
-		RunE: func(command *cobra.Command, args []string) error {
-			url := args[0]
-			if err := checkRelayURL(url); err != nil {
-				return err
-			}
-			dir, err := home(command)
-			if err != nil {
-				return err
-			}
-			// add, rm and ls read each line, so that a write keeps the
-			// lines that arc skips.
-			relays, err := readURLs(relaysPath(dir))
-			if err != nil {
-				return err
-			}
-			indexers, err := readURLs(indexersPath(dir))
-			if err != nil {
-				return err
-			}
-			index, _ := command.Flags().GetBool("index")
-			if index {
-				if slices.Contains(relays, url) {
-					return fmt.Errorf("%s is a relay of this citizen; remove it with arc relay rm first", url)
-				}
-				if !slices.Contains(indexers, url) {
-					indexers = append(indexers, url)
-				}
-				if err := writeIndexers(dir, indexers); err != nil {
-					return err
-				}
-			} else {
-				if slices.Contains(indexers, url) {
-					return fmt.Errorf("%s is an indexer of this citizen; remove it with arc relay rm first", url)
-				}
-				if !slices.Contains(relays, url) {
-					relays = append(relays, url)
-				}
-				if err := writeRelays(dir, relays); err != nil {
-					return err
-				}
-			}
-			announceRelays(command)
-			return nil
-		},
-	}
-	add.Flags().Bool("index", false, "use the relay only to publish and look up relay lists")
-
 	command.AddCommand(
-		add,
+		relayAddCommand(),
 		&cobra.Command{
 			Use: "rm <url>", Short: "Stop using a relay", Args: cobra.ExactArgs(1),
 			RunE: func(command *cobra.Command, args []string) error {
@@ -136,6 +85,60 @@ func relayCommand() *cobra.Command {
 		ringCommand(),
 	)
 	return command
+}
+
+func relayAddCommand() *cobra.Command {
+	add := &cobra.Command{
+		Use: "add <url>", Short: "Send to and sync with a relay", Args: cobra.ExactArgs(1),
+		Long: "With --index, the relay is an indexer: arc publishes only its relay\n" +
+			"lists there, and looks up the relay lists of other citizens there.",
+		RunE: func(command *cobra.Command, args []string) error {
+			url := args[0]
+			if err := checkRelayURL(url); err != nil {
+				return err
+			}
+			dir, err := home(command)
+			if err != nil {
+				return err
+			}
+			// add, rm and ls read each line, so that a write keeps the
+			// lines that arc skips.
+			relays, err := readURLs(relaysPath(dir))
+			if err != nil {
+				return err
+			}
+			indexers, err := readURLs(indexersPath(dir))
+			if err != nil {
+				return err
+			}
+			index, _ := command.Flags().GetBool("index")
+			if index {
+				if slices.Contains(relays, url) {
+					return fmt.Errorf("%s is a relay of this citizen; remove it with arc relay rm first", url)
+				}
+				if !slices.Contains(indexers, url) {
+					indexers = append(indexers, url)
+				}
+				if err := writeIndexers(dir, indexers); err != nil {
+					return err
+				}
+			} else {
+				if slices.Contains(indexers, url) {
+					return fmt.Errorf("%s is an indexer of this citizen; remove it with arc relay rm first", url)
+				}
+				if !slices.Contains(relays, url) {
+					relays = append(relays, url)
+				}
+				if err := writeRelays(dir, relays); err != nil {
+					return err
+				}
+			}
+			announceRelays(command)
+			return nil
+		},
+	}
+	add.Flags().Bool("index", false, "use the relay only to publish and look up relay lists")
+	return add
 }
 
 // announceRelays publishes the relay list of this citizen, when it has a key

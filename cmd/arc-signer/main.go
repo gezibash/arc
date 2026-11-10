@@ -43,6 +43,11 @@ func root() *cobra.Command {
 		SilenceErrors: true,
 	}
 	command.PersistentFlags().String("dir", ".", "the folder of the identity; the key is in signer/key in it")
+	command.AddCommand(genCommand(), recoverSeedCommand(), importKeyCommand(), encryptCommand(), stdioCommand())
+	return command
+}
+
+func genCommand() *cobra.Command {
 	gen := &cobra.Command{
 		Use:   "gen",
 		Short: "Make a key from a new 24-word seed, and show the words once",
@@ -70,7 +75,10 @@ func root() *cobra.Command {
 	}
 	gen.Flags().Bool("encrypt", false, "seal the key with a passphrase, as NIP-49 defines")
 	gen.Flags().Bool("seed-passphrase", false, "add a BIP-39 passphrase to the seed")
+	return gen
+}
 
+func recoverSeedCommand() *cobra.Command {
 	recoverSeed := &cobra.Command{
 		Use:   "recover",
 		Short: "Make the key again from the words of its seed, read on standard input",
@@ -97,7 +105,10 @@ func root() *cobra.Command {
 	}
 	recoverSeed.Flags().Bool("encrypt", false, "seal the key with a passphrase, as NIP-49 defines")
 	recoverSeed.Flags().Bool("seed-passphrase", false, "the seed has a BIP-39 passphrase")
+	return recoverSeed
+}
 
+func importKeyCommand() *cobra.Command {
 	importKey := &cobra.Command{
 		Use:   "import",
 		Short: "Take a key as hex, nsec or ncryptsec, from --from or standard input",
@@ -136,7 +147,10 @@ func root() *cobra.Command {
 	}
 	importKey.Flags().String("from", "", "the file that holds the key")
 	importKey.Flags().String("public", "", "the public key of an ncryptsec, in hex, so no passphrase is needed")
+	return importKey
+}
 
+func encryptCommand() *cobra.Command {
 	encrypt := &cobra.Command{
 		Use:   "encrypt",
 		Short: "Seal the key with a passphrase, as NIP-49 defines",
@@ -157,7 +171,10 @@ func root() *cobra.Command {
 			return nil
 		},
 	}
+	return encrypt
+}
 
+func stdioCommand() *cobra.Command {
 	stdio := &cobra.Command{
 		Use:   "stdio",
 		Short: "Answer one request for each JSON line on standard input",
@@ -178,8 +195,7 @@ func root() *cobra.Command {
 			return serve(command, k, command.InOrStdin(), command.OutOrStdout())
 		},
 	}
-	command.AddCommand(gen, recoverSeed, importKey, encrypt, stdio)
-	return command
+	return stdio
 }
 
 // keyPath is the file of the key: signer/key in the folder of the identity.

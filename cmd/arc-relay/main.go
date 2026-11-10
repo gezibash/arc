@@ -68,102 +68,7 @@ func relayCommand() *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE: func(command *cobra.Command, _ []string) error {
-			listen, _ := command.Flags().GetString("listen")
-			path, _ := command.Flags().GetString("db")
-			if path == "" {
-				var err error
-				if path, err = defaultDB(); err != nil {
-					return err
-				}
-			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				return err
-			}
-
-			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			ring, err := ringSetting(command)
-			if err != nil {
-				return err
-			}
-			rl, connections, ringer, closeDB, err := relayserver.New(path, writePolicy(command), ring, logger)
-			if err != nil {
-				return err
-			}
-			defer closeDB()
-
-			listener, err := net.Listen("tcp", listen)
-			if err != nil {
-				return err
-			}
-			listener = connections.Listen(listener)
-			fmt.Fprintf(command.OutOrStdout(), "relay listens on ws://%s\n", listener.Addr())
-			turnConfig, err := turnSetting(command)
-			if err != nil {
-				return err
-			}
-			var turnServer *turn.Server
-			if stunAddress := stunListen(command, listen); stunAddress != "" {
-				// A second relay on one machine cannot take the default
-				// port. It runs with no STUN server. A port that the
-				// operator sets must open.
-				conn, err := net.ListenPacket("udp", stunAddress)
-				switch {
-				case err != nil && (command.Flags().Changed("stun") || turnConfig != nil):
-					return fmt.Errorf("STUN: %w", err)
-				case err != nil:
-					fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("relay answers no STUN: %v (set --stun)", err)))
-				case turnConfig != nil:
-					// The TURN server answers STUN binding requests too.
-					host, _, _ := net.SplitHostPort(stunAddress)
-					turnConfig.RelayHost = host
-					turnConfig.Logger = logger
-					if address, _ := command.Flags().GetString("turn-tcp"); address != "" {
-						if turnConfig.TCP, err = net.Listen("tcp", address); err != nil {
-							_ = conn.Close()
-							return fmt.Errorf("TURN over TCP: %w", err)
-						}
-					}
-					if turnServer, err = turn.Serve(conn, *turnConfig); err != nil {
-						_ = conn.Close()
-						if turnConfig.TCP != nil {
-							_ = turnConfig.TCP.Close()
-						}
-						return fmt.Errorf("TURN: %w", err)
-					}
-					defer func() { _ = turnServer.Close() }()
-					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN and TURN on udp://%s, relay ports %d-%d on %s\n", conn.LocalAddr(), turnConfig.MinPort, turnConfig.MaxPort, turnConfig.PublicIP)
-					if turnConfig.TCP != nil {
-						fmt.Fprintf(command.OutOrStdout(), "relay answers TURN on tcp://%s\n", turnConfig.TCP.Addr())
-					}
-				default:
-					defer func() { _ = conn.Close() }()
-					go func() {
-						if err := stun.Serve(conn); err != nil {
-							fmt.Fprintln(os.Stderr, "the STUN server stopped:", terminal.EscapeLine(err.Error()))
-						}
-					}()
-					fmt.Fprintf(command.OutOrStdout(), "relay answers STUN on udp://%s\n", conn.LocalAddr())
-				}
-			} else if turnConfig != nil {
-				return errors.New("TURN needs the STUN port; do not set --stun none with --turn-ports")
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			if ringer != nil {
-				go ringer.Run(ctx)
-				fmt.Fprintf(command.OutOrStdout(), "relay rings citizens, at most %d rings each minute\n", ring.PerMinute)
-			}
-			server := &http.Server{Handler: relayserver.Handler(rl, turnServer, ringer), ConnContext: connections.ConnContext}
-			go func() { <-ctx.Done(); _ = server.Close() }()
-			go connections.Run(ctx, time.Minute)
-			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
-				return err
-			}
-			return nil
-		},
+		RunE:          runRelay,
 	}
 	command.Flags().String("listen", "127.0.0.1:7447", "the address to listen on")
 	command.Flags().String("db", "", "the file that holds the events (default relay.db in ARC_HOME, or in ~/.arc)")
@@ -185,6 +90,121 @@ func relayCommand() *cobra.Command {
 	command.Flags().Int("rings-per-minute", rings.DefaultPerMinute, "the most rings of the whole relay in one minute")
 	command.Flags().IntSlice("rings-ports", []int{443}, "the ports that a ring URL can name")
 	return command
+}
+
+// runRelay runs the relay until a signal stops it: the store, the
+// WebSocket listener, STUN and TURN, the rings, and the HTTP server.
+func runRelay(command *cobra.Command, _ []string) error {
+	listen, _ := command.Flags().GetString("listen")
+	path, _ := command.Flags().GetString("db")
+	if path == "" {
+		var err error
+		if path, err = defaultDB(); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ring, err := ringSetting(command)
+	if err != nil {
+		return err
+	}
+	rl, connections, ringer, closeDB, err := relayserver.New(path, writePolicy(command), ring, logger)
+	if err != nil {
+		return err
+	}
+	defer closeDB()
+
+	listener, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	listener = connections.Listen(listener)
+	fmt.Fprintf(command.OutOrStdout(), "relay listens on ws://%s\n", listener.Addr())
+	turnServer, stopSTUN, err := startSTUN(command, listen, logger)
+	if err != nil {
+		return err
+	}
+	defer stopSTUN()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if ringer != nil {
+		go ringer.Run(ctx)
+		fmt.Fprintf(command.OutOrStdout(), "relay rings citizens, at most %d rings each minute\n", ring.PerMinute)
+	}
+	server := &http.Server{Handler: relayserver.Handler(rl, turnServer, ringer), ConnContext: connections.ConnContext}
+	go func() { <-ctx.Done(); _ = server.Close() }()
+	go connections.Run(ctx, time.Minute)
+	if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// startSTUN opens the STUN port of the relay, and serves TURN on it when
+// the flags ask for TURN. It returns the TURN server, or nil, and a
+// function that closes what it opened.
+func startSTUN(command *cobra.Command, listen string, logger *slog.Logger) (*turn.Server, func(), error) {
+	none := func() {}
+	turnConfig, err := turnSetting(command)
+	if err != nil {
+		return nil, none, err
+	}
+	stunAddress := stunListen(command, listen)
+	if stunAddress == "" {
+		if turnConfig != nil {
+			return nil, none, errors.New("TURN needs the STUN port; do not set --stun none with --turn-ports")
+		}
+		return nil, none, nil
+	}
+	// A second relay on one machine cannot take the default
+	// port. It runs with no STUN server. A port that the
+	// operator sets must open.
+	conn, err := net.ListenPacket("udp", stunAddress)
+	switch {
+	case err != nil && (command.Flags().Changed("stun") || turnConfig != nil):
+		return nil, none, fmt.Errorf("STUN: %w", err)
+	case err != nil:
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("relay answers no STUN: %v (set --stun)", err)))
+		return nil, none, nil
+	case turnConfig != nil:
+		// The TURN server answers STUN binding requests too.
+		host, _, _ := net.SplitHostPort(stunAddress)
+		turnConfig.RelayHost = host
+		turnConfig.Logger = logger
+		if address, _ := command.Flags().GetString("turn-tcp"); address != "" {
+			if turnConfig.TCP, err = net.Listen("tcp", address); err != nil {
+				_ = conn.Close()
+				return nil, none, fmt.Errorf("TURN over TCP: %w", err)
+			}
+		}
+		turnServer, err := turn.Serve(conn, *turnConfig)
+		if err != nil {
+			_ = conn.Close()
+			if turnConfig.TCP != nil {
+				_ = turnConfig.TCP.Close()
+			}
+			return nil, none, fmt.Errorf("TURN: %w", err)
+		}
+		fmt.Fprintf(command.OutOrStdout(), "relay answers STUN and TURN on udp://%s, relay ports %d-%d on %s\n", conn.LocalAddr(), turnConfig.MinPort, turnConfig.MaxPort, turnConfig.PublicIP)
+		if turnConfig.TCP != nil {
+			fmt.Fprintf(command.OutOrStdout(), "relay answers TURN on tcp://%s\n", turnConfig.TCP.Addr())
+		}
+		return turnServer, func() { _ = turnServer.Close() }, nil
+	default:
+		go func() {
+			if err := stun.Serve(conn); err != nil {
+				fmt.Fprintln(os.Stderr, "the STUN server stopped:", terminal.EscapeLine(err.Error()))
+			}
+		}()
+		fmt.Fprintf(command.OutOrStdout(), "relay answers STUN on udp://%s\n", conn.LocalAddr())
+		return nil, func() { _ = conn.Close() }, nil
+	}
 }
 
 // ringSetting reads the ring flags of a relay. It returns nil if the relay
