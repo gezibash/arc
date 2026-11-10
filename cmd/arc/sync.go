@@ -57,7 +57,7 @@ func runSync(command *cobra.Command, _ []string) error {
 	// so a repair through it has nothing to audit (#404).
 	if repair, _ := command.Flags().GetBool("repair"); repair {
 		if dir, _ := command.Flags().GetString("dir"); dir != "" {
-			return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: sync arc sync --repair and arc sync --dir apart")
+			return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: run arc sync --repair and arc sync --dir apart")
 		}
 	}
 	sess, err := open(command)
