@@ -314,13 +314,12 @@ func (m *Manifest) checkCommand(c Command) error {
 // response fields, defaults and transformations cannot authorize file writes.
 func saveArgument(c Command) (string, error) {
 	t, err := template.Compile(c.Output.Save.To, nil)
-	if err != nil {
-		return "", errors.New("save.to must name one explicit path argument without filters or a default")
-	}
-	if name, ok := t.PlaceholderOnly(); ok {
-		for _, a := range c.Args {
-			if a.Name == name && a.Type == "path" && a.Kind != "switch" && a.Default == "" {
-				return a.Name, nil
+	if err == nil {
+		if name, ok := t.PlaceholderOnly(); ok {
+			for _, a := range c.Args {
+				if a.Name == name && a.Type == "path" && a.Kind != "switch" && a.Default == "" {
+					return a.Name, nil
+				}
 			}
 		}
 	}
@@ -431,3 +430,4 @@ func jsonTemplates(v any) []string {
 	}
 	return out
 }
+
