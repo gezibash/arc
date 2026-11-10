@@ -92,6 +92,8 @@ func relayCommand() *cobra.Command {
 	return command
 }
 
+// runRelay runs the relay until a signal stops it: the store, the
+// WebSocket listener, STUN and TURN, the rings, and the HTTP server.
 func runRelay(command *cobra.Command, _ []string) error {
 	listen, _ := command.Flags().GetString("listen")
 	path, _ := command.Flags().GetString("db")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/lists"
 	"github.com/spf13/cobra"
@@ -49,15 +50,9 @@ func listsAddCommand() *cobra.Command {
 			} else if !ok {
 				return fmt.Errorf("no installed command %q: see arc apps list", args[0])
 			}
-			// A member is a key, in any form that a key argument takes.
-			env := &citizen.Environment{Installs: installs}
-			var keys []string
-			for _, text := range args[2:] {
-				pk, err := env.ResolveKey(command.Context(), text)
-				if err != nil {
-					return err
-				}
-				keys = append(keys, pk.Hex())
+			keys, err := memberKeys(command, installs, args[2:])
+			if err != nil {
+				return err
 			}
 			store, err := listsOf(command)
 			if err != nil {
@@ -82,14 +77,9 @@ func listsRmCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env := &citizen.Environment{Installs: installs}
-			var keys []string
-			for _, text := range args[2:] {
-				pk, err := env.ResolveKey(command.Context(), text)
-				if err != nil {
-					return err
-				}
-				keys = append(keys, pk.Hex())
+			keys, err := memberKeys(command, installs, args[2:])
+			if err != nil {
+				return err
 			}
 			store, err := listsOf(command)
 			if err != nil {
@@ -148,4 +138,19 @@ func listsLsCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// memberKeys resolves each member of a list to a key, in hex. A member is
+// a key, in any form that a key argument takes.
+func memberKeys(command *cobra.Command, installs catalog.Installs, texts []string) ([]string, error) {
+	env := &citizen.Environment{Installs: installs}
+	var keys []string
+	for _, text := range texts {
+		pk, err := env.ResolveKey(command.Context(), text)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, pk.Hex())
+	}
+	return keys, nil
 }

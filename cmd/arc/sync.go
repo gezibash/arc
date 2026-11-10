@@ -50,12 +50,14 @@ type syncRun struct {
 	unreached []string
 }
 
+// runSync runs arc sync: it reaches each relay once, syncs each target,
+// forwards waiting mail and syncs self data, then names what failed.
 func runSync(command *cobra.Command, _ []string) error {
 	// A directory holds events, not the pieces of a storage citizen,
 	// so a repair through it has nothing to audit (#404).
 	if repair, _ := command.Flags().GetBool("repair"); repair {
 		if dir, _ := command.Flags().GetString("dir"); dir != "" {
-			return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: run arc sync --repair and arc sync --dir apart")
+			return errors.New("--repair audits the pieces on the storage citizens, and --dir syncs with a directory, which holds no pieces: sync arc sync --repair and arc sync --dir apart")
 		}
 	}
 	sess, err := open(command)
@@ -69,34 +71,34 @@ func runSync(command *cobra.Command, _ []string) error {
 		return errors.New("--turn allows TURN for repair: give it with --repair")
 	}
 
-	run := &syncRun{command: command, sess: sess, sealed: sealedFilters(sess.Key.Public)}
+	sync := &syncRun{command: command, sess: sess, sealed: sealedFilters(sess.Key.Public)}
 	targets := sess.Relays
-	run.dir, _ = command.Flags().GetString("dir")
-	if run.dir != "" {
-		targets = []transport.Transport{file.Dir{Path: run.dir}}
+	sync.dir, _ = command.Flags().GetString("dir")
+	if sync.dir != "" {
+		targets = []transport.Transport{file.Dir{Path: sync.dir}}
 	}
 	if len(targets) == 0 {
 		return errors.New("nothing to sync with: add a relay, or give --dir")
 	}
-	if run.dir != "" {
+	if sync.dir != "" {
 		refreshDevices(command.Context(), sess, command.ErrOrStderr())
 	}
 	// Ask each relay once, all at once: a relay that does not answer
 	// is then down, and the steps below skip it, so silent relays
 	// cost one deadline in total, not one each (#442).
 	reached := map[string]error{}
-	if run.dir == "" {
+	if sync.dir == "" {
 		for i, err := range sess.Reach(command.Context()) {
 			reached[sess.Relays[i].Name()] = err
 		}
 	}
 	for _, t := range targets {
-		run.target(t, reached[t.Name()])
+		sync.target(t, reached[t.Name()])
 	}
-	if run.dir == "" && len(sess.Relays) > 0 {
-		run.forward()
+	if sync.dir == "" && len(sess.Relays) > 0 {
+		sync.forward()
 	}
-	if run.dir == "" {
+	if sync.dir == "" {
 		cfg, err := selfSyncConfig(command, sess)
 		if err != nil {
 			return err
@@ -104,10 +106,10 @@ func runSync(command *cobra.Command, _ []string) error {
 		again, _ := command.Flags().GetBool("import")
 		cfg.Repair, cfg.RepairTURN = repair, turn
 		if syncSelf(command.Context(), sess, cfg, again) != nil {
-			run.failed = true
+			sync.failed = true
 		}
 	}
-	return run.finish()
+	return sync.finish()
 }
 
 // target syncs with one relay or directory. reached is the answer of the
