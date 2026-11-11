@@ -904,6 +904,7 @@ func TestSyncEscapesTheDirectory(t *testing.T) {
 // lists allow it (#441). A revoke of an unknown name and a bad relay URL
 // give the name escaped once at the print (#443).
 func TestConfirmationsEscapeTheNameOnce(t *testing.T) {
+	t.Parallel()
 	home, url := hostileRelay(t)
 	name := "p\u202ex\u0085y"
 	device := keys.Generate()
@@ -948,6 +949,7 @@ func TestConfirmationsEscapeTheNameOnce(t *testing.T) {
 
 // The errors of arc relay turn are on one line, joined with "; " (#443).
 func TestTheTurnErrorsAreOneLine(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", "ws://127.0.0.1:1")
@@ -962,6 +964,7 @@ func TestTheTurnErrorsAreOneLine(t *testing.T) {
 // use and arc keys remove says to give the raw name, and the raw name,
 // quoted for the shell, works (#441).
 func TestKeysUseTakesTheRawName(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	for _, use := range []string{"use", "remove"} {
@@ -985,6 +988,7 @@ func TestKeysUseTakesTheRawName(t *testing.T) {
 // citizen that the storage list says is gone: arc sync removes it, and
 // names it escaped on one line (#443).
 func TestARemovedStorageInstallIsNamedEscaped(t *testing.T) {
+	t.Parallel()
 	home, url := hostileRelay(t)
 	name := "p\u202ex\narc: fake forged"
 	gone := keys.Generate().Public

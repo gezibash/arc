@@ -3,7 +3,7 @@
 - Status: built
 - Layers: core, sdk, runtime
 - Owns: core/session
-- Proof: go test -count=1 -run '^(TestBundledProviderSessionsThroughCLI|TestAnOpenThatNoOneHeardIsNotSubmitted)$' ./cmd/arc/ ./core/call/
+- Proof: go test -count=1 -run '^(TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF|TestATerminalSessionRestoresTheTerminalThroughCLI|TestAnOpenThatNoOneHeardIsNotSubmitted|TestSQLSessionTransactionsAndIsolation|TestHTTPNestedSessionStreamsAndPreservesFinalError|TestExecSessionInteractiveIOAndExit|TestReleaseSessionArchiveAndPathBoundary)$' ./cmd/arc/ ./core/call/ ./apps/sqlite/server/ ./apps/http/server/ ./apps/exec/server/ ./apps/releases/server/
 - Unverified: No test runs a session across a network other than loopback.
 
 ARC participants may provide and consume capabilities. Transport connections
@@ -202,8 +202,11 @@ gets a `session.Stream` that implements `io.Reader` and `io.Writer`.
 
 ## 8. Proof
 
-- `TestBundledProviderSessionsThroughCLI` in `cmd/arc` runs the bundled apps
-  through a local relay and the normal CLI.
+- `TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF` in `cmd/arc`
+  runs a duplex session through a local relay and the normal CLI.
+  `TestATerminalSessionRestoresTheTerminalThroughCLI` runs `arc session
+  --tty` under a real terminal, and checks that arc restores it.
+- The session tests of each bundled app: SQLite, HTTP, Exec and Releases.
 - The tests of `core/session`: credit, half-close, duplicates, gaps,
   cancellation and the request/reply mode.
 - The tests of `core/call` and `sdk/provider`: identity binding, mode

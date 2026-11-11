@@ -8,6 +8,7 @@ import (
 // arc keys bunker refuses a bad flag before it opens the identity, so the
 // owner learns of the mistake at once, and not at the first request.
 func TestTheBunkerRefusesBadFlags(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	for _, c := range []struct {
 		args []string

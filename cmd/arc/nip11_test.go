@@ -20,6 +20,7 @@ import (
 // slice of the relay, so two requests wrote one slot; the race detector saw
 // it on CI).
 func TestNIP11RequestsAtOnceDoNotRace(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeStore, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
