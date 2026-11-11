@@ -69,7 +69,7 @@ func (r Relay) beforeRead(ctx context.Context, conn *nostr.Relay, filter nostr.F
 // many events one query returns, so Fetch asks again for older events until a
 // page brings nothing new.
 func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, error) {
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return transport.Batch{}, err
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)
@@ -178,7 +178,7 @@ func drain(ctx context.Context, sub *nostr.Subscription) ([]nostr.Event, error) 
 // sends, all on one connection. An answer to a live call is ephemeral, and a
 // relay never stores it, so a subscription that came after it would miss it.
 func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Filter, match func(nostr.Event) bool) (answer nostr.Event, err error) {
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return nostr.Event{}, &transport.NotSubmittedError{Err: err}
 	}
 	conn, _, done, err := r.open(ctx)

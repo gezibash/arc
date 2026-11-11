@@ -117,7 +117,7 @@ func runSync(command *cobra.Command, _ []string) error {
 func (r *syncRun) target(t transport.Transport, reached error) {
 	command, sess := r.command, r.sess
 	if reached != nil && citizen.Unreachable(reached) {
-		r.unreached = append(r.unreached, t.Name()+": "+citizen.UnreachedReason(reached))
+		r.unreached = append(r.unreached, citizen.UnreachedLine(t.Name(), reached))
 		return
 	}
 	if line, ok := citizen.RefusedLine(t.Name(), reached); ok {
@@ -178,7 +178,7 @@ func (r *syncRun) directory(t transport.Transport) bool {
 func (r *syncRun) mail(t transport.Transport) {
 	command := r.command
 	mails, err := r.sess.Mail.Sync(command.Context(), t)
-	if line, ok := citizen.StoppedLine(terminal.EscapeLine(t.Name()), err); ok {
+	if line, ok := citizen.StoppedLine(t.Name(), err); ok {
 		// The relay took some wraps, and then gave no answer:
 		// one line names it, and the rest wait (#465).
 		r.unreached = append(r.unreached, line)
@@ -188,7 +188,7 @@ func (r *syncRun) mail(t transport.Transport) {
 		// The relay answered the question of Reach, so only
 		// its mail gave no answer: say so, in a few words at
 		// the end, not its whole error (#439, #442).
-		r.unreached = append(r.unreached, t.Name()+": "+citizen.UnreachedReason(err)+" for mail")
+		r.unreached = append(r.unreached, t.Name()+": "+citizen.UnreachedReason(err)+" for mail; arc syncs with it again at the next sync")
 		return
 	}
 	if line, ok := citizen.RefusedLine(t.Name()+" for mail", err); ok {
@@ -219,19 +219,25 @@ func (r *syncRun) forward() {
 	}
 }
 
-// finish writes one line for each relay that gave no answer, the last as
-// the error of the sync when nothing else failed. A line holds raw text
-// that a relay chose, and is escaped once, where it is printed: errorLine
-// escapes the error of the command (#464).
+// finish writes the line of each relay that gave no answer or refused.
 func (r *syncRun) finish() error {
-	for i, relay := range r.unreached {
-		if i < len(r.unreached)-1 || r.failed {
-			fmt.Fprintln(r.command.ErrOrStderr(), "arc: "+terminal.EscapeLine(relay+"; arc syncs with it again at the next sync"))
+	return relayLines(r.command.ErrOrStderr(), r.unreached, r.failed)
+}
+
+// relayLines prints the line of sync for each relay that gave no answer or
+// refused, the last as the error of the sync when nothing else failed. A
+// line holds raw text that a relay or a mark chose, with its own ending,
+// and is escaped once, where it is printed: errorLine escapes the error of
+// the command (#444, #464).
+func relayLines(errs io.Writer, lines []string, failed bool) error {
+	for i, line := range lines {
+		if i < len(lines)-1 || failed {
+			fmt.Fprintln(errs, "arc: "+terminal.EscapeLine(line))
 		} else {
-			return errors.New(relay + "; arc syncs with it again at the next sync")
+			return errors.New(line)
 		}
 	}
-	if r.failed {
+	if failed {
 		return errors.New("some transports failed")
 	}
 	return nil
