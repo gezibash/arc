@@ -115,6 +115,13 @@ func (s preparingSigner) Decrypt(ctx context.Context, body string, from nostr.Pu
 	return s.Key.Decrypt(ctx, body, from)
 }
 
+// settle bounds each wait of TestConcurrentPreparationExecutesOnce. The two
+// readers share one bolt file through two leases, so each takes the file
+// only after the other closes it: boltlease.Idle and an open of the file at
+// each handoff. That takes about 0.3 s alone and 0.85 s beside a full suite,
+// so a limit of 1 s failed under load.
+const settle = 10 * time.Second
+
 func TestConcurrentPreparationExecutesOnce(t *testing.T) {
 	m, dir, key, n := openMail(t, nil)
 	request := receivedRequest(t, m)
@@ -139,7 +146,7 @@ func TestConcurrentPreparationExecutesOnce(t *testing.T) {
 	for range 2 {
 		select {
 		case <-signer.entered:
-		case <-time.After(time.Second):
+		case <-time.After(settle):
 			t.Fatal("both readers did not prepare the pending request")
 		}
 	}
@@ -152,7 +159,7 @@ func TestConcurrentPreparationExecutesOnce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(settle):
 			t.Fatal("preparation did not finish")
 		}
 	}
