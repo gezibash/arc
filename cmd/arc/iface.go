@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/homedir"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -110,5 +111,5 @@ func builtinName(root *cobra.Command, name string) bool {
 			return true
 		}
 	}
-	return name == "help" || name == "completion" || slices.Contains(homeNames, name)
+	return name == "help" || name == "completion" || slices.Contains(homedir.Names(), name)
 }

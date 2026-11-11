@@ -62,83 +62,106 @@ func execSession(command *cobra.Command, stream *session.Stream, tty bool) error
 			return err
 		}
 		defer func() { _ = term.Restore(int(file.Fd()), old) }()
-		resize := make(chan os.Signal, 1)
-		signal.Notify(resize, syscall.SIGWINCH)
-		defer signal.Stop(resize)
-		done := make(chan struct{})
-		defer close(done)
-		go func() {
-			for {
-				select {
-				case <-resize:
-					cols, rows, err := term.GetSize(int(file.Fd()))
-					if err == nil {
-						if err = send(execadapter.Record{Type: "resize", Rows: uint16(rows), Cols: uint16(cols)}); err != nil {
-							return
-						}
-					}
-				case <-stream.Context().Done():
-					return
-				case <-done:
-					return
-				}
-			}
-		}()
+		defer sendResizes(file, stream, send)()
 	}
 	inputFailure := make(chan error, 1)
 	detached := new(atomic.Bool)
 	if stream.Mode() == session.Duplex {
-		// The terminal reader polls its own context and is joined before closing.
-		if !tty {
-			defer closeOnEnd(stream, input)()
-		}
-		readInput := input
-		inputCtx, stopInput := context.WithCancel(stream.Context())
-		if tty {
-			held, _ := input.(*os.File)
-			readInput = terminalReader{inputCtx, int(held.Fd())}
-		}
-		inputDone := make(chan struct{})
-		defer func() {
-			stopInput()
-			if tty {
-				<-inputDone
-			}
-		}()
-		go func() {
-			defer close(inputDone)
-			buf := make([]byte, 4096)
-			var escape detachEscape
-			for {
-				n, err := readInput.Read(buf)
-				if n > 0 {
-					data, detach := buf[:n], false
-					if tty {
-						data, detach = escape.filter(data)
-					}
-					if len(data) > 0 {
-						if e := send(execadapter.Record{Type: "stdin", Data: data}); e != nil {
-							return
-						}
-					}
-					if detach {
-						detached.Store(true)
-						_ = stream.Close()
+		defer sendInput(stream, input, tty, send, inputFailure, detached)()
+	}
+	return readExecOutput(command, stream, inputFailure, detached)
+}
+
+// sendResizes sends each new size of the terminal until the session ends.
+// The function that it returns stops it.
+func sendResizes(file *os.File, stream *session.Stream, send func(execadapter.Record) error) func() {
+	resize := make(chan os.Signal, 1)
+	signal.Notify(resize, syscall.SIGWINCH)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-resize:
+				cols, rows, err := term.GetSize(int(file.Fd()))
+				if err == nil {
+					if err = send(execadapter.Record{Type: "resize", Rows: uint16(rows), Cols: uint16(cols)}); err != nil {
 						return
 					}
 				}
-				if errors.Is(err, io.EOF) {
-					_ = stream.CloseWrite()
-					return
+			case <-stream.Context().Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		signal.Stop(resize)
+	}
+}
+
+// sendInput sends the input as stdin records until it ends, the session
+// ends, or a terminal gives the detach sequence. The function that it
+// returns stops it.
+func sendInput(stream *session.Stream, input io.Reader, tty bool, send func(execadapter.Record) error, inputFailure chan<- error, detached *atomic.Bool) func() {
+	// The terminal reader polls its own context and is joined before closing.
+	stopClose := func() bool { return false }
+	if !tty {
+		stopClose = closeOnEnd(stream, input)
+	}
+	readInput := input
+	inputCtx, stopInput := context.WithCancel(stream.Context())
+	if tty {
+		held, _ := input.(*os.File)
+		readInput = terminalReader{inputCtx, int(held.Fd())}
+	}
+	inputDone := make(chan struct{})
+	go func() {
+		defer close(inputDone)
+		buf := make([]byte, 4096)
+		var escape detachEscape
+		for {
+			n, err := readInput.Read(buf)
+			if n > 0 {
+				data, detach := buf[:n], false
+				if tty {
+					data, detach = escape.filter(data)
 				}
-				if err != nil {
-					inputFailure <- err
+				if len(data) > 0 {
+					if e := send(execadapter.Record{Type: "stdin", Data: data}); e != nil {
+						return
+					}
+				}
+				if detach {
+					detached.Store(true)
 					_ = stream.Close()
 					return
 				}
 			}
-		}()
+			if errors.Is(err, io.EOF) {
+				_ = stream.CloseWrite()
+				return
+			}
+			if err != nil {
+				inputFailure <- err
+				_ = stream.Close()
+				return
+			}
+		}
+	}()
+	return func() {
+		stopInput()
+		if tty {
+			<-inputDone
+		}
+		stopClose()
 	}
+}
+
+// readExecOutput writes the stdout and stderr records, and gives the exit
+// status of the process as the error of arc.
+func readExecOutput(command *cobra.Command, stream *session.Stream, inputFailure <-chan error, detached *atomic.Bool) error {
 	reader := execadapter.NewReader(stream)
 	exit := -1
 	for {

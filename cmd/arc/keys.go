@@ -13,6 +13,7 @@ import (
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/signer/program"
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/homedir"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
 )
@@ -109,7 +110,7 @@ func keysAddCommand() *cobra.Command {
 			if strings.HasPrefix(text, "bunker://") {
 				// The first token lets this device read the sealed data of
 				// the citizen on a relay with no path to the signer.
-				sess, err := openDir(command, filepath.Join(citizensDir(root), k.Name()))
+				sess, err := openDir(command, filepath.Join(homedir.CitizensDir(root), k.Name()))
 				if err != nil {
 					return err
 				}
@@ -134,7 +135,7 @@ func keysListCommand() *cobra.Command {
 			}
 			all, err := listCitizens(root)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return unreadableIdentities(root, why, err)
+				return homedir.UnreadableIdentities(root, why, err)
 			}
 			if err != nil {
 				return err
@@ -143,9 +144,9 @@ func keysListCommand() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no identities: make one with arc keys gen")
 				return nil
 			}
-			body, err := os.ReadFile(defaultPath(root))
+			body, err := os.ReadFile(homedir.DefaultPath(root))
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return unreadableDefault(root, why, err)
+				return homedir.UnreadableDefault(root, why, err)
 			}
 			active := strings.TrimSpace(string(body))
 			for _, c := range all {
@@ -172,10 +173,10 @@ func keysUseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := os.Stat(filepath.Join(citizensDir(root), args[0])); err != nil || !validName(args[0]) {
+			if _, err := os.Stat(filepath.Join(homedir.CitizensDir(root), args[0])); err != nil || !validName(args[0]) {
 				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", args[0])
 			}
-			if err := os.WriteFile(defaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
+			if err := os.WriteFile(homedir.DefaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
 				return err
 			}
 			fmt.Fprintf(command.OutOrStdout(), "the default is %s\n", terminal.EscapeLine(args[0]))
@@ -201,7 +202,7 @@ func keysRemoveCommand() *cobra.Command {
 				return err
 			}
 			name := args[0]
-			dir := filepath.Join(citizensDir(root), name)
+			dir := filepath.Join(homedir.CitizensDir(root), name)
 			if _, err := os.Stat(dir); err != nil || !validName(name) {
 				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 			}
@@ -216,7 +217,7 @@ func keysRemoveCommand() *cobra.Command {
 				return err
 			}
 			if defaultName(root) == name {
-				if err := os.Remove(defaultPath(root)); err != nil {
+				if err := os.Remove(homedir.DefaultPath(root)); err != nil {
 					return err
 				}
 			}
