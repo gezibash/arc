@@ -108,7 +108,11 @@ func (u Update) source(ctx context.Context) (Requester, *pipeCaller, bool, error
 	// With no pipe, the archive comes in chunks: on a local relay they were
 	// faster than session frames, and they need fewer events.
 	if streams && u.Pipes.Policy != direct.Off {
-		piped := &pipeCaller{caller: c, installs: u.Installs, dial: u.Pipes}
+		address := "releases+arc://" + u.Provider.Hex() + "/releases"
+		open := func(ctx context.Context, body string) (*session.Stream, error) {
+			return u.Session.OpenSessionAddress(ctx, u.Installs, address, body, session.ServerStream)
+		}
+		piped := &pipeCaller{Requester: c, open: open, dial: u.Pipes}
 		return piped, piped, streams, nil
 	}
 	return c, nil, streams, nil
