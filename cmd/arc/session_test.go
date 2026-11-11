@@ -96,3 +96,25 @@ func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
 		t.Fatalf("sessions shared application state: %q", isolated.String())
 	}
 }
+
+// arc session takes one output mapping, and one that the mode allows. It
+// refuses the others before it opens a session.
+func TestASessionRefusesAMappingThatDoesNotFit(t *testing.T) {
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	for _, c := range []struct {
+		flags []string
+		want  string
+	}{
+		{[]string{"--exec", "--http"}, "choose one session output mapping"},
+		{[]string{"--tty", "--websocket"}, "choose one session output mapping"},
+		{[]string{"--http", "--mode", "request_reply"}, "HTTP streaming needs server_stream or duplex"},
+		{[]string{"--websocket", "--mode", "server_stream"}, "WebSockets need duplex mode"},
+		{[]string{"--exec", "--mode", "request_reply"}, "exec I/O needs server_stream or duplex"},
+	} {
+		_, err := run(t, home, "", append([]string{"session", "exec+arc://" + strings.Repeat("a", 64) + "/"}, c.flags...)...)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: got %v, want an error with %q", c.flags, err, c.want)
+		}
+	}
+}

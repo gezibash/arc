@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync/atomic"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/runtime/catalog"
@@ -19,6 +20,10 @@ type announcer struct {
 	// known and ahead are read by the watches of other goroutines.
 	known, ahead atomic.Bool
 	told         bool
+	// tried is the wall time of the last call to announce. A machine that
+	// sleeps stops the monotonic clock of a ticker, but not the wall clock
+	// by which a caller judges an announcement (catalog.Current).
+	tried nostr.Timestamp
 	// pull asks the relays for the announcements, and is nil when one
 	// answered.
 	pull func() error
@@ -28,7 +33,8 @@ type announcer struct {
 	say  func(text string)
 }
 
-func (a *announcer) announce() error {
+func (a *announcer) announce(now nostr.Timestamp) error {
+	a.tried = now
 	if !a.known.Load() {
 		a.known.Store(a.pull() == nil)
 	}
@@ -55,6 +61,12 @@ func (a *announcer) announce() error {
 		return err
 	}
 	return a.sign(at)
+}
+
+// due says whether catalog.Refresh passed on the wall clock since the last
+// call to announce.
+func (a *announcer) due(now nostr.Timestamp) bool {
+	return now-a.tried >= nostr.Timestamp(catalog.Refresh/time.Second)
 }
 
 // waiting says whether the announcer waits: for a relay that answers, or
