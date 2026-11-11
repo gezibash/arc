@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -302,5 +303,84 @@ func TestAPipeThatDoesNotOpenIsAnError(t *testing.T) {
 		if frames != 0 {
 			t.Errorf("request %q: the client asked for frames %d times after a pipe that did not open", request, frames)
 		}
+	}
+}
+
+// recordsProvider opens a session whose provider runs serve with the
+// request, and writes what serve gives as records.
+func recordsProvider(t *testing.T, serve func(ctx context.Context, request string, out *json.Encoder, s *session.Stream) error) Opener {
+	return func(_ context.Context, request string) (*session.Stream, error) {
+		return providertest.Start(t, session.ServerStream, func(ctx context.Context, s *session.Stream) error {
+			return serve(ctx, request, json.NewEncoder(s), s)
+		}), nil
+	}
+}
+
+// TestABodyBeforeTheResponseIsRefused gets a body record before the
+// record of the status and headers. Copy refuses the response.
+func TestABodyBeforeTheResponseIsRefused(t *testing.T) {
+	open := recordsProvider(t, func(_ context.Context, _ string, out *json.Encoder, _ *session.Stream) error {
+		n := int64(5)
+		for _, r := range []SessionRecord{{Type: "body", Data: []byte("hello")}, {Type: "response", Status: 200}, {Type: "end", BodyBytes: &n}} {
+			if err := out.Encode(r); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	piped, err := OpenSession(t.Context(), direct.DialConfig{Policy: direct.Off}, "", open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer piped.Close()
+	if _, err := piped.Copy(io.Discard); err == nil || !strings.Contains(err.Error(), "HTTP body before headers") {
+		t.Fatalf("got %v, want the refusal of a body before the headers", err)
+	}
+}
+
+// TestAPipeBodyOfTheWrongCountIsRefused sends 5 bytes on the pipe, and an
+// end record that counts 6. Copy refuses the body: a pipe that closed
+// early must not pass as a whole body.
+func TestAPipeBodyOfTheWrongCountIsRefused(t *testing.T) {
+	open := recordsProvider(t, func(ctx context.Context, request string, out *json.Encoder, _ *session.Stream) error {
+		var in struct {
+			Direct direct.Offer `json:"direct"`
+		}
+		if err := json.Unmarshal([]byte(request), &in); err != nil {
+			return err
+		}
+		pipe, answer, err := direct.Accept(ctx, direct.AcceptConfig{Policy: direct.Auto, Options: loopback}, in.Direct)
+		if err != nil {
+			return err
+		}
+		defer pipe.Close()
+		if err := out.Encode(SessionRecord{Type: "direct", SDP: answer}); err != nil {
+			return err
+		}
+		if err := pipe.Wait(ctx); err != nil {
+			return err
+		}
+		if err := out.Encode(SessionRecord{Type: "response", Status: 200}); err != nil {
+			return err
+		}
+		if _, err := pipe.Write([]byte("hello")); err != nil {
+			return err
+		}
+		if err := pipe.CloseWrite(ctx); err != nil {
+			return err
+		}
+		n := int64(6)
+		return out.Encode(SessionRecord{Type: "end", BodyBytes: &n})
+	})
+	piped, err := OpenSession(t.Context(), direct.DialConfig{Policy: direct.DirectOnly, Options: loopback}, "", open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer piped.Close()
+	if piped.Pipe == nil {
+		t.Fatalf("no pipe opened: path %q", piped.Path)
+	}
+	if _, err := piped.Copy(io.Discard); err == nil || !strings.Contains(err.Error(), "the body has 5 bytes, the provider sent 6") {
+		t.Fatalf("got %v, want the refusal of a body of the wrong count", err)
 	}
 }
