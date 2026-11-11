@@ -31,6 +31,16 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		// The two ends of a pipe on this machine find each other on the
+		// loopback address, with no STUN server: the test relay serves no
+		// STUN. It is set once for each test, so that a test that opens a
+		// pipe can run in parallel with the others.
+		for name, value := range map[string]string{"ARC_LOOPBACK": "1", "ARC_STUN": "none"} {
+			if err := os.Setenv(name, value); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
 		return m.Run()
 	}())
 }

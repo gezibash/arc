@@ -22,6 +22,25 @@ import (
 	"golang.org/x/term"
 )
 
+// programWith wraps a test program in a script that gives it the
+// environment env, as NAME=value. A test that configures its provider so
+// needs no t.Setenv, and can run in parallel with the others.
+func programWith(t *testing.T, binary string, env ...string) string {
+	t.Helper()
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	script := "#!/bin/sh\n"
+	for _, kv := range env {
+		name, value, _ := strings.Cut(kv, "=")
+		script += "export " + name + "=" + quote(value) + "\n"
+	}
+	script += "exec " + quote(binary) + ` "$@"` + "\n"
+	path := filepath.Join(t.TempDir(), "program.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func providerBinary(t *testing.T, pkg string) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "program")
@@ -33,13 +52,8 @@ func providerBinary(t *testing.T, pkg string) string {
 	return binary
 }
 
-// pipesOnLoopback lets two ends of a pipe on this machine find each other
-// on the loopback address, with no STUN server. The test relay serves no
-// STUN.
-func pipesOnLoopback(t *testing.T) {
-	t.Setenv("ARC_LOOPBACK", "1")
-	t.Setenv("ARC_STUN", "none")
-}
+// providerHome makes a citizen with one relay, and gives its home and its
+// public key.
 func providerHome(t *testing.T, relay string) (string, string) {
 	t.Helper()
 	home := t.TempDir()
@@ -105,10 +119,10 @@ func sessionDone(t *testing.T, done <-chan error, wantExit int) {
 	}
 }
 func TestBundledProviderSessionsThroughCLI(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 	consumer, key := providerHome(t, relay)
 	sqlHome, sqlKey := providerHome(t, relay)
 	httpHome, httpKey := providerHome(t, relay)
@@ -117,8 +131,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	if err := os.WriteFile(sqlConfig, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SQLITE_CONFIG", sqlConfig)
-	serveSessionProvider(t, ctx, sqlHome, providerBinary(t, "../../apps/sqlite/cmd/arc-sqlite"), "../../apps/sqlite/manifest.json")
+	serveSessionProvider(t, ctx, sqlHome, programWith(t, providerBinary(t, "../../apps/sqlite/cmd/arc-sqlite"), "SQLITE_CONFIG="+sqlConfig), "../../apps/sqlite/manifest.json")
 	ok(t, consumer, "", "install", sqlKey, "--yes")
 	input, out, done := startSessionCLI(t, ctx, consumer, "sqlite+arc://"+sqlKey+"/main")
 	if !waitFor(out, `"type":"ready"`, 5*time.Second) {
@@ -164,8 +177,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "exec.json")
 	data, _ = json.Marshal(map[string]any{"grants": []string{key}, "cwd": t.TempDir()})
 	os.WriteFile(config, data, 0600)
-	t.Setenv("EXEC_CONFIG", config)
-	serveSessionProvider(t, ctx, execHome, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "../../apps/exec/manifest.json")
+	serveSessionProvider(t, ctx, execHome, programWith(t, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "EXEC_CONFIG="+config), "../../apps/exec/manifest.json")
 	ok(t, consumer, "", "install", execKey, "--yes")
 	input, out, done = startSessionCLI(t, ctx, consumer, "--exec", "exec+arc://"+execKey+"/", `{"script":"printf ready; read word; printf '<%s>' \"$word\"; exit 7"}`)
 	if !waitFor(out, "ready", 5*time.Second) {
@@ -236,8 +248,7 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	digest := sha256.Sum256([]byte(archive))
 	hexDigest := hex.EncodeToString(digest[:])
 	os.WriteFile(filepath.Join(root, "blobs", hexDigest+".tar.gz"), []byte(archive), 0600)
-	t.Setenv("RELEASES_ROOT", root)
-	serveSessionProvider(t, ctx, relHome, providerBinary(t, "../../apps/releases/cmd/arc-releases"), "../../apps/releases/manifest.json")
+	serveSessionProvider(t, ctx, relHome, programWith(t, providerBinary(t, "../../apps/releases/cmd/arc-releases"), "RELEASES_ROOT="+root), "../../apps/releases/manifest.json")
 	ok(t, consumer, "", "install", relKey, "--yes")
 	input, out, done = startSessionCLI(t, ctx, consumer, "--mode", "server_stream", "releases+arc://"+relKey+"/releases", `{"op":"archive","digest":"sha256:`+hexDigest+`"}`)
 	sessionDone(t, done, 0)
@@ -311,6 +322,7 @@ func (r *ttyRun) detach(t *testing.T) {
 // A person starts a kept process under a terminal, detaches with the escape,
 // and attaches again. The process runs while no terminal is attached.
 func TestTerminalDetachAndAttachThroughCLI(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
@@ -319,8 +331,7 @@ func TestTerminalDetachAndAttachThroughCLI(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "exec.json")
 	data, _ := json.Marshal(map[string]any{"grants": []string{key}, "cwd": t.TempDir()})
 	os.WriteFile(config, data, 0600)
-	t.Setenv("EXEC_CONFIG", config)
-	serveSessionProvider(t, ctx, execHome, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "../../apps/exec/manifest.json")
+	serveSessionProvider(t, ctx, execHome, programWith(t, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "EXEC_CONFIG="+config), "../../apps/exec/manifest.json")
 	ok(t, consumer, "", "install", execKey, "--yes")
 	arc := providerBinary(t, ".")
 	address := "exec+arc://" + execKey + "/"

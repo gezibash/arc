@@ -62,6 +62,7 @@ func app(t *testing.T, id, arcfile string, interactions ...string) string {
 // An Arcfile of version 2 limits who reaches the program, and what the
 // program calls, through a real relay and the normal CLI.
 func TestArcfileAllowAndUsesThroughCLI(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
@@ -121,7 +122,6 @@ func TestArcfileProtocolHTTPThroughCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 
 	bin := t.TempDir()
 	translator := providerBinary(t, "../../apps/http/cmd/arc-http")

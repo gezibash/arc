@@ -32,10 +32,10 @@ func uploadSession(t *testing.T, ctx context.Context, home string, input io.Read
 // byte, and arc names the path. With --path session, the body goes in
 // session frames, and the handler gets each byte.
 func TestLargeUploadOverPipeThroughRelay(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 	consumer, _ := providerHome(t, relay)
 	web, webKey := providerHome(t, relay)
 	serveSessionProvider(t, ctx, web, providerBinary(t, "../../apps/http/cmd/arc-http"), "testdata/streaming-http/interface.json", providerBinary(t, "./testdata/streaming-http"))
@@ -70,6 +70,7 @@ func TestLargeUploadOverPipeThroughRelay(t *testing.T) {
 // again with no offer, says so, and sends the body in frames. With
 // --path direct, arc stops.
 func TestOlderProviderUploadFallsBackToFrames(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	consumer, address, log := pipeProvider(t, ctx, "old")
@@ -108,6 +109,7 @@ func (c *countingReader) Read(b []byte) (int, error) {
 // but no pipe opens. arc stops with an error, never sends the body in
 // frames, and reads no byte of standard input.
 func TestUploadPipeFailureIsAnError(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	consumer, address, log := pipeProvider(t, ctx, "deaf")
@@ -129,6 +131,7 @@ func TestUploadPipeFailureIsAnError(t *testing.T) {
 // 64 KiB of the request body. arc stops with an error that says the
 // outcome is not known, and does not ask again.
 func TestBrokenUploadPipeIsAnError(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	consumer, address, log := pipeProvider(t, ctx, "break")

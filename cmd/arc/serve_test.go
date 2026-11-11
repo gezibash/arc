@@ -127,6 +127,7 @@ func deadAddress(t *testing.T) string {
 // reads the line calls at once. When the relay comes up, `arc serve` says
 // "serves", and a live call through the relay gets an answer.
 func TestServeSaysServesOnlyWhenARelayHasTheWatch(t *testing.T) {
+	t.Parallel()
 	url, up := testrelay.StartDown(t)
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
@@ -170,6 +171,7 @@ func TestServeSaysServesOnlyWhenARelayHasTheWatch(t *testing.T) {
 // One relay of two is down, and stays down. `arc serve` says "serves" through
 // the other relay, and does not wait for the one that is down.
 func TestServeSaysServesWhenOneRelayOfTwoIsDown(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", "ws://"+deadAddress(t))
@@ -191,6 +193,7 @@ func TestServeSaysServesWhenOneRelayOfTwoIsDown(t *testing.T) {
 // `arc serve` is told to stop before any relay has the watch. It stops, and
 // it never says "serves".
 func TestServeStopsBeforeAnyRelayHasTheWatch(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", "ws://"+deadAddress(t))
@@ -224,6 +227,7 @@ func callEcho(ctx context.Context, provider nostr.PubKey, id string, r relay.Rel
 // answers the calls, so `arc serve` stops too, with an error, and does not
 // stay up as a provider that answers no one.
 func TestServeStopsWhenItsProgramStops(t *testing.T) {
+	t.Parallel()
 	url := testrelay.Start(t)
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
@@ -258,6 +262,7 @@ func TestServeStopsWhenItsProgramStops(t *testing.T) {
 // a caller that shares no relay with the provider finds its read relays
 // there.
 func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
+	t.Parallel()
 	down, upDown := testrelay.StartDown(t)
 	indexer, upIndexer := testrelay.StartDown(t)
 	home := t.TempDir()
@@ -304,6 +309,7 @@ func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
 // the bundle directory. `arc serve` runs the program there, wherever the owner
 // runs `arc serve`.
 func TestServeRunsTheProgramOfABundleInItsCwd(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", testrelay.Start(t))
@@ -365,6 +371,7 @@ func servedKey(t *testing.T, out *output) (string, nostr.PubKey) {
 // citizen that serves it. The call is refused until that citizen installs
 // the other provider, because an install is the consent to call it.
 func TestAProviderCallsOnlyWhatItsCitizenInstalled(t *testing.T) {
+	t.Parallel()
 	url := testrelay.Start(t)
 	front, back := t.TempDir(), t.TempDir()
 	for _, home := range []string{front, back} {

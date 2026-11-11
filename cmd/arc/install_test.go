@@ -28,6 +28,7 @@ func arc(t *testing.T, home string, args ...string) error {
 // When the relay is down, install says so. It does not say that the
 // provider announced nothing.
 func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
+	t.Parallel()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +54,7 @@ func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
 // a clock ahead signed later, which only the relay holds
 // (docs/delivery/SPEC.md, section 4.7).
 func TestAnnounceReplacesAnAnnouncementOfTheSameSecond(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join("..", "..", "apps", "files", "manifest.json")
 	manifest, err := os.ReadFile(path)
 	if err != nil {
@@ -114,6 +116,7 @@ func identityOf(t *testing.T, home string) signerIdentity {
 // announcement that the relays hold, so it refuses, and keeps nothing: one
 // of the same second could tie with an older one (#422).
 func TestAnnounceRefusesWhenNoRelayAnswers(t *testing.T) {
+	t.Parallel()
 	url, kill := testrelay.StartKillable(t)
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
@@ -132,6 +135,7 @@ func TestAnnounceRefusesWhenNoRelayAnswers(t *testing.T) {
 // here one that the relay holds from 2 seconds ahead: else the relay keeps
 // the older manifest (#422).
 func TestServeAnnouncesAfterTheNewestAnnouncement(t *testing.T) {
+	t.Parallel()
 	url := testrelay.Start(t)
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
@@ -172,6 +176,7 @@ func TestServeAnnouncesAfterTheNewestAnnouncement(t *testing.T) {
 // the newest. It says so once. When the relay comes up, holding one from 2
 // seconds ahead, arc serve signs after it (#422).
 func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := arc(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)
@@ -220,6 +225,7 @@ func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
 // With no relay at all, arc announce refuses, as when no relay answers,
 // and keeps nothing to publish later (#445).
 func TestAnnounceRefusesWithNoRelay(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := arc(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)
@@ -242,6 +248,7 @@ func TestAnnounceRefusesWithNoRelay(t *testing.T) {
 // While its only relay is down, arc serve says one line, that it waits:
 // the warnings of each watch and of the relay list stay quiet (#445).
 func TestServeSaysOneLineWhileNoRelayAnswers(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := arc(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)

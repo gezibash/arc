@@ -376,6 +376,7 @@ func refuseAuth(t *testing.T, url, reason string) string {
 // prints one line for each relay, with the text escaped. The self data of
 // bob needs the authentication too, so the sync ends with an error.
 func TestSyncSaysThatARelayRefusedTheAuthentication(t *testing.T) {
+	t.Parallel()
 	url, _ := ringRelay(t, http.StatusOK)
 	const reason = "restricted: \x1b[31mno\u202e\nforged line"
 	first, second := refuseAuth(t, url, reason), refuseAuth(t, url, reason)

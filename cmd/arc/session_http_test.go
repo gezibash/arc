@@ -27,6 +27,7 @@ func framed(t *testing.T, stream *session.Stream) *httpadapter.ClientSession {
 }
 
 func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {
+	t.Parallel()
 	stream := providertest.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
 		encoder := json.NewEncoder(s)
 		for _, v := range []httpadapter.SessionRecord{{Type: "response", Status: 404}, {Type: "body", Data: []byte("missing")}, {Type: "end"}} {
@@ -46,6 +47,7 @@ func TestHTTPSessionCLIDecodesBodyAndStatus(t *testing.T) {
 	}
 }
 func TestWebSocketCLITextMapping(t *testing.T) {
+	t.Parallel()
 	stream := providertest.Start(t, session.Duplex, func(_ context.Context, s *session.Stream) error {
 		encoder := json.NewEncoder(s)
 		if err := encoder.Encode(httpadapter.SessionRecord{Type: "response", Status: 101}); err != nil {
@@ -73,6 +75,7 @@ func TestWebSocketCLITextMapping(t *testing.T) {
 }
 
 func TestHTTPCLIPreservesNestedSessionFailure(t *testing.T) {
+	t.Parallel()
 	stream := providertest.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
 		encoder := json.NewEncoder(s)
 		for _, record := range []httpadapter.SessionRecord{{Type: "response", Status: 200}, {Type: "body", Data: []byte("partial")}, {Type: "trailers", Headers: http.Header{"Arc-Session-Error": {`"refused"`}}}, {Type: "end"}} {

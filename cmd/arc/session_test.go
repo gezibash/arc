@@ -14,6 +14,7 @@ import (
 )
 
 func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	url := testrelay.Start(t)
@@ -100,6 +101,7 @@ func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
 // arc session takes one output mapping, and one that the mode allows. It
 // refuses the others before it opens a session.
 func TestASessionRefusesAMappingThatDoesNotFit(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	for _, c := range []struct {

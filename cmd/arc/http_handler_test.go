@@ -16,6 +16,7 @@ import (
 // fields and the content of the response. See docs/http/SPEC.md, sections
 // 3.2 to 3.4.
 func TestAGoHandlerAnswersACallThroughARelay(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)

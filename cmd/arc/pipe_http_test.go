@@ -39,10 +39,10 @@ func pattern(n int) []byte {
 // local relay. The body goes on the pipe, and arc names the path. The flag
 // --path session and the citizen setting send the body in session frames.
 func TestLargeBodyOverPipeThroughRelay(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 	consumer, _ := providerHome(t, relay)
 	web, webKey := providerHome(t, relay)
 	serveSessionProvider(t, ctx, web, providerBinary(t, "../../apps/http/cmd/arc-http"), "testdata/streaming-http/interface.json", providerBinary(t, "./testdata/streaming-http"))
@@ -78,13 +78,11 @@ func TestLargeBodyOverPipeThroughRelay(t *testing.T) {
 func pipeProvider(t *testing.T, ctx context.Context, mode string) (consumer, address, log string) {
 	t.Helper()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 	log = filepath.Join(t.TempDir(), "sessions")
-	t.Setenv("PIPE_HTTP_MODE", mode)
-	t.Setenv("PIPE_HTTP_LOG", log)
 	consumer, _ = providerHome(t, relay)
 	home, key := providerHome(t, relay)
-	serveSessionProvider(t, ctx, home, providerBinary(t, "./testdata/pipe-http"), "testdata/streaming-http/interface.json")
+	program := programWith(t, providerBinary(t, "./testdata/pipe-http"), "PIPE_HTTP_MODE="+mode, "PIPE_HTTP_LOG="+log)
+	serveSessionProvider(t, ctx, home, program, "testdata/streaming-http/interface.json")
 	ok(t, consumer, "", "install", key, "--yes")
 	return consumer, "http+arc://" + key + "/", log
 }
@@ -103,6 +101,7 @@ func sessionsOf(t *testing.T, log string) string {
 // In auto, arc asks again with no offer, says so, and gets the body in
 // frames. With --path direct, arc stops.
 func TestOlderProviderFallsBackToFrames(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	consumer, address, log := pipeProvider(t, ctx, "old")
@@ -133,6 +132,7 @@ func TestOlderProviderFallsBackToFrames(t *testing.T) {
 // attempt, and stops with an error. It never asks for the body in frames.
 // A pipe that breaks during the body is an error too.
 func TestPipeFailureIsAnError(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	consumer, address, log := pipeProvider(t, ctx, "deaf")
@@ -150,6 +150,7 @@ func TestPipeFailureIsAnError(t *testing.T) {
 }
 
 func TestBrokenPipeIsAnError(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	consumer, address, log := pipeProvider(t, ctx, "break")

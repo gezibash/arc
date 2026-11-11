@@ -9,6 +9,7 @@ import (
 // refuses it, so no release can send the tags that the tests of the apps
 // send. Run with -tags arctest, the test has nothing to prove.
 func TestAReleaseBuildHasNoTestTags(t *testing.T) {
+	t.Parallel()
 	if testTagsBuild {
 		t.Skip("a build with the tag arctest has the flag")
 	}
