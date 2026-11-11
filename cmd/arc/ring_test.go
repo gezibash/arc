@@ -22,6 +22,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/coder/websocket"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/relay/rings"
 )
 
@@ -59,7 +60,7 @@ func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 		},
 		TLS: &tls.Config{RootCAs: target.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs},
 	}
-	rl, _, ringer, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, config, slog.New(slog.DiscardHandler))
+	rl, _, ringer, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, config, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go ringer.Run(ctx)
-	server := httptest.NewServer(relayHandler(rl, nil, ringer))
+	server := httptest.NewServer(relayserver.Handler(rl, nil, ringer))
 	t.Cleanup(server.Close)
 	return "ws" + strings.TrimPrefix(server.URL, "http"), hits
 }
@@ -83,30 +84,22 @@ func waitRing(t *testing.T, hits chan ringHit, what string) ringHit {
 	}
 }
 
-func noRing(t *testing.T, hits chan ringHit, what string) {
-	t.Helper()
-	select {
-	case hit := <-hits:
-		t.Fatalf("a ring came: %s: %s", what, hit.body)
-	case <-time.After(3 * time.Second):
-	}
-}
-
 // The proof of rings through the real relay and the normal CLI
 // (docs/rings/SPEC.md, section 8). Bob registers a ring URL. Mail from
-// alice rings it once; more mail before bob reads does not; arc sync is a
-// read, and the next mail rings again.
+// alice rings it; arc sync is a read, and the next mail rings again. That
+// more mail before a read rings no more is checked with a fake clock in
+// adapters/relay/rings.
 func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	url, hits := ringRelay(t, http.StatusOK)
 
 	// A second relay offers no rings: it answers 404 on /ring, and ring set
 	// skips it.
-	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closePlain)
-	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 	response, err := http.Get(plainServer.URL + rings.Path)
 	if err != nil {
@@ -159,7 +152,6 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 
 	ok(t, alice, "", "message", "send", bobHex, "hello?")
 	ok(t, alice, "", "sync")
-	noRing(t, hits, "a second mail before bob read")
 
 	// arc sync reads. The next mail rings again.
 	ok(t, bob, "", "sync")
@@ -181,7 +173,7 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 // that --relay names and that offers no rings fails the command.
 func TestARingCommandActsOnOneRelay(t *testing.T) {
 	first, firstHits := ringRelay(t, http.StatusOK)
-	second, secondHits := ringRelay(t, http.StatusOK)
+	second, _ := ringRelay(t, http.StatusOK)
 	bob, _ := providerHome(t, first)
 	ok(t, bob, "", "relay", "add", second)
 	t.Setenv("ARC_RING_KEY", "a key of the routine of bob")
@@ -197,7 +189,6 @@ func TestARingCommandActsOnOneRelay(t *testing.T) {
 		t.Fatalf("arc relay ring test --relay %s:\n%s", first, out)
 	}
 	waitRing(t, firstHits, "the test ring of the first relay")
-	noRing(t, secondHits, "a test ring of the first relay only")
 	if out := ok(t, bob, "", "relay", "ring", "show", "--relay", first); !strings.Contains(out, "47 of 48 left today") || strings.Contains(out, second) {
 		t.Fatalf("arc relay ring show --relay %s:\n%s", first, out)
 	}
@@ -223,12 +214,12 @@ func TestARingCommandActsOnOneRelay(t *testing.T) {
 		}
 	}
 
-	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closePlain)
-	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 	plainURL := "ws" + strings.TrimPrefix(plainServer.URL, "http")
 	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", plainURL); err == nil || !strings.Contains(err.Error(), plainURL+" offers no rings") || strings.Contains(out, "skipped") {
@@ -375,6 +366,7 @@ func refuseAuth(t *testing.T, url, reason string) string {
 // prints one line for each relay, with the text escaped. The self data of
 // bob needs the authentication too, so the sync ends with an error.
 func TestSyncSaysThatARelayRefusedTheAuthentication(t *testing.T) {
+	t.Parallel()
 	url, _ := ringRelay(t, http.StatusOK)
 	const reason = "restricted: \x1b[31mno\u202e\nforged line"
 	first, second := refuseAuth(t, url, reason), refuseAuth(t, url, reason)

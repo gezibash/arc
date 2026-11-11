@@ -3,68 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/nip46"
 )
-
-func TestTheBunkerPolicy(t *testing.T) {
-	owner, other, device := nostr.Generate().Public(), nostr.Generate().Public(), nostr.Generate().Public()
-	token := func(to nostr.PubKey, at nostr.Timestamp, life int64) nip46.Request {
-		event := nostr.Event{Kind: 20274, CreatedAt: at, Tags: nostr.Tags{{"p", to.Hex()}, {"expiration", strconv.FormatInt(int64(at)+life, 10)}}}
-		body, _ := event.MarshalJSON()
-		return nip46.Request{Method: "sign_event", Params: []string{string(body)}}
-	}
-	now := nostr.Now()
-	week := int64(7 * 24 * 60 * 60)
-	sign := func(kind int) nip46.Request {
-		event := nostr.Event{Kind: nostr.Kind(kind), CreatedAt: 1, Tags: nostr.Tags{}}
-		body, _ := event.MarshalJSON()
-		return nip46.Request{Method: "sign_event", Params: []string{string(body)}}
-	}
-	decrypt := func(from nostr.PubKey) nip46.Request {
-		return nip46.Request{Method: "nip44_decrypt", Params: []string{from.Hex(), "ciphertext"}}
-	}
-
-	cases := []struct {
-		name   string
-		policy policy
-		req    nip46.Request
-		want   string
-	}{
-		{"an allowed kind", policy{kinds: []nostr.Kind{11}, decrypt: "self"}, sign(11), ""},
-		{"a kind not allowed", policy{kinds: []nostr.Kind{11}, decrypt: "self"}, sign(1111), "does not sign kind 1111"},
-		{"authentication", policy{kinds: []nostr.Kind{11}, decrypt: "self"}, sign(22242), ""},
-		{"any kind", policy{decrypt: "self"}, sign(0), ""},
-		{"never a device list", policy{decrypt: "self"}, sign(10274), "never signs a device list"},
-		{"a device list even when allowed", policy{kinds: []nostr.Kind{10274}, decrypt: "self"}, sign(10274), "never signs a device list"},
-		{"never a storage list", policy{decrypt: "self"}, sign(10273), "never signs a storage list"},
-		{"a storage list even when allowed", policy{kinds: []nostr.Kind{10273}, decrypt: "self"}, sign(10273), "never signs a storage list"},
-		{"never the data roots", policy{kinds: []nostr.Kind{10275}, decrypt: "self"}, sign(10275), "never signs the data roots"},
-		{"a token for the device that asks", policy{kinds: []nostr.Kind{11}, decrypt: "self"}, token(device, now, week), ""},
-		{"no token for another key", policy{decrypt: "self"}, token(other, now, week), "only for the device that asks"},
-		{"no token for longer than 7 days", policy{decrypt: "self"}, token(device, now, week+1), "only for the device that asks"},
-		{"no token that has ended", policy{decrypt: "self"}, token(device, now-nostr.Timestamp(week), week), "only for the device that asks"},
-		{"self opens own", policy{decrypt: "self"}, decrypt(owner), ""},
-		{"self refuses others", policy{decrypt: "self"}, decrypt(other), "decrypts only"},
-		{"none refuses own", policy{decrypt: "none"}, decrypt(owner), "does not decrypt"},
-		{"all opens others", policy{decrypt: "all"}, decrypt(other), ""},
-		{"nip04 too", policy{decrypt: "self"}, nip46.Request{Method: "nip04_decrypt", Params: []string{other.Hex(), "x"}}, "decrypts only"},
-		{"encrypt is open", policy{decrypt: "none"}, nip46.Request{Method: "nip44_encrypt", Params: []string{other.Hex(), "x"}}, ""},
-	}
-	for _, c := range cases {
-		err := c.policy.refusal(c.req, owner, device)
-		switch {
-		case c.want == "" && err != nil:
-			t.Errorf("%s: refused: %v", c.name, err)
-		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
-			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
-		}
-	}
-}
 
 // run runs arc in a home, with its standard output captured.
 func run(t *testing.T, home string, stdin string, args ...string) (string, error) {
@@ -91,6 +34,7 @@ func ok(t *testing.T, home string, stdin string, args ...string) string {
 // Two identities in one home keep apart what belongs to each key: here, the
 // relays. The first identity is the default; --key picks the other.
 func TestTwoIdentitiesKeepTheirOwnRelays(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	first := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
 	second := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
@@ -113,6 +57,7 @@ func TestTwoIdentitiesKeepTheirOwnRelays(t *testing.T) {
 
 // The name of an identity cannot reach outside the directory of identities.
 func TestAKeyNameCannotLeaveItsDirectory(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	outside := filepath.Join(home, "outside")
@@ -132,6 +77,7 @@ func TestAKeyNameCannotLeaveItsDirectory(t *testing.T) {
 // A key that does not parse leaves nothing behind, and the same key twice is
 // refused.
 func TestKeysAddRefusesABadKeyAndADuplicate(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if _, err := run(t, home, "not a key", "keys", "add"); err == nil {
 		t.Fatal("keys add took a line that is not a key")
@@ -153,6 +99,7 @@ func TestKeysAddRefusesABadKeyAndADuplicate(t *testing.T) {
 // Removing the default identity leaves no default, so the next identity
 // that this machine makes becomes the default.
 func TestRemovingTheDefaultLetsTheNextOneTakeItsPlace(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	gone := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
 	ok(t, home, "", "keys", "remove", gone, "--yes")
@@ -169,6 +116,7 @@ func TestRemovingTheDefaultLetsTheNextOneTakeItsPlace(t *testing.T) {
 
 // apps remove takes out the install that a name runs, and leaves the others.
 func TestToolRemoveTakesOutOneInstall(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	name := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
 	a, b := nostr.Generate().Public().Hex(), nostr.Generate().Public().Hex()
@@ -190,6 +138,7 @@ func TestToolRemoveTakesOutOneInstall(t *testing.T) {
 
 // A capability command takes --key before its name.
 func TestDispatchReadsKey(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	_, err := run(t, home, "", "--key", "nobody-here", "journal", "read", "x")

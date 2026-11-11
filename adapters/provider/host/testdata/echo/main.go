@@ -35,6 +35,9 @@ func (e *echo) HandleRequest(ctx context.Context, request provider.Request) (str
 		return "", provider.Error("refused_on_purpose")
 	case "panic":
 		panic("the provider broke")
+	case "exit":
+		// The program stops, as a program that crashes does.
+		os.Exit(3)
 	}
 	if name, ok := strings.CutPrefix(request.Message, "env "); ok {
 		return os.Getenv(name), nil

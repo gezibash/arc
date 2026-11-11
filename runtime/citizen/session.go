@@ -34,6 +34,9 @@ import (
 type Session struct {
 	Key    keys.Key
 	Signer keys.Signer
+	// Holder answers the requests that need the citizen secret. It is nil
+	// on a device.
+	Holder Holder
 	Remote bool
 	// Device is the device key of a machine that signs through a remote
 	// signer. It opens the data roots wrapped to this device.
@@ -67,16 +70,26 @@ type Session struct {
 	// ran: no line goes to Errors after it.
 	errMu     sync.Mutex
 	errClosed bool
+	// closeSigner ends the signer of the session.
+	closeSigner func() error
+	// cache seals the caches on the machine that holds the citizen key.
+	cache keys.Key
 }
 
 type Config struct {
 	Home, Root        string
 	Key               keys.Key
 	Signer            keys.Signer
+	Holder            Holder
 	Remote            bool
 	Device            keys.Key
 	URLs, IndexerURLs []string
 	Errors            io.Writer
+	// Close ends the signer of the session, such as a program signer.
+	Close func() error
+	// CacheKey is the key of this machine. On the machine that holds the
+	// citizen key, it seals the caches of the session.
+	CacheKey keys.Key
 }
 
 // Open composes filesystem, relay, mail and wake adapters for a local citizen.
@@ -85,7 +98,11 @@ func Open(cfg Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess := &Session{Key: cfg.Key, Signer: cfg.Signer, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	sess := &Session{closeSigner: cfg.Close, cache: cfg.CacheKey, Key: cfg.Key, Signer: cfg.Signer, Holder: cfg.Holder, Remote: cfg.Remote, Device: cfg.Device, store: s, storeDir: filepath.Join(cfg.Home, "store"), URLs: cfg.URLs, Errors: cfg.Errors, search: blevesearch.New(filepath.Join(cfg.Home, "store", "search", "journal-v1.bleve")), kept: map[string]relay.Relay{}}
+	// A key with its secret answers the requests of its own holder.
+	if sess.Holder == nil && !cfg.Remote && cfg.Key.Secret != (nostr.SecretKey{}) {
+		sess.Holder = cfg.Key
+	}
 	sess.bodies = bodies.Dir{Path: filepath.Join(cfg.Home, "store", "bodies")}
 	sess.receipts = boltkv.Open(filepath.Join(cfg.Home, "store", "receipts.db"))
 	sess.roots = boltkv.Open(filepath.Join(cfg.Home, "store", "data-roots.db"))
@@ -164,6 +181,9 @@ func (s *Session) Close() {
 	}
 	if s.store != nil {
 		s.store.Close()
+	}
+	if s.closeSigner != nil {
+		_ = s.closeSigner()
 	}
 }
 

@@ -417,10 +417,10 @@ Three runs of each, with the SHA-256 of each body checked (measured):
 | `--path session` | 54.2 to 54.3 s | 15.4 to 15.5 Mbit/s |
 | `--path turn`, one run, relay with TURN on `127.0.0.1` | 2.5 s | 329.6 Mbit/s |
 
-The commands, with `arc` built from this tree:
+The commands, with `arc` and `arc-relay` built from this tree:
 
 ```sh
-arc --home "$W/relay" relay serve --listen 127.0.0.1:7499 --stun none
+arc-relay --db "$W/relay/relay.db" --listen 127.0.0.1:7499 --stun none
 arc --home "$W/provider" keys gen
 arc --home "$W/provider" relay add ws://127.0.0.1:7499
 ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/provider" serve "exec://$PWD/arc-http?manifest=$PWD/cmd/arc/testdata/streaming-http/interface.json&args=$PWD/origin"

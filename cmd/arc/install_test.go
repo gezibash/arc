@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/testrelay"
 	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/homedir"
 )
 
 func arc(t *testing.T, home string, args ...string) error {
@@ -28,6 +28,7 @@ func arc(t *testing.T, home string, args ...string) error {
 // When the relay is down, install says so. It does not say that the
 // provider announced nothing.
 func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
+	t.Parallel()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +54,7 @@ func TestInstallSaysWhenNoRelayAnswered(t *testing.T) {
 // a clock ahead signed later, which only the relay holds
 // (docs/delivery/SPEC.md, section 4.7).
 func TestAnnounceReplacesAnAnnouncementOfTheSameSecond(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join("..", "..", "apps", "files", "manifest.json")
 	manifest, err := os.ReadFile(path)
 	if err != nil {
@@ -71,7 +73,7 @@ func TestAnnounceReplacesAnAnnouncementOfTheSameSecond(t *testing.T) {
 		if err != nil || len(mine) != 1 {
 			t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
 		}
-		id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+		id, err := loadIdentity(context.Background(), filepath.Join(homedir.CitizensDir(home), mine[0].name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +105,7 @@ func identityOf(t *testing.T, home string) signerIdentity {
 	if err != nil || len(mine) != 1 {
 		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
 	}
-	id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+	id, err := loadIdentity(context.Background(), filepath.Join(homedir.CitizensDir(home), mine[0].name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +116,7 @@ func identityOf(t *testing.T, home string) signerIdentity {
 // announcement that the relays hold, so it refuses, and keeps nothing: one
 // of the same second could tie with an older one (#422).
 func TestAnnounceRefusesWhenNoRelayAnswers(t *testing.T) {
+	t.Parallel()
 	url, kill := testrelay.StartKillable(t)
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
@@ -132,6 +135,7 @@ func TestAnnounceRefusesWhenNoRelayAnswers(t *testing.T) {
 // here one that the relay holds from 2 seconds ahead: else the relay keeps
 // the older manifest (#422).
 func TestServeAnnouncesAfterTheNewestAnnouncement(t *testing.T) {
+	t.Parallel()
 	url := testrelay.Start(t)
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
@@ -169,9 +173,11 @@ func TestServeAnnouncesAfterTheNewestAnnouncement(t *testing.T) {
 }
 
 // While no relay answers, arc serve signs no announcement: it cannot know
-// the newest. It says so once. When the relay comes up, holding one from 2
-// seconds ahead, arc serve signs after it (#422).
+// the newest. It says so once, and says nothing else: the warnings of each
+// watch and of the relay list stay quiet (#445). When the relay comes up,
+// holding one from 2 seconds ahead, arc serve signs after it (#422).
 func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := arc(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)
@@ -196,9 +202,15 @@ func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
 	if !waitFor(errs, "is not announced yet: no relay has answered", 5*time.Second) {
 		t.Fatalf("arc serve did not say that it waits: %q", out.String())
 	}
+	// One retry of the watch and of the announcement is 3 s.
 	time.Sleep(4 * time.Second)
 	if n := strings.Count(errs.String(), "is not announced yet"); n != 1 {
 		t.Errorf("arc serve said %d times that it waits, want once", n)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(errs.String()), "\n") {
+		if !strings.Contains(line, "is not announced yet") {
+			t.Errorf("while no relay answered, arc serve said %q, want only that it waits", line)
+		}
 	}
 	up()
 	if !waitFor(out, "serves", 15*time.Second) {
@@ -217,38 +229,10 @@ func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
 	}
 }
 
-// The announcer of arc serve signs nothing before a relay answers, says so
-// once, and then signs at the time after the newest, never at the clock.
-func TestTheAnnouncerSignsNothingBlind(t *testing.T) {
-	answers := []bool{false, false, true}
-	var signed []nostr.Timestamp
-	said := 0
-	a := &announcer{
-		pull: func() error {
-			ok := answers[0]
-			answers = answers[1:]
-			if !ok {
-				return errors.New("no relay answered")
-			}
-			return nil
-		},
-		at:   func() (nostr.Timestamp, error) { return 1_900_000_000, nil },
-		sign: func(at nostr.Timestamp) error { signed = append(signed, at); return nil },
-		say:  func(string) { said++ },
-	}
-	for range 3 {
-		if err := a.announce(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(signed) != 1 || signed[0] != 1_900_000_000 || said != 1 {
-		t.Errorf("the announcer signed at %v and said %d times, want one signature at the time after the newest, after one word", signed, said)
-	}
-}
-
 // With no relay at all, arc announce refuses, as when no relay answers,
 // and keeps nothing to publish later (#445).
 func TestAnnounceRefusesWithNoRelay(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := arc(t, home, "keys", "gen"); err != nil {
 		t.Fatal(err)
@@ -265,64 +249,5 @@ func TestAnnounceRefusesWithNoRelay(t *testing.T) {
 	batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{identityOf(t, home).key.Public}})
 	if err != nil || len(batch.Events) != 0 {
 		t.Errorf("the refused announcement went out later: %d, %v", len(batch.Events), err)
-	}
-}
-
-// An announcement far ahead of this clock holds the new one back, but the
-// announcer only waits: it says so once, with the gap in words, and signs
-// when the clock reaches the cap (#445).
-func TestTheAnnouncerWaitsForAnAnnouncementFarAhead(t *testing.T) {
-	ahead := true
-	var signed int
-	var said []string
-	a := &announcer{
-		pull: func() error { return nil },
-		at: func() (nostr.Timestamp, error) {
-			if ahead {
-				return 0, &catalog.AheadError{ID: "exec", Ahead: 15 * time.Minute}
-			}
-			return 1_900_000_000, nil
-		},
-		sign: func(nostr.Timestamp) error { signed++; return nil },
-		say:  func(text string) { said = append(said, text) },
-	}
-	for range 3 {
-		if err := a.announce(); err != nil {
-			t.Fatalf("an announcement far ahead stopped the announcer: %v", err)
-		}
-	}
-	if signed != 0 || !a.waiting() || len(said) != 1 || !strings.Contains(said[0], "an announcement is 15m0s ahead of this clock; arc announces again in 5m0s") {
-		t.Errorf("with one far ahead, the announcer signed %d, waits %v, and said %q", signed, a.waiting(), said)
-	}
-	ahead = false
-	if err := a.announce(); err != nil || signed != 1 || a.waiting() {
-		t.Errorf("once the clock reached it, the announcer gave %v, signed %d, waits %v", err, signed, a.waiting())
-	}
-}
-
-// While its only relay is down, arc serve says one line, that it waits:
-// the warnings of each watch and of the relay list stay quiet (#445).
-func TestServeSaysOneLineWhileNoRelayAnswers(t *testing.T) {
-	home := t.TempDir()
-	if err := arc(t, home, "keys", "gen"); err != nil {
-		t.Fatal(err)
-	}
-	if err := arc(t, home, "relay", "add", "ws://"+deadAddress(t)); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	_, out, done := servingWithErrors(t, ctx, home)
-	time.Sleep(8 * time.Second)
-	cancel()
-	<-done
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	var other []string
-	for _, line := range lines {
-		if !strings.Contains(line, "is not announced yet") && !strings.Contains(line, "the service is stopping") {
-			other = append(other, line)
-		}
-	}
-	if len(other) != 0 || !strings.Contains(out.String(), "is not announced yet") {
-		t.Errorf("arc serve with its only relay down said %q, want only that it waits", out.String())
 	}
 }

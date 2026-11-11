@@ -19,6 +19,7 @@ import (
 // long arc serve thus finds a signer that comes back, and one command waits
 // for a missing signer only once.
 func TestLazySignerRetries(t *testing.T) {
+	t.Parallel()
 	citizen := keys.Generate()
 	clock := time.Unix(1760000000, 0)
 	calls := 0
@@ -67,6 +68,7 @@ func TestLazySignerRetries(t *testing.T) {
 // After that, a command asks the signer again, and an answer removes the
 // file.
 func TestLazySignerRemembersSilence(t *testing.T) {
+	t.Parallel()
 	citizen := keys.Generate()
 	silent := filepath.Join(t.TempDir(), "signer-silent")
 	clock := time.Unix(1760000000, 0)

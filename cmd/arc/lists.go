@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/runtime/lists"
 	"github.com/spf13/cobra"
@@ -28,112 +29,128 @@ func listsCommand() *cobra.Command {
 			"arc lists add <command> team <key> <key>, then arc <command> send team hello.",
 	}
 	command.AddCommand(
-		&cobra.Command{
-			Use: "add <command> <name> <citizen>...", Short: "Put citizens in a list",
-			Args: cobra.MinimumNArgs(3),
-			RunE: func(command *cobra.Command, args []string) error {
-				installs, err := installsOf(command)
-				if err != nil {
-					return err
-				}
-				if _, ok, err := installs.Named(args[0]); err != nil {
-					return err
-				} else if !ok {
-					return fmt.Errorf("no installed command %q: see arc apps list", args[0])
-				}
-				// A member is a key, in any form that a key argument takes.
-				env := &citizen.Environment{Installs: installs}
-				var keys []string
-				for _, text := range args[2:] {
-					pk, err := env.ResolveKey(command.Context(), text)
-					if err != nil {
-						return err
-					}
-					keys = append(keys, pk.Hex())
-				}
-				store, err := listsOf(command)
-				if err != nil {
-					return err
-				}
-				held, err := store.Add(args[0], args[1], keys)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintf(command.OutOrStdout(), "%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use: "rm <command> <name> [citizen...]", Short: "Take citizens out of a list, or remove the list",
-			Args: cobra.MinimumNArgs(2),
-			RunE: func(command *cobra.Command, args []string) error {
-				installs, err := installsOf(command)
-				if err != nil {
-					return err
-				}
-				env := &citizen.Environment{Installs: installs}
-				var keys []string
-				for _, text := range args[2:] {
-					pk, err := env.ResolveKey(command.Context(), text)
-					if err != nil {
-						return err
-					}
-					keys = append(keys, pk.Hex())
-				}
-				store, err := listsOf(command)
-				if err != nil {
-					return err
-				}
-				held, err := store.Remove(args[0], args[1], keys)
-				if err != nil {
-					return err
-				}
-				if len(keys) == 0 {
-					fmt.Fprintf(command.OutOrStdout(), "removed %s/%s\n", args[0], args[1])
-					return nil
-				}
-				fmt.Fprintf(command.OutOrStdout(), "%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use: "ls <command> [name]", Short: "Show the lists of a command",
-			Args: cobra.RangeArgs(1, 2),
-			RunE: func(command *cobra.Command, args []string) error {
-				store, err := listsOf(command)
-				if err != nil {
-					return err
-				}
-				if len(args) == 2 {
-					held, err := store.Members(args[0], args[1])
-					if err != nil {
-						return err
-					}
-					if len(held) == 0 {
-						fmt.Fprintf(command.OutOrStdout(), "no list %s/%s\n", args[0], args[1])
-						return nil
-					}
-					fmt.Fprintln(command.OutOrStdout(), strings.Join(held, "\n"))
-					return nil
-				}
-				names, err := store.Names(args[0])
-				if err != nil {
-					return err
-				}
-				if len(names) == 0 {
-					fmt.Fprintf(command.OutOrStdout(), "no lists for %s\n", args[0])
-					return nil
-				}
-				for _, name := range names {
-					members, err := store.Members(args[0], name)
-					if err != nil {
-						return err
-					}
-					fmt.Fprintf(command.OutOrStdout(), "%s: %s\n", name, strings.Join(members, " "))
-				}
-				return nil
-			},
-		},
+		listsAddCommand(),
+		listsRmCommand(),
+		listsLsCommand(),
 	)
 	return command
+}
+
+func listsAddCommand() *cobra.Command {
+	return &cobra.Command{
+		Use: "add <command> <name> <citizen>...", Short: "Put citizens in a list",
+		Args: cobra.MinimumNArgs(3),
+		RunE: func(command *cobra.Command, args []string) error {
+			installs, err := installsOf(command)
+			if err != nil {
+				return err
+			}
+			if _, ok, err := installs.Named(args[0]); err != nil {
+				return err
+			} else if !ok {
+				return fmt.Errorf("no installed command %q: see arc apps list", args[0])
+			}
+			keys, err := memberKeys(command, installs, args[2:])
+			if err != nil {
+				return err
+			}
+			store, err := listsOf(command)
+			if err != nil {
+				return err
+			}
+			held, err := store.Add(args[0], args[1], keys)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(command.OutOrStdout(), "%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
+			return nil
+		},
+	}
+}
+
+func listsRmCommand() *cobra.Command {
+	return &cobra.Command{
+		Use: "rm <command> <name> [citizen...]", Short: "Take citizens out of a list, or remove the list",
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			installs, err := installsOf(command)
+			if err != nil {
+				return err
+			}
+			keys, err := memberKeys(command, installs, args[2:])
+			if err != nil {
+				return err
+			}
+			store, err := listsOf(command)
+			if err != nil {
+				return err
+			}
+			held, err := store.Remove(args[0], args[1], keys)
+			if err != nil {
+				return err
+			}
+			if len(keys) == 0 {
+				fmt.Fprintf(command.OutOrStdout(), "removed %s/%s\n", args[0], args[1])
+				return nil
+			}
+			fmt.Fprintf(command.OutOrStdout(), "%s/%s: %s\n", args[0], args[1], strings.Join(held, " "))
+			return nil
+		},
+	}
+}
+
+func listsLsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use: "ls <command> [name]", Short: "Show the lists of a command",
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(command *cobra.Command, args []string) error {
+			store, err := listsOf(command)
+			if err != nil {
+				return err
+			}
+			if len(args) == 2 {
+				held, err := store.Members(args[0], args[1])
+				if err != nil {
+					return err
+				}
+				if len(held) == 0 {
+					fmt.Fprintf(command.OutOrStdout(), "no list %s/%s\n", args[0], args[1])
+					return nil
+				}
+				fmt.Fprintln(command.OutOrStdout(), strings.Join(held, "\n"))
+				return nil
+			}
+			names, err := store.Names(args[0])
+			if err != nil {
+				return err
+			}
+			if len(names) == 0 {
+				fmt.Fprintf(command.OutOrStdout(), "no lists for %s\n", args[0])
+				return nil
+			}
+			for _, name := range names {
+				members, err := store.Members(args[0], name)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(command.OutOrStdout(), "%s: %s\n", name, strings.Join(members, " "))
+			}
+			return nil
+		},
+	}
+}
+
+// memberKeys resolves each member of a list to a key, in hex. A member is
+// a key, in any form that a key argument takes.
+func memberKeys(command *cobra.Command, installs catalog.Installs, texts []string) ([]string, error) {
+	env := &citizen.Environment{Installs: installs}
+	var keys []string
+	for _, text := range texts {
+		pk, err := env.ResolveKey(command.Context(), text)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, pk.Hex())
+	}
+	return keys, nil
 }

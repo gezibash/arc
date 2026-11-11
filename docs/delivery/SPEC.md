@@ -1032,7 +1032,7 @@ Two apps can open a direct connection for bulk bytes, as the transfer app
 does. ARC carries only the offer and the answer. The relay helps the two
 machines find a path, and carries the bytes only as the last resort.
 
-**STUN.** `arc relay serve` answers STUN binding requests (RFC 8489) on UDP
+**STUN.** `arc-relay` answers STUN binding requests (RFC 8489) on UDP
 port 3478 of its host. A machine asks it for its public address.
 
 **TURN.** If the operator sets `--turn-ports`, the relay also serves TURN
@@ -1189,8 +1189,8 @@ A public event, such as a capability announcement, is readable by everyone.
   with NIP-98, and counts their bytes against a quota for each day, see
   section 4.12. The relay pays for the bandwidth of each relayed transfer.
 
-`arc relay serve` applies the other limits when its flags turn them on, see
-`arc relay serve --help`. A relay can also lower the size limit of one event,
+`arc-relay` applies the other limits when its flags turn them on, see
+`arc-relay --help`. A relay can also lower the size limit of one event,
 and cap the rate of events from one IP address.
 
 The relay transport answers the NIP-42 challenge of a relay and sends the

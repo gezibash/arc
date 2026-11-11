@@ -156,7 +156,7 @@ func TestAFileTravelsAsOneBlob(t *testing.T) {
 func sealRaw(t *testing.T, k Keys, device nostr.SecretKey, env Envelope, body []byte) (string, []byte) {
 	t.Helper()
 	id := k.BlobID(env.Record.ID)
-	digest := changeDigest(id, env.Record.ID)
+	digest := keys.ChangeDigest(id, env.Record.ID)
 	priv, _ := btcec.PrivKeyFromBytes(device[:])
 	sig, err := schnorr.Sign(priv, digest[:])
 	if err != nil {
@@ -186,10 +186,10 @@ func TestABlobMustCarryTheBodyOfItsWrap(t *testing.T) {
 	k := testKeys(t, 0)
 	wrap, body := fileWrap(t, citizen, 10_000)
 
-	if _, _, err := Seal(k, citizen.Secret, wrap, nil); err == nil {
+	if _, _, err := Seal(context.Background(), k, citizen, wrap, nil); err == nil {
 		t.Error("Seal made the blob of a wrap with no body")
 	}
-	id, blob, err := Seal(k, citizen.Secret, wrap, body)
+	id, blob, err := Seal(context.Background(), k, citizen, wrap, body)
 	if err != nil {
 		t.Fatal(err)
 	}

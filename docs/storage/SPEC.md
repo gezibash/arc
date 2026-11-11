@@ -1537,7 +1537,7 @@ the deletion.
   (proposal, section 3.3, step 2). This step therefore refuses writes now.
 - After 2027-01-10 the operator removes each event of kinds 31234, 1234,
   3275 and 10013, except the drafts with the d tag `arc-keyed-root`.
-  `arc relay serve` has no command for this. That is not built (section
+  `arc-relay` has no command for this. That is not built (section
   8.2).
 - The relay applies a deletion with the tag `["arc", "moved"]`, and then
   serves it to nobody, also not to its author. A v0.25.0 client keeps each
@@ -2351,7 +2351,7 @@ the app closed an account that holds a blob.
   n days, which changes sections 3.9.1 and 3.11 of the interface spec and
   needs a decision of the journal; or join old checkpoints into one record,
   which needs a new kind.
-- Not built. A command of `arc relay serve` that removes the old drafts
+- Not built. A command of `arc-relay` that removes the old drafts
   from the store of the relay on 2027-01-10. The operator must remove them
   from the store by other means.
 - Not built. A repair for a v0.25.0 device whose store took a moved

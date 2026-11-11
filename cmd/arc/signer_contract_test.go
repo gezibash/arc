@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/testrelay"
+	"github.com/gezibash/arc/runtime/bunker"
 )
 
 // remoteForTest exercises the actual NIP-46 adapter through a loopback relay.
@@ -29,13 +29,20 @@ func remoteForTest(t *testing.T) (keys.Signer, keys.Key) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bunker := nip46.NewStaticKeySigner(owner.Secret)
-	bunker.AuthorizeRequest = func(bool, nostr.PubKey, string) bool { return true }
+	// The bunker answers through a program signer; here the key answers
+	// in this process, as arc-signer does at the other end of its lines.
+	signer := keys.Remote{Public: owner.Public, Call: func(ctx context.Context, method string, params ...string) (string, error) {
+		r := owner.Answer(ctx, keys.Request{ID: "1", Method: method, Params: params})
+		if r.Error != "" {
+			return "", errors.New(r.Error)
+		}
+		return r.Result, nil
+	}}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for request := range requests {
-			response, ok := answer(ctx, &bunker, owner.Secret, request, policy{decrypt: "all"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			response, ok := bunker.Answer(ctx, signer, request, bunker.Policy{Decrypt: "all"}, func(nostr.PubKey, string) bool { return true }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if ok {
 				_ = r.Send(ctx, response)
 			}
@@ -65,6 +72,7 @@ func keyerOperations(k nostr.Keyer) map[string]func(context.Context) error {
 }
 
 func TestSignerContextContract(t *testing.T) {
+	t.Parallel()
 	factories := map[string]func(*testing.T) (keys.Signer, keys.Key){
 		"local":  func(*testing.T) (keys.Signer, keys.Key) { k := keys.Generate(); return k, k },
 		"remote": remoteForTest,
@@ -149,6 +157,7 @@ func (k observedKeyer) Nip04Decrypt(ctx context.Context, _ string, _ nostr.PubKe
 }
 
 func TestTimedSignerContract(t *testing.T) {
+	t.Parallel()
 	probe := observedKeyer{}
 	for _, method := range []string{"public_key", "sign", "encrypt", "decrypt", "nip04_encrypt", "nip04_decrypt"} {
 		t.Run(method, func(t *testing.T) {
@@ -191,6 +200,7 @@ func TestTimedSignerContract(t *testing.T) {
 }
 
 func TestRemoteIdentityCancellation(t *testing.T) {
+	t.Parallel()
 	t.Run("before_connect", func(t *testing.T) {
 		home := t.TempDir()
 		ctx, cancel := context.WithCancel(context.Background())

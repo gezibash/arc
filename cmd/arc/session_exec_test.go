@@ -15,6 +15,7 @@ import (
 )
 
 func TestExecSessionCLIOutputAndExit(t *testing.T) {
+	t.Parallel()
 	stream := providertest.Start(t, session.ServerStream, func(_ context.Context, s *session.Stream) error {
 		e := json.NewEncoder(s)
 		for _, v := range []execadapter.Record{{Type: "stdout", Data: []byte("hello")}, {Type: "stderr", Data: []byte("problem")}, {Type: "exit", Exit: 7}} {
@@ -39,6 +40,7 @@ func TestExecSessionCLIOutputAndExit(t *testing.T) {
 // The cases follow the escape of ssh: "~." at the start of a line detaches,
 // and "~~" there sends one "~".
 func TestDetachEscape(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		reads  []string

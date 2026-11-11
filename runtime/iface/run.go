@@ -18,6 +18,9 @@ import (
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/args"
+	"github.com/gezibash/arc/runtime/iface/manifest"
+	"github.com/gezibash/arc/runtime/iface/template"
 	"github.com/gezibash/arc/sdk/terminal"
 )
 
@@ -30,7 +33,7 @@ type SearchIndex interface {
 
 // Env is what a command needs from the citizen's machine.
 type Env interface {
-	Resolver
+	args.Resolver
 	Store
 	// Me is the citizen's public key.
 	Me() nostr.PubKey
@@ -66,7 +69,7 @@ type CallResult struct {
 
 // Installed is a manifest that the citizen trusts, and its author.
 type Installed struct {
-	Manifest *Manifest
+	Manifest *manifest.Manifest
 	Author   nostr.PubKey
 	// Name is what the citizen types to run it.
 	Name string
@@ -78,13 +81,6 @@ const KeyedRootD = "arc-keyed-root"
 
 // KeyedRootKind is the kind inside that draft: application data, NIP-78.
 const KeyedRootKind = 30078
-
-// KeyedRoot derives the root of every keyed value from a secret key. A
-// machine with the key derives it; a machine that signs through NIP-46 reads
-// it from the draft that a machine with the key published.
-func KeyedRoot(secret [32]byte) ([]byte, error) {
-	return hkdf.Key(sha256.New, secret[:], nil, "arc-keyed-root-v1", 32)
-}
 
 // KeyedValue computes a keyed value, as section 3.7.1 of the spec defines.
 func KeyedValue(root []byte, info []byte, input string) (string, error) {
@@ -110,9 +106,9 @@ type run struct {
 	ctx     context.Context
 	env     Env
 	in      Installed
-	command *Command
-	values  Values
-	flags   Flags
+	command *manifest.Command
+	values  args.Values
+	flags   args.Flags
 	stdio   Stdio
 	// missing is the first part that join could not find.
 	missing error
@@ -123,13 +119,13 @@ type run struct {
 	told *bool
 }
 
-func (r *run) keyed(purpose, input string) (string, error) {
+func (r *run) Keyed(purpose, input string) (string, error) {
 	return r.env.Keyed(r.ctx, keyedInfo(r.in.Author, r.in.Manifest.ID, purpose), input)
 }
 
-// eventAuthor finds the author of an event: in its coordinate, or by
+// EventAuthor finds the author of an event: in its coordinate, or by
 // fetching it from the group relay and the citizen's relays.
-func (r *run) eventAuthor(ref string) (string, error) {
+func (r *run) EventAuthor(ref string) (string, error) {
 	if parts := strings.SplitN(ref, ":", 3); len(parts) == 3 {
 		pk, err := nostr.PubKeyFromHex(parts[1])
 		return pk.Hex(), err
@@ -158,7 +154,7 @@ func (r *run) groupRelays() []string {
 	return nil
 }
 
-func (r *run) name(key string) string {
+func (r *run) Name(key string) string {
 	pk, err := nostr.PubKeyFromHex(key)
 	if err != nil {
 		return key
@@ -182,11 +178,11 @@ func (r *run) scope(name string) (any, bool) {
 
 // template renders one action template as text.
 func (r *run) template(text string) (string, error) {
-	t, err := compile(text, nil)
+	t, err := template.Compile(text, nil)
 	if err != nil {
 		return "", err
 	}
-	return t.render(r.scope, r, false)
+	return t.Render(r.scope, r, false)
 }
 
 // Stdio are the streams of one command.
@@ -212,7 +208,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 		return nil
 	}
 
-	values, flags, err := bind(ctx, command, rest, env, stdio.In)
+	values, flags, err := args.Bind(ctx, command, rest, env, stdio.In)
 	if err != nil {
 		// arc writes an error on one line, so the usage follows on it (#398).
 		return fmt.Errorf("%w; usage: %s", err, usage(in, command))
@@ -226,7 +222,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	// member.
 	var listed string
 	for name, value := range values {
-		if _, ok := value.(members); ok {
+		if _, ok := value.(args.Members); ok {
 			if listed != "" {
 				return fmt.Errorf("%s and %s both name a list: one command takes one list", listed, name)
 			}
@@ -239,10 +235,10 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 	if command.Action.Watch != nil {
 		return fmt.Errorf("%s names a list, and a watch takes one key", listed)
 	}
-	list, _ := values[listed].(members)
+	list, _ := values[listed].(args.Members)
 	failed := 0
 	for _, member := range list {
-		one := Values{}
+		one := args.Values{}
 		maps.Copy(one, values)
 		one[listed] = member
 		if err := runOnce(ctx, env, in, command, one, flags, stdio); err != nil {
@@ -258,7 +254,7 @@ func Run(ctx context.Context, env Env, in Installed, words []string, stdio Stdio
 }
 
 // runOnce runs a command with its values.
-func runOnce(ctx context.Context, env Env, in Installed, command *Command, values Values, flags Flags, stdio Stdio) error {
+func runOnce(ctx context.Context, env Env, in Installed, command *manifest.Command, values args.Values, flags args.Flags, stdio Stdio) error {
 	r := &run{ctx: ctx, env: env, in: in, command: command, values: values, flags: flags, stdio: stdio, told: new(bool)}
 	if command.Action.Watch != nil {
 		return r.watch(command.Action.Watch)
@@ -279,7 +275,7 @@ func runOnce(ctx context.Context, env Env, in Installed, command *Command, value
 	return r.missing
 }
 
-func hasPositional(c *Command) bool {
+func hasPositional(c *manifest.Command) bool {
 	for _, a := range c.Args {
 		if a.Kind == "positional" && a.Type != "stdin" {
 			return true
@@ -310,7 +306,7 @@ func (r *run) act() ([]*entry, error) {
 	return nil, errors.New("the command has no action")
 }
 
-func (r *run) call(c *Call) ([]*entry, error) {
+func (r *run) call(c *manifest.Call) ([]*entry, error) {
 	service := r.in.Manifest.Service
 	request := CallRequest{Capability: r.in.Manifest.ID, Method: service.Method, Path: service.Path}
 	var err error
@@ -355,7 +351,7 @@ var fixed = map[string]bool{"id": true, "kind": true, "author": true, "created":
 
 // open parses the content of one record into its fields.
 func open(record Record, parse string) error {
-	content := str(record["content"])
+	content := template.Str(record["content"])
 	switch parse {
 	case "text":
 		record["text"] = content
@@ -429,7 +425,7 @@ func (r *run) write(entries []*entry, out io.Writer) (err error) {
 			if !ok {
 				text = record["content"]
 			}
-			if err := line(w, r.sanitize(str(text))); err != nil {
+			if err := line(w, r.Sanitize(template.Str(text))); err != nil {
 				return err
 			}
 		}
@@ -438,16 +434,16 @@ func (r *run) write(entries []*entry, out io.Writer) (err error) {
 	return r.format(r.in.Manifest.Formats[name], records, w)
 }
 
-func (r *run) format(f Format, records []Record, w io.Writer) error {
-	render := func(text string, s scope) error {
+func (r *run) format(f manifest.Format, records []Record, w io.Writer) error {
+	render := func(text string, s template.Scope) error {
 		if text == "" {
 			return nil
 		}
-		t, err := compile(text, nil)
+		t, err := template.Compile(text, nil)
 		if err != nil {
 			return err
 		}
-		out, err := t.render(s, r, true)
+		out, err := t.Render(s, r, true)
 		if err != nil {
 			return err
 		}
@@ -463,7 +459,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 	for _, record := range records {
 		s := r.recordScope(record)
 		if f.Table != nil {
-			if err := r.table(w, scope(s).lookup(f.Table.Columns), scope(s).lookup(f.Table.Rows)); err != nil {
+			if err := r.table(w, template.Scope(s).Lookup(f.Table.Columns), template.Scope(s).Lookup(f.Table.Rows)); err != nil {
 				return err
 			}
 			continue
@@ -478,7 +474,7 @@ func (r *run) format(f Format, records []Record, w io.Writer) error {
 // table writes rows as aligned columns, under a line of column names.
 func (r *run) table(w io.Writer, columns, rows any) error {
 	cell := func(v any) string {
-		text := r.sanitize(str(v))
+		text := r.Sanitize(template.Str(v))
 		return strings.NewReplacer("\t", " ", "\n", " ").Replace(text)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -538,7 +534,7 @@ func Help(in Installed) string {
 	return b.String()
 }
 
-func commandHelp(in Installed, c *Command) string {
+func commandHelp(in Installed, c *manifest.Command) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nusage: %s\n", terminal.Escape(c.Summary), usage(in, c))
 	if len(c.Args) > 0 {
@@ -552,7 +548,7 @@ func commandHelp(in Installed, c *Command) string {
 			if a.Default != "" {
 				note += ", default " + a.Default
 			}
-			fmt.Fprintf(tw, "  %s\t%s\n", terminal.EscapeLine(usageOf(a)), terminal.EscapeLine(note))
+			fmt.Fprintf(tw, "  %s\t%s\n", terminal.EscapeLine(args.Usage(a)), terminal.EscapeLine(note))
 		}
 		_ = tw.Flush()
 	}
@@ -560,10 +556,10 @@ func commandHelp(in Installed, c *Command) string {
 	return b.String()
 }
 
-func usage(in Installed, c *Command) string {
+func usage(in Installed, c *manifest.Command) string {
 	words := append([]string{"arc", in.Name}, c.Path...)
 	for _, a := range c.Args {
-		text := usageOf(a)
+		text := args.Usage(a)
 		if !a.Required {
 			text = "[" + text + "]"
 		}
@@ -580,11 +576,11 @@ func ShowReply(ctx context.Context, env Env, in Installed, body string, stdio St
 	if service == nil || service.Output == nil {
 		return errors.New("the service has no output")
 	}
-	command := &Command{Output: *service.Output}
-	r := &run{ctx: ctx, env: env, in: in, command: command, values: Values{}, stdio: stdio, told: new(bool)}
+	command := &manifest.Command{Output: *service.Output}
+	r := &run{ctx: ctx, env: env, in: in, command: command, values: args.Values{}, stdio: stdio, told: new(bool)}
 	entries, err := r.pipeline([]*entry{{rec: Record{"content": body}}})
 	if err != nil {
-		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, r.sanitize(body)))
+		return errors.Join(fmt.Errorf("the reply does not fit the output of %s: %w", in.Name, err), line(stdio.Out, r.Sanitize(body)))
 	}
 	if err := r.write(entries, stdio.Out); err != nil {
 		return err

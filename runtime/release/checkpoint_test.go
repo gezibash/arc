@@ -1,11 +1,13 @@
 package release_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/release"
 )
 
@@ -16,7 +18,7 @@ func channelOf(t *testing.T, publisher *publisherKey, sequence int) map[string]a
 	unsigned := channelDocument(publisher, releaseEntry("9.9.9", "linux", "amd64"))
 	unsigned["sequence"] = sequence
 
-	signed, err := release.Sign(publisher.secret, unsigned)
+	signed, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), unsigned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestTheCheckpointRefusesAnOlderDocument(t *testing.T) {
 	unsigned := channelDocument(publisher, releaseEntry("9.9.8", "linux", "amd64"))
 	unsigned["sequence"] = 7
 
-	again, err := release.Sign(publisher.secret, unsigned)
+	again, err := release.Sign(context.Background(), keys.FromSecret(publisher.secret), unsigned)
 	if err != nil {
 		t.Fatal(err)
 	}

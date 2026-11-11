@@ -8,13 +8,15 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/core/private"
 )
 
 // A message of the full mail size crosses the relay of arc relay serve, with
 // its Bolt store and no flags. One byte more is refused before it is sent.
 func TestAFullMessageCrossesTheRelay(t *testing.T) {
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	t.Parallel()
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

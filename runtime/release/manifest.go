@@ -14,6 +14,7 @@
 package release
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -25,13 +26,13 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/canonical"
 )
 
 // Domain stands at the front of the bytes that a publisher signs.
-const Domain = "ARC-RELEASE-CHANNEL-V"
+const Domain = keys.ReleaseDomain
 
 // The channels that a publisher may name.
 var Channels = map[string]bool{"stable": true, "beta": true}
@@ -109,14 +110,21 @@ type Expect struct {
 	Now time.Time
 }
 
+// Signer signs a release channel with the key of its publisher: a key that
+// it holds, or a signer that holds the key.
+type Signer interface {
+	PublicKey() nostr.PubKey
+	SignRelease(ctx context.Context, schema int64, encoded []byte) (string, error)
+}
+
 // Sign signs one channel document. A publisher signs the canonical JSON of
 // the document, under the domain of its schema.
-func Sign(secret nostr.SecretKey, unsigned map[string]any) (map[string]any, error) {
+func Sign(ctx context.Context, signer Signer, unsigned map[string]any) (map[string]any, error) {
 	channel, err := readChannel(unsigned)
 	if err != nil {
 		return nil, err
 	}
-	public := secret.Public()
+	public := signer.PublicKey()
 	if string(channel.Publisher) != string(public[:]) {
 		return nil, ErrPublisher
 	}
@@ -126,9 +134,7 @@ func Sign(secret nostr.SecretKey, unsigned map[string]any) (map[string]any, erro
 		return nil, ErrInvalid
 	}
 
-	digest := signedDigest(channel.Schema, encoded)
-	key, _ := btcec.PrivKeyFromBytes(secret[:])
-	signature, err := schnorr.Sign(key, digest[:])
+	signature, err := signer.SignRelease(ctx, channel.Schema, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -137,15 +143,9 @@ func Sign(secret nostr.SecretKey, unsigned map[string]any) (map[string]any, erro
 	maps.Copy(signed, unsigned)
 	signed["signature"] = map[string]any{
 		"algorithm": Algorithm,
-		"value":     hex.EncodeToString(signature.Serialize()),
+		"value":     signature,
 	}
 	return signed, nil
-}
-
-// signedDigest is the SHA-256 of the domain of the schema, one zero byte, and
-// the canonical JSON of the unsigned document.
-func signedDigest(schema int64, encoded []byte) [32]byte {
-	return sha256.Sum256(append([]byte(Domain+strconv.FormatInt(schema, 10)+"\x00"), encoded...))
 }
 
 // Verify reads one signed channel document.
@@ -194,7 +194,7 @@ func Verify(document map[string]any, expect Expect) (*Channel, error) {
 	if err != nil {
 		return nil, ErrSignature
 	}
-	signed := signedDigest(channel.Schema, encoded)
+	signed := keys.ReleaseDigest(channel.Schema, encoded)
 	if !parsed.Verify(signed[:], key) {
 		return nil, ErrSignature
 	}

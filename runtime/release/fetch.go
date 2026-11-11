@@ -152,8 +152,13 @@ func Newest(ctx context.Context, provider Requester, checkpoint *Checkpoint, pub
 	return verified.Select(platform, version)
 }
 
+// Companions are the programs that a release of arc ships beside arc.
+// arc needs arc-signer for each identity, from its first run.
+var Companions = []string{"arc-signer", "arc-relay"}
+
 // Apply downloads the archive of a release, and replaces the program with
-// the program of the same name in it.
+// the program of the same name in it. For arc, it first installs each
+// companion that the archive holds beside it, so the new arc finds them.
 func Apply(ctx context.Context, provider Requester, newest *Release, program string, progress func(read, total int64)) error {
 	if !newest.Eligible {
 		return errors.New("release: the channel says that this release cannot be installed")
@@ -161,6 +166,20 @@ func Apply(ctx context.Context, provider Requester, newest *Release, program str
 	archive, err := Download(ctx, provider, newest.Archive(), progress)
 	if err != nil {
 		return err
+	}
+	if filepath.Base(program) == "arc" {
+		for _, name := range Companions {
+			companion, err := Unpack(archive, name)
+			if errors.Is(err, ErrNotInArchive) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := Replace(ctx, filepath.Join(filepath.Dir(program), name), companion, newest.Version); err != nil {
+				return fmt.Errorf("release: %s: %w", name, err)
+			}
+		}
 	}
 	binary, err := Unpack(archive, filepath.Base(program))
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 	"github.com/gezibash/arc/adapters/provider/host"
 	"github.com/gezibash/arc/runtime/bundle"
 	"github.com/gezibash/arc/runtime/capability"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 func TestInitWritesABundleThatServes(t *testing.T) {
@@ -165,13 +165,13 @@ func TestInitRefusesToWriteOverAFile(t *testing.T) {
 }
 
 // parseInterface reads an interface.json as arc serve reads it.
-func parseInterface(t *testing.T, path string) *iface.Manifest {
+func parseInterface(t *testing.T, path string) *manifest.Manifest {
 	t.Helper()
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := iface.Parse(body)
+	m, err := manifest.Parse(body)
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
