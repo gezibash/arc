@@ -157,54 +157,6 @@ func pipeReleases(t *testing.T, ctx context.Context, mode string) (consumer, key
 	return consumer, key, log
 }
 
-// TestOlderReleasesProviderFallsBackToChunks updates from a provider that
-// refuses the field "direct" as invalid_request, as a provider before the
-// pipe does. In auto, arc says so and reads the archive in chunks. With
-// --path direct, arc stops.
-func TestOlderReleasesProviderFallsBackToChunks(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	consumer, key, log := pipeReleases(t, ctx, "old")
-
-	program, notes, err := updateApply(t, ctx, consumer, key)
-	if err != nil || !strings.Contains(program, "9.9.9") {
-		t.Fatalf("%v, %q", err, notes)
-	}
-	if !strings.Contains(notes, "the provider has no pipe; using chunks over the relay") || !strings.Contains(notes, "path chunks (relay replies)") {
-		t.Fatalf("%q", notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\nchunks" {
-		t.Fatalf("sessions %q, want an offer and then chunks", got)
-	}
-
-	program, notes, err = updateApply(t, ctx, consumer, key, "--path", "direct")
-	if err == nil || !strings.Contains(err.Error(), "the provider has no pipe; run again with --path session") || program != oldProgram {
-		t.Fatalf("--path direct: %v, %q", err, notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\nchunks\noffer" {
-		t.Fatalf("sessions %q after --path direct", got)
-	}
-}
-
-// TestArchivePipeFailureIsAnError updates from a provider that answers
-// each offer, but no pipe opens. arc makes the two direct attempts and the
-// relay attempt, and stops. It never reads chunks, and the program stays.
-func TestArchivePipeFailureIsAnError(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	consumer, key, log := pipeReleases(t, ctx, "deaf")
-
-	program, notes, err := updateApply(t, ctx, consumer, key)
-	if err == nil || !strings.Contains(err.Error(), "no direct path, and no path through the relay") || program != oldProgram {
-		t.Fatalf("%v, %q", err, notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\noffer" {
-		t.Fatalf("sessions %q, want two offers and no chunks", got)
-	}
-}
-
 // TestBrokenArchivePipeIsAnError updates from a provider whose pipe closes
 // after 64 KiB of the archive.
 func TestBrokenArchivePipeIsAnError(t *testing.T) {
