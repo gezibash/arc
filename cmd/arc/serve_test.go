@@ -220,6 +220,39 @@ func callEcho(ctx context.Context, provider nostr.PubKey, id string, r relay.Rel
 	}, r)
 }
 
+// The program of a provider stops while `arc serve` runs. Nothing then
+// answers the calls, so `arc serve` stops too, with an error, and does not
+// stay up as a provider that answers no one.
+func TestServeStopsWhenItsProgramStops(t *testing.T) {
+	url := testrelay.Start(t)
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	ok(t, home, "", "relay", "add", url)
+	ctx := t.Context()
+	out, result := serving(t, ctx, home)
+	if !waitFor(out, "serves", 10*time.Second) {
+		t.Fatalf("arc serve did not serve: %q", out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	public, err := hex.DecodeString(lines[len(lines)-1])
+	if err != nil || len(public) != 32 {
+		t.Fatalf("arc serve gave no public key: %q", out.String())
+	}
+	callCtx, cancelCall := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelCall()
+	_, _, _ = call.Live(callCtx, keys.Generate(), nostr.PubKey(public), call.Request{
+		Capability: strings.Fields(lines[0])[2], Method: "ECHO", Path: "/", Body: "exit",
+	}, relay.Relay{URL: url})
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "the app program stopped") {
+			t.Errorf("arc serve gave %v, want the app program stopped", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("arc serve still runs after its program stopped")
+	}
+}
+
 // A relay and an indexer of a provider are down when `arc serve` starts, and
 // come back after it says "serves". Each gets the NIP-65 relay list, because
 // a caller that shares no relay with the provider finds its read relays

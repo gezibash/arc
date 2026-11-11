@@ -42,6 +42,7 @@ flowchart LR
 | `core/compact`, `core/frame`, `core/relaylist` | Event encoding, bounded fragmentation and relay-list protocol. |
 | `runtime/citizen`, `runtime/catalog`, `runtime/iface` | Citizen workflows, installs and consent, capability discovery and manifest-driven commands. |
 | `runtime/selfsync` | The blob and the sync of self data with a storage citizen. |
+| `runtime/host` | `arc serve`: runs the program of an app for its citizen, announces it, and answers the calls that reach it. |
 | Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
 | `apps/<name>/` | One complete app: manifest, Arcfile, service implementation in `server/`, and its program in `cmd/arc-<name>`. Data apps can consist of a manifest. |
 | `cmd/arc` | The arc program. It imports no app. |

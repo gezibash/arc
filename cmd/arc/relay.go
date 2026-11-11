@@ -150,6 +150,6 @@ func announceRelays(command *cobra.Command) {
 	}
 	defer sess.Close()
 	if len(sess.Relays) > 0 {
-		publishRelayList(command.Context(), sess, os.Stderr, nil)
+		sess.PublishRelayList(command.Context(), os.Stderr, nil)
 	}
 }
