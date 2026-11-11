@@ -143,27 +143,9 @@ func Load(path string) (*Bundle, error) {
 	if err != nil {
 		return nil, ErrNoArcfile
 	}
-
-	var probe map[string]any
-	if err := toml.Unmarshal(body, &probe); err != nil {
-		return nil, fmt.Errorf("bundle: %w", err)
-	}
-	version, _ := probe["version"].(int64)
-	switch version {
-	case 2:
-	case 1:
-		return nil, ErrVersion1
-	default:
-		return nil, ErrVersion
-	}
-
-	// A field that version 2 does not define is an error, so a typing error
-	// such as "protcol" does not pass unseen.
-	var held document
-	decoder := toml.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&held); err != nil {
-		return nil, fmt.Errorf("bundle: %w", err)
+	probe, held, err := decode(body)
+	if err != nil {
+		return nil, err
 	}
 	serve := held.Serve
 	if strings.TrimSpace(serve.Command) == "" {
@@ -178,17 +160,9 @@ func Load(path string) (*Bundle, error) {
 	if serve.Cwd != "" {
 		cwd = resolve(root, serve.Cwd)
 	}
-
-	manifest := resolve(root, serve.Manifest)
-	if info, err := os.Stat(manifest); err != nil || info.IsDir() {
-		if err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-		modern := filepath.Join(root, InterfaceName)
-		if info, err := os.Stat(modern); err != nil || info.IsDir() {
-			return nil, ErrManifestAbsent
-		}
-		manifest = modern
+	manifest, err := manifestOf(root, serve.Manifest)
+	if err != nil {
+		return nil, err
 	}
 
 	command, err := findCommand(cwd, serve.Command)
@@ -201,38 +175,13 @@ func Load(path string) (*Bundle, error) {
 			args = append(args, arg)
 		}
 	}
-
-	protocol := serve.Protocol
-	if protocol == "" {
-		protocol = Stdio
+	protocol, command, args, err := throughProtocol(serve.Protocol, command, args)
+	if err != nil {
+		return nil, err
 	}
-	if !protocolPattern.MatchString(protocol) {
-		return nil, fmt.Errorf("bundle: the protocol %q must be lower-case letters, digits and hyphens", protocol)
-	}
-	if protocol != Stdio {
-		translator, err := findTranslator(protocol)
-		if err != nil {
-			return nil, err
-		}
-		args = append([]string{command}, args...)
-		command = translator
-	}
-
-	// An empty [uses] allows no call. A missing one allows every installed
-	// app. The decoder gives both as nil, so the table is looked up.
-	var uses []Use
-	if _, listed := probe["uses"]; listed {
-		uses = []Use{}
-		for name, installed := range held.Uses {
-			if !useNamePattern.MatchString(name) {
-				return nil, fmt.Errorf("bundle: the name %q in [uses] must be lower-case letters, digits and hyphens", name)
-			}
-			if strings.TrimSpace(installed) == "" {
-				return nil, fmt.Errorf("bundle: %q in [uses] names no installed app", name)
-			}
-			uses = append(uses, Use{Name: name, Installed: installed})
-		}
-		sort.Slice(uses, func(a, b int) bool { return uses[a].Name < uses[b].Name })
+	uses, err := usesOf(probe, held.Uses)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Bundle{
@@ -240,6 +189,91 @@ func Load(path string) (*Bundle, error) {
 		Command: command, Args: args, Cwd: cwd, Manifest: manifest,
 		Protocol: protocol, Allow: serve.Allow, Uses: uses,
 	}, nil
+}
+
+// decode reads an Arcfile of version 2. It gives the document, and the
+// tables as they stand, which say whether [uses] is there.
+func decode(body []byte) (map[string]any, document, error) {
+	var probe map[string]any
+	if err := toml.Unmarshal(body, &probe); err != nil {
+		return nil, document{}, fmt.Errorf("bundle: %w", err)
+	}
+	version, _ := probe["version"].(int64)
+	switch version {
+	case 2:
+	case 1:
+		return nil, document{}, ErrVersion1
+	default:
+		return nil, document{}, ErrVersion
+	}
+
+	// A field that version 2 does not define is an error, so a typing error
+	// such as "protcol" does not pass unseen.
+	var held document
+	decoder := toml.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&held); err != nil {
+		return nil, document{}, fmt.Errorf("bundle: %w", err)
+	}
+	return probe, held, nil
+}
+
+// manifestOf is the manifest that the Arcfile names, or the interface file
+// beside the Arcfile when the named one is not there.
+func manifestOf(root, given string) (string, error) {
+	manifest := resolve(root, given)
+	if info, err := os.Stat(manifest); err != nil || info.IsDir() {
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		modern := filepath.Join(root, InterfaceName)
+		if info, err := os.Stat(modern); err != nil || info.IsDir() {
+			return "", ErrManifestAbsent
+		}
+		manifest = modern
+	}
+	return manifest, nil
+}
+
+// throughProtocol checks the protocol, and puts its translator in front of
+// the command for a protocol other than stdio.
+func throughProtocol(protocol, command string, args []string) (string, string, []string, error) {
+	if protocol == "" {
+		protocol = Stdio
+	}
+	if !protocolPattern.MatchString(protocol) {
+		return "", "", nil, fmt.Errorf("bundle: the protocol %q must be lower-case letters, digits and hyphens", protocol)
+	}
+	if protocol != Stdio {
+		translator, err := findTranslator(protocol)
+		if err != nil {
+			return "", "", nil, err
+		}
+		args = append([]string{command}, args...)
+		command = translator
+	}
+	return protocol, command, args, nil
+}
+
+// usesOf reads [uses]. An empty [uses] allows no call. A missing one allows
+// every installed app. The decoder gives both as nil, so the table is
+// looked up.
+func usesOf(probe map[string]any, listed map[string]string) ([]Use, error) {
+	if _, ok := probe["uses"]; !ok {
+		return nil, nil
+	}
+	uses := []Use{}
+	for name, installed := range listed {
+		if !useNamePattern.MatchString(name) {
+			return nil, fmt.Errorf("bundle: the name %q in [uses] must be lower-case letters, digits and hyphens", name)
+		}
+		if strings.TrimSpace(installed) == "" {
+			return nil, fmt.Errorf("bundle: %q in [uses] names no installed app", name)
+		}
+		uses = append(uses, Use{Name: name, Installed: installed})
+	}
+	sort.Slice(uses, func(a, b int) bool { return uses[a].Name < uses[b].Name })
+	return uses, nil
 }
 
 // findCommand resolves the command as a shell does. A name with a slash is

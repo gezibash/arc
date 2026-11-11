@@ -12,6 +12,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
 	"github.com/gezibash/arc/internal/testutil"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 func writeNotebookPage(c *citizen, book string, page int, title, body string) {
@@ -46,7 +47,7 @@ func TestNotebookManagedTimestampsAndOrdinals(t *testing.T) {
 	for _, value := range []string{"0", "01", "-1", "chapter", "9223372036854775808"} {
 		body := strings.Replace(input, "page: 1", "page: "+value, 1)
 		r := &run{env: c.env, in: Installed{Manifest: specManifests(t)["journal"]}}
-		if _, err := r.notebookHeader(&Publish{Kind: "page"}, body, nil); err == nil {
+		if _, err := r.notebookHeader(&manifest.Publish{Kind: "page"}, body, nil); err == nil {
 			t.Fatalf("header accepted page %q", value)
 		}
 		if _, err := c.run("journal", body, "write", "arc/research/"+value); err == nil {
@@ -76,6 +77,12 @@ func TestNotebookChronologyFiltersAndNumericNavigation(t *testing.T) {
 	}
 	listing = c.must("journal", "", "ls", "--notebook", "arc/research", "--from", "2026-09-28", "--to", "2026-09-28", "--title", "RESULT", "--page", "2")
 	if strings.Count(listing, "\n") != 1 || !strings.HasPrefix(listing, "arc/research/2\tSecond result\t2026-09-28T23:59:59.000Z") {
+		t.Fatal(listing)
+	}
+	// The dates alone choose: page 10 is from the day before, and page 1
+	// from the day after. The last second of the day is in it.
+	listing = c.must("journal", "", "ls", "--notebook", "arc/research", "--from", "2026-09-28", "--to", "2026-09-28")
+	if strings.Count(listing, "\n") != 1 || !strings.HasPrefix(listing, "arc/research/2\t") {
 		t.Fatal(listing)
 	}
 	if got := c.must("journal", "", "select", "--notebook", "arc/research", "--page", "2", "--section", "method"); got != "# Method\nsecond\n" {
@@ -225,7 +232,7 @@ func TestNotebookIndexRepairsStaleSnapshots(t *testing.T) {
 	if !strings.Contains(index, "| 1 | Current |") || strings.Contains(index, "Obsolete") {
 		t.Fatal(index)
 	}
-	d, err := r.keyed("index", "arc/research")
+	d, err := r.Keyed("index", "arc/research")
 	if err != nil {
 		t.Fatal(err)
 	}

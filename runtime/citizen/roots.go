@@ -243,21 +243,42 @@ func (sess *Session) PublishDataRoots(ctx context.Context, list devices.List) (d
 
 // cacheKey seals the roots on the disk of this machine: the device key on a
 // device, and the citizen key on a machine that holds it.
-func (sess *Session) cacheKey() (keys.Key, error) {
-	k := sess.Key
-	if sess.Remote {
-		k = sess.Device
+func (sess *Session) cacheKey() (keys.Signer, error) {
+	if !sess.Remote {
+		// The machine key seals the caches of the machine that holds the
+		// citizen key, so a session opens them with no signer request.
+		if sess.cache.Secret != (nostr.SecretKey{}) {
+			return sess.cache, nil
+		}
+		return sess.Signer, nil
 	}
-	if k.Secret == (nostr.SecretKey{}) {
-		return keys.Key{}, errors.New("this machine has no device key to seal its data roots: run arc keys device")
+	if sess.Device.Secret == (nostr.SecretKey{}) {
+		return nil, errors.New("this machine has no device key to seal its data roots: run arc keys device")
 	}
-	return k, nil
+	return sess.Device, nil
+}
+
+// openCache opens one sealed entry of a cache. An entry that an older arc
+// sealed with the citizen key opens through the signer; its next write seals
+// it with the machine key.
+func (sess *Session) openCache(ctx context.Context, sealed string) (string, error) {
+	k, err := sess.cacheKey()
+	if err != nil {
+		return "", err
+	}
+	text, err := k.Decrypt(ctx, sealed, k.PublicKey())
+	if err != nil && !sess.Remote && k.PublicKey() != sess.Signer.PublicKey() {
+		if old, oldErr := sess.Signer.Decrypt(ctx, sealed, sess.Signer.PublicKey()); oldErr == nil {
+			return old, nil
+		}
+	}
+	return text, err
 }
 
 // heldRoots reads the roots that this machine keeps on its disk. A root of an
 // older arc is 32 bytes in clear text. The next keepRoots seals it.
 func (sess *Session) heldRoots(ctx context.Context) (map[uint32][32]byte, error) {
-	k, err := sess.cacheKey()
+	_, err := sess.cacheKey()
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +297,7 @@ func (sess *Session) heldRoots(ctx context.Context) (map[uint32][32]byte, error)
 				held[gen] = [32]byte(v)
 				return nil
 			}
-			text, err := k.Decrypt(ctx, string(v), k.Public)
+			text, err := sess.openCache(ctx, string(v))
 			if err != nil {
 				return fmt.Errorf("the data root of generation %d on this disk does not open: %w", gen, err)
 			}
@@ -298,7 +319,7 @@ func (sess *Session) keepRoots(ctx context.Context, held map[uint32][32]byte) er
 	}
 	sealed := map[uint32]string{}
 	for gen, root := range held {
-		if sealed[gen], err = k.Encrypt(ctx, hex.EncodeToString(root[:]), k.Public); err != nil {
+		if sealed[gen], err = k.Encrypt(ctx, hex.EncodeToString(root[:]), k.PublicKey()); err != nil {
 			return err
 		}
 	}

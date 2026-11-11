@@ -1,8 +1,6 @@
 package main
 
 import (
-	"cmp"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,17 +11,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/mail"
-	"github.com/gezibash/arc/core/node"
-	"github.com/gezibash/arc/core/private"
-	"github.com/gezibash/arc/core/store"
-	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
@@ -339,142 +332,9 @@ func watchMessages(command *cobra.Command, _ []string) error {
 		return err
 	}
 	defer sess.Close()
-	var relays []transport.Live
-	for _, t := range sess.Relays {
-		if live, ok := t.(transport.Live); ok {
-			relays = append(relays, live)
-		}
-	}
-	if len(relays) == 0 {
-		return errors.New("arc message watch needs a relay: run arc relay add <url>")
-	}
-
-	// The mail of a watch saves each seal that it opens. After each save,
-	// the inbox can hold a new message.
-	saved := make(chan struct{}, 1)
-	sess.Node.Store = sealNotice{EventStore: sess.Node.Store, saved: saved}
-
 	printer := newMessagePrinter(command.OutOrStdout(), sess.Signer.PublicKey(), asJSON)
-	show := func(m mail.Message) error {
-		if len(senders) > 0 && !senders[m.From] {
-			return nil
-		}
-		return printer.print(m)
-	}
-	msgs, err := sess.Mail.Inbox(ctx)
-	if err != nil {
-		return err
-	}
-	after, err := sinceFilter(ctx, sess, since, msgs)
-	if err != nil {
-		return err
-	}
-	// showNew prints the messages that it did not print before, in the
-	// order of receipt. An adapter that gives the last id to --since after
-	// a restart then loses no message.
-	seen := map[string]bool{}
-	showNew := func(msgs []mail.Message, include func(mail.Message) bool) error {
-		var fresh []mail.Message
-		for _, m := range msgs {
-			if !seen[m.ID] {
-				seen[m.ID] = true
-				if include(m) {
-					fresh = append(fresh, m)
-				}
-			}
-		}
-		if len(fresh) > 1 {
-			order, err := sess.ReceiptOrder(ctx)
-			if err != nil {
-				return err
-			}
-			// A message with no receipt comes first, in the order of the inbox.
-			slices.SortStableFunc(fresh, func(a, b mail.Message) int { return cmp.Compare(order[a.ID], order[b.ID]) })
-		}
-		for _, m := range fresh {
-			if err := show(m); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := showNew(msgs, after); err != nil {
-		return err
-	}
-
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	// The store closes after the watches end.
-	var watches sync.WaitGroup
-	defer watches.Wait()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	for _, r := range relays {
-		watches.Go(func() {
-			keepMail(ctx, sess.Mail, r, func() { log.Info("watching", "relay", r.Name()) }, log)
-		})
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-saved:
-		}
-		msgs, err := sess.Mail.Inbox(ctx)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := showNew(msgs, func(mail.Message) bool { return true }); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-	}
-}
-
-// sinceFilter says which stored messages watch prints before it watches.
-// With no point, it prints none. A time includes the messages at that time,
-// by the clock of each sender. A message id selects the messages that this
-// machine stored after that message, and each message that it stored before
-// it kept receipts.
-func sinceFilter(ctx context.Context, sess *citizen.Session, since string, msgs []mail.Message) (func(mail.Message) bool, error) {
-	if since == "" {
-		return func(mail.Message) bool { return false }, nil
-	}
-	if at, err := time.Parse(time.RFC3339, since); err == nil {
-		return func(m mail.Message) bool { return !m.At.Before(at) }, nil
-	}
-	if !slices.ContainsFunc(msgs, func(m mail.Message) bool { return m.ID == since }) {
-		return nil, fmt.Errorf("--since %q is not an RFC 3339 time or the id of a message in the inbox", since)
-	}
-	order, err := sess.ReceiptOrder(ctx)
-	if err != nil {
-		return nil, err
-	}
-	mark := order[since]
-	return func(m mail.Message) bool {
-		position, ok := order[m.ID]
-		return m.ID != since && (!ok || position > mark)
-	}, nil
-}
-
-// sealNotice tells a watch that the store saved a seal. A seal that the store
-// held already also counts: another arc command can save a message first.
-type sealNotice struct {
-	node.EventStore
-	saved chan<- struct{}
-}
-
-func (s sealNotice) Save(event nostr.Event) (store.Result, error) {
-	result, err := s.EventStore.Save(event)
-	if event.Kind == private.SealKind {
-		select {
-		case s.saved <- struct{}{}:
-		default:
-		}
-	}
-	return result, err
+	return sess.WatchInbox(ctx, citizen.InboxWatch{
+		Since: since, From: senders, Show: printer.print,
+		Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+	})
 }

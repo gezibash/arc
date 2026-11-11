@@ -51,9 +51,18 @@ func Budget(ctx context.Context, deadlineMS int64) (context.Context, context.Can
 	}
 	return context.WithDeadline(ctx, deadline)
 }
+
+// Deadline is the deadline of ctx in Unix milliseconds, or 0 when ctx has
+// none. It is the time that remains of ctx, counted from now on the wall
+// clock. A deadline that ctx set before the machine slept keeps its old wall
+// reading, which the sleep can have passed, while its monotonic clock
+// stopped. The receiver reads the wall clock (Budget).
 func Deadline(ctx context.Context) int64 {
 	if deadline, ok := ctx.Deadline(); ok {
-		return deadline.UnixMilli()
+		// One reading of the clock: without a sleep, this is the wall
+		// reading of the deadline to the nanosecond.
+		now := time.Now()
+		return now.Add(deadline.Sub(now)).UnixMilli()
 	}
 	return 0
 }

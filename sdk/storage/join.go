@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -9,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/gezibash/arc/core/keys"
 )
 
 // MaxNote is the largest note of a join, in bytes.
@@ -112,32 +111,6 @@ type CloseReply struct {
 	Message string `json:"message,omitempty"`
 }
 
-// JoinDigest is the message that the citizen key signs to show itself in
-// a join: SHA-256("arc-storage-join-v1" || 0x00 || account key || storage
-// key), with each key as its 32 bytes.
-func JoinDigest(account, storage [32]byte) [32]byte {
-	h := sha256.New()
-	h.Write([]byte("arc-storage-join-v1"))
-	h.Write([]byte{0})
-	h.Write(account[:])
-	h.Write(storage[:])
-	var digest [32]byte
-	h.Sum(digest[:0])
-	return digest
-}
-
-// SignJoin signs JoinDigest with the secret citizen key, and returns the
-// signature in hex.
-func SignJoin(citizen [32]byte, account, storage [32]byte) (string, error) {
-	priv, _ := btcec.PrivKeyFromBytes(citizen[:])
-	digest := JoinDigest(account, storage)
-	sig, err := schnorr.Sign(priv, digest[:])
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(sig.Serialize()), nil
-}
-
 // VerifyJoin checks the citizen key and the signature of a join. The keys
 // are in hex.
 func VerifyJoin(citizen, sig, account, storage string) error {
@@ -164,7 +137,7 @@ func VerifyJoin(citizen, sig, account, storage string) error {
 	if err != nil {
 		return errors.New("the citizen key is not valid")
 	}
-	digest := JoinDigest(a, s)
+	digest := keys.JoinDigest(a, s)
 	if !parsed.Verify(digest[:], pub) {
 		return errors.New("the signature of the citizen key does not match the account key and the storage key")
 	}

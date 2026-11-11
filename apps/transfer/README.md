@@ -19,7 +19,7 @@ flow control.
 | --- | --- |
 | `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs, with the STUN server of Google. |
 | `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
-| STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc relay serve`. Not tested between two machines behind NATs. |
+| STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc-relay`. Not tested between two machines behind NATs. |
 | TURN on the relay, for two machines that find no direct path | Built. Tested on an emulated network, with two ends behind symmetric NATs and the TURN server of `arc relay serve`. Tested by hand on 2026-10-11 between two virtual machines behind NATs, through the relay on Fly.io; see "Speed". |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
@@ -43,13 +43,13 @@ The app needs these things:
 
 - A relay in the arc home of each citizen.
 - A STUN server that each machine can reach. The default is the first relay
-  of the citizen, on UDP port 3478: `arc relay serve` answers STUN there. For
+  of the citizen, on UDP port 3478: `arc-relay` answers STUN there. For
   the relay `wss://relay.example.org`, the default is
   `stun:relay.example.org:3478`. The STUN server sees the public address of
   each machine. The two machines see the public address of each other. If the
   citizen has no relay, an end uses the addresses of its machine only.
 - The two machines online at the same time.
-- For the last resort, a relay that serves TURN (`arc relay serve
+- For the last resort, a relay that serves TURN (`arc-relay
   --turn-ports`). `get` and `put` get a credential with `arc relay turn`,
   and the relay counts the bytes against a quota for each day.
 

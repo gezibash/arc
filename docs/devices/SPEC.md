@@ -3,8 +3,8 @@
 - Status: built
 - Layers: core, adapters, runtime
 - Owns: core/devices
-- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize|TestADeviceReadsSealedDataWithAToken|TestTheBunkerPolicy)$' ./internal/proof/ ./core/devices/ ./adapters/relay/sealed/ ./cmd/arc/
-- Unverified: No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped and no cached storage list. No test renews a token after 3.5 days, or lets one end during a command. No test measures the wait for a signer on a slow network: a signer that answers after 15 seconds counts as silent. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
+- Proof: go test -count=1 -run '^(TestDevices|TestDeviceList|TestDataRoots|TestOfflineDevice|TestDevicePages|TestRootsEvent|TestContentKey|TestRootsSize|TestADeviceReadsSealedDataWithAToken|TestTheBunkerPolicy|TestRemoteAnswers|TestRemoteRefusesAnotherKey|TestAnswerRefuses|TestProgramSigner|TestSealedKey|TestTheBunkerRefusesHolderRequests|TestALeftRequestKeepsTheSigner|TestRemoteRefusesAnotherEvent|TestAKeyOfAnotherIdentity|TestTheBunkerKeepsItsRelay)$' ./internal/proof/ ./core/devices/ ./adapters/relay/sealed/ ./runtime/bunker/ ./core/keys/ ./adapters/signer/program/
+- Unverified: No hardware signer exists, so no test runs one. No test checks the time of a request to a program signer; 1,000 change signatures took 259 ms through arc-signer and 238 ms in one process, measured once on a Mac. No test runs the signer and a device on separate machines or networks. No test measures the time of one request through the signer. No test publishes a device list from a machine other than the signer, as recovery from the seed will do. No test runs `arc sync` with the signer stopped and no cached storage list. No test renews a token after 3.5 days, or lets one end during a command. No test measures the wait for a signer on a slow network: a signer that answers after 15 seconds counts as silent. No test gives a page that a revoked device backdated through a hostile storage citizen: other devices take it, as section 6 says. `TestDevicePages` builds `arc` of commit 7cc7aa5 (v0.26.0), so a shallow clone without that commit fails it. No test runs a device with no relay at all: `TestOfflineDevice` stops only the signer. No test shows a revoked device that holds the newest roots event and fails to open its wrap through the CLI: the signer refuses the device first. The proof of the data roots in self sync reads the root cache of the revoked phone from its disk, because the signer and the storage citizen refuse the phone before it gets a blob.
 
 A citizen keeps the citizen key on one signer. Each other device has its own
 random device key, and signs and decrypts through the signer with NIP-46. The
@@ -272,6 +272,60 @@ with no signature of the citizen key. Section 4.13 of
   device key can use it.
 - A manifest MUST NOT name kind 20274.
 
+### 3.7 The holder requests
+
+Some values need the secret of the citizen key, and no NIP-46
+request gives them. A signer answers them as these requests. Each request
+is a NIP-46 request object, `{"id", "method", "params"}`, and each answer a
+NIP-46 response object, `{"id", "result", "error"}`. Each key and each
+digest is lowercase hex.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `arc_keyed_root` | none | The keyed root: HKDF-SHA256 of the secret, no salt, info `arc-keyed-root-v1`, 32 bytes. |
+| `arc_account_key` | the key of a storage citizen | The secret account key for that storage citizen, as section 3.2 of [the storage spec](../storage/SPEC.md) derives it. |
+| `arc_sign_join` | the account key, the key of the storage citizen | A BIP-340 signature of SHA-256(`arc-storage-join-v1` \|\| 0x00 \|\| account \|\| storage). |
+| `arc_sign_release` | the schema as a decimal number, the canonical bytes of the unsigned channel document | A BIP-340 signature of SHA-256(`ARC-RELEASE-CHANNEL-V` \|\| schema \|\| 0x00 \|\| bytes). |
+| `arc_sign_change` | the blob ID, the ID of the record | A BIP-340 signature of the change digest of a self-data blob, as [the storage spec](../storage/SPEC.md) defines it. |
+
+- The signer MUST compute each digest from the params. It MUST NOT sign a
+  digest that a client gives.
+- These requests give the powers of the owner: an account key admits its
+  holder to the storage citizen, and a release signature speaks for the
+  publisher. A signer MUST answer them only over the program signer of
+  section 3.8. A bunker MUST refuse them over a relay, to each device.
+
+### 3.8 The program signer
+
+A program signer is a program on the machine of the citizen. It
+holds the citizen key, and answers the NIP-46 requests and the requests of
+section 3.7 over its standard input and output.
+
+- The key file of an identity that uses a program signer holds one line,
+  `program:<name>`. The line holds no secret.
+- `arc` starts `<name> stdio` once for each command that signs, opens or
+  asks for a value of section 3.7, in the folder of the identity. It looks
+  for the program beside its own program, then on the PATH.
+- Each request is one JSON line on the standard input of the program, and
+  each answer one JSON line on its standard output, in the order of the
+  requests. The lines are not encrypted: the two ends are processes of one
+  user on one machine.
+- `arc-signer` is the program signer of ARC. It keeps the secret in
+  `signer/key` in the folder of the identity, in the formats of a key file:
+  hex, nsec, or a NIP-49 ncryptsec. It asks for the passphrase of an
+  ncryptsec on the terminal, or reads `ARC_PASSPHRASE`. `arc` never reads
+  that file.
+- A program signer is a boundary of processes, not of users. A program of
+  the same user can read the secret file. A hardware signer comes with its
+  own program, which speaks the same lines and keeps the key on the device.
+- `arc keys bunker` stays the bunker of section 3.4. It answers devices
+  over a relay, and sends each request that it admits to the program
+  signer. NIP-44 between the device and the citizen key goes through the
+  program signer too. arc never holds the key.
+- `arc keys gen`, `recover`, `add` and `encrypt` run `arc-signer gen`,
+  `recover`, `import` and `encrypt`. arc-signer shows the seed, and asks
+  for the passphrases; arc reads only the public key.
+
 ## 4. Behavior
 
 ### 4.1 Add a device
@@ -438,6 +492,14 @@ restart keeps the list.
   key, as before.
 - **An older relay** has no tag `arc-delegation`. A device does not send its
   token there, and authenticates with the citizen key, as before.
+- **A key file with a secret**, of an older `arc`, moves to arc-signer at
+  its first use: `arc` runs `arc-signer import`, which takes the secret into
+  `signer/key`, and then writes `program:arc-signer` to the key file. The
+  public key stays, so mail, drafts and lists on the relays stay the same.
+  An older `arc` cannot read the new key file; it says that the key does
+  not parse.
+- **An older bunker** does not know the requests of section 3.7, and
+  answers an error, as a new bunker does.
 - Kind 10272 stays reserved for a migration record. Kind 10273 is the
   storage list of [the storage spec](../storage/SPEC.md), section 3.8.
 
@@ -452,11 +514,11 @@ restart keeps the list.
 - `TestDeviceList` in `core/devices` checks the event: the kind, the NIP-70
   tag, the sealed content, the refusal of another author and of changed
   content, and a revocation in the same second.
-- `TestTheBunkerPolicy` in `cmd/arc` checks that the bunker never signs kind
-  10274, also with `--allow-kind 10274`, and never signs kind 10275. It
-  signs a token of kind 20274 for the device that asks, also with
-  `--allow-kind`, and refuses a token for another key, for longer than 7
-  days, or that has ended.
+- `TestTheBunkerPolicy` in `runtime/bunker` checks that the bunker never
+  signs kind 10274, also with `--allow-kind 10274`, and never signs kind
+  10275. It signs a token of kind 20274 for the device that asks, also
+  with `--allow-kind`, and refuses a token for another key, for longer
+  than 7 days, or that has ended.
 - `TestADeviceReadsSealedDataWithAToken` in `adapters/relay/sealed` checks
   that a device reads a draft of the citizen with a token while the citizen
   signer fails each signature. The relay refuses a token for another key, a

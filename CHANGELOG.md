@@ -8,6 +8,19 @@ All notable changes to ARC are recorded here. The format follows
 
 ### Changed
 
+- **Breaking:** `arc-signer` holds the citizen key; `arc` never reads it.
+  The key file of an identity holds `program:arc-signer`, and the secret is
+  in `signer/key` beside it. A key file of an older arc moves at its first
+  use: arc runs `arc-signer import`. The public key, mail and data stay the
+  same. An older arc cannot read the new key file. Install `arc-signer`
+  beside `arc`; `install.sh` links it. `arc keys bunker` refuses the new
+  holder requests over a relay (docs/devices/SPEC.md, sections 3.7 and 3.8).
+- **Breaking:** `arc relay serve` is gone. Run `arc-relay` with the same
+  flags. It takes no `--home`: name the store with `--db <home>/relay.db`,
+  or let it use `relay.db` in `ARC_HOME` or `~/.arc`. The Docker image runs
+  `arc-relay`. No event or wire format changed.
+- No source file holds more than 600 lines; `go test ./internal/architecture`
+  checks it. See docs/PROGRAMS.md.
 - **Breaking:** the default home of `arc` is `~/.arc`. A home that an older
   arc made in `~/.config/arc` stays in use while `~/.arc` holds no entry of
   arc (`citizens`, `default`, `device`, `relay.db`, `wake`, `wake.toml`), so

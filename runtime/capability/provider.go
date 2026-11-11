@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 // Provider is a validated execution and announcement definition. Runtime code
@@ -74,7 +74,7 @@ func LoadProvider(path string) (*Provider, error) {
 }
 
 func currentProvider(body []byte) (*Provider, error) {
-	m, err := iface.Parse(body)
+	m, err := manifest.Parse(body)
 	if err != nil {
 		return nil, err
 	}

@@ -5,16 +5,16 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 )
 
 func TestServiceDeclaresSupportedInteractions(t *testing.T) {
-	manifest := `{"interface":1,"id":"repl","shape":"service","service":{"method":"EVAL","path":"/"},"kinds":{},"formats":{},"commands":[]}`
-	unary := strings.Replace(manifest, `"commands":[]`, `"commands":[{"path":["run"],"summary":"Run a query","action":{"call":{"class":"live","body":"query"}}}]`, 1)
-	if _, err := iface.Parse([]byte(manifest)); err == nil {
+	spec := `{"interface":1,"id":"repl","shape":"service","service":{"method":"EVAL","path":"/"},"kinds":{},"formats":{},"commands":[]}`
+	unary := strings.Replace(spec, `"commands":[]`, `"commands":[{"path":["run"],"summary":"Run a query","action":{"call":{"class":"live","body":"query"}}}]`, 1)
+	if _, err := manifest.Parse([]byte(spec)); err == nil {
 		t.Fatal("an ordinary service with no commands was accepted")
 	}
-	plain, err := iface.Parse([]byte(unary))
+	plain, err := manifest.Parse([]byte(unary))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +28,8 @@ func TestServiceDeclaresSupportedInteractions(t *testing.T) {
 		{`["request_reply","server_stream","duplex"]`, true},
 		{`["duplex"]`, true}, {`["unknown"]`, false}, {`["duplex","duplex"]`, false},
 	} {
-		body := strings.Replace(manifest, `"method":"EVAL"`, `"interactions":`+declaration.modes+`,"method":"EVAL"`, 1)
-		parsed, err := iface.Parse([]byte(body))
+		body := strings.Replace(spec, `"method":"EVAL"`, `"interactions":`+declaration.modes+`,"method":"EVAL"`, 1)
+		parsed, err := manifest.Parse([]byte(body))
 		if (err == nil) != declaration.valid {
 			t.Fatalf("%s: %v", declaration.modes, err)
 		}

@@ -328,13 +328,14 @@ func TestAWatchShowsAHeldReplyAtItsEnd(t *testing.T) {
 // the terminal lets read.
 func TestASealedKeyAsksOnTheTerminal(t *testing.T) {
 	t.Parallel()
-	bob := dmtest.NewPerson(t, "bob")
+	bob, ada := dmtest.NewPerson(t, "bob"), dmtest.NewPerson(t, "ada")
 	seal := bob.Arc.Command(context.Background(), "keys", "encrypt")
 	seal.Env = append(os.Environ(), "ARC_PASSPHRASE=open sesame")
 	if out, err := seal.CombinedOutput(); err != nil {
 		t.Fatalf("arc keys encrypt: %v\n%s", err, out)
 	}
-	command, terminal, out := dmtest.OnTerminal(t, "ls", "-arc", bob.Arc.Program, "-home", bob.Arc.Home, "-state", bob.State)
+	// A send signs, so the signer asks for the passphrase of the key.
+	command, terminal, out := dmtest.OnTerminal(t, "send", "-arc", bob.Arc.Program, "-home", bob.Arc.Home, "-state", bob.State, ada.Key, "hello")
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 	answered := 0
@@ -343,11 +344,11 @@ func TestASealedKeyAsksOnTheTerminal(t *testing.T) {
 		select {
 		case err := <-done:
 			if err != nil || answered == 0 || strings.Contains(out.String(), "open sesame") {
-				t.Errorf("arc-dm ls ended with %v after %d passphrases; the terminal showed:\n%s", err, answered, out.String())
+				t.Errorf("arc-dm send ended with %v after %d passphrases; the terminal showed:\n%s", err, answered, out.String())
 			}
 			return
 		case <-deadline:
-			t.Fatalf("arc-dm ls did not end after %d passphrases; the terminal showed:\n%s", answered, out.String())
+			t.Fatalf("arc-dm send did not end after %d passphrases; the terminal showed:\n%s", answered, out.String())
 		case <-time.After(100 * time.Millisecond):
 			if n := strings.Count(out.String(), "passphrase of the key: "); n > answered {
 				answered = n

@@ -80,7 +80,7 @@ one ring for each read, and a cap for each day.
   and `POST` on `/ring/test`, of its HTTP listener. A relay without the tag
   answers 404 on these paths.
 - Rings are off unless the operator turns them on:
-  `arc relay serve --rings`. The relay then needs the environment variable
+  `arc-relay --rings`. The relay then needs the environment variable
   `RINGS_SECRET`, as TURN needs `TURN_SECRET`.
 - A registration lives 30 days after the last read of its citizen
   (section 3.3), or after its last `PUT`, whichever is later. While a
@@ -389,7 +389,7 @@ new.
   | `a try is on the way` | A try of this citizen has not ended. |
   | `no registration` | 1: the citizen has no registration. |
 
-  `no registration` is at Debug, which `arc relay serve` does not print:
+  `no registration` is at Debug, which `arc-relay` does not print:
   most wraps are for citizens that never registered, and a line for each
   would make the log a list of all mail. When the sweep removes a
   registration, it logs one line at Info with the citizen, so a citizen
@@ -493,9 +493,10 @@ and khatru:
 - `TestRingsWakeACitizenThroughTheCLI` (`cmd/arc`): the normal CLI.
   `arc relay ring set` skips a relay without rings, which answers 404 on
   `/ring`; refuses an empty key variable; and never prints the key.
-  `ring test` reaches the URL with the key. Mail from alice rings once; a
-  second mail does not; `arc sync` is a read, and the next mail rings
-  again. The body names no author and carries no mail. `ring clear` ends
+  `ring test` reaches the URL with the key. Mail from alice rings;
+  `arc sync` is a read, and the next mail rings again. That a second mail
+  before a read does not ring is checked with a fake clock in
+  `TestARelayRingsOnceForEachUnreadPeriod`. The body names no author and carries no mail. `ring clear` ends
   it. With the call that authenticates before a read removed, the test
   fails at "no ring: mail after bob read".
 - `TestAWrapRingsWithinMilliseconds`: five rings, each within 200 ms of

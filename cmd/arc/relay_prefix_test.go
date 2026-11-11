@@ -13,6 +13,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/coder/websocket"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/private"
@@ -24,7 +25,8 @@ import (
 // The test reads the raw frames of the relay, because the client library
 // drops an event that does not match the filter before arc sees it.
 func TestRelayServesMailOnlyToTheFullKey(t *testing.T) {
-	rl, _, _, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	t.Parallel()
+	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

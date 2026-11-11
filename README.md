@@ -16,8 +16,10 @@ ARC moves signed Nostr events. A private event is sealed to its recipient,
 and a relay, a USB stick or another machine carries it without reading it.
 See [the delivery layer](docs/delivery/SPEC.md).
 
-`arc` is the one program. It keeps your identities, talks to relays, calls
-apps, serves their interfaces, and runs a relay.
+`arc` is the program of a citizen. It keeps your identities, talks to
+relays, calls apps and serves their interfaces. `arc-signer` holds your
+key, and `arc` asks it for each signature. `arc-relay` runs a relay. Each
+program does one job: see [the programs](docs/PROGRAMS.md).
 
 ## Install
 
@@ -235,14 +237,15 @@ remain available. See the [sessions of the bundled apps](apps/README.md#sessions
 ## Run a relay
 
 ```bash
-arc relay serve --listen 127.0.0.1:7447
+arc-relay --listen 127.0.0.1:7447
 ```
 
 The relay is a khatru relay. It serves NIP-42 authentication, NIP-77 sync,
 and sealed data only to its author. Flags turn on write limits: an event
 size cap, authentication or proof of work for gift wraps, a rate for each IP
 address, and a store cap.
-`arc relay serve --help` lists the flags.
+`arc-relay --help` lists the flags. The relay keeps its events in
+`relay.db` in `ARC_HOME`, or in `~/.arc`; `--db` names another file.
 
 The relay logs to standard error. It writes a WARN line for each failed
 WebSocket upgrade, each connection that closes with an error, and each

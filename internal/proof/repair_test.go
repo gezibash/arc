@@ -216,7 +216,7 @@ func TestStorageRepair(t *testing.T) {
 func TestStorageRepairTURN(t *testing.T) {
 	work := t.TempDir()
 	relayHome := arc(t, filepath.Join(work, "relay")).with("TURN_SECRET=proof-turn-secret")
-	p := relayHome.start("relay", "serve", "--listen", "127.0.0.1:0", "--stun", "127.0.0.1:0", "--turn-ports", "50240-50279", "--turn-ip", "127.0.0.1")
+	p := relayHome.relay().start("--listen", "127.0.0.1:0", "--stun", "127.0.0.1:0", "--turn-ports", "50240-50279", "--turn-ip", "127.0.0.1")
 	if !p.waitFor("relay listens on ", 10*time.Second) {
 		t.Fatalf("the relay did not start:\n%s", p.output())
 	}

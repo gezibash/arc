@@ -196,7 +196,7 @@ func TestStorageList(t *testing.T) {
 // one entry moved back by age, signed with the key of home.
 func backdate(t *testing.T, url, home, citizen, name string, age time.Duration) {
 	t.Helper()
-	key, err := keyfiles.Load(keyfile(t, home))
+	key, err := keyfiles.Load(secretfile(t, home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ type listFetch struct {
 // of home, which answers the NIP-42 challenge with its own key.
 func fetchList(t *testing.T, url, home, citizen string) listFetch {
 	t.Helper()
-	key, err := keyfiles.Load(keyfile(t, home))
+	key, err := keyfiles.Load(secretfile(t, home))
 	if err != nil {
 		t.Fatal(err)
 	}

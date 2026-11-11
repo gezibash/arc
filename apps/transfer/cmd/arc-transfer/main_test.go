@@ -70,7 +70,8 @@ func setup(m *testing.M) int {
 	env.arc = filepath.Join(root, "arc")
 	env.program = filepath.Join(root, "arc-transfer")
 	env.state = filepath.Join(root, "state")
-	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", env.program: "."} {
+	relayProgram := filepath.Join(root, "arc-relay")
+	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", relayProgram: "github.com/gezibash/arc/cmd/arc-relay", filepath.Join(root, "arc-signer"): "github.com/gezibash/arc/cmd/arc-signer", env.program: "."} {
 		if out, err := exec.Command("go", "build", "-tags", "arctest", "-o", binary, pkg).CombinedOutput(); err != nil {
 			return fail("go build %s: %v\n%s", pkg, err, out)
 		}
@@ -95,9 +96,9 @@ func setup(m *testing.M) int {
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	relay := exec.Command(env.arc, "--home", filepath.Join(root, "relay"), "relay", "serve", "--listen", address, "--stun", "none")
+	relay := exec.Command(relayProgram, "--db", filepath.Join(root, "relay.db"), "--listen", address, "--stun", "none")
 	if err := relay.Start(); err != nil {
-		return fail("arc relay serve: %v", err)
+		return fail("arc-relay: %v", err)
 	}
 	defer relay.Process.Kill()
 	if !waitUntil(10*time.Second, func() bool {

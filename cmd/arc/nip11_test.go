@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 )
 
 // Each NIP-11 document of arc relay serve lists its NIPs, though many
@@ -19,7 +20,8 @@ import (
 // slice of the relay, so two requests wrote one slot; the race detector saw
 // it on CI).
 func TestNIP11RequestsAtOnceDoNotRace(t *testing.T) {
-	rl, _, _, closeStore, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Parallel()
+	rl, _, _, closeStore, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

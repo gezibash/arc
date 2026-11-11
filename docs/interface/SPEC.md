@@ -154,7 +154,7 @@ The group is a NIP-29 group. Its relay enforces who may post, and applies the
 moderation of the group's admins. The author of the manifest can announce a
 different relay or id in a new version of the manifest.
 
-`arc relay serve` does not host groups. The relay of a group is a NIP-29
+`arc-relay` does not host groups. The relay of a group is a NIP-29
 relay outside ARC. The ARC relay only coordinates: it does not keep the data
 of an app.
 
@@ -1138,7 +1138,7 @@ The limits of this design that bear on security:
   rule, because a sealed message also needs a signature, which `--allow-kind`
   limits.
 - **Another relay may serve drafts to anyone.** Only a relay that enforces
-  NIP-42 reads, as `arc relay serve` does, keeps the events themselves from
+  NIP-42 reads, as `arc-relay` does, keeps the events themselves from
   others. The content stays encrypted on every relay.
 
 ## 7. Compatibility

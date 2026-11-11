@@ -10,6 +10,7 @@ import (
 // 0 and q as a, so mail was queued for a key that nobody typed (Cato's
 // test of v0.36.1, 2026-10-19).
 func TestAKeyWithALetterThatIsNotHexIsRefused(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	good := "451d098c585bccbcdf68e2a7bf3fa542c2a2503d365c1c079ed100b743855310"

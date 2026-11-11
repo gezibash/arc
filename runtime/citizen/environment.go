@@ -352,7 +352,7 @@ func (e *Environment) Call(ctx context.Context, provider nostr.PubKey, request i
 		}
 		return iface.CallResult{Queued: true}, nil
 	}
-	signer, err := e.callSigner(provider)
+	signer, err := e.callSigner(ctx, provider)
 	if err != nil {
 		return iface.CallResult{}, err
 	}
@@ -367,7 +367,7 @@ func (e *Environment) Call(ctx context.Context, provider nostr.PubKey, request i
 // call to a storage citizen goes from the account key or the device key, so
 // that the storage citizen never sees the citizen key. Each other call goes
 // from the citizen key.
-func (e *Environment) callSigner(provider nostr.PubKey) (keys.Signer, error) {
+func (e *Environment) callSigner(ctx context.Context, provider nostr.PubKey) (keys.Signer, error) {
 	if e.Tool == "" || e.Installs.Path == "" {
 		return e.Session.Signer, nil
 	}
@@ -378,7 +378,7 @@ func (e *Environment) callSigner(provider nostr.PubKey) (keys.Signer, error) {
 	if !ok || install.ID != StorageApp || install.Provider != provider.Hex() {
 		return e.Session.Signer, nil
 	}
-	return e.Session.StorageSigner(provider)
+	return e.Session.StorageSigner(ctx, provider)
 }
 
 // List returns the members of a list of the running command, as keys.

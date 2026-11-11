@@ -370,10 +370,12 @@ document, a replayed sequence, platform selection, a wrong hash, a short
 download, an archive that escapes its directory, and a program that does not
 start after the swap.
 
-These tests prove section 3.7, each through a local relay:
+These tests prove section 3.7. The tests in `cmd/arc` run through a local
+relay; those in `runtime/release` give the provider's answers directly:
 
 ```sh
-go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestOlderReleasesProviderFallsBackToChunks|TestArchivePipeFailureIsAnError|TestBrokenArchivePipeIsAnError|TestBadArchiveOverPipeIsRefused)$' ./cmd/arc/
+go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestBrokenArchivePipeIsAnError)$' ./cmd/arc/
+go test -count=1 -run '^(TestStreamedArchiveRequiresSizeHashAndFinalSuccess|TestAnArchivePipeThatDoesNotOpenIsAnError|TestAnOlderReleasesProviderSendsChunks|TestARefusalThatEndsTheOpenIsMapped)$' ./runtime/release/
 go test -count=1 -run '^TestArchiveOfferRefusals$' ./apps/releases/server/
 ```
 

@@ -62,6 +62,7 @@ func app(t *testing.T, id, arcfile string, interactions ...string) string {
 // An Arcfile of version 2 limits who reaches the program, and what the
 // program calls, through a real relay and the normal CLI.
 func TestArcfileAllowAndUsesThroughCLI(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
@@ -112,45 +113,5 @@ func TestArcfileAllowAndUsesThroughCLI(t *testing.T) {
 	cmd.SetArgs([]string{"--home", lonely, "serve", app(t, "lonely", stdio+"[uses]\na = \"alpha\"\n")})
 	if err := cmd.ExecuteContext(ctx); err == nil || !strings.Contains(err.Error(), "has not installed") {
 		t.Fatalf("serve with an app in [uses] that is not installed: %v", err)
-	}
-}
-
-// protocol = "http" runs arc-http, which runs an HTTP server of any
-// language. The operator writes no exec:// address.
-func TestArcfileProtocolHTTPThroughCLI(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
-
-	bin := t.TempDir()
-	translator := providerBinary(t, "../../apps/http/cmd/arc-http")
-	if err := os.Rename(translator, filepath.Join(bin, "arc-http")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	manifest, err := filepath.Abs("testdata/streaming-http/interface.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := providerBinary(t, "./testdata/streaming-http")
-	dir := filepath.Join(t.TempDir(), "web")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	arcfile := fmt.Sprintf("version = 2\n[serve]\ncommand = %q\nprotocol = \"http\"\nmanifest = %q\n", server, manifest)
-	if err := os.WriteFile(filepath.Join(dir, "Arcfile"), []byte(arcfile), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	webHome, webKey := providerHome(t, relay)
-	serveDir(t, ctx, webHome, dir)
-	caller, _ := providerHome(t, relay)
-	ok(t, caller, "", "install", webKey, "--yes")
-	_, out, done := startSessionCLI(t, ctx, caller, "--http", "--mode", "server_stream", "http+arc://"+webKey+"/events")
-	sessionDone(t, done, 0)
-	if !strings.Contains(out.String(), "data: first") || !strings.Contains(out.String(), "data: second") {
-		t.Fatalf("SSE through protocol http: %s", out.String())
 	}
 }

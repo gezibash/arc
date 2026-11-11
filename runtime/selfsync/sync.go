@@ -13,6 +13,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/sdk/atomicfile"
 	"github.com/gezibash/arc/sdk/storage"
@@ -86,12 +87,19 @@ type Blobs interface {
 // them.
 const putChunk = 64
 
+// DeviceSigner signs the changes and the drafts of this machine: a device
+// key, or the citizen key on a signer.
+type DeviceSigner interface {
+	keys.Signer
+	SignChange(ctx context.Context, blobID string, record nostr.ID) (string, error)
+}
+
 // Syncer syncs the self data of one citizen on one device.
 type Syncer struct {
 	Citizen nostr.PubKey
 	// Device is the key that signs each change: the device key, or the
-	// citizen key on the machine that holds it.
-	Device nostr.SecretKey
+	// citizen key through its holder on the machine that holds it.
+	Device DeviceSigner
 	Store  Store
 	// Bodies keeps the bodies of the drafts that name one.
 	Bodies Bodies

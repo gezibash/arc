@@ -29,11 +29,11 @@ USER arc
 WORKDIR /home/arc
 
 # The home of arc is $HOME/.arc: identities, stores, and the events of the
-# relay in relay.db. Mount a volume there to keep them across runs. A volume
-# that an older image filled at $HOME/.config/arc stays in use.
+# relay in relay.db. Mount a volume there to keep them across runs. A relay
+# whose store an older image kept at $HOME/.config/arc names it with --db.
 VOLUME ["/home/arc/.arc"]
 
-# The image runs a Nostr relay, with no write limits. To run another
-# command, name it: docker run IMAGE arc keys gen
+# The image runs arc-relay, with no write limits. Its store is relay.db in
+# /home/arc/.arc. To run another command, name it: docker run IMAGE arc version
 EXPOSE 7447
-CMD ["arc", "relay", "serve", "--listen", "0.0.0.0:7447"]
+CMD ["arc-relay", "--listen", "0.0.0.0:7447"]

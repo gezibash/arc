@@ -2,484 +2,56 @@ package main
 
 import (
 	"bufio"
-	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
-	"os/signal"
+	"os/exec"
 	"path/filepath"
-	"slices"
-	"strconv"
 	"strings"
-	"sync"
-	"syscall"
-	"time"
 
-	"fiatjaf.com/nostr"
-	"fiatjaf.com/nostr/keyer"
-	"fiatjaf.com/nostr/nip44"
 	"fiatjaf.com/nostr/nip46"
 	"github.com/gezibash/arc/adapters/keyfile"
-	"github.com/gezibash/arc/adapters/transport/relay"
-	"github.com/gezibash/arc/core/devices"
-	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/adapters/signer/program"
 	"github.com/gezibash/arc/runtime/citizen"
-	"github.com/gezibash/arc/sdk/storage"
+	"github.com/gezibash/arc/runtime/homedir"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
-	"golang.org/x/sys/unix"
-	"golang.org/x/term"
 )
-
-// signerIdentity is who this citizen is on this machine: a secret key in
-// the key file, or a remote signer of NIP-46 that the key file names.
-type signerIdentity struct {
-	key    keys.Key
-	signer keys.Signer
-	remote bool
-}
-
-// loadIdentity reads the key file. It holds a secret key as hex or nsec, an
-// ncryptsec of NIP-49 that a passphrase opens, or a bunker URI of NIP-46.
-func loadIdentity(ctx context.Context, dir string) (signerIdentity, error) {
-	text, err := keyfile.Read(keyPath(dir))
-	if err != nil {
-		return signerIdentity{}, err
-	}
-	switch {
-	case strings.HasPrefix(text, "bunker://"):
-		return remoteIdentity(ctx, dir, text)
-	case strings.HasPrefix(text, "ncryptsec1"):
-		passphrase, err := askPassphrase("passphrase of the key: ")
-		if err != nil {
-			return signerIdentity{}, err
-		}
-		k, err := keys.Decrypt(text, passphrase)
-		if err != nil {
-			return signerIdentity{}, err
-		}
-		return signerIdentity{key: k, signer: k}, nil
-	}
-	k, err := keys.Parse(text)
-	if err != nil {
-		return signerIdentity{}, err
-	}
-	return signerIdentity{key: k, signer: k}, nil
-}
-
-// remoteIdentity is an identity of a NIP-46 signer. This machine keeps a key
-// of its own for the connection, in <home>/bunker-client; it signs nothing
-// else. An identity that this machine added knows its public key, so it
-// connects at the first signature or decryption. Thus a command that needs
-// neither runs with no path to the signer. While it adds the identity, it
-// connects at once, to learn the key.
-func remoteIdentity(ctx context.Context, dir, uri string) (signerIdentity, error) {
-	if err := ctx.Err(); err != nil {
-		return signerIdentity{}, err
-	}
-	text, err := os.ReadFile(publicPath(dir))
-	if errors.Is(err, os.ErrNotExist) {
-		signer, pk, err := connectSigner(ctx, dir, uri)
-		if err != nil {
-			return signerIdentity{}, err
-		}
-		return signerIdentity{key: keys.Key{Public: pk}, signer: keys.Identity{Public: pk, Keyer: signer}, remote: true}, nil
-	}
-	if err != nil {
-		return signerIdentity{}, err
-	}
-	pk, err := nostr.PubKeyFromHex(strings.TrimSpace(string(text)))
-	if err != nil {
-		return signerIdentity{}, fmt.Errorf("%s holds no public key: %w", publicPath(dir), err)
-	}
-	lazy := &lazySigner{public: pk, now: time.Now, silent: filepath.Join(dir, "signer-silent"), connect: func() (nostr.Keyer, error) {
-		signer, got, err := connectSigner(ctx, dir, uri)
-		if err == nil && got != pk {
-			err = fmt.Errorf("the remote signer signs as %s, not as this identity %s", got.Hex(), pk.Hex())
-		}
-		return signer, err
-	}}
-	return signerIdentity{key: keys.Key{Public: pk}, signer: keys.Identity{Public: pk, Keyer: lazy}, remote: true}, nil
-}
-
-// connectSigner connects to a NIP-46 signer, and asks for its public key.
-func connectSigner(ctx context.Context, dir, uri string) (nostr.Keyer, nostr.PubKey, error) {
-	// Keep a successful connection for the command lifetime. Stop a failed or
-	// abandoned handshake so its subscriptions cannot outlive the attempt.
-	connectCtx, stop := context.WithCancel(ctx)
-	connected := false
-	defer func() {
-		if !connected {
-			stop()
-		}
-	}()
-	path := filepath.Join(dir, "bunker-client")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := keyfile.Save(path, keys.Generate()); err != nil {
-			return nil, nostr.PubKey{}, err
-		}
-	}
-	client, err := keyfile.Load(path)
-	if err != nil {
-		return nil, nostr.PubKey{}, err
-	}
-	// The client listens for answers for as long as its context lives, so
-	// the context is the command's own. A timer bounds the first contact.
-	type result struct {
-		signer nostr.Keyer
-		pk     nostr.PubKey
-		err    error
-	}
-	done := make(chan result, 1)
-	go func() {
-		signer, err := keyer.New(connectCtx, nil, uri, &keyer.SignerOptions{BunkerClientSecretKey: client.Secret, BunkerSignTimeout: 15 * time.Second})
-		if err != nil {
-			done <- result{err: fmt.Errorf("the remote signer did not answer: %w", err)}
-			return
-		}
-		pk, err := signer.GetPublicKey(connectCtx)
-		if err != nil {
-			err = fmt.Errorf("the remote signer did not give its key: %w", err)
-		}
-		done <- result{signer, pk, err}
-	}()
-	timer := time.NewTimer(15 * time.Second)
-	defer timer.Stop()
-	select {
-	case r := <-done:
-		if err := ctx.Err(); err != nil {
-			return nil, nostr.PubKey{}, err
-		}
-		if r.err != nil {
-			return nil, nostr.PubKey{}, r.err
-		}
-		connected = true
-		return timed{r.signer}, r.pk, nil
-	case <-ctx.Done():
-		return nil, nostr.PubKey{}, ctx.Err()
-	case <-timer.C:
-		return nil, nostr.PubKey{}, fmt.Errorf("the remote signer did not answer in 15 seconds: %w", context.DeadlineExceeded)
-	}
-}
-
-// askPassphrase reads ARC_PASSPHRASE, or asks on the terminal without echo.
-func askPassphrase(prompt string) (string, error) {
-	return askSecret("ARC_PASSPHRASE", prompt)
-}
-
-// openTTY opens the terminal of arc; tests give another.
-var openTTY = func() (*os.File, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
-
-// afterPrompt runs when the prompt shows; tests type there.
-var afterPrompt = func() {}
-
-// readPassword reads a line without echo; tests make it fail.
-var readPassword = term.ReadPassword
-
-// askSecret reads the variable env, or asks on the terminal without echo.
-// Echo goes off before the prompt shows, so an answer typed or pasted as
-// the prompt appears is not shown, and it comes back on each way out, also
-// on a signal that ends arc.
-func askSecret(env, prompt string) (string, error) {
-	if value := os.Getenv(env); value != "" {
-		return value, nil
-	}
-	tty, err := openTTY()
-	if err != nil {
-		return "", fmt.Errorf("arc needs a passphrase: set %s, or run arc on a terminal", env)
-	}
-	defer func() { _ = tty.Close() }()
-	fd := int(tty.Fd())
-	echo := &quietTerminal{fd: fd}
-	// The watch of signals starts before echo goes off, and stops after
-	// it comes back, so no signal falls between the two.
-	defer watchSignals(echo)()
-	if err := echo.off(); err != nil {
-		return "", err
-	}
-	defer echo.restore()
-	fmt.Fprint(tty, prompt)
-	afterPrompt()
-	value, err := readPassword(fd)
-	fmt.Fprintln(tty)
-	if err != nil {
-		return "", err
-	}
-	return string(value), nil
-}
-
-// quietTerminal turns the echo of a terminal off, and brings back the mode
-// that it had.
-type quietTerminal struct {
-	fd    int
-	mu    sync.Mutex
-	saved *unix.Termios // the mode to bring back; nil while echo is on
-}
-
-// off stops the terminal from showing what is typed.
-func (q *quietTerminal) off() error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.saved != nil {
-		return nil
-	}
-	old, err := unix.IoctlGetTermios(q.fd, getTermios)
-	if err != nil {
-		return err
-	}
-	quiet := *old
-	quiet.Lflag &^= unix.ECHO
-	quiet.Lflag |= unix.ICANON | unix.ISIG
-	quiet.Iflag |= unix.ICRNL
-	if err := unix.IoctlSetTermios(q.fd, setTermios, &quiet); err != nil {
-		return err
-	}
-	q.saved = old
-	return nil
-}
-
-// restore brings back the mode that the terminal had before off.
-func (q *quietTerminal) restore() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.saved == nil {
-		return
-	}
-	if err := unix.IoctlSetTermios(q.fd, setTermios, q.saved); err != nil {
-		fmt.Fprintln(os.Stderr, "arc: the terminal may still not echo; run stty echo:", terminal.EscapeLine(err.Error()))
-	}
-	q.saved = nil
-}
-
-// promptSignals end arc; at the prompt, echo comes back before they do.
-var promptSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT}
-
-// watchSignals brings the echo of q back when a signal that ends arc
-// comes, and then lets the signal end arc. It leaves a signal that arc
-// ignores alone: a watch would stop the ignore. The returned function stops
-// the watch.
-func watchSignals(q *quietTerminal) (stop func()) {
-	var watched []os.Signal
-	for _, s := range promptSignals {
-		if !signal.Ignored(s) {
-			watched = append(watched, s)
-		}
-	}
-	signals := make(chan os.Signal, 1)
-	done := make(chan struct{})
-	if len(watched) == 0 {
-		return func() {}
-	}
-	signal.Notify(signals, watched...)
-	go func() {
-		select {
-		case got := <-signals:
-			q.restore()
-			signal.Reset(got)
-			if sig, ok := got.(syscall.Signal); ok {
-				_ = syscall.Kill(os.Getpid(), sig)
-			}
-		case <-done:
-		}
-	}()
-	return func() {
-		signal.Stop(signals)
-		close(done)
-	}
-}
 
 // Each identity of this machine has its own directory, <root>/citizens/<name>,
 // because the store, the relays and the installs belong to one key. The file
 // <root>/default names the identity that commands use when --key does not.
 
-func citizensDir(root string) string { return filepath.Join(root, "citizens") }
-func defaultPath(root string) string { return filepath.Join(root, "default") }
-func publicPath(dir string) string   { return filepath.Join(dir, "public") }
-
-// chosen returns the directory of the identity that the command uses, and
-// what chose it: --key, ARC_KEY, or the default.
-func chosen(command *cobra.Command) (string, string, error) {
-	root, why, err := rootSource(command)
-	if err != nil {
-		return "", "", err
-	}
-	name, source := "", ""
-	if flag, _ := command.Flags().GetString("key"); flag != "" {
-		name, source = flag, "--key"
-	} else if env := os.Getenv("ARC_KEY"); env != "" {
-		name, source = env, "ARC_KEY"
-	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
-		name, source = strings.TrimSpace(string(body)), "the default"
-	} else if !errors.Is(err, os.ErrNotExist) {
-		// A home that arc cannot read is not a home with no identity.
-		return "", "", unreadableDefault(root, why, err)
-	}
-	if name == "" {
-		return "", "", fmt.Errorf("no identity in %s, chosen by %s: make one with arc keys gen, or add one with arc keys add", root, why)
-	}
-	dir := filepath.Join(citizensDir(root), name)
-	if !validName(name) {
-		return "", "", fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
-	}
-	if _, err := os.Stat(dir); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", "", unreadableIdentities(root, why, err)
-		}
-		return "", "", fmt.Errorf("no identity \"%s\" in %s, chosen by %s: see arc keys list", name, root, why)
-	}
-	return dir, source, nil
-}
-
-// validName refuses a name that would leave the directory of identities.
-func validName(name string) bool {
-	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".")
-}
-
-// localID is one identity of this machine.
-type localID struct {
-	name   string
-	public string
-}
-
-// listCitizens reads the identities of this machine, by name.
-func listCitizens(root string) ([]localID, error) {
-	entries, err := os.ReadDir(citizensDir(root))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var out []localID
-	for _, entry := range entries {
-		if !entry.IsDir() || !validName(entry.Name()) {
-			continue
-		}
-		public, _ := os.ReadFile(publicPath(filepath.Join(citizensDir(root), entry.Name())))
-		out = append(out, localID{name: entry.Name(), public: strings.TrimSpace(string(public))})
-	}
-	return out, nil
-}
-
-func defaultName(root string) string {
-	body, _ := os.ReadFile(defaultPath(root))
-	return strings.TrimSpace(string(body))
-}
-
-// addCitizen keeps a key file as a new identity. It reads the key in a
-// directory of its own first, so that a key that does not open, or a signer
-// that does not answer, leaves nothing behind. The first identity becomes the
-// default. A caller that made the key passes it as known, so a sealed key does
-// not ask for its passphrase again.
-func addCitizen(ctx context.Context, root, why, text string, known *keys.Key) (_ keys.Key, err error) {
-	// A default that arc cannot read stops the add before it writes a key:
-	// keys gen shows the seed only after the add.
-	body, err := os.ReadFile(defaultPath(root))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return keys.Key{}, unreadableDefault(root, why, err)
-	}
-	first := strings.TrimSpace(string(body)) == ""
-	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
-		return keys.Key{}, unwritableIdentities(root, why, err)
-	}
-	staging, err := os.MkdirTemp(citizensDir(root), ".adding-")
-	if err != nil {
-		return keys.Key{}, unwritableIdentities(root, why, err)
-	}
-	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
-
-	if err := keyfile.Write(keyPath(staging), text); err != nil {
-		return keys.Key{}, err
-	}
-	// An identity that signs through a bunker uses the device key of this
-	// machine, so the key that the signer lists stays when an add fails.
-	var device keys.Key
-	if strings.HasPrefix(text, "bunker://") {
-		if device, err = deviceKey(root); err != nil {
-			return keys.Key{}, err
-		}
-		if err := keyfile.Save(filepath.Join(staging, "bunker-client"), device); err != nil {
-			return keys.Key{}, err
-		}
-	}
-	var k keys.Key
-	if known != nil {
-		k = *known
-	} else {
-		id, err := loadIdentity(ctx, staging)
-		if err != nil {
-			if strings.Contains(err.Error(), "not on the device list") {
-				return keys.Key{}, fmt.Errorf("%w\non the signer, run: arc keys devices add %s --name <name>", err, device.Public.Hex())
-			}
-			return keys.Key{}, err
-		}
-		k = id.key
-	}
-	if err := os.WriteFile(publicPath(staging), []byte(k.Public.Hex()+"\n"), 0o600); err != nil {
-		return keys.Key{}, err
-	}
-	name := k.Name()
-	if err := os.Rename(staging, filepath.Join(citizensDir(root), name)); err != nil {
-		if _, statErr := os.Stat(filepath.Join(citizensDir(root), name)); statErr == nil {
-			return keys.Key{}, fmt.Errorf("%s is already on this machine", name)
-		}
-		return keys.Key{}, err
-	}
-	if first {
-		if err := os.WriteFile(defaultPath(root), []byte(name+"\n"), 0o600); err != nil {
-			return keys.Key{}, err
-		}
-	}
-	return k, nil
-}
-
 func keysCommand() *cobra.Command {
 	command := &cobra.Command{Use: "keys", Short: "Make, add, list and pick identities"}
 
+	command.AddCommand(keysGenCommand(), keysRecoverSeedCommand(), keysAddCommand(), keysListCommand(), keysUseCommand(), keysRemoveCommand(), keysEncryptCommand(), bunkerCommand(), deviceCommand(), devicesCommand(), accountCommand(), storageKeysCommand(), rootsCommand(), sealCommand(), unsealCommand())
+	return command
+}
+
+func keysGenCommand() *cobra.Command {
 	gen := &cobra.Command{
 		Use:   "gen",
 		Short: "Make an identity from a new 24-word seed, and make it the default when there is none",
-		Long: "arc makes a seed of 24 words, as BIP-39 and NIP-06 define, and derives\n" +
-			"the key from it. arc shows the words once, on standard error, and never\n" +
-			"stores them. Write them on paper: arc keys recover makes the same key\n" +
+		Long: "arc-signer, the program signer of the identity, makes a seed of 24\n" +
+			"words, as BIP-39 and NIP-06 define, and derives the key from it. It keeps\n" +
+			"the key in signer/key in the folder of the identity; arc never reads it.\n" +
+			"arc-signer shows the words once, on standard error, and never stores them. Write them on paper: arc keys recover makes the same key\n" +
 			"from them. Anyone who reads the words has the key.\n\n" +
 			"--seed-passphrase adds a BIP-39 passphrase. The words and the passphrase\n" +
 			"together give the key; without the passphrase, the words give another\n" +
 			"key. arc reads it from ARC_SEED_PASSPHRASE, or asks on the terminal.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			root, err := rootDir(command)
-			if err != nil {
-				return err
-			}
-			words, err := keys.NewSeed()
-			if err != nil {
-				return err
-			}
-			passphrase, err := seedPassphrase(command, true)
-			if err != nil {
-				return err
-			}
-			k, err := keys.FromSeed(words, passphrase)
-			if err != nil {
-				return err
-			}
-			if _, err := keepSeedKey(command, root, k); err != nil {
-				return err
-			}
-			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
-			showSeed(command.ErrOrStderr(), words, passphrase != "")
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
-			return nil
+			return makeSigned(command, "gen")
 		},
 	}
 	gen.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
 	gen.Flags().Bool("seed-passphrase", false, "add a BIP-39 passphrase to the seed")
+	return gen
+}
 
+func keysRecoverSeedCommand() *cobra.Command {
 	recoverSeed := &cobra.Command{
 		Use:   "recover",
 		Short: "Make an identity again from the words of its seed",
@@ -490,62 +62,42 @@ func keysCommand() *cobra.Command {
 			"ARC_SEED_PASSPHRASE, or asks on the terminal.",
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			root, err := rootDir(command)
-			if err != nil {
-				return err
-			}
-			words, err := readSeed(command)
-			if err != nil {
-				return err
-			}
-			passphrase, err := seedPassphrase(command, false)
-			if err != nil {
-				return err
-			}
-			k, err := keys.FromSeed(words, passphrase)
-			if err != nil {
-				return err
-			}
-			if _, err := keepSeedKey(command, root, k); err != nil {
-				return err
-			}
-			fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
-			fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
-			return nil
+			return makeSigned(command, "recover")
 		},
 	}
 	recoverSeed.Flags().Bool("encrypt", false, "seal the key file with a passphrase, as NIP-49 defines")
 	recoverSeed.Flags().Bool("seed-passphrase", false, "the seed has a BIP-39 passphrase")
+	return recoverSeed
+}
 
+func keysAddCommand() *cobra.Command {
 	add := &cobra.Command{
 		Use:   "add [bunker://...]",
 		Short: "Add an identity that exists already",
-		Long: "arc reads the key from standard input: 64 characters of hex, an nsec,\n" +
-			"or an ncryptsec of NIP-49. With a bunker:// URI, the identity signs\n" +
-			"through a remote signer, as NIP-46 defines, and this machine holds no\n" +
-			"secret key. An agent uses this: its owner runs arc keys bunker.",
+		Long: "arc-signer takes the key from standard input: 64 characters of hex,\n" +
+			"an nsec, or an ncryptsec of NIP-49. arc never reads it. With a bunker://\n" +
+			"URI, the identity signs through a remote signer, as NIP-46 defines, and\n" +
+			"this machine holds no secret key. An agent uses this: its owner runs\n" +
+			"arc keys bunker.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			root, err := rootDir(command)
 			if err != nil {
 				return err
 			}
-			var text string
-			if len(args) == 1 {
-				if !nip46.IsValidBunkerURL(args[0]) {
-					return errors.New("that is not a bunker:// URI; give a secret key on standard input")
-				}
-				text = args[0]
-			} else {
-				body, err := io.ReadAll(io.LimitReader(command.InOrStdin(), 4096))
+			if len(args) == 0 {
+				// arc-signer takes the key from standard input: arc never reads it.
+				k, err := addSigned(command, "import")
 				if err != nil {
 					return err
 				}
-				text = strings.TrimSpace(string(body))
-				if text == "" {
-					return errors.New("give the key on standard input, or a bunker:// URI")
-				}
+				fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
+				return nil
 			}
+			if !nip46.IsValidBunkerURL(args[0]) {
+				return errors.New("that is not a bunker:// URI; give a secret key on standard input")
+			}
+			text := args[0]
 			_, why, err := rootSource(command)
 			if err != nil {
 				return err
@@ -558,7 +110,7 @@ func keysCommand() *cobra.Command {
 			if strings.HasPrefix(text, "bunker://") {
 				// The first token lets this device read the sealed data of
 				// the citizen on a relay with no path to the signer.
-				sess, err := openDir(command, filepath.Join(citizensDir(root), k.Name()))
+				sess, err := openDir(command, filepath.Join(homedir.CitizensDir(root), k.Name()))
 				if err != nil {
 					return err
 				}
@@ -570,7 +122,10 @@ func keysCommand() *cobra.Command {
 			return nil
 		},
 	}
+	return add
+}
 
+func keysListCommand() *cobra.Command {
 	list := &cobra.Command{
 		Use: "list", Aliases: []string{"ls"}, Short: "List the identities of this machine", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -580,7 +135,7 @@ func keysCommand() *cobra.Command {
 			}
 			all, err := listCitizens(root)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return unreadableIdentities(root, why, err)
+				return homedir.UnreadableIdentities(root, why, err)
 			}
 			if err != nil {
 				return err
@@ -589,9 +144,9 @@ func keysCommand() *cobra.Command {
 				fmt.Fprintln(command.OutOrStdout(), "no identities: make one with arc keys gen")
 				return nil
 			}
-			body, err := os.ReadFile(defaultPath(root))
+			body, err := os.ReadFile(homedir.DefaultPath(root))
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return unreadableDefault(root, why, err)
+				return homedir.UnreadableDefault(root, why, err)
 			}
 			active := strings.TrimSpace(string(body))
 			for _, c := range all {
@@ -604,7 +159,10 @@ func keysCommand() *cobra.Command {
 			return nil
 		},
 	}
+	return list
+}
 
+func keysUseCommand() *cobra.Command {
 	use := &cobra.Command{
 		Use: "use <name>", Short: "Make one identity the default", Args: cobra.ExactArgs(1),
 		Long: "Give the raw name of the identity, quoted for the shell. arc keys list\n" +
@@ -615,17 +173,20 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := os.Stat(filepath.Join(citizensDir(root), args[0])); err != nil || !validName(args[0]) {
+			if _, err := os.Stat(filepath.Join(homedir.CitizensDir(root), args[0])); err != nil || !validName(args[0]) {
 				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", args[0])
 			}
-			if err := os.WriteFile(defaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
+			if err := os.WriteFile(homedir.DefaultPath(root), []byte(args[0]+"\n"), 0o600); err != nil {
 				return err
 			}
 			fmt.Fprintf(command.OutOrStdout(), "the default is %s\n", terminal.EscapeLine(args[0]))
 			return nil
 		},
 	}
+	return use
+}
 
+func keysRemoveCommand() *cobra.Command {
 	remove := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove one identity from this machine",
@@ -641,7 +202,7 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			name := args[0]
-			dir := filepath.Join(citizensDir(root), name)
+			dir := filepath.Join(homedir.CitizensDir(root), name)
 			if _, err := os.Stat(dir); err != nil || !validName(name) {
 				return fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 			}
@@ -656,7 +217,7 @@ func keysCommand() *cobra.Command {
 				return err
 			}
 			if defaultName(root) == name {
-				if err := os.Remove(defaultPath(root)); err != nil {
+				if err := os.Remove(homedir.DefaultPath(root)); err != nil {
 					return err
 				}
 			}
@@ -665,7 +226,10 @@ func keysCommand() *cobra.Command {
 		},
 	}
 	remove.Flags().Bool("yes", false, "remove without asking")
+	return remove
+}
 
+func keysEncryptCommand() *cobra.Command {
 	encrypt := &cobra.Command{
 		Use: "encrypt", Short: "Seal the key with a passphrase, as NIP-49 defines", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -673,24 +237,32 @@ func keysCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			k, err := keyfile.Load(keyPath(dir))
+			text, err := keyfile.Read(keyPath(dir))
 			if err != nil {
 				return err
 			}
-			sealed, err := newPassphrase(k)
+			if strings.HasPrefix(text, "bunker://") {
+				return errors.New("the key of this identity is on a remote signer; seal it there")
+			}
+			if !strings.HasPrefix(text, program.Prefix) {
+				if err := moveToSigner(command.Context(), dir); err != nil {
+					return err
+				}
+			}
+			path, err := program.Find(signerProgram)
 			if err != nil {
 				return err
 			}
-			if err := keyfile.Write(keyPath(dir), sealed); err != nil {
-				return err
+			run := exec.CommandContext(command.Context(), path, "encrypt", "--dir", dir)
+			run.Stdin, run.Stderr = command.InOrStdin(), command.ErrOrStderr()
+			if err := run.Run(); err != nil {
+				return fmt.Errorf("arc-signer encrypt: %w", err)
 			}
-			fmt.Fprintln(command.OutOrStdout(), "the key is sealed; arc asks for the passphrase, or reads ARC_PASSPHRASE")
+			fmt.Fprintln(command.OutOrStdout(), "the key is sealed; arc-signer asks for the passphrase, or reads ARC_PASSPHRASE")
 			return nil
 		},
 	}
-
-	command.AddCommand(gen, recoverSeed, add, list, use, remove, encrypt, bunkerCommand(), deviceCommand(), devicesCommand(), accountCommand(), storageKeysCommand(), rootsCommand(), sealCommand(), unsealCommand())
-	return command
+	return encrypt
 }
 
 func whoamiCommand() *cobra.Command {
@@ -716,536 +288,24 @@ func whoamiCommand() *cobra.Command {
 	}
 }
 
-// keepSeedKey keeps a key that a seed derives, sealed with NIP-49 when
-// --encrypt asks for it. The key file format does not change.
-func keepSeedKey(command *cobra.Command, root string, k keys.Key) (keys.Key, error) {
-	text := k.Secret.Hex()
-	if encrypt, _ := command.Flags().GetBool("encrypt"); encrypt {
-		var err error
-		if text, err = newPassphrase(k); err != nil {
-			return keys.Key{}, err
+// makeSigned makes an identity with arc-signer gen or recover, which show
+// the seed and ask for the passphrases themselves.
+func makeSigned(command *cobra.Command, what string) error {
+	args := []string{what}
+	for _, flag := range []string{"encrypt", "seed-passphrase"} {
+		if on, _ := command.Flags().GetBool(flag); on {
+			args = append(args, "--"+flag)
 		}
 	}
-	_, why, err := rootSource(command)
-	if err != nil {
-		return keys.Key{}, err
-	}
-	return addCitizen(command.Context(), root, why, text, &k)
-}
-
-// seedPassphrase returns the BIP-39 passphrase when --seed-passphrase asks
-// for one, and an empty passphrase when it does not. A new seed asks twice,
-// because a forgotten passphrase loses the key.
-func seedPassphrase(command *cobra.Command, confirm bool) (string, error) {
-	if want, _ := command.Flags().GetBool("seed-passphrase"); !want {
-		return "", nil
-	}
-	first, err := askSecret("ARC_SEED_PASSPHRASE", "passphrase of the seed: ")
-	if err != nil {
-		return "", err
-	}
-	if first == "" {
-		return "", errors.New("the passphrase of the seed is empty")
-	}
-	if confirm && os.Getenv("ARC_SEED_PASSPHRASE") == "" {
-		again, err := askSecret("ARC_SEED_PASSPHRASE", "the passphrase of the seed again: ")
-		if err != nil {
-			return "", err
-		}
-		if again != first {
-			return "", errors.New("the two passphrases of the seed differ")
-		}
-	}
-	return first, nil
-}
-
-// readSeed reads the words of a seed from standard input. On a terminal it
-// asks for them first.
-func readSeed(command *cobra.Command) (string, error) {
-	in := command.InOrStdin()
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		fmt.Fprint(command.ErrOrStderr(), "the words of the seed, then Enter: ")
-		line, err := bufio.NewReader(file).ReadString('\n')
-		if err != nil && line == "" {
-			return "", err
-		}
-		return line, nil
-	}
-	body, err := io.ReadAll(io.LimitReader(in, 4096))
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(string(body)) == "" {
-		return "", errors.New("give the words of the seed on standard input")
-	}
-	return string(body), nil
-}
-
-// showSeed writes the words once, numbered, with a warning.
-func showSeed(w io.Writer, words string, withPassphrase bool) {
-	fmt.Fprintln(w, "Write these 24 words on paper, in order. They are the only backup of")
-	fmt.Fprintln(w, "this identity. arc does not store them and does not show them again.")
-	fmt.Fprintln(w, "Anyone who reads them has the key. Never type them into a chat or a website.")
-	if withPassphrase {
-		fmt.Fprintln(w, "The words need the passphrase too. Without it, they give another key.")
-	}
-	fmt.Fprintln(w)
-	for i, word := range strings.Fields(words) {
-		fmt.Fprintf(w, "%2d. %s\n", i+1, word)
-	}
-	fmt.Fprintln(w)
-}
-
-// newPassphrase asks for a passphrase twice, and seals the key with it.
-func newPassphrase(k keys.Key) (string, error) {
-	first, err := askPassphrase("new passphrase: ")
-	if err != nil {
-		return "", err
-	}
-	if os.Getenv("ARC_PASSPHRASE") == "" {
-		again, err := askPassphrase("the passphrase again: ")
-		if err != nil {
-			return "", err
-		}
-		if again != first {
-			return "", errors.New("the two passphrases differ")
-		}
-	}
-	return keys.Encrypt(k, first)
-}
-
-func bunkerCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "bunker",
-		Short: "Sign for others through a relay, as NIP-46 defines",
-		Long: "arc prints a bunker:// URI. A machine that uses it, such as an agent,\n" +
-			"signs with this citizen's key and never holds it. With --allow-kind,\n" +
-			"the bunker signs only those kinds, and authentication for relays. By\n" +
-			"default it decrypts only what the owner sealed to themselves, which\n" +
-			"the journal and the files need; mail needs --decrypt all. When a\n" +
-			"device list exists, the bunker admits only its devices: see\n" +
-			"arc keys devices.",
-		Args: cobra.NoArgs,
-		RunE: serveBunker,
-	}
-	command.Flags().String("relay", "", "the relay that carries the requests")
-	command.Flags().StringArray("allow-kind", nil, "a kind that the bunker signs; with none, it signs every kind")
-	command.Flags().String("decrypt", "self", "what the bunker decrypts: none, self (drafts and the keyed root), or all (needed for mail)")
-	return command
-}
-
-func serveBunker(command *cobra.Command, _ []string) error {
-	url, _ := command.Flags().GetString("relay")
-	if url == "" {
-		return errors.New("name the relay with --relay")
-	}
-	// A bad URL fails now, and not at each try to reach the relay.
-	if err := checkRelayURL(url); err != nil {
-		return fmt.Errorf("--relay: %w", err)
-	}
-	decrypt, _ := command.Flags().GetString("decrypt")
-	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
-		return fmt.Errorf("--decrypt is none, self or all, not %q", decrypt)
-	}
-	var allowed []nostr.Kind
-	texts, _ := command.Flags().GetStringArray("allow-kind")
-	for _, text := range texts {
-		n, err := strconv.Atoi(text)
-		if err != nil {
-			return fmt.Errorf("--allow-kind %q is not a kind", text)
-		}
-		allowed = append(allowed, nostr.Kind(n))
-	}
-
-	dir, err := home(command)
+	k, err := addSigned(command, args...)
 	if err != nil {
 		return err
 	}
-	id, err := loadIdentity(command.Context(), dir)
+	root, err := rootDir(command)
 	if err != nil {
 		return err
 	}
-	if id.remote {
-		return errRemote("a bunker")
-	}
-	secret, err := bunkerSecret(dir)
-	if err != nil {
-		return err
-	}
-
-	// A machine that signs through this bunker reads the keyed root from
-	// the bunker's relay.
-	sess, err := open(command)
-	if err != nil {
-		return err
-	}
-	rootRelay := relay.Relay{URL: url, Signer: sess.Signer}
-	if !slices.Contains(sess.URLs, url) {
-		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s is not a relay of this citizen: a new device list reaches the bunker only after a restart; add it with arc relay add", url)))
-	}
-	g := &guard{secret: secret, authorized: map[nostr.PubKey]bool{}}
-	if err := startDevices(command.Context(), sess, rootRelay, g); err != nil {
-		sess.Close()
-		return err
-	}
-	if err := sess.PublishKeyedRoot(command.Context()); err != nil {
-		sess.Close()
-		return err
-	}
-	wraps, err := sess.Node.Store.Query(citizen.RootFilter(sess.Key.Public))
-	if err != nil {
-		sess.Close()
-		return err
-	}
-	for _, wrap := range wraps {
-		if err := rootRelay.Send(command.Context(), wrap); err != nil {
-			fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the keyed root did not reach %s: %v", url, err)))
-		}
-	}
-	sess.Close()
-
-	signer := nip46.NewStaticKeySigner(id.key.Secret)
-	signer.AuthorizeRequest = func(_ bool, from nostr.PubKey, given string) bool {
-		return g.authorize(from, given)
-	}
-
-	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	r := relay.Relay{URL: url}
-	pk := id.key.Public
-
-	// With a device list, the secret admits nobody, so the URI leaves it out.
-	if g.listed() {
-		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s\n", pk.Hex(), terminal.EscapeLine(url))
-	} else {
-		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), terminal.EscapeLine(url), secret)
-	}
-	go watchDevices(ctx, relay.Relay{URL: url, Signer: id.key}, id.key, g, log)
-	for {
-		requests, err := r.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindNostrConnect}, Tags: nostr.TagMap{"p": {pk.Hex()}}, Since: nostr.Now()})
-		if err == nil {
-			for request := range requests {
-				response, ok := answer(ctx, &signer, id.key.Secret, request, policy{kinds: allowed, decrypt: decrypt, admit: g.refusal}, log)
-				if ok {
-					if err := r.Send(ctx, response); err != nil {
-						log.Warn("the answer did not reach the relay", "error", err)
-					}
-				}
-			}
-		}
-		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "the bunker is stopping")
-			return nil
-		}
-		log.Warn("the relay ended the watch; watching again", "relay", url, "error", err)
-		select {
-		case <-time.After(3 * time.Second):
-		case <-ctx.Done():
-			return nil
-		}
-	}
-}
-
-// policy is what a bunker does for the machines that use it.
-type policy struct {
-	// kinds are the kinds that it signs; none means every kind.
-	kinds []nostr.Kind
-	// decrypt is none, self or all. Self opens only what the owner sealed
-	// to their own key: drafts, the keyed root, the private relay list.
-	decrypt string
-	// admit says why the bunker refuses a device, or nothing. Nil admits
-	// each device.
-	admit func(nostr.PubKey) error
-}
-
-// refusal says why the policy refuses a request of the device key from,
-// or nothing when it allows it. Authentication for relays is always
-// allowed, and so is a token for the device that asks, and for no other key.
-func (p policy) refusal(req nip46.Request, owner, from nostr.PubKey) error {
-	switch req.Method {
-	case "sign_event":
-		if len(req.Params) != 1 {
-			return nil
-		}
-		var event nostr.Event
-		if err := event.UnmarshalJSON([]byte(req.Params[0])); err != nil {
-			return nil
-		}
-		// A device must not change the list of devices that the signer admits.
-		if event.Kind == devices.Kind {
-			return errors.New("the bunker never signs a device list; run arc keys devices on the signer")
-		}
-		// A device must not change which devices hold the data roots.
-		if event.Kind == devices.RootsKind {
-			return errors.New("the bunker never signs the data roots; run arc keys devices on the signer")
-		}
-		// A device must not change which storage citizens hold the data.
-		if event.Kind == storage.ListKind {
-			return errors.New("the bunker never signs a storage list; run arc keys storage on the signer")
-		}
-		// A token lets one device key read the sealed data on a relay.
-		if event.Kind == devices.TokenKind {
-			if _, err := devices.TokenEnd(event, from, nostr.Now()); err != nil {
-				return fmt.Errorf("the bunker signs a token only for the device that asks, for at most 7 days: %w", err)
-			}
-			return nil
-		}
-		if len(p.kinds) == 0 {
-			return nil
-		}
-		if event.Kind != nostr.KindClientAuthentication && !slices.Contains(p.kinds, event.Kind) {
-			return fmt.Errorf("the bunker does not sign kind %d", event.Kind)
-		}
-	case "nip44_decrypt", "nip04_decrypt":
-		switch {
-		case p.decrypt == "none":
-			return errors.New("the bunker does not decrypt")
-		case p.decrypt == "self" && (len(req.Params) == 0 || req.Params[0] != owner.Hex()):
-			return errors.New("the bunker decrypts only what its owner sealed to themselves; mail needs --decrypt all")
-		}
-	}
+	fmt.Fprintf(command.ErrOrStderr(), "wrote the identity in %s\n", terminal.EscapeLine(root))
+	fmt.Fprintf(command.OutOrStdout(), "%s\n%s\n", k.Name(), k.Public.Hex()) //arc:raw-ok the name of a key of this machine
 	return nil
-}
-
-// answer handles one request. A request that the policy refuses gets a
-// refusal, and the signer never sees it.
-func answer(ctx context.Context, signer *nip46.StaticKeySigner, secret nostr.SecretKey, request nostr.Event, p policy, log *slog.Logger) (nostr.Event, bool) {
-	conversation, err := nip44.GenerateConversationKey(request.PubKey, secret)
-	if err != nil {
-		return nostr.Event{}, false
-	}
-	session := nip46.Session{PublicKey: secret.Public(), ConversationKey: conversation}
-	if parsed, err := session.ParseRequest(request); err == nil {
-		reason := p.refusal(parsed, secret.Public(), request.PubKey)
-		if p.admit != nil {
-			if refused := p.admit(request.PubKey); refused != nil {
-				reason = refused
-			}
-		}
-		if reason != nil {
-			log.Info("refused a request", "method", parsed.Method, "reason", reason, "from", request.PubKey.Hex()[:8])
-			_, refusal, err := session.MakeResponse(parsed.ID, request.PubKey, "", reason)
-			if err != nil || refusal.Sign(secret) != nil {
-				return nostr.Event{}, false
-			}
-			return refusal, true
-		}
-	}
-	_, _, response, err := signer.HandleRequest(ctx, request)
-	if err != nil {
-		log.Debug("a request failed", "error", err)
-		return nostr.Event{}, false
-	}
-	return response, true
-}
-
-// bunkerSecret is the secret of the bunker URI. It stays the same, so a
-// machine that uses the URI keeps working after the bunker restarts.
-func bunkerSecret(dir string) (string, error) {
-	path := filepath.Join(dir, "bunker-secret")
-	if body, err := os.ReadFile(path); err == nil {
-		return strings.TrimSpace(string(body)), nil
-	}
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	secret := hex.EncodeToString(raw)
-	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	return secret, nil
-}
-
-// timed bounds each request to a remote signer, so a lost answer fails the
-// command instead of stopping it.
-// signerRetry is the time after a failed connection to the signer in which
-// each use fails at once with the same reason.
-const signerRetry = time.Minute
-
-// lazySigner connects to a remote signer at its first use. After a failed
-// connection, each use in the next signerRetry fails at once, so a command
-// waits for the signer only once. When the signer did not answer, the file
-// silent keeps the time, so the next commands of this machine fail at once
-// too. A later use connects again, so arc serve finds the signer when it
-// comes back.
-type lazySigner struct {
-	public  nostr.PubKey
-	connect func() (nostr.Keyer, error)
-	now     func() time.Time
-	silent  string
-	mu      sync.Mutex
-	keyer   nostr.Keyer
-	err     error
-	failed  time.Time
-}
-
-func (l *lazySigner) get() (nostr.Keyer, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.keyer != nil {
-		return l.keyer, nil
-	}
-	if l.err != nil && l.now().Sub(l.failed) < signerRetry {
-		return nil, l.err
-	}
-	if at, ok := l.silentAt(); ok && l.now().Sub(at) < signerRetry {
-		l.err, l.failed = &citizen.SignerError{Citizen: l.public, Err: context.DeadlineExceeded, Retry: at.Add(signerRetry)}, at
-		return nil, l.err
-	}
-	k, err := l.connect()
-	if err != nil {
-		l.failed = l.now()
-		signerErr := &citizen.SignerError{Citizen: l.public, Err: err}
-		if errors.Is(err, context.DeadlineExceeded) {
-			signerErr.Retry = l.failed.Add(signerRetry)
-			l.keepSilent(l.failed)
-		}
-		l.err = signerErr
-		return nil, l.err
-	}
-	if l.silent != "" {
-		_ = os.Remove(l.silent)
-	}
-	l.keyer, l.err = k, nil
-	return k, nil
-}
-
-// silentAt reads the time at which the signer last did not answer. A
-// missing or broken file reads as no time.
-func (l *lazySigner) silentAt() (time.Time, bool) {
-	if l.silent == "" {
-		return time.Time{}, false
-	}
-	text, err := os.ReadFile(l.silent)
-	if err != nil {
-		return time.Time{}, false
-	}
-	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(text)))
-	return at, err == nil
-}
-
-// keepSilent keeps the time at which the signer did not answer. A failed
-// write only costs the next command one more wait.
-func (l *lazySigner) keepSilent(at time.Time) {
-	if l.silent != "" {
-		_ = os.WriteFile(l.silent, []byte(at.Format(time.RFC3339Nano)+"\n"), 0o600)
-	}
-}
-
-func (l *lazySigner) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
-	return l.public, ctx.Err()
-}
-
-func (l *lazySigner) SignEvent(ctx context.Context, event *nostr.Event) error {
-	k, err := l.get()
-	if err != nil {
-		return err
-	}
-	return k.SignEvent(ctx, event)
-}
-
-func (l *lazySigner) Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
-	k, err := l.get()
-	if err != nil {
-		return "", err
-	}
-	return k.Encrypt(ctx, plaintext, to)
-}
-
-func (l *lazySigner) Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
-	k, err := l.get()
-	if err != nil {
-		return "", err
-	}
-	return k.Decrypt(ctx, ciphertext, from)
-}
-
-func (l *lazySigner) Nip04Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
-	k, err := l.get()
-	if err != nil {
-		return "", err
-	}
-	return k.Nip04Encrypt(ctx, plaintext, to)
-}
-
-func (l *lazySigner) Nip04Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
-	k, err := l.get()
-	if err != nil {
-		return "", err
-	}
-	return k.Nip04Decrypt(ctx, ciphertext, from)
-}
-
-type timed struct{ nostr.Keyer }
-
-const signerTimeout = 20 * time.Second
-
-// signerError preserves cancellation identity when the remote library returns
-// an untyped network error. A signer refusal under an active context is unchanged.
-func signerError(ctx context.Context, err error) error {
-	if err != nil && ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return err
-}
-
-func (t timed) SignEvent(ctx context.Context, event *nostr.Event) error {
-	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return signerError(ctx, t.Keyer.SignEvent(ctx, event))
-}
-
-func (t timed) Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	text, err := t.Keyer.Encrypt(ctx, plaintext, to)
-	return text, signerError(ctx, err)
-}
-
-func (t timed) Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	text, err := t.Keyer.Decrypt(ctx, ciphertext, from)
-	return text, signerError(ctx, err)
-}
-
-func (t timed) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
-	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return nostr.PubKey{}, err
-	}
-	pk, err := t.Keyer.GetPublicKey(ctx)
-	return pk, signerError(ctx, err)
-}
-
-func (t timed) Nip04Encrypt(ctx context.Context, plaintext string, to nostr.PubKey) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	text, err := t.Keyer.Nip04Encrypt(ctx, plaintext, to)
-	return text, signerError(ctx, err)
-}
-
-func (t timed) Nip04Decrypt(ctx context.Context, ciphertext string, from nostr.PubKey) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, signerTimeout)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	text, err := t.Keyer.Nip04Decrypt(ctx, ciphertext, from)
-	return text, signerError(ctx, err)
 }

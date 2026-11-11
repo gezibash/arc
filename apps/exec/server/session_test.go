@@ -144,3 +144,37 @@ func TestExecSessionTerminalOutputOutlivesASlowPeer(t *testing.T) {
 		t.Fatalf("PTY: %q exit %d", out.String(), exit)
 	}
 }
+
+// TestATerminalEndsItsInputWithCtrlD closes the input of a session on a
+// terminal. The server types Ctrl-D, as a person at the terminal does, so
+// cat ends on its own and the session exits 0. Closing the terminal in its
+// place would hang up the process.
+func TestATerminalEndsItsInputWithCtrlD(t *testing.T) {
+	s := testServer(t)
+	stream := execStream(t, s, caller, `{"argv":["cat"],"pty":true,"rows":24,"cols":80}`, provider.Duplex)
+	if err := json.NewEncoder(stream).Encode(execadapter.Record{Type: "stdin", Data: []byte("hello\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	rd := execadapter.NewReader(stream)
+	var out strings.Builder
+	exit := -1
+	for {
+		v, err := rd.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.Write(v.Data)
+		if v.Type == "exit" {
+			exit = v.Exit
+		}
+	}
+	if !strings.Contains(out.String(), "hello") || exit != 0 {
+		t.Fatalf("cat on a terminal gave %q and exit %d; want hello and exit 0", out.String(), exit)
+	}
+}

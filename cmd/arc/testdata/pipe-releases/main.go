@@ -2,12 +2,7 @@
 // It serves the channel and the chunks of RELEASES_ROOT, as the releases
 // app does. PIPE_RELEASES_MODE picks the behavior of an archive session:
 //
-//	old    a provider that is older than the pipe: it refuses the field
-//	       "direct" with invalid_request
-//	deaf   it answers each offer, but no pipe opens
 //	break  the pipe opens, and closes after 64 KiB of the archive
-//	bad    the pipe carries the archive with one byte changed, and the end
-//	       record gives the right count
 //
 // PIPE_RELEASES_LOG gets one line for each archive session, "offer", and
 // one line for the first chunk of an archive, "chunks".
@@ -24,7 +19,6 @@ import (
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/provider"
 	"github.com/gezibash/arc/sdk/stdio"
-	"github.com/gezibash/arc/sdk/strictjson"
 )
 
 type app struct {
@@ -76,17 +70,6 @@ func (a *app) HandleSession(ctx context.Context, r provider.Request, stream *pro
 		Digest string        `json:"digest"`
 		Direct *direct.Offer `json:"direct"`
 	}
-	if a.mode == "old" {
-		// The request fields of the releases app before the pipe.
-		var old struct {
-			Op     string `json:"op"`
-			Digest string `json:"digest"`
-		}
-		if strictjson.Decode(strings.NewReader(r.Message), &old) != nil {
-			note("offer")
-			return provider.ErrInvalidRequest
-		}
-	}
 	if err := json.Unmarshal([]byte(r.Message), &in); err != nil || in.Direct == nil {
 		return provider.ErrInvalidRequest
 	}
@@ -96,30 +79,6 @@ func (a *app) HandleSession(ctx context.Context, r provider.Request, stream *pro
 		return err
 	}
 	encoder := json.NewEncoder(stream)
-	if a.mode == "deaf" {
-		pc, err := direct.NewConnection(direct.Options{Loopback: true})
-		if err != nil {
-			return err
-		}
-		if _, err = pc.CreateDataChannel("pipe", nil); err != nil {
-			return err
-		}
-		offer, err := pc.CreateOffer(nil)
-		if err == nil {
-			offer, err = direct.Describe(pc, offer)
-		}
-		_ = pc.Close()
-		if err != nil {
-			return err
-		}
-		// An SDP of an end that is gone: no data channel opens.
-		answer := strings.Replace(offer.SDP, "a=setup:actpass", "a=setup:active", 1)
-		if err = encoder.Encode(record{Type: "direct", SDP: answer}); err != nil {
-			return err
-		}
-		<-ctx.Done()
-		return provider.Error("no_path")
-	}
 	pipe, answer, err := direct.Accept(ctx, direct.AcceptConfig{Policy: direct.Auto, Options: direct.Options{Loopback: true}}, *in.Direct)
 	if err != nil {
 		return err
@@ -137,9 +96,6 @@ func (a *app) HandleSession(ctx context.Context, r provider.Request, stream *pro
 		_ = pipe.Close()
 		<-ctx.Done()
 		return provider.Error("pipe_failed")
-	case "bad":
-		data = append([]byte(nil), data...)
-		data[len(data)/2] ^= 0xff
 	}
 	if _, err = pipe.Write(data); err != nil {
 		return provider.Error("pipe_failed")
