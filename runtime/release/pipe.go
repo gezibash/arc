@@ -1,4 +1,4 @@
-package main
+package release
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/runtime/catalog"
-	"github.com/gezibash/arc/runtime/release"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -34,17 +33,17 @@ type archiveRecord struct {
 	BodyBytes *int64 `json:"body_bytes"`
 }
 
-// pipeReleaseCaller gets the archive over a pipe. In the policy auto, a
+// pipeCaller gets the archive over a pipe. In the policy auto, a
 // provider that has no pipe sends the archive in chunks.
-type pipeReleaseCaller struct {
-	releaseCaller
+type pipeCaller struct {
+	caller
 	installs catalog.Installs
 	dial     direct.DialConfig
 	// path names the path of the archive, after OpenArchive.
 	path string
 }
 
-func (r *pipeReleaseCaller) OpenArchive(ctx context.Context, digest string) (release.ArchiveReader, error) {
+func (r *pipeCaller) OpenArchive(ctx context.Context, digest string) (ArchiveReader, error) {
 	var current *pipeArchive
 	pipe, err := direct.Dial(ctx, r.dial, func(ctx context.Context, offer direct.Offer) (string, error) {
 		if current != nil {
@@ -82,7 +81,7 @@ func (r *pipeReleaseCaller) OpenArchive(ctx context.Context, digest string) (rel
 				fmt.Fprintf(r.dial.Notes, "%s; using chunks over the relay\n", terminal.EscapeLine(err.Error()))
 			}
 			r.path = chunkPath
-			return nil, release.ErrUseChunks
+			return nil, ErrUseChunks
 		}
 		if errors.Is(err, errProviderHasNoPipe) {
 			return nil, fmt.Errorf("%w; run again with --path session", err)
