@@ -17,6 +17,7 @@ import (
 	"github.com/gezibash/arc/core/relaylist"
 	"github.com/gezibash/arc/internal/testrelay"
 	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/homedir"
 )
 
 // A citizen that adds a relay publishes its NIP-65 relay list there.
@@ -57,7 +58,7 @@ func TestRelayAddPublishesNoPrivateRelayList(t *testing.T) {
 	if err != nil || len(mine) != 1 {
 		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
 	}
-	id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+	id, err := loadIdentity(context.Background(), filepath.Join(homedir.CitizensDir(home), mine[0].name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestAnIndexerHoldsOnlyThePublicRelayLists(t *testing.T) {
 	if err != nil || len(mine) != 1 {
 		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
 	}
-	id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+	id, err := loadIdentity(context.Background(), filepath.Join(homedir.CitizensDir(home), mine[0].name))
 	if err != nil {
 		t.Fatal(err)
 	}

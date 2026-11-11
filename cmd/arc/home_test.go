@@ -23,6 +23,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/homedir"
 	"github.com/gezibash/arc/sdk/storage"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -89,7 +90,7 @@ func TestAnOlderHomeStillWorks(t *testing.T) {
 	if _, err := runDefault(t, "keys", "device"); err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range homeNames {
+	for _, entry := range homedir.Names() {
 		if exists(filepath.Join(home, ".arc", entry)) {
 			t.Errorf("arc wrote %s in ~/.arc, while its home is ~/.config/arc", entry)
 		}
@@ -135,7 +136,7 @@ func TestARelayKeepsItsOlderHome(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(old, "relay.db"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := defaultRoot(home); err != nil || got != old {
+	if got, err := homedir.Default(home); err != nil || got != old {
 		t.Fatalf("the home is %s, want %s", got, old)
 	}
 }
@@ -609,7 +610,7 @@ func TestADotArcThatIsNoFolderStopsArc(t *testing.T) {
 				t.Errorf("a ~/.arc that is a %s: arc %s printed %q, %v; want %q", shape, strings.Join(args, " "), out, err, want)
 			}
 		}
-		if entries, _ := os.ReadDir(citizensDir(old)); len(entries) != 1 {
+		if entries, _ := os.ReadDir(homedir.CitizensDir(old)); len(entries) != 1 {
 			t.Errorf("a ~/.arc that is a %s: ~/.config/arc holds %d identities, want 1", shape, len(entries))
 		}
 	}
@@ -711,7 +712,7 @@ func TestNoHostileNameForgesALine(t *testing.T) {
 			t.Errorf("arc %s with a hostile HOME printed %q", strings.Join(args, " "), out+errs)
 		}
 	}
-	hostile := filepath.Join(citizensDir(dot), "x\narc: fake forged\x1b[2J")
+	hostile := filepath.Join(homedir.CitizensDir(dot), "x\narc: fake forged\x1b[2J")
 	if err := os.MkdirAll(hostile, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +729,7 @@ func TestNoHostileNameForgesALine(t *testing.T) {
 
 	// A list that an older arc wrote can already hold such a URL: each
 	// line that names it is escaped, and nothing fails.
-	if err := os.WriteFile(relaysPath(filepath.Join(citizensDir(dot), defaultName(dot))), []byte("ws://x\x1b]0;pwned\x07.invalid\n"), 0o600); err != nil {
+	if err := os.WriteFile(relaysPath(filepath.Join(homedir.CitizensDir(dot), defaultName(dot))), []byte("ws://x\x1b]0;pwned\x07.invalid\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"relay", "ls"}, {"sync"}} {
@@ -747,7 +748,7 @@ func TestABadDefaultNameIsEscapedOnce(t *testing.T) {
 	home := user(t)
 	dot := filepath.Join(home, ".arc")
 	identity(t, dot)
-	if err := os.WriteFile(defaultPath(dot), []byte("x\nafter"), 0o600); err != nil {
+	if err := os.WriteFile(homedir.DefaultPath(dot), []byte("x\nafter"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := runErr(t, "whoami")
@@ -774,7 +775,7 @@ func hostileRelay(t *testing.T) (string, string) {
 
 // identityDir is the folder of the default identity of a home.
 func identityDir(home string) string {
-	return filepath.Join(citizensDir(home), defaultName(home))
+	return filepath.Join(homedir.CitizensDir(home), defaultName(home))
 }
 
 // A relay list that an older arc wrote can hold a line that is not a relay
@@ -969,7 +970,7 @@ func TestKeysUseTakesTheRawName(t *testing.T) {
 		}
 	}
 	name := "x\ny"
-	if err := os.MkdirAll(filepath.Join(citizensDir(home), name), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(homedir.CitizensDir(home), name), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := run(t, home, "", "keys", "use", `x\ny`); err == nil {

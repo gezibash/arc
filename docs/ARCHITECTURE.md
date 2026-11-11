@@ -44,6 +44,7 @@ flowchart LR
 | `runtime/selfsync` | The blob and the sync of self data with a storage citizen. |
 | `runtime/host` | `arc serve`: runs the program of an app for its citizen, announces it, and answers the calls that reach it. |
 | `runtime/bunker` | `arc keys bunker`: signs for the devices of a citizen through a relay, as NIP-46 defines, with the guard of the device list. |
+| `runtime/homedir` | Finds the home of arc: `~/.arc`, the home of an older arc, `--home` or `ARC_HOME`, and the errors of a home that arc cannot read. |
 | Other `runtime/` packages | App deployment/configuration models, lists, wake behavior and release/update workflows. |
 | `apps/<name>/` | One complete app: manifest, Arcfile, service implementation in `server/`, and its program in `cmd/arc-<name>`. Data apps can consist of a manifest. |
 | `cmd/arc` | The arc program. It imports no app. |
