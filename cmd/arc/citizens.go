@@ -13,12 +13,9 @@ import (
 	"github.com/gezibash/arc/adapters/keyfile"
 	"github.com/gezibash/arc/adapters/signer/program"
 	"github.com/gezibash/arc/core/keys"
+	"github.com/gezibash/arc/runtime/homedir"
 	"github.com/spf13/cobra"
 )
-
-func citizensDir(root string) string { return filepath.Join(root, "citizens") }
-
-func defaultPath(root string) string { return filepath.Join(root, "default") }
 
 func publicPath(dir string) string { return filepath.Join(dir, "public") }
 
@@ -34,22 +31,22 @@ func chosen(command *cobra.Command) (string, string, error) {
 		name, source = flag, "--key"
 	} else if env := os.Getenv("ARC_KEY"); env != "" {
 		name, source = env, "ARC_KEY"
-	} else if body, err := os.ReadFile(defaultPath(root)); err == nil {
+	} else if body, err := os.ReadFile(homedir.DefaultPath(root)); err == nil {
 		name, source = strings.TrimSpace(string(body)), "the default"
 	} else if !errors.Is(err, os.ErrNotExist) {
 		// A home that arc cannot read is not a home with no identity.
-		return "", "", unreadableDefault(root, why, err)
+		return "", "", homedir.UnreadableDefault(root, why, err)
 	}
 	if name == "" {
 		return "", "", fmt.Errorf("no identity in %s, chosen by %s: make one with arc keys gen, or add one with arc keys add", root, why)
 	}
-	dir := filepath.Join(citizensDir(root), name)
+	dir := filepath.Join(homedir.CitizensDir(root), name)
 	if !validName(name) {
 		return "", "", fmt.Errorf("no identity \"%s\" on this machine: see arc keys list", name)
 	}
 	if _, err := os.Stat(dir); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			return "", "", unreadableIdentities(root, why, err)
+			return "", "", homedir.UnreadableIdentities(root, why, err)
 		}
 		return "", "", fmt.Errorf("no identity \"%s\" in %s, chosen by %s: see arc keys list", name, root, why)
 	}
@@ -69,7 +66,7 @@ type localID struct {
 
 // listCitizens reads the identities of this machine, by name.
 func listCitizens(root string) ([]localID, error) {
-	entries, err := os.ReadDir(citizensDir(root))
+	entries, err := os.ReadDir(homedir.CitizensDir(root))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -81,14 +78,14 @@ func listCitizens(root string) ([]localID, error) {
 		if !entry.IsDir() || !validName(entry.Name()) {
 			continue
 		}
-		public, _ := os.ReadFile(publicPath(filepath.Join(citizensDir(root), entry.Name())))
+		public, _ := os.ReadFile(publicPath(filepath.Join(homedir.CitizensDir(root), entry.Name())))
 		out = append(out, localID{name: entry.Name(), public: strings.TrimSpace(string(public))})
 	}
 	return out, nil
 }
 
 func defaultName(root string) string {
-	body, _ := os.ReadFile(defaultPath(root))
+	body, _ := os.ReadFile(homedir.DefaultPath(root))
 	return strings.TrimSpace(string(body))
 }
 
@@ -100,17 +97,17 @@ func defaultName(root string) string {
 func addCitizen(ctx context.Context, root, why, text string, prepare func(staging string) (nostr.PubKey, error)) (_ keys.Key, err error) {
 	// A default that arc cannot read stops the add before it writes a key:
 	// keys gen shows the seed only after the add.
-	body, err := os.ReadFile(defaultPath(root))
+	body, err := os.ReadFile(homedir.DefaultPath(root))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return keys.Key{}, unreadableDefault(root, why, err)
+		return keys.Key{}, homedir.UnreadableDefault(root, why, err)
 	}
 	first := strings.TrimSpace(string(body)) == ""
-	if err := os.MkdirAll(citizensDir(root), 0o700); err != nil {
-		return keys.Key{}, unwritableIdentities(root, why, err)
+	if err := os.MkdirAll(homedir.CitizensDir(root), 0o700); err != nil {
+		return keys.Key{}, homedir.UnwritableIdentities(root, why, err)
 	}
-	staging, err := os.MkdirTemp(citizensDir(root), ".adding-")
+	staging, err := os.MkdirTemp(homedir.CitizensDir(root), ".adding-")
 	if err != nil {
-		return keys.Key{}, unwritableIdentities(root, why, err)
+		return keys.Key{}, homedir.UnwritableIdentities(root, why, err)
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(staging)) }()
 
@@ -150,14 +147,14 @@ func addCitizen(ctx context.Context, root, why, text string, prepare func(stagin
 		return keys.Key{}, err
 	}
 	name := k.Name()
-	if err := os.Rename(staging, filepath.Join(citizensDir(root), name)); err != nil {
-		if _, statErr := os.Stat(filepath.Join(citizensDir(root), name)); statErr == nil {
+	if err := os.Rename(staging, filepath.Join(homedir.CitizensDir(root), name)); err != nil {
+		if _, statErr := os.Stat(filepath.Join(homedir.CitizensDir(root), name)); statErr == nil {
 			return keys.Key{}, fmt.Errorf("%s is already on this machine", name)
 		}
 		return keys.Key{}, err
 	}
 	if first {
-		if err := os.WriteFile(defaultPath(root), []byte(name+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(homedir.DefaultPath(root), []byte(name+"\n"), 0o600); err != nil {
 			return keys.Key{}, err
 		}
 	}
