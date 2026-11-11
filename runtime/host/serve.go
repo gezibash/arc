@@ -314,19 +314,23 @@ func (s *service) loop() error {
 		case <-s.server.Done():
 			return errors.New("the app program stopped")
 		case <-refresh.C:
-			s.refresh()
+			if err := s.announcer.announce(nostr.Now()); err != nil {
+				s.log.Warn("the announcement was not signed again", "error", err)
+			}
 		case <-ticker.C:
-			s.refresh()
+			s.afterSleep()
 			s.tick()
 		}
 	}
 }
 
-// refresh signs the announcement again when catalog.Refresh passed on the
-// wall clock. The refresh ticker alone is late after the machine slept: its
+// afterSleep signs the announcement again when catalog.Refresh passed on
+// the wall clock. The refresh ticker is late after the machine slept: its
 // clock stops during sleep, and the announcement then looks older than
 // catalog.Fresh to a caller. The short tick finds that soon after a wake.
-func (s *service) refresh() {
+// The refresh ticker still signs on its own, so a wall clock that steps
+// back does not stop the refresh.
+func (s *service) afterSleep() {
 	if now := nostr.Now(); !s.announcer.waiting() && s.announcer.due(now) {
 		if err := s.announcer.announce(now); err != nil {
 			s.log.Warn("the announcement was not signed again", "error", err)
