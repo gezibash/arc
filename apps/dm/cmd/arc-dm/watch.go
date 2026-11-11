@@ -51,7 +51,46 @@ func watch(ctx context.Context, args []string) error {
 	if second, ok := ctx.Value(secondSignal{}).(context.Context); ok {
 		w.closeCtx = second
 	}
-	w.print = func(m arcprogram.Message, messages *store, quote bool) {
+	w.print = messagePrinter(ctx, me, notifier)
+	// The ids that the watch shows as missing go to the state at most once
+	// a second, and at its end, so a reply in another terminal refuses them.
+	// The watch also saves after each timer read that showed an id.
+	var (
+		saving   sync.Mutex
+		lastSave time.Time
+	)
+	save := func(force bool) {
+		saving.Lock()
+		defer saving.Unlock()
+		if !force && time.Since(lastSave) < time.Second {
+			return
+		}
+		w.mu.Lock()
+		ids := w.messages.shown
+		w.messages.shown, w.messages.isShown = nil, nil
+		w.mu.Unlock()
+		lastSave = time.Now()
+		if err := saveShown(stateDir(s.state), ids); err != nil {
+			fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
+		}
+	}
+	w.mu.Lock()
+	w.saveShown = func() { save(true) } // reads come at most each second
+	w.mu.Unlock()
+	err = s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
+		w.take(m)
+		save(false)
+		return nil
+	})
+	w.close()
+	save(true)
+	return err
+}
+
+// messagePrinter prints one message of the watch, with its quote line, and
+// runs the notifier for it. A failed notification does not stop the watch.
+func messagePrinter(ctx context.Context, me string, notifier []string) func(m arcprogram.Message, messages *store, quote bool) {
+	return func(m arcprogram.Message, messages *store, quote bool) {
 		group := ""
 		if len(m.Members) > 2 {
 			group = fmt.Sprintf("  in a group of %d", len(m.Members))
@@ -86,39 +125,6 @@ func watch(ctx context.Context, args []string) error {
 			fmt.Fprintf(os.Stderr, "arc-dm: the notification failed: %s\n", terminal.EscapeLine(err.Error()+" "+strings.TrimSpace(string(out))))
 		}
 	}
-	// The ids that the watch shows as missing go to the state at most once
-	// a second, and at its end, so a reply in another terminal refuses them.
-	// The watch also saves after each timer read that showed an id.
-	var (
-		saving   sync.Mutex
-		lastSave time.Time
-	)
-	save := func(force bool) {
-		saving.Lock()
-		defer saving.Unlock()
-		if !force && time.Since(lastSave) < time.Second {
-			return
-		}
-		w.mu.Lock()
-		ids := w.messages.shown
-		w.messages.shown, w.messages.isShown = nil, nil
-		w.mu.Unlock()
-		lastSave = time.Now()
-		if err := saveShown(stateDir(s.state), ids); err != nil {
-			fmt.Fprintln(os.Stderr, "arc-dm:", terminal.EscapeLine(err.Error()))
-		}
-	}
-	w.mu.Lock()
-	w.saveShown = func() { save(true) } // reads come at most each second
-	w.mu.Unlock()
-	err = s.arc.Watch(ctx, arcprogram.WatchOptions{Notes: os.Stderr}, func(m arcprogram.Message) error {
-		w.take(m)
-		save(false)
-		return nil
-	})
-	w.close()
-	save(true)
-	return err
 }
 
 // notifierOf is the command that posts a notification, before its two
