@@ -28,6 +28,7 @@ import (
 // that a person can read, with each line under its header. The JSON lines
 // keep the text as it was sent (docs/clients/SPEC.md, section 3.9).
 func TestATerminalShowsNoEscapeOfASender(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +84,7 @@ const (
 // Held mail from a stranger, and a message that arc message watch prints,
 // reach the terminal escaped.
 func TestHeldAndWatchedTextIsEscaped(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +174,7 @@ const (
 // and into a file. Only --raw writes it as it came, and on a terminal it
 // says that it does.
 func TestALiveReplyIsEscapedWhereverItGoes(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
@@ -220,6 +223,7 @@ func TestALiveReplyIsEscapedWhereverItGoes(t *testing.T) {
 // line of arc, change the terminal, or look like an escape that it is not.
 // The cases are those of Alfred's probe of ac2ff05.
 func TestAnErrorLineCannotReachTheTerminal(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ reason, want string }{
 		{"no\narc: your ring key leaked, run arc keys rotate --force", `arc: the provider refused: no\narc: your ring key leaked, run arc keys rotate --force`},
 		{"a\tb\x1b[2J\u202ec\U000e0068\U000e0100\ufe0f\ufe0fd", `arc: the provider refused: a\tb\x1b[2J\u202ec\U000e0068\U000e0100\ufe0f\ufe0fd`},
@@ -245,6 +249,7 @@ func forged(out string) bool { return strings.Contains("\n"+out, "\narc: forged"
 // A relay that refuses a message cannot change the terminal or forge a
 // line through the warning of arc message send.
 func TestARelayRefusalIsEscapedOnOneLine(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -279,6 +284,7 @@ func TestARelayRefusalIsEscapedOnOneLine(t *testing.T) {
 // A relay that answers arc relay ring with a hostile refusal cannot change
 // the terminal or forge a line.
 func TestARingRefusalIsEscapedOnOneLine(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Accept") == "application/nostr+json" {
 			w.Header().Set("Content-Type", "application/nostr+json")
@@ -310,6 +316,7 @@ func TestARingRefusalIsEscapedOnOneLine(t *testing.T) {
 
 // The answer of a storage citizen shows escaped, each field on its line.
 func TestAStorageAnswerIsEscaped(t *testing.T) {
+	t.Parallel()
 	account := &storage.Account{Message: hostileReason, Plan: "free\x1b[2J\narc: forged plan", State: "ok\u202e"}
 	for _, out := range []string{accountPending("storage-1", account), accountAdmitted("storage-1", account)} {
 		if forged(out) || strings.ContainsAny(out, "\x1b\u202e\U000e0068") {

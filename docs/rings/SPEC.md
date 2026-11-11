@@ -493,9 +493,10 @@ and khatru:
 - `TestRingsWakeACitizenThroughTheCLI` (`cmd/arc`): the normal CLI.
   `arc relay ring set` skips a relay without rings, which answers 404 on
   `/ring`; refuses an empty key variable; and never prints the key.
-  `ring test` reaches the URL with the key. Mail from alice rings once; a
-  second mail does not; `arc sync` is a read, and the next mail rings
-  again. The body names no author and carries no mail. `ring clear` ends
+  `ring test` reaches the URL with the key. Mail from alice rings;
+  `arc sync` is a read, and the next mail rings again. That a second mail
+  before a read does not ring is checked with a fake clock in
+  `TestARelayRingsOnceForEachUnreadPeriod`. The body names no author and carries no mail. `ring clear` ends
   it. With the call that authenticates before a read removed, the test
   fails at "no ring: mail after bob read".
 - `TestAWrapRingsWithinMilliseconds`: five rings, each within 200 ms of

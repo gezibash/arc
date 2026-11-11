@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/httpadapter
-- Proof: go test -count=1 -run '^(TestAGoHandlerAnswersACallThroughARelay|TestLargeBodyOverPipeThroughRelay|TestOlderProviderFallsBackToFrames|TestPipeFailureIsAnError|TestBrokenPipeIsAnError|TestLargeUploadOverPipeThroughRelay|TestOlderProviderUploadFallsBackToFrames|TestUploadPipeFailureIsAnError|TestBrokenUploadPipeIsAnError)$' ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestLargeBodyOverPipeThroughRelay|TestBrokenPipeIsAnError|TestLargeUploadOverPipeThroughRelay|TestBrokenUploadPipeIsAnError|TestAnHTTPExchangeCrossesTheAdapter|TestTheCallerFieldCannotBeForged|TestRefusalBeforeOpenIsConfirmed|TestAPipeThatDoesNotOpenIsAnError)$' ./cmd/arc/ ./sdk/httpadapter/
 - Unverified: No test serves an HTTP program written in a language other than Go. No automated test sends a body on a pipe between two machines, or through the TURN server of a relay. Runs by hand between two machines behind NAT are in section 8.2 of [the direct spec](../direct/SPEC.md). A provider with `ARC_PATH=turn` under `arc serve` gave a path on one machine only. Between two machines behind NAT it gave no path ([#264](https://github.com/gezibash/arc/issues/264)).
 
 One ARC call carries one HTTP exchange. The package `sdk/httpadapter` maps
@@ -429,20 +429,21 @@ What the consumer writes for each failure of a pipe:
 ## 8. Proof
 
 - `go test ./sdk/httpadapter ./apps/http/server` tests both adapters.
-- `TestBundledProviderSessionsThroughCLI` in `cmd/arc` runs `arc-http`
-  through a local relay and the normal CLI.
-- `TestAGoHandlerAnswersACallThroughARelay` in `cmd/arc` runs a Go handler
-  from `httpadapter.New` the same way.
+- `TestHTTPNestedSessionStreamsAndPreservesFinalError` in
+  `apps/http/server` runs the `arc-http` server side.
+- `TestAnHTTPExchangeCrossesTheAdapter` and
+  `TestTheCallerFieldCannotBeForged` in `sdk/httpadapter` run a Go handler
+  from `httpadapter.New`: the status, the headers and the body, and a
+  caller that the request cannot forge.
 - `TestLargeBodyOverPipeThroughRelay` in `cmd/arc` gets 16 MiB from
   `arc-http` through a local relay. The body goes on a pipe on the loopback
   address, and arc names the path. `--path session` and `arc path session`
   send the body in frames.
-- `TestOlderProviderFallsBackToFrames` calls a provider that refuses
-  `direct` as `invalid_request`. In `auto`, arc asks again with no offer.
-  With `--path direct`, arc stops.
-- `TestPipeFailureIsAnError` calls a provider that answers each offer, but
-  no pipe opens. arc makes each attempt and stops with an error. It never
-  asks for the body in frames.
+- `TestAPipeThatDoesNotOpenIsAnError` in `sdk/httpadapter` opens a
+  session whose pipe finds no path, for a download and for an upload. The
+  client stops with an error, and never asks for the body in frames.
+  `TestAFailedRelayAttemptNamesTheTURNServer` in `sdk/direct` checks the
+  error after the last attempt.
 - `TestBrokenPipeIsAnError` breaks the pipe during the body.
 - `TestFifthPipeIsBusy` in `sdk/httpadapter` holds 4 pipes on one provider.
   The fifth offer gets `busy` before the handler runs.
@@ -451,18 +452,13 @@ What the consumer writes for each failure of a pipe:
   `auto`.
 - `TestRefusalBeforeOpenIsConfirmed` in `sdk/httpadapter` gets the
   `invalid_request` refusal before the transport confirms the open. In
-  `auto`, arc asks again with no offer. With `--path direct`, arc stops.
+  `auto`, arc asks again with no offer. With `--path direct`, arc stops. An
+  upload takes the same branch of `OpenSession`.
 - `TestLargeUploadOverPipeThroughRelay` in `cmd/arc` sends 16 MiB to
   `arc-http` through a local relay. The body goes on a pipe, and the
   handler answers with the count and the SHA-256 of the bytes that it got.
   `--path session` sends 1 MiB in frames, because 16 MiB in frames takes
   76 s with `-race`.
-- `TestOlderProviderUploadFallsBackToFrames` sends an upload to a provider
-  that refuses `direct` as `invalid_request`. In `auto`, arc sends the body
-  in frames. With `--path direct`, arc stops.
-- `TestUploadPipeFailureIsAnError` calls a provider that answers each offer,
-  but no pipe opens. arc stops with an error, and reads no byte of its
-  input.
 - `TestBrokenUploadPipeIsAnError` breaks the pipe during the request body.
 - `TestUploadOverPipe`, `TestUploadAnsweredEarly` and
   `TestFifthUploadPipeIsBusy` in `sdk/httpadapter` check `request_bytes`,
