@@ -6,12 +6,8 @@ package architecture
 // function, then lower or remove its entry. A move of a listed function,
 // unchanged, to another file changes only the key of its entry.
 var functionDebt = map[string]int{
-	"adapters/transport/ble/direct.go:Direct.handle":   119,
-	"apps/dm/cmd/arc-dm/watch.go:watch":                101,
-	"apps/exec/server/session.go:server.HandleSession": 165,
-	"apps/transfer/client/client.go:getter.attempt":    126,
-	"core/call/session.go:Server.handleSessionFrame":   127,
-	"core/keys/wire.go:Key.answer":                     106,
-	"core/mail/requests.go:Mail.answer":                128,
-	"sdk/httpadapter/client.go:ClientSession.Copy":     119,
+	"core/call/session.go:Server.handleSessionFrame": 127,
+	"core/keys/wire.go:Key.answer":                   106,
+	"core/mail/requests.go:Mail.answer":              128,
+	"sdk/httpadapter/client.go:ClientSession.Copy":   119,
 }
