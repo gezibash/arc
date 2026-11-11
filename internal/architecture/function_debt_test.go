@@ -10,7 +10,6 @@ var functionDebt = map[string]int{
 	"apps/dm/cmd/arc-dm/watch.go:watch":                  101,
 	"apps/exec/server/session.go:server.HandleSession":   165,
 	"apps/transfer/client/client.go:getter.attempt":      126,
-	"cmd/arc/update.go:update":                           137,
 	"core/call/session.go:Server.handleSessionFrame":     127,
 	"core/keys/wire.go:Key.answer":                       106,
 	"core/mail/requests.go:Mail.answer":                  128,
