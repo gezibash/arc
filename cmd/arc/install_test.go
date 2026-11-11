@@ -15,6 +15,7 @@ import (
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/internal/testrelay"
 	"github.com/gezibash/arc/runtime/catalog"
+	"github.com/gezibash/arc/runtime/homedir"
 )
 
 func arc(t *testing.T, home string, args ...string) error {
@@ -70,7 +71,7 @@ func TestAnnounceReplacesAnAnnouncementOfTheSameSecond(t *testing.T) {
 		if err != nil || len(mine) != 1 {
 			t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
 		}
-		id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+		id, err := loadIdentity(context.Background(), filepath.Join(homedir.CitizensDir(home), mine[0].name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +103,7 @@ func identityOf(t *testing.T, home string) signerIdentity {
 	if err != nil || len(mine) != 1 {
 		t.Fatalf("the home holds %d identities (%v), want 1", len(mine), err)
 	}
-	id, err := loadIdentity(context.Background(), filepath.Join(citizensDir(home), mine[0].name))
+	id, err := loadIdentity(context.Background(), filepath.Join(homedir.CitizensDir(home), mine[0].name))
 	if err != nil {
 		t.Fatal(err)
 	}
