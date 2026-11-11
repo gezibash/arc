@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gezibash/arc/core/session"
-	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/sdk/direct"
 	"github.com/gezibash/arc/sdk/terminal"
 )
@@ -36,9 +35,11 @@ type archiveRecord struct {
 // pipeCaller gets the archive over a pipe. In the policy auto, a
 // provider that has no pipe sends the archive in chunks.
 type pipeCaller struct {
-	caller
-	installs catalog.Installs
-	dial     direct.DialConfig
+	// Requester asks for the chunks of the archive with live calls.
+	Requester
+	// open opens a session of the releases app with the request body.
+	open func(ctx context.Context, body string) (*session.Stream, error)
+	dial direct.DialConfig
 	// path names the path of the archive, after OpenArchive.
 	path string
 }
@@ -54,9 +55,11 @@ func (r *pipeCaller) OpenArchive(ctx context.Context, digest string) (ArchiveRea
 		if err != nil {
 			return "", err
 		}
-		stream, err := r.sess.OpenSessionAddress(ctx, r.installs, "releases+arc://"+r.provider.Hex()+"/releases", string(body), session.ServerStream)
+		stream, err := r.open(ctx, string(body))
 		if err != nil {
-			return "", err
+			// The answer of the provider can end the open before the
+			// transport confirms it. Then the refusal is the error of open.
+			return "", archiveRefusal(err)
 		}
 		current = &pipeArchive{stream: stream, records: json.NewDecoder(stream)}
 		var answer archiveRecord
