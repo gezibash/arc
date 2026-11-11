@@ -22,6 +22,7 @@ import (
 
 // A citizen that adds a relay publishes its NIP-65 relay list there.
 func TestRelayAddPublishesTheNIP65RelayList(t *testing.T) {
+	t.Parallel()
 	url := testrelay.Start(t)
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
@@ -47,6 +48,7 @@ func TestRelayAddPublishesTheNIP65RelayList(t *testing.T) {
 // kind 10013 (docs/storage/SPEC.md, section 7). A relay that is not an ARC
 // relay takes every kind, so it would keep one.
 func TestRelayAddPublishesNoPrivateRelayList(t *testing.T) {
+	t.Parallel()
 	url := testrelay.StartStandard(t)
 	home := t.TempDir()
 	for _, args := range [][]string{{"keys", "gen"}, {"relay", "add", url}} {
@@ -80,6 +82,7 @@ func TestRelayAddPublishesNoPrivateRelayList(t *testing.T) {
 // finds the provider's announcement there, and goes there
 // (docs/delivery/SPEC.md, section 4.10).
 func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
+	t.Parallel()
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)
 	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
@@ -128,6 +131,7 @@ func TestALiveCallGoesToTheReadRelaysOfTheProvider(t *testing.T) {
 // An indexer takes the public relay lists of a citizen, NIP-65 and NIP-17,
 // and they name only the citizen's relays.
 func TestAnIndexerHoldsOnlyThePublicRelayLists(t *testing.T) {
+	t.Parallel()
 	relayURL := testrelay.Start(t)
 	indexer := testrelay.Start(t)
 	home := t.TempDir()
@@ -169,6 +173,7 @@ func TestAnIndexerHoldsOnlyThePublicRelayLists(t *testing.T) {
 // only on an indexer that both use. The live call finds the list there, and
 // goes to the provider's relay.
 func TestALiveCallFindsTheProviderThroughAnIndexer(t *testing.T) {
+	t.Parallel()
 	callerRelay := testrelay.Start(t)
 	providerRelay := testrelay.Start(t)
 	indexer := testrelay.Start(t)
@@ -215,6 +220,7 @@ func TestALiveCallFindsTheProviderThroughAnIndexer(t *testing.T) {
 // A recipient's NIP-17 list is only on an indexer. A direct message still
 // reaches the recipient's inbox relay.
 func TestAMessageFindsTheInboxThroughAnIndexer(t *testing.T) {
+	t.Parallel()
 	senderRelay := testrelay.Start(t)
 	inbox := testrelay.Start(t)
 	indexer := testrelay.Start(t)

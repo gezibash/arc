@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -277,5 +278,29 @@ func TestFifthUploadPipeIsBusy(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatal("the handler ran for the refused offer")
+	}
+}
+
+// TestAPipeThatDoesNotOpenIsAnError opens a session whose pipe finds no
+// path. In auto, that is an error: the client never asks for the body in
+// session frames, for a download or for an upload. Only a provider that
+// has no pipe falls back to frames (TestRefusalBeforeOpenIsConfirmed).
+func TestAPipeThatDoesNotOpenIsAnError(t *testing.T) {
+	for _, request := range []string{"", `{"stream_body":true}`} {
+		var frames int
+		open := func(_ context.Context, body string) (*session.Stream, error) {
+			if !strings.Contains(body, `"direct"`) {
+				frames++
+				return nil, errors.New("asked for frames")
+			}
+			return nil, session.RemoteError(ErrNoPath)
+		}
+		_, err := OpenSession(t.Context(), direct.DialConfig{Policy: direct.Auto, Options: loopback}, request, open)
+		if err == nil || !strings.Contains(err.Error(), "no direct path, and no path through the relay") {
+			t.Errorf("request %q: got %v, want the error of no path", request, err)
+		}
+		if frames != 0 {
+			t.Errorf("request %q: the client asked for frames %d times after a pipe that did not open", request, frames)
+		}
 	}
 }

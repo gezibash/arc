@@ -13,6 +13,7 @@ import (
 // no text ends at once instead of waiting for input (proposal journal-v2,
 // section 4.3: no command waits for a TTY).
 func TestAnAppCommandDoesNotWaitForATerminal(t *testing.T) {
+	t.Parallel()
 	terminal, slave, err := pty.Open()
 	if err != nil {
 		t.Skip("no terminal on this machine:", err)

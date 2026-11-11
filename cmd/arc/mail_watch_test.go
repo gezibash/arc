@@ -13,6 +13,7 @@ import (
 // A provider takes its mail from a watch on the relay. With a tick of one
 // hour, no sync runs during the test, and the mail still arrives at once.
 func TestServeTakesMailFromAWatch(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)

@@ -19,6 +19,7 @@ import (
 // whose first relay is down and whose second relay serves no TURN. The
 // credential comes from the third relay (docs/direct/SPEC.md, section 3.6).
 func TestTURNFromTheFirstRelayThatServesIt(t *testing.T) {
+	t.Parallel()
 	// A relay that is down: nothing listens on its port.
 	gone, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -73,6 +74,7 @@ func TestTURNFromTheFirstRelayThatServesIt(t *testing.T) {
 // TCP, as behind a TLS proxy on port 443. A citizen that cannot send UDP
 // relays only through the second, so the credential comes from it.
 func TestTURNPrefersARelayThatTakesTCP(t *testing.T) {
+	t.Parallel()
 	const tls = "turns:relay.example:443?transport=tcp"
 	serve := func(name string, config turn.Config) string {
 		rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), name+".db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))

@@ -8,6 +8,7 @@ import (
 )
 
 func TestCheckSuccessorRefusesAChannelFileWithoutASequence(t *testing.T) {
+	t.Parallel()
 	target := filepath.Join(t.TempDir(), "stable.json")
 	if err := os.WriteFile(target, []byte(`{"publisher":"p"}`), 0o600); err != nil {
 		t.Fatal(err)

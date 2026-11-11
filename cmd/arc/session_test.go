@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +12,7 @@ import (
 )
 
 func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	url := testrelay.Start(t)
@@ -22,12 +21,7 @@ func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
 		ok(t, home, "", "keys", "gen")
 		ok(t, home, "", "relay", "add", url)
 	}
-	binary := filepath.Join(t.TempDir(), "repl")
-	build := exec.Command("go", "build", "-o", binary, "./testdata/repl")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatal(err)
-	}
+	binary := providerBinary(t, "./testdata/repl")
 	manifest, err := filepath.Abs("testdata/repl/interface.json")
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +94,7 @@ func TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF(t *testing.T) {
 // arc session takes one output mapping, and one that the mode allows. It
 // refuses the others before it opens a session.
 func TestASessionRefusesAMappingThatDoesNotFit(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	for _, c := range []struct {
