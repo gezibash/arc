@@ -72,6 +72,7 @@ func keyerOperations(k nostr.Keyer) map[string]func(context.Context) error {
 }
 
 func TestSignerContextContract(t *testing.T) {
+	t.Parallel()
 	factories := map[string]func(*testing.T) (keys.Signer, keys.Key){
 		"local":  func(*testing.T) (keys.Signer, keys.Key) { k := keys.Generate(); return k, k },
 		"remote": remoteForTest,
@@ -156,6 +157,7 @@ func (k observedKeyer) Nip04Decrypt(ctx context.Context, _ string, _ nostr.PubKe
 }
 
 func TestTimedSignerContract(t *testing.T) {
+	t.Parallel()
 	probe := observedKeyer{}
 	for _, method := range []string{"public_key", "sign", "encrypt", "decrypt", "nip04_encrypt", "nip04_decrypt"} {
 		t.Run(method, func(t *testing.T) {
@@ -198,6 +200,7 @@ func TestTimedSignerContract(t *testing.T) {
 }
 
 func TestRemoteIdentityCancellation(t *testing.T) {
+	t.Parallel()
 	t.Run("before_connect", func(t *testing.T) {
 		home := t.TempDir()
 		ctx, cancel := context.WithCancel(context.Background())

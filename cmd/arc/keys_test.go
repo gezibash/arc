@@ -34,6 +34,7 @@ func ok(t *testing.T, home string, stdin string, args ...string) string {
 // Two identities in one home keep apart what belongs to each key: here, the
 // relays. The first identity is the default; --key picks the other.
 func TestTwoIdentitiesKeepTheirOwnRelays(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	first := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
 	second := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
@@ -56,6 +57,7 @@ func TestTwoIdentitiesKeepTheirOwnRelays(t *testing.T) {
 
 // The name of an identity cannot reach outside the directory of identities.
 func TestAKeyNameCannotLeaveItsDirectory(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	outside := filepath.Join(home, "outside")
@@ -75,6 +77,7 @@ func TestAKeyNameCannotLeaveItsDirectory(t *testing.T) {
 // A key that does not parse leaves nothing behind, and the same key twice is
 // refused.
 func TestKeysAddRefusesABadKeyAndADuplicate(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if _, err := run(t, home, "not a key", "keys", "add"); err == nil {
 		t.Fatal("keys add took a line that is not a key")
@@ -96,6 +99,7 @@ func TestKeysAddRefusesABadKeyAndADuplicate(t *testing.T) {
 // Removing the default identity leaves no default, so the next identity
 // that this machine makes becomes the default.
 func TestRemovingTheDefaultLetsTheNextOneTakeItsPlace(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	gone := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
 	ok(t, home, "", "keys", "remove", gone, "--yes")
@@ -112,6 +116,7 @@ func TestRemovingTheDefaultLetsTheNextOneTakeItsPlace(t *testing.T) {
 
 // apps remove takes out the install that a name runs, and leaves the others.
 func TestToolRemoveTakesOutOneInstall(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	name := strings.Fields(ok(t, home, "", "keys", "gen"))[0]
 	a, b := nostr.Generate().Public().Hex(), nostr.Generate().Public().Hex()
@@ -133,6 +138,7 @@ func TestToolRemoveTakesOutOneInstall(t *testing.T) {
 
 // A capability command takes --key before its name.
 func TestDispatchReadsKey(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	_, err := run(t, home, "", "--key", "nobody-here", "journal", "read", "x")

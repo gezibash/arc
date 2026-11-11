@@ -25,6 +25,7 @@ import (
 // The test reads the raw frames of the relay, because the client library
 // drops an event that does not match the filter before arc sees it.
 func TestRelayServesMailOnlyToTheFullKey(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)

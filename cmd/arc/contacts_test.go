@@ -21,6 +21,7 @@ import (
 // makes no work, writes to bob. arc holds the message, says so on standard
 // error, and lists it. arc contacts add moves it to the inbox.
 func TestContactsReleaseHeldMail(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +85,7 @@ func TestContactsReleaseHeldMail(t *testing.T) {
 
 // A message that this citizen sends puts the recipient on its contact list.
 func TestASendAddsAContact(t *testing.T) {
+	t.Parallel()
 	rl, _, _, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
