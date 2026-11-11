@@ -49,28 +49,10 @@ func bunkerCommand() *cobra.Command {
 }
 
 func serveBunker(command *cobra.Command, _ []string) error {
-	url, _ := command.Flags().GetString("relay")
-	if url == "" {
-		return errors.New("name the relay with --relay")
+	url, p, err := bunkerFlags(command)
+	if err != nil {
+		return err
 	}
-	// A bad URL fails now, and not at each try to reach the relay.
-	if err := checkRelayURL(url); err != nil {
-		return fmt.Errorf("--relay: %w", err)
-	}
-	decrypt, _ := command.Flags().GetString("decrypt")
-	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
-		return fmt.Errorf("--decrypt is none, self or all, not %q", decrypt)
-	}
-	var allowed []nostr.Kind
-	texts, _ := command.Flags().GetStringArray("allow-kind")
-	for _, text := range texts {
-		n, err := strconv.Atoi(text)
-		if err != nil {
-			return fmt.Errorf("--allow-kind %q is not a kind", text)
-		}
-		allowed = append(allowed, nostr.Kind(n))
-	}
-
 	dir, err := home(command)
 	if err != nil {
 		return err
@@ -95,35 +77,16 @@ func serveBunker(command *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	rootRelay := relay.Relay{URL: url, Signer: sess.Signer}
-	if !slices.Contains(sess.URLs, url) {
-		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s is not a relay of this citizen: a new device list reaches the bunker only after a restart; add it with arc relay add", url)))
-	}
 	g := &guard{secret: secret, authorized: map[nostr.PubKey]bool{}}
-	if err := startDevices(command.Context(), sess, rootRelay, g); err != nil {
-		sess.Close()
-		return err
-	}
-	if err := sess.PublishKeyedRoot(command.Context()); err != nil {
-		sess.Close()
-		return err
-	}
-	wraps, err := sess.Node.Store.Query(citizen.RootFilter(sess.Key.Public))
-	if err != nil {
-		sess.Close()
-		return err
-	}
-	for _, wrap := range wraps {
-		if err := rootRelay.Send(command.Context(), wrap); err != nil {
-			fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the keyed root did not reach %s: %v", url, err)))
-		}
-	}
+	err = prepareBunker(command.Context(), sess, url, g)
 	sess.Close()
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(command.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	r := relay.Relay{URL: url}
 	pk := id.key.Public
 
 	// With a device list, the secret admits nobody, so the URI leaves it out.
@@ -133,11 +96,70 @@ func serveBunker(command *cobra.Command, _ []string) error {
 		fmt.Fprintf(command.OutOrStdout(), "bunker://%s?relay=%s&secret=%s\n", pk.Hex(), terminal.EscapeLine(url), secret)
 	}
 	go watchDevices(ctx, relay.Relay{URL: url, Signer: remote}, remote, g, log)
+	p.admit = g.refusal
+	return watchRequests(ctx, url, pk, remote, p, g.authorize, log)
+}
+
+// bunkerFlags reads the relay and the policy of arc bunker.
+func bunkerFlags(command *cobra.Command) (string, policy, error) {
+	url, _ := command.Flags().GetString("relay")
+	if url == "" {
+		return "", policy{}, errors.New("name the relay with --relay")
+	}
+	// A bad URL fails now, and not at each try to reach the relay.
+	if err := checkRelayURL(url); err != nil {
+		return "", policy{}, fmt.Errorf("--relay: %w", err)
+	}
+	decrypt, _ := command.Flags().GetString("decrypt")
+	if !slices.Contains([]string{"none", "self", "all"}, decrypt) {
+		return "", policy{}, fmt.Errorf("--decrypt is none, self or all, not %q", decrypt)
+	}
+	var allowed []nostr.Kind
+	texts, _ := command.Flags().GetStringArray("allow-kind")
+	for _, text := range texts {
+		n, err := strconv.Atoi(text)
+		if err != nil {
+			return "", policy{}, fmt.Errorf("--allow-kind %q is not a kind", text)
+		}
+		allowed = append(allowed, nostr.Kind(n))
+	}
+	return url, policy{kinds: allowed, decrypt: decrypt}, nil
+}
+
+// prepareBunker loads the device list into the guard, and puts the keyed
+// root on the relay of the bunker, before the bunker answers anyone.
+func prepareBunker(ctx context.Context, sess *citizen.Session, url string, g *guard) error {
+	rootRelay := relay.Relay{URL: url, Signer: sess.Signer}
+	if !slices.Contains(sess.URLs, url) {
+		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("%s is not a relay of this citizen: a new device list reaches the bunker only after a restart; add it with arc relay add", url)))
+	}
+	if err := startDevices(ctx, sess, rootRelay, g); err != nil {
+		return err
+	}
+	if err := sess.PublishKeyedRoot(ctx); err != nil {
+		return err
+	}
+	wraps, err := sess.Node.Store.Query(citizen.RootFilter(sess.Key.Public))
+	if err != nil {
+		return err
+	}
+	for _, wrap := range wraps {
+		if err := rootRelay.Send(ctx, wrap); err != nil {
+			fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the keyed root did not reach %s: %v", url, err)))
+		}
+	}
+	return nil
+}
+
+// watchRequests answers the requests that reach the relay of the bunker,
+// and watches again when the relay ends the watch, until ctx ends.
+func watchRequests(ctx context.Context, url string, pk nostr.PubKey, remote keys.Remote, p policy, authorize func(nostr.PubKey, string) bool, log *slog.Logger) error {
+	r := relay.Relay{URL: url}
 	for {
 		requests, err := r.Watch(ctx, nostr.Filter{Kinds: []nostr.Kind{nostr.KindNostrConnect}, Tags: nostr.TagMap{"p": {pk.Hex()}}, Since: nostr.Now()})
 		if err == nil {
 			for request := range requests {
-				response, ok := answer(ctx, remote, request, policy{kinds: allowed, decrypt: decrypt, admit: g.refusal}, g.authorize, log)
+				response, ok := answer(ctx, remote, request, p, authorize, log)
 				if ok {
 					if err := r.Send(ctx, response); err != nil {
 						log.Warn("the answer did not reach the relay", "error", err)
