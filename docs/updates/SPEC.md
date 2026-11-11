@@ -373,7 +373,8 @@ start after the swap.
 These tests prove section 3.7, each through a local relay:
 
 ```sh
-go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestOlderReleasesProviderFallsBackToChunks|TestArchivePipeFailureIsAnError|TestBrokenArchivePipeIsAnError|TestBadArchiveOverPipeIsRefused)$' ./cmd/arc/
+go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestOlderReleasesProviderFallsBackToChunks|TestArchivePipeFailureIsAnError|TestBrokenArchivePipeIsAnError)$' ./cmd/arc/
+go test -count=1 -run '^TestStreamedArchiveRequiresSizeHashAndFinalSuccess$' ./runtime/release/
 go test -count=1 -run '^TestArchiveOfferRefusals$' ./apps/releases/server/
 ```
 
