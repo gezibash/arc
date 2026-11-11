@@ -1,4 +1,4 @@
-package main
+package bunker
 
 import (
 	"context"
@@ -51,7 +51,7 @@ func TestTheBunkerRefusesHolderRequests(t *testing.T) {
 		if err := request.Sign(device.Secret); err != nil {
 			t.Fatal(err)
 		}
-		response, ok := answer(ctx, signer, request, policy{decrypt: "all"}, func(nostr.PubKey, string) bool { return true }, log)
+		response, ok := Answer(ctx, signer, request, Policy{Decrypt: "all"}, func(nostr.PubKey, string) bool { return true }, log)
 		if !ok {
 			t.Fatalf("%s: the bunker gave no answer", c.method)
 		}
@@ -99,7 +99,7 @@ func TestTheBunkerKeepsItsRelay(t *testing.T) {
 		}
 		return r.Result, nil
 	}
-	response, ok := answer(ctx, signer, request, policy{}, func(nostr.PubKey, string) bool { return true }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	response, ok := Answer(ctx, signer, request, Policy{}, func(nostr.PubKey, string) bool { return true }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !ok {
 		t.Fatal("no answer")
 	}

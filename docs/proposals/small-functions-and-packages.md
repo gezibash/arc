@@ -128,7 +128,7 @@ one runtime function, and print. The work moves as follows:
 | Work in `cmd/arc` today | Moves to |
 | --- | --- |
 | `serve.go`, `announce.go`, `servelock.go`: host an app, announce it, watch mail and sync | `runtime/host` |
-| `bunker.go`, the guard and device watch of `devices.go` | `runtime/citizen` (the bunker) |
+| `bunker.go`, the guard and device watch of `devices.go` | `runtime/bunker` |
 | `watchMessages` and `sinceFilter` in `message.go` | `runtime/citizen` (the inbox) |
 | `home.go`, `path.go`: find the home and the folder of an identity | `runtime/citizen` (the home) |
 | `update.go`, `update_pipe.go`: choose and apply a release | `runtime/release` |
@@ -153,7 +153,7 @@ one runtime function, and print. The work moves as follows:
 | 5 | `args`; split `bind` | 1 |
 | 6 | split `notebookAction` and `writePage` in place | 2 |
 | 7 | `runtime/host`; split `serve` | 1 |
-| 8–11 | The bunker, the inbox and the home into `runtime/citizen`; the update into `runtime/release`; split `serveBunker`, `watchMessages` and `update` | 3 |
+| 8–11 | The bunker into `runtime/bunker`; the inbox and the home into `runtime/citizen`; the update into `runtime/release`; split `serveBunker`, `watchMessages` and `update` | 3 |
 | 12 | The other 16, one function at a time | 16 |
 
 The counts name the functions on the list today (measured). They add up
