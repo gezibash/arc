@@ -142,3 +142,48 @@ func TestInterruptedExecutionIsNotRepeated(t *testing.T) {
 		t.Fatalf("entry=%+v reply=%+v", entry, reply)
 	}
 }
+
+// TestAClaimOfAnotherProcessIsNotTaken: another process claims a pending
+// request between the first read of this sync and its claim. This sync
+// must leave it to that process: no run, and no reply of outcome_unknown
+// while the other process still runs it.
+func TestAClaimOfAnotherProcessIsNotTaken(t *testing.T) {
+	m, _, key, n := openMail(t, nil)
+	sender := keys.Generate()
+	request := call.RequestRumor(sender, key.Public, call.Request{Body: "increment"}, time.Now())
+	seal, err := private.Seal(context.Background(), sender, key.Public, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = n.Store.Save(seal); err != nil {
+		t.Fatal(err)
+	}
+	id := request.ID.Hex()
+	if err = m.put(inboxBucket, id, incoming{Seal: seal.ID.Hex(), State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	// Serves runs after the first read and before the claim: here the other
+	// process claims the request.
+	m.Serves = func(nostr.Event) bool {
+		if err := m.put(inboxBucket, id, incoming{Seal: seal.ID.Hex(), State: "processing", Started: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		return true
+	}
+	called := false
+	m.OnRequest = func(context.Context, nostr.Event) (call.Reply, error) {
+		called = true
+		return call.Reply{Body: "2"}, nil
+	}
+	report, err := m.Sync(context.Background(), file.Dir{Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry incoming
+	if _, err = m.get(inboxBucket, id, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if called || report.Answered != 0 || entry.State != "processing" || entry.ReplySeal != "" {
+		t.Fatalf("called=%v answered=%d state=%s reply=%q; want the claim of the other process left alone", called, report.Answered, entry.State, entry.ReplySeal)
+	}
+}

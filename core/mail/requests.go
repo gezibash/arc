@@ -78,32 +78,9 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		return err
 	}
 	if entry.Receipt != nil {
-		// A crash on either side of Save leaves enough ciphertext in the
-		// journal to finish receipt without waiting for another delivery.
-		result, err := m.node.Store.Save(*entry.Receipt)
-		if err != nil {
+		refused, err := m.finishReceipt(id, &entry, report)
+		if err != nil || refused {
 			return err
-		}
-		err = m.update(func(tx kv.Tx) error {
-			entry = incoming{}
-			if err := json.Unmarshal(tx.Bucket(inboxBucket).Get([]byte(id)), &entry); err != nil {
-				return err
-			}
-			if entry.Receipt == nil {
-				return nil
-			}
-			entry.Receipt = nil
-			if result.Outcome == store.Refused {
-				entry.State = "completed"
-			}
-			return put(tx, inboxBucket, id, entry)
-		})
-		if err != nil {
-			return err
-		}
-		if result.Outcome == store.Refused {
-			report.Refused = append(report.Refused, id+": "+result.Reason)
-			return nil
 		}
 	}
 	if m.OnRequest == nil || entry.State == "completed" {
@@ -114,31 +91,80 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 	}
 	// Opening the request cannot execute it. A failed read or signer call
 	// must leave pending work retryable. Claim it atomically only afterward.
-	sealID, err := nostr.IDFromHex(entry.Seal)
-	if err != nil {
-		return err
-	}
-	seals, err := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{sealID}})
-	if err != nil {
-		return err
-	}
-	if len(seals) == 0 {
-		return fmt.Errorf("mail: request %s has no saved seal", id)
-	}
-	request, err := private.OpenSeal(ctx, m.key, seals[0])
+	request, err := m.openRequest(ctx, id, entry)
 	if err != nil {
 		return err
 	}
 	if m.Serves != nil && !m.Serves(request) {
 		return nil
 	}
-	var run, uncertain bool
+	run, uncertain, err := m.claim(ctx, id, &entry)
+	if err != nil || !run && !uncertain {
+		return err
+	}
+	return m.reply(ctx, id, &entry, request, run, report)
+}
+
+// finishReceipt saves the receipt that the entry keeps. A crash on either
+// side of Save leaves enough ciphertext in the journal to finish receipt
+// without waiting for another delivery. It says whether the store refused
+// the request, which completes it.
+func (m *Mail) finishReceipt(id string, entry *incoming, report *Report) (bool, error) {
+	result, err := m.node.Store.Save(*entry.Receipt)
+	if err != nil {
+		return false, err
+	}
 	err = m.update(func(tx kv.Tx) error {
+		*entry = incoming{}
+		if err := json.Unmarshal(tx.Bucket(inboxBucket).Get([]byte(id)), entry); err != nil {
+			return err
+		}
+		if entry.Receipt == nil {
+			return nil
+		}
+		entry.Receipt = nil
+		if result.Outcome == store.Refused {
+			entry.State = "completed"
+		}
+		return put(tx, inboxBucket, id, *entry)
+	})
+	if err != nil {
+		return false, err
+	}
+	if result.Outcome == store.Refused {
+		report.Refused = append(report.Refused, id+": "+result.Reason)
+		return true, nil
+	}
+	return false, nil
+}
+
+// openRequest opens the saved seal of the request.
+func (m *Mail) openRequest(ctx context.Context, id string, entry incoming) (nostr.Event, error) {
+	sealID, err := nostr.IDFromHex(entry.Seal)
+	if err != nil {
+		return nostr.Event{}, err
+	}
+	seals, err := m.node.Store.Query(nostr.Filter{IDs: []nostr.ID{sealID}})
+	if err != nil {
+		return nostr.Event{}, err
+	}
+	if len(seals) == 0 {
+		return nostr.Event{}, fmt.Errorf("mail: request %s has no saved seal", id)
+	}
+	return private.OpenSeal(ctx, m.key, seals[0])
+}
+
+// claim marks the request as processing, in one transaction. run says the
+// request was pending, and runs now. uncertain says an earlier run did not
+// record a result.
+func (m *Mail) claim(ctx context.Context, id string, entry *incoming) (bool, bool, error) {
+	var run, uncertain bool
+	err := m.update(func(tx kv.Tx) error {
 		data := tx.Bucket(inboxBucket).Get([]byte(id))
 		if data == nil {
 			return nil
 		}
-		if err := json.Unmarshal(data, &entry); err != nil {
+		if err := json.Unmarshal(data, entry); err != nil {
 			return err
 		}
 		switch entry.State {
@@ -159,14 +185,18 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		}
 		entry.State = "processing"
 		entry.Started = m.now().UTC()
-		return put(tx, inboxBucket, id, entry)
+		return put(tx, inboxBucket, id, *entry)
 	})
-	if err != nil || !run && !uncertain {
-		return err
-	}
+	return run, uncertain, err
+}
+
+// reply runs the request when run says so, and sends the reply. An
+// uncertain run gets outcome_unknown in place of a second run.
+func (m *Mail) reply(ctx context.Context, id string, entry *incoming, request nostr.Event, run bool, report *Report) error {
 	reply := call.Reply{Err: "outcome_unknown a previous execution did not record a result"}
 	if run {
 		budget, cancel := context.WithTimeout(ctx, call.Timeout)
+		var err error
 		reply, err = m.OnRequest(budget, request)
 		cancel()
 		if err != nil {
@@ -188,7 +218,7 @@ func (m *Mail) answer(ctx context.Context, id string, report *Report) error {
 		if err := putCarried(tx, entries); err != nil {
 			return err
 		}
-		return put(tx, inboxBucket, id, entry)
+		return put(tx, inboxBucket, id, *entry)
 	}); err != nil {
 		return err
 	}

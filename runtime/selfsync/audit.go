@@ -54,12 +54,7 @@ func spend(kept string) (nonce []byte, proof string, ok bool) {
 func (r *run) audit(ctx context.Context) error {
 	now := r.s.now()
 	day := now.Unix() / int64(24*time.Hour/time.Second)
-	type sample struct {
-		ids   []string
-		lost  []string
-		fresh map[string][]byte
-	}
-	samples := make([]sample, len(r.sides))
+	samples := make([]auditSample, len(r.sides))
 	r.each(func(i int) {
 		st := &r.states[i]
 		if r.sides[i].Relayed && !r.s.TURN {
@@ -68,88 +63,7 @@ func (r *run) audit(ctx context.Context) error {
 		if now.Sub(time.Unix(st.Audited, 0)) < AuditEvery {
 			return
 		}
-		var ids []string
-		for id, present := range st.Remote {
-			if _, tagged := st.Tags[id]; present && tagged && !st.Lost[id] {
-				ids = append(ids, id)
-			}
-		}
-		slices.Sort(ids)
-		// The storage citizen must not predict the sample.
-		for n := len(ids) - 1; n > 0; n-- {
-			m := int(randomBelow(uint64(n + 1)))
-			ids[n], ids[m] = ids[m], ids[n]
-		}
-		ids = ids[:min(AuditSample, len(ids))]
-		if len(ids) == 0 {
-			return
-		}
-		smp := sample{ids: ids, fresh: map[string][]byte{}}
-		var plain []string
-		// The device forgets each kept proof, and saves that, before it
-		// sends the nonce: a nonce never goes out two times, also after a
-		// crash.
-		type kept struct {
-			nonce []byte
-			proof string
-		}
-		spent := map[string]kept{}
-		for _, id := range ids {
-			if nonce, proof, ok := spend(st.Proofs[id]); ok {
-				spent[id] = kept{nonce, proof}
-				delete(st.Proofs, id)
-				continue
-			}
-			plain = append(plain, id)
-		}
-		if len(spent) > 0 {
-			if err := r.s.save(r.sides[i].Key.Hex(), *st); err != nil {
-				r.fail(i, err)
-				return
-			}
-		}
-		older := false
-		for _, id := range ids {
-			k, ok := spent[id]
-			if !ok {
-				continue
-			}
-			if older {
-				plain = append(plain, id)
-				continue
-			}
-			items, err := r.sides[i].Conn.Audit(ctx, []string{id}, k.nonce)
-			if errors.Is(err, storage.ErrOlderApp) {
-				older = true
-				plain = append(plain, id)
-				continue
-			}
-			if err != nil {
-				r.fail(i, err)
-				return
-			}
-			if items[0].Error != "" || items[0].Proof != k.proof {
-				smp.lost = append(smp.lost, id)
-			}
-		}
-		if len(plain) > 0 {
-			err := r.sides[i].Conn.GetMany(ctx, plain, func(id string, data []byte, err error) error {
-				if err != nil {
-					if storage.IsRefused(err, storage.ErrNotFound) {
-						smp.lost = append(smp.lost, id)
-						return nil
-					}
-					return err
-				}
-				smp.fresh[id] = data
-				return nil
-			})
-			if err != nil {
-				r.fail(i, err)
-				return
-			}
-		}
-		samples[i] = smp
+		samples[i] = r.auditSide(ctx, i)
 	})
 	if err := ctx.Err(); err != nil {
 		return err
@@ -191,6 +105,103 @@ func (r *run) audit(ctx context.Context) error {
 		return nil
 	}
 	return r.mapPieces(ctx)
+}
+
+// auditSample is the audit of one storage citizen: the pieces that it
+// checked, the ones that are lost, and the bytes of each piece that came
+// whole, to open.
+type auditSample struct {
+	ids   []string
+	lost  []string
+	fresh map[string][]byte
+}
+
+// auditSide checks a random sample of the pieces of one storage citizen.
+// A failure of the pipe fails the side, and gives no sample.
+func (r *run) auditSide(ctx context.Context, i int) auditSample {
+	st := &r.states[i]
+	var ids []string
+	for id, present := range st.Remote {
+		if _, tagged := st.Tags[id]; present && tagged && !st.Lost[id] {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	// The storage citizen must not predict the sample.
+	for n := len(ids) - 1; n > 0; n-- {
+		m := int(randomBelow(uint64(n + 1)))
+		ids[n], ids[m] = ids[m], ids[n]
+	}
+	ids = ids[:min(AuditSample, len(ids))]
+	if len(ids) == 0 {
+		return auditSample{}
+	}
+	smp := auditSample{ids: ids, fresh: map[string][]byte{}}
+	var plain []string
+	// The device forgets each kept proof, and saves that, before it
+	// sends the nonce: a nonce never goes out two times, also after a
+	// crash.
+	type kept struct {
+		nonce []byte
+		proof string
+	}
+	spent := map[string]kept{}
+	for _, id := range ids {
+		if nonce, proof, ok := spend(st.Proofs[id]); ok {
+			spent[id] = kept{nonce, proof}
+			delete(st.Proofs, id)
+			continue
+		}
+		plain = append(plain, id)
+	}
+	if len(spent) > 0 {
+		if err := r.s.save(r.sides[i].Key.Hex(), *st); err != nil {
+			r.fail(i, err)
+			return auditSample{}
+		}
+	}
+	older := false
+	for _, id := range ids {
+		k, ok := spent[id]
+		if !ok {
+			continue
+		}
+		if older {
+			plain = append(plain, id)
+			continue
+		}
+		items, err := r.sides[i].Conn.Audit(ctx, []string{id}, k.nonce)
+		if errors.Is(err, storage.ErrOlderApp) {
+			older = true
+			plain = append(plain, id)
+			continue
+		}
+		if err != nil {
+			r.fail(i, err)
+			return auditSample{}
+		}
+		if items[0].Error != "" || items[0].Proof != k.proof {
+			smp.lost = append(smp.lost, id)
+		}
+	}
+	if len(plain) > 0 {
+		err := r.sides[i].Conn.GetMany(ctx, plain, func(id string, data []byte, err error) error {
+			if err != nil {
+				if storage.IsRefused(err, storage.ErrNotFound) {
+					smp.lost = append(smp.lost, id)
+					return nil
+				}
+				return err
+			}
+			smp.fresh[id] = data
+			return nil
+		})
+		if err != nil {
+			r.fail(i, err)
+			return auditSample{}
+		}
+	}
+	return smp
 }
 
 // suspects reports the failures of the audits of today, from the state of
