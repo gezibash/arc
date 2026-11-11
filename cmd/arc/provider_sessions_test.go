@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/url"
 	"os"
@@ -19,7 +16,6 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gezibash/arc/internal/testrelay"
-	"github.com/gezibash/arc/runtime/iface"
 	"golang.org/x/term"
 )
 
@@ -116,107 +112,24 @@ func serveSessionProvider(t *testing.T, ctx context.Context, home, binary, manif
 	})
 	waitServes(t, out, done, 10*time.Second)
 }
-func startSessionCLI(t *testing.T, ctx context.Context, home string, args ...string) (*io.PipeWriter, *output, <-chan error) {
-	t.Helper()
-	input, writer := io.Pipe()
-	t.Cleanup(func() { writer.Close(); input.Close() })
-	cmd := root()
-	cmd.SetArgs(append([]string{"--home", home, "session", "--timeout", "15s"}, args...))
-	cmd.SetIn(input)
-	out := &output{}
-	cmd.SetOut(out)
-	done := make(chan error, 1)
-	go func() { done <- cmd.ExecuteContext(ctx) }()
-	return writer, out, done
-}
-func sessionDone(t *testing.T, done <-chan error, wantExit int) {
-	t.Helper()
-	select {
-	case err := <-done:
-		if wantExit == 0 && err != nil {
-			t.Fatal(err)
-		}
-		if wantExit != 0 {
-			var exit iface.ExitError
-			if !errors.As(err, &exit) || exit.Code != wantExit {
-				t.Fatalf("exit: %v", err)
-			}
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("session did not finish")
-	}
-}
-func TestBundledProviderSessionsThroughCLI(t *testing.T) {
+
+// arc session --tty runs under a real terminal: it forwards the size and
+// the raw input to an exec session, and puts the terminal back as it found
+// it when the program ends. The apps that serve sessions are tested in
+// their own packages; TestCLISessionKeepsStateAndProducesOutputBeforeInputEOF
+// runs a session through a relay and the normal CLI.
+func TestATerminalSessionRestoresTheTerminalThroughCLI(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
 	consumer, key := providerHome(t, relay)
-	sqlHome, sqlKey := providerHome(t, relay)
-	httpHome, httpKey := providerHome(t, relay)
-	sqlConfig := filepath.Join(t.TempDir(), "sqlite.json")
-	data, _ := json.Marshal(map[string]any{"databases": map[string]any{"main": map[string]any{"path": filepath.Join(t.TempDir(), "main.db"), "grants": map[string]string{key: "write", httpKey: "read"}}}})
-	if err := os.WriteFile(sqlConfig, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	serveSessionProvider(t, ctx, sqlHome, programWith(t, providerBinary(t, "../../apps/sqlite/cmd/arc-sqlite"), "SQLITE_CONFIG="+sqlConfig), "../../apps/sqlite/manifest.json")
-	ok(t, consumer, "", "install", sqlKey, "--yes")
-	input, out, done := startSessionCLI(t, ctx, consumer, "sqlite+arc://"+sqlKey+"/main")
-	if !waitFor(out, `"type":"ready"`, 5*time.Second) {
-		t.Fatal(out.String())
-	}
-	io.WriteString(input, "CREATE TEMP TABLE local(n);\nINSERT INTO local VALUES(42);\nSELECT n FROM local;\n")
-	if !waitFor(out, `"row":[42]`, 5*time.Second) {
-		t.Fatalf("SQL lost state: %s", out.String())
-	}
-	input.Close()
-	sessionDone(t, done, 0)
-	// A second participant consumes SQLite through the hosted HTTP session API.
-	ok(t, httpHome, "", "install", sqlKey, "--yes")
-	serveSessionProvider(t, ctx, httpHome, providerBinary(t, "../../apps/http/cmd/arc-http"), "testdata/streaming-http/interface.json", providerBinary(t, "./testdata/streaming-http"))
-	ok(t, consumer, "", "install", httpKey, "--yes")
-	input, out, done = startSessionCLI(t, ctx, consumer, "--http", "--mode", "server_stream", "http+arc://"+httpKey+"/events")
-	if !waitFor(out, "data: first", 5*time.Second) {
-		t.Fatalf("SSE did not stream: %s", out.String())
-	}
-	sessionDone(t, done, 0)
-	if !strings.Contains(out.String(), "data: second") {
-		t.Fatal(out.String())
-	}
-	input.Close()
-	input, out, done = startSessionCLI(t, ctx, consumer, "--websocket", "http+arc://"+httpKey+"/socket")
-	if !waitFor(out, "ready", 5*time.Second) {
-		t.Fatal(out.String())
-	}
-	io.WriteString(input, "echo over ARC\n")
-	if !waitFor(out, "echo over ARC", 5*time.Second) {
-		t.Fatal(out.String())
-	}
-	input.Close()
-	sessionDone(t, done, 0)
-	nested, _ := json.Marshal(map[string]string{"query": url.Values{"address": {"sqlite+arc://" + sqlKey + "/main"}, "body": {"SELECT 99"}}.Encode()})
-	input, out, done = startSessionCLI(t, ctx, consumer, "--http", "--mode", "server_stream", "http+arc://"+httpKey+"/nested", string(nested))
-	sessionDone(t, done, 0)
-	input.Close()
-	if !strings.Contains(out.String(), `"row":[99]`) {
-		t.Fatalf("nested SQL: %s", out.String())
-	}
 	execHome, execKey := providerHome(t, relay)
 	config := filepath.Join(t.TempDir(), "exec.json")
-	data, _ = json.Marshal(map[string]any{"grants": []string{key}, "cwd": t.TempDir()})
+	data, _ := json.Marshal(map[string]any{"grants": []string{key}, "cwd": t.TempDir()})
 	os.WriteFile(config, data, 0600)
 	serveSessionProvider(t, ctx, execHome, programWith(t, providerBinary(t, "../../apps/exec/cmd/arc-exec"), "EXEC_CONFIG="+config), "../../apps/exec/manifest.json")
 	ok(t, consumer, "", "install", execKey, "--yes")
-	input, out, done = startSessionCLI(t, ctx, consumer, "--exec", "exec+arc://"+execKey+"/", `{"script":"printf ready; read word; printf '<%s>' \"$word\"; exit 7"}`)
-	if !waitFor(out, "ready", 5*time.Second) {
-		t.Fatal(out.String())
-	}
-	io.WriteString(input, "interactive\n")
-	sessionDone(t, done, 7)
-	input.Close()
-	if !strings.Contains(out.String(), "<interactive>") {
-		t.Fatal(out.String())
-	}
 	// The actual CLI runs under a terminal and forwards its size and raw input.
 	arc := providerBinary(t, ".")
 	command := exec.CommandContext(ctx, "sh", "-c", `"$@"; result=$?; printf "\ntty-finished\n"; read stop; exit "$result"`, "sh", arc, "--home", consumer, "session", "--tty", "--timeout", "10s", "exec+arc://"+execKey+"/", `{"script":"stty -echo; printf tty-ready; read word; printf 'tty-%s' \"$word\""}`)
@@ -268,21 +181,6 @@ func TestBundledProviderSessionsThroughCLI(t *testing.T) {
 	<-copied
 	if !strings.Contains(terminalOut.String(), "tty-answer") {
 		t.Fatal(terminalOut.String())
-	}
-	relHome, relKey := providerHome(t, relay)
-	root := t.TempDir()
-	os.Mkdir(filepath.Join(root, "blobs"), 0700)
-	archive := strings.Repeat("archive", 10000)
-	digest := sha256.Sum256([]byte(archive))
-	hexDigest := hex.EncodeToString(digest[:])
-	os.WriteFile(filepath.Join(root, "blobs", hexDigest+".tar.gz"), []byte(archive), 0600)
-	serveSessionProvider(t, ctx, relHome, programWith(t, providerBinary(t, "../../apps/releases/cmd/arc-releases"), "RELEASES_ROOT="+root), "../../apps/releases/manifest.json")
-	ok(t, consumer, "", "install", relKey, "--yes")
-	input, out, done = startSessionCLI(t, ctx, consumer, "--mode", "server_stream", "releases+arc://"+relKey+"/releases", `{"op":"archive","digest":"sha256:`+hexDigest+`"}`)
-	sessionDone(t, done, 0)
-	input.Close()
-	if out.String() != archive {
-		t.Fatalf("archive bytes: %d", len(out.String()))
 	}
 }
 

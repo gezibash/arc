@@ -173,8 +173,9 @@ func TestServeAnnouncesAfterTheNewestAnnouncement(t *testing.T) {
 }
 
 // While no relay answers, arc serve signs no announcement: it cannot know
-// the newest. It says so once. When the relay comes up, holding one from 2
-// seconds ahead, arc serve signs after it (#422).
+// the newest. It says so once, and says nothing else: the warnings of each
+// watch and of the relay list stay quiet (#445). When the relay comes up,
+// holding one from 2 seconds ahead, arc serve signs after it (#422).
 func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -201,9 +202,15 @@ func TestServeSignsNothingBeforeARelayAnswers(t *testing.T) {
 	if !waitFor(errs, "is not announced yet: no relay has answered", 5*time.Second) {
 		t.Fatalf("arc serve did not say that it waits: %q", out.String())
 	}
+	// One retry of the watch and of the announcement is 3 s.
 	time.Sleep(4 * time.Second)
 	if n := strings.Count(errs.String(), "is not announced yet"); n != 1 {
 		t.Errorf("arc serve said %d times that it waits, want once", n)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(errs.String()), "\n") {
+		if !strings.Contains(line, "is not announced yet") {
+			t.Errorf("while no relay answered, arc serve said %q, want only that it waits", line)
+		}
 	}
 	up()
 	if !waitFor(out, "serves", 15*time.Second) {
@@ -242,33 +249,5 @@ func TestAnnounceRefusesWithNoRelay(t *testing.T) {
 	batch, err := (relay.Relay{URL: url}).Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{identityOf(t, home).key.Public}})
 	if err != nil || len(batch.Events) != 0 {
 		t.Errorf("the refused announcement went out later: %d, %v", len(batch.Events), err)
-	}
-}
-
-// While its only relay is down, arc serve says one line, that it waits:
-// the warnings of each watch and of the relay list stay quiet (#445).
-func TestServeSaysOneLineWhileNoRelayAnswers(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	if err := arc(t, home, "keys", "gen"); err != nil {
-		t.Fatal(err)
-	}
-	if err := arc(t, home, "relay", "add", "ws://"+deadAddress(t)); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	_, out, done := servingWithErrors(t, ctx, home)
-	time.Sleep(8 * time.Second)
-	cancel()
-	<-done
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	var other []string
-	for _, line := range lines {
-		if !strings.Contains(line, "is not announced yet") && !strings.Contains(line, "the service is stopping") {
-			other = append(other, line)
-		}
-	}
-	if len(other) != 0 || !strings.Contains(out.String(), "is not announced yet") {
-		t.Errorf("arc serve with its only relay down said %q, want only that it waits", out.String())
 	}
 }
