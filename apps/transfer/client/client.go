@@ -239,35 +239,8 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 				finish(fmt.Errorf("the sender stopped: %s", m.Data))
 				return
 			}
-			// The sender says ok only after the size, the SHA-256 and
-			// the rename pass, so that it records no delivery of bytes
-			// that this end refused. The get ends before the sender reads
-			// ok and closes the connection.
 			ending.Store(true)
-			if g.part != nil {
-				beforeFinish()
-				if err := g.part.Finish(); err != nil {
-					switch {
-					case errors.Is(err, files.ErrWrongBytes):
-						finish(fmt.Errorf("%w: %w", errRefused, err))
-					case errors.Is(err, files.ErrEarlyEnd):
-						finish(err)
-					default:
-						// The bytes can be right: this end could not keep them.
-						finish(fmt.Errorf("%w: %w", errNotKept, err))
-					}
-					_ = dc.SendText("refused: " + files.Refusal(err))
-					return
-				}
-			}
-			// A sender that gave up waiting has closed: then the ok does
-			// not go, and the get tells the sender again at its end. An
-			// ok that a test drops counts as sent, as a lost one does.
-			if !dropOK() && (gone.Load() || dc.SendText("ok") != nil) {
-				g.unconfirmed.Store(true)
-			}
-			afterOK()
-			finish(nil)
+			g.end(dc, &gone, finish)
 			return
 		}
 		if g.part == nil {
@@ -287,30 +260,7 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 		}
 	})
 
-	local, err := pc.CreateOffer(nil)
-	if err == nil {
-		local, err = direct.Describe(pc, local)
-	}
-	if err != nil {
-		return "", err
-	}
-	stun, err := direct.OfferSTUN(ctx, options, local)
-	if err != nil {
-		return "", err
-	}
-	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.offset(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
-	if err != nil {
-		return "", err
-	}
-	reply, err := call(ctx, g.Arc, g.sender, string(body))
-	if err != nil {
-		return "", err
-	}
-	var remote files.Answer
-	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 {
-		return "", fmt.Errorf("the sender gave no answer: %.200q", reply)
-	}
-	if err := pc.SetRemoteDescription(remote.SDP); err != nil {
+	if err := g.signal(ctx, pc, options, hold); err != nil {
 		return "", err
 	}
 
@@ -337,6 +287,66 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 	case <-time.After(2 * time.Second):
 	}
 	return path, nil
+}
+
+// end checks the bytes when the sender says end. The sender says ok only
+// after the size, the SHA-256 and the rename pass, so that it records no
+// delivery of bytes that this end refused. The get ends before the sender
+// reads ok and closes the connection.
+func (g *getter) end(dc *webrtc.DataChannel, gone *atomic.Bool, finish func(error)) {
+	if g.part != nil {
+		beforeFinish()
+		if err := g.part.Finish(); err != nil {
+			switch {
+			case errors.Is(err, files.ErrWrongBytes):
+				finish(fmt.Errorf("%w: %w", errRefused, err))
+			case errors.Is(err, files.ErrEarlyEnd):
+				finish(err)
+			default:
+				// The bytes can be right: this end could not keep them.
+				finish(fmt.Errorf("%w: %w", errNotKept, err))
+			}
+			_ = dc.SendText("refused: " + files.Refusal(err))
+			return
+		}
+	}
+	// A sender that gave up waiting has closed: then the ok does not go,
+	// and the get tells the sender again at its end. An ok that a test
+	// drops counts as sent, as a lost one does.
+	if !dropOK() && (gone.Load() || dc.SendText("ok") != nil) {
+		g.unconfirmed.Store(true)
+	}
+	afterOK()
+	finish(nil)
+}
+
+// signal sends the offer of the connection to the sender, with the offset
+// to go on from, and takes its answer.
+func (g *getter) signal(ctx context.Context, pc *webrtc.PeerConnection, options direct.Options, hold time.Duration) error {
+	local, err := pc.CreateOffer(nil)
+	if err == nil {
+		local, err = direct.Describe(pc, local)
+	}
+	if err != nil {
+		return err
+	}
+	stun, err := direct.OfferSTUN(ctx, options, local)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.offset(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
+	if err != nil {
+		return err
+	}
+	reply, err := call(ctx, g.Arc, g.sender, string(body))
+	if err != nil {
+		return err
+	}
+	var remote files.Answer
+	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 {
+		return fmt.Errorf("the sender gave no answer: %.200q", reply)
+	}
+	return pc.SetRemoteDescription(remote.SDP)
 }
 
 // call makes the ARC call to the transfer app of a citizen.

@@ -6,10 +6,6 @@ package architecture
 // function, then lower or remove its entry. A move of a listed function,
 // unchanged, to another file changes only the key of its entry.
 var functionDebt = map[string]int{
-	"adapters/transport/ble/direct.go:Direct.handle":     119,
-	"apps/dm/cmd/arc-dm/watch.go:watch":                  101,
-	"apps/exec/server/session.go:server.HandleSession":   165,
-	"apps/transfer/client/client.go:getter.attempt":      126,
 	"runtime/citizen/storagesync.go:Session.SyncStorage": 253,
 	"runtime/selfsync/audit.go:run.audit":                141,
 	"runtime/selfsync/repair.go:run.repair":              107,
