@@ -214,7 +214,11 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/race"
           if [ "$PART" = packages ]; then
-            go test -count=1 $(go list ./... | grep -v '/internal/proof$')
+            go test -count=1 $(go list ./... | grep -v -e '/internal/proof$' -e '/cmd/arc$')
+            # Each test of cmd/arc starts relays and arc processes. Under the
+            # race detector, several at once on this runner time out, so
+            # they run one at a time here, as before they ran in parallel.
+            go test -count=1 -parallel 1 ./cmd/arc/
           else
             .github/scripts/proof-shards.sh run "$PART"
           fi
