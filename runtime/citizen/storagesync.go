@@ -34,12 +34,69 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	if listed && !sess.Remote {
 		list = sess.pruneStorageList(ctx, list, cfg)
 	}
-	installs, err := storageInstalls(cfg.Installs)
+	targets, err := storageTargets(cfg.Installs, list, listed)
 	if err != nil {
 		return err
 	}
-	// A local install that the list does not name syncs as active. A gone
-	// entry whose install is still here gets no sync.
+	if len(targets) == 0 {
+		fmt.Fprintln(cfg.Out, "self data stays on this machine: no storage citizen; install one with arc install <key> storage")
+		return nil
+	}
+	syncer, err := sess.storageSyncer(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	// Each pipe opens at the same time. Then one sync lists each storage
+	// citizen, reads the pieces that this machine lacks, and puts the
+	// pieces that the storage citizens lack.
+	start := time.Now()
+	opened := make([]opening, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Go(func() { opened[i] = sess.openOne(ctx, cfg, syncer, t) })
+	}
+	wg.Wait()
+	defer func() {
+		for _, o := range opened {
+			if o.conn != nil {
+				o.conn.Close()
+			}
+		}
+	}()
+	sides, err := sidesOf(targets, opened)
+	if err != nil {
+		return err
+	}
+	report, err := syncer.SyncAll(ctx, sides)
+
+	var failed []error
+	if err != nil {
+		failed = append(failed, err)
+		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
+	}
+	sideFailed, empty, usages := sess.reportSides(ctx, cfg, targets, opened, report, start, listed)
+	failed = append(failed, sideFailed...)
+	if len(empty) > 0 {
+		if err := sess.markGone(ctx, cfg, list, targets, opened, usages, empty); err != nil {
+			failed = append(failed, err)
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
+		}
+	}
+	failed = append(failed, sess.reportSync(cfg, report, targets, opened)...)
+	if report.Kept != nil {
+		sess.moveDrafts(ctx, cfg, report.Kept)
+	}
+	return errors.Join(failed...)
+}
+
+// storageTargets are the storage citizens to sync with. A local install
+// that the list does not name syncs as active. A gone entry whose install
+// is still here gets no sync.
+func storageTargets(all catalog.Installs, list storage.List, listed bool) ([]target, error) {
+	installs, err := storageInstalls(all)
+	if err != nil {
+		return nil, err
+	}
 	var targets []target
 	for _, install := range installs {
 		state := storage.StateActive
@@ -52,10 +109,12 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 			targets = append(targets, target{install, state})
 		}
 	}
-	if len(targets) == 0 {
-		fmt.Fprintln(cfg.Out, "self data stays on this machine: no storage citizen; install one with arc install <key> storage")
-		return nil
-	}
+	return targets, nil
+}
+
+// storageSyncer makes the syncer of self data, with the keys and the device
+// list that it asks for once for all storage citizens.
+func (sess *Session) storageSyncer(ctx context.Context, cfg SelfSync) (*selfsync.Syncer, error) {
 	// A machine that holds the citizen key signs with it. It is the signer,
 	// and is on no device list. A device that signs through the signer
 	// uses its device key.
@@ -63,7 +122,7 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	if !sess.Remote {
 		h, err := sess.holder()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		signer = h
 	}
@@ -83,9 +142,9 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 	newest, err := sess.newestSelfKeys(ctx)
 	if err != nil {
 		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: the keys of the blobs did not come, so no storage citizen synced: %v", err)))
-		return err
+		return nil, err
 	}
-	syncer := &selfsync.Syncer{
+	return &selfsync.Syncer{
 		Citizen: sess.Key.Public,
 		Device:  signer,
 		Store:   sess.store,
@@ -100,29 +159,17 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		Repair:  cfg.Repair,
 		// On the path turn, each pipe goes through TURN, so a rebuild may too.
 		TURN: cfg.RepairTURN || cfg.Path == direct.RelayOnly,
-	}
-	// Each pipe opens at the same time. Then one sync lists each storage
-	// citizen, reads the pieces that this machine lacks, and puts the
-	// pieces that the storage citizens lack.
-	start := time.Now()
-	opened := make([]opening, len(targets))
-	var wg sync.WaitGroup
-	for i, t := range targets {
-		wg.Go(func() { opened[i] = sess.openOne(ctx, cfg, syncer, t) })
-	}
-	wg.Wait()
-	defer func() {
-		for _, o := range opened {
-			if o.conn != nil {
-				o.conn.Close()
-			}
-		}
-	}()
+	}, nil
+}
+
+// sidesOf gives each storage citizen as a side of the sync, with its pipe
+// when one opened.
+func sidesOf(targets []target, opened []opening) ([]selfsync.Side, error) {
 	sides := make([]selfsync.Side, len(targets))
 	for i, t := range targets {
 		key, err := nostr.PubKeyFromHex(t.install.Provider)
 		if err != nil {
-			return fmt.Errorf("%s: %w", t.install.As, err)
+			return nil, fmt.Errorf("%s: %w", t.install.As, err)
 		}
 		sides[i] = selfsync.Side{Key: key, Label: t.install.As, Active: t.state == storage.StateActive}
 		if opened[i].conn != nil {
@@ -130,13 +177,14 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 			sides[i].Relayed = opened[i].conn.Path == "relay"
 		}
 	}
-	report, err := syncer.SyncAll(ctx, sides)
+	return sides, nil
+}
 
+// reportSides prints one line for each storage citizen, in the order of the
+// installs. It gives the failures, the storage citizens that hold no piece
+// and that the signer marks gone, and the usage of each.
+func (sess *Session) reportSides(ctx context.Context, cfg SelfSync, targets []target, opened []opening, report selfsync.Report, start time.Time, listed bool) ([]error, []int, []*storage.Usage) {
 	var failed []error
-	if err != nil {
-		failed = append(failed, err)
-		fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
-	}
 	var empty []int
 	usages := make([]*storage.Usage, len(opened))
 	for i, o := range opened {
@@ -193,12 +241,13 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 			fmt.Fprintf(cfg.Out, "%s holds no piece now; run arc keys storage rm %s --gone on the signer\n", as, as)
 		}
 	}
-	if len(empty) > 0 {
-		if err := sess.markGone(ctx, cfg, list, targets, opened, usages, empty); err != nil {
-			failed = append(failed, err)
-			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("self data: %v", err)))
-		}
-	}
+	return failed, empty, usages
+}
+
+// reportSync prints the summary of the sync, and gives its failures: the
+// records that wait, and the blobs that cannot be read now.
+func (sess *Session) reportSync(cfg SelfSync, report selfsync.Report, targets []target, opened []opening) []error {
+	var failed []error
 	fmt.Fprintf(cfg.Out, "self data: took %d records, already held %d", report.Received, report.Held)
 	if report.T > 0 {
 		fmt.Fprintf(cfg.Out, ", coded %d new records into pieces, %d of %d rebuild each", report.Sent, report.K, report.T)
@@ -216,7 +265,23 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		failed = append(failed, fmt.Errorf("%d records wait", report.Waiting))
 		fmt.Fprintf(cfg.Errs, "self data: %d records wait: a new blob needs %d storage citizens that answer; the next sync puts them\n", report.Waiting, report.K)
 	}
-	rep := report.Repair
+	reportRepair(cfg, report.Repair, targets, opened)
+	if report.Short > 0 {
+		fmt.Fprintf(cfg.Out, "self data: %d blobs have fewer than k pieces of one seal on the storage citizens: a deletion that did not end, or lost pieces; repair ends them\n", report.Short)
+	}
+	if n := len(report.Unreadable); n > 0 {
+		failed = append(failed, fmt.Errorf("%d blobs cannot be read now", n))
+		fmt.Fprintf(cfg.Errs, "self data: %d blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again\n", n)
+		for _, reason := range report.Unreadable {
+			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("  unreadable %s", reason)))
+		}
+	}
+	return failed
+}
+
+// reportRepair says what the repair did, or, with no repair, what waits
+// for one.
+func reportRepair(cfg SelfSync, rep selfsync.RepairReport, targets []target, opened []opening) {
 	if cfg.Repair {
 		// The blobs of a deletion of parts that no page names get the words
 		// of journal delete, not those of replaced records.
@@ -263,20 +328,6 @@ func (sess *Session) SyncStorage(ctx context.Context, cfg SelfSync) error {
 		fmt.Fprintf(cfg.Errs, "self data: the repair of %d blobs waits for a direct path: the pipe to %s goes through TURN; arc sync --repair --turn allows TURN\n",
 			rep.WaitDirect, strings.Join(relayed, ", "))
 	}
-	if report.Short > 0 {
-		fmt.Fprintf(cfg.Out, "self data: %d blobs have fewer than k pieces of one seal on the storage citizens: a deletion that did not end, or lost pieces; repair ends them\n", report.Short)
-	}
-	if n := len(report.Unreadable); n > 0 {
-		failed = append(failed, fmt.Errorf("%d blobs cannot be read now", n))
-		fmt.Fprintf(cfg.Errs, "self data: %d blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again\n", n)
-		for _, reason := range report.Unreadable {
-			fmt.Fprintln(cfg.Errs, terminal.EscapeLine(fmt.Sprintf("  unreadable %s", reason)))
-		}
-	}
-	if report.Kept != nil {
-		sess.moveDrafts(ctx, cfg, report.Kept)
-	}
-	return errors.Join(failed...)
 }
 
 // target is one storage citizen of a sync, with its state in the storage

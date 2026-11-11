@@ -129,9 +129,38 @@ func (r *run) repair(ctx context.Context) error {
 			return err
 		}
 	}
-	records, err := Records(r.s.Store, r.s.Citizen)
+	jobs, err := r.planJobs(usable)
 	if err != nil {
 		return err
+	}
+	defer r.countOld()
+	if !r.s.Repair {
+		for _, j := range jobs {
+			if j.unnamed {
+				r.report.Repair.Unnamed++
+			} else if j.replaced {
+				r.report.Repair.Replaced++
+			} else {
+				r.report.Repair.Pending++
+			}
+		}
+		return nil
+	}
+	sortJobs(jobs)
+	// One sync moves at most migrateMax blobs of format 1. The next sync
+	// moves the rest.
+	if n := slices.IndexFunc(jobs, func(j *job) bool { return j.migrate }); n >= 0 && len(jobs)-n > migrateMax {
+		jobs = jobs[:n+migrateMax]
+	}
+	return r.runRepair(ctx, jobs, usable(r.s.TURN))
+}
+
+// planJobs plans a job for each blob that needs one, on the sides that
+// repair may use, and counts what waits for a direct path.
+func (r *run) planJobs(usable func(turn bool) func(int) bool) ([]*job, error) {
+	records, err := Records(r.s.Store, r.s.Citizen)
+	if err != nil {
+		return nil, err
 	}
 	local := make(map[string]*nostr.Event, len(records))
 	for n := range records {
@@ -157,23 +186,14 @@ func (r *run) repair(ctx context.Context) error {
 			jobs = append(jobs, j)
 		}
 	}
-	defer r.countOld()
-	if !r.s.Repair {
-		for _, j := range jobs {
-			if j.unnamed {
-				r.report.Repair.Unnamed++
-			} else if j.replaced {
-				r.report.Repair.Replaced++
-			} else {
-				r.report.Repair.Pending++
-			}
-		}
-		return nil
-	}
-	// The blobs of replaced records go first: they need no bytes, and they
-	// free quota for the puts. Then the blobs with the fewest spare pieces.
-	// A blob of format 1 goes after each blob that can lose a piece: its
-	// whole copies still serve.
+	return jobs, nil
+}
+
+// sortJobs puts the blobs of replaced records first: they need no bytes,
+// and they free quota for the puts. Then the blobs with the fewest spare
+// pieces. A blob of format 1 goes after each blob that can lose a piece:
+// its whole copies still serve.
+func sortJobs(jobs []*job) {
 	slices.SortFunc(jobs, func(a, b *job) int {
 		if a.replaced != b.replaced {
 			if a.replaced {
@@ -192,12 +212,13 @@ func (r *run) repair(ctx context.Context) error {
 		}
 		return strings.Compare(a.id, b.id)
 	})
-	// One sync moves at most migrateMax blobs of format 1. The next sync
-	// moves the rest.
-	if n := slices.IndexFunc(jobs, func(j *job) bool { return j.migrate }); n >= 0 && len(jobs)-n > migrateMax {
-		jobs = jobs[:n+migrateMax]
-	}
-	// Repair reads and writes only on the pipes that it may use.
+}
+
+// runRepair runs the jobs. Repair reads and writes only on the pipes that
+// it may use. The deletions go first, on each open pipe: they move no
+// bytes of a blob. Then the other jobs, on the pipes that a rebuild may
+// use.
+func (r *run) runRepair(ctx context.Context, jobs []*job, rebuild func(int) bool) error {
 	open := slices.Clone(r.open)
 	defer func() {
 		for i := range r.open {
@@ -206,8 +227,6 @@ func (r *run) repair(ctx context.Context) error {
 	}()
 	r.repairing = true
 	defer func() { r.repairing = false }()
-	// The deletions go first, on each open pipe: they move no bytes of a
-	// blob. Then the other jobs, on the pipes that a rebuild may use.
 	deletions := 0
 	for deletions < len(jobs) && jobs[deletions].replaced {
 		deletions++
@@ -218,7 +237,7 @@ func (r *run) repair(ctx context.Context) error {
 		}
 	}
 	for i := range r.open {
-		r.open[i] = usable(r.s.TURN)(i)
+		r.open[i] = rebuild(i)
 	}
 	for chunk := range slices.Chunk(jobs[deletions:], getChunk) {
 		if err := r.runJobs(ctx, chunk); err != nil {
