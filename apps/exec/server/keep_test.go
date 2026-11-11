@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +141,7 @@ func TestAttachAfterExitShowsTheExitStatus(t *testing.T) {
 	if err := k.write([]byte("x\n")); err != nil {
 		t.Fatal(err)
 	}
-	<-k.ended
+	ended(t, k)
 
 	second := open(t, s, caller, `{"attach":"gone"}`)
 	if err := second.finish(); err != nil {
@@ -167,7 +170,7 @@ func TestKeptOutputBufferHoldsTheNewestBytes(t *testing.T) {
 	if err := k.write([]byte("go\n")); err != nil {
 		t.Fatal(err)
 	}
-	<-k.ended
+	ended(t, k)
 
 	var all strings.Builder
 	all.WriteString("ready\n")
@@ -246,7 +249,7 @@ func TestKeptTerminalKeepsOutputWhileDetached(t *testing.T) {
 	if k.done() {
 		t.Fatal("the terminal process ended with its session")
 	}
-	<-k.ended
+	ended(t, k)
 
 	plain := open(t, s, caller, `{"attach":"tty"}`)
 	if err := plain.finish(); err == nil || err.Error() != "pty_mismatch" {
@@ -334,5 +337,48 @@ func TestKeptOutputBufferJoinsSmallWrites(t *testing.T) {
 	}
 	if total != 64*1024 || next != 100_000 {
 		t.Fatalf("since: %d bytes, next %d", total, next)
+	}
+}
+
+// A key that a session sent reaches the kept process even when the session
+// ends at that moment (#412: the last "w\n" of a session that closed at once
+// was dropped, the script waited for it forever, and the test hung for ten
+// minutes on CI).
+func TestTheLastInputOfAnEndingSessionReachesTheProcess(t *testing.T) {
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rd.Close()
+	k := &keptProcess{input: wr, changed: make(chan struct{})}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("the session ended"))
+	record, err := json.Marshal(execadapter.Record{Type: "stdin", Data: []byte("w\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.pumpInput(ctx, cancel, bytes.NewReader(append(record, '\n')))
+	_ = wr.Close()
+	got, err := io.ReadAll(rd)
+	if err != nil || string(got) != "w\n" {
+		t.Fatalf("the process got %q (%v), want the last input of the session", got, err)
+	}
+}
+
+// ended waits for a kept process to end. A process that waits for input that
+// never came fails the test with what it printed, instead of hanging it.
+func ended(t *testing.T, k *keptProcess) {
+	t.Helper()
+	select {
+	case <-k.ended:
+	case <-time.After(30 * time.Second):
+		k.mu.Lock()
+		chunks, _ := k.output.since(0)
+		k.mu.Unlock()
+		var out strings.Builder
+		for _, chunk := range chunks {
+			out.Write(chunk.data)
+		}
+		t.Fatalf("the kept process %s did not end in 30 s; its output: %q", k.name, out.String())
 	}
 }

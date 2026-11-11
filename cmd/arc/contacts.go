@@ -101,9 +101,9 @@ func contactsCommand() *cobra.Command {
 func contactKeys(text string) ([]nostr.PubKey, error) {
 	var out []nostr.PubKey
 	for part := range strings.SplitSeq(text, ",") {
-		pk, err := nostr.PubKeyFromHex(strings.TrimSpace(part))
+		pk, err := publicKey(strings.TrimSpace(part))
 		if err != nil {
-			return nil, fmt.Errorf("a contact is 64 characters of hex, as arc whoami prints it; separate keys with commas")
+			return nil, fmt.Errorf("the contact %w; separate keys with commas", err)
 		}
 		out = append(out, pk)
 	}

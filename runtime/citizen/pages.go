@@ -79,6 +79,30 @@ func sealedApps(installs catalog.Installs) (map[string]string, error) {
 	return apps, nil
 }
 
+// pageOpener returns the opener of the app of each sealed kind, for the
+// repair of parts that no page names. A kind of no install has none, and
+// repair keeps each part of its drafts.
+func (sess *Session) pageOpener(installs catalog.Installs) func(kind string) (draft.Opener, bool) {
+	apps, err := sealedApps(installs)
+	return func(kind string) (draft.Opener, bool) {
+		app := apps[kind]
+		if err != nil || app == "" {
+			return draft.Opener{}, false
+		}
+		return draft.Opener{
+			Citizen: sess.Key.Public,
+			Keyer:   sess.Signer,
+			Key: func(ctx context.Context, gen uint32) ([32]byte, error) {
+				root, err := sess.DataRootAt(ctx, gen)
+				if err != nil {
+					return [32]byte{}, err
+				}
+				return devices.ContentKey(root, app)
+			},
+		}, true
+	}
+}
+
 func (sess *Session) importPage(ctx context.Context, root devices.Root, app string, wrap nostr.Event) error {
 	opened, err := draft.Open(ctx, sess.Signer, wrap)
 	if err != nil {

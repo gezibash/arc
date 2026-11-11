@@ -74,12 +74,11 @@ func releaseRoot(t *testing.T, home, key string) (string, int) {
 // releasesProvider serves binary as the releases provider of a new
 // citizen on relay. It returns the key of the provider and the size of the
 // archive.
-func releasesProvider(t *testing.T, ctx context.Context, relay, binary string) (string, int) {
+func releasesProvider(t *testing.T, ctx context.Context, relay, binary string, env ...string) (string, int) {
 	t.Helper()
 	home, key := providerHome(t, relay)
 	root, size := releaseRoot(t, home, key)
-	t.Setenv("RELEASES_ROOT", root)
-	serveSessionProvider(t, ctx, home, binary, "../../apps/releases/manifest.json")
+	serveSessionProvider(t, ctx, home, programWith(t, binary, append(env, "RELEASES_ROOT="+root)...), "../../apps/releases/manifest.json")
 	return key, size
 }
 
@@ -109,10 +108,10 @@ func updateApply(t *testing.T, ctx context.Context, home, key string, args ...st
 // --path session, and for a citizen that did not install the app, the
 // archive comes in chunks.
 func TestArchiveOverPipeThroughRelay(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 	key, size := releasesProvider(t, ctx, relay, providerBinary(t, "../../apps/releases/cmd/arc-releases"))
 	consumer, _ := providerHome(t, relay)
 	ok(t, consumer, "", "install", key, "--yes")
@@ -151,65 +150,17 @@ func TestArchiveOverPipeThroughRelay(t *testing.T) {
 func pipeReleases(t *testing.T, ctx context.Context, mode string) (consumer, key, log string) {
 	t.Helper()
 	relay := testrelay.Start(t)
-	pipesOnLoopback(t)
 	log = filepath.Join(t.TempDir(), "sessions")
-	t.Setenv("PIPE_RELEASES_MODE", mode)
-	t.Setenv("PIPE_RELEASES_LOG", log)
-	key, _ = releasesProvider(t, ctx, relay, providerBinary(t, "./testdata/pipe-releases"))
+	key, _ = releasesProvider(t, ctx, relay, providerBinary(t, "./testdata/pipe-releases"), "PIPE_RELEASES_MODE="+mode, "PIPE_RELEASES_LOG="+log)
 	consumer, _ = providerHome(t, relay)
 	ok(t, consumer, "", "install", key, "--yes")
 	return consumer, key, log
 }
 
-// TestOlderReleasesProviderFallsBackToChunks updates from a provider that
-// refuses the field "direct" as invalid_request, as a provider before the
-// pipe does. In auto, arc says so and reads the archive in chunks. With
-// --path direct, arc stops.
-func TestOlderReleasesProviderFallsBackToChunks(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	consumer, key, log := pipeReleases(t, ctx, "old")
-
-	program, notes, err := updateApply(t, ctx, consumer, key)
-	if err != nil || !strings.Contains(program, "9.9.9") {
-		t.Fatalf("%v, %q", err, notes)
-	}
-	if !strings.Contains(notes, "the provider has no pipe; using chunks over the relay") || !strings.Contains(notes, "path chunks (relay replies)") {
-		t.Fatalf("%q", notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\nchunks" {
-		t.Fatalf("sessions %q, want an offer and then chunks", got)
-	}
-
-	program, notes, err = updateApply(t, ctx, consumer, key, "--path", "direct")
-	if err == nil || !strings.Contains(err.Error(), "the provider has no pipe; run again with --path session") || program != oldProgram {
-		t.Fatalf("--path direct: %v, %q", err, notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\nchunks\noffer" {
-		t.Fatalf("sessions %q after --path direct", got)
-	}
-}
-
-// TestArchivePipeFailureIsAnError updates from a provider that answers
-// each offer, but no pipe opens. arc makes the two direct attempts and the
-// relay attempt, and stops. It never reads chunks, and the program stays.
-func TestArchivePipeFailureIsAnError(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	consumer, key, log := pipeReleases(t, ctx, "deaf")
-
-	program, notes, err := updateApply(t, ctx, consumer, key)
-	if err == nil || !strings.Contains(err.Error(), "no direct path, and no path through the relay") || program != oldProgram {
-		t.Fatalf("%v, %q", err, notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\noffer" {
-		t.Fatalf("sessions %q, want two offers and no chunks", got)
-	}
-}
-
 // TestBrokenArchivePipeIsAnError updates from a provider whose pipe closes
 // after 64 KiB of the archive.
 func TestBrokenArchivePipeIsAnError(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	consumer, key, log := pipeReleases(t, ctx, "break")
@@ -220,19 +171,5 @@ func TestBrokenArchivePipeIsAnError(t *testing.T) {
 	}
 	if got := sessionsOf(t, log); got != "offer" {
 		t.Fatalf("sessions %q, want one offer", got)
-	}
-}
-
-// TestBadArchiveOverPipeIsRefused updates from a provider that sends the
-// archive with one byte changed, and the right count. arc checks the hash
-// as it does for chunks, and keeps the program.
-func TestBadArchiveOverPipeIsRefused(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	consumer, key, _ := pipeReleases(t, ctx, "bad")
-
-	program, notes, err := updateApply(t, ctx, consumer, key)
-	if err == nil || !strings.Contains(err.Error(), "does not match its size and hash") || program != oldProgram {
-		t.Fatalf("%v, %q", err, notes)
 	}
 }

@@ -1,73 +1,25 @@
 package iface
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/draft"
-	"github.com/gezibash/arc/internal/search"
+	"github.com/gezibash/arc/runtime/iface/args"
+	"github.com/gezibash/arc/runtime/iface/manifest"
+	"github.com/gezibash/arc/runtime/iface/template"
 )
-
-// Notebook is an application view over sealed pages, not a transport or a
-// second persistence engine. Page and index events use the normal draft core.
-type Notebook struct {
-	Op       string `json:"op"`
-	Kind     string `json:"kind"`
-	D        string `json:"d,omitempty"`
-	Address  string `json:"address,omitempty"`
-	Notebook string `json:"notebook,omitempty"`
-	Prefix   string `json:"prefix,omitempty"`
-	Query    string `json:"query,omitempty"`
-	Syntax   string `json:"syntax,omitempty"`
-	Title    string `json:"title,omitempty"`
-	Page     string `json:"page,omitempty"`
-	From     string `json:"from,omitempty"`
-	To       string `json:"to,omitempty"`
-	Order    string `json:"order,omitempty"`
-	Reverse  string `json:"reverse,omitempty"`
-	Limit    string `json:"limit,omitempty"`
-	Section  string `json:"section,omitempty"`
-}
 
 var notebookPageName = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
 var notebookPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*/[a-z0-9][a-z0-9_.-]*$`)
-
-func (m *Manifest) checkNotebook(n *Notebook, check func(string) error) error {
-	if err := m.checkKind(n.Kind); err != nil {
-		return err
-	}
-	if m.Kinds[n.Kind].NotebookIndex == "" {
-		return errors.New("notebook action requires a notebook_index kind")
-	}
-	if !slices.Contains([]string{"read", "list", "search", "select", "next", "prev", "index", "toc"}, n.Op) {
-		return fmt.Errorf("invalid notebook operation %q", n.Op)
-	}
-	if n.Op == "read" && (n.D == "" || n.Address == "") {
-		return errors.New("notebook read requires d and address")
-	}
-	if (n.Op == "next" || n.Op == "prev") && n.Address == "" {
-		return errors.New("notebook navigation requires address")
-	}
-	if (n.Op == "index" || n.Op == "toc") && n.Notebook == "" {
-		return errors.New("notebook index or toc requires notebook")
-	}
-	for _, text := range []string{n.D, n.Address, n.Notebook, n.Prefix, n.Query, n.Syntax, n.Title, n.Page, n.From, n.To, n.Order, n.Reverse, n.Limit, n.Section} {
-		if err := check(text); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func ordinal(text string) (int64, error) {
 	n, err := strconv.ParseInt(text, 10, 64)
@@ -79,7 +31,7 @@ func ordinal(text string) (int64, error) {
 
 // notebookHeader preserves supplied content and optional metadata. The two
 // timestamps are managed by ARC; caller values cannot change original creation.
-func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (string, error) {
+func (r *run) notebookHeader(p *manifest.Publish, content string, old *draft.Draft) (string, error) {
 	if r.kindOf(p.Kind).NotebookIndex == "" {
 		return content, nil
 	}
@@ -88,24 +40,24 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 		return "", err
 	}
 	for _, key := range []string{"title", "page", "notebook"} {
-		if strings.TrimSpace(str(fields[key])) == "" {
+		if strings.TrimSpace(template.Str(fields[key])) == "" {
 			return "", fmt.Errorf("frontmatter: requires nonempty %q", key)
 		}
 	}
-	if _, err = ordinal(str(fields["page"])); err != nil {
+	if _, err = ordinal(template.Str(fields["page"])); err != nil {
 		return "", err
 	}
-	if !notebookPattern.MatchString(str(fields["notebook"])) {
+	if !notebookPattern.MatchString(template.Str(fields["notebook"])) {
 		return "", errors.New("frontmatter: notebook must be project/notebook")
 	}
-	now := r.env.Now().UTC().Format(time.RFC3339Nano)
+	now := r.env.Now().UTC().Format(timeFormat)
 	created := now
 	if old != nil && !old.Deleted {
 		before, _, err := frontmatter(old.Event.Content)
 		if err != nil {
 			return "", err
 		}
-		if stamp := str(before["created_at"]); stamp != "" {
+		if stamp := template.Str(before["created_at"]); stamp != "" {
 			if _, err = time.Parse(time.RFC3339Nano, stamp); err != nil {
 				return "", errors.New("stored notebook created_at is invalid")
 			}
@@ -113,8 +65,8 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 		} else {
 			// For a historical numbered page, use the earliest available checkpoint.
 			saved := *r
-			saved.values = Values{"notebook_existing_d": old.D}
-			history, err := saved.query(&Query{Kinds: []string{p.Kind}, Authors: "me", D: "{{notebook_existing_d}}", History: true})
+			saved.values = args.Values{"notebook_existing_d": old.D}
+			history, err := saved.query(&manifest.Query{Kinds: []string{p.Kind}, Authors: "me", D: "{{notebook_existing_d}}", History: true})
 			if err != nil {
 				return "", err
 			}
@@ -124,7 +76,7 @@ func (r *run) notebookHeader(p *Publish, content string, old *draft.Draft) (stri
 					first = stamp
 				}
 			}
-			created = time.Unix(first, 0).UTC().Format(time.RFC3339Nano)
+			created = time.Unix(first, 0).UTC().Format(timeFormat)
 		}
 	}
 	header := content[:len(content)-len(body)]
@@ -153,45 +105,82 @@ type notebookPage struct {
 	page                 int64
 	created, updated     time.Time
 	text                 string
+	// entries are the entries of the page, oldest first.
+	entries []pageEntry
+	// base is the address that the head and the entries name, and hid the
+	// id of the head. A lost page has an address of its own,
+	// <base>-<hid>, and checkpoint is the ID of its head, if it has one.
+	base, hid  string
+	lost       bool
+	checkpoint nostr.ID
 }
 
 func (r *run) notebookPages(kind string) ([]notebookPage, error) {
-	entries, err := r.query(&Query{Kinds: []string{kind}, Authors: "me"})
+	entries, err := r.query(&manifest.Query{Kinds: []string{kind}, Authors: "me"})
 	if err != nil {
 		return nil, err
 	}
 	pages := []notebookPage{}
 	for _, e := range entries {
-		address := str(field(e.rec, "tags.d"))
+		address := template.Str(field(e.rec, "tags.d"))
 		slash := strings.LastIndex(address, "/")
 		if slash < 0 || !notebookPattern.MatchString(address[:slash]) {
 			continue
 		}
-		p := notebookPage{entry: e, address: address, book: address[:slash], title: str(field(e.rec, "tags.title"))}
-		fields, _, parseErr := frontmatter(str(e.rec["content"]))
-		if parseErr == nil && str(fields["notebook"])+"/"+str(fields["page"]) == address {
-			p.page, _ = ordinal(str(fields["page"]))
-			p.created, _ = time.Parse(time.RFC3339Nano, str(fields["created_at"]))
-			p.updated, _ = time.Parse(time.RFC3339Nano, str(fields["updated_at"]))
-		}
-		if p.updated.IsZero() {
-			p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()
-		}
-		e.rec["page"] = p.page
-		e.rec["notebook"] = p.book
-		e.rec["created_at"] = stamp(p.created)
-		e.rec["updated_at"] = stamp(p.updated)
-		e.rec["legacy"] = p.page == 0 || p.created.IsZero()
+		p := notebookPage{entry: e, address: address, base: address, hid: template.Str(field(e.rec, "tags.head"))}
+		pageMeta(&p)
 		pages = append(pages, p)
 	}
-	return pages, nil
+	if r.kindOf(kind).NotebookEntry == "" {
+		return pages, nil
+	}
+	return r.attachEntries(kind, pages)
 }
+
+// pageMeta reads the title, the number and the times of a page from its
+// head, and puts them in its record.
+func pageMeta(p *notebookPage) {
+	e := p.entry
+	p.book = p.base[:strings.LastIndex(p.base, "/")]
+	p.title = template.Str(field(e.rec, "tags.title"))
+	fields, _, parseErr := frontmatter(template.Str(e.rec["content"]))
+	if parseErr == nil && template.Str(fields["notebook"])+"/"+template.Str(fields["page"]) == p.base {
+		if !p.lost {
+			p.page, _ = ordinal(template.Str(fields["page"]))
+		}
+		p.created, _ = time.Parse(time.RFC3339Nano, template.Str(fields["created_at"]))
+		p.updated, _ = time.Parse(time.RFC3339Nano, template.Str(fields["updated_at"]))
+	}
+	if p.updated.IsZero() && number(e.rec["created"]) > 0 {
+		p.updated = time.Unix(int64(number(e.rec["created"])), 0).UTC()
+	}
+	if len(p.entries) > 0 {
+		if p.created.IsZero() {
+			p.created = p.entries[0].at()
+		}
+		// The time of an entry is in milliseconds: keep the head's time when
+		// the entry is not later.
+		if newest := p.entries[len(p.entries)-1].at(); newest.After(p.updated) {
+			p.updated = newest
+		}
+	}
+	e.rec["page"] = p.page
+	e.rec["notebook"] = p.book
+	e.rec["created_at"] = stamp(p.created)
+	e.rec["updated_at"] = stamp(p.updated)
+	e.rec["legacy"] = p.page == 0 || p.created.IsZero()
+}
+
+// timeFormat is the one form of a time of the journal: UTC, with three
+// digits of milliseconds, so that times line up (#400). Reads also take
+// RFC 3339 times of other precision, as older pages have them.
+const timeFormat = "2006-01-02T15:04:05.000Z07:00"
 
 func stamp(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format(timeFormat)
 }
 
 // dateBound treats --to YYYY-MM-DD as the whole UTC day, not just midnight.
@@ -230,11 +219,11 @@ func (r *run) notebookAddress(value string) (string, string, error) {
 	return address, section, nil
 }
 
-func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
+func (r *run) notebookAction(n *manifest.Notebook) ([]*entry, error) {
 	copy := *n
 	n = &copy
 	dTemplate := n.D
-	values := []*string{&n.Address, &n.Notebook, &n.Prefix, &n.Query, &n.Syntax, &n.Title, &n.Page, &n.From, &n.To, &n.Order, &n.Reverse, &n.Limit, &n.Section}
+	values := []*string{&n.Address, &n.Notebook, &n.Prefix, &n.Query, &n.Syntax, &n.Title, &n.Page, &n.From, &n.To, &n.Order, &n.Reverse, &n.Limit, &n.Section, &n.Text}
 	for _, value := range values {
 		text, err := r.template(*value)
 		if err != nil {
@@ -242,76 +231,18 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 		}
 		*value = text
 	}
-	if n.Op == "read" {
-		address, anchor, err := r.notebookAddress(n.Address)
-		if err != nil {
-			return nil, err
-		}
-		if n.Section == "" {
-			n.Section = anchor
-		}
-		// Resolve the input reference before the manifest's keyed d template.
-		scoped := *r
-		scoped.values = maps.Clone(r.values)
-		scoped.values["address"] = address
-		d, err := scoped.template(dTemplate)
-		if err != nil {
-			return nil, err
-		}
-		entries, err := r.query(&Query{Kinds: []string{n.Kind}, Authors: "me", D: d, Limit: "1"})
-		if err != nil {
-			return nil, err
-		}
-		return r.notebookSections(entries, n.Section)
+	switch n.Op {
+	case "write", "append", "fix", "history", "delete":
+		return r.notebookWrite(n, dTemplate)
+	case "read":
+		return r.notebookRead(n, dTemplate)
 	}
 	if n.Notebook != "" && !notebookPattern.MatchString(n.Notebook) {
 		return nil, errors.New("notebook must be project/notebook")
 	}
-	from, err := dateBound(n.From, false)
+	f, err := r.notebookFilter(n)
 	if err != nil {
 		return nil, err
-	}
-	to, err := dateBound(n.To, true)
-	if err != nil {
-		return nil, err
-	}
-	if !from.IsZero() && !to.IsZero() && from.After(to) {
-		return nil, errors.New("from must not be after to")
-	}
-	page := int64(0)
-	if n.Page != "" {
-		page, err = ordinal(n.Page)
-		if err != nil {
-			return nil, err
-		}
-	}
-	limit := 0
-	if n.Limit != "" {
-		limit, err = strconv.Atoi(n.Limit)
-		if err != nil || limit < 1 {
-			return nil, errors.New("limit must be positive")
-		}
-	}
-	order := n.Order
-	if order == "" {
-		order = "created"
-	}
-	if !slices.Contains([]string{"created", "updated", "page"}, order) {
-		return nil, errors.New("order must be created, updated or page")
-	}
-	navPage := int64(0)
-	if n.Op == "next" || n.Op == "prev" {
-		address, _, err := r.notebookAddress(n.Address)
-		if err != nil {
-			return nil, err
-		}
-		slash := strings.LastIndex(address, "/")
-		n.Notebook = address[:slash]
-		navPage, err = ordinal(address[slash+1:])
-		if err != nil {
-			return nil, err
-		}
-		order = "page"
 	}
 	bodies := n.Op == "index" || n.Op == "toc"
 	pages, err := r.notebookPages(n.Kind)
@@ -321,36 +252,31 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 	allPages := slices.Clone(pages)
 	selected := pages[:0]
 	for _, p := range pages {
-		if n.Notebook != "" && p.book != n.Notebook || n.Prefix != "" && !strings.HasPrefix(p.address, n.Prefix) || page != 0 && p.page != page || n.Title != "" && !strings.Contains(strings.ToLower(p.title), strings.ToLower(n.Title)) {
-			continue
+		if f.keeps(n, p) {
+			selected = append(selected, p)
 		}
-		if (!from.IsZero() || !to.IsZero()) && p.created.IsZero() {
-			continue
-		}
-		if !from.IsZero() && p.created.Before(from) || !to.IsZero() && p.created.After(to) {
-			continue
-		}
-		if n.Op == "next" && (p.page == 0 || p.page <= navPage) || n.Op == "prev" && (p.page == 0 || p.page >= navPage) {
-			continue
-		}
-		selected = append(selected, p)
 	}
 	pages = selected
 	if n.Op == "search" {
-		return r.searchNotebook(n, allPages, pages, limit)
+		return r.searchNotebook(n, allPages, pages, f.limit)
 	}
-	sortNotebookPages(pages, order, n.Reverse == "true" || n.Op == "prev")
+	sortNotebookPages(pages, f.order, n.Reverse == "true" || n.Op == "prev")
 	if n.Op == "next" || n.Op == "prev" {
 		if len(pages) == 0 {
 			return nil, fmt.Errorf("no %s page in %s", n.Op, n.Notebook)
 		}
 		pages = pages[:1]
 	}
-	if n.Op != "search" && limit > 0 && len(pages) > limit {
-		pages = pages[:limit]
+	if n.Op != "search" && f.limit > 0 && len(pages) > f.limit {
+		pages = pages[:f.limit]
 	}
 	// Fetch parts only after metadata filters and non-search limits. A missing
 	// part in another notebook must not prevent a selected notebook from reading.
+	if r.kindOf(n.Kind).NotebookEntry != "" {
+		if err := r.compose(pages); err != nil {
+			return nil, err
+		}
+	}
 	if bodies {
 		for i := range pages {
 			pages[i].text, err = r.joined(pages[i].entry)
@@ -380,170 +306,128 @@ func (r *run) notebookAction(n *Notebook) ([]*entry, error) {
 	if n.Op == "select" || n.Op == "next" || n.Op == "prev" {
 		return r.notebookSections(entries, n.Section)
 	}
-	return entries, nil
-}
-
-func (r *run) notebookSections(entries []*entry, section string) ([]*entry, error) {
-	if section == "" {
-		return entries, nil
-	}
-	for _, e := range entries {
-		text, err := r.joined(e)
-		if err != nil {
+	if n.Op == "list" {
+		// Only the pages that ls shows get a notice.
+		r.noteLost(allPages, pages, "")
+		// A failed write leaves no page to list, so name its address here.
+		if err := r.reportUnnamed(n.Kind); err != nil {
 			return nil, err
 		}
-		_, body, err := frontmatter(text)
-		if err != nil {
-			return nil, err
-		}
-		text, err = markdownSection(body, section)
-		if err != nil {
-			return nil, err
-		}
-		e.rec["content"] = text
-		e.parts = nil
-		e.lines = nil
 	}
 	return entries, nil
 }
 
-func (r *run) saveNotebookIndex(kind, book, text string) error {
-	indexKind := r.kindOf(kind).NotebookIndex
-	d, err := r.keyed(indexKind, book)
-	if err != nil {
-		return err
-	}
-	scoped := *r
-	scoped.values = Values{"notebook_index_content": text}
-	_, err = scoped.publishSealed(&Publish{Kind: indexKind, D: d, Content: Content{Text: "{{notebook_index_content}}"}, Revise: "replace", Tags: [][]string{{"d", book}, {"notebook", book}, {"title", "Index of " + book}}})
-	return err
-}
-
-func tableText(value string) string {
-	return strings.NewReplacer("|", "\\|", "\n", " ", "\r", " ", "[", "\\[", "]", "\\]").Replace(value)
-}
-
-func (r *run) pageReference(p notebookPage) string {
-	return r.in.Manifest.ID + "+arc://" + r.env.Me().Hex() + "/" + p.address
-}
-
-// notebookIndex writes the titles of the pages as they are. The caller
-// must clean the index before it shows it: the record that holds it goes
-// through sanitize (docs/clients/SPEC.md, section 3.9).
-func (r *run) notebookIndex(book string, pages []notebookPage, table bool) string {
-	var out strings.Builder
-	fmt.Fprintf(&out, "# %s\n\n", book)
-	if table {
-		out.WriteString("## Index\n\n| Page | Title | Created (UTC) | Updated (UTC) | Reference |\n| --- | --- | --- | --- | --- |\n")
-		for _, p := range pages {
-			number := "legacy"
-			if p.page > 0 {
-				number = strconv.FormatInt(p.page, 10)
-			}
-			created := stamp(p.created)
-			if created == "" {
-				created = "unknown"
-			}
-			fmt.Fprintf(&out, "| %s | %s | %s | %s | [%s](%s) |\n", number, tableText(p.title), created, stamp(p.updated), p.address, r.pageReference(p)) //arc:raw-ok the index goes to a buffer; the record that holds it goes through sanitize
-		}
-		out.WriteString("\n")
-	}
-	out.WriteString("## Table of contents\n\n")
-	for _, p := range pages {
-		label := p.title
-		if p.page > 0 {
-			label = strconv.FormatInt(p.page, 10) + ". " + label
-		}
-		fmt.Fprintf(&out, "- [%s](%s)\n", tableText(label), r.pageReference(p))
-		_, body, err := frontmatter(p.text)
-		if err != nil {
-			body = p.text
-		}
-		for _, h := range markdownHeadings(body) {
-			fmt.Fprintf(&out, "%s- [%s](%s#%s)\n", strings.Repeat("  ", h.level), tableText(h.title), r.pageReference(p), url.PathEscape(h.anchor)) //arc:raw-ok the index goes to a buffer; the record that holds it goes through sanitize
-		}
-	}
-	return out.String()
-}
-
-func sortNotebookPages(pages []notebookPage, order string, reverse bool) {
-	sort.Slice(pages, func(i, j int) bool {
-		a, b := pages[i], pages[j]
-		if order == "page" && a.page != b.page {
-			if a.page == 0 {
-				return false
-			}
-			if b.page == 0 {
-				return true
-			}
-			return a.page < b.page
-		}
-		first, second := a.created, b.created
-		if order == "updated" {
-			first, second = a.updated, b.updated
-		}
-		if !first.Equal(second) {
-			if first.IsZero() {
-				return false
-			}
-			if second.IsZero() {
-				return true
-			}
-			return first.Before(second)
-		}
-		return a.address < b.address
-	})
-
-	if reverse {
-		slices.Reverse(pages)
-	}
-}
-
-// searchNotebook keeps notebook semantics here. The adapter sees only generic
-// versions, selected IDs and the text of changed selected documents.
-func (r *run) searchNotebook(n *Notebook, all, selected []notebookPage, limit int) ([]*entry, error) {
-	byID := make(map[string]notebookPage, len(selected))
-	for _, p := range selected {
-		byID[p.entry.d] = p
-	}
-	sources := make([]search.Source, 0, len(all))
-	for _, p := range all {
-		_, eligible := byID[p.entry.d]
-		sources = append(sources, search.Source{ID: p.entry.d, Version: str(p.entry.rec["id"]), Selected: eligible})
-	}
-	hits, err := r.env.SearchIndex().Search(r.ctx, search.Request{
-		Namespace: r.env.Me().Hex() + "/" + r.in.Author.Hex() + "/" + r.in.Manifest.ID + "/" + n.Kind,
-		Sources:   sources, Query: n.Query, Syntax: n.Syntax == "true", Limit: limit,
-		Load: func(ctx context.Context, source search.Source) (search.Document, error) {
-			p := byID[source.ID]
-			scoped := *r
-			scoped.ctx = ctx
-			text, err := scoped.joined(p.entry)
-			if err != nil {
-				return search.Document{}, err
-			}
-			_, body, err := frontmatter(text)
-			if err != nil {
-				body = text
-			} // Historical headerless pages remain searchable.
-			return search.Document{Title: p.title, Text: body}, nil
-		},
-	})
+// notebookRead reads one page, or one section of it.
+func (r *run) notebookRead(n *manifest.Notebook, dTemplate string) ([]*entry, error) {
+	address, anchor, err := r.notebookAddress(n.Address)
 	if err != nil {
 		return nil, err
 	}
-	entries := make([]*entry, 0, len(hits))
-	for _, hit := range hits {
-		e := byID[hit.ID].entry
-		if r.flags.JSON {
-			text, err := r.joined(e)
-			if err != nil {
-				return nil, err
-			}
-			e.rec["text"] = text
-		}
-		e.rec["score"] = hit.Score
-		entries = append(entries, e)
+	if n.Section == "" {
+		n.Section = anchor
 	}
-	return entries, nil
+	if r.kindOf(n.Kind).NotebookEntry != "" {
+		p, err := r.findPage(n.Kind, address, "today")
+		if err != nil {
+			return nil, err
+		}
+		page := []notebookPage{*p}
+		if err := r.compose(page); err != nil {
+			return nil, err
+		}
+		page[0].entry.rec["entries"] = entryList(p.entries)
+		return r.notebookSections([]*entry{page[0].entry}, n.Section)
+	}
+	// Resolve the input reference before the manifest's keyed d template.
+	d, err := r.headD(dTemplate, address)
+	if err != nil {
+		return nil, err
+	}
+	head, err := r.head(n.Kind, d)
+	if err != nil {
+		return nil, err
+	}
+	if head == nil {
+		return nil, noSuchPage(address)
+	}
+	return r.notebookSections([]*entry{head}, n.Section)
+}
+
+// pageFilter is what a list of pages asks for: dates, a page number, a
+// limit and an order. next and prev also give the page they start from.
+type pageFilter struct {
+	from, to      time.Time
+	page, navPage int64
+	limit         int
+	order         string
+}
+
+// notebookFilter reads the filter of a list of pages. For next and prev it
+// sets the notebook of the page they start from.
+func (r *run) notebookFilter(n *manifest.Notebook) (pageFilter, error) {
+	var f pageFilter
+	from, err := dateBound(n.From, false)
+	if err != nil {
+		return f, err
+	}
+	to, err := dateBound(n.To, true)
+	if err != nil {
+		return f, err
+	}
+	if !from.IsZero() && !to.IsZero() && from.After(to) {
+		return f, errors.New("from must not be after to")
+	}
+	page := int64(0)
+	if n.Page != "" {
+		page, err = ordinal(n.Page)
+		if err != nil {
+			return f, err
+		}
+	}
+	limit := 0
+	if n.Limit != "" {
+		limit, err = strconv.Atoi(n.Limit)
+		if err != nil || limit < 1 {
+			return f, errors.New("limit must be positive")
+		}
+	}
+	order := n.Order
+	if order == "" {
+		order = "created"
+	}
+	if !slices.Contains([]string{"created", "updated", "page"}, order) {
+		return f, errors.New("order must be created, updated or page")
+	}
+	navPage := int64(0)
+	if n.Op == "next" || n.Op == "prev" {
+		address, _, err := r.notebookAddress(n.Address)
+		if err != nil {
+			return f, err
+		}
+		slash := strings.LastIndex(address, "/")
+		n.Notebook = address[:slash]
+		navPage, err = ordinal(address[slash+1:])
+		if err != nil {
+			return f, err
+		}
+		order = "page"
+	}
+	return pageFilter{from: from, to: to, page: page, navPage: navPage, limit: limit, order: order}, nil
+}
+
+// keeps says if a page passes the filter.
+func (f pageFilter) keeps(n *manifest.Notebook, p notebookPage) bool {
+	if n.Notebook != "" && p.book != n.Notebook || n.Prefix != "" && !strings.HasPrefix(p.address, n.Prefix) || f.page != 0 && p.page != f.page || n.Title != "" && !strings.Contains(strings.ToLower(p.title), strings.ToLower(n.Title)) {
+		return false
+	}
+	if (!f.from.IsZero() || !f.to.IsZero()) && p.created.IsZero() {
+		return false
+	}
+	if !f.from.IsZero() && p.created.Before(f.from) || !f.to.IsZero() && p.created.After(f.to) {
+		return false
+	}
+	if n.Op == "next" && (p.page == 0 || p.page <= f.navPage) || n.Op == "prev" && (p.page == 0 || p.page >= f.navPage) {
+		return false
+	}
+	return true
 }

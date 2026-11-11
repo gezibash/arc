@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/gezibash/arc/runtime/citizen"
+	"github.com/gezibash/arc/runtime/homedir"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // dispatch runs a command of an installed app: arc <name> <path...>.
@@ -70,7 +73,17 @@ func runCapability(command *cobra.Command, name string, words []string) error {
 		return err
 	}
 	env := &citizen.Environment{Session: sess, Installs: installs, Tool: name, Lists: store}
-	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: os.Stdin, Out: command.OutOrStdout(), Err: os.Stderr})
+	return iface.Run(command.Context(), env, in, words, iface.Stdio{In: inputOf(os.Stdin), Out: command.OutOrStdout(), Err: os.Stderr})
+}
+
+// inputOf is the standard input of an app command. No command waits for a
+// terminal: from a terminal it reads nothing, so a command that needs text
+// says so and ends.
+func inputOf(f *os.File) io.Reader {
+	if term.IsTerminal(int(f.Fd())) {
+		return strings.NewReader("")
+	}
+	return f
 }
 
 // helpCommand shows the help of a command of arc, or of an app.
@@ -90,12 +103,13 @@ func helpCommand(root *cobra.Command) *cobra.Command {
 	}
 }
 
-// builtinName says whether a name is a command of arc itself.
+// builtinName says whether a name is a command of arc itself, or an entry
+// of its home, which an app must not take as the directory of its data.
 func builtinName(root *cobra.Command, name string) bool {
 	for _, c := range root.Commands() {
 		if c.Name() == name || slices.Contains(c.Aliases, name) {
 			return true
 		}
 	}
-	return name == "help" || name == "completion"
+	return name == "help" || name == "completion" || slices.Contains(homedir.Names(), name)
 }

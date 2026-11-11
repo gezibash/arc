@@ -134,6 +134,12 @@ func OpenSession(ctx context.Context, me keys.Signer, to nostr.PubKey, request R
 		if remote, ok := errors.AsType[session.RemoteError](err); ok {
 			return nil, remote
 		}
+		// An open that the transport did not submit, such as one that no
+		// provider heard, has a known outcome: the provider never got it.
+		// An answer of the provider replaced the error of the send above.
+		if _, ok := errors.AsType[*transport.NotSubmittedError](err); ok {
+			return nil, err
+		}
 		return nil, fmt.Errorf("session open failed; outcome may be unknown: %w", err)
 	}
 	return stream, nil
@@ -164,58 +170,74 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 	route := s.sessions[f.ID]
 	s.mu.Unlock()
 	if route != nil {
-		if route.from != rumor.PubKey {
-			return
-		}
-		if f.Op == "open" {
-			return
-		}
-		e := wire.Event{Op: "session", RequestID: f.ID, Session: &f}
-		select {
-		case route.in <- e:
-		case <-route.ctx.Done():
-		default:
-			route.cancel()
-		}
+		route.forward(rumor.PubKey, f)
 		return
 	}
 	if f.Op != "open" || m.Request == nil {
 		return
 	}
+	route = s.openRoute(ctx, rumor, via, f, m.Request)
+	if route == nil {
+		return
+	}
+	s.runRoute(route, f, m.Request)
+}
+
+// forward gives a frame of an open session to the provider. A frame from
+// another key, or a second open, goes nowhere. A full queue cancels the
+// session.
+func (route *sessionRoute) forward(from nostr.PubKey, f session.Frame) {
+	if route.from != from {
+		return
+	}
+	if f.Op == "open" {
+		return
+	}
+	e := wire.Event{Op: "session", RequestID: f.ID, Session: &f}
+	select {
+	case route.in <- e:
+	case <-route.ctx.Done():
+	default:
+		route.cancel()
+	}
+}
+
+// openRoute admits a new session, or refuses it with a close frame. It
+// gives nil for a session that it refuses or ignores.
+func (s *Server) openRoute(ctx context.Context, rumor nostr.Event, via transport.Transport, f session.Frame, request *Request) *sessionRoute {
 	reject := func(reason string) {
 		_ = sendSession(ctx, s.key, rumor.PubKey, via, session.Frame{Version: 1, ID: f.ID, Op: "close", Error: reason}, nil)
 	}
-	request := m.Request
 	// Another server of this citizen can serve the capability, and answers
 	// the session. See ErrNotServed.
 	if request.Capability != s.capability {
-		return
+		return nil
 	}
 	if len(request.Body) > min(s.maxBytes, session.MaxChunk) {
 		reject("request_too_large")
-		return
+		return nil
 	}
 	if !session.Supports(s.interactions, f.Mode) {
 		reject(session.ErrUnsupported.Error())
-		return
+		return nil
 	}
 	lifetime, cancel := session.Budget(ctx, request.DeadlineMS)
 	if lifetime.Err() != nil {
 		cancel()
 		reject("provider_timeout")
-		return
+		return nil
 	}
 	s.mu.Lock()
 	if len(s.sessions)+len(s.waiting) >= wire.MaxConcurrent {
 		s.mu.Unlock()
 		cancel()
 		reject("provider_busy")
-		return
+		return nil
 	}
 	if _, seen := s.seen[f.ID]; seen {
 		s.mu.Unlock()
 		cancel()
-		return
+		return nil
 	}
 	s.seen[f.ID] = time.Now()
 	for id, at := range s.seen {
@@ -223,9 +245,18 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 			delete(s.seen, id)
 		}
 	}
-	route = &sessionRoute{from: rumor.PubKey, ctx: lifetime, cancel: cancel, via: via, in: make(chan wire.Event, 4), out: make(chan session.Frame, 4)}
+	route := &sessionRoute{from: rumor.PubKey, ctx: lifetime, cancel: cancel, via: via, in: make(chan wire.Event, 4), out: make(chan session.Frame, 4)}
 	s.sessions[f.ID] = route
 	s.mu.Unlock()
+	return route
+}
+
+// runRoute gives the open frame to the provider, then carries frames each
+// way until the session settles or its lifetime ends. Cleanup tells the
+// provider to cancel, and tells the peer of a disconnect when the session
+// did not settle.
+func (s *Server) runRoute(route *sessionRoute, f session.Frame, request *Request) {
+	lifetime, cancel, via := route.ctx, route.cancel, route.via
 	stop := context.AfterFunc(s.ctx, cancel)
 	cleanup := func() {
 		route.once.Do(func() {
@@ -244,7 +275,7 @@ func (s *Server) handleSessionFrame(ctx context.Context, rumor nostr.Event, via 
 			}
 		})
 	}
-	route.in <- wire.Event{Op: "session", RequestID: f.ID, Session: &f, From: rumor.PubKey.Hex(), Message: new(request.Body),
+	route.in <- wire.Event{Op: "session", RequestID: f.ID, Session: &f, From: route.from.Hex(), Message: new(request.Body),
 		Meta: map[string]any{"method": request.Method, "path": request.Path, "capability": request.Capability}, DeadlineMS: wire.Deadline(lifetime)}
 	go func() {
 		defer cleanup()

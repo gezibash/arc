@@ -154,7 +154,8 @@ by itself, and grants no permission to restart.
 
 `<identity directory>/update/<publisher>/<channel>.json` holds the highest
 sequence that this identity accepted, and the digest of that document. The
-identity directory is `~/.config/arc/citizens/<name>`.
+identity directory is `<home>/citizens/<name>`, and the home is the one that
+arc picks ([the interface spec](../interface/SPEC.md), section 3.17).
 
 - Each publisher and each channel holds its own record.
 - A record that cannot be read is an error, not an empty record: the update
@@ -369,10 +370,12 @@ document, a replayed sequence, platform selection, a wrong hash, a short
 download, an archive that escapes its directory, and a program that does not
 start after the swap.
 
-These tests prove section 3.7, each through a local relay:
+These tests prove section 3.7. The tests in `cmd/arc` run through a local
+relay; those in `runtime/release` give the provider's answers directly:
 
 ```sh
-go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestOlderReleasesProviderFallsBackToChunks|TestArchivePipeFailureIsAnError|TestBrokenArchivePipeIsAnError|TestBadArchiveOverPipeIsRefused)$' ./cmd/arc/
+go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestBrokenArchivePipeIsAnError)$' ./cmd/arc/
+go test -count=1 -run '^(TestStreamedArchiveRequiresSizeHashAndFinalSuccess|TestAnArchivePipeThatDoesNotOpenIsAnError|TestAnOlderReleasesProviderSendsChunks|TestARefusalThatEndsTheOpenIsMapped)$' ./runtime/release/
 go test -count=1 -run '^TestArchiveOfferRefusals$' ./apps/releases/server/
 ```
 

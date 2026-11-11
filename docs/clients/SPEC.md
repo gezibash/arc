@@ -3,7 +3,7 @@
 - Status: built
 - Layers: sdk
 - Owns: sdk/arcprogram, sdk/arcprogram/arcprogramtest, sdk/terminal
-- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheOutboxRarely|TestTheWatchForgetsMissedIds|TestALiveAddDoesNotSortTheStore|TestAWatchHoldsAReplyUntilItReadsTheOutbox|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/...
+- Proof: go test -count=1 -run '^(TestMessages|TestGroupMessages|TestSendRefusesANameAsTheRecipient|TestWatch|TestWatchFailsWithABadSince|TestEscape|TestANoticeLineIsEscapedOnce|TestARelayNoticeReachesTheScreenEscapedOnce|TestEscapeLine|TestEscapeLineCut|TestEscapeData|TestEscapeJSON|TestStrip|TestStripCases|TestStripKeepsOneSelector|TestStripAndEscapeAgreeAfterABackslash|TestEscapeLineCutNeverPassesTheLimit|TestBlank|TestATerminalShowsNoEscapeOfASender|TestHeldAndWatchedTextIsEscaped|TestServeTakesMailFromAWatch|TestALiveReplyIsEscapedWhereverItGoes|TestAnErrorLineCannotReachTheTerminal|TestARelayRefusalIsEscapedOnOneLine|TestARingRefusalIsEscapedOnOneLine|TestAStorageAnswerIsEscaped|TestNoticeIsCutAndEscaped|TestTextOfOtherPartiesIsEscapedAtThePrint|TestTheEscapeCheckFindsRawPrints|TestSlogTextHandlerQuotesHostileText|TestReplies|TestAReleaseBuildHasNoTestTags|TestAReplyQuotesItsParent|TestAReplyInAGroup|TestAQuoteComesFromTheStore|TestAHostileParentIsOneEscapedLine|TestAReplyToAnUnheldMessageShowsTheIdOnly|TestAReplyAcrossConversationsShowsNoText|TestATagThatIsNoReplyShowsAPlainMessage|TestReplyRefusals|TestAWatchQuotesTheParent|TestShortIDs|TestAReplyToYourOwnMessage|TestSendReplyChecksTheIdBeforeTheText|TestAWatchReadsTheInboxOnlyAtItsStart|TestTheOutboxIsReadAtMostOnceEachRefreshFromTheEndOfTheLast|TestTheWatchForgetsMissedIds|TestALiveAddDoesNotSortTheStore|TestAWatchHoldsAReplyUntilItReadsTheOutbox|TestTheHeldQueueIsCapped|TestOneSendersJunkDoesNotHideAValidReply|TestRotatingKeysDoNotHideAValidReply|TestQuickHonestRepliesKeepQuotesAndOrder|TestASenderOverItsQuotaPrintsItsOldest|TestSmallHoldersWaitForTheRead|TestManyKeysDoNotHideAnHonestSender|TestAnEarlyReplyMarksNoParentMissed|TestASealedKeyAsksOnTheTerminal|TestAHangupEndsEachArc|TestSIGTERMEndsEachArc|TestAKilledArcDmLeavesNoArcOnLinux|TestAShownMissingIdIsRefused|TestOnlyPlainHeadsShowEarly|TestAFailedReadMarksNothingMissed|TestAWatchReadTimesOut|TestAfterAFailedReadNothingShowsAsMissing|TestAnAlwaysHungOutboxShowsRepliesPlain|TestAWatchSavesShownIdsAtItsEnd|TestACallEndsWhenArcEnds|TestACallOutlivesTheEndOfOtherThreads|TestAPanicInAWatchEndsItsArc|TestAWatchOutlivesTheEndOfOtherThreads|TestReplyRefusesAnIdShownAsMissing|TestABusyGroupDoesNotHideAValidReply|TestAnOverflowReadsAnOldOutbox|TestCraftedCollisionsStayFast|TestASecondInterruptEndsTheWatch|TestTheEndOfAWatchReadsTheOutbox|TestALiveFloodIsLinear|TestAWatchShowsAHeldReplyAtItsEnd|TestAddIsNotQuadratic|TestAnIdIsCheckedBeforeArcRuns|TestWidth|TestEscapeLineFit|TestFlagsAfterThePeer|TestArcChecksAReplyBeforeTheText|TestIndexIsNotQuadratic|TestABlankParentQuotesAsBlank|TestRepliesShowSoonWhileTheOutboxHangs|TestTakeNeverReads|TestReadsRecoverAfterAFailure|TestReadsBackOffFromTheEndOfTheLastRead|TestACompactionDuringAReadKeepsALateReplyWaiting|TestASaveRemovesTheTemporaryFileOfAKilledSave|TestAKilledWatchKeepsTheIdsThatAReadShowed|TestAWarningOfArcShowsOnceAndAnErrorIsOneLine|TestEscapeLineData|TestNoHostileNameForgesALine|TestALineThatIsNoRelayURLIsSkippedAndMarked|TestARelayURLWithAFormatCharacterIsRefused|TestAnInstalledNameIsEscapedAndABadStorageNameIsRefused|TestSyncEscapesTheDirectory|TestConfirmationsEscapeTheNameOnce|TestTheTurnErrorsAreOneLine|TestKeysUseTakesTheRawName)$' ./sdk/arcprogram/ ./sdk/terminal/ ./cmd/arc/ ./runtime/citizen/ ./internal/architecture/ ./apps/dm/... ./internal/proof/
 - Unverified: No test runs a client program against a relay other than a relay on the same machine. No test reads a reply from another NIP-17 client. No test reads the outbox of a citizen that sent a request or a private event of an app kind. No test runs a client program on Windows, where arc cannot get an interrupt.
 
 The package `sdk/arcprogram` runs the arc program for a client program. It
@@ -62,8 +62,21 @@ does not give a client program a way to read the keys of the arc home.
 - If the client program names an arc home, the command MUST start with
   `--home <home>`, before the arc command.
 - A client program MUST NOT read the key files of the arc home.
-- A failure MUST hold the last 4 KiB that arc wrote on standard error. If
-  arc wrote nothing, it holds the error of the process.
+- A failure MUST hold the last 4 KiB that arc wrote on standard error, on
+  one line: the lines joined with `; `, with no line that starts with
+  `arc: warning: `. If arc wrote nothing else, it holds the error of the
+  process.
+- A warning is a line that starts with `arc: warning: `, such as the
+  warning of two homes, which arc writes at each command. A client program
+  that gives a writer for warnings MUST get each warning once in the
+  program, on one line. arc escaped the line: the client escapes each
+  control character that is left, and keeps each backslash as one, so no
+  escape of arc is escaped twice (`terminal.EscapeLineData`).
+  A client program trusts the arc program that it runs: a backslash in its
+  output stays as arc wrote it. A program that stands in for arc on the
+  PATH already controls far more than what the client shows, so the client
+  does not guard against one. An older client program gets each warning
+  inside the text of a failure, and none on a success.
 
 ### 3.2 The message line
 
@@ -152,7 +165,9 @@ message, `to` is the first recipient.
 ### 3.8 The test relay
 
 - `arcprogramtest.Start` builds `github.com/gezibash/arc/cmd/arc` with
-  `go build -tags arctest`, and runs `arc relay serve` on a free port of
+  `go build -tags arctest`, builds `github.com/gezibash/arc/cmd/arc-relay`
+  and `github.com/gezibash/arc/cmd/arc-signer` beside it, and runs
+  `arc-relay` on a free port of
   `127.0.0.1`, with no STUN server. With the tag, a first message to a
   stranger makes 8 bits of proof of work, not 20
   ([the strangers spec](../strangers/SPEC.md), section 3.5). A release
@@ -187,6 +202,30 @@ agent, or make `file.exe` look like `file.png`.
   | A backslash | two backslashes, so a typed `\x1b` shows as `\\x1b` |
   | Each other character, including the joiners U+200C and U+200D, and the marks U+200E, U+200F and U+061C | itself |
 
+- arc MUST also escape each name or path that a user or the file system
+  controls where it prints it, such as the home, the name of an identity
+  folder, a device name or the name of a storage citizen: a path can hold
+  a newline. `arc relay add` and `arc keys bunker --relay` MUST refuse a
+  URL with a space, a control character or a format character (Unicode
+  category Cf, such as a bidi mark), because the list holds one relay on
+  each line, and a format character can make a relay look like another
+  (#441). A relay list that an older arc wrote can hold a line that is not
+  a ws:// or wss:// URL: arc MUST skip such a line when it uses the list.
+  `arc relay ls` shows it as `not a relay URL, skipped: "<escaped line>"`
+  and says once on standard error to remove it with `arc relay rm`, which
+  takes the line as the list holds it. `arc keys storage add` MUST refuse
+  an installed name (`--as`) that is empty, longer than the 64 bytes that
+  the storage list holds, or that holds a control or format character,
+  before it asks the storage citizen. An escaped name is not the name:
+  `arc keys use` and `arc keys remove` take the raw name, quoted for the
+  shell, and their help says so. An error holds a name as it came, in
+  quotes, and arc escapes it once where it prints the error.
+  `TestNoHostileNameForgesALine`,
+  `TestALineThatIsNoRelayURLIsSkippedAndMarked`,
+  `TestARelayURLWithAFormatCharacterIsRefused`,
+  `TestAnInstalledNameIsEscapedAndABadStorageNameIsRefused`,
+  `TestSyncEscapesTheDirectory`, `TestConfirmationsEscapeTheNameOnce`,
+  `TestTheTurnErrorsAreOneLine` and `TestKeysUseTakesTheRawName` prove it.
 - One variation selector after a visible character stays, because emoji
   use it, and one of U+E0100 to U+E01EF after an ideograph, because names
   use it. A backslash counts as a visible character, whether it is written
@@ -438,7 +477,46 @@ are not on the wire.
 | `TestAWatchQuotesTheParent` | `arc-dm watch` shows the quote of a reply to a message sent after the watch started, and the id only for an unheld parent. |
 | `TestAReplyToYourOwnMessage` | A reply to a message that the citizen sent quotes it on both sides: arc finds the parent in the outbox. |
 | `TestSendReplyChecksTheIdBeforeTheText` | `arc-dm send -reply` with a wrong id fails at once, with standard input open. |
-| `TestAWatchReadsTheOutboxRarely` | 20 replies to ids that no message has make a watch read the outbox at most once each 5 s, and the inbox not at all, after its start. |
+| `TestAWatchReadsTheInboxOnlyAtItsStart` | Through the CLI, 20 replies to ids that no message has make a watch read the outbox after its start, and the inbox not at all. |
+| `TestTheOutboxIsReadAtMostOnceEachRefreshFromTheEndOfTheLast` | With an outbox that takes 2 s and replies to unknown ids each 100 ms for 14 s, the watch reads at once, then at most once each 7 s; each read starts at least 5 s after the last one ended, and no take waits 1 s. |
+| `TestTheHeldQueueIsCapped` | A watch holds at most 4,096 messages, and loses none; each sender keeps its order. |
+| `TestOneSendersJunkDoesNotHideAValidReply` | One junk reply, one valid reply, then 254 junk replies of one sender: the junk past 64 shows at once, oldest first, and the valid reply gets its quote. |
+| `TestRotatingKeysDoNotHideAValidReply` | 16 keys that take turns to send 255 junk replies within 1 s of a read hide no valid reply. |
+| `TestQuickHonestRepliesKeepQuotesAndOrder` | 20 quick replies of one sender all get their quotes, in order. |
+| `TestASenderOverItsQuotaPrintsItsOldest` | A sender with 100 held messages shows its 36 oldest at once, in order, and holds 64. |
+| `TestSmallHoldersWaitForTheRead` | Past 256 waiting replies with the read blocked, none shows early: the read comes within a second, and each reply gets its quote. |
+| `TestManyKeysDoNotHideAnHonestSender` | 300 keys with one junk reply each, within 1 s of a read, hide none of the 30 waiting replies of an honest sender. |
+| `TestAnEarlyReplyMarksNoParentMissed` | A reply that shows early because its sender is over the quota marks no parent missed. |
+| `TestASealedKeyAsksOnTheTerminal` | A key that a passphrase seals asks on the terminal of arc-dm, without echo, and arc-dm works. |
+| `TestAHangupEndsEachArc` | A hangup, to arc-dm alone or to its process group, ends arc-dm and each arc that it runs. |
+| `TestSIGTERMEndsEachArc` | SIGTERM to arc-dm alone ends each arc that it runs. |
+| `TestAKilledArcDmLeavesNoArcOnLinux` | On Linux, a killed arc-dm leaves no arc behind. |
+| `TestAShownMissingIdIsRefused` | A short id that arc-dm showed as missing does not name a later message that starts with it, unless that id is here now. |
+| `TestOnlyPlainHeadsShowEarly` | At the hard cap with the read blocked, no message of a sender whose oldest held reply waits shows early. |
+| `TestAFailedReadMarksNothingMissed` | After a read that fails, a waiting reply shows with no quote line, no id is shown as missing, and a later reply to the same parent gets its quote. |
+| `TestAWatchReadTimesOut` | A read on a hung arc ends after 10 s with a warning, and shows the held reply with no quote line; a reply after it shows at once with no quote line; after a read that works, a later reply gets its quote. |
+| `TestAfterAFailedReadNothingShowsAsMissing` | After a failed read, no reply shows as "(not on this device)", not even one that a sender over its quota pushes out, and no id is recorded. |
+| `TestAnAlwaysHungOutboxShowsRepliesPlain` | With an outbox that always hangs, a reply to a message of this citizen shows after one read, with no quote line. |
+| `TestRepliesShowSoonWhileTheOutboxHangs` | With an outbox that always hangs, each of 12 replies, 1 s apart, shows within 40 s with no quote line, and none shows as missing. A watch that reads for each reply passes 40 s by its seventh reply. |
+| `TestTakeNeverReads` | A message that arrives does not wait for a read of the outbox that blocks. |
+| `TestReadsRecoverAfterAFailure` | After a failed read, a reply shows at once with no quote line; after a read that works, replies wait for reads again, and a sender over its quota shows its oldest as "(not on this device)". |
+| `TestReadsBackOffFromTheEndOfTheLastRead` | With an outbox that takes 2 s and fails, the next read starts at least 5 s after the last one ended. |
+| `TestACompactionDuringAReadKeepsALateReplyWaiting` | A flood of 0, 60, 130 or 200 messages of one sender during a read does not put a reply that came during the read into what that read prints: the reply to a message sent after the read started is not marked missing, and gets its quote from the next read. With 100 messages before the read, 36 of them printed early, and 100 during it, the read does not slice past the end of the queue. |
+| `TestASaveRemovesTheTemporaryFileOfAKilledSave` | A save of the shown ids removes the temporary file that a killed save left, and neither the lock file nor a file of another path. |
+| `TestAKilledWatchKeepsTheIdsThatAReadShowed` | After a timer read shows an id as missing, with no message after it, a watch killed with SIGKILL has saved the id, and `arc-dm reply` refuses it. |
+| `TestAWatchSavesShownIdsAtItsEnd` | The ids that a watch showed as missing are saved at its end, and `arc-dm reply` refuses them. |
+| `TestACallEndsWhenArcEnds` | A call returns when arc ends, though a child of arc holds its output open. |
+| `TestACallOutlivesTheEndOfOtherThreads` | On Linux, with one P, a call's arc lives on while other goroutines end their threads between the start of arc and the wait for it. |
+| `TestAPanicInAWatchEndsItsArc` | A function of a watch that panics, or that calls `runtime.Goexit`, with a caller that recovers, leaves no arc running. |
+| `TestAWatchOutlivesTheEndOfOtherThreads` | On Linux, a watch's arc lives on while other threads of the program end: the thread that started it stays held. |
+| `TestReplyRefusesAnIdShownAsMissing` | Through the CLI, arc-dm reply refuses the id of a parent that arc-dm open showed as missing. |
+| `TestABusyGroupDoesNotHideAValidReply` | 600 messages behind a valid reply that waits do not push it out unquoted, and each sender keeps its order. |
+| `TestAnOverflowReadsAnOldOutbox` | An overflow reads the outbox 1 s after the end of the last read. |
+| `TestCraftedCollisionsStayFast` | Ids that share 10 digits get 11-digit short ids, and a flood of such pairs stays linear. |
+| `TestASecondInterruptEndsTheWatch` | A second interrupt ends a watch at once while its last read of the outbox hangs: the watch shows its held reply, and the hung arc ends. |
+| `TestTheEndOfAWatchReadsTheOutbox` | At its end, a watch reads the outbox once for a reply that waits, and prints it with its quote. |
+| `TestAWatchShowsAHeldReplyAtItsEnd` | An interrupt while a reply waits for the outbox still prints the reply with the quote of its parent. |
+| `TestALiveFloodIsLinear` | 4 times the messages added one at a time, each with its short id, take less than 9 times as long. |
 | `TestTheWatchForgetsMissedIds` | A watch remembers at most 1,024 ids that a read of the outbox did not find. |
 | `TestALiveAddDoesNotSortTheStore` | At 100,000 messages, a watch adds one message in under 0.6 percent of the time of a whole index: no sort. |
 | `TestAWatchHoldsAReplyUntilItReadsTheOutbox` | After a reply to an id that no message has, a reply within 5 s to a message sent from another process after the watch started still shows its parent, after the first reply. |

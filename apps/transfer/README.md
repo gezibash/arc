@@ -19,7 +19,7 @@ flow control.
 | --- | --- |
 | `send`, `offer`, `get` and the service | Built. Tested with the built `arc`, a local relay and three citizens, and by hand between two machines behind NATs, with the STUN server of Google. |
 | `put`, and `get` of a file that came with `put` | Built. Tested with the built `arc`, a local relay and two citizens, and by hand from a phone and a Mac to a virtual machine behind NATs. |
-| STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc relay serve`. Not tested between two machines behind NATs. |
+| STUN on the relay, the default STUN server | Built. Tested with a binding request to a local `arc-relay`. Not tested between two machines behind NATs. |
 | TURN on the relay, for two machines that find no direct path | Built. Tested on an emulated network, with two ends behind symmetric NATs and the TURN server of `arc relay serve`. Tested by hand on 2026-10-11 between two virtual machines behind NATs, through the relay on Fly.io; see "Speed". |
 | A message that carries a link | Not built. Send the link as text, for example with `arc message send`. |
 
@@ -43,13 +43,13 @@ The app needs these things:
 
 - A relay in the arc home of each citizen.
 - A STUN server that each machine can reach. The default is the first relay
-  of the citizen, on UDP port 3478: `arc relay serve` answers STUN there. For
+  of the citizen, on UDP port 3478: `arc-relay` answers STUN there. For
   the relay `wss://relay.example.org`, the default is
   `stun:relay.example.org:3478`. The STUN server sees the public address of
   each machine. The two machines see the public address of each other. If the
   citizen has no relay, an end uses the addresses of its machine only.
 - The two machines online at the same time.
-- For the last resort, a relay that serves TURN (`arc relay serve
+- For the last resort, a relay that serves TURN (`arc-relay
   --turn-ports`). `get` and `put` get a credential with `arc relay turn`,
   and the relay counts the bytes against a quota for each day.
 
@@ -276,7 +276,11 @@ and the path `/`. The body and the reply are JSON.
 
 The receiver opens one data channel. The sender writes the bytes from
 `offset` in messages of 16 KiB, and then the text `end`. The receiver
-answers with the text `ok`.
+checks the size and the SHA-256 of all the bytes, and renames its part
+file. Then it answers with the text `ok`, or with `refused: ` and the
+reason. A receiver that has the whole file already asks with `offset` equal
+to the size, so that the sender sends no bytes and the receiver confirms
+again. An older receiver answers `ok` before its check.
 
 A put has the operation `put` and the size of the file. It has no offset:
 
@@ -317,13 +321,23 @@ A refused request has one of these errors:
 - To limit the callers of the app, set `allow` in the `Arcfile`.
 - An offer stays until you delete its file `offers/<sha256>.json` in the
   state directory.
-- When a receiver confirms the last byte of a file, the service writes the
-  file `delivered/<sha256>-<key of the receiver>` in the state directory.
-  It holds the time and the path. `send` reads it.
+- When a receiver answers `ok`, the service writes the file
+  `delivered/<sha256>-<key of the receiver>` in the state directory. It
+  holds the time and the path. `send` reads it. A refusal writes nothing,
+  and the log of the service gives the reason.
 
 ## Rules of the receiver
 
-- `get` does not replace a file. If the output file is there, it stops.
+- `get` does not replace a file. If the output file is there with the
+  SHA-256 of the link, `get` tells the sender that it arrived, with no
+  bytes: this recovers an `ok` that the network lost. Another file at the
+  output stops `get`.
+- If the sender stopped waiting for `ok` while `get` checked the bytes, as
+  on a slow disk, `get` tells the sender once more, in the same way.
+- If the sender ends before the last byte, the part file keeps the bytes,
+  and the next `get` takes only the rest.
+- A `put` waits 30 s for the `ok` of the app, and 1 s more for each 4 MiB
+  of the file, because the app puts the file on its disk first.
 - The name in a link comes from another citizen. `get` uses only its last
   part, with no directory. It removes each character that could change the
   terminal or hide text, and newlines and tabs. If only removed characters

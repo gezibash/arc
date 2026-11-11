@@ -94,7 +94,7 @@ func TestStorageLargeFile(t *testing.T) {
 
 	// A second machine of the citizen reads both files back.
 	desktop := arc(t, filepath.Join(work, "desktop")).with(loopback...)
-	desktop.input(read(t, keyfile(t, laptop.home)), "keys", "add")
+	desktop.input(read(t, secretfile(t, laptop.home)), "keys", "add")
 	desktop.run("relay", "add", url)
 	desktop.run("install", citizen, "files", "--yes")
 	desktop.run("sync")
@@ -138,7 +138,7 @@ func TestStorageLargeFile(t *testing.T) {
 	// A machine that runs v0.30.0 refuses the blob of version 2, and
 	// keeps no wrong file. After its update it gets the blob.
 	old := arc(t, filepath.Join(work, "old")).with(loopback...).using(olderArc)
-	old.input(read(t, keyfile(t, laptop.home)), "keys", "add")
+	old.input(read(t, secretfile(t, laptop.home)), "keys", "add")
 	old.run("relay", "add", url)
 	refused := old.try("", "sync")
 	has(t, refused.Stderr, "no envelope of version 1", "the sync of v0.30.0")
@@ -159,7 +159,7 @@ func TestStorageLargeFile(t *testing.T) {
 	stick := filepath.Join(work, "stick")
 	has(t, laptop.run("sync", "--dir", stick), "bodies received 0, sent 1", "the sync of the laptop with the stick")
 	carried := arc(t, filepath.Join(work, "carried")).with(loopback...)
-	carried.input(read(t, keyfile(t, laptop.home)), "keys", "add")
+	carried.input(read(t, secretfile(t, laptop.home)), "keys", "add")
 	carried.run("relay", "add", url)
 	carried.run("discover")
 	carried.run("install", citizen, "files", "--yes")

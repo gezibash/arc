@@ -228,6 +228,17 @@ func (m *Mail) expireDropped(tx kv.Tx) error {
 
 // unhold removes a held seal, when a wrap of it with work arrives.
 func (m *Mail) unhold(seal nostr.ID) error {
+	// Read first: each write transaction ends with an fsync, and most
+	// admitted seals were never held.
+	held := false
+	if err := m.view(func(tx kv.Tx) error {
+		if b := tx.Bucket(heldBucket); b != nil {
+			held = b.Get([]byte(seal.Hex())) != nil
+		}
+		return nil
+	}); err != nil || !held {
+		return err
+	}
 	return m.update(func(tx kv.Tx) error { return tx.Bucket(heldBucket).Delete([]byte(seal.Hex())) })
 }
 

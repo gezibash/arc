@@ -42,16 +42,29 @@ func run(m *testing.M) int {
 	defer os.RemoveAll(programs)
 	for name, pkg := range map[string]string{
 		"arc":          "./cmd/arc",
+		"arc-relay":    "./cmd/arc-relay",
+		"arc-signer":   "./cmd/arc-signer",
 		"arc-exec":     "./apps/exec/cmd/arc-exec",
 		"arc-sqlite":   "./apps/sqlite/cmd/arc-sqlite",
 		"arc-releases": "./apps/releases/cmd/arc-releases",
 		"arc-storage":  "./apps/storage/cmd/arc-storage",
+		"arc-dm":       "./apps/dm/cmd/arc-dm",
 		"slowcall":     "./internal/proof/testdata/slowcall",
+		"muterelay":    "./internal/proof/testdata/muterelay",
+		"echo":         "./adapters/provider/host/testdata/echo",
 	} {
 		if err := build(filepath.Join(programs, name), pkg, ""); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+	}
+	// arc-test is arc with the hooks of the tag arctest, such as a write
+	// that waits between two events.
+	command := exec.Command("go", "build", "-tags", "arctest", "-o", filepath.Join(programs, "arc-test"), "./cmd/arc")
+	command.Dir = repo
+	if output, err := command.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build -tags arctest ./cmd/arc: %v\n%s", err, output)
+		return 1
 	}
 	return m.Run()
 }
@@ -79,6 +92,9 @@ type machine struct {
 	program string
 	home    string
 	env     []string
+	// relayStore says that program is arc-relay, which keeps its store
+	// in relay.db in home and takes no --home.
+	relayStore bool
 }
 
 // arc gives the machine that keeps its home in dir.
@@ -89,6 +105,14 @@ func arc(t *testing.T, dir string) machine {
 // with adds environment variables, each as NAME=value.
 func (m machine) with(env ...string) machine {
 	m.env = append(append([]string(nil), m.env...), env...)
+	return m
+}
+
+// relay runs arc-relay with its store in relay.db in the home of m, where
+// arc relay serve kept it.
+func (m machine) relay() machine {
+	m.program = program("arc-relay")
+	m.relayStore = true
 	return m
 }
 
@@ -104,7 +128,14 @@ type result struct {
 }
 
 func (m machine) command(args ...string) *exec.Cmd {
-	command := exec.Command(m.program, append([]string{"--home", m.home}, args...)...)
+	first := []string{"--home", m.home}
+	if !strings.HasPrefix(m.program, programs+string(filepath.Separator)) {
+		forOlder(m.t, m.home)
+	}
+	if m.relayStore {
+		first = []string{"--db", filepath.Join(m.home, "relay.db")}
+	}
+	command := exec.Command(m.program, append(first, args...)...)
 	command.Dir = repo
 	command.Env = append(os.Environ(), m.env...)
 	return command
@@ -259,7 +290,7 @@ func (m machine) serve(args ...string) *process {
 // startRelay runs a relay that keeps its events in dir, and returns its URL.
 func startRelay(t *testing.T, dir string, flags ...string) string {
 	t.Helper()
-	p := arc(t, dir).start(append([]string{"relay", "serve", "--listen", "127.0.0.1:0"}, flags...)...)
+	p := arc(t, dir).relay().start(append([]string{"--listen", "127.0.0.1:0"}, flags...)...)
 	if !p.waitFor("relay listens on ", 10*time.Second) {
 		t.Fatalf("the relay did not start:\n%s", p.output())
 	}
@@ -279,6 +310,39 @@ func line(text string, n int) string {
 		return ""
 	}
 	return lines[n-1]
+}
+
+// secretfile names the file that holds the secret of the one identity of a
+// home: signer/key of arc-signer, or the key file that an older arc wrote.
+func secretfile(t *testing.T, home string) string {
+	t.Helper()
+	path := keyfile(t, home)
+	if strings.HasPrefix(read(t, path), "program:") {
+		return filepath.Join(filepath.Dir(path), "signer", "key")
+	}
+	return path
+}
+
+// forOlder gives each identity of home a key file that an older arc reads:
+// the secret that arc-signer keeps. The next run of this arc moves it to
+// arc-signer again. An older arc does not read the key file of arc-signer,
+// and these proofs check data, not key files.
+func forOlder(t *testing.T, home string) {
+	t.Helper()
+	found, _ := filepath.Glob(filepath.Join(home, "citizens", "*", "key"))
+	for _, path := range found {
+		text, err := os.ReadFile(path)
+		if err != nil || !strings.HasPrefix(string(text), "program:") {
+			continue
+		}
+		secret, err := os.ReadFile(filepath.Join(filepath.Dir(path), "signer", "key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, secret, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // keyfile names the key file of the one identity of a home.

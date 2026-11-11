@@ -71,44 +71,13 @@ func runSession(command *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		body = args[1]
 	}
-	httpMode, _ := command.Flags().GetBool("http")
-	wsMode, _ := command.Flags().GetBool("websocket")
-	execMode, _ := command.Flags().GetBool("exec")
-	tty, _ := command.Flags().GetBool("tty")
-	if (execMode || tty) && (httpMode || wsMode) {
-		return fmt.Errorf("choose one session output mapping")
-	}
-	if httpMode || wsMode {
-		if mode == session.RequestReply {
-			return fmt.Errorf("HTTP streaming needs server_stream or duplex")
-		}
-		if wsMode {
-			if mode != session.Duplex {
-				return fmt.Errorf("WebSockets need duplex mode")
-			}
-			body, err = websocketRequest(body)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	if execMode || tty {
-		if mode == session.RequestReply {
-			return fmt.Errorf("exec I/O needs server_stream or duplex")
-		}
-		if tty {
-			if mode != session.Duplex {
-				return fmt.Errorf("a terminal needs duplex mode")
-			}
-			body, err = terminalRequest(command.InOrStdin(), body)
-			if err != nil {
-				return err
-			}
-		}
+	m, body, err := sessionMappingOf(command, mode, body)
+	if err != nil {
+		return err
 	}
 	var piped *httpadapter.ClientSession
 	var stream *session.Stream
-	if httpMode && !wsMode {
+	if m.http && !m.ws {
 		pipes, err := dialConfig(command)
 		if err != nil {
 			return err
@@ -128,13 +97,67 @@ func runSession(command *cobra.Command, args []string) error {
 		}
 	}
 	defer func() { _ = stream.Close() }()
-	if execMode || tty {
-		return execSession(command, stream, tty)
+	return m.run(command, stream, piped, mode)
+}
+
+// sessionMapping is how arc session maps the session to the terminal:
+// plain bytes, HTTP, WebSocket, or Exec with or without a terminal.
+type sessionMapping struct {
+	http, ws, exec, tty bool
+}
+
+// sessionMappingOf reads the flags of the mapping, checks them against the
+// mode, and gives the first request of the mapping.
+func sessionMappingOf(command *cobra.Command, mode session.Mode, body string) (sessionMapping, string, error) {
+	var m sessionMapping
+	m.http, _ = command.Flags().GetBool("http")
+	m.ws, _ = command.Flags().GetBool("websocket")
+	m.exec, _ = command.Flags().GetBool("exec")
+	m.tty, _ = command.Flags().GetBool("tty")
+	var err error
+	if (m.exec || m.tty) && (m.http || m.ws) {
+		return m, "", fmt.Errorf("choose one session output mapping")
 	}
-	if wsMode {
+	if m.http || m.ws {
+		if mode == session.RequestReply {
+			return m, "", fmt.Errorf("HTTP streaming needs server_stream or duplex")
+		}
+		if m.ws {
+			if mode != session.Duplex {
+				return m, "", fmt.Errorf("WebSockets need duplex mode")
+			}
+			body, err = websocketRequest(body)
+			if err != nil {
+				return m, "", err
+			}
+		}
+	}
+	if m.exec || m.tty {
+		if mode == session.RequestReply {
+			return m, "", fmt.Errorf("exec I/O needs server_stream or duplex")
+		}
+		if m.tty {
+			if mode != session.Duplex {
+				return m, "", fmt.Errorf("a terminal needs duplex mode")
+			}
+			body, err = terminalRequest(command.InOrStdin(), body)
+			if err != nil {
+				return m, "", err
+			}
+		}
+	}
+	return m, body, nil
+}
+
+// run copies the session to and from the terminal, as the mapping says.
+func (m sessionMapping) run(command *cobra.Command, stream *session.Stream, piped *httpadapter.ClientSession, mode session.Mode) error {
+	if m.exec || m.tty {
+		return execSession(command, stream, m.tty)
+	}
+	if m.ws {
 		return websocketCLI(command, stream)
 	}
-	if mode == session.Duplex && httpMode {
+	if mode == session.Duplex && m.http {
 		// The HTTP session sends standard input as the request body, on
 		// the pipe or in the session input.
 		piped.Body = command.InOrStdin()
@@ -152,10 +175,10 @@ func runSession(command *cobra.Command, args []string) error {
 			}
 		}()
 	}
-	if httpMode {
+	if m.http {
 		return httpSessionCLI(command, piped)
 	}
-	_, err = io.Copy(command.OutOrStdout(), stream)
+	_, err := io.Copy(command.OutOrStdout(), stream)
 	if err == nil {
 		err = stream.Wait()
 	}

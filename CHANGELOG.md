@@ -6,6 +6,260 @@ All notable changes to ARC are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `arc-signer` holds the citizen key; `arc` never reads it.
+  The key file of an identity holds `program:arc-signer`, and the secret is
+  in `signer/key` beside it. A key file of an older arc moves at its first
+  use: arc runs `arc-signer import`. The public key, mail and data stay the
+  same. An older arc cannot read the new key file. Install `arc-signer`
+  beside `arc`; `install.sh` links it. `arc keys bunker` refuses the new
+  holder requests over a relay (docs/devices/SPEC.md, sections 3.7 and 3.8).
+- **Breaking:** `arc relay serve` is gone. Run `arc-relay` with the same
+  flags. It takes no `--home`: name the store with `--db <home>/relay.db`,
+  or let it use `relay.db` in `ARC_HOME` or `~/.arc`. The Docker image runs
+  `arc-relay`. No event or wire format changed.
+- No source file holds more than 600 lines; `go test ./internal/architecture`
+  checks it. See docs/PROGRAMS.md.
+- **Breaking:** the default home of `arc` is `~/.arc`. A home that an older
+  arc made in `~/.config/arc` stays in use while `~/.arc` holds no entry of
+  arc (`citizens`, `default`, `device`, `relay.db`, `wake`, `wake.toml`), so
+  an installed machine and a relay volume keep working. arc moves no file.
+  `--home` and `ARC_HOME` still win. arc never takes a home from the working
+  directory. A new install needs this arc or a newer one. An older arc looks
+  only in `~/.config/arc`, so it does not find a home in `~/.arc` unless it
+  gets `--home ~/.arc` or `ARC_HOME=~/.arc`. The Docker image declares its
+  volume at `/home/arc/.arc`.
+- arc-dm resolves no home of its own. It runs the arc program, passes
+  `--home` only when it got one, and keeps its state in
+  `~/.local/state/arc-dm`. So it follows the arc that it runs: a newer
+  arc-dm with an older arc does not see a home in `~/.arc`. Upgrade arc and
+  arc-dm together; they ship in one tarball.
+- **Upgrade first:** upgrade each arc and arc-dm on a machine before you use
+  any of them, or set `ARC_HOME`. An older arc does not see `~/.arc`. When
+  it finds no home in `~/.config/arc`, it tells you to run `arc keys gen`,
+  and that makes a second identity there.
+- If `~/.arc` and `~/.config/arc` both hold an identity, each command warns
+  once and names both folders. arc uses `~/.arc`.
+- If arc cannot read `~/.arc` or `~/.config/arc`, for example after
+  `sudo arc`, each command fails with an error that names the folder. arc
+  never uses the identity of the other folder in its place, and never makes
+  a new one. A `default` file that arc cannot read is an error too, not a
+  missing identity, and `arc keys gen`, `recover` and `add` stop before they
+  write a key.
+- `arc install` refuses the name of an entry of the arc home as the name of
+  an app.
+- **Breaking:** an open or a call that no provider hears is not submitted,
+  and arc tries it again for at most 6 s (docs/sessions/SPEC.md,
+  docs/delivery/SPEC.md). It tries again only when no one listened, so a
+  request that went out is never submitted twice. An older caller still
+  fails at once (#436).
+  - A call whose deadline ends while no provider hears it says so and names
+    the relay of the provider, not the deadline of the caller (#453).
+  - arc does not start a try that cannot end before the deadline of the
+    caller, so the deadline never cuts off a try after its request went
+    out.
+- **Breaking:** one relay that never answers does not stall a command
+  while another relay answers (docs/delivery/SPEC.md). A pull asks each
+  relay at once and waits at most 500 ms after the first answer. A send
+  and a publish give the event to each relay at once. A relay that did
+  not connect, or that connected and gave no answer to a probe, is down
+  for 30 s, so the other calls of the command fail at once on it.
+  Finding a relay that gives no answer takes about 20 s, once. `arc sync`
+  names each such relay in one line of plain words, with its reason. An
+  older arc still asks one relay at a time and waits for each (#442).
+- A relay that takes the connection and never answers no longer costs
+  about 30 s for each waiting message in `arc sync` (#442).
+- A relay that refuses (a CLOSED such as "blocked: ...", a request for
+  authentication that arc cannot answer, or HTTP 403 for the WebSocket)
+  gets one line in `arc sync` that says that it refused, with its reason,
+  in place of four lines of raw errors (#463).
+- A relay that stops answering partway through `arc sync` gets one line
+  that says how many waiting wraps it took, and the sync fails. The wraps
+  that did not go wait for the next sync. An older arc printed "refused
+  not sent" for each wrap and exited 0 (#465).
+- In CI, the test of the ring latency gives each ring 1 s, not 200 ms: a
+  shared disk can take longer than 200 ms for one sync of the store. The
+  200 ms target stays for a run on a machine of its own. The count of the
+  store writes before a ring stays as it is (#452).
+- A watch that ends after its command no longer writes its line after the
+  command closed its session. Each line of a session is written one at a
+  time. The race detector found the watch-end line of #438 writing while a
+  test read the output (#438).
+
+## [0.37.0] - 2026-10-19
+
+Mail follows a recipient who moves to other relays, and waiting mail goes
+to relays that are learned later. A sync goes to TURN first for 6 hours
+after the direct attempts to a storage citizen find no path. A key with a
+letter that is not hex is refused on amd64 too. Found and tested by Otto
+and Cato. Nothing is breaking. Update each relay, then each device.
+
+### Changed
+
+- Each send asks the relays and indexers for the NIP-17 relay list of the
+  recipient, for at most 5 s, and uses the newest. If none answers, it uses
+  the stored list and says so. With no list, it says that the mail waits on
+  the sender's relays only. After the relays, `arc sync` and each
+  `arc serve` tick send waiting messages and requests to relays of the
+  current list that lack their wraps (docs/delivery/SPEC.md, section 3.8).
+  An older arc looks in its store first, so it keeps using a moved
+  recipient's old relays (#374).
+- After the direct attempts to a storage citizen find no path, a sync that
+  takes a pipe through TURN goes to TURN first for that storage citizen for
+  6 hours, then tries the direct attempts first again. A repair without
+  `--turn` still tries a direct path first (docs/storage/SPEC.md, section
+  4.6; docs/delivery/SPEC.md, section 4.12) (#372).
+
+### Fixed
+
+- On amd64 with AVX2, the hex decoder of the Nostr library took any byte as
+  a digit, so `arc message send` and `arc contacts add` took a key with Z,
+  g or q and queued mail for a key that nobody typed. Relays read such
+  bytes too. Every hex decode now checks each byte (#373, nostrlib#5).
+
+## [0.36.1] - 2026-10-19
+
+A relay serves mail only to the full key it is addressed to. Found by Otto
+in a new-user test. Nothing is breaking. Update each relay, then each
+device.
+
+### Fixed
+
+- The Bolt event store matched pubkeys, ids and tag values by their first
+  8 bytes and never checked the full value. A relay so served a citizen
+  every gift wrap whose `p` tag shared the first 8 bytes of its key, and
+  counted them, and the client printed `filter does not match`. The same
+  shortcut let an event with a colliding author replace another author's
+  replaceable event. The store now checks each event it finds through an
+  index against the full filter, and an id lookup checks the full id. The
+  wraps are public ciphertext, so no content leaked (#369).
+- arc no longer prints the Nostr library's info lines, such as `[nl][info]
+  ... filter does not match`, for an event that the library drops (#369).
+
+## [0.36.0] - 2026-10-19
+
+A relay can serve TURN over TCP behind a TLS proxy on port 443, so a
+citizen whose network lets out only TCP port 443 can still reach a storage
+citizen or another device. arc takes a TURN credential that names TCP or
+TLS first. Transfers say ok only after the bytes pass the check, keep a
+good partial file, and sync their files to disk. Found and tested by Otto
+and Cato. Nothing is breaking. Update each relay, then each device.
+
+### Added
+
+- `arc relay serve --turn-tcp <address>` also serves TURN over TCP, such as
+  on 127.0.0.1:3479 behind a TLS proxy on port 443. The relay sockets stay
+  UDP, and the same quota counts their bytes. `--turn-url <url>` adds an
+  address, such as `turns:relay.example:443?transport=tcp`, to each
+  credential (docs/delivery/SPEC.md, section 4.12) (#368).
+
+### Changed
+
+- `arc relay turn` with no URL, `arc sync` and the other direct
+  connections take the first credential that names TURN over TCP or TLS,
+  else the first that a relay gives (docs/direct/SPEC.md, section 3.6). An
+  older arc takes the credential of the first relay that answers (#368).
+
+### Fixed
+
+- A get ends well before it sends ok, so a sender that closes at once
+  cannot fail it (#363).
+- A receiver says ok only after the bytes pass the check, and a repeat get
+  confirms a file that is already there. An older receiver says ok before
+  its check, as before; an older sender records nothing on a refusal (#364).
+- A slow get confirms by itself when the connection closed before ok went
+  out, a good partial file is kept when the sender ends early, and a large
+  put waits longer for its confirmation (#365).
+- A transfer syncs new directories and moved files to disk, keeps a renamed
+  file when the directory sync fails, and removes a stale part file (#366).
+
+## [0.35.0] - 2026-10-19
+
+arc-dm can reply to a message, a relay tells a citizen when its rings for
+the day run low, and a passphrase no longer shows on the terminal when it
+is typed or pasted as the prompt appears. A sync of mail that it already
+holds no longer pays an fsync for each message. Found and reviewed by
+Otto, Cato and Alfred. Several changes are breaking, under Changed. Update
+each relay, then each device.
+
+### Changed
+
+- **Breaking:** arc and each client program escape the text of another
+  party where they print it, not where they make an error, and the source
+  check `TestTextOfOtherPartiesIsEscapedAtThePrint` enforces it
+  (docs/clients/SPEC.md, section 3.9). An operator log shows an error on
+  one line. docs/storage/SPEC.md, section 3.3, now states that a storage
+  reply to a get, delete or audit with `ids` names the IDs of the request,
+  in order, and tests cover it; the client has refused another reply
+  since #226 (v0.26.0). The text of an app's format
+  templates is stripped like its values (docs/interface/SPEC.md, section
+  3.15) (#337).
+- **Breaking:** `arc-dm reply <id> <text>` and `arc-dm send -reply <id>`
+  reply to a message with a NIP-17 `e` tag, and the reply shows its parent
+  as one quoted line, taken from this device only (docs/clients/SPEC.md,
+  `reply_to`). An older arc or client program shows a reply as a plain
+  message. `arc-dm reply` with an older arc fails with
+  `unknown flag: --reply` (#348).
+- **Breaking:** the quote of a reply caps the id it shows and fits in 72
+  columns, counted by grapheme clusters with a cap on characters
+  (docs/clients/SPEC.md, section 3.10). An older arc-dm can show the whole
+  short id, or a quote wider than 72 columns (#349, #350, #351).
+- **Breaking:** U+034F, U+180B and U+1D173 to U+1D17A are escaped too, and
+  `Strip` removes them (docs/clients/SPEC.md, section 3.9). An older arc
+  or client program shows them as they came (#350).
+- **Breaking:** while 5 or fewer of a citizen's rings are left for the
+  day, and the citizen used at least one, the relay sends one NOTICE on
+  each connection that reads for it:
+  `arc-ring: <n> of <daily_cap> rings left today; then rings wait until 00:00 UTC`,
+  and at 0, `arc-ring: 0 of <daily_cap> rings left today; rings wait until 00:00 UTC`
+  (docs/rings/SPEC.md, section 3.5). An arc of v0.33.7 or newer prints it;
+  a relay older than this rule sends none (#357).
+
+- arc-dm takes its flags after the peer or id as well as before it. The
+  first word that is not a flag starts the text, each word after `--` is
+  text, and an empty `-reply=` is refused (#350, #351).
+
+### Added
+
+- `arc relay ring set`, `show`, `test` and `clear` take `--relay <url>` to
+  act on one relay only. A `--relay` given with no URL fails and acts on
+  no relay (#356).
+- A relay logs why it does not ring, with a short citizen id, and arc
+  prints an authentication that a relay refused (#344). A streak of
+  refused sign-ins is told once (#345).
+
+### Fixed
+
+- A sync of mail that it already holds no longer opens a write
+  transaction, each with an fsync, for each message it reads again
+  (#358, #361). On the Mac of a developer, `arc sync` of the same citizen
+  took 28.4, 27.1 and 28.4 s with v0.34.0, and 7.7, 7.7 and 7.4 s with
+  this release. On Cato's Linux machine, a repeat sync of 400 known seals
+  makes about 9620 fdatasync calls with v0.34.0 and 14 with this release.
+  There, #361 alone took the median of that sync from 3436 ms to 2869 ms
+  (-16.5%); #358 alone halved the fdatasync calls with no change in time.
+  The gain differs by machine and disk.
+- The passphrase prompt turns echo off before it shows, so a passphrase
+  typed or pasted as the prompt appears is not shown. Ctrl-C, Ctrl-\,
+  SIGTERM and SIGHUP at the prompt bring echo back before arc ends, and a
+  signal that arc started with ignored, as under `nohup`, stays ignored
+  (#360).
+- `arc-transfer get` gives a 16-hex-digit hash prefix to a file whose
+  name had only hidden characters before its first dot, so the file no
+  longer becomes a dot file such as `.tar.gz`. A dot file that the sender
+  named, such as `.bashrc`, stays one (#337).
+- arc-dm holds a reply until it has read the outbox, keeps each sender's
+  order, caps what it holds, and refuses a short id that it showed as
+  missing (#352). After an outbox read that times out, held replies show
+  at once with no quote line; a watch whose function panics ends its arc
+  (#355). A killed save leaves no temporary file behind (#359).
+- A relay reads the authenticated keys of a connection under its lock,
+  which removes a data race in khatru (#339, #341, with the nostrlib pin
+  in #343).
+- arc waits up to 3 s for a relay's NIP-42 challenge before a read, so a
+  slow challenge no longer fails the read (#346).
+
 ## [0.34.0] - 2026-10-17
 
 Text that another party chooses can no longer change your terminal, reorder

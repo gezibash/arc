@@ -60,9 +60,22 @@ func (r receiptStore) SaveAll(events []nostr.Event) ([]store.Result, error) {
 	return results, nil
 }
 
+// receipt reads first: each write transaction ends with an fsync, and a sync
+// saves again each seal that a relay sends. The write checks again, for
+// another process that recorded the seal between the two.
 func (r receiptStore) receipt(event nostr.Event) error {
 	if event.Kind == private.SealKind && event.PubKey != r.me {
-		err := r.db.Update(func(tx kv.Tx) error {
+		known := false
+		err := r.db.View(func(tx kv.Tx) error {
+			if b := tx.Bucket(receiptBucket); b != nil {
+				known = b.Get(event.ID[:]) != nil
+			}
+			return nil
+		})
+		if err != nil || known {
+			return err
+		}
+		err = r.db.Update(func(tx kv.Tx) error {
 			b, err := tx.CreateBucketIfNotExists(receiptBucket)
 			if err != nil {
 				return err

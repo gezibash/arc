@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: sdk
 - Owns: sdk/direct
-- Proof: go test -count=1 -run '^(TestRelayPath|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestSTUNURLs|TestADeadFirstSTUNServerDoesNotStopAnEnd|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
+- Proof: go test -count=1 -run '^(TestRelayPath|TestTURNOverTCPGivesARelayAddress|TestRelayPathWithoutSTUN|TestRelayQuota|TestSTUNURL|TestSTUNURLs|TestADeadFirstSTUNServerDoesNotStopAnEnd|TestPipe|TestPipeClosedEarly|TestPipeOpenedThenDead|TestPipeAnswererRelayOnly|TestPipeFingerprint|TestParsePolicy|TestOffererSendsFirst|TestAnswererFirst)$' ./sdk/direct/
 - Remaining: the storage citizen step of [the proposal](../proposals/direct-path.md), section 6.
 - Unverified: No automated test runs two machines behind real NATs. The direct path and the relay attempt between two machines behind NAT were tested by hand only, with the transfer app and with `arc session --http` (section 8.2). A provider with the policy `turn` under `arc serve` and a consumer with `--path turn` gave a path between two machines behind NAT through the production relay in 6 of 6 runs, with the relay of v0.27.0 (section 8.2).
 
@@ -148,9 +148,10 @@ then fails.
 
 ### 3.6 The relay attempt
 
-1. The offerer gets a TURN credential and its quota from the first of its
-   relays, in their order, that answers with one. A relay that is down, or
-   serves no TURN, does not stop the others. An app program runs
+1. The offerer gets a TURN credential and its quota from its relays, in
+   their order: the first credential that names TURN over TCP or TLS, else
+   the first that any relay gives. A relay that is down, or serves no TURN,
+   does not stop the others. TURN over TCP lets an end with no UDP relay. An app program runs
    `arc relay turn`. arc signs a NIP-98 request with the key of the
    citizen.
 2. If the quota is smaller than the bytes that remain plus a tenth, the
@@ -288,7 +289,7 @@ The two ends then use the data channel. The sender follows section 3.4.
 | `arc relay turn` fails | Stops | `no direct path, and no path through the relay: arc relay turn: <reason>` |
 | The quota is too small | Stops before the attempt | The quota and the need, in MiB |
 | The TURN server gave no address | Stops | `no direct path, and no path through the relay: the TURN server of the relay gave no address` |
-| No path in the relay attempt | Stops | `no direct path, and no path through the relay: no direct path` |
+| No path in the relay attempt | Stops | `no direct path, and no path through the relay: the data channel did not open through the TURN server <URLs>` |
 | The receiver closes the channel while the sender waits | The sender stops | `the receiver closed the channel` |
 
 An answerer that does not see the data channel open closes its end after
@@ -416,10 +417,10 @@ Three runs of each, with the SHA-256 of each body checked (measured):
 | `--path session` | 54.2 to 54.3 s | 15.4 to 15.5 Mbit/s |
 | `--path turn`, one run, relay with TURN on `127.0.0.1` | 2.5 s | 329.6 Mbit/s |
 
-The commands, with `arc` built from this tree:
+The commands, with `arc` and `arc-relay` built from this tree:
 
 ```sh
-arc --home "$W/relay" relay serve --listen 127.0.0.1:7499 --stun none
+arc-relay --db "$W/relay/relay.db" --listen 127.0.0.1:7499 --stun none
 arc --home "$W/provider" keys gen
 arc --home "$W/provider" relay add ws://127.0.0.1:7499
 ARC_LOOPBACK=1 ARC_STUN=none arc --home "$W/provider" serve "exec://$PWD/arc-http?manifest=$PWD/cmd/arc/testdata/streaming-http/interface.json&args=$PWD/origin"

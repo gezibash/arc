@@ -22,6 +22,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/coder/websocket"
 	"github.com/gezibash/arc/adapters/relay/limits"
+	"github.com/gezibash/arc/adapters/relay/relayserver"
 	"github.com/gezibash/arc/adapters/relay/rings"
 )
 
@@ -59,7 +60,7 @@ func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 		},
 		TLS: &tls.Config{RootCAs: target.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs},
 	}
-	rl, _, ringer, closeDB, err := newRelay(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, config, slog.New(slog.DiscardHandler))
+	rl, _, ringer, closeDB, err := relayserver.New(filepath.Join(t.TempDir(), "relay.db"), limits.Policy{}, config, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func ringRelay(t *testing.T, status int) (string, chan ringHit) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go ringer.Run(ctx)
-	server := httptest.NewServer(relayHandler(rl, nil, ringer))
+	server := httptest.NewServer(relayserver.Handler(rl, nil, ringer))
 	t.Cleanup(server.Close)
 	return "ws" + strings.TrimPrefix(server.URL, "http"), hits
 }
@@ -83,30 +84,22 @@ func waitRing(t *testing.T, hits chan ringHit, what string) ringHit {
 	}
 }
 
-func noRing(t *testing.T, hits chan ringHit, what string) {
-	t.Helper()
-	select {
-	case hit := <-hits:
-		t.Fatalf("a ring came: %s: %s", what, hit.body)
-	case <-time.After(3 * time.Second):
-	}
-}
-
 // The proof of rings through the real relay and the normal CLI
 // (docs/rings/SPEC.md, section 8). Bob registers a ring URL. Mail from
-// alice rings it once; more mail before bob reads does not; arc sync is a
-// read, and the next mail rings again.
+// alice rings it; arc sync is a read, and the next mail rings again. That
+// more mail before a read rings no more is checked with a fake clock in
+// adapters/relay/rings.
 func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	url, hits := ringRelay(t, http.StatusOK)
 
 	// A second relay offers no rings: it answers 404 on /ring, and ring set
 	// skips it.
-	plain, _, _, closePlain, err := newRelay(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(closePlain)
-	plainServer := httptest.NewServer(relayHandler(plain, nil, nil))
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
 	t.Cleanup(plainServer.Close)
 	response, err := http.Get(plainServer.URL + rings.Path)
 	if err != nil {
@@ -159,7 +152,6 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 
 	ok(t, alice, "", "message", "send", bobHex, "hello?")
 	ok(t, alice, "", "sync")
-	noRing(t, hits, "a second mail before bob read")
 
 	// arc sync reads. The next mail rings again.
 	ok(t, bob, "", "sync")
@@ -172,6 +164,69 @@ func TestRingsWakeACitizenThroughTheCLI(t *testing.T) {
 	}
 	if _, err := run(t, bob, "", "relay", "ring", "show"); err == nil {
 		t.Fatal("ring show found a registration after clear")
+	}
+}
+
+// With --relay, each ring command acts on one relay. Bob has two relays
+// that ring, and registers with the first only: the second has no
+// registration, and test, show and clear touch the first only. A relay
+// that --relay names and that offers no rings fails the command.
+func TestARingCommandActsOnOneRelay(t *testing.T) {
+	first, firstHits := ringRelay(t, http.StatusOK)
+	second, _ := ringRelay(t, http.StatusOK)
+	bob, _ := providerHome(t, first)
+	ok(t, bob, "", "relay", "add", second)
+	t.Setenv("ARC_RING_KEY", "a key of the routine of bob")
+
+	set := ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY", "--relay", first)
+	if !strings.Contains(set, first+": rings example.com") || strings.Contains(set, second) {
+		t.Fatalf("arc relay ring set --relay %s:\n%s", first, set)
+	}
+	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", second); err == nil {
+		t.Fatalf("the second relay has a registration:\n%s", out)
+	}
+	if out := ok(t, bob, "", "relay", "ring", "test", "--relay", first); !strings.Contains(out, first+": the URL answered 200 OK") || strings.Contains(out, second) {
+		t.Fatalf("arc relay ring test --relay %s:\n%s", first, out)
+	}
+	waitRing(t, firstHits, "the test ring of the first relay")
+	if out := ok(t, bob, "", "relay", "ring", "show", "--relay", first); !strings.Contains(out, "47 of 48 left today") || strings.Contains(out, second) {
+		t.Fatalf("arc relay ring show --relay %s:\n%s", first, out)
+	}
+	if out := ok(t, bob, "", "relay", "ring", "clear", "--relay", first); out != first+": rings no more\n" {
+		t.Fatalf("arc relay ring clear --relay %s:\n%s", first, out)
+	}
+	if _, err := run(t, bob, "", "relay", "ring", "show", "--relay", first); err == nil {
+		t.Fatal("ring show found a registration after clear")
+	}
+
+	// A given but empty --relay, as from an unset variable in a script,
+	// must fail and touch no relay.
+	ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY")
+	for _, args := range [][]string{{"--relay", ""}, {"--relay="}} {
+		out, err := run(t, bob, "", append([]string{"relay", "ring", "clear"}, args...)...)
+		if err == nil || !strings.Contains(err.Error(), "--relay needs a URL") {
+			t.Fatalf("ring clear %q: %v\n%s", args, err, out)
+		}
+	}
+	for _, relay := range []string{first, second} {
+		if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", relay); err != nil {
+			t.Fatalf("an empty --relay cleared %s: %v\n%s", relay, err, out)
+		}
+	}
+
+	plain, _, _, closePlain, err := relayserver.New(filepath.Join(t.TempDir(), "plain.db"), limits.Policy{}, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closePlain)
+	plainServer := httptest.NewServer(relayserver.Handler(plain, nil, nil))
+	t.Cleanup(plainServer.Close)
+	plainURL := "ws" + strings.TrimPrefix(plainServer.URL, "http")
+	if out, err := run(t, bob, "", "relay", "ring", "show", "--relay", plainURL); err == nil || !strings.Contains(err.Error(), plainURL+" offers no rings") || strings.Contains(out, "skipped") {
+		t.Fatalf("ring show --relay on a relay without rings: %v\n%s", err, out)
+	}
+	if _, err := run(t, bob, "", "relay", "ring", "show", "--relay", "https://example.com"); err == nil || !strings.Contains(err.Error(), "ws:// or wss://") {
+		t.Fatalf("ring show took an https relay: %v", err)
 	}
 }
 
@@ -200,6 +255,30 @@ func TestSyncSaysThatRingsFail(t *testing.T) {
 	want := url + ": arc-ring: the rings to example.com fail since "
 	if !strings.Contains(stderr.String(), want) || !strings.Contains(stderr.String(), "last answer 401") {
 		t.Fatalf("arc sync said on standard error:\n%s\nwant a line starting %q", stderr.String(), want)
+	}
+}
+
+// TestSyncSaysThatRingsRunLow registers with a daily cap of 2 and uses one
+// ring with ring test. The next arc sync prints the notice of the relay on
+// standard error: 1 of 2 rings left today.
+func TestSyncSaysThatRingsRunLow(t *testing.T) {
+	url, hits := ringRelay(t, http.StatusOK)
+	bob, _ := providerHome(t, url)
+	t.Setenv("ARC_RING_KEY", "a key of the routine of bob")
+	ok(t, bob, "", "relay", "ring", "set", "https://example.com/hook", "--key-env", "ARC_RING_KEY", "--daily-cap", "2")
+	ok(t, bob, "", "relay", "ring", "test")
+	waitRing(t, hits, "the test ring")
+
+	var stderr strings.Builder
+	command := root()
+	command.SetOut(&strings.Builder{})
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"--home", bob, "sync"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if want := url + ": arc-ring: 1 of 2 rings left today; then rings wait until 00:00 UTC\n"; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("arc sync said on standard error:\n%s\nwant %q", stderr.String(), want)
 	}
 }
 
@@ -287,6 +366,7 @@ func refuseAuth(t *testing.T, url, reason string) string {
 // prints one line for each relay, with the text escaped. The self data of
 // bob needs the authentication too, so the sync ends with an error.
 func TestSyncSaysThatARelayRefusedTheAuthentication(t *testing.T) {
+	t.Parallel()
 	url, _ := ringRelay(t, http.StatusOK)
 	const reason = "restricted: \x1b[31mno\u202e\nforged line"
 	first, second := refuseAuth(t, url, reason), refuseAuth(t, url, reason)

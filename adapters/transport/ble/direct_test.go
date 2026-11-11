@@ -358,3 +358,34 @@ func TestRecordRejectsOversize(t *testing.T) {
 		t.Fatal("accepted oversized record")
 	}
 }
+
+// TestAFetchOfMoreThan64EventsIsRefused asks for a filter that 65 events
+// match. The peer refuses the query, and never cuts the result short in
+// silence.
+func TestAFetchOfMoreThan64EventsIsRefused(t *testing.T) {
+	a, b, _, kb := pair(t)
+	for i := range maxResults + 1 {
+		if _, err := b.config.Store.Save(signed(t, kb, 1, fmt.Sprint("note ", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := a.Fetch(context.Background(), nostr.Filter{Kinds: []nostr.Kind{1}})
+	if err == nil || !strings.Contains(err.Error(), "query exceeds 64 events") {
+		t.Fatalf("a fetch that 65 events match gave %v, want a refusal", err)
+	}
+}
+
+// TestALinkHoldsOneWatch asks the peer for a second watch on one link. The
+// peer holds one: it refuses the second.
+func TestALinkHoldsOneWatch(t *testing.T) {
+	a, _, _, kb := pair(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	f := nostr.Filter{Kinds: []nostr.Kind{1}, Authors: []nostr.PubKey{kb.Public}}
+	if _, err := a.request(ctx, message{Op: "watch", Filter: &f}); err != nil {
+		t.Fatalf("the first watch: %v", err)
+	}
+	if _, err := a.request(ctx, message{Op: "watch", Filter: &f}); err == nil {
+		t.Fatal("the peer took a second watch on one link")
+	}
+}

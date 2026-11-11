@@ -13,6 +13,7 @@ import (
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/sdk/atomicfile"
 	"github.com/gezibash/arc/sdk/storage"
@@ -86,12 +87,19 @@ type Blobs interface {
 // them.
 const putChunk = 64
 
+// DeviceSigner signs the changes and the drafts of this machine: a device
+// key, or the citizen key on a signer.
+type DeviceSigner interface {
+	keys.Signer
+	SignChange(ctx context.Context, blobID string, record nostr.ID) (string, error)
+}
+
 // Syncer syncs the self data of one citizen on one device.
 type Syncer struct {
 	Citizen nostr.PubKey
 	// Device is the key that signs each change: the device key, or the
-	// citizen key on the machine that holds it.
-	Device nostr.SecretKey
+	// citizen key through its holder on the machine that holds it.
+	Device DeviceSigner
 	Store  Store
 	// Bodies keeps the bodies of the drafts that name one.
 	Bodies Bodies
@@ -104,6 +112,11 @@ type Syncer struct {
 	// Devices returns the device list of the citizen, and false when the
 	// citizen has none.
 	Devices func(ctx context.Context) (devices.List, bool, error)
+	// Opener returns the opener of the app whose drafts hold the kind
+	// inside, as the k tag of a draft names it, and false for a kind of no
+	// app. Repair opens the drafts and checkpoints with it to find the
+	// parts that no page names. Nil keeps each part.
+	Opener func(kind string) (draft.Opener, bool)
 	// State is the directory of the cursor of each storage citizen.
 	State string
 	// Repair lets the sync audit, rebuild, move and delete pieces
@@ -115,6 +128,10 @@ type Syncer struct {
 	TURN bool
 	// Now gives the time of the audits. Nil is time.Now.
 	Now func() time.Time
+	// Writing says whether a write of self data runs on this machine now.
+	// A repair then keeps each part with no blob, whatever its age. Nil
+	// means no write runs.
+	Writing func() (bool, error)
 }
 
 func (s *Syncer) now() time.Time {
@@ -216,6 +233,10 @@ type state struct {
 	// SilentSince is the Unix time of the first failed open after the
 	// last pipe that opened. It is 0 while the storage citizen answers.
 	SilentSince int64 `json:"silent_since,omitempty"`
+	// DirectFailed is the Unix time of the last open in which the direct
+	// attempts found no path and the TURN server of the relay opened the
+	// pipe. It is 0 after a direct path opens.
+	DirectFailed int64 `json:"direct_failed,omitempty"`
 	// Lost holds each listed piece that failed an audit or did not open.
 	// It counts for no seal, and repair replaces it.
 	Lost map[string]bool `json:"lost,omitempty"`
@@ -261,6 +282,42 @@ func (s *Syncer) Unanswered(name string, at time.Time) (time.Duration, error) {
 		}
 	}
 	return at.Sub(time.Unix(st.SilentSince, 0)), nil
+}
+
+// TURNFirstFor is the time after the direct attempts to a storage citizen
+// found no path in which each sync opens the pipe to it through the TURN
+// server of the relay first (docs/storage/SPEC.md, section 4.6).
+const TURNFirstFor = 6 * time.Hour
+
+// TURNFirst gives the end of the time in which a sync at the time at opens
+// the pipe to the storage citizen through the TURN server of the relay
+// first. It gives the zero time when the sync tries the direct attempts
+// first. A clock that went back before the failure ends the time.
+func (s *Syncer) TURNFirst(name string, at time.Time) (time.Time, error) {
+	st, err := s.load(name)
+	if err != nil || st.DirectFailed == 0 {
+		return time.Time{}, err
+	}
+	failed := time.Unix(st.DirectFailed, 0)
+	if until := failed.Add(TURNFirstFor); !at.Before(failed) && at.Before(until) {
+		return until, nil
+	}
+	return time.Time{}, nil
+}
+
+// DirectPath records the direct attempts of an open at the time at whose
+// pipe opened: found says that a direct path opened, and not the TURN
+// server of the relay.
+func (s *Syncer) DirectPath(name string, at time.Time, found bool) error {
+	st, err := s.load(name)
+	if err != nil {
+		return err
+	}
+	st.DirectFailed = at.Unix()
+	if found {
+		st.DirectFailed = 0
+	}
+	return s.save(name, st)
 }
 
 func (s *Syncer) statePath(name string) string {

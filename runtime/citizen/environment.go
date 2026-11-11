@@ -17,6 +17,7 @@ import (
 	"github.com/gezibash/arc/core/node"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/core/transport"
+	"github.com/gezibash/arc/internal/writelock"
 	"github.com/gezibash/arc/runtime/catalog"
 	"github.com/gezibash/arc/runtime/iface"
 	"github.com/gezibash/arc/runtime/lists"
@@ -119,9 +120,18 @@ func (e *Environment) relaysOf(urls []string) []transport.Transport {
 // Self data, such as a draft of the journal, stays in the store. It goes to
 // no relay; arc sync gives it to the storage citizens of the citizen.
 func (e *Environment) Publish(ctx context.Context, events []nostr.Event, urls []string) error {
+	// A write of self data holds the lock of writes until its last event,
+	// so that a repair keeps the parts that it saved before its draft.
+	if urls == nil && len(events) > 1 && e.Session.storeDir != "" {
+		release, err := writelock.Hold(e.Session.storeDir)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	targets := e.relaysOf(urls)
 	unsent := map[string]error{}
-	for _, event := range events {
+	for i, event := range events {
 		to := targets
 		if urls == nil && selfsync.Local(event) {
 			to = nil
@@ -132,6 +142,9 @@ func (e *Environment) Publish(ctx context.Context, events []nostr.Event, urls []
 		}
 		if result.Outcome == store.Refused {
 			return fmt.Errorf("the store refused the event: %s", result.Reason)
+		}
+		if urls == nil {
+			pauseAfterSave(i+1, e.Session.Errors)
 		}
 		taken := false
 		for _, s := range sent {
@@ -229,7 +242,7 @@ func (e *Environment) Fetch(ctx context.Context, filter nostr.Filter, urls []str
 		return found, nil
 	}
 	if err := node.Unreached(e.Session.Node.Pull(ctx, filter, e.Session.Relays)); err != nil {
-		e.Session.warnf("%v\nthis shows what this machine holds\n", err)
+		e.Session.warnUnreached(err, "this shows what this machine holds")
 	}
 	return e.Session.Node.Store.Query(filter)
 }
@@ -339,7 +352,7 @@ func (e *Environment) Call(ctx context.Context, provider nostr.PubKey, request i
 		}
 		return iface.CallResult{Queued: true}, nil
 	}
-	signer, err := e.callSigner(provider)
+	signer, err := e.callSigner(ctx, provider)
 	if err != nil {
 		return iface.CallResult{}, err
 	}
@@ -354,7 +367,7 @@ func (e *Environment) Call(ctx context.Context, provider nostr.PubKey, request i
 // call to a storage citizen goes from the account key or the device key, so
 // that the storage citizen never sees the citizen key. Each other call goes
 // from the citizen key.
-func (e *Environment) callSigner(provider nostr.PubKey) (keys.Signer, error) {
+func (e *Environment) callSigner(ctx context.Context, provider nostr.PubKey) (keys.Signer, error) {
 	if e.Tool == "" || e.Installs.Path == "" {
 		return e.Session.Signer, nil
 	}
@@ -365,7 +378,7 @@ func (e *Environment) callSigner(provider nostr.PubKey) (keys.Signer, error) {
 	if !ok || install.ID != StorageApp || install.Provider != provider.Hex() {
 		return e.Session.Signer, nil
 	}
-	return e.Session.StorageSigner(provider)
+	return e.Session.StorageSigner(ctx, provider)
 }
 
 // List returns the members of a list of the running command, as keys.

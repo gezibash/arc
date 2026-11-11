@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fiatjaf.com/nostr"
 )
 
 // ifaceExit returns the exit status of a command: 0 for no error, and -1 if
@@ -238,9 +240,12 @@ func TestInterface(t *testing.T) {
 	contains(caller.refuse("exec", "fly"), `no command "fly"`, "the error of an unknown command")
 	t.Log("ok: arc checks the arguments before it calls")
 
-	contains(caller.refuse("install", execKey, "--as", "relay", "--yes"), "is a command of arc",
+	contains(caller.refuse("install", execKey, "--as", "relay", "--yes"), "is a name of arc itself",
 		"the error of a capability that takes the name of a command")
 	t.Log("ok: a capability cannot take the name of a command of arc")
+	contains(caller.refuse("install", execKey, "--as", "wake", "--yes"), "is a name of arc itself",
+		"the error of a capability that takes the name of an entry of the arc home")
+	t.Log("ok: a capability cannot take the name of an entry of the arc home")
 
 	stranger := home("stranger")
 	stranger.run("keys", "gen")
@@ -295,7 +300,7 @@ func TestInterface(t *testing.T) {
 	// open on this machine, with the loopback address and no STUN server.
 	laptop := caller.with(loopback...)
 	desktop := home("desktop").with(loopback...)
-	desktop.input(read(t, keyfile(t, caller.home)), "keys", "add")
+	desktop.input(read(t, secretfile(t, caller.home)), "keys", "add")
 	desktop.run("relay", "add", url)
 	storeKey := storageCitizen(t, work, url, laptop)
 	sync := func() {
@@ -393,7 +398,9 @@ func TestInterface(t *testing.T) {
 	if page := desktop.try("", "journal", "read", "hrs/ablations/1").Stdout; page != "" {
 		t.Fatalf("an old stick brought the deleted page back:\n%s", page)
 	}
-	contains(desktop.run("journal", "history", "hrs/ablations/1"), "no revisions", "the history outlived the delete")
+	if gone := desktop.try("", "journal", "history", "hrs/ablations/1"); gone.Err == nil || !strings.Contains(gone.Stderr, "no such page hrs/ablations/1") {
+		t.Fatalf("the history outlived the delete:\n%s\n%s", gone.Stdout, gone.Stderr)
+	}
 	t.Log("ok: delete removes the page and its history, and an old stick does not bring it back")
 
 	// With no relay, the page crosses a stick.
@@ -483,15 +490,17 @@ func TestInterface(t *testing.T) {
 	sealed := home("sealed")
 	opened := sealed.with("ARC_PASSPHRASE=correct horse")
 	identity := opened.run("keys", "gen", "--encrypt")
-	if !strings.HasPrefix(read(t, keyfile(t, sealed.home)), "ncryptsec1") {
+	if !strings.HasPrefix(read(t, secretfile(t, sealed.home)), "ncryptsec1") {
 		t.Fatal("the key file is not an ncryptsec")
 	}
 	whoami := strings.SplitN(sealed.run("whoami"), "\n", 3)
 	if len(whoami) < 2 || whoami[0]+"\n"+whoami[1] != ifaceTrim(identity) {
 		t.Fatalf("the sealed key is another identity:\nwhoami   %q\nkeys gen %q", whoami, identity)
 	}
-	opened.run("message", "outbox")
-	sealed.with("ARC_PASSPHRASE=wrong").refuse("message", "outbox")
+	// keys account asks the signer, which opens the key.
+	storageKey := nostr.Generate().Public().Hex()
+	opened.run("keys", "account", storageKey)
+	sealed.with("ARC_PASSPHRASE=wrong").refuse("keys", "account", storageKey)
 	t.Log("ok: a key sealed with a passphrase opens with it, and not without it")
 
 	// An agent signs through its owner's bunker, and holds no secret key.
@@ -513,7 +522,7 @@ func TestInterface(t *testing.T) {
 	if added[len(added)-1] != ownerKey {
 		t.Fatalf("the agent is %q, not the owner %s", added, ownerKey)
 	}
-	secret := strings.TrimSpace(read(t, keyfile(t, owner.home)))
+	secret := strings.TrimSpace(read(t, secretfile(t, owner.home)))
 	err = filepath.WalkDir(agent.home, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || !entry.Type().IsRegular() {
 			return err
@@ -539,7 +548,7 @@ func TestInterface(t *testing.T) {
 	}
 	t.Log("ok: an agent signs as its owner through a bunker, and holds no secret key")
 
-	contains(agent.refuse("notes", "post", "not", "allowed"), "does not sign kind 1",
+	contains(refusedByBunker(t, agent, "notes", "post", "not", "allowed"), "does not sign kind 1",
 		"the refusal of a kind that the bunker does not allow")
 	t.Log("ok: the bunker refuses a kind that its owner does not allow")
 
@@ -581,4 +590,32 @@ func TestInterface(t *testing.T) {
 	t.Log("ok: with --decrypt all, the agent reads its owner's mail, and the URI stays the same")
 
 	t.Log("phase D holds: reserved kinds, consent, dry runs, sealed keys, and remote signers")
+}
+
+// refusedByBunker runs a command that the bunker must refuse, and returns
+// its standard error. Under load, as with the race detector, the bunker can
+// miss the 15 s window of a connect. arc then keeps the file signer-silent
+// in the identity, and fails each command for a minute with "the signer did
+// not answer", which is not the refusal under test. So it removes that file
+// and asks again, up to 3 times. A bunker that never answers still fails.
+func refusedByBunker(t *testing.T, agent machine, args ...string) string {
+	t.Helper()
+	var refused string
+	for attempt := 1; attempt <= 3; attempt++ {
+		refused = agent.refuse(args...)
+		if !strings.Contains(refused, "the signer did not answer") {
+			return refused
+		}
+		t.Logf("measured: the bunker did not answer in time, attempt %d; asking again", attempt)
+		err := filepath.WalkDir(agent.home, func(path string, entry fs.DirEntry, err error) error {
+			if err == nil && entry.Name() == "signer-silent" {
+				return os.Remove(path)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return refused
 }

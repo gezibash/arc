@@ -145,3 +145,35 @@ func (d Dir) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch, e
 	}
 	return batch, ctx.Err()
 }
+
+// Remove deletes the files of these events, and the hop limit beside each,
+// then flushes the directory. Each remove is atomic: a crash leaves a file
+// whole or gone, and a later Remove takes the rest. It returns the count of
+// events whose file it removed.
+func (d Dir) Remove(ids []nostr.ID) (int, error) {
+	removed := 0
+	for _, id := range ids {
+		// The hop limit goes first, so no limit stays without its event.
+		path := filepath.Join(d.events(), id.Hex())
+		if err := os.Remove(path + ".hops"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, err
+		}
+		err := os.Remove(path + ".json")
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	dir, err := os.Open(d.events())
+	if err != nil {
+		return removed, err
+	}
+	defer func() { _ = dir.Close() }()
+	return removed, dir.Sync()
+}

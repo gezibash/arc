@@ -114,8 +114,9 @@ show it.
 
 ### 3.4 Wake configuration
 
-The caller keeps wake hooks in `wake.toml` in the directory of ARC (default
-`~/.config/arc/wake.toml`), one hook for each citizen key. This file has the
+The caller keeps wake hooks in `wake.toml` in the directory of ARC (by
+default `~/.arc/wake.toml`, or `~/.config/arc/wake.toml` in a home that an
+older arc made), one hook for each citizen key. This file has the
 same role as `ProxyCommand` in `~/.ssh/config`.
 
 ```toml

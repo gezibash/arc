@@ -49,44 +49,10 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	process := start(cmd)
 	process.WaitDelay = time.Second
 	output := &processOutput{encoder: json.NewEncoder(stream), remaining: s.config.Limits.OutputBytes, cancel: cancel}
-	var input io.WriteCloser
-	var terminal *os.File
-	var outputDone chan error
 	commandDone := new(atomic.Bool)
-	if request.PTY {
-		terminal, err = startTerminal(process, request.Rows, request.Cols)
-		if err != nil {
-			return err
-		}
-		input = terminal
-		outputDone = make(chan error, 1)
-		go func() {
-			_, err := io.Copy(processChannel{output, "stdout"}, ptyOutput{terminal, commandDone})
-			// EIO: no process holds the terminal open. A deadline: no output
-			// came for drainIdle after the command exited.
-			if errors.Is(err, syscall.EIO) || errors.Is(err, os.ErrDeadlineExceeded) {
-				err = nil
-			}
-			if err != nil {
-				cancel(err)
-			}
-			outputDone <- err
-		}()
-	} else {
-		rd, wr, e := os.Pipe()
-		if e != nil {
-			return e
-		}
-		process.Stdin = rd
-		process.Stdout = processChannel{output, "stdout"}
-		process.Stderr = processChannel{output, "stderr"}
-		err = process.Start()
-		_ = rd.Close()
-		if err != nil {
-			_ = wr.Close()
-			return err
-		}
-		input = wr
+	input, terminal, outputDone, err := startIO(process, request, output, cancel, commandDone)
+	if err != nil {
+		return err
 	}
 	s.lease.hold()
 	defer s.lease.release()
@@ -105,59 +71,112 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 	}()
 	defer killGroup(process)
 	// Core closes the stream after the handler returns, releasing a pending read.
-	go func() {
-		if len(cmd.Stdin) > 0 {
-			if _, err := input.Write(cmd.Stdin); err != nil {
-				if !inputGone(err) {
-					cancel(err)
-				}
-				return
-			}
+	go feedInput(ctx, cancel, stream, input, terminal, cmd)
+	return finishRun(ctx, process, terminal, outputDone, output, commandDone)
+}
+
+// startIO starts the process on a terminal, or with pipes. It gives the
+// input of the process, the terminal or nil, and the channel that gets the
+// end of the output of a terminal.
+func startIO(process *exec.Cmd, request body, output *processOutput, cancel context.CancelCauseFunc, commandDone *atomic.Bool) (input io.WriteCloser, terminal *os.File, outputDone chan error, err error) {
+	if request.PTY {
+		terminal, err = startTerminal(process, request.Rows, request.Cols)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		if stream.Mode() != provider.Duplex {
-			if err := input.Close(); err != nil && ctx.Err() == nil && !inputGone(err) {
+		input = terminal
+		outputDone = make(chan error, 1)
+		go func() {
+			_, err := io.Copy(processChannel{output, "stdout"}, ptyOutput{terminal, commandDone})
+			// EIO: no process holds the terminal open. A deadline: no output
+			// came for drainIdle after the command exited.
+			if errors.Is(err, syscall.EIO) || errors.Is(err, os.ErrDeadlineExceeded) {
+				err = nil
+			}
+			if err != nil {
+				cancel(err)
+			}
+			outputDone <- err
+		}()
+	} else {
+		rd, wr, e := os.Pipe()
+		if e != nil {
+			return nil, nil, nil, e
+		}
+		process.Stdin = rd
+		process.Stdout = processChannel{output, "stdout"}
+		process.Stderr = processChannel{output, "stderr"}
+		err = process.Start()
+		_ = rd.Close()
+		if err != nil {
+			_ = wr.Close()
+			return nil, nil, nil, err
+		}
+		input = wr
+	}
+	return input, terminal, outputDone, nil
+}
+
+// feedInput writes the stdin of the command, then each stdin record of a
+// duplex session, to the process. A resize record sets the size of the
+// terminal. Its failure cancels the run with the cause.
+func feedInput(ctx context.Context, cancel context.CancelCauseFunc, stream *provider.Stream, input io.WriteCloser, terminal *os.File, cmd *command) {
+	if len(cmd.Stdin) > 0 {
+		if _, err := input.Write(cmd.Stdin); err != nil {
+			if !inputGone(err) {
 				cancel(err)
 			}
 			return
 		}
-		reader := execadapter.NewReader(stream)
-		for {
-			record, err := reader.Next()
-			if errors.Is(err, io.EOF) {
-				if terminal != nil {
-					_, err = input.Write([]byte{4})
-				} else {
-					err = input.Close()
-				}
-				if err != nil && ctx.Err() == nil && !inputGone(err) {
-					cancel(err)
-				}
-				return
-			}
-			if err != nil {
-				cancel(err)
-				return
-			}
-			switch record.Type {
-			case "stdin":
-				_, err = input.Write(record.Data)
-			case "resize":
-				if terminal == nil || record.Rows == 0 || record.Cols == 0 {
-					err = provider.ErrInvalidRequest
-				} else {
-					err = setsize(terminal, record.Rows, record.Cols)
-				}
-			default:
-				err = provider.ErrInvalidRequest
-			}
-			if err != nil {
-				if !inputGone(err) {
-					cancel(err)
-				}
-				return
-			}
+	}
+	if stream.Mode() != provider.Duplex {
+		if err := input.Close(); err != nil && ctx.Err() == nil && !inputGone(err) {
+			cancel(err)
 		}
-	}()
+		return
+	}
+	reader := execadapter.NewReader(stream)
+	for {
+		record, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			if terminal != nil {
+				_, err = input.Write([]byte{4})
+			} else {
+				err = input.Close()
+			}
+			if err != nil && ctx.Err() == nil && !inputGone(err) {
+				cancel(err)
+			}
+			return
+		}
+		if err != nil {
+			cancel(err)
+			return
+		}
+		switch record.Type {
+		case "stdin":
+			_, err = input.Write(record.Data)
+		case "resize":
+			if terminal == nil || record.Rows == 0 || record.Cols == 0 {
+				err = provider.ErrInvalidRequest
+			} else {
+				err = setsize(terminal, record.Rows, record.Cols)
+			}
+		default:
+			err = provider.ErrInvalidRequest
+		}
+		if err != nil {
+			if !inputGone(err) {
+				cancel(err)
+			}
+			return
+		}
+	}
+}
+
+// finishRun waits for the process, drains the output of a terminal, and
+// sends the exit record.
+func finishRun(ctx context.Context, process *exec.Cmd, terminal *os.File, outputDone chan error, output *processOutput, commandDone *atomic.Bool) error {
 	waitErr := process.Wait()
 	killGroup(process)
 	if terminal != nil {
@@ -165,7 +184,7 @@ func (s *server) HandleSession(parent context.Context, req provider.Request, str
 		// This deadline also ends a read that started before the exit. If
 		// it fails, the next read reports the failure.
 		_ = terminal.SetReadDeadline(time.Now().Add(drainIdle))
-		err = <-outputDone
+		err := <-outputDone
 		if err != nil && ctx.Err() == nil {
 			return err
 		}

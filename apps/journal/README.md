@@ -31,26 +31,59 @@ configured delivery paths.
 ## Write and read a page
 
 Addresses are `project/notebook/page`. Page numbers are positive ordinals.
-Required front matter names the title, notebook and page. ARC supplies UTC
-`created_at` and `updated_at` values and retains the original creation time.
+A page keeps each entry. `write` starts a page once, and each `append`,
+`add` and `fix` adds an entry. Nothing changes an entry, so two devices
+that append offline keep both texts.
 
 ```sh
-arc journal write arc/design/1 <<'MD'
----
-title: App boundaries
-notebook: arc/design
-page: 1
----
+arc journal new arc/design --title "App boundaries" <<'MD'
 # Decision
 Apps own domain behavior. Core owns ARC protocols.
 MD
+# prints arc/design/1, the next page number of the notebook
+
+arc journal add arc/design Follow up with the SQLite REPL.
+# adds an entry to today's page, the page titled with today's UTC date
 
 arc journal read arc/design/1
-arc journal append arc/design/1 Follow up with the SQLite REPL.
+arc journal append arc/design/1 Ask Otto about the session limits.
+arc journal history arc/design/1
+arc journal fix arc/design/1/<id> Ask Otto about the call limits.
 arc journal ls --notebook arc/design --order page
 arc journal index arc/design
 arc journal toc arc/design
 ```
+
+- `new <notebook>` writes at the next page number, and prints the address.
+  `write <notebook>/next` writes there too, and `write` of a numbered page
+  starts that page.
+- `add <notebook> <text>` adds an entry to today's page. It starts the page
+  at the next number when the notebook has none.
+- `<notebook>/today` also works with `append`, `read`, `history` and
+  `write`. The words `next`, `today` and `at` never name a page.
+- arc fills in the front matter that the text does not give: `notebook`
+  and `page` from the address, and `title` from `--title`, else from the
+  first `# ` heading, else from its first line. Only `add` and `today` make a page titled with the date. A field that is given must match.
+- `write` of a page that exists fails. Add an entry, or fix one.
+- `history` lists the page and each entry and fix, oldest first, with the
+  address of each entry: `<page>/<id>`. `fix <page>/<id> <text>` replaces
+  that entry when the page is read, and the history keeps both. `fix <page>`
+  replaces the first text of the page.
+- `read` of a page that does not exist says `no such page`, and exits 1.
+- Two devices that start one page offline, such as two `new` of one
+  notebook, keep two pages. The store keeps one at the number, and the
+  other reads at `<page>-<head id>`, such as `arc/design/3-9f2c4e1a0b7d3c55`.
+  `ls` lists it and says why. Entries that a delete on another device did
+  not know read the same way. `append`, `fix`, `history` and `delete` take
+  such an address. A delete of the page at the number moves the other page
+  up to it, so a delete never takes both.
+- No command waits for a terminal. `write` and `new` with no standard input
+  and no `--title` say `no text`, and exit 1.
+
+The first text of a page and each entry hold at most about 3 MB each: the
+store keeps at most 65,535 bytes in the draft, which holds its first 32 KiB
+and the list of its other parts. A larger text is refused before arc keeps
+any of it, with its size; split it.
 
 After another page exists, `next` and `prev` move by ordinal within its notebook,
 skipping missing or deleted pages. `index` and `toc` read the pages of the
@@ -122,6 +155,21 @@ data roots`. An older arc cannot read the pages of this arc, so update each
 device. [The app interface](../../docs/interface/SPEC.md), section 3.9.4,
 defines the page.
 
+### Older arc
+
+An older arc refuses the manifest of this arc, so `arc journal` stops on
+an older home when the new manifest is announced. Update each home before
+the announcement. An older arc that still runs shows a page without its
+entries: it does not read kind 4272.
+
+The manifest adds kind 4272, so after the announcement `arc journal` says
+`the author changed what journal can do`. Agree to the new kind once on
+each home:
+
+```sh
+arc install <manifest-author> journal
+```
+
 ### Pages on the relays
 
 An older arc wrote each page to the relays. The first `arc sync` of this arc
@@ -144,11 +192,16 @@ The [manifest](manifest.json) defines every command of the journal. The
 [app interface](../../docs/interface/SPEC.md) defines the primitives that it
 uses.
 
-A page is a NIP-23 article, kind 30023, inside a draft in the shape of
-NIP-37. The article's `d` tag is the page address, sealed inside the draft;
-the draft's `d` tag is a keyed value of the address. The content key comes
-from the data roots, so no other Nostr client opens the page. The
-checkpoints of the draft are the history of the page.
+The head of a page is a NIP-23 article, kind 30023, inside a draft in the
+shape of NIP-37. The article's `d` tag is the page address, sealed inside
+the draft; the draft's `d` tag is a keyed value of the address. Each entry
+is an event of kind 4272 inside a draft of its own. Its `d` tag is
+`<address>/<id>`, with 16 random hex digits, and a `page` tag names the page;
+a fix also has a `corrects` tag. The draft's `d` tag is a keyed value of
+`<address>/<id>`, so the store keeps each entry. The content key comes from
+the data roots, so no other Nostr client opens the page.
+[The app interface](../../docs/interface/SPEC.md), section 3.9.3, defines
+the head and the entries.
 
 The journal is a collection of notebooks. A notebook is namespaced as
 `project/notebook`, such as `arc/architecture`. Each new page has a positive
@@ -157,13 +210,15 @@ scoped to the notebook. Gaps are allowed; deleting page 2 never renumbers page
 3. Old pages with names remain readable and appear as legacy entries; they are
 not silently renumbered.
 
-The input header requires `title`, `page` and `notebook`. Their combined address
-must match the command address. ARC fills in `created_at` and `updated_at` as
-UTC RFC3339 timestamps. `created_at` stays fixed through replacement and append;
-`updated_at` records the latest write. Caller-supplied timestamps cannot change
-these values. For an older numbered page with no creation field, rewriting uses
-the earliest checkpoint available to this machine. UTC dates come from the
-writer's clock; event replacement still uses core's monotonically newer time.
+The header of a page holds `title`, `page` and `notebook`; arc fills in the
+ones that the text does not give. Their combined address must match the
+command address. ARC fills in `created_at` and `updated_at` as UTC RFC3339
+timestamps with three digits of milliseconds, such as
+`2026-10-24T19:26:07.420Z`; `ls` and `history` show times in the same form. `created_at` is the time of the write. `updated_at` shows the
+time of the newest entry. Caller-supplied timestamps cannot change these
+values. The time of an entry comes from the clock of its device, in
+milliseconds. Each entry is later than each entry of the page that its
+device holds, so entries of one device keep their order.
 
 ```sh
 arc journal write arc/architecture/1 <<'MD'
@@ -198,6 +253,13 @@ bounds. `--from` and `--to` accept a UTC date or RFC3339 timestamp; a date for
 `--to` includes that whole day. `--limit` is positive. `select` reads the full
 selected pages, or the requested Markdown section. Search filters before
 ranking and limiting. Search options must precede the search terms.
+
+A write that fails after it keeps some parts names the address of the parts
+in its error, and the `arc journal delete` command that removes them. `ls`
+also writes a line on the standard error for each address that holds parts
+or checkpoints but no page. A checkpoint gives the address. Parts without a
+checkpoint do not name their address, so `ls` only counts them. A `delete`
+says how many parts and checkpoints that no page names it removed.
 
 Journal search uses a local Bleve Scorch index with BM25 scoring. Plain queries
 match any Unicode word, without stemming or stop-word removal. `--syntax` enables

@@ -113,6 +113,30 @@ func TestTheDailyCapHoldsUntilMidnight(t *testing.T) {
 	ring(t, s, midnight, 200)
 }
 
+// A day with 5 or fewer rings left, after a ring of that day, tells a
+// read how many are left; at 0, that rings wait until 00:00 UTC.
+func TestALowDayTellsTheRingsLeft(t *testing.T) {
+	for _, c := range []struct {
+		daily, used int
+		day         string
+		want        string
+	}{
+		{48, 42, "2026-10-16", ""},
+		{48, 43, "2026-10-16", "arc-ring: 5 of 48 rings left today; then rings wait until 00:00 UTC"},
+		{48, 47, "2026-10-16", "arc-ring: 1 of 48 rings left today; then rings wait until 00:00 UTC"},
+		{48, 48, "2026-10-16", "arc-ring: 0 of 48 rings left today; rings wait until 00:00 UTC"},
+		{48, 48, "2026-10-15", ""},
+		{3, 0, "2026-10-16", ""},
+		{3, 1, "2026-10-16", "arc-ring: 2 of 3 rings left today; then rings wait until 00:00 UTC"},
+	} {
+		s := fresh()
+		s.DailyCap, s.Used, s.Day = c.daily, c.used, c.day
+		if got := s.low(t0); got != c.want {
+			t.Errorf("daily_cap %d, %d used on %s: %q, want %q", c.daily, c.used, c.day, got, c.want)
+		}
+	}
+}
+
 func TestAFailedRingTriesFourTimesWithBackoff(t *testing.T) {
 	s := fresh()
 	s.wrap(t0, false, "")

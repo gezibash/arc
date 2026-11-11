@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -62,6 +63,17 @@ type Config struct {
 	TTL time.Duration
 	// Net replaces the network of the machine. Tests use it.
 	Net transport.Net
+	// TCP, if not nil, also serves TURN over TCP, such as behind a TLS
+	// proxy on port 443 for citizens that cannot send UDP. The relay
+	// sockets stay UDP.
+	TCP net.Listener
+	// URLs are more addresses that each credential names, after the UDP
+	// one, such as "turns:relay.example:443?transport=tcp".
+	URLs []string
+	// Logger gets a line at Info for each allocation, its end and its
+	// errors, and each refusal, so that an operator can see why a citizen
+	// found no path through the relay (#427). Nil logs nothing.
+	Logger *slog.Logger
 }
 
 // Credential is the reply to GET /turn.
@@ -107,29 +119,59 @@ func Serve(conn net.PacketConn, config Config) (*Server, error) {
 		port = addr.Port
 	}
 	s := &Server{config: config, port: port, ledger: newLedger(config.Quota, config.Period)}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	quiet := logging.NewDefaultLoggerFactory()
 	quiet.DefaultLogLevel = logging.LogLevelDisabled
+	generator := &meteredGenerator{
+		RelayAddressGeneratorPortRange: &pturn.RelayAddressGeneratorPortRange{
+			RelayAddress: config.PublicIP,
+			Address:      config.RelayHost,
+			MinPort:      config.MinPort,
+			MaxPort:      config.MaxPort,
+			Net:          config.Net,
+		},
+		ledger:  s.ledger,
+		localIP: localIP(config),
+	}
+	var listeners []pturn.ListenerConfig
+	if config.TCP != nil {
+		listeners = []pturn.ListenerConfig{{Listener: config.TCP, RelayAddressGenerator: generator}}
+	}
 	server, err := pturn.NewServer(pturn.ServerConfig{
 		Realm:         Realm,
 		LoggerFactory: quiet,
 		AuthHandler:   pturn.LongTermTURNRESTAuthHandler(config.Secret, quiet.NewLogger("turn")),
-		QuotaHandler: func(username, _ string, _ net.Addr) bool {
-			return s.ledger.left(userOf(username)) > 0
+		QuotaHandler: func(username, _ string, src net.Addr) bool {
+			if s.ledger.left(userOf(username)) > 0 {
+				return true
+			}
+			logger.Info("turn refused", "citizen", short(userOf(username)), "from", src.String(), "reason", "quota used")
+			return false
+		},
+		EventHandler: pturn.EventHandler{
+			OnAuth: func(src, _ net.Addr, protocol, username, _ string, method string, verdict bool) {
+				if !verdict {
+					logger.Info("turn refused", "citizen", short(userOf(username)), "from", src.String(), "protocol", protocol, "method", method, "reason", "bad credential")
+				}
+			},
+			OnAllocationCreated: func(src, _ net.Addr, protocol, userID, _ string, relay net.Addr, _ int) {
+				logger.Info("turn allocation", "citizen", short(userID), "from", src.String(), "protocol", protocol, "relay", relay.String())
+			},
+			OnAllocationDeleted: func(src, _ net.Addr, protocol, userID, _ string) {
+				logger.Info("turn allocation ended", "citizen", short(userID), "from", src.String(), "protocol", protocol)
+			},
+			OnAllocationError: func(src, _ net.Addr, protocol, message string) {
+				logger.Info("turn allocation error", "from", src.String(), "protocol", protocol, "error", message)
+			},
 		},
 		PacketConnConfigs: []pturn.PacketConnConfig{{
-			PacketConn: conn,
-			RelayAddressGenerator: &meteredGenerator{
-				RelayAddressGeneratorPortRange: &pturn.RelayAddressGeneratorPortRange{
-					RelayAddress: config.PublicIP,
-					Address:      config.RelayHost,
-					MinPort:      config.MinPort,
-					MaxPort:      config.MaxPort,
-					Net:          config.Net,
-				},
-				ledger:  s.ledger,
-				localIP: localIP(config),
-			},
+			PacketConn:            conn,
+			RelayAddressGenerator: generator,
 		}},
+		ListenerConfigs: listeners,
 	})
 	if err != nil {
 		return nil, err
@@ -165,7 +207,7 @@ func (s *Server) Credential(key, host string) (Credential, error) {
 		return Credential{}, err
 	}
 	return Credential{
-		URLs:      []string{"turn:" + net.JoinHostPort(host, strconv.Itoa(s.port)) + "?transport=udp"},
+		URLs:      append([]string{"turn:" + net.JoinHostPort(host, strconv.Itoa(s.port)) + "?transport=udp"}, s.config.URLs...),
 		Username:  username,
 		Password:  password,
 		TTL:       int(s.config.TTL / time.Second),
@@ -199,6 +241,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // userOf is the key in a username of the form <expiry>:<key>.
+// short is the first 8 hex digits of a key, as the relay logs name a
+// citizen.
+func short(key string) string { return key[:min(8, len(key))] }
+
 func userOf(username string) string {
 	if _, key, ok := strings.Cut(username, ":"); ok {
 		return key

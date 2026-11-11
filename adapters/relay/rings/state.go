@@ -269,6 +269,23 @@ func (s *state) failure(host string) string {
 		host, time.Unix(s.Failing, 0).UTC().Format("2006-01-02 15:04"), answer, s.Failures)
 }
 
+// lowRings is the number of rings left in a day at which a read is told.
+const lowRings = 5
+
+// low is the text that tells a citizen that the day has few rings left, or
+// empty. A day in which no ring was used says nothing, so that a small
+// daily_cap does not tell each read.
+func (s *state) low(now time.Time) string {
+	left := s.left(now)
+	switch {
+	case left > lowRings || left == s.DailyCap:
+		return ""
+	case left == 0:
+		return fmt.Sprintf("arc-ring: 0 of %d rings left today; rings wait until 00:00 UTC", s.DailyCap)
+	}
+	return fmt.Sprintf("arc-ring: %d of %d rings left today; then rings wait until 00:00 UTC", left, s.DailyCap)
+}
+
 // backoff is the wait after a failed try: half the base wait, plus a random
 // part of the other half, so that retries of many citizens spread out.
 func backoff(attempt int, jitter float64) time.Duration {

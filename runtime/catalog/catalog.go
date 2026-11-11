@@ -24,7 +24,7 @@ import (
 	"github.com/gezibash/arc/core/session"
 	"github.com/gezibash/arc/core/store"
 	"github.com/gezibash/arc/runtime/capability"
-	"github.com/gezibash/arc/runtime/iface"
+	"github.com/gezibash/arc/runtime/iface/manifest"
 	"github.com/gezibash/arc/sdk/atomicfile"
 )
 
@@ -58,7 +58,7 @@ type Offer struct {
 	Package map[string]any
 	// Manifest is the manifest of interface version 1, when the
 	// announcement holds one. A manifest of the older stack leaves it nil.
-	Manifest *iface.Manifest
+	Manifest *manifest.Manifest
 	Event    nostr.Event
 }
 
@@ -90,7 +90,7 @@ func Announce(ctx context.Context, k keys.Signer, pkg map[string]any, at nostr.T
 // AnnounceManifest makes the announcement of one manifest of interface
 // version 1. Its id becomes the d tag.
 func AnnounceManifest(ctx context.Context, k keys.Signer, data []byte, at nostr.Timestamp) (nostr.Event, error) {
-	m, err := iface.Parse(data)
+	m, err := manifest.Parse(data)
 	if err != nil {
 		return nostr.Event{}, err
 	}
@@ -168,7 +168,7 @@ func Read(event nostr.Event) (Offer, error) {
 
 // readManifest opens an announcement of interface version 1.
 func readManifest(event nostr.Event, pkg map[string]any) (Offer, error) {
-	m, err := iface.Parse([]byte(event.Content))
+	m, err := manifest.Parse([]byte(event.Content))
 	if err != nil {
 		return Offer{}, fmt.Errorf("catalog: %w", err)
 	}
@@ -255,6 +255,45 @@ func Find(s EventReader, provider nostr.PubKey, id string) (Offer, error) {
 	return offers[0], nil
 }
 
+// After is the time to sign a new announcement of a capability: now, or one
+// second after the newest announcement of the author that the store holds.
+// Two announcements of one second tie, and the store keeps the one with the
+// lower ID, so a new one at that second can lose to the old one.
+func After(s EventReader, author nostr.PubKey, id string, now nostr.Timestamp) (nostr.Timestamp, error) {
+	events, err := s.Query(nostr.Filter{Kinds: []nostr.Kind{Kind}, Authors: []nostr.PubKey{author}, Tags: nostr.TagMap{"d": {id}}})
+	if err != nil {
+		return 0, err
+	}
+	clock := now
+	for _, event := range events {
+		// An announcement far in the future would hold each new one
+		// there: the clock of this machine, or of the one that signed it,
+		// is wrong (#422).
+		if event.CreatedAt > clock+nostr.Timestamp(MaxSkew/time.Second) {
+			return 0, &AheadError{ID: id, Ahead: time.Duration(event.CreatedAt-clock) * time.Second}
+		}
+		if event.CreatedAt >= now {
+			now = event.CreatedAt + 1
+		}
+	}
+	return now, nil
+}
+
+// MaxSkew is how far after the clock of this machine an announcement can
+// be dated, so that a new one is signed after it.
+const MaxSkew = 10 * time.Minute
+
+// AheadError is the error of an announcement dated more than MaxSkew after
+// the clock of this machine.
+type AheadError struct {
+	ID    string
+	Ahead time.Duration
+}
+
+func (e *AheadError) Error() string {
+	return fmt.Sprintf("the newest announcement of %s is %s ahead of the clock of this machine, more than %s: check the clock of this machine, and of the machine that signed it", e.ID, e.Ahead, MaxSkew)
+}
+
 // Install is one capability that the citizen trusts.
 type Install struct {
 	Provider string `json:"provider"`
@@ -264,7 +303,7 @@ type Install struct {
 	As string `json:"as,omitempty"`
 	// Consent is what the citizen agreed to at install: the kinds and the
 	// group relay of the manifest.
-	Consent *iface.Consent `json:"consent,omitempty"`
+	Consent *manifest.Consent `json:"consent,omitempty"`
 }
 
 // Installs is the list of trusted capabilities, in one file.
@@ -303,7 +342,7 @@ func (i Installs) Add(offer Offer, as string) error {
 	}
 	entry := Install{Provider: offer.Provider.Hex(), ID: offer.ID, Name: offer.Name(), As: as}
 	if offer.Manifest != nil {
-		consent := iface.ConsentOf(offer.Manifest)
+		consent := manifest.ConsentOf(offer.Manifest)
 		entry.Consent = &consent
 	}
 	for _, e := range list {

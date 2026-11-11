@@ -93,7 +93,7 @@ machine costs compute all the time.
 ## Set up a caller
 
 1. Add a wake hook for the citizen to `wake.toml` in the arc home, by
-   default `~/.config/arc/wake.toml`. The hook runs the start script on
+   default `~/.arc/wake.toml`. The hook runs the start script on
    the citizen machine. Before each live call to the citizen, `arc` runs the
    hook: `arc call`, and the commands that `arc install` adds. The hook
    runs a program of the platform that wakes the machine, with your own

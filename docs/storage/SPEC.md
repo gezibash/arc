@@ -3,9 +3,9 @@
 - Status: partial
 - Layers: sdk, runtime
 - Owns: sdk/storage
-- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestClosedAccountRemoved|TestCloseCall|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestAReplyWithABadIDIsRefused|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/
+- Proof: go test -count=1 -run '^(TestStorageJournalSync|TestStorageImportsDrafts|TestStorageSealsWithDataRoots|TestStorageList|TestPruneGone|TestStorageNetworkSync|TestStoragePieces|TestSilence|TestInviteAdmits|TestAskRule|TestOpenRuleQuotaEachAccount|TestClosedAccountRemoved|TestCloseCall|TestNewKeys|TestPieceKeys|TestCode|TestPieces|TestPieceIDsDiffer|TestParityPrefix|TestNewStorageCitizenAddsPiece|TestPutManyWindow|TestPutManyOlderApp|TestAReplyWithABadIDIsRefused|TestRequestsInFlight|TestHelloAndWindow|TestPieceTags|TestCrashMidWrite|TestImportOldState|TestIndexBytesGrowLinearly|TestAudit|TestAuditReplay|TestAuditProofVector|TestDrain|TestStorageRepair|TestStorageRepairTURN|TestRepairGone|TestRepairTURN|TestRepairAudit|TestRepairRule2|TestRepairDrain|TestRepairExtraPiece|TestRepairMirror|TestStorageFormat1|TestRepairFormat1|TestRepairFormat1Interrupted|TestRepairFormat1Drain|TestRepairFormat1Bound|TestStorageDeletesReplaced|TestReplaced|TestReplacedInterrupted|TestReplacedTURN|TestReplacedLearns|TestReplacedReturns|TestRepairFreesPartsThatNoPageNames|TestAStoppedWriteSendsNoParts|TestAKilledWriterHoldsNothing|TestARunningWriteKeepsItsParts|TestRepairKeepsPartsOfAnotherDevice|TestRepairKeepsPartsThatACheckpointNames|TestRepairKeepsPartsOfAWriteThatRuns|TestRepairSplitsTheDeletionOfManyParts|TestMovable|TestMoves|TestKept|TestAStoreRefusesAMovedDeletion|TestARelayRefusesNewDrafts|TestARelayServesSealedDataOnlyToItsAuthor|TestRelayAddPublishesNoPrivateRelayList|TestDevicePages|TestStorageLargeFile|TestAFileTravelsAsOneBlob|TestABlobMustCarryTheBodyOfItsWrap|TestAPutGoesToTheDiskAsItComes|TestARepairOverTURNDeletesWhileARebuildWaits|TestADirectFailureSendsTheNextSyncsToTURNFor6Hours|TestNoPathThroughTURNFallsBackToTheDirectAttempts|TestAFailedCallGetsNoDirectAttempt|TestTURNFirstSkipsAFixedPath|TestAClockThatWentBackTriesTheDirectAttempts|TestADirLeavesOutTheEventsOfDeletedPages)$' ./internal/proof/ ./apps/storage/cmd/arc-storage/ ./runtime/selfsync/ ./sdk/storage/ ./apps/storage/server/ ./core/store/ ./adapters/relay/sealed/ ./cmd/arc/ ./runtime/citizen/ ./internal/writelock/
 - Remaining: the steps that section 8.2 names: set reconciliation, and a command that removes the old drafts from a relay.
-- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record. No test puts a file of 63 MiB, the largest body, through the CLI: the proof puts 60 MiB. No test puts a large file on storage citizens on other machines or behind real NATs; the proof uses the loopback address. No test measures the memory of a storage citizen during a put of 64 MiB; a unit test proves that the bytes go to the disk as they come. No test checks the limit of 128 MiB of puts in flight. No test waits one hour for the removal of a body that no draft names: a unit test gives the time. `TestStorageLargeFile` needs commit 9ee6088 in the checkout, so a shallow clone fails it. No test waits 30 days after a close of the operator: the test moves `closing` back in `state.json`. No test sends a close call to an older storage app; section 7 states its behavior from the code. No test closes an account through the CLI while another device holds a pipe of the account; a unit test ends the pipe.
+- Unverified: No test runs the two ends of a pipe on two machines or behind real NATs; the tests use the loopback address. No test runs a signer that is offline when it revokes a device. No test runs the sync of `arc serve` on its 15-minute tick; the tests run `arc sync`, and the repair of `arc serve` at its start. No test runs a relay that is not an ARC relay with the storage list. No test asks a real bunker to sign a storage list through the normal CLI, because the device refuses first; the bunker policy has a unit test. No test measures a sync of 1,000 pages through `arc sync`; the measurement of requests in flight runs the app and the client on an emulated link, not on two machines. No test stops the power of a machine: the crash test stops the program, and the page cache of the machine survives. No test runs an invite token older than 7 days, a request older than 30 days, or an account after its `expires`; unit logic decides them from the clock. No test gives a blob of a later generation to a revoked device through `arc sync`: the signer and the storage citizen refuse the device first. The proof reads the data roots that the revoked device keeps on its disk, and tries each one on each blob file. The proof of a parallel sync delays each ARC call to a storage app with a wrapper program; no test delays the pipe itself on a real link. No test waits 7 days: the proof moves `silent_since` back on the disk of the device, and a unit test gives the clock. No test audits a blob of 64 MiB, or 256 blobs in one request; the tests audit blobs of 4 KiB. The test of a replayed answer runs the app and the client in one test program, not through `arc-storage`, because the CLI makes a new nonce on each run and cannot send an old answer. The proof of TURN runs the TURN server of a local relay on the loopback address, with no NAT. No test waits 24 hours for the next audit: the proof audits at the first repair, and a unit test gives the clock. No test runs two devices that repair at the same time through the CLI; a unit test makes the extra piece by hand. No test stops `arc` in the middle of a move of blobs of format 1 to pieces: the proof stops a storage citizen, and a unit test ends a pipe before its puts and before its deletes. No test moves more than 1,024 blobs of format 1 through the CLI; a unit test checks the limit. The proof of the pieces runs one older storage app, built from commit d53e91b. `TestStorageFormat1` runs `arc` of commit d53e91b against storage citizens with pieces: its sync fails with `the storage citizen announced a blob of`. `TestStoragePieces` and `TestStorageFormat1` need commit d53e91b in the checkout, so a shallow clone fails them. No test codes a blob larger than 4 KiB through the CLI; unit tests code blobs of 4 KiB and 64 KiB. No test runs two devices that code one record at the same time. The proof of the removal of the old drafts runs `arc relay serve` of commit d53e91b as the older relay; it sends the drafts of the older client to that relay with the relay adapter, not with an older `arc`. No test runs a v0.25.0 device against a relay that serves a moved deletion: the relay and the store refuse it, and unit tests prove each refusal. No test removes the drafts on 2027-01-10. No test waits 30 days for the removal of a gone entry: the proof moves `since` back in a storage list that the test signs with the citizen key, and a unit test gives the clock. No test ends a drain with a signer that signs through a bunker; such a signer does not hold the citizen key, so it does not end a drain. No test stops `arc` in the middle of the deletion of replaced blobs: the proof stops a storage citizen, and a unit test ends a pipe before its deletes. No test learns about more than 1,024 blobs in one sync. No test runs a v0.26.0 device after the deletion: section 7 states its behavior from the code. No test waits 90 days for the tombstone of a piece ID to end. No test lets a device that cannot read the newest version put an old version again through the CLI: a unit test gives that device a store that takes no record. No test puts a file of 63 MiB, the largest body, through the CLI: the proof puts 60 MiB. No test puts a large file on storage citizens on other machines or behind real NATs; the proof uses the loopback address. No test measures the memory of a storage citizen during a put of 64 MiB; a unit test proves that the bytes go to the disk as they come. No test checks the limit of 128 MiB of puts in flight. No test waits one hour for the removal of a body that no draft names: a unit test gives the time. `TestStorageLargeFile` needs commit 9ee6088 in the checkout, so a shallow clone fails it. No test waits 30 days after a close of the operator: the test moves `closing` back in `state.json`. No test sends a close call to an older storage app; section 7 states its behavior from the code. No test closes an account through the CLI while another device holds a pipe of the account; a unit test ends the pipe. No test stops `arc` in the middle of the removal of the events of a deleted page from a directory: the proof writes two removed files back. No test makes a send of a deletion request to a directory fail; the proof gives the directory a changed copy of it instead. `arc sync --dir` does not remove the bodies of deleted pages from the directory. No test frees parts that no page names through the CLI: a unit test saves the parts with no draft, because a write through the CLI does not stop between its parts and its draft.
 
 This spec defines how a device of a citizen keeps its self data in sync with
 a storage citizen. The design is in
@@ -413,6 +413,19 @@ wrap, and the device that holds the body puts it.
   the file `bodies/<SHA-256>` of the directory, and takes each body that a
   wrap names from there. A body that the device takes MUST hash to its
   name.
+- `arc sync --dir` MUST NOT print a line for each event that the store
+  refuses because a deletion request of its author names it. It prints one
+  line with the count, and removes the files of those events from the
+  directory. It counts an event once, also when two filters of the sync
+  match it. It removes only the events that the store refused for that
+  reason, after it sent the directory each event that the directory lacks,
+  so the directory keeps the deletion request. It removes nothing unless
+  the directory holds a copy of each deletion request of the store that
+  verifies. A changed copy keeps the ID of the request, so the sync does
+  not send the valid one over it.
+  A device that holds the page and has not seen the delete gets the
+  deletion request from the directory, and puts nothing back. A page
+  written again after the delete is newer than the request, so it stays.
 - A device MUST remove a body that no wrap of its store names, at the end of
   a sync, when the body is older than one hour. Thus the bytes of a deleted
   or replaced file leave the disk. The hour keeps a body that another
@@ -919,23 +932,56 @@ sync of `arc serve` repairs: at its start and on each tick. `arc sync`
 repairs only with `--repair`. Without it, `arc sync` counts the blobs that
 need repair, and prints
 `self data: <n> blobs need repair; arc serve repairs them on its tick, or run arc sync --repair`.
+`arc sync --repair --dir` MUST fail before it syncs: a directory holds no
+pieces, so a repair there would audit nothing and print nothing about it
+(#404).
 
 Reason: decision 4 of
 [the storage network proposal](../proposals/storage-network.md). A phone
 repairs only on request. Two devices that repair at the same time cost at
 most one extra piece, which the next repair deletes.
 
-**TURN.** Repair and audits use only direct pipes. A pipe through TURN
-gives no piece to repair, gets no repair put and no audit. If the repair of
-a blob needs a pipe through TURN, the device prints
+**TURN.** A deletion of repair uses each open pipe, also a pipe through
+TURN, with no flag: it frees the blobs of replaced or deleted records and
+moves no bytes of them. A rebuild and an audit use only direct pipes. A pipe
+through TURN gives no piece to a rebuild, gets no repair put and no audit.
+If the rebuild of a blob needs a pipe through TURN, the device still makes
+its deletions, and prints
 `self data: the repair of <n> blobs waits for a direct path: the pipe to <names> goes through TURN; arc sync --repair --turn allows TURN`.
-`--turn` lets repair and audits use TURN. `--turn` with no `--repair` is an
-error. Reason: decision 7 of the proposal. A rebuild of 1 GiB needs more
-than the TURN quota of one day.
+`--turn` lets a rebuild and an audit use TURN. On the path `turn`
+(`arc path turn`), each pipe goes through TURN, so a repair acts as with
+`--turn`. `--turn` with no `--repair` is an error. Reason: decision 7 of
+the proposal. A rebuild of 1 GiB needs more than the TURN quota of one
+day. A deletion needs a few bytes for each blob.
 
 The sync opens each pipe with the path of the citizen (`arc path`): `turn`
 uses only the TURN server of the relay, and `direct` uses no TURN. `auto`
-and `session` try a direct path first.
+and `session` try a direct path first, with one exception.
+
+**TURN first after a direct failure.** With `auto` or `session`, the
+device records in the state file of each storage citizen
+(`direct_failed`, a Unix time) when the direct attempts found no path and
+the TURN server of the relay opened the pipe. A direct path that opens
+removes the record. For 6 hours after the record, a sync that takes a pipe
+through TURN opens the pipe to that storage citizen through the TURN server
+of the relay first, with no direct attempt. If that attempt finds no path,
+the sync runs the direct attempts. If the call to the storage citizen
+fails, the sync makes no second attempt. A pipe that opens through TURN
+first does not move the record, so after 6 hours a sync tries the direct
+attempts first again. A clock before the record also tries them first. The
+sync tells the user:
+`<name>: the direct attempts found no path; until <HH:MM> each sync tries the TURN server of the relay first, so the bytes go through the relay`.
+A repair opens its pipes in the same way, so inside the 6 hours it goes to
+TURN first for its deletions and records no new failure. Reason: a device with no UDP, such as a sandbox that lets
+out only TCP port 443, spent about 36 s of each sync on two direct attempts
+to each storage citizen (Otto, 2026-10-19). An older device ignores the
+record and drops it when it saves the state file, so the next sync tries
+the direct attempts first. Proved by
+`TestADirectFailureSendsTheNextSyncsToTURNFor6Hours`,
+`TestNoPathThroughTURNFallsBackToTheDirectAttempts`,
+`TestAFailedCallGetsNoDirectAttempt`,
+`TestTURNFirstSkipsAFixedPath` and
+`TestAClockThatWentBackTriesTheDirectAttempts` in `runtime/citizen`.
 
 **Decisions.** Zim accepted these on 2026-10-12, with the build of this
 section:
@@ -947,6 +993,24 @@ section:
    `arc sync --repair`. Reason: the piece costs k pieces down, as a
    rebuild does (decision 4 of the proposal).
 3. Audits wait for a direct path, as repair does. `--turn` allows both.
+
+Zim accepted this decision on 2026-10-19:
+
+4. After the direct attempts to a storage citizen find no path, the sync
+   goes to the TURN server of the relay first for 6 hours, then tries the
+   direct attempts first again.
+
+Otto decided this on 2026-10-19, and it narrows decision 3:
+
+5. Over TURN, repair deletes with no flag: freeing the blobs of replaced or
+   deleted records moves no bytes of them. A rebuild and an audit still
+   wait for a direct pipe or `--turn`, and the path `turn` counts as
+   `--turn`. A repair never moves the 6 hours of decision 4: it opens its
+   pipes as a sync does. Reason: on a home with no UDP, a plain
+   `arc sync --repair` spent about 22 s on direct attempts, moved the window
+   on, and freed nothing (Cato, 2026-10-19). `TestReplacedTURN`,
+   `TestARepairOverTURNDeletesWhileARebuildWaits` and
+   `TestStorageRepairTURN` prove it.
 
 Zim accepted these on 2026-10-12, with the move of blobs of format 1:
 
@@ -1141,6 +1205,47 @@ of the device refuses it for one of these reasons:
 The device deletes each piece and each whole copy of the blob of such a
 record, on each storage citizen.
 
+**Parts and checkpoints that no page names.** A write that stops after its
+parts and before its draft, for example a crash, a kill or a full disk,
+leaves parts that no draft names. In a sync that repairs, before step 5 of
+section 4.1, the device deletes a part or a checkpoint from its store only
+when all of these hold:
+
+- This device signed it: its `pubkey` is the key of this device
+  (interface spec, section 3.9.4). In a sync, a part of another device
+  can arrive before its draft, so the device keeps each event of another
+  device.
+- The listings of the start of the sync hold its blob, or it has no blob
+  and its `created_at` is more than one hour before the time of the sync.
+  Thus it is older than one sync, or older than any write, and a write that
+  still runs keeps its parts. A write of self data holds a shared lock on
+  `store/writes.lock` (flock) from its first event to its last. While any
+  process holds it, a repair MUST keep each event with no blob, whatever
+  its age. The system frees the lock of a process that ends, also on
+  SIGKILL.
+- No page names it. A checkpoint is unnamed when its address has no draft,
+  or a blank draft. A part is unnamed when no draft and no checkpoint that
+  stays names it in a `parts` tag, after each one is opened with the key
+  of its app. If a draft or a checkpoint of the address does not open, or
+  has the format before the data roots, each event of the address stays.
+
+The device then saves deletion requests, as `journal delete` of an
+address with no draft does: an `e` tag for each such event, a `k` tag for
+kinds 1234 and 3275, and the `p` tag, signed by the device key. They have
+no `a` tag. One request names at most 512 events, so that it is smaller
+than one event may be (64 KiB); more events take more requests. The same
+sync puts them, and the next repair deletes the blobs by
+rule 3 of "When the device deletes" below.
+
+The write of each sync (step 5 of section 4.1) MUST NOT put a part or a
+checkpoint that has no blob yet, that this device signed, and that no page
+names, as the rule above finds it. Thus a write that stops sends nothing
+to the storage citizens (#397). A write that still runs when a sync starts
+has its parts held back too, and the next sync puts them with the draft.
+If a draft or a checkpoint of the address does not open, the write puts
+the event. An older arc puts each such part, and a repair deletes it after
+one sync by the rule above.
+
 **What stays.** The checkpoints and the parts of a page that is not deleted
 stay. The checkpoints are the history of the draft (interface spec, section
 3.9.1), and `history` reads them (section 3.11). A checkpoint holds the
@@ -1221,7 +1326,13 @@ cursor.
   cannot read the newer version in that sync seals version 1 again.
 
 `arc sync --repair` prints the count in its repair line: `removed <n>
-blobs of replaced records`. Measured in `TestStorageDeletesReplaced`, with
+blobs of replaced records`. The blobs that a deletion request with no `a`
+tag, and with `k` tags only for kinds 1234 and 3275, names are not in that
+count. When there are such blobs, the line says `removed <n> blobs of parts
+and checkpoints that no page names` before it. A repair that deletes such
+parts from the store prints `self data: repair removed <n> parts and <m>
+checkpoints that no page names, as a write that failed leaves them; the
+next arc sync --repair frees any that went to your storage citizens`. Measured in `TestStorageDeletesReplaced`, with
 three storage citizens, k = 2, and pieces of 2,093 bytes: after 8 writes
 of one page, each storage citizen held 17 blobs of 35,581 bytes. The
 repair removed 7 blobs, and each storage citizen then held 10 blobs of
@@ -1275,6 +1386,8 @@ the deletion.
 | A blob does not pass section 3.5 | The device skips it. | `refused <id>: <reason>` |
 | The device holds a wrap and not its body | It puts no blob of the wrap. It gets the blob, if a storage citizen holds it. | `refused <id>: the body of the draft is not on this device: <reason>` |
 | A file needs a body larger than 63 MiB | The put writes nothing. | `<path> is over 66060288 bytes` |
+| The directory holds events of a page that the citizen deleted | `arc sync --dir` leaves them out, and removes their files from the directory. A crash in the removal leaves some files whole; the next sync removes them. | `file:<dir>: <n> events of deleted pages left out, <m> removed from the directory` |
+| The directory holds events of a deleted page, and lacks a deletion request of the store, or holds a changed copy of one | `arc sync --dir` leaves them out, and removes nothing. | `file:<dir>: <n> events of deleted pages left out; they stay in the directory, because it lacks a valid copy of a deletion request` |
 | A wrap names a body that neither the device nor the directory holds | `arc sync --dir` carries the other bodies. | `the body <sum> is on neither side; the device that wrote it holds it` |
 | A piece does not pass section 3.5 | The device gets another piece of the seal. | `refused <name>: piece <id> of blob <blob>: the piece does not open; the device asks another storage citizen` |
 | Fewer than k pieces of a blob answer | The blob waits for the next sync. The sync fails. | `self data: <n> blobs cannot be read now: fewer of their pieces answered than rebuild them; start the storage citizens that are stopped, and sync again`, and `unreadable <blob>: 1 of the 2 pieces that rebuild it answered` for each |
@@ -1424,7 +1537,7 @@ the deletion.
   (proposal, section 3.3, step 2). This step therefore refuses writes now.
 - After 2027-01-10 the operator removes each event of kinds 31234, 1234,
   3275 and 10013, except the drafts with the d tag `arc-keyed-root`.
-  `arc relay serve` has no command for this. That is not built (section
+  `arc-relay` has no command for this. That is not built (section
   8.2).
 - The relay applies a deletion with the tag `["arc", "moved"]`, and then
   serves it to nobody, also not to its author. A v0.25.0 client keeps each
@@ -1579,6 +1692,17 @@ the deletion.
   - The repair line of `arc sync` gains `removed <n> blobs of replaced
     records`. The Go API adds `RepairReport.Replaced`, `Report.Short` and
     `store.ReasonDeleted`.
+- The deletion of parts and checkpoints that no page names (section 4.7)
+  changes no message on the pipe and no kind. Its deletion request has the
+  form that `journal delete` of an address with no draft already makes:
+  - An older device does not look for such parts, and saves no deletion.
+    It applies a deletion of a newer device as each other deletion: its
+    store drops the named events. A device of v0.26.0 or later then deletes
+    their blobs, and counts them in `removed <n> blobs of replaced
+    records`.
+  - A newer device counts these blobs apart, in `removed <n> blobs of parts
+    and checkpoints that no page names`. The Go API adds `Syncer.Opener`
+    and `RepairReport.Unnamed`, `UnnamedParts` and `UnnamedCheckpoints`.
 - `sdk/storage` holds the messages that `apps/storage/wire` held before. The
   bytes on the pipe did not change.
 - Requests in flight add `hello`, `n` and `ids`. They change no earlier
@@ -1941,6 +2065,39 @@ proves the deletion of replaced records with the real store of a device:
 - A device that seals an old version again makes it return. The next
   repair of another device deletes it again.
 
+`go test -count=1 -run '^(TestRepairFreesPartsThatNoPageNames|TestAStoppedWriteSendsNoParts|TestAKilledWriterHoldsNothing|TestRepairKeepsPartsOfAnotherDevice|TestRepairKeepsPartsThatACheckpointNames|TestRepairKeepsPartsOfAWriteThatRuns|TestRepairSplitsTheDeletionOfManyParts)$' ./runtime/selfsync/ ./internal/writelock/`
+proves the deletion of parts and checkpoints that no page names, with
+the real store of a device and drafts in the format of the data roots:
+
+- A part that this device signed and that no page names goes from the
+  store at the first repair after the storage citizens hold it, with one
+  deletion that the same sync puts. The next repair frees its blobs, and
+  counts them apart from the replaced records. The parts, the draft and
+  the checkpoint of a page stay.
+- A part of another device that no draft names yet stays.
+- A part that only the checkpoint of an older version names stays, and so
+  does the checkpoint.
+- A part that the storage citizens do not hold yet stays, as a write that
+  still runs keeps it. The draft then names it.
+- The deletion of 1,000 such parts goes in several requests, each smaller
+  than 64 KiB, and the next repair frees each blob.
+- No sync puts the parts of a write that stopped: the storage citizens
+  hold the 4 records of a page, not its 3 orphan parts. A repair keeps the
+  orphans while they are younger than one hour, and deletes them after.
+  The parts of a write that runs during a sync go out at the next sync,
+  with its draft. While a write holds the lock of writes, a repair keeps
+  the orphans after one hour too.
+- `TestARunningWriteKeepsItsParts` in `./internal/proof/` runs a real
+  `arc journal write` of a page of about 1 MB, built with the tag
+  `arctest`, which stops it after 5 events and before its draft. A real
+  `arc sync --repair` with the clock 2 hours on keeps its parts, and the
+  write then ends with a page that reads whole. After SIGKILL of a second
+  write at the same point, the next such repair deletes its 5 parts. With
+  the lock taken out of the write, or out of the repair, the first repair
+  deletes the parts of the running write. With the hold-back removed, the first sync puts 9
+  records; with the age rule removed, a repair deletes the 2 parts of the
+  running write.
+
 `go test -count=1 -run '^TestStorageDeletesReplaced$' ./internal/proof/`
 runs a real relay and three storage citizens. It writes one page 8 times,
 with a plain `arc sync` after each write. It proves:
@@ -2194,7 +2351,7 @@ the app closed an account that holds a blob.
   n days, which changes sections 3.9.1 and 3.11 of the interface spec and
   needs a decision of the journal; or join old checkpoints into one record,
   which needs a new kind.
-- Not built. A command of `arc relay serve` that removes the old drafts
+- Not built. A command of `arc-relay` that removes the old drafts
   from the store of the relay on 2027-01-10. The operator must remove them
   from the store by other means.
 - Not built. A repair for a v0.25.0 device whose store took a moved

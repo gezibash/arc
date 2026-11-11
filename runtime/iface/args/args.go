@@ -1,0 +1,405 @@
+package args
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip19"
+	"github.com/gezibash/arc/core/draft"
+	"github.com/gezibash/arc/runtime/iface/manifest"
+	"github.com/gezibash/arc/sdk/terminal"
+)
+
+// MaxInput bounds a file or the standard input that a command reads. It is
+// what 256 parts of 32 KiB hold, as base64.
+const MaxInput = 6 << 20
+
+// Values are the arguments of one command, by name. A text is a string, a
+// variadic text is a []string, an integer is an int64, a switch is true, and
+// an absent argument has no entry.
+type Values map[string]any
+
+// Flags are the flags of every command.
+type Flags struct {
+	JSON   bool
+	Later  bool
+	Help   bool
+	DryRun bool
+}
+
+// Resolver turns what a citizen typed into a public key: 64 hex characters,
+// an npub, an nprofile, a NIP-05 name, a petname, or an installed name.
+type Resolver interface {
+	ResolveKey(ctx context.Context, text string) (nostr.PubKey, error)
+}
+
+// Lister finds a list of keys that the citizen saved for the running
+// command. A key argument that names a list stands for each of its members.
+type Lister interface {
+	List(name string) ([]nostr.PubKey, error)
+}
+
+// Members is the value of a key argument that named a list, as hex keys.
+type Members []string
+
+// Bind reads the words that follow a command's path.
+func Bind(ctx context.Context, c *manifest.Command, words []string, r Resolver, stdin io.Reader) (Values, Flags, error) {
+	raw, positionals, flags, err := readWords(c, words)
+	if err != nil || flags.Help {
+		return nil, flags, err
+	}
+	if err := takePositionals(c, raw, positionals); err != nil {
+		return nil, flags, err
+	}
+	values, err := valuesOf(ctx, c, raw, r, stdin)
+	if err != nil {
+		return nil, flags, err
+	}
+	return values, flags, nil
+}
+
+// readWords reads the flags of a command line. It gives the words of each
+// flag by name, and the words that are not flags in their order.
+func readWords(c *manifest.Command, words []string) (map[string][]string, []string, Flags, error) {
+	var flags Flags
+	raw := map[string][]string{}
+	var positionals []string
+
+	byName := map[string]manifest.Arg{}
+	variadicAt := -1
+	n := 0
+	for _, a := range c.Args {
+		byName[a.Name] = a
+		if a.Kind == "positional" && a.Type != "stdin" {
+			if a.Variadic {
+				variadicAt = n
+			}
+			n++
+		}
+	}
+
+	for i := 0; i < len(words); i++ {
+		word := words[i]
+		if word == "--" {
+			positionals = append(positionals, words[i+1:]...)
+			break
+		}
+		// Every word after the first word of a variadic argument is its own,
+		// so a command line such as sh -c '...' passes whole.
+		if variadicAt >= 0 && len(positionals) > variadicAt {
+			positionals = append(positionals, words[i:]...)
+			break
+		}
+		// A word of dashes only, such as the --- of front matter, is text,
+		// not a flag (#398). Only -- ends the flags.
+		if !strings.HasPrefix(word, "-") || word == "-" || len(word) > 2 && strings.Trim(word, "-") == "" {
+			positionals = append(positionals, word)
+			continue
+		}
+		name, value, hasValue := strings.Cut(strings.TrimLeft(word, "-"), "=")
+		switch name {
+		case "json":
+			flags.JSON = true
+			continue
+		case "later":
+			flags.Later = true
+			continue
+		case "dry-run":
+			flags.DryRun = true
+			continue
+		case "h", "help":
+			flags.Help = true
+			continue
+		}
+		a, ok := byName[name]
+		if !ok || a.Kind == "positional" {
+			return nil, nil, flags, fmt.Errorf("unknown flag --%s", name)
+		}
+		if a.Kind == "switch" {
+			if hasValue {
+				return nil, nil, flags, fmt.Errorf("--%s takes no value", name)
+			}
+			raw[name] = []string{"true"}
+			continue
+		}
+		if !hasValue {
+			if i+1 >= len(words) {
+				return nil, nil, flags, fmt.Errorf("--%s needs a value", name)
+			}
+			i++
+			value = words[i]
+		}
+		raw[name] = []string{value}
+	}
+	return raw, positionals, flags, nil
+}
+
+// takePositionals gives the words that are not flags to the positional
+// arguments, in order. A variadic argument takes the rest.
+func takePositionals(c *manifest.Command, raw map[string][]string, positionals []string) error {
+	var given []string
+	for _, a := range c.Args {
+		if a.Kind != "positional" || a.Type == "stdin" {
+			continue
+		}
+		if len(positionals) == 0 {
+			break
+		}
+		if a.Variadic {
+			raw[a.Name] = positionals
+			positionals = nil
+			break
+		}
+		raw[a.Name] = positionals[:1]
+		given = append(given, fmt.Sprintf("the %s is %q", a.Name, positionals[0]))
+		positionals = positionals[1:]
+	}
+	if len(positionals) > 0 {
+		// Name what each argument took, so that a word in the wrong place,
+		// such as --- before the address, shows (#398).
+		text := fmt.Sprintf("too many arguments: %s", terminal.EscapeLine(strings.Join(positionals, " ")))
+		if len(given) > 0 {
+			text += ", after " + terminal.EscapeLine(strings.Join(given, ", "))
+		}
+		return errors.New(text)
+	}
+	return nil
+}
+
+// valuesOf converts the words of each argument to its type. It reads the
+// standard input for an argument of that type, and fills in a default.
+func valuesOf(ctx context.Context, c *manifest.Command, raw map[string][]string, r Resolver, stdin io.Reader) (Values, error) {
+	values := Values{}
+	for _, a := range c.Args {
+		if a.Type == "stdin" {
+			body, err := io.ReadAll(io.LimitReader(stdin, MaxInput+1))
+			if err != nil {
+				return nil, err
+			}
+			if len(body) > MaxInput {
+				return nil, fmt.Errorf("the standard input is over %d bytes", MaxInput)
+			}
+			values[a.Name] = string(body)
+			continue
+		}
+		words, given := raw[a.Name]
+		if !given && a.Default != "" {
+			words, given = []string{a.Default}, true
+		}
+		if !given {
+			if a.Required {
+				return nil, fmt.Errorf("missing %s", Usage(a))
+			}
+			continue
+		}
+		if a.Kind == "switch" {
+			values[a.Name] = true
+			continue
+		}
+		if a.Variadic {
+			values[a.Name] = words
+			continue
+		}
+		var value any
+		var err error
+		if a.Type == "file" && a.Name == manifest.BodyArg(c.Action.Publish) {
+			// A body goes beside the draft, so it can be larger.
+			value, err = readFile(words[0], draft.MaxBody)
+		} else {
+			value, err = convert(ctx, a, words[0], r)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", a.Name, err)
+		}
+		values[a.Name] = value
+	}
+	return values, nil
+}
+
+var linesPattern = regexp.MustCompile(`^([1-9][0-9]*)?:([1-9][0-9]*)?$`)
+
+// convert reads one argument as its type.
+func convert(ctx context.Context, a manifest.Arg, text string, r Resolver) (any, error) {
+	switch a.Type {
+	case "text":
+		return text, nil
+	case "integer":
+		n, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a whole number", text)
+		}
+		return n, nil
+	case "key":
+		if l, ok := r.(Lister); ok {
+			list, err := l.List(text)
+			if err != nil {
+				return nil, err
+			}
+			if len(list) > 0 {
+				out := make(Members, len(list))
+				for i, pk := range list {
+					out[i] = pk.Hex()
+				}
+				return out, nil
+			}
+		}
+		pk, err := r.ResolveKey(ctx, text)
+		if err != nil {
+			return nil, err
+		}
+		return pk.Hex(), nil
+	case "event":
+		return eventRef(text)
+	case "address":
+		if !regexp.MustCompile(a.Pattern).MatchString(text) {
+			// The pattern is for the manifest, not for the citizen (#398).
+			return nil, fmt.Errorf("%q is not an address that this command takes%s", text, addressExample(a.Pattern))
+		}
+		return text, nil
+	case "lines":
+		m := linesPattern.FindStringSubmatch(text)
+		if m == nil || (m[1] == "" && m[2] == "") {
+			return nil, fmt.Errorf("%q is not a range of lines: use a:b, a: or :b", text)
+		}
+		if m[1] != "" && m[2] != "" {
+			from, _ := strconv.Atoi(m[1])
+			to, _ := strconv.Atoi(m[2])
+			if from > to {
+				return nil, fmt.Errorf("the range %q ends before it starts", text)
+			}
+		}
+		return text, nil
+	case "path":
+		if _, err := os.Lstat(text); err == nil {
+			return nil, fmt.Errorf("%s exists; arc never replaces a file", text)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+		return text, nil
+	case "file":
+		return readFile(text, MaxInput)
+	}
+	return nil, fmt.Errorf("the type %q does not exist", a.Type)
+}
+
+// eventRef reads 64 hex characters, a note, an nevent or an naddr. An event
+// becomes its ID, and an naddr becomes its coordinate: kind:author:d.
+func eventRef(text string) (string, error) {
+	if id, err := nostr.IDFromHex(text); err == nil {
+		return id.Hex(), nil
+	}
+	prefix, value, err := nip19.Decode(text)
+	if err != nil {
+		return "", fmt.Errorf("%q is not an event: use hex, note, nevent or naddr", text)
+	}
+	switch prefix {
+	case "note", "nevent":
+		p, ok := value.(nostr.EventPointer)
+		if !ok {
+			return "", fmt.Errorf("%q is not an event: use hex, note, nevent or naddr", text)
+		}
+		return p.ID.Hex(), nil
+	case "naddr":
+		p, ok := value.(nostr.EntityPointer)
+		if !ok {
+			return "", fmt.Errorf("%q is not an event: use hex, note, nevent or naddr", text)
+		}
+		return fmt.Sprintf("%d:%s:%s", p.Kind, p.PublicKey.Hex(), p.Identifier), nil
+	}
+	return "", fmt.Errorf("%q is an %s, not an event", text, prefix)
+}
+
+// File is a file that the citizen named. Templates read its name, type,
+// size and sha256; the file itself renders as base64.
+type File struct {
+	Name   string
+	Type   string
+	Size   int64
+	SHA256 string
+	Bytes  []byte
+}
+
+func (f File) Field(name string) any {
+	switch name {
+	case "name":
+		return f.Name
+	case "type":
+		return f.Type
+	case "size":
+		return f.Size
+	case "sha256":
+		return f.SHA256
+	}
+	return nil
+}
+
+func (f File) String() string { return base64.StdEncoding.EncodeToString(f.Bytes) }
+
+func (f File) MarshalJSON() ([]byte, error) { return json.Marshal(f.String()) }
+
+func readFile(path string, limit int) (File, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return File{}, err
+	}
+	defer func() { _ = file.Close() }()
+	body, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	if err != nil {
+		return File{}, err
+	}
+	if len(body) > limit {
+		return File{}, fmt.Errorf("%s is over %d bytes", path, limit)
+	}
+	kind := mime.TypeByExtension(filepath.Ext(path))
+	if kind == "" {
+		kind = http.DetectContentType(body)
+	}
+	sum := sha256.Sum256(body)
+	return File{
+		Name: filepath.Base(path), Type: kind, Size: int64(len(body)),
+		SHA256: hex.EncodeToString(sum[:]), Bytes: body,
+	}, nil
+}
+
+// Usage writes one argument as the help shows it.
+func Usage(a manifest.Arg) string {
+	switch {
+	case a.Kind == "switch":
+		return "--" + a.Name
+	case a.Kind == "option":
+		return "--" + a.Name + " <" + a.Type + ">"
+	case a.Type == "stdin":
+		return "<standard input>"
+	case a.Variadic:
+		return "<" + a.Name + "...>"
+	}
+	return "<" + a.Name + ">"
+}
+
+// addressExamples are addresses of each form that the journal takes.
+var addressExamples = []string{"notes/work/1", "notes/work"}
+
+// addressExample says what an address of the pattern looks like, with the
+// first example that it takes, or "" if it takes none.
+func addressExample(pattern string) string {
+	for _, example := range addressExamples {
+		if regexp.MustCompile(pattern).MatchString(example) {
+			return fmt.Sprintf(": an address is lowercase words and numbers joined by /, such as %s", example)
+		}
+	}
+	return ""
+}

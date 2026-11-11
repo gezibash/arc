@@ -39,6 +39,11 @@ const (
 	PartSize = 32 * 1024
 	// MaxParts bounds the parts of one draft.
 	MaxParts = 256
+	// MaxContent is the most content, in bytes, that the store keeps in one
+	// event: its codec counts the content in 16 bits. The sealed draft of a
+	// long page holds its first part and the list of its parts, so it
+	// reaches this limit before MaxParts.
+	MaxContent = 65535
 )
 
 // Moved marks a NIP-09 deletion that a device sends to a relay for the

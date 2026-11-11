@@ -1,6 +1,6 @@
 // Package lists holds the saved sets of peers of one machine.
 //
-// A list lives at ~/.config/arc/lists/<tool>/<name>, one peer for each line.
+// A list lives at <identity directory>/lists/<tool>/<name>, one peer for each line.
 // A command of that tool that names a list sends to every peer in it.
 package lists
 
@@ -22,17 +22,8 @@ var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 // Store holds the lists of one machine.
 type Store struct {
-	// Dir is the directory of ARC, for example ~/.config/arc.
+	// Dir is the directory of an identity, for example ~/.arc/citizens/<name>.
 	Dir string
-}
-
-// DefaultStore returns the store of this user.
-func DefaultStore() (*Store, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	return &Store{Dir: filepath.Join(home, ".config", "arc")}, nil
 }
 
 func (s *Store) path(tool, name string) string {

@@ -41,6 +41,8 @@ var publicIP = netip.MustParseAddr("203.0.113.10")
 type hit struct {
 	auth, id, body string
 	at             time.Time
+	// tx is the last write of the store when the ring came.
+	tx int
 }
 
 type safeBuffer struct {
@@ -82,7 +84,7 @@ func start(t *testing.T, cfg Config) *harness {
 
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		h.hits <- hit{auth: r.Header.Get("Authorization"), id: r.Header.Get(IDHeader), body: string(body), at: time.Now()}
+		h.hits <- hit{auth: r.Header.Get("Authorization"), id: r.Header.Get(IDHeader), body: string(body), at: time.Now(), tx: h.lastWrite()}
 		w.WriteHeader(int(h.status.Load()))
 	}))
 	target.StartTLS()
@@ -1000,6 +1002,38 @@ func TestTwoRelaysRingWithOneID(t *testing.T) {
 	}
 }
 
+// notices makes times reads of the wraps of citizen, as as, on one
+// connection, and returns the NOTICEs that the connection got.
+func (h *harness) notices(as keys.Key, citizen nostr.PubKey, times int) []string {
+	t := h.t
+	t.Helper()
+	var mu sync.Mutex
+	var notices []string
+	ctx := context.Background()
+	conn, err := nostr.RelayConnect(ctx, h.ws, nostr.RelayOptions{NoticeHandler: func(_ *nostr.Relay, text string) {
+		mu.Lock()
+		notices = append(notices, text)
+		mu.Unlock()
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	authenticate(t, conn, as)
+	for range times {
+		sub, err := conn.Subscribe(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {citizen.Hex()}}}, nostr.SubscriptionOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitStored(t, sub)
+		sub.Unsub()
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	return notices
+}
+
 // TestAReadOfACitizenWithFailingRingsGetsANotice rings a URL that answers
 // 401, as a platform does after its key changed. The relay tries once, and
 // tells the citizen on its next authenticated read, once on that
@@ -1017,33 +1051,7 @@ func TestAReadOfACitizenWithFailingRingsGetsANotice(t *testing.T) {
 		t.Fatalf("a ring answered 401 made %d calls, want 1: a retry cannot fix the key", n)
 	}
 
-	read := func(as keys.Key, times int) []string {
-		var mu sync.Mutex
-		var notices []string
-		ctx := context.Background()
-		conn, err := nostr.RelayConnect(ctx, h.ws, nostr.RelayOptions{NoticeHandler: func(_ *nostr.Relay, text string) {
-			mu.Lock()
-			notices = append(notices, text)
-			mu.Unlock()
-		}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = conn.Close() }()
-		authenticate(t, conn, as)
-		for range times {
-			sub, err := conn.Subscribe(ctx, nostr.Filter{Kinds: []nostr.Kind{private.WrapKind}, Tags: nostr.TagMap{"p": {bob.Public.Hex()}}}, nostr.SubscriptionOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			waitStored(t, sub)
-			sub.Unsub()
-		}
-		time.Sleep(100 * time.Millisecond)
-		mu.Lock()
-		defer mu.Unlock()
-		return notices
-	}
+	read := func(as keys.Key, times int) []string { return h.notices(as, bob.Public, times) }
 
 	if got := read(stranger, 1); len(got) != 0 {
 		t.Fatalf("a stranger's read got %q", got)
@@ -1054,5 +1062,79 @@ func TestAReadOfACitizenWithFailingRingsGetsANotice(t *testing.T) {
 	}
 	if strings.Contains(got[0], "/hook") {
 		t.Fatalf("the notice names the path of the URL: %s", got[0])
+	}
+}
+
+// A citizen whose rings fail and whose day has few rings left gets both
+// notices on one read.
+func TestAReadGetsBothNotices(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	if code, body := h.register(bob, Request{URL: "https://example.com/hook", Key: ringKey, DailyCap: 2}); code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	h.status.Store(401)
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	h.rings.sends.Wait()
+	got := h.notices(bob, bob.Public, 1)
+	if len(got) != 2 || !strings.HasPrefix(got[0], "arc-ring: the rings to example.com fail since ") || got[1] != "arc-ring: 1 of 2 rings left today; then rings wait until 00:00 UTC" {
+		t.Fatalf("a read got %q, want the failure and then the rings left", got)
+	}
+}
+
+// A read of a citizen whose day has 5 or fewer rings left, after one ring
+// of the day, gets one NOTICE on each connection: the rings left, and at
+// 0, that rings wait until 00:00 UTC. A stranger's read gets none.
+func TestAReadWithFewRingsLeftGetsANotice(t *testing.T) {
+	h := start(t, Config{})
+	bob, stranger := keys.Generate(), keys.Generate()
+	if code, body := h.register(bob, Request{URL: "https://example.com/hook", Key: ringKey, DailyCap: 2}); code != http.StatusOK {
+		t.Fatalf("register: %d %s", code, body)
+	}
+	if got := h.notices(bob, bob.Public, 1); len(got) != 0 {
+		t.Fatalf("a read before any ring of the day got %q", got)
+	}
+	for _, want := range []string{
+		"arc-ring: 1 of 2 rings left today; then rings wait until 00:00 UTC",
+		"arc-ring: 0 of 2 rings left today; rings wait until 00:00 UTC",
+	} {
+		if code, body := h.do(http.MethodPost, TestPath, bob, nil, nil); code != http.StatusOK {
+			t.Fatalf("ring test: %d %s", code, body)
+		}
+		if got := h.notices(stranger, bob.Public, 1); len(got) != 0 {
+			t.Fatalf("a stranger's read got %q", got)
+		}
+		if got := h.notices(bob, bob.Public, 3); len(got) != 1 || got[0] != want {
+			t.Fatalf("bob's three reads on one connection got %q, want [%q]", got, want)
+		}
+	}
+}
+
+// lastWrite is the ID of the last write of the store of the rings.
+func (h *harness) lastWrite() int {
+	tx, err := h.db.Begin(false)
+	if err != nil {
+		return -1
+	}
+	defer func() { _ = tx.Rollback() }()
+	return tx.ID()
+}
+
+// The way from a wrap to its ring writes the store twice: the wrap itself,
+// and the ring ID, which a restart must find. Each write syncs the disk,
+// and each sync of a busy disk made a ring late (#451).
+func TestAWrapWritesTheStoreTwiceBeforeItsRing(t *testing.T) {
+	h := start(t, Config{})
+	bob := keys.Generate()
+	h.mustRegister(bob)
+	before := h.lastWrite()
+	h.mail(bob.Public, private.RelayForm, private.WrapKind)
+	select {
+	case hit := <-h.hits:
+		if writes := hit.tx - before; writes != 2 {
+			t.Errorf("the store took %d writes on the way to the ring, want 2: the wrap and the ring ID", writes)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no ring came")
 	}
 }

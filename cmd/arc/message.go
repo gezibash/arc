@@ -1,8 +1,6 @@
 package main
 
 import (
-	"cmp"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,18 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/core/mail"
-	"github.com/gezibash/arc/core/node"
-	"github.com/gezibash/arc/core/private"
-	"github.com/gezibash/arc/core/store"
-	"github.com/gezibash/arc/core/transport"
 	"github.com/gezibash/arc/runtime/citizen"
 	"github.com/gezibash/arc/sdk/terminal"
 	"github.com/spf13/cobra"
@@ -102,13 +96,40 @@ func replyParent(command *cobra.Command) (nostr.ID, error) {
 func recipients(text string) ([]nostr.PubKey, error) {
 	var out []nostr.PubKey
 	for part := range strings.SplitSeq(text, ",") {
-		pk, err := nostr.PubKeyFromHex(strings.TrimSpace(part))
+		pk, err := publicKey(strings.TrimSpace(part))
 		if err != nil {
-			return nil, errors.New("a recipient is 64 characters of hex, as arc whoami prints it; separate the recipients of a group with commas")
+			return nil, fmt.Errorf("the recipient %w; separate the recipients of a group with commas", err)
 		}
 		out = append(out, pk)
 	}
 	return out, nil
+}
+
+// plural gives one for n == 1, else many.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// publicKey reads a public key of 64 hex characters, as arc whoami prints
+// it. Its error names the first character that is not hex, or says that
+// the hex is not a key.
+func publicKey(text string) (nostr.PubKey, error) {
+	if len(text) != 64 {
+		return nostr.PubKey{}, fmt.Errorf("is not a key: a key is 64 hex characters, as arc whoami prints it, and this has %d", len(text))
+	}
+	for i, c := range text {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F') {
+			return nostr.PubKey{}, fmt.Errorf("is not a key: %s at position %d is not hex", terminal.EscapeLine(strconv.QuoteRune(c)), i+1)
+		}
+	}
+	pk, err := nostr.PubKeyFromHex(text)
+	if err != nil {
+		return nostr.PubKey{}, errors.New("is not a key: it is hex, but no key has this value; check it for a typo")
+	}
+	return pk, nil
 }
 
 func hexKeys(pks []nostr.PubKey) []string {
@@ -120,6 +141,27 @@ func hexKeys(pks []nostr.PubKey) []string {
 }
 
 // petnames names some keys, separated by commas.
+// inboxNotes says, for each recipient, when the send found no relay list,
+// or used an old one because no relay or indexer answered
+// (docs/delivery/SPEC.md, section 3.8).
+func inboxNotes(sess *citizen.Session, out []mail.Outgoing) {
+	for _, o := range out {
+		pk, err := nostr.PubKeyFromHex(o.To)
+		if err != nil {
+			continue
+		}
+		name := petnames([]nostr.PubKey{pk})
+		switch o.Inbox {
+		case mail.InboxNone:
+			if len(sess.Relays) > 0 {
+				fmt.Fprintf(os.Stderr, "no relay list for %s on your relays or indexers: the mail waits on your relays only; if %s reads mail on other relays, add one of them with arc relay add --index <url>, and arc sync sends it there\n", name, name)
+			}
+		case mail.InboxStored:
+			fmt.Fprintf(os.Stderr, "no relay or indexer answered the lookup of the relay list of %s: the mail goes to the relays of the list in your store, which can be old\n", name)
+		}
+	}
+}
+
 func petnames(pks []nostr.PubKey) string {
 	names := make([]string, len(pks))
 	for i, pk := range pks {
@@ -276,9 +318,9 @@ func watchMessages(command *cobra.Command, _ []string) error {
 	texts, _ := command.Flags().GetStringArray("from")
 	senders := map[nostr.PubKey]bool{}
 	for _, text := range texts {
-		pk, err := nostr.PubKeyFromHex(text)
+		pk, err := publicKey(text)
 		if err != nil {
-			return fmt.Errorf("--from %q is not a public key", text)
+			return fmt.Errorf("--from %w", err)
 		}
 		senders[pk] = true
 	}
@@ -290,142 +332,9 @@ func watchMessages(command *cobra.Command, _ []string) error {
 		return err
 	}
 	defer sess.Close()
-	var relays []transport.Live
-	for _, t := range sess.Relays {
-		if live, ok := t.(transport.Live); ok {
-			relays = append(relays, live)
-		}
-	}
-	if len(relays) == 0 {
-		return errors.New("arc message watch needs a relay: run arc relay add <url>")
-	}
-
-	// The mail of a watch saves each seal that it opens. After each save,
-	// the inbox can hold a new message.
-	saved := make(chan struct{}, 1)
-	sess.Node.Store = sealNotice{EventStore: sess.Node.Store, saved: saved}
-
 	printer := newMessagePrinter(command.OutOrStdout(), sess.Signer.PublicKey(), asJSON)
-	show := func(m mail.Message) error {
-		if len(senders) > 0 && !senders[m.From] {
-			return nil
-		}
-		return printer.print(m)
-	}
-	msgs, err := sess.Mail.Inbox(ctx)
-	if err != nil {
-		return err
-	}
-	after, err := sinceFilter(ctx, sess, since, msgs)
-	if err != nil {
-		return err
-	}
-	// showNew prints the messages that it did not print before, in the
-	// order of receipt. An adapter that gives the last id to --since after
-	// a restart then loses no message.
-	seen := map[string]bool{}
-	showNew := func(msgs []mail.Message, include func(mail.Message) bool) error {
-		var fresh []mail.Message
-		for _, m := range msgs {
-			if !seen[m.ID] {
-				seen[m.ID] = true
-				if include(m) {
-					fresh = append(fresh, m)
-				}
-			}
-		}
-		if len(fresh) > 1 {
-			order, err := sess.ReceiptOrder(ctx)
-			if err != nil {
-				return err
-			}
-			// A message with no receipt comes first, in the order of the inbox.
-			slices.SortStableFunc(fresh, func(a, b mail.Message) int { return cmp.Compare(order[a.ID], order[b.ID]) })
-		}
-		for _, m := range fresh {
-			if err := show(m); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := showNew(msgs, after); err != nil {
-		return err
-	}
-
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	// The store closes after the watches end.
-	var watches sync.WaitGroup
-	defer watches.Wait()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	for _, r := range relays {
-		watches.Go(func() {
-			keepMail(ctx, sess.Mail, r, func() { log.Info("watching", "relay", r.Name()) }, log)
-		})
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-saved:
-		}
-		msgs, err := sess.Mail.Inbox(ctx)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := showNew(msgs, func(mail.Message) bool { return true }); err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-	}
-}
-
-// sinceFilter says which stored messages watch prints before it watches.
-// With no point, it prints none. A time includes the messages at that time,
-// by the clock of each sender. A message id selects the messages that this
-// machine stored after that message, and each message that it stored before
-// it kept receipts.
-func sinceFilter(ctx context.Context, sess *citizen.Session, since string, msgs []mail.Message) (func(mail.Message) bool, error) {
-	if since == "" {
-		return func(mail.Message) bool { return false }, nil
-	}
-	if at, err := time.Parse(time.RFC3339, since); err == nil {
-		return func(m mail.Message) bool { return !m.At.Before(at) }, nil
-	}
-	if !slices.ContainsFunc(msgs, func(m mail.Message) bool { return m.ID == since }) {
-		return nil, fmt.Errorf("--since %q is not an RFC 3339 time or the id of a message in the inbox", since)
-	}
-	order, err := sess.ReceiptOrder(ctx)
-	if err != nil {
-		return nil, err
-	}
-	mark := order[since]
-	return func(m mail.Message) bool {
-		position, ok := order[m.ID]
-		return m.ID != since && (!ok || position > mark)
-	}, nil
-}
-
-// sealNotice tells a watch that the store saved a seal. A seal that the store
-// held already also counts: another arc command can save a message first.
-type sealNotice struct {
-	node.EventStore
-	saved chan<- struct{}
-}
-
-func (s sealNotice) Save(event nostr.Event) (store.Result, error) {
-	result, err := s.EventStore.Save(event)
-	if event.Kind == private.SealKind {
-		select {
-		case s.saved <- struct{}{}:
-		default:
-		}
-	}
-	return result, err
+	return sess.WatchInbox(ctx, citizen.InboxWatch{
+		Since: since, From: senders, Show: printer.print,
+		Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+	})
 }

@@ -1,22 +1,18 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"fiatjaf.com/nostr"
 	"github.com/gezibash/arc/adapters/keyfile"
-	"github.com/gezibash/arc/adapters/transport/relay"
 	"github.com/gezibash/arc/core/devices"
 	"github.com/gezibash/arc/core/keys"
 	"github.com/gezibash/arc/runtime/citizen"
@@ -80,14 +76,14 @@ func accountCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			storage, ok := keys.ParsePublic(args[0])
 			if !ok {
-				return fmt.Errorf("%q is not the key of a storage citizen", args[0])
+				return fmt.Errorf("\"%s\" is not the key of a storage citizen", args[0])
 			}
 			sess, err := open(command)
 			if err != nil {
 				return err
 			}
 			defer sess.Close()
-			account, err := sess.AccountKey(storage)
+			account, err := sess.AccountKey(command.Context(), storage)
 			if err != nil {
 				return err
 			}
@@ -118,7 +114,7 @@ func devicesCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			key, err := nostr.PubKeyFromHex(args[0])
 			if err != nil {
-				return fmt.Errorf("%q is not a device key of 64 hex characters: %w", args[0], err)
+				return fmt.Errorf("\"%s\" is not a device key of 64 hex characters: %w", args[0], err)
 			}
 			name, _ := command.Flags().GetString("name")
 			return changeDevices(command, func(_ *citizen.Session, l devices.List) (devices.List, string, error) {
@@ -140,7 +136,7 @@ func devicesCommand() *cobra.Command {
 			return changeDevices(command, func(sess *citizen.Session, l devices.List) (devices.List, string, error) {
 				d, ok := l.Find(args[0])
 				if !ok {
-					return l, "", fmt.Errorf("no device %q on the list: see arc keys devices", args[0])
+					return l, "", fmt.Errorf("no device \"%s\" on the list: see arc keys devices", args[0])
 				}
 				// The revoked key never holds the generation after the
 				// newest one, which the signer makes next.
@@ -179,7 +175,7 @@ func listDevices(command *cobra.Command, _ []string) error {
 		fmt.Fprintln(command.OutOrStdout(), "the device list is empty: the bunker admits no device")
 	}
 	for _, d := range l.Devices {
-		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", d.Name, d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly)) //arc:raw-ok a device name that this citizen chose
+		fmt.Fprintf(command.OutOrStdout(), "%s  %s  added %s\n", terminal.EscapeLine(d.Name), d.Key.Hex(), d.Added.Time().UTC().Format(time.DateOnly))
 	}
 	return nil
 }
@@ -206,7 +202,8 @@ func changeDevices(command *cobra.Command, change func(*citizen.Session, devices
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(command.OutOrStdout(), said)
+	// said names the device, which a user or an older list chose.
+	fmt.Fprintln(command.OutOrStdout(), terminal.EscapeLine(said))
 	root, err := sess.PublishDataRoots(command.Context(), l)
 	if err != nil {
 		return fmt.Errorf("the device list changed, but the data roots did not: %w; run arc keys roots on the signer to try again", err)
@@ -218,7 +215,7 @@ func changeDevices(command *cobra.Command, change func(*citizen.Session, devices
 	}
 	targets, err := sess.PushGrants(command.Context(), installs, l)
 	for _, install := range targets {
-		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", install.As)
+		fmt.Fprintf(command.OutOrStdout(), "grants: sent to the storage citizen %s\n", terminal.EscapeLine(install.As))
 	}
 	if err != nil {
 		return fmt.Errorf("the device list changed, but %w; run arc sync on the signer to try again", err)
@@ -355,105 +352,4 @@ func unsealCommand() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// guard decides which devices a bunker admits. With no device list, it
-// admits a device that gave the bunker secret once, as before device lists.
-// With a list, it admits only the device keys on the list.
-type guard struct {
-	mu         sync.Mutex
-	secret     string
-	authorized map[nostr.PubKey]bool
-	list       *devices.List
-}
-
-func (g *guard) authorize(from nostr.PubKey, given string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.list != nil {
-		return g.list.Has(from)
-	}
-	if given == g.secret {
-		g.authorized[from] = true
-	}
-	return g.authorized[from]
-}
-
-// refusal says why the bunker refuses a device, or nothing.
-func (g *guard) refusal(from nostr.PubKey) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.list != nil && !g.list.Has(from) {
-		return errors.New("the signer refuses this device: its key is not on the device list")
-	}
-	return nil
-}
-
-// load takes a list when it is newer than the list that the guard holds.
-func (g *guard) load(l devices.List) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.list != nil && l.At <= g.list.At {
-		return false
-	}
-	g.list = &l
-	return true
-}
-
-func (g *guard) listed() bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.list != nil
-}
-
-// watchDevices loads each new device list that reaches the bunker's relay,
-// until ctx ends. The relay serves the sealed list only after the bunker
-// authenticates as the citizen.
-func watchDevices(ctx context.Context, r relay.Relay, k keys.Key, g *guard, log *slog.Logger) {
-	for {
-		events, err := r.Watch(ctx, devices.Filter(k.Public))
-		if err == nil {
-			for event := range events {
-				l, err := devices.Open(ctx, k, k.Public, event)
-				if err != nil {
-					log.Warn("a device list does not open", "error", err)
-					continue
-				}
-				if g.load(l) {
-					log.Info("loaded the device list", "devices", len(l.Devices))
-				}
-			}
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		log.Warn("the relay ended the watch of the device list; watching again", "relay", r.URL, "error", err)
-		select {
-		case <-time.After(3 * time.Second):
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// startDevices loads the newest device list that the store and the relays
-// hold, before the bunker answers anyone.
-func startDevices(ctx context.Context, sess *citizen.Session, r relay.Relay, g *guard) error {
-	filter := devices.Filter(sess.Key.Public)
-	sess.Node.Pull(ctx, filter, sess.Relays)
-	held, err := sess.Node.Store.Query(filter)
-	if err != nil {
-		return err
-	}
-	if batch, err := r.Fetch(ctx, filter); err == nil {
-		held = append(held, batch.Events...)
-	} else {
-		fmt.Fprintln(os.Stderr, terminal.EscapeLine(fmt.Sprintf("the device list did not come from %s: %v", r.URL, err)))
-	}
-	if l, ok, err := citizen.NewestDeviceList(ctx, sess.Signer, sess.Key.Public, held); err != nil {
-		return err
-	} else if ok {
-		g.load(l)
-	}
-	return nil
 }

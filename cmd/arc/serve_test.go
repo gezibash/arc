@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -46,13 +45,16 @@ func (o *output) String() string {
 // command.
 func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan error) {
 	t.Helper()
+	out, _, result := servingWithErrors(t, ctx, home)
+	return out, result
+}
+
+// servingWithErrors is serving, and also returns what arc serve writes on
+// its standard error.
+func servingWithErrors(t *testing.T, ctx context.Context, home string) (*output, *output, <-chan error) {
+	t.Helper()
 	dir := t.TempDir()
-	echo := filepath.Join(dir, "echo")
-	build := exec.Command("go", "build", "-o", echo, "../../adapters/provider/host/testdata/echo")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatal(err)
-	}
+	echo := providerBinary(t, "../../adapters/provider/host/testdata/echo")
 	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,11 +65,13 @@ func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan er
 
 	out := &output{}
 	command := root()
+	errs := &output{}
 	command.SetOut(out)
+	command.SetErr(errs)
 	command.SetArgs([]string{"--home", home, "serve", "exec://" + echo + "?manifest=" + filepath.Join(dir, "manifest.json")})
 	result := make(chan error, 1)
 	go func() { result <- command.ExecuteContext(ctx) }()
-	return out, result
+	return out, errs, result
 }
 
 // waitFor waits until the output holds text, or until the time ends.
@@ -117,6 +121,7 @@ func deadAddress(t *testing.T) string {
 // reads the line calls at once. When the relay comes up, `arc serve` says
 // "serves", and a live call through the relay gets an answer.
 func TestServeSaysServesOnlyWhenARelayHasTheWatch(t *testing.T) {
+	t.Parallel()
 	url, up := testrelay.StartDown(t)
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
@@ -160,6 +165,7 @@ func TestServeSaysServesOnlyWhenARelayHasTheWatch(t *testing.T) {
 // One relay of two is down, and stays down. `arc serve` says "serves" through
 // the other relay, and does not wait for the one that is down.
 func TestServeSaysServesWhenOneRelayOfTwoIsDown(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", "ws://"+deadAddress(t))
@@ -181,6 +187,7 @@ func TestServeSaysServesWhenOneRelayOfTwoIsDown(t *testing.T) {
 // `arc serve` is told to stop before any relay has the watch. It stops, and
 // it never says "serves".
 func TestServeStopsBeforeAnyRelayHasTheWatch(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", "ws://"+deadAddress(t))
@@ -210,11 +217,50 @@ func callEcho(ctx context.Context, provider nostr.PubKey, id string, r relay.Rel
 	}, r)
 }
 
+// The program of a provider stops while `arc serve` runs. Nothing then
+// answers the calls, so `arc serve` stops too, with an error, and does not
+// stay up as a provider that answers no one.
+func TestServeStopsWhenItsProgramStops(t *testing.T) {
+	t.Parallel()
+	url := testrelay.Start(t)
+	home := t.TempDir()
+	ok(t, home, "", "keys", "gen")
+	ok(t, home, "", "relay", "add", url)
+	ctx := t.Context()
+	out, result := serving(t, ctx, home)
+	if !waitFor(out, "serves", 10*time.Second) {
+		t.Fatalf("arc serve did not serve: %q", out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	public, err := hex.DecodeString(lines[len(lines)-1])
+	if err != nil || len(public) != 32 {
+		t.Fatalf("arc serve gave no public key: %q", out.String())
+	}
+	// The program exits before it answers, so the call gets no reply: it
+	// runs on, and the test waits for arc serve instead.
+	callCtx, cancelCall := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelCall()
+	go func() {
+		_, _, _ = call.Live(callCtx, keys.Generate(), nostr.PubKey(public), call.Request{
+			Capability: strings.Fields(lines[0])[2], Method: "ECHO", Path: "/", Body: "exit",
+		}, relay.Relay{URL: url})
+	}()
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "the app program stopped") {
+			t.Errorf("arc serve gave %v, want the app program stopped", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("arc serve still runs after its program stopped")
+	}
+}
+
 // A relay and an indexer of a provider are down when `arc serve` starts, and
 // come back after it says "serves". Each gets the NIP-65 relay list, because
 // a caller that shares no relay with the provider finds its read relays
 // there.
 func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
+	t.Parallel()
 	down, upDown := testrelay.StartDown(t)
 	indexer, upIndexer := testrelay.StartDown(t)
 	home := t.TempDir()
@@ -261,6 +307,7 @@ func TestServeSendsTheRelayListToARelayThatComesBack(t *testing.T) {
 // the bundle directory. `arc serve` runs the program there, wherever the owner
 // runs `arc serve`.
 func TestServeRunsTheProgramOfABundleInItsCwd(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", testrelay.Start(t))
@@ -322,6 +369,7 @@ func servedKey(t *testing.T, out *output) (string, nostr.PubKey) {
 // citizen that serves it. The call is refused until that citizen installs
 // the other provider, because an install is the consent to call it.
 func TestAProviderCallsOnlyWhatItsCitizenInstalled(t *testing.T) {
+	t.Parallel()
 	url := testrelay.Start(t)
 	front, back := t.TempDir(), t.TempDir()
 	for _, home := range []string{front, back} {

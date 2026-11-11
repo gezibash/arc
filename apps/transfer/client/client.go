@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gezibash/arc/apps/transfer/files"
@@ -65,6 +66,9 @@ type Result struct {
 	Path string
 	// Elapsed is the time of the run.
 	Elapsed time.Duration
+	// Confirmed says that the file was here already, whole, and the run
+	// only told the sender that it arrived.
+	Confirmed bool
 }
 
 type getter struct {
@@ -72,6 +76,8 @@ type getter struct {
 	sender string
 	offer  files.Offer
 	part   *files.Part
+	// unconfirmed says that the sender closed before this end said ok.
+	unconfirmed atomic.Bool
 }
 
 // Run gets the file. It writes <output>.part, and renames it when the
@@ -92,7 +98,23 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		}
 	}
 	if _, err := os.Stat(g.Output); err == nil {
-		return result, fmt.Errorf("%s is there already", g.Output)
+		sum, err := files.HashFile(g.Output)
+		if err != nil {
+			return result, fmt.Errorf("%s is there already, and cannot be read: %w", g.Output, err)
+		}
+		if sum != offer.SHA256 {
+			return result, fmt.Errorf("%s is there already", g.Output)
+		}
+		// The file is here and whole. The ok of an earlier get can have
+		// been lost, so tell the sender again: it sends no bytes.
+		fmt.Fprintf(g.Notes, "%s is there already; telling the sender that it arrived\n", g.Output)
+		// A part file next to the whole file is left from an earlier get.
+		if err := os.Remove(g.Output + ".part"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(g.Notes, "%s.part is left from an earlier get, and could not be removed\n", g.Output)
+		}
+		result.Path, err = g.confirm(ctx, sender, offer)
+		result.Output, result.Confirmed = g.Output, err == nil
+		return result, err
 	}
 	if g.State != "" {
 		if taken, err := takePushed(files.ReceivedFile(g.State, sender, offer.SHA256), offer.Size, g.Output); taken || err != nil {
@@ -124,17 +146,39 @@ func (g Get) Run(ctx context.Context) (Result, error) {
 		part.Discard()
 		return result, fmt.Errorf("%w; the part file is removed", err)
 	}
+	if errors.Is(err, errRefused) || errors.Is(err, errNotKept) {
+		return result, err
+	}
 	if err != nil {
 		if part.Have() > resumed {
 			return result, fmt.Errorf("%w; %s.part holds %d of %d bytes, run the command again to get the rest", err, g.Output, part.Have(), offer.Size)
 		}
 		return result, err
 	}
-	if err := part.Finish(); err != nil {
-		return result, err
-	}
 	result.Output, result.Bytes, result.Elapsed = g.Output, part.Have()-resumed, time.Since(started)
+	if run.unconfirmed.Load() {
+		// The sender closed before this end could say ok, as when a slow
+		// disk makes the check long: tell it once more, with no bytes.
+		fmt.Fprintln(g.Notes, "the sender stopped waiting for the check; telling it that the file arrived")
+		if _, err := g.confirm(ctx, sender, offer); err != nil {
+			fmt.Fprintln(g.Notes, "the sender was not told; a later get of the same link tells it")
+		}
+	}
 	return result, nil
+}
+
+// confirm tells the sender that the whole file is here: a transfer from the
+// offset of the size, with no bytes.
+func (g Get) confirm(ctx context.Context, sender string, offer files.Offer) (path string, err error) {
+	run := &getter{Get: g, sender: sender, offer: offer}
+	err = direct.Attempts{
+		Options: g.Options, AnswererFirst: g.AnswererFirst, NoRelay: g.NoRelay, TURN: turn(g.Arc), Notes: g.Notes,
+		Need: func() int64 { return 0 },
+	}.Run(ctx, func(ctx context.Context, options direct.Options, hold time.Duration) (err error) {
+		path, err = run.attempt(ctx, options, hold)
+		return err
+	})
+	return path, err
 }
 
 // takePushed moves a file that the sender gave with a put to output. It
@@ -145,31 +189,25 @@ func takePushed(file string, size int64, output string) (bool, error) {
 	if err != nil || info.Size() != size {
 		return false, nil
 	}
-	if os.Rename(file, output) == nil {
-		return true, nil
+	// The bytes and the name are on the disk before the file counts as
+	// taken.
+	return true, files.MoveFile(file, output)
+}
+
+// errRefused marks bytes that failed the check of size and SHA-256, and
+// errNotKept a file that this end could not keep, such as on a full disk.
+var (
+	errRefused = errors.New("the bytes are refused")
+	errNotKept = errors.New("the file could not be kept")
+)
+
+// offset is where the sender starts: after the bytes of the part file, or
+// at the end when the file is here and only needs confirming.
+func (g *getter) offset() int64 {
+	if g.part == nil {
+		return g.offer.Size
 	}
-	// The state directory can be on another file system than the output.
-	in, err := os.Open(file)
-	if err != nil {
-		return true, err
-	}
-	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(output+".part", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return true, err
-	}
-	_, err = io.Copy(out, in)
-	if closeErr := out.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(output+".part", output)
-	}
-	if err != nil {
-		_ = os.Remove(output + ".part")
-		return true, err
-	}
-	return true, os.Remove(file)
+	return g.part.Have()
 }
 
 // attempt opens one connection and takes bytes from it. It returns
@@ -190,6 +228,9 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 	result := make(chan error, 1)
 	var once sync.Once
 	finish := func(err error) { once.Do(func() { result <- err }) }
+	// Once end arrives, only the check of the bytes decides the get: a
+	// sender that gives up waiting for ok closes the connection then.
+	var ending, gone atomic.Bool
 	dc.OnOpen(func() { close(opened) })
 	dc.OnClose(func() { close(closed) })
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
@@ -198,8 +239,12 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 				finish(fmt.Errorf("the sender stopped: %s", m.Data))
 				return
 			}
-			_ = dc.SendText("ok")
-			finish(nil)
+			ending.Store(true)
+			g.end(dc, &gone, finish)
+			return
+		}
+		if g.part == nil {
+			finish(errors.New("the sender sent bytes of a file that is here"))
 			return
 		}
 		if err := g.part.Write(m.Data); err != nil {
@@ -208,34 +253,14 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 	})
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			finish(errors.New("the connection ended before the end of the file"))
+			gone.Store(true)
+			if !ending.Load() {
+				finish(errors.New("the connection ended before the end of the file"))
+			}
 		}
 	})
 
-	local, err := pc.CreateOffer(nil)
-	if err == nil {
-		local, err = direct.Describe(pc, local)
-	}
-	if err != nil {
-		return "", err
-	}
-	stun, err := direct.OfferSTUN(ctx, options, local)
-	if err != nil {
-		return "", err
-	}
-	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.part.Have(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
-	if err != nil {
-		return "", err
-	}
-	reply, err := call(ctx, g.Arc, g.sender, string(body))
-	if err != nil {
-		return "", err
-	}
-	var remote files.Answer
-	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 {
-		return "", fmt.Errorf("the sender gave no answer: %.200q", reply)
-	}
-	if err := pc.SetRemoteDescription(remote.SDP); err != nil {
+	if err := g.signal(ctx, pc, options, hold); err != nil {
 		return "", err
 	}
 
@@ -262,6 +287,66 @@ func (g *getter) attempt(ctx context.Context, options direct.Options, hold time.
 	case <-time.After(2 * time.Second):
 	}
 	return path, nil
+}
+
+// end checks the bytes when the sender says end. The sender says ok only
+// after the size, the SHA-256 and the rename pass, so that it records no
+// delivery of bytes that this end refused. The get ends before the sender
+// reads ok and closes the connection.
+func (g *getter) end(dc *webrtc.DataChannel, gone *atomic.Bool, finish func(error)) {
+	if g.part != nil {
+		beforeFinish()
+		if err := g.part.Finish(); err != nil {
+			switch {
+			case errors.Is(err, files.ErrWrongBytes):
+				finish(fmt.Errorf("%w: %w", errRefused, err))
+			case errors.Is(err, files.ErrEarlyEnd):
+				finish(err)
+			default:
+				// The bytes can be right: this end could not keep them.
+				finish(fmt.Errorf("%w: %w", errNotKept, err))
+			}
+			_ = dc.SendText("refused: " + files.Refusal(err))
+			return
+		}
+	}
+	// A sender that gave up waiting has closed: then the ok does not go,
+	// and the get tells the sender again at its end. An ok that a test
+	// drops counts as sent, as a lost one does.
+	if !dropOK() && (gone.Load() || dc.SendText("ok") != nil) {
+		g.unconfirmed.Store(true)
+	}
+	afterOK()
+	finish(nil)
+}
+
+// signal sends the offer of the connection to the sender, with the offset
+// to go on from, and takes its answer.
+func (g *getter) signal(ctx context.Context, pc *webrtc.PeerConnection, options direct.Options, hold time.Duration) error {
+	local, err := pc.CreateOffer(nil)
+	if err == nil {
+		local, err = direct.Describe(pc, local)
+	}
+	if err != nil {
+		return err
+	}
+	stun, err := direct.OfferSTUN(ctx, options, local)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(files.Fetch{Version: 1, SHA256: g.offer.SHA256, Offset: g.offset(), HoldMS: int(hold / time.Millisecond), STUN: stun, SDP: local})
+	if err != nil {
+		return err
+	}
+	reply, err := call(ctx, g.Arc, g.sender, string(body))
+	if err != nil {
+		return err
+	}
+	var remote files.Answer
+	if json.Unmarshal(reply, &remote) != nil || remote.Version != 1 {
+		return fmt.Errorf("the sender gave no answer: %.200q", reply)
+	}
+	return pc.SetRemoteDescription(remote.SDP)
 }
 
 // call makes the ARC call to the transfer app of a citizen.
@@ -375,6 +460,8 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 	}
 	opened := make(chan struct{})
 	answered := make(chan string, 1)
+	gone := make(chan struct{})
+	var goneOnce sync.Once
 	dc.OnOpen(func() { close(opened) })
 	dc.OnMessage(func(m webrtc.DataChannelMessage) {
 		if m.IsString {
@@ -382,6 +469,11 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 			case answered <- string(m.Data):
 			default:
 			}
+		}
+	})
+	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
+			goneOnce.Do(func() { close(gone) })
 		}
 	})
 
@@ -430,15 +522,23 @@ func (p Put) attempt(ctx context.Context, options direct.Options, offer files.Of
 		return path, 0, err
 	}
 	// The receiver checks the SHA-256 of all the bytes, and then says "ok".
+	// An end that is gone gives no answer: the wait stops then.
+	var text string
 	select {
-	case text := <-answered:
-		if text != "ok" {
-			return path, 0, fmt.Errorf("the receiver refused the file: %s", text)
+	case text = <-answered:
+	case <-gone:
+		select {
+		case text = <-answered:
+		default:
+			return path, 0, errors.New("the connection to the receiver ended before it confirmed the file")
 		}
-	case <-time.After(30 * time.Second):
+	case <-time.After(putConfirmWait(offer.Size)):
 		return path, 0, errors.New("the receiver did not confirm the file")
 	case <-ctx.Done():
 		return path, 0, ctx.Err()
+	}
+	if text != "ok" {
+		return path, 0, fmt.Errorf("the receiver refused the file: %s", text)
 	}
 	return path, offer.Size - remote.Offset, nil
 }

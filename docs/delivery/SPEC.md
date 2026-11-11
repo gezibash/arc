@@ -3,7 +3,7 @@
 - Status: partial
 - Layers: core, adapters, runtime
 - Owns: core/keys, core/private, core/store, core/node, core/mail, core/kv, core/transport, core/compact, core/frame, core/relaylist, core/call
-- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/
+- Proof: go test -count=1 -run '^(TestDelivery|TestSeed|TestDevicePages|TestSelfDataBelongsToTheCitizen|TestSelfDataNeedsADeviceOnTheList|TestADeviceReadsSealedDataWithAToken|TestASendFollowsANewerRelayList|TestPendingMailGoesToARelayListThatAppearsLater|TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater|TestASendWithNoAnswerUsesTheStoredList|TestAnnounceReplacesAnAnnouncementOfTheSameSecond|TestACallThatNoOneHeardTriesAgain|TestALostReplyAfterAnUnheardCallIsNotRepeated|TestADeadlineInARetryGivesTheUnheardResult|TestADeadlineAfterASubmittedTryKeepsItsResult|TestATryThatCannotEndBeforeTheDeadlineIsNotStarted|TestATryThatStartedAndWasCutOffKeepsItsUnknownOutcome)$' ./internal/proof/ ./core/store/ ./adapters/relay/sealed/ ./core/mail/ ./cmd/arc/ ./runtime/citizen/
 - Remaining: phases 5 and 6 of section 8.1
 - Unverified: Phases 5 and 6 of section 8.1 have no proof. TURN of section 4.12 has a two-machine run behind NAT on the relay of Fly.io (docs/direct/SPEC.md section 8.2), and no automated test between two real NATs. Section 8.3 lists the deferred work. No test types the words or the passphrase of a seed on a real terminal.
 
@@ -339,6 +339,7 @@ registry uses these numbers:
 | 3274 | regular | an acknowledgement, inside a gift wrap |
 | 3275 | regular | one continuation part of sealed content longer than 32 KiB |
 | 3276 | private rumor | core session frames, inside live wraps of kind 21059; see [sessions](../sessions/SPEC.md) |
+| 4272 | regular | a journal entry, inside a NIP-37 draft; see [interface](../interface/SPEC.md), section 3.9.3 |
 | 10272 | replaceable | reserved, and not used, see section 7.1 |
 | 10273 | replaceable | the sealed storage list; see [storage](../storage/SPEC.md), section 3.8 |
 | 10274 | replaceable | the sealed device list; see [devices](../devices/SPEC.md) |
@@ -413,6 +414,44 @@ node races both families, IPv6 first, and starts IPv4 after 300 ms.
 `TestACallMovesToIPv4WhenIPv6Stalls` and
 `TestSyncUsesOneConnectionPerRelay` prove this.
 
+One relay that never answers MUST NOT stall a command when another relay
+answers (#439). A pull asks each relay at once. After the first answer, it
+waits at most 500 ms for the others, and then stops them. When a relay of
+the session did not connect, each send, query, NIP-77 session or live call
+to it in the next 30 seconds fails at once with the same error. Only the
+relay's own timeout or a dial that failed marks it down, never a refusal or
+the deadline of the caller. A relay that took the connection, and then gave
+no EOSE, OK or CLOSED within its own timeout, is down in the same way,
+unless it answers a probe at once, the event of no ID, within 5 seconds: a
+relay that ignores one kind is up, and only that call fails. To find a
+relay that gives no answer thus takes about 20 seconds, the timeout of 15
+and the probe of 5, once; an older arc waited 15 seconds for each call. A
+first attempt that raced both address families and reached neither within
+4 seconds ends the connect: the host is behind a black hole. `arc sync`
+first asks each relay that probe, all at once, so that relays that give no
+answer cost one timeout in all. It names each relay that gave no answer in
+one line of plain words at its end, with its reason: a refused connection,
+a host that does not exist, no answer, or no answer for mail from a relay
+that answered the probe. A relay that refused the probe, by a CLOSED, an
+OK that is false, a request for authentication that arc cannot answer, or
+an HTTP status other than 101 for the WebSocket, gets one line that says
+that the relay refused, with its reason, escaped (#463). A relay that stops
+answering partway through the sends of a sync gets no more sends in that
+sync: the sync stops at the first send that got no answer, keeps each wrap
+that did not go for the next sync, and names the relay in one line with
+the number of wraps that it took. The sync then fails. An older arc tries
+each wrap, and says that the relay refused each one (#465). That line is
+the only line about the relay, with or without a relay that answers. A send and a publish give the event to
+each relay at once, so relays that give no answer cost one wait in all. A
+send opens a new connection after a stall only on a connection where the
+relay answered before. A watch
+still tries to connect, so a provider watches again as soon as its relay
+is back. A relay that gave no answer in time counts as unreached: a command
+that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
+and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestARefusalReasonIsEscapedOnce`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestARelayThatStopsAnsweringInASyncGetsOneLine`, `TestASyncStopsAtARelayThatStopsAnswering`
+prove this.
+
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and
 the NIP-17 list, kind 10050. Each list names every relay of the citizen. A
 citizen does not publish the private NIP-37 list, kind 10013, because no
@@ -421,10 +460,48 @@ relay holds its drafts. `arc relay add`, `arc relay rm`, and
 
 A citizen can also name indexer relays with `arc relay add <url> --index`.
 An indexer holds only relay lists. The citizen publishes its NIP-65 and NIP-17
-lists there. The citizen looks up the lists of
-others in its store, then on its relays and its indexers. A one-time key
-answers the NIP-42 challenge of an indexer, so the indexer does not learn who
-looks up a list. `arc` names no indexer by default.
+lists there. A one-time key answers the NIP-42 challenge of an indexer, so the
+indexer does not learn who looks up a list. `arc` names no indexer by default.
+
+**The lookup of a NIP-17 list.** Before each send to a recipient, the
+citizen MUST ask its relays and its indexers for the NIP-17 list of the
+recipient, for at most 5 seconds, and MUST use the newest list. The list in
+the store can be old: a recipient who moves to other relays publishes a new
+list there. The mail goes to the relays of the sender and to the relays of
+that list.
+
+- If no relay or indexer answers in time, the citizen uses the list in its
+  store, and tells the user:
+  `no relay or indexer answered the lookup of the relay list of <name>: the mail goes to the relays of the list in your store, which can be old`.
+- If no list is found, the mail waits on the relays of the sender only, and
+  the citizen tells the user:
+  `no relay list for <name> on your relays or indexers: the mail waits on your relays only; if <name> reads mail on other relays, add one of them with arc relay add --index <url>, and arc sync sends it there`.
+  Two citizens with no relay and no indexer in common cannot find the list
+  of the other.
+
+**Waiting mail.** After the sync of its relays, `arc sync` and each tick of
+`arc serve` look up the list of each recipient of a message or a request
+that is not delivered and not expired, and of each acknowledgement or reply
+that is not expired, and send its wraps to each relay of that list that
+does not have them yet. Each wrap goes to a relay once. So an
+acknowledgement that waited on the relays of its sender reaches the
+sender of the message once the list is found, and the outbox shows the
+message delivered. `arc sync` prints
+`mail: sent <n> waiting messages to the relays that their recipients read`,
+with `message` and `its` for one.
+
+An older arc looks in its store first, and asks the relays only when the
+store has no list. So it keeps sending to the old relays of a recipient who
+moved, and it never sends waiting mail to a list that it learns later. Its
+mail reaches a newer recipient only on the relays of the old list. Reason:
+Cato's test of v0.36.1 (2026-10-19). A citizen on relay.republic.sh only and
+a citizen on aurelia.republic.sh only exchanged no mail after they swapped
+relays. `TestASendFollowsANewerRelayList`,
+`TestPendingMailGoesToARelayListThatAppearsLater`,
+`TestAWaitingAcknowledgementGoesToARelayListThatAppearsLater` and
+`TestASendWithNoAnswerUsesTheStoredList` in `core/mail` prove this. Zim
+accepted the lookup on each send and the sending of waiting mail on
+2026-10-19.
 
 **File.** A node writes events to a directory as JSON lines, one event on
 each line. Another node reads the directory, imports each event that it does
@@ -793,6 +870,35 @@ A provider announces a capability with an addressable event of kind 30272:
 Announcements are public. Nodes keep them and sync them. A new version of the
 manifest replaces the old one, because the event is addressable.
 
+Two announcements of one second tie, and a store keeps the one with the lower
+ID. Before `arc announce` signs, it therefore reads the announcements of that
+capability that the store and the relays hold. It MUST sign the new one at
+least one second after the newest of them. An older client signs at the
+current second, so its new version can lose to an announcement of the same
+second. A reader needs no change. If no relay answers, or the citizen has
+no relay, `arc announce` cannot know the newest announcement, and MUST
+refuse, and keep nothing.
+`arc serve` starts as before, but MUST sign no announcement until a relay
+answered for the announcements that the relays hold. Until then it says so
+once on the standard error, and asks again. Then it MUST sign each of its
+announcements, also each one again, at least one second after the newest
+that its store holds, never at the bare clock (#422). An announcement that a store holds can be
+dated at most 10 minutes after the clock of the machine: above that,
+`arc announce` MUST refuse to sign, and name the clocks to check. Else one
+announcement far in the future would hold each new one as far ahead.
+`arc serve` MUST NOT stop for it, as a wrong clock or a hostile relay would
+then stop the service: it signs nothing, says once how far ahead the
+announcement is and when it announces again, and announces once the clock
+is within the 10 minutes. While `arc serve` waits, that line and the line
+that no relay has answered are the only ones that it writes (#445).
+`TestAnnounceReplacesAnAnnouncementOfTheSameSecond`,
+`TestAnnounceRefusesWhenNoRelayAnswers`,
+`TestServeAnnouncesAfterTheNewestAnnouncement`, `TestServeSignsNothingBeforeARelayAnswers` and
+`TestTheAnnouncerSignsNothingBlind`, `TestAnnounceRefusesWithNoRelay`,
+`TestTheAnnouncerWaitsForAnAnnouncementFarAhead` and
+`TestServeSaysOneLineWhileNoRelayAnswers` in `cmd/arc`, and
+`TestAnAnnouncementFarAheadStopsANewOne` in `runtime/catalog`, prove this.
+
 An announcement is one event, so its JSON holds at most 65,536 bytes, see
 section 3.4. If the announcement of a manifest is larger, the provider MUST
 refuse to sign it. The error gives the size of the event and the size of
@@ -827,6 +933,16 @@ A live call subscribes, waits until the relay has taken the subscription, and
 only then sends, all on one connection, because a relay never stores the
 ephemeral reply.
 
+A relay that has no watch for a live event answers that no one was
+listening: no one got the event. The relay transport MUST report it as not
+submitted, with `transport.ErrNoListener`. A provider has no watch for a
+few seconds after its relay ends the watch, so the caller MAY send a live
+call or a session open that no one heard again, for at most 6 seconds. It
+MUST NOT send again after any other error of a submitted request. A
+provider whose watch ran more than 10 seconds and ended MUST watch again at
+once (#424). An older caller fails at once with an open whose outcome is
+unknown.
+
 Receipt and processing are separate:
 
 - A deferred request remains pending when no provider is attached, including
@@ -844,6 +960,15 @@ Receipt and processing are separate:
   automatically executed again. The same conservative rule applies to
   historical receipts without a processing journal. This does not promise
   exactly-once effects in an external service.
+- At most once holds for one provider for each identity and capability.
+  One home MUST serve a capability with one `arc serve` at a time: a
+  second one waits up to 10 seconds for a lock in the identity folder, says
+  so once, and then exits with an error. The system frees the lock of a
+  serve that ends, also on SIGKILL (#447). Two devices of one citizen that
+  serve the same capability can both run a request: each one watches the
+  identity, and a request names no device. `docs/proposals/one-provider.md`
+  proposes a fix. `TestOneHomeRunsEachRequestOnce` proves the rule for one
+  home.
 
 Outgoing calls commit their outbox and forwarding state before any send.
 Live replay protection remembers request IDs for the live window. Each request
@@ -907,7 +1032,7 @@ Two apps can open a direct connection for bulk bytes, as the transfer app
 does. ARC carries only the offer and the answer. The relay helps the two
 machines find a path, and carries the bytes only as the last resort.
 
-**STUN.** `arc relay serve` answers STUN binding requests (RFC 8489) on UDP
+**STUN.** `arc-relay` answers STUN binding requests (RFC 8489) on UDP
 port 3478 of its host. A machine asks it for its public address.
 
 **TURN.** If the operator sets `--turn-ports`, the relay also serves TURN
@@ -936,6 +1061,12 @@ port 3478 of its host. A machine asks it for its public address.
   allocations that it has.
 - A relay sets its relay ports with `--turn-ports`, and the public address
   of those ports with `--turn-ip`.
+- A citizen whose network lets out no UDP, such as a cloud sandbox that
+  allows only TCP port 443, can reach TURN over TCP. With `--turn-tcp
+  <address>` the relay also serves TURN on that TCP address, such as
+  `127.0.0.1:3479` behind a TLS proxy on port 443. The relay ports stay UDP.
+  `--turn-url <url>`, which can repeat, adds an address to each credential
+  after the UDP one, such as `turns:relay.example:443?transport=tcp`.
 - The relay MUST relay a packet from one of its allocations to another of
   its allocations. If the relay ports listen on a private address behind
   the public address, as on Fly.io, the network can drop a packet from the
@@ -944,11 +1075,16 @@ port 3478 of its host. A machine asks it for its public address.
   allocation. Only the relay ports get this change.
 
 `arc relay turn [url]` signs the NIP-98 request with the key of the citizen
-and prints the reply. An app gets a credential with this command, because
+and prints the reply. With no URL, it asks the relays in their order, and
+takes the first credential that names TURN over TCP or TLS, else the first
+that any relay gives. An app gets a credential with this command, because
 an app cannot read the key.
 
-An app MUST use TURN only after its direct attempts fail. It MUST tell the
-user that the bytes go through the relay. Before it starts an attempt
+An app MUST use TURN only after its direct attempts fail. A failure of the
+direct attempts to the same citizen in the last 6 hours counts, as in the
+sync of self data (docs/storage/SPEC.md, section 4.6). An app that then
+goes to TURN first MUST run the direct attempts if TURN gives no path. It
+MUST tell the user that the bytes go through the relay. Before it starts an attempt
 through the relay, it compares `quota_left` with the bytes that remain, and
 refuses with an error if the quota is too small.
 
@@ -1053,8 +1189,8 @@ A public event, such as a capability announcement, is readable by everyone.
   with NIP-98, and counts their bytes against a quota for each day, see
   section 4.12. The relay pays for the bandwidth of each relayed transfer.
 
-`arc relay serve` applies the other limits when its flags turn them on, see
-`arc relay serve --help`. A relay can also lower the size limit of one event,
+`arc-relay` applies the other limits when its flags turn them on, see
+`arc-relay --help`. A relay can also lower the size limit of one event,
 and cap the rate of events from one IP address.
 
 The relay transport answers the NIP-42 challenge of a relay and sends the
@@ -1223,6 +1359,11 @@ the NIP-98 refusals and the byte quota on a real TURN allocation.
 `go test -run '^TestRelayToRelay$' ./adapters/relay/turn/` sends packets
 between two allocations of a relay whose public address does not reach the
 host.
+`go test -run '^TestAnAllocationOverTCP$' ./adapters/relay/turn/` gets an
+allocation over TCP, relays bytes on its UDP relay port against the quota,
+and checks the extra URL of the credential.
+`go test -run '^(TestTURNFromTheFirstRelayThatServesIt|TestTURNPrefersARelayThatTakesTCP)$' ./cmd/arc/`
+checks which relay gives the credential.
 `go test -run '^TestRelayPath$' ./sdk/direct/` puts two ends behind
 symmetric NATs on an emulated network: the direct attempt finds no path, and
 the attempt through TURN sends the file.

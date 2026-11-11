@@ -5,6 +5,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -285,5 +288,200 @@ func TestReplies(t *testing.T) {
 	plain, err := ada.Outbox(ctx)
 	if err != nil || len(plain) != 1 || plain[0].ReplyTo != "" {
 		t.Errorf("ada's outbox is %+v, %v, want one plain message", plain, err)
+	}
+}
+
+// On Linux, arc dies with the thread that starts it. A goroutine that
+// holds a thread and returns ends that thread, so the watch holds the
+// thread that started its arc until arc ends: a healthy watch lives on
+// while other threads end. Which threads end is chance, so the test runs
+// four watches; with the thread let go after the start, at least one
+// dies in about 97 runs of 100.
+func TestAWatchOutlivesTheEndOfOtherThreads(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux kills a child when the thread that started it ends")
+	}
+	ada, _ := citizen(t, "ada")
+	bob, bobKey := citizen(t, "bob")
+	for round := range 4 {
+		watchOutlivesThreads(t, ada, bob, bobKey, fmt.Sprint("still there ", round))
+	}
+}
+
+func watchOutlivesThreads(t *testing.T, ada, bob arcprogram.Arc, bobKey, text string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	notes := &lockedBuffer{}
+	got := make(chan arcprogram.Message, 8)
+	ended := make(chan error, 1)
+	go func() {
+		ended <- bob.Watch(ctx, arcprogram.WatchOptions{Notes: notes}, func(m arcprogram.Message) error {
+			got <- m
+			return nil
+		})
+	}()
+	if !arcprogramtest.WaitUntil(30*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
+		t.Fatalf("the watch did not start:\n%s", notes.String())
+	}
+	// Each of these goroutines ends the thread that it holds.
+	for range 5 {
+		var wg sync.WaitGroup
+		for range 500 {
+			wg.Go(func() { runtime.LockOSThread() })
+		}
+		wg.Wait()
+		time.Sleep(200 * time.Millisecond)
+	}
+	if _, err := ada.Send(ctx, []string{bobKey}, text); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case m := <-got:
+			if m.Text == text {
+				return
+			}
+		case err := <-ended:
+			t.Fatalf("the watch ended: %v\n%s", err, notes.String())
+		case <-time.After(30 * time.Second):
+			t.Fatalf("the watch gave no message:\n%s", notes.String())
+		}
+	}
+}
+
+// wrapper is an arc that runs script before the arc of a, in dir.
+func wrapper(t *testing.T, a arcprogram.Arc, script string) arcprogram.Arc {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "arc")
+	body := "#!/bin/sh\n" + script + "\nexec " + a.Program + " " + `"$@"` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return arcprogram.Arc{Program: path, Home: a.Home}
+}
+
+// A call returns when arc ends, even if a child of arc holds its output
+// open: here a sleep that the wrapper of arc leaves behind.
+func TestACallEndsWhenArcEnds(t *testing.T) {
+	ada, adaKey := citizen(t, "ada")
+	sleep := fmt.Sprintf("%d.%d", 300+os.Getpid()%30, time.Now().Nanosecond()%1000)
+	defer func() { _ = exec.Command("pkill", "-f", "sleep "+sleep).Run() }()
+	slow := wrapper(t, ada, "sleep "+sleep+" &")
+	start := time.Now()
+	key, err := slow.PublicKey(context.Background())
+	if took := time.Since(start); err != nil || key != adaKey || took > 15*time.Second {
+		t.Errorf("PublicKey gave %q, %v after %v, want %s at once", key, err, took, adaKey)
+	}
+}
+
+// On Linux, arc dies with the thread that starts it. A call holds that
+// thread until arc ends, so a call lives on while other threads end. With
+// one P, the call waits after the start of arc while new goroutines hold
+// their threads and return: the first runs on the thread of the call
+// unless the call holds it, and the end of that thread kills arc.
+func TestACallOutlivesTheEndOfOtherThreads(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux kills a child when the thread that started it ends")
+	}
+	ada, adaKey := citizen(t, "ada")
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	defer arcprogram.SetStarted(func() {
+		// More than one goroutine, so that idle threads end too.
+		for range 16 {
+			ended := make(chan struct{})
+			go func() {
+				runtime.LockOSThread()
+				close(ended)
+			}()
+			<-ended
+		}
+	})()
+	// The first call of a process can miss, as the runtime starts its
+	// threads.
+	for range 3 {
+		key, err := ada.PublicKey(context.Background())
+		if err != nil || key != adaKey {
+			t.Fatalf("PublicKey gave %q, %v after another thread ended", key, err)
+		}
+	}
+}
+
+// A function of a watch that panics, with a caller that recovers, or that
+// ends its goroutine with runtime.Goexit, as t.FailNow does, leaves no arc
+// behind.
+func TestAPanicInAWatchEndsItsArc(t *testing.T) {
+	for _, how := range []string{"panic", "Goexit"} {
+		t.Run(how, func(t *testing.T) {
+			ada, _ := citizen(t, "ada")
+			bob, bobKey := citizen(t, "bob")
+			notes := &lockedBuffer{}
+			ended := make(chan any, 1)
+			go func() {
+				defer func() { ended <- recover() }()
+				_ = bob.Watch(context.Background(), arcprogram.WatchOptions{Notes: notes}, func(arcprogram.Message) error {
+					if how == "Goexit" {
+						runtime.Goexit()
+					}
+					panic("the function of the watch")
+				})
+			}()
+			if !arcprogramtest.WaitUntil(30*time.Second, func() bool { return strings.Contains(notes.String(), "watching") }) {
+				t.Fatalf("the watch did not start:\n%s", notes.String())
+			}
+			if _, err := ada.Send(context.Background(), []string{bobKey}, how); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case r := <-ended:
+				if (r == nil) != (how == "Goexit") {
+					t.Fatalf("the goroutine of the watch ended with %v", r)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("the function of the watch did not end it")
+			}
+			if out, _ := exec.Command("pgrep", "-f", bob.Home+" message watch").Output(); len(out) > 0 {
+				t.Errorf("arc message watch runs on after a %s: %s", how, out)
+				_ = exec.Command("pkill", "-f", bob.Home+" message watch").Run()
+			}
+		})
+	}
+}
+
+// fakeArc is an arc program that runs script and nothing else.
+func fakeArc(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "arc")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// arc warns of two homes at each command. A client gets the warning once
+// in a program, and an error that follows a warning is one line, with no
+// warning in it.
+func TestAWarningOfArcShowsOnceAndAnErrorIsOneLine(t *testing.T) {
+	// arc escaped the newline of the path itself: the client keeps that
+	// escape as it is, and does not escape it twice.
+	const warning = `arc: warning: both /h\narc: x/.arc and /h/.config/arc hold an identity. arc uses /h\narc: x/.arc, because it holds an identity`
+	key := strings.Repeat("ab", 32)
+	program := fakeArc(t, `printf '%s\n' '`+warning+`' >&2
+if [ -n "$FAIL" ]; then echo "arc: no identity in /h/.arc" >&2; echo "chosen by ~/.arc" >&2; exit 1; fi
+echo `+key)
+	var warnings strings.Builder
+	a := arcprogram.Arc{Program: program, Warnings: &warnings}
+	for range 3 {
+		if got, err := a.PublicKey(t.Context()); err != nil || got != key {
+			t.Fatalf("PublicKey: %q, %v", got, err)
+		}
+	}
+	if warnings.String() != warning+"\n" {
+		t.Errorf("three calls warned %q, want the warning once", warnings.String())
+	}
+	t.Setenv("FAIL", "1")
+	_, err := a.PublicKey(t.Context())
+	if err == nil || err.Error() != "arc whoami: arc: no identity in /h/.arc; chosen by ~/.arc" {
+		t.Errorf("the error is %q, want the lines of arc on one line, with no warning", err)
 	}
 }

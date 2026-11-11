@@ -35,7 +35,7 @@ func newestAnnouncements(ctx context.Context, sess *Session, provider nostr.PubK
 	}
 	filter := nostr.Filter{Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}}
 	if err := node.Unreached(sess.Node.Pull(ctx, filter, sess.Relays)); err != nil {
-		sess.warnf("%v\nthis uses the announcement that this machine holds\n", err)
+		sess.warnUnreached(err, "this uses the announcement that this machine holds")
 	}
 }
 
@@ -117,7 +117,7 @@ func (sess *Session) Installed(ctx context.Context, installs catalog.Installs, n
 	if err := node.Unreached(sess.Node.Pull(ctx, nostr.Filter{
 		Kinds: []nostr.Kind{catalog.Kind}, Authors: []nostr.PubKey{provider}, Tags: nostr.TagMap{"d": {install.ID}},
 	}, sess.Relays)); err != nil {
-		sess.warnf("%v\nthis uses the announcement that this machine holds\n", err)
+		sess.warnUnreached(err, "this uses the announcement that this machine holds")
 	}
 	offer, err := sess.FindOffer(ctx, provider, install.ID)
 	if err != nil {
@@ -135,8 +135,9 @@ func (sess *Session) Installed(ctx context.Context, installs catalog.Installs, n
 		changes = install.Consent.Changes(offer.Manifest)
 	}
 	if len(changes) > 0 {
-		return iface.Installed{}, fmt.Errorf("the author changed what %s can do:\n  %s\nto agree, install it again: arc install %s %s --as %s",
-			name, strings.Join(changes, "\n  "), install.Provider, install.ID, name)
+		// arc writes an error on one line, so the changes go on it (#398).
+		return iface.Installed{}, fmt.Errorf("the author changed what %s can do: %s; to agree, install it again: arc install %s %s --as %s",
+			name, strings.Join(changes, "; "), install.Provider, install.ID, name)
 	}
 
 	return iface.Installed{Manifest: offer.Manifest, Author: provider, Name: name}, nil

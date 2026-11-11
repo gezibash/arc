@@ -16,8 +16,10 @@ ARC moves signed Nostr events. A private event is sealed to its recipient,
 and a relay, a USB stick or another machine carries it without reading it.
 See [the delivery layer](docs/delivery/SPEC.md).
 
-`arc` is the one program. It keeps your identities, talks to relays, calls
-apps, serves their interfaces, and runs a relay.
+`arc` is the program of a citizen. It keeps your identities, talks to
+relays, calls apps and serves their interfaces. `arc-signer` holds your
+key, and `arc` asks it for each signature. `arc-relay` runs a relay. Each
+program does one job: see [the programs](docs/PROGRAMS.md).
 
 ## Install
 
@@ -83,9 +85,10 @@ passphrase, read from `ARC_SEED_PASSPHRASE` or the terminal.
 identity is the default. `arc keys use <name>` changes the default, and
 `--key <name>` or `ARC_KEY` picks another identity for one command.
 
-Each identity has its own directory, `~/.config/arc/citizens/<name>`,
+Each identity has its own directory, `~/.arc/citizens/<name>`,
 with its key, store, relays and installs. `--home` or `ARC_HOME` names
-another home. Back up the key files.
+another home. A home that an older arc made in `~/.config/arc`
+stays in use, and arc moves no file. Back up the key files.
 
 `arc keys gen --encrypt` seals a key with a passphrase, as NIP-49 defines.
 `arc` reads the passphrase from `ARC_PASSPHRASE`, or asks on the terminal.
@@ -202,7 +205,7 @@ is live. With `--later`, or with no relay, it travels like a message, and
 `arc call results` shows the reply.
 
 Before a live call, `arc` runs the wake hook of the service identity from
-`~/.config/arc/wake.toml`. Without a hook, the service needs a current
+`wake.toml` in the arc home. Without a hook, the service needs a current
 announcement. See [the Exec app](apps/exec/README.md).
 
 `arc lists add <command> <name> <citizen>...` saves a set of citizens. Where
@@ -234,14 +237,15 @@ remain available. See the [sessions of the bundled apps](apps/README.md#sessions
 ## Run a relay
 
 ```bash
-arc relay serve --listen 127.0.0.1:7447
+arc-relay --listen 127.0.0.1:7447
 ```
 
 The relay is a khatru relay. It serves NIP-42 authentication, NIP-77 sync,
 and sealed data only to its author. Flags turn on write limits: an event
 size cap, authentication or proof of work for gift wraps, a rate for each IP
 address, and a store cap.
-`arc relay serve --help` lists the flags.
+`arc-relay --help` lists the flags. The relay keeps its events in
+`relay.db` in `ARC_HOME`, or in `~/.arc`; `--db` names another file.
 
 The relay logs to standard error. It writes a WARN line for each failed
 WebSocket upgrade, each connection that closes with an error, and each

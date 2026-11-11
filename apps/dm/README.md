@@ -92,7 +92,9 @@ A reply shows a quote line between its header and its text:
 - `-reply` can also come after the peer, before the text:
   `arc-dm send ada -reply 1c77 yes`. Each other word after the peer is
   text, so `arc-dm send ada -home is where the heart is` sends that text.
-  After `--`, each word is text. An empty `-reply=` is refused.
+  After `--`, each word is text. An empty `-reply=` is refused, and so is
+  a text of only `-h`, `-H`, `--h`, `--H`, `-help` or `--help`: put `--`
+  before it to send it.
 - A parent that this machine does not hold shows
   `↳ 77aa01  (not on this device)`. A message that you sent from another
   device, or a held message of a stranger, is not held.
@@ -101,10 +103,40 @@ A reply shows a quote line between its header and its text:
 - A reply shows the direct parent only, one level.
 - `arc-dm watch` adds each message that it receives. When a reply names a
   parent that the watch does not hold, it reads the outbox, in case you
-  sent the parent after the watch started: at most once each 5 s,
-  because a sender can name many ids. The reply, and each message after
-  it, waits for that read, at most 5 s, so the order stays and the quote
-  is not lost.
+  sent the parent after the watch started: at most once each 5 s from
+  the end of the last read, because a sender can name many ids. Only a
+  timer starts a read; a message that arrives never waits for arc. The
+  reply, and each message after it, waits for that read, so the order
+  stays and the quote is not lost. A waiting reply shows without its
+  quote only after a read that came after it, with one exception: a
+  sender that holds more than 64 messages shows its oldest at once. Past
+  256 waiting replies, the watch reads the outbox a second after the end
+  of its last read. Past
+  4,096 held messages, it shows early only plain messages that lead the
+  held messages of their sender, and else waits for that read. The
+  messages of one sender always show in their order; a sender's messages
+  can show ahead of the messages of others.
+  A read of the outbox while the watch runs takes at most 10 s. A read
+  that fails or takes longer shows the held messages at once, each reply
+  that waits with no quote line. Until a read works, a new reply that
+  waits shows at once with no quote line, unless its sender has held
+  messages, and the watch tries a read each 5 s.
+  When the watch ends, on an interrupt, SIGTERM or a hangup of its
+  terminal, it reads the outbox once more for a reply that waits; a
+  second signal ends that read, and the watch shows each held message as
+  it is, and drops none. arc-dm ends each arc that it runs, but not a
+  process that such an arc starts in turn. On Linux, an
+  arc-dm that is killed takes its arc with it; on macOS such an arc runs
+  on, and can hold the database of its home until it ends.
+- The id of a parent that is not on this device shows 12 digits, so a
+  message that arrives later with the same first 6 digits does not take
+  it. A sender can still aim the id: it can name, as the parent, an id
+  that starts with the same 12 digits as a message that it sends later.
+  So arc-dm remembers the last 4,096 ids that it showed as missing, and
+  `arc-dm reply` refuses a short id that starts one of them: give the
+  full id. `arc-dm watch` saves these ids at most once a second as
+  messages arrive, after each read of the outbox that showed one, and at
+  its end.
 - arc sorts messages by the clock of each sender, so a reply can show
   above its parent.
 - An `arc-dm` older than replies shows a reply as a plain message. A newer
@@ -197,3 +229,10 @@ commands as a person does: conversations, groups, unread counts, peer
 names, control characters, replies, and a watch that notifies. A test
 that needs a hostile reply sends it with `arc message send --arctest-tag`,
 which only a test build of arc has.
+
+The tests that run the commands are in three packages under
+`cmd/arc-dm/e2e`: `conversations`, `replies` and `watch`. Each builds arc
+and `arc-dm` and runs its own relay, through `cmd/arc-dm/internal/dmtest`,
+so the packages run at the same time, each within the time limit of
+`go test`. The tests of the store and of the watch's rules stay beside
+the code, in package `main`, and run no relay.

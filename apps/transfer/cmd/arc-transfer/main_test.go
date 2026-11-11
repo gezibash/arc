@@ -31,6 +31,7 @@ var env struct {
 	relay                   string // the URL of the relay
 	senderKey, receiverKey  string
 	strangerKey             string
+	served                  *output // the log of the app of the sender
 }
 
 // output collects what a background process prints.
@@ -69,7 +70,8 @@ func setup(m *testing.M) int {
 	env.arc = filepath.Join(root, "arc")
 	env.program = filepath.Join(root, "arc-transfer")
 	env.state = filepath.Join(root, "state")
-	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", env.program: "."} {
+	relayProgram := filepath.Join(root, "arc-relay")
+	for binary, pkg := range map[string]string{env.arc: "github.com/gezibash/arc/cmd/arc", relayProgram: "github.com/gezibash/arc/cmd/arc-relay", filepath.Join(root, "arc-signer"): "github.com/gezibash/arc/cmd/arc-signer", env.program: "."} {
 		if out, err := exec.Command("go", "build", "-tags", "arctest", "-o", binary, pkg).CombinedOutput(); err != nil {
 			return fail("go build %s: %v\n%s", pkg, err, out)
 		}
@@ -94,9 +96,9 @@ func setup(m *testing.M) int {
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	relay := exec.Command(env.arc, "--home", filepath.Join(root, "relay"), "relay", "serve", "--listen", address, "--stun", "none")
+	relay := exec.Command(relayProgram, "--db", filepath.Join(root, "relay.db"), "--listen", address, "--stun", "none")
 	if err := relay.Start(); err != nil {
-		return fail("arc relay serve: %v", err)
+		return fail("arc-relay: %v", err)
 	}
 	defer relay.Process.Kill()
 	if !waitUntil(10*time.Second, func() bool {
@@ -129,7 +131,8 @@ func setup(m *testing.M) int {
 	// the loopback address and no STUN server.
 	serve := exec.Command(env.arc, "--home", env.sender, "serve", app)
 	serve.Env = append(os.Environ(), "TRANSFER_STATE="+env.state, "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1", "TRANSFER_PUT_MAX_MIB=4")
-	served := &output{}
+	env.served = &output{}
+	served := env.served
 	serve.Stdout, serve.Stderr = served, served
 	if err := serve.Start(); err != nil {
 		return fail("arc serve: %v", err)
@@ -272,6 +275,209 @@ func TestGetTakesOnlyTheRestAfterAPartFile(t *testing.T) {
 	}
 }
 
+// A sender closes the connection once it reads ok. The receiver has the
+// whole file by then, so the get must end well, however late the receiver
+// goes on after it sends ok.
+func TestAGetEndsWellWhenTheSenderClosesAtOK(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	t.Setenv("TRANSFER_TEST_OK_DELAY", "1s")
+	log, err := fetch(env.receiver, link, output)
+	if err != nil {
+		t.Fatalf("a get whose sender closed at ok failed: %v\n%s", err, log)
+	}
+	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the file is not the file of the sender (%v)", err)
+	}
+}
+
+// delivered says whether the sender recorded that the receiver has the
+// file, within a few seconds.
+func delivered(sum string) bool {
+	return waitUntil(3*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(env.state, "delivered", sum+"-"+env.receiverKey))
+		return err == nil
+	})
+}
+
+// A file that changed on the side of the sender, with the same size and
+// time, gives bytes that fail the check of the receiver. The receiver must
+// not say ok, so the sender records no delivery.
+func TestBytesThatFailTheCheckAreNoDelivery(t *testing.T) {
+	data := random(t, 1<<20)
+	path, link := offered(t, data)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := random(t, len(data))
+	if err := os.WriteFile(path, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "got.bin")
+	log, err := fetch(env.receiver, link, output)
+	if err == nil || !strings.Contains(log, "SHA-256") {
+		t.Fatalf("a get of changed bytes gave %v:\n%s", err, log)
+	}
+	sum := sha256.Sum256(data)
+	if delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the sender recorded a delivery of bytes that the receiver refused")
+	}
+}
+
+// shortConfirmWait makes the sender wait d for ok, for this test only.
+func shortConfirmWait(t *testing.T, d string) {
+	t.Helper()
+	path := filepath.Join(env.state, "arctest-confirm-wait")
+	if err := os.MkdirAll(env.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(d), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+// The short wait of a test is that test's only: in another test the sender
+// waits its 30 s, so a check of 6 s still gets its ok to the sender.
+func TestTheSenderWaitsItsFullTimeForOK(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	sum := sha256.Sum256(data)
+	label := fmt.Sprintf("%.12s to %.8s", hex.EncodeToString(sum[:]), env.receiverKey)
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "6s")
+	if log, err := fetch(env.receiver, link, filepath.Join(t.TempDir(), "got.bin")); err != nil {
+		t.Fatalf("get: %v\n%s", err, log)
+	}
+	want := fmt.Sprintf("%s: %d bytes in", label, len(data))
+	if !waitUntil(3*time.Second, func() bool { return strings.Contains(env.served.String(), want) }) {
+		t.Fatalf("the sender did not get the ok of a 6 s check; its log:\n%s", env.served.String())
+	}
+}
+
+// A local error at the receiver, such as a directory that it cannot write,
+// is no refusal of the bytes: the get says that the file could not be kept.
+func TestALocalErrorIsNoRefusalOfTheBytes(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	dir := t.TempDir()
+	output := filepath.Join(dir, "got.bin")
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "3s")
+	type got struct {
+		log string
+		err error
+	}
+	done := make(chan got, 1)
+	go func() {
+		log, err := fetch(env.receiver, link, output)
+		done <- got{log, err}
+	}()
+	if !waitUntil(10*time.Second, func() bool {
+		info, err := os.Stat(output + ".part")
+		return err == nil && info.Size() == int64(len(data))
+	}) {
+		t.Fatal("the part file did not fill")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	r := <-done
+	if r.err == nil || !strings.Contains(r.log, "the file could not be kept") || strings.Contains(r.log, "refused") {
+		t.Fatalf("a get that could not write its file gave %v:\n%s", r.err, r.log)
+	}
+}
+
+// A part file next to a whole file is stale: a re-confirm removes it.
+func TestAReconfirmRemovesAStalePartFile(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	if err := os.WriteFile(output, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output+".part", data[:1000], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("a re-confirm: %v\n%s", err, log)
+	}
+	absent(t, output+".part")
+}
+
+// A receiver whose check of the bytes takes longer than the sender waits
+// for ok, as on a slow disk, still ends its get well: once end arrives,
+// only the check decides. The sender has closed by then, so the receiver
+// tells it again by itself, and the sender records the delivery. The sender
+// waits 5 s here.
+func TestASlowCheckStillEndsTheGetWell(t *testing.T) {
+	shortConfirmWait(t, "5s")
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	sum := sha256.Sum256(data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	t.Setenv("TRANSFER_TEST_FINISH_DELAY", "7s")
+	log, err := fetch(env.receiver, link, output)
+	if err != nil {
+		t.Fatalf("a get with a slow check failed: %v\n%s", err, log)
+	}
+	if !strings.Contains(log, "telling it that the file arrived") {
+		t.Errorf("the get did not tell the sender again:\n%s", log)
+	}
+	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the file is not the file of the sender (%v)", err)
+	}
+	if !delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the sender recorded no delivery: the receiver did not tell it again")
+	}
+}
+
+// An ok that the network lost leaves the receiver with the file and the
+// sender with no record. A second get of the same link confirms it, and
+// the sender records the delivery. A different file at the output stays.
+func TestAGetOfAFileThatIsThereConfirmsIt(t *testing.T) {
+	data := random(t, 1<<20)
+	_, link := offered(t, data)
+	sum := sha256.Sum256(data)
+	output := filepath.Join(t.TempDir(), "got.bin")
+	t.Setenv("TRANSFER_TEST_DROP_OK", "1")
+	if log, err := fetch(env.receiver, link, output); err != nil {
+		t.Fatalf("get: %v\n%s", err, log)
+	}
+	if delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the sender recorded a delivery with no ok")
+	}
+	t.Setenv("TRANSFER_TEST_DROP_OK", "")
+	log, err := fetch(env.receiver, link, output)
+	if err != nil {
+		t.Fatalf("a second get of a file that is there: %v\n%s", err, log)
+	}
+	if !strings.Contains(log, "was here already") || strings.Contains(log, "NaN") {
+		t.Errorf("the second get printed:\n%s", log)
+	}
+	if !delivered(hex.EncodeToString(sum[:])) {
+		t.Fatal("the second get did not confirm the delivery")
+	}
+	if got, err := os.ReadFile(output); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("the file changed (%v)", err)
+	}
+
+	other := filepath.Join(t.TempDir(), "other.bin")
+	if err := os.WriteFile(other, []byte("another file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if log, err := fetch(env.receiver, link, other); err == nil || !strings.Contains(log, "is there already") {
+		t.Fatalf("a get over another file gave %v:\n%s", err, log)
+	}
+	if got, _ := os.ReadFile(other); string(got) != "another file" {
+		t.Fatal("a get wrote over another file")
+	}
+}
+
 func TestGetRefusesBytesWithAWrongSHA256(t *testing.T) {
 	data := random(t, 2<<20)
 	_, link := offered(t, data)
@@ -390,16 +596,26 @@ func TestTheSenderCanSendTheFirstPacket(t *testing.T) {
 
 // inboxText returns the text of the first message of a sender in the inbox
 // of a citizen, after a sync, or "" if there is none.
-func inboxText(home, from string) string {
+func inboxText(home, from, prefix string) string {
 	_ = exec.Command(env.arc, "--home", home, "sync").Run()
 	out, _ := exec.Command(env.arc, "--home", home, "message", "inbox", "--json").Output()
 	for line := range strings.SplitSeq(string(out), "\n") {
 		var message struct{ From, Text string }
-		if json.Unmarshal([]byte(line), &message) == nil && message.From == from {
+		if json.Unmarshal([]byte(line), &message) == nil && message.From == from && strings.HasPrefix(message.Text, prefix) {
 			return message.Text
 		}
 	}
 	return ""
+}
+
+// serveProcesses are the pids of the services that sends started.
+func serveProcesses() map[string]bool {
+	out, _ := exec.Command("pgrep", "-f", "arc-transfer-send").Output()
+	pids := map[string]bool{}
+	for pid := range strings.FieldsSeq(string(out)) {
+		pids[pid] = true
+	}
+	return pids
 }
 
 // send gives a file with one command: no service runs before it, and none
@@ -410,10 +626,13 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The stranger is the sender here: no service runs for its key.
+	// The stranger is the sender here: no service runs for its key. Each
+	// run has its own message, so a run with -count finds its own link.
 	state := filepath.Join(t.TempDir(), "state")
+	note := "listen to this " + hex.EncodeToString(data[:4])
+	before := serveProcesses()
 	send := func(wait string) (command *exec.Cmd, stdout, stderr *output) {
-		command = exec.Command(env.program, "send", "-arc", env.arc, "-home", env.other, "-state", state, "-wait", wait, "-m", "listen to this", env.receiverKey, path)
+		command = exec.Command(env.program, "send", "-arc", env.arc, "-home", env.other, "-state", state, "-wait", wait, "-m", note, env.receiverKey, path)
 		command.Env = append(os.Environ(), "TRANSFER_STUN=none", "TRANSFER_LOOPBACK=1")
 		stdout, stderr = &output{}, &output{}
 		command.Stdout, command.Stderr = stdout, stderr
@@ -430,16 +649,18 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 	if out, err := exec.Command(env.arc, "--home", env.receiver, "install", env.strangerKey, "transfer", "--as", "transfer-of-stranger", "--yes").CombinedOutput(); err != nil {
 		t.Fatalf("arc install: %v\n%s", err, out)
 	}
-	text := inboxText(env.receiver, env.strangerKey)
-	if !strings.HasPrefix(text, "listen to this\ntransfer+arc://"+env.strangerKey+"/") {
+	text := inboxText(env.receiver, env.strangerKey, note+"\n")
+	if !strings.HasPrefix(text, note+"\ntransfer+arc://"+env.strangerKey+"/") {
 		t.Fatalf("the message of the first send is %q", text)
 	}
-	link := strings.TrimPrefix(text, "listen to this\n")
+	link := strings.TrimPrefix(text, note+"\n")
 	output := filepath.Join(t.TempDir(), "got.wav")
 	// The service of the first send stopped with it: no process of it is
 	// left, and the receiver gets no answer.
-	if left, _ := exec.Command("pgrep", "-f", "arc-transfer-send").Output(); len(left) > 0 {
-		t.Fatalf("a process of the service runs after send ended: %s", left)
+	for pid := range serveProcesses() {
+		if !before[pid] {
+			t.Fatalf("a process of the service runs after send ended: %s", pid)
+		}
 	}
 	if log, err := fetch(env.receiver, link, output); err == nil {
 		t.Fatalf("a service answers after send ended:\n%s", log)
@@ -449,8 +670,17 @@ func TestSendGivesAFileInOneCommand(t *testing.T) {
 	if err := second.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- second.Wait() }()
+	done, exited := make(chan error, 1), make(chan struct{})
+	go func() { done <- second.Wait(); close(exited) }()
+	// A failed run must not leave this send and its service running.
+	t.Cleanup(func() {
+		_ = second.Process.Signal(os.Interrupt)
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			_ = second.Process.Kill()
+		}
+	})
 	// The receiver gets the file while send waits. The service of send
 	// answers only when it runs, so the receiver tries until then.
 	var log string
@@ -515,6 +745,67 @@ func give(home, file string) (link, log string, err error) {
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err = command.Run()
 	return strings.TrimSpace(stdout.String()), stderr.String(), err
+}
+
+// The app puts a file on its disk before it says ok, so a put waits longer
+// for a larger file: here 2 s and 1 s for each MiB, against a check of
+// 3.5 s for 3 MiB. A wait that does not grow gives up after 2 s.
+func TestAPutWaitsLongerForALargerFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.bin")
+	if err := os.WriteFile(path, random(t, 3<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateFile(t, "arctest-put-finish-delay", "3500ms")
+	t.Setenv("TRANSFER_TEST_CONFIRM_BASE", "2s")
+	t.Setenv("TRANSFER_TEST_CONFIRM_RATE", fmt.Sprint(1<<20))
+	if _, log, err := give(env.receiver, path); err != nil {
+		t.Fatalf("a put whose check took 3.5 s failed: %v\n%s", err, log)
+	}
+}
+
+// stateFile writes a file of the state directory of the app, for this test
+// only: the knobs of a test build.
+func stateFile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(env.state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(env.state, name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+// A put whose app is gone before it answers stops at once: it does not sit
+// out its wait, which grows with the size.
+func TestAPutStopsWhenTheAppIsGone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, random(t, 1<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateFile(t, "arctest-put-gone", "")
+	t.Setenv("TRANSFER_TEST_CONFIRM_BASE", "30s")
+	started := time.Now()
+	_, log, err := give(env.receiver, path)
+	if err == nil || !strings.Contains(log, "ended before it confirmed") {
+		t.Fatalf("a put to an app that is gone gave %v:\n%s", err, log)
+	}
+	if took := time.Since(started); took > 15*time.Second {
+		t.Fatalf("the put waited %v for an app that is gone", took)
+	}
+}
+
+// A sender that ends before the last byte hears why from the receiver.
+func TestAnEarlyEndIsToldToTheSender(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, random(t, 1<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TRANSFER_TEST_END_AFTER", "100000")
+	if _, log, err := give(env.receiver, path); err == nil || !strings.Contains(log, "the sender ended before the last byte") {
+		t.Fatalf("a put that ended early gave %v:\n%s", err, log)
+	}
 }
 
 // A phone gives a photo to the app of an agent, and sends the link in a
@@ -620,7 +911,7 @@ func TestTheErrorLineIsEscaped(t *testing.T) {
 	}
 	out := stderr.String()
 	if strings.Count(out, "\n") != 1 || strings.Contains(out, "\narc: forged") || strings.ContainsAny(out, "\x1b\x07\u202e\U000e0068") ||
-		!strings.Contains(out, `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068\narc: forged line`) {
+		!strings.Contains(out, `P\x1b]0;pwned\x07\x1b[2J\u202egnp.exe\U000e0068; arc: forged line`) {
 		t.Errorf("arc-transfer printed %q, want one escaped line", out)
 	}
 }
