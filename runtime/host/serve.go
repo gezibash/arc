@@ -222,7 +222,7 @@ func (s *service) newAnnouncer(definition *capability.Provider) *announcer {
 // returns true when ctx ended first.
 func (s *service) start() (bool, error) {
 	ctx, sess := s.ctx, s.cfg.Session
-	if err := s.announcer.announce(); err != nil {
+	if err := s.announcer.announce(nostr.Now()); err != nil {
 		return false, err
 	}
 	// A caller that shares no relay with this provider finds its read
@@ -265,7 +265,7 @@ func (s *service) start() (bool, error) {
 	if len(missing) > 0 {
 		s.log.Warn("serves without these relays until they take the watch", "relays", missing)
 		// A relay that took the watch late did not get the announcement.
-		if err := s.announcer.announce(); err != nil {
+		if err := s.announcer.announce(nostr.Now()); err != nil {
 			s.log.Warn("the announcement was not signed again", "error", err)
 		}
 	}
@@ -305,7 +305,7 @@ func (s *service) loop() error {
 		}
 		select {
 		case <-unknown:
-			if err := s.announcer.announce(); err != nil {
+			if err := s.announcer.announce(nostr.Now()); err != nil {
 				s.log.Warn("the announcement was not signed", "error", err)
 			}
 		case <-s.ctx.Done():
@@ -314,11 +314,22 @@ func (s *service) loop() error {
 		case <-s.server.Done():
 			return errors.New("the app program stopped")
 		case <-refresh.C:
-			if err := s.announcer.announce(); err != nil {
-				s.log.Warn("the announcement was not signed again", "error", err)
-			}
+			s.refresh()
 		case <-ticker.C:
+			s.refresh()
 			s.tick()
+		}
+	}
+}
+
+// refresh signs the announcement again when catalog.Refresh passed on the
+// wall clock. The refresh ticker alone is late after the machine slept: its
+// clock stops during sleep, and the announcement then looks older than
+// catalog.Fresh to a caller. The short tick finds that soon after a wake.
+func (s *service) refresh() {
+	if now := nostr.Now(); !s.announcer.waiting() && s.announcer.due(now) {
+		if err := s.announcer.announce(now); err != nil {
+			s.log.Warn("the announcement was not signed again", "error", err)
 		}
 	}
 }
