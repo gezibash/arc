@@ -59,7 +59,10 @@ func Budget(ctx context.Context, deadlineMS int64) (context.Context, context.Can
 // stopped. The receiver reads the wall clock (Budget).
 func Deadline(ctx context.Context) int64 {
 	if deadline, ok := ctx.Deadline(); ok {
-		return time.Now().Add(time.Until(deadline)).UnixMilli()
+		// One reading of the clock: without a sleep, this is the wall
+		// reading of the deadline to the nanosecond.
+		now := time.Now()
+		return now.Add(deadline.Sub(now)).UnixMilli()
 	}
 	return 0
 }

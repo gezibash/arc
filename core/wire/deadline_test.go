@@ -22,7 +22,12 @@ func slept(t *testing.T, at time.Time, d time.Duration) time.Time {
 	if *wall&hasMonotonic == 0 {
 		t.Fatal("the time has no monotonic reading")
 	}
+	before := at.Unix()
 	*wall -= uint64(d/time.Second) << nsecBits
+	// A change of the layout of time.Time fails here, not in the test.
+	if moved := time.Duration(before-at.Unix()) * time.Second; moved != d {
+		t.Fatalf("the wall reading moved %s, want %s", moved, d)
+	}
 	return at
 }
 
