@@ -105,7 +105,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: true
       # The version must match golangci-lint in mise.toml.
       - uses: golangci/golangci-lint-action@v9
@@ -134,7 +134,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: true
       - run: go test -count=1 -run '^TestDelivery' ./internal/proof/
 
@@ -148,7 +148,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: true
       - run: go test -count=1 -run '^TestInterface' ./internal/proof/
 
@@ -185,7 +185,7 @@ jobs:
       # expiring. A pull request restores the latest cache of main.
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: false
       - id: cache
         name: Name the race build cache
@@ -200,9 +200,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-race-${{ runner.os }}-1.27.3-${{ steps.cache.outputs.kind }}-${{ github.sha }}
+          key: go-race-${{ runner.os }}-1.27.4-${{ steps.cache.outputs.kind }}-${{ github.sha }}
           restore-keys: |
-            go-race-${{ runner.os }}-1.27.3-${{ steps.cache.outputs.kind }}-
+            go-race-${{ runner.os }}-1.27.4-${{ steps.cache.outputs.kind }}-
       - name: Test with the race detector
         env:
           GOFLAGS: -race
@@ -240,7 +240,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-race-${{ runner.os }}-1.27.3-${{ steps.cache.outputs.kind }}-${{ github.sha }}
+          key: go-race-${{ runner.os }}-1.27.4-${{ steps.cache.outputs.kind }}-${{ github.sha }}
 
   # Check the actual release recipe only when its inputs change.
   # Skipped jobs still satisfy the existing required status checks.
@@ -254,7 +254,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: true
       - run: bash .github/scripts/check-clean-build.sh
 
