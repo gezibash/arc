@@ -236,11 +236,15 @@ func TestServeStopsWhenItsProgramStops(t *testing.T) {
 	if err != nil || len(public) != 32 {
 		t.Fatalf("arc serve gave no public key: %q", out.String())
 	}
+	// The program exits before it answers, so the call gets no reply: it
+	// runs on, and the test waits for arc serve instead.
 	callCtx, cancelCall := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelCall()
-	_, _, _ = call.Live(callCtx, keys.Generate(), nostr.PubKey(public), call.Request{
-		Capability: strings.Fields(lines[0])[2], Method: "ECHO", Path: "/", Body: "exit",
-	}, relay.Relay{URL: url})
+	go func() {
+		_, _, _ = call.Live(callCtx, keys.Generate(), nostr.PubKey(public), call.Request{
+			Capability: strings.Fields(lines[0])[2], Method: "ECHO", Path: "/", Body: "exit",
+		}, relay.Relay{URL: url})
+	}()
 	select {
 	case err := <-result:
 		if err == nil || !strings.Contains(err.Error(), "the app program stopped") {

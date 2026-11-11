@@ -429,8 +429,8 @@ What the consumer writes for each failure of a pipe:
 ## 8. Proof
 
 - `go test ./sdk/httpadapter ./apps/http/server` tests both adapters.
-- `TestBundledProviderSessionsThroughCLI` in `cmd/arc` runs `arc-http`
-  through a local relay and the normal CLI.
+- `TestHTTPNestedSessionStreamsAndPreservesFinalError` in
+  `apps/http/server` runs the `arc-http` server side.
 - `TestAnHTTPExchangeCrossesTheAdapter` and
   `TestTheCallerFieldCannotBeForged` in `sdk/httpadapter` run a Go handler
   from `httpadapter.New`: the status, the headers and the body, and a
