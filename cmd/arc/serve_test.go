@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -55,12 +54,7 @@ func serving(t *testing.T, ctx context.Context, home string) (*output, <-chan er
 func servingWithErrors(t *testing.T, ctx context.Context, home string) (*output, *output, <-chan error) {
 	t.Helper()
 	dir := t.TempDir()
-	echo := filepath.Join(dir, "echo")
-	build := exec.Command("go", "build", "-o", echo, "../../adapters/provider/host/testdata/echo")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatal(err)
-	}
+	echo := providerBinary(t, "../../adapters/provider/host/testdata/echo")
 	manifest, err := os.ReadFile(filepath.Join("..", "..", "apps", "exec", "manifest.json"))
 	if err != nil {
 		t.Fatal(err)

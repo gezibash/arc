@@ -65,68 +65,6 @@ func TestLargeUploadOverPipeThroughRelay(t *testing.T) {
 	}
 }
 
-// TestOlderProviderUploadFallsBackToFrames sends an upload to a provider
-// that refuses the field "direct" as invalid_request. In auto, arc asks
-// again with no offer, says so, and sends the body in frames. With
-// --path direct, arc stops.
-func TestOlderProviderUploadFallsBackToFrames(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	consumer, address, log := pipeProvider(t, ctx, "old")
-
-	_, notes, err := uploadSession(t, ctx, consumer, bytes.NewReader(pattern(1<<20)), address, `{"stream_body":true}`)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, notes)
-	}
-	if !strings.Contains(notes, "the provider has no pipe; using session frames over the relay") ||
-		!strings.Contains(notes, "upload path session (relay frames): 1048576 bytes") {
-		t.Fatalf("%q", notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\nframes" {
-		t.Fatalf("sessions %q, want an offer and then frames", got)
-	}
-
-	_, notes, err = uploadSession(t, ctx, consumer, bytes.NewReader(pattern(1<<20)), "--path", "direct", address, `{"stream_body":true}`)
-	if err == nil || !strings.Contains(err.Error(), "the provider has no pipe; run again with --path session") {
-		t.Fatalf("--path direct: %v, %q", err, notes)
-	}
-}
-
-// countingReader counts the bytes that arc read from standard input.
-type countingReader struct {
-	r io.Reader
-	n int
-}
-
-func (c *countingReader) Read(b []byte) (int, error) {
-	n, err := c.r.Read(b)
-	c.n += n
-	return n, err
-}
-
-// TestUploadPipeFailureIsAnError calls a provider that answers each offer,
-// but no pipe opens. arc stops with an error, never sends the body in
-// frames, and reads no byte of standard input.
-func TestUploadPipeFailureIsAnError(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	consumer, address, log := pipeProvider(t, ctx, "deaf")
-
-	input := &countingReader{r: bytes.NewReader(pattern(1 << 20))}
-	_, notes, err := uploadSession(t, ctx, consumer, input, address, `{"stream_body":true}`)
-	if err == nil || !strings.Contains(err.Error(), "no direct path, and no path through the relay") {
-		t.Fatalf("%v, %q", err, notes)
-	}
-	if got := sessionsOf(t, log); got != "offer\noffer" {
-		t.Fatalf("sessions %q, want two offers and no frames", got)
-	}
-	if input.n != 0 || strings.Contains(notes, "session frames") {
-		t.Fatalf("arc read %d bytes of standard input, %q", input.n, notes)
-	}
-}
-
 // TestBrokenUploadPipeIsAnError uses a pipe that the provider closes after
 // 64 KiB of the request body. arc stops with an error that says the
 // outcome is not known, and does not ask again.

@@ -8,6 +8,9 @@ import (
 	"testing"
 )
 
+// programs is the folder of the programs that the tests build.
+var programs string
+
 // TestMain builds arc-signer, the program signer of each identity that the
 // tests make, and puts it on the PATH, where arc finds it.
 func TestMain(m *testing.M) {
@@ -18,6 +21,7 @@ func TestMain(m *testing.M) {
 			return 1
 		}
 		defer os.RemoveAll(dir)
+		programs = dir
 		build := exec.Command("go", "build", "-o", filepath.Join(dir, "arc-signer"), "../arc-signer")
 		// The signer is built without -race: each command starts one, and a
 		// race build of it made this package pass the 10 minutes of CI.

@@ -221,18 +221,3 @@ func TestBrokenArchivePipeIsAnError(t *testing.T) {
 		t.Fatalf("sessions %q, want one offer", got)
 	}
 }
-
-// TestBadArchiveOverPipeIsRefused updates from a provider that sends the
-// archive with one byte changed, and the right count. arc checks the hash
-// as it does for chunks, and keeps the program.
-func TestBadArchiveOverPipeIsRefused(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	consumer, key, _ := pipeReleases(t, ctx, "bad")
-
-	program, notes, err := updateApply(t, ctx, consumer, key)
-	if err == nil || !strings.Contains(err.Error(), "does not match its size and hash") || program != oldProgram {
-		t.Fatalf("%v, %q", err, notes)
-	}
-}

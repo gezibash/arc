@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -41,15 +42,42 @@ func programWith(t *testing.T, binary string, env ...string) string {
 	return path
 }
 
+// builtProgram is one test program, built once for each run of the tests.
+type builtProgram struct {
+	once sync.Once
+	path string
+	err  error
+}
+
+// built holds the programs that providerBinary built, by package.
+var built sync.Map
+
+// providerBinary builds the program of pkg once for each run of the tests,
+// and gives its path. A test must not change the file: each test that
+// builds pkg gets the same one.
 func providerBinary(t *testing.T, pkg string) string {
 	t.Helper()
-	binary := filepath.Join(t.TempDir(), "program")
-	cmd := exec.Command("go", "build", "-o", binary, pkg)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	abs, err := filepath.Abs(pkg)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return binary
+	v, _ := built.LoadOrStore(abs, &builtProgram{})
+	b := v.(*builtProgram)
+	b.once.Do(func() {
+		dir, err := os.MkdirTemp(programs, "program-")
+		if err != nil {
+			b.err = err
+			return
+		}
+		b.path = filepath.Join(dir, filepath.Base(abs))
+		cmd := exec.Command("go", "build", "-o", b.path, abs)
+		cmd.Stderr = os.Stderr
+		b.err = cmd.Run()
+	})
+	if b.err != nil {
+		t.Fatal(b.err)
+	}
+	return b.path
 }
 
 // providerHome makes a citizen with one relay, and gives its home and its
