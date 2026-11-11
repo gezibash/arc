@@ -177,18 +177,9 @@ func (c *ClientSession) Close() error {
 // the same time, and then closes the write side. It then waits for the
 // final outcome of the session.
 func (c *ClientSession) Copy(w io.Writer) (Response, error) {
-	var out Response
-	var started, endedAt time.Time
-	ended := false
-	var announced, requested *int64
-	type copied struct {
-		n   int64
-		err error
-	}
-	var piped chan copied
-	var up *upload
+	b := &bodyCopy{}
 	if c.Body != nil {
-		up = c.send()
+		b.up = c.send()
 	}
 	for {
 		record, err := c.reader.Next()
@@ -196,75 +187,112 @@ func (c *ClientSession) Copy(w io.Writer) (Response, error) {
 			break
 		}
 		if err != nil {
-			// A broken pipe closes the session. Its error says more.
-			select {
-			case r := <-piped:
-				if r.err != nil {
-					return out, r.err
-				}
-			default:
-			}
-			if up != nil {
-				if upErr := c.endUpload(up, err, false, nil, time.Time{}, &out); upErr != nil {
-					return out, upErr
-				}
-			}
-			return out, err
+			return b.out, c.readFailed(b, err)
 		}
-		if ended {
-			return out, errors.New("HTTP data after end")
+		if b.ended {
+			return b.out, errors.New("HTTP data after end")
 		}
-		switch record.Type {
-		case "response":
-			if out.Status != 0 || record.Status < 200 || record.Status > 599 {
-				return out, errors.New("invalid HTTP response status")
-			}
-			out.Status, out.Headers, started = record.Status, record.Headers, time.Now()
-			if c.Pipe != nil {
-				piped = make(chan copied, 1)
-				go func() {
-					n, err := io.Copy(w, c.Pipe)
-					if errors.Is(err, direct.ErrPipeClosed) {
-						err = fmt.Errorf("the pipe closed after %d bytes; the outcome is not known", n)
-					}
-					piped <- copied{n, err}
-					if err != nil {
-						// The session cannot end well without the body.
-						_ = c.Stream.Close()
-					}
-				}()
-			}
-		case "body":
-			if out.Status == 0 {
-				return out, errors.New("HTTP body before headers")
-			}
-			if c.Pipe != nil {
-				return out, errors.New("a body record in a session with a pipe")
-			}
-			if _, err = w.Write(record.Data); err != nil {
-				return out, err
-			}
-			out.Bytes += int64(len(record.Data))
-		case "trailers":
-			out.Trailers = record.Headers
-		case "end":
-			ended, announced, requested, endedAt = true, record.BodyBytes, record.RequestBytes, time.Now()
-		default:
-			return out, fmt.Errorf("unknown HTTP record %q", record.Type)
+		if err := c.take(w, b, record); err != nil {
+			return b.out, err
 		}
 	}
-	// The provider ends the session after the reader has the last byte of
-	// the pipe. A session that failed closes the pipe, so the copy stops.
+	return c.finishCopy(b)
+}
+
+// bodyCopy is the state of one Copy.
+type bodyCopy struct {
+	out              Response
+	started, endedAt time.Time
+	ended            bool
+	announced        *int64
+	requested        *int64
+	piped            chan copied
+	up               *upload
+}
+
+// copied is the result of the copy of the pipe.
+type copied struct {
+	n   int64
+	err error
+}
+
+// readFailed gives the error of a session whose records stopped. A broken
+// pipe closes the session, and its error says more.
+func (c *ClientSession) readFailed(b *bodyCopy, err error) error {
+	select {
+	case r := <-b.piped:
+		if r.err != nil {
+			return r.err
+		}
+	default:
+	}
+	if b.up != nil {
+		if upErr := c.endUpload(b.up, err, false, nil, time.Time{}, &b.out); upErr != nil {
+			return upErr
+		}
+	}
+	return err
+}
+
+// take handles one record of the response.
+func (c *ClientSession) take(w io.Writer, b *bodyCopy, record SessionRecord) error {
+	switch record.Type {
+	case "response":
+		if b.out.Status != 0 || record.Status < 200 || record.Status > 599 {
+			return errors.New("invalid HTTP response status")
+		}
+		b.out.Status, b.out.Headers, b.started = record.Status, record.Headers, time.Now()
+		if c.Pipe != nil {
+			b.piped = make(chan copied, 1)
+			go func() {
+				n, err := io.Copy(w, c.Pipe)
+				if errors.Is(err, direct.ErrPipeClosed) {
+					err = fmt.Errorf("the pipe closed after %d bytes; the outcome is not known", n)
+				}
+				b.piped <- copied{n, err}
+				if err != nil {
+					// The session cannot end well without the body.
+					_ = c.Stream.Close()
+				}
+			}()
+		}
+	case "body":
+		if b.out.Status == 0 {
+			return errors.New("HTTP body before headers")
+		}
+		if c.Pipe != nil {
+			return errors.New("a body record in a session with a pipe")
+		}
+		if _, err := w.Write(record.Data); err != nil {
+			return err
+		}
+		b.out.Bytes += int64(len(record.Data))
+	case "trailers":
+		b.out.Trailers = record.Headers
+	case "end":
+		b.ended, b.announced, b.requested, b.endedAt = true, record.BodyBytes, record.RequestBytes, time.Now()
+	default:
+		return fmt.Errorf("unknown HTTP record %q", record.Type)
+	}
+	return nil
+}
+
+// finishCopy waits for the final outcome, and checks the response against
+// the end record. The provider ends the session after the reader has the
+// last byte of the pipe. A session that failed closes the pipe, so the copy
+// stops.
+func (c *ClientSession) finishCopy(b *bodyCopy) (Response, error) {
+	out := b.out
 	final := c.Stream.Wait()
-	if piped != nil {
+	if b.piped != nil {
 		var r copied
 		select {
-		case r = <-piped:
+		case r = <-b.piped:
 		default:
 			if final != nil {
 				_ = c.Pipe.Close()
 			}
-			r = <-piped
+			r = <-b.piped
 			if final != nil {
 				r.err = nil
 			}
@@ -274,22 +302,22 @@ func (c *ClientSession) Copy(w io.Writer) (Response, error) {
 		}
 		out.Bytes = r.n
 	}
-	out.Elapsed = time.Since(started)
-	if up != nil {
-		if err := c.endUpload(up, final, ended, requested, endedAt, &out); err != nil {
+	out.Elapsed = time.Since(b.started)
+	if b.up != nil {
+		if err := c.endUpload(b.up, final, b.ended, b.requested, b.endedAt, &out); err != nil {
 			return out, err
 		}
 	}
 	if final != nil {
 		return out, final
 	}
-	if out.Status == 0 || !ended {
+	if out.Status == 0 || !b.ended {
 		return out, errors.New("incomplete HTTP response")
 	}
-	if c.Pipe != nil && (announced == nil || *announced != out.Bytes) {
+	if c.Pipe != nil && (b.announced == nil || *b.announced != out.Bytes) {
 		want := "no count"
-		if announced != nil {
-			want = fmt.Sprint(*announced)
+		if b.announced != nil {
+			want = fmt.Sprint(*b.announced)
 		}
 		return out, fmt.Errorf("the body has %d bytes, the provider sent %s", out.Bytes, want)
 	}

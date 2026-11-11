@@ -55,110 +55,132 @@ func (k Key) Answer(ctx context.Context, req Request) Response {
 }
 
 func (k Key) answer(ctx context.Context, req Request) (string, error) {
-	param := func(i int) (string, error) {
-		if i >= len(req.Params) {
-			return "", fmt.Errorf("%s needs %d params", req.Method, i+1)
-		}
-		return req.Params[i], nil
-	}
-	key := func(i int) (nostr.PubKey, error) {
-		text, err := param(i)
-		if err != nil {
-			return nostr.PubKey{}, err
-		}
-		return nostr.PubKeyFromHex(text)
-	}
+	p := params(req)
 	switch req.Method {
 	case "ping":
 		return "pong", nil
 	case "get_public_key":
 		return k.Public.Hex(), nil
 	case "sign_event":
-		text, err := param(0)
-		if err != nil {
-			return "", err
-		}
-		var event nostr.Event
-		if err := event.UnmarshalJSON([]byte(text)); err != nil {
-			return "", fmt.Errorf("sign_event: %w", err)
-		}
-		if err := k.SignEvent(ctx, &event); err != nil {
-			return "", err
-		}
-		return event.String(), nil
+		return k.answerSign(ctx, p)
 	case "nip44_encrypt", "nip44_decrypt", "nip04_encrypt", "nip04_decrypt":
-		peer, err := key(0)
-		if err != nil {
-			return "", err
-		}
-		text, err := param(1)
-		if err != nil {
-			return "", err
-		}
-		switch req.Method {
-		case "nip44_encrypt":
-			return k.Encrypt(ctx, text, peer)
-		case "nip44_decrypt":
-			return k.Decrypt(ctx, text, peer)
-		case "nip04_encrypt":
-			return k.Nip04Encrypt(ctx, text, peer)
-		default:
-			return k.Nip04Decrypt(ctx, text, peer)
-		}
+		return k.answerCrypt(ctx, p)
 	case MethodKeyedRoot:
 		root, err := k.KeyedRoot(ctx)
 		return hex.EncodeToString(root), err
 	case MethodAccountKey:
-		storage, err := key(0)
+		storage, err := p.key(0)
 		if err != nil {
 			return "", err
 		}
 		account, err := k.AccountKey(ctx, storage)
 		return account.Secret.Hex(), err
 	case MethodSignJoin:
-		account, err := key(0)
+		account, err := p.key(0)
 		if err != nil {
 			return "", err
 		}
-		storage, err := key(1)
+		storage, err := p.key(1)
 		if err != nil {
 			return "", err
 		}
 		return k.SignJoin(ctx, account, storage)
 	case MethodSignRelease:
-		text, err := param(0)
-		if err != nil {
-			return "", err
-		}
-		schema, err := strconv.ParseInt(text, 10, 64)
-		if err != nil {
-			return "", errors.New("arc_sign_release: the schema is not a number")
-		}
-		text, err = param(1)
-		if err != nil {
-			return "", err
-		}
-		encoded, err := hex.DecodeString(text)
-		if err != nil {
-			return "", errors.New("arc_sign_release: the bytes are not hex")
-		}
-		return k.SignRelease(ctx, schema, encoded)
+		return k.answerRelease(ctx, p)
 	case MethodSignChange:
-		blob, err := param(0)
-		if err != nil {
-			return "", err
-		}
-		text, err := param(1)
-		if err != nil {
-			return "", err
-		}
-		record, err := nostr.IDFromHex(text)
-		if err != nil {
-			return "", errors.New("arc_sign_change: the record ID is not hex")
-		}
-		return k.SignChange(ctx, blob, record)
+		return k.answerChange(ctx, p)
 	}
 	return "", fmt.Errorf("the signer does not answer %q", req.Method)
+}
+
+// params reads the params of a request.
+type params Request
+
+func (p params) at(i int) (string, error) {
+	if i >= len(p.Params) {
+		return "", fmt.Errorf("%s needs %d params", p.Method, i+1)
+	}
+	return p.Params[i], nil
+}
+
+func (p params) key(i int) (nostr.PubKey, error) {
+	text, err := p.at(i)
+	if err != nil {
+		return nostr.PubKey{}, err
+	}
+	return nostr.PubKeyFromHex(text)
+}
+
+func (k Key) answerSign(ctx context.Context, p params) (string, error) {
+	text, err := p.at(0)
+	if err != nil {
+		return "", err
+	}
+	var event nostr.Event
+	if err := event.UnmarshalJSON([]byte(text)); err != nil {
+		return "", fmt.Errorf("sign_event: %w", err)
+	}
+	if err := k.SignEvent(ctx, &event); err != nil {
+		return "", err
+	}
+	return event.String(), nil
+}
+
+func (k Key) answerCrypt(ctx context.Context, p params) (string, error) {
+	peer, err := p.key(0)
+	if err != nil {
+		return "", err
+	}
+	text, err := p.at(1)
+	if err != nil {
+		return "", err
+	}
+	switch p.Method {
+	case "nip44_encrypt":
+		return k.Encrypt(ctx, text, peer)
+	case "nip44_decrypt":
+		return k.Decrypt(ctx, text, peer)
+	case "nip04_encrypt":
+		return k.Nip04Encrypt(ctx, text, peer)
+	default:
+		return k.Nip04Decrypt(ctx, text, peer)
+	}
+}
+
+func (k Key) answerRelease(ctx context.Context, p params) (string, error) {
+	text, err := p.at(0)
+	if err != nil {
+		return "", err
+	}
+	schema, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return "", errors.New("arc_sign_release: the schema is not a number")
+	}
+	text, err = p.at(1)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := hex.DecodeString(text)
+	if err != nil {
+		return "", errors.New("arc_sign_release: the bytes are not hex")
+	}
+	return k.SignRelease(ctx, schema, encoded)
+}
+
+func (k Key) answerChange(ctx context.Context, p params) (string, error) {
+	blob, err := p.at(0)
+	if err != nil {
+		return "", err
+	}
+	text, err := p.at(1)
+	if err != nil {
+		return "", err
+	}
+	record, err := nostr.IDFromHex(text)
+	if err != nil {
+		return "", errors.New("arc_sign_change: the record ID is not hex")
+	}
+	return k.SignChange(ctx, blob, record)
 }
 
 // Remote is a citizen key on a signer. Each method is one request through

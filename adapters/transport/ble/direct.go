@@ -217,83 +217,9 @@ func (d *Direct) handle(m message) error {
 			return errors.New("bluetooth: slow watch consumer")
 		}
 	case "send":
-		e, err := unpack(m.Frames)
-		d.mu.Lock()
-		filter := d.local
-		d.mu.Unlock()
-		if err == nil && e.Kind.IsEphemeral() && (filter == nil || !filter.Matches(e)) {
-			err = errors.New("bluetooth: no live subscriber")
-		}
-		if err == nil && !e.Kind.IsEphemeral() {
-			var r store.Result
-			r, err = d.config.Store.Save(e)
-			if err == nil && r.Outcome == store.Refused {
-				err = errors.New(r.Reason)
-			}
-		}
-		reply := message{Op: "ack", ID: m.ID}
-		if err != nil {
-			reply.Error = "event refused"
-		} else {
-			d.mu.Lock()
-			filter := d.local
-			d.mu.Unlock()
-			if filter != nil && filter.Matches(e) {
-				select {
-				case d.events <- e:
-				default:
-					return errors.New("bluetooth: slow watch consumer")
-				}
-			}
-		}
-		return d.enqueue(reply)
+		return d.handleSend(m)
 	case "fetch", "watch":
-		if m.Filter == nil {
-			return errors.New("bluetooth: missing filter")
-		}
-		filter := *m.Filter
-		// Bound work before querying the store; never silently truncate a result.
-		filter.Limit = maxResults + 1
-		es, err := d.config.Store.Query(filter)
-		if err != nil {
-			return d.enqueue(message{Op: "end", ID: m.ID, Error: "query failed"})
-		}
-		allowed := make([]nostr.Event, 0, len(es))
-		for _, e := range es {
-			if d.config.Share(e) {
-				allowed = append(allowed, e)
-			}
-		}
-		if len(es) > maxResults {
-			return d.enqueue(message{Op: "end", ID: m.ID, Error: "query exceeds 64 events; narrow the filter"})
-		}
-		if limit := m.Filter.Limit; limit > 0 && len(allowed) > limit {
-			allowed = allowed[:limit]
-		}
-		if m.Op == "watch" {
-			d.mu.Lock()
-			if d.remote != nil {
-				d.mu.Unlock()
-				return errors.New("bluetooth: one watch per link")
-			}
-			f := *m.Filter
-			d.remote = &f
-			d.mu.Unlock()
-		}
-		for _, e := range allowed {
-			fs, err := pack(e)
-			if err != nil {
-				return err
-			}
-			op := "result"
-			if m.Op == "watch" {
-				op = "event"
-			}
-			if err = d.enqueue(message{Op: op, ID: m.ID, Frames: fs}); err != nil {
-				return err
-			}
-		}
-		return d.enqueue(message{Op: "end", ID: m.ID})
+		return d.handleQuery(m)
 	case "unwatch":
 		d.mu.Lock()
 		d.remote = nil
@@ -302,6 +228,93 @@ func (d *Direct) handle(m message) error {
 	default:
 		return errors.New("bluetooth: unknown operation")
 	}
+}
+
+// handleSend saves an event that the peer sends, or gives a live one to
+// the local watch, and acknowledges it.
+func (d *Direct) handleSend(m message) error {
+	e, err := unpack(m.Frames)
+	d.mu.Lock()
+	filter := d.local
+	d.mu.Unlock()
+	if err == nil && e.Kind.IsEphemeral() && (filter == nil || !filter.Matches(e)) {
+		err = errors.New("bluetooth: no live subscriber")
+	}
+	if err == nil && !e.Kind.IsEphemeral() {
+		var r store.Result
+		r, err = d.config.Store.Save(e)
+		if err == nil && r.Outcome == store.Refused {
+			err = errors.New(r.Reason)
+		}
+	}
+	reply := message{Op: "ack", ID: m.ID}
+	if err != nil {
+		reply.Error = "event refused"
+	} else {
+		d.mu.Lock()
+		filter := d.local
+		d.mu.Unlock()
+		if filter != nil && filter.Matches(e) {
+			select {
+			case d.events <- e:
+			default:
+				return errors.New("bluetooth: slow watch consumer")
+			}
+		}
+	}
+	return d.enqueue(reply)
+}
+
+// handleQuery answers a fetch or a watch from the store, with the events
+// that the link may share. A watch also takes the filter for the events
+// that come later.
+func (d *Direct) handleQuery(m message) error {
+	if m.Filter == nil {
+		return errors.New("bluetooth: missing filter")
+	}
+	filter := *m.Filter
+	// Bound work before querying the store; never silently truncate a result.
+	filter.Limit = maxResults + 1
+	es, err := d.config.Store.Query(filter)
+	if err != nil {
+		return d.enqueue(message{Op: "end", ID: m.ID, Error: "query failed"})
+	}
+	allowed := make([]nostr.Event, 0, len(es))
+	for _, e := range es {
+		if d.config.Share(e) {
+			allowed = append(allowed, e)
+		}
+	}
+	if len(es) > maxResults {
+		return d.enqueue(message{Op: "end", ID: m.ID, Error: "query exceeds 64 events; narrow the filter"})
+	}
+	if limit := m.Filter.Limit; limit > 0 && len(allowed) > limit {
+		allowed = allowed[:limit]
+	}
+	if m.Op == "watch" {
+		d.mu.Lock()
+		if d.remote != nil {
+			d.mu.Unlock()
+			return errors.New("bluetooth: one watch per link")
+		}
+		f := *m.Filter
+		d.remote = &f
+		d.mu.Unlock()
+	}
+	for _, e := range allowed {
+		fs, err := pack(e)
+		if err != nil {
+			return err
+		}
+		op := "result"
+		if m.Op == "watch" {
+			op = "event"
+		}
+		if err = d.enqueue(message{Op: op, ID: m.ID, Frames: fs}); err != nil {
+			return err
+		}
+	}
+	return d.enqueue(message{Op: "end", ID: m.ID})
 }
 func (d *Direct) request(ctx context.Context, m message) (transport.Batch, error) {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)

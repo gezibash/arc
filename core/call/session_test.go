@@ -392,3 +392,36 @@ func TestAnOpenThatNoOneHeardIsNotSubmitted(t *testing.T) {
 		t.Fatalf("an open with no provider failed with %v, want an open that no one heard", err)
 	}
 }
+
+// TestACallerHearsThatTheProviderWentAway stops the provider program in a
+// session that has not settled. The provider tells the caller that the
+// session is disconnected, so the caller does not wait to its deadline.
+func TestACallerHearsThatTheProviderWentAway(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r := relay.Relay{URL: testrelay.Start(t)}
+	owner, client := keys.Generate(), keys.Generate()
+	process, err := host.Start(echoBinary, nil, "", nil, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := call.NewServer(owner, "primary", process, 64*1024, nil, quiet, session.Duplex)
+	ready := make(chan struct{})
+	go server.ServeLive(ctx, r, func() { close(ready) })
+	<-ready
+	s := openSession(t, ctx, client, owner, r, session.Duplex, "")
+	line(t, bufio.NewReader(s), "ready\n")
+	_ = process.Stop()
+	_, _ = io.WriteString(s, "GET\n")
+	ended := make(chan error, 1)
+	go func() { _, err := io.ReadAll(s); ended <- err }()
+	select {
+	case err := <-ended:
+		// The provider sends its close with the error of a disconnect.
+		if err == nil || !strings.Contains(err.Error(), session.ErrDisconnected.Error()) {
+			t.Fatalf("the caller got %v, want that the session is disconnected", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the caller heard nothing for 10 s after the provider went away")
+	}
+}
