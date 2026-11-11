@@ -19,7 +19,8 @@ import (
 
 // Guard decides which devices a bunker admits. With no device list, it
 // admits a device that gave the bunker secret once, as before device lists.
-// With a list, it admits only the device keys on the list.
+// With a list, it admits only the device keys on the list. Make one with
+// NewGuard: the zero Guard has no secret, and is not usable.
 type Guard struct {
 	mu         sync.Mutex
 	secret     string
