@@ -31,7 +31,7 @@ func TestAnAnswerOfAnotherVersionIsRefused(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	g := &getter{Get: Get{Arc: arcprogram.Arc{Program: arc}}, sender: strings.Repeat("a", 64)}
+	g := &getter{Arc: arcprogram.Arc{Program: arc}, sender: strings.Repeat("a", 64)}
 	if err := g.signal(ctx, pc, options, 0); err == nil || !strings.Contains(err.Error(), "the sender gave no answer") {
 		t.Fatalf("an answer of version 2 gave %v, want a refusal", err)
 	}
