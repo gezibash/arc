@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -263,18 +267,18 @@ func TestARelayThatDidNotConnectFailsAtOnce(t *testing.T) {
 	}
 	start := time.Now()
 	_, err := r.Fetch(t.Context(), filter)
-	if err == nil || !strings.Contains(err.Error(), "arc asks again in") || time.Since(start) > 100*time.Millisecond {
+	if err == nil || !strings.Contains(err.Error(), "arc tries it again in") || time.Since(start) > 100*time.Millisecond {
 		t.Fatalf("the second fetch took %s and gave %v, want the error of the first at once", time.Since(start), err)
 	}
 	wctx, wcancel := context.WithTimeout(t.Context(), time.Second)
 	defer wcancel()
-	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc asks again in") {
+	if _, err := r.Watch(wctx, filter); err != nil && strings.Contains(err.Error(), "arc tries it again in") {
 		t.Errorf("a watch did not try the relay: %v", err)
 	}
 	time.Sleep(2 * time.Second)
 	again, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
-	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc asks again in") {
+	if _, err := r.Fetch(again, filter); err == nil || strings.Contains(err.Error(), "arc tries it again in") {
 		t.Errorf("a fetch after downFor did not try again: %v", err)
 	}
 }
@@ -386,6 +390,72 @@ func TestARelayThatIgnoresOneKindIsUp(t *testing.T) {
 	}
 }
 
+// marks is a DownStore in memory. It keeps each mark, and answers each
+// look with the one mark of lookup.
+type marks struct {
+	mu     sync.Mutex
+	marked []string
+	lookup time.Time
+}
+
+func (m *marks) Down(string) (time.Time, string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lookup, "no answer", !m.lookup.IsZero()
+}
+
+func (m *marks) MarkDown(url string, _ time.Time, why string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.marked = append(m.marked, url+" "+why)
+}
+
+func (m *marks) Up(string) {}
+
+// A closed port refuses the connection: an answer of the host. It marks
+// nothing for the other processes of the home, and this process remembers
+// it only for quickFor, so a relay that starts on the port is used soon
+// (#444).
+func TestAClosedPortIsNotDown(t *testing.T) {
+	defer relay.SetQuickFor(2 * time.Second)()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "ws://" + l.Addr().String()
+	_ = l.Close()
+	store := &marks{}
+	r := relay.New(url, keyer.NewPlainKeySigner(nostr.Generate()))
+	r.ShareDown(store)
+	quickFailures(t, r, "a closed port", "the connection was refused")
+	if len(store.marked) > 0 {
+		t.Errorf("a closed port was marked down for the other processes: %v", store.marked)
+	}
+}
+
+// quickFailures checks a relay whose connect fails at once: the first fetch
+// dials and fails, the next one in quickFor fails at once with the same
+// reason, and one after quickFor dials again.
+func quickFailures(t *testing.T, r relay.Relay, what, reason string) {
+	t.Helper()
+	filter := nostr.Filter{Kinds: []nostr.Kind{1}}
+	if _, err := r.Fetch(t.Context(), filter); err == nil {
+		t.Fatalf("a fetch from %s worked", what)
+	} else if _, down := errors.AsType[*relay.DownError](err); down {
+		t.Fatalf("the first fetch from %s gave %v, want its own error", what, err)
+	}
+	_, err := r.Fetch(t.Context(), filter)
+	if down, ok := errors.AsType[*relay.DownError](err); !ok || down.Err == nil || !strings.Contains(err.Error(), reason) {
+		t.Errorf("a fetch from %s right after gave %v, want it to fail at once: %s", what, err, reason)
+	}
+	time.Sleep(2200 * time.Millisecond)
+	if _, err := r.Fetch(t.Context(), filter); err == nil {
+		t.Fatalf("a fetch from %s worked", what)
+	} else if _, down := errors.AsType[*relay.DownError](err); down {
+		t.Errorf("a fetch from %s after quickFor gave %v, want it to dial again", what, err)
+	}
+}
+
 // endings collects what OnWatchEnd gives.
 type endings struct {
 	mu  sync.Mutex
@@ -465,5 +535,68 @@ func TestAWatchEndSaysWhoEndedIt(t *testing.T) {
 	defer ended.mu.Unlock()
 	if len(ended.got) != 0 {
 		t.Errorf("a watch that its caller stopped was told as %v", ended.got)
+	}
+}
+
+// A host that takes the connection and closes it at once answered at once:
+// a mark would save no wait, and would skip the relay after it comes back.
+// It marks nothing, in this process or for the other processes of the home
+// (#444). arc relay add marked such a relay for 30 s, so arc serve skipped
+// it when it came back.
+func TestAConnectionClosedAtOnceIsNotDown(t *testing.T) {
+	defer relay.SetQuickFor(2 * time.Second)()
+	// A close sends FIN, and the client reads EOF; a close with no linger
+	// sends RST, and the client reads a reset of the connection.
+	for _, reset := range []bool{false, true} {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = l.Close() })
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				if reset {
+					_ = c.(*net.TCPConn).SetLinger(0)
+				}
+				_ = c.Close()
+			}
+		}()
+		store := &marks{}
+		r := relay.New("ws://"+l.Addr().String(), keyer.NewPlainKeySigner(nostr.Generate()))
+		r.ShareDown(store)
+		quickFailures(t, r, fmt.Sprintf("a host that closes at once (reset %t)", reset), "the connection was closed")
+		if len(store.marked) > 0 {
+			t.Errorf("reset %t: a host that closes at once was marked down for the other processes: %v", reset, store.marked)
+		}
+	}
+}
+
+// Each form in which a host closes or resets a connection at once counts
+// as one: which form the client reads depends on timing, and a write of
+// the request can meet a broken pipe (#444). A refusal and a timeout are
+// not such a close.
+func TestEachFormOfACloseAtOnceCounts(t *testing.T) {
+	op := func(call string, errno syscall.Errno) error {
+		return &net.OpError{Op: call, Net: "tcp", Err: os.NewSyscallError(call, errno)}
+	}
+	for _, c := range []struct {
+		name   string
+		err    error
+		closed bool
+	}{
+		{"EOF", fmt.Errorf("Get: %w", io.EOF), true},
+		{"a reset", op("read", syscall.ECONNRESET), true},
+		{"a broken pipe", op("write", syscall.EPIPE), true},
+		{"an idle connection that the server closed", errors.New("Get: http: server closed idle connection"), true},
+		{"a refusal", op("connect", syscall.ECONNREFUSED), false},
+		{"a timeout", context.DeadlineExceeded, false},
+	} {
+		if got := relay.HostClosed(c.err); got != c.closed {
+			t.Errorf("%s: hostClosed is %t, want %t", c.name, got, c.closed)
+		}
 	}
 }

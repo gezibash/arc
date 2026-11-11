@@ -24,7 +24,7 @@ func (r Relay) Reconcile(ctx context.Context, filter nostr.Filter, local nostr.Q
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
-	if err := r.kept.isDown(); err != nil {
+	if err := r.kept.isDown(r.URL); err != nil {
 		return nil, nil, true, err
 	}
 	ctx, cancel := context.WithTimeoutCause(ctx, callTimeout, ErrNoAnswer)

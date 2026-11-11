@@ -36,7 +36,7 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := k.isDown(); err != nil {
+	if err := k.isDown(r.URL); err != nil {
 		return err
 	}
 
