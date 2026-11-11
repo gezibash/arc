@@ -17,41 +17,23 @@ import (
 // more than one step: split it into steps with names.
 const maxFunctionLines = 100
 
-// TestFunctionSize refuses a function over maxFunctionLines, unless it is
-// on functionDebt. The debt can only shrink: see checkFunctions.
+// TestFunctionSize refuses a function over maxFunctionLines.
 func TestFunctionSize(t *testing.T) {
 	sizes, err := functionSizes(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, problem := range checkFunctions(sizes, functionDebt) {
+	for _, problem := range checkFunctions(sizes) {
 		t.Error(problem)
 	}
 }
 
-// checkFunctions compares the length of each function with the limit and
-// with the debt. A function on the debt must hold exactly its listed
-// length: a longer one grew, and a shorter one lowers its entry, so that
-// it cannot grow back. An entry at or under the limit, or for a function
-// that is gone, leaves the debt.
-func checkFunctions(sizes, debt map[string]int) []string {
+// checkFunctions gives a problem for each function over the limit.
+func checkFunctions(sizes map[string]int) []string {
 	var problems []string
 	for name, n := range sizes {
-		listed, ok := debt[name]
-		switch {
-		case !ok && n > maxFunctionLines:
+		if n > maxFunctionLines {
 			problems = append(problems, fmt.Sprintf("%s is %d lines, over %d: split it into steps", name, n, maxFunctionLines))
-		case ok && n <= maxFunctionLines:
-			problems = append(problems, fmt.Sprintf("%s is %d lines, at or under %d: remove it from functionDebt", name, n, maxFunctionLines))
-		case ok && n > listed:
-			problems = append(problems, fmt.Sprintf("%s grew from %d to %d lines: a listed function may only shrink", name, listed, n))
-		case ok && n < listed:
-			problems = append(problems, fmt.Sprintf("%s shrank from %d to %d lines: set its entry in functionDebt to %d", name, listed, n, n))
-		}
-	}
-	for name := range debt {
-		if _, ok := sizes[name]; !ok {
-			problems = append(problems, fmt.Sprintf("%s is on functionDebt, but no such function exists: remove the entry", name))
 		}
 	}
 	slices.Sort(problems)
@@ -152,19 +134,13 @@ func TestCheckFunctions(t *testing.T) {
 	cases := []struct {
 		name  string
 		sizes map[string]int
-		debt  map[string]int
 		want  string
 	}{
-		{"a function at the limit passes", map[string]int{"a.go:f": maxFunctionLines}, nil, ""},
-		{"an unlisted function over the limit fails", map[string]int{"a.go:f": over}, nil, "a.go:f is 101 lines, over 100"},
-		{"a listed function at its length passes", map[string]int{"a.go:f": 150}, map[string]int{"a.go:f": 150}, ""},
-		{"a listed function that grew fails", map[string]int{"a.go:f": 151}, map[string]int{"a.go:f": 150}, "a.go:f grew from 150 to 151 lines"},
-		{"a listed function that shrank must lower its entry", map[string]int{"a.go:f": 120}, map[string]int{"a.go:f": 150}, "a.go:f shrank from 150 to 120 lines"},
-		{"a listed function at the limit leaves the list", map[string]int{"a.go:f": maxFunctionLines}, map[string]int{"a.go:f": 150}, "a.go:f is 100 lines, at or under 100"},
-		{"an entry for a gone function leaves the list", nil, map[string]int{"a.go:f": 150}, "a.go:f is on functionDebt, but no such function exists"},
+		{"a function at the limit passes", map[string]int{"a.go:f": maxFunctionLines}, ""},
+		{"a function over the limit fails", map[string]int{"a.go:f": over}, "a.go:f is 101 lines, over 100"},
 	}
 	for _, c := range cases {
-		got := strings.Join(checkFunctions(c.sizes, c.debt), "\n")
+		got := strings.Join(checkFunctions(c.sizes), "\n")
 		if c.want == "" && got != "" || !strings.Contains(got, c.want) {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}

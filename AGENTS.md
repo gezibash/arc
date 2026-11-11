@@ -38,10 +38,7 @@ Read [the architecture map](docs/ARCHITECTURE.md) before changing a package boun
   concern. `go test ./internal/architecture` checks it.
 - No function holds more than 100 lines, with its signature and the
   function literals inside it. Split a longer one into steps with names.
-  `TestFunctionSize` checks it. The functions on `functionDebt` are debt:
-  never add one, and lower or remove an entry when you split it. When a
-  move takes a listed function to another file unchanged, change only the
-  key of its entry, in the same commit.
+  `TestFunctionSize` checks it.
 - The runtime and adapters must not import concrete `apps/` packages.
   Apps use the SDK to compose with other apps.
 - Define an interface at the layer that consumes its effect. Only interfaces
