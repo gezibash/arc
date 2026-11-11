@@ -104,3 +104,23 @@ func TestAnOlderReleasesProviderSendsChunks(t *testing.T) {
 		t.Errorf("with the policy direct, the update asked for %d chunks", source.asked)
 	}
 }
+
+// TestARefusalThatEndsTheOpenIsMapped gets an archive from an older
+// provider whose refusal ends the open, before the transport confirms it:
+// the open itself gives the refusal as its error. In auto, the update reads
+// the archive in chunks, as when the refusal ends the session after it
+// opens (sdk/httpadapter TestRefusalBeforeOpenIsConfirmed).
+func TestARefusalThatEndsTheOpenIsMapped(t *testing.T) {
+	source, artifact := archiveOf("the archive of an older provider")
+	open := func(context.Context, string) (*session.Stream, error) {
+		return nil, session.RemoteError("invalid_request")
+	}
+	p := &pipeCaller{Requester: source, open: open, dial: direct.DialConfig{Policy: direct.Auto, Options: loopback}}
+	got, err := Download(t.Context(), p, artifact, nil)
+	if err != nil || string(got) != string(source.archive) {
+		t.Fatalf("got %q, %v; want the archive in chunks", got, err)
+	}
+	if p.path != chunkPath {
+		t.Errorf("the archive took the path %q, want chunks", p.path)
+	}
+}

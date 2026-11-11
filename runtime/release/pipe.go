@@ -57,7 +57,9 @@ func (r *pipeCaller) OpenArchive(ctx context.Context, digest string) (ArchiveRea
 		}
 		stream, err := r.open(ctx, string(body))
 		if err != nil {
-			return "", err
+			// The answer of the provider can end the open before the
+			// transport confirms it. Then the refusal is the error of open.
+			return "", archiveRefusal(err)
 		}
 		current = &pipeArchive{stream: stream, records: json.NewDecoder(stream)}
 		var answer archiveRecord

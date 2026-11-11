@@ -375,7 +375,7 @@ relay; those in `runtime/release` give the provider's answers directly:
 
 ```sh
 go test -count=1 -run '^(TestArchiveOverPipeThroughRelay|TestBrokenArchivePipeIsAnError)$' ./cmd/arc/
-go test -count=1 -run '^(TestStreamedArchiveRequiresSizeHashAndFinalSuccess|TestAnArchivePipeThatDoesNotOpenIsAnError|TestAnOlderReleasesProviderSendsChunks)$' ./runtime/release/
+go test -count=1 -run '^(TestStreamedArchiveRequiresSizeHashAndFinalSuccess|TestAnArchivePipeThatDoesNotOpenIsAnError|TestAnOlderReleasesProviderSendsChunks|TestARefusalThatEndsTheOpenIsMapped)$' ./runtime/release/
 go test -count=1 -run '^TestArchiveOfferRefusals$' ./apps/releases/server/
 ```
 
