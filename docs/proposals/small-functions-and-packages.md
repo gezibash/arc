@@ -1,8 +1,10 @@
-Status: proposed
+Status: built
+Proof: go test -count=1 -run '^TestFunctionSize$' ./internal/architecture/
 
 # Small functions and small packages
 
-No code implements this proposal. It continues
+PRs #473 to #494 carried out this plan: no function is over 100 lines, and
+no exception remains. It continues
 [the programs and the file rule](../PROGRAMS.md). Each claim about ARC names a
 file at commit `4b36835`. Each number has a tag:
 
