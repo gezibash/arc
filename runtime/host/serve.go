@@ -256,7 +256,7 @@ func (s *service) start() (bool, error) {
 	// waits for the line can call at once.
 	missing, err := watchAll(ctx, s.server, sess.Relays, s.quiet)
 	if ctx.Err() != nil {
-		fmt.Fprintln(os.Stderr, "the service is stopping")
+		fmt.Fprintln(s.cfg.Errs, "the service is stopping")
 		return true, nil
 	}
 	if err != nil {
@@ -309,7 +309,7 @@ func (s *service) loop() error {
 				s.log.Warn("the announcement was not signed", "error", err)
 			}
 		case <-s.ctx.Done():
-			fmt.Fprintln(os.Stderr, "the service is stopping")
+			fmt.Fprintln(s.cfg.Errs, "the service is stopping")
 			return nil
 		case <-s.server.Done():
 			return errors.New("the app program stopped")

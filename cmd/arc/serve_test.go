@@ -228,8 +228,7 @@ func TestServeStopsWhenItsProgramStops(t *testing.T) {
 	home := t.TempDir()
 	ok(t, home, "", "keys", "gen")
 	ok(t, home, "", "relay", "add", url)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	out, result := serving(t, ctx, home)
 	if !waitFor(out, "serves", 10*time.Second) {
 		t.Fatalf("arc serve did not serve: %q", out.String())
