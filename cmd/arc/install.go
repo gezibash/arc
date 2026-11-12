@@ -19,6 +19,9 @@ func installCmd() *cobra.Command {
 			"A data app runs locally. A service app calls the selected participant.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(command *cobra.Command, args []string) error {
+			if as, _ := command.Flags().GetString("as"); controlOrFormat(as) {
+				return errors.New("--as: a name has no control character and no format character")
+			}
 			sess, err := open(command)
 			if err != nil {
 				return err
@@ -67,7 +70,7 @@ func installCmd() *cobra.Command {
 			if err := installs.Add(offer, as); err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "installed %s: see arc help %s\n", as, as)
+			fmt.Fprintf(command.OutOrStdout(), "installed %s: see arc help %s\n", terminal.EscapeLine(as), terminal.EscapeLine(as))
 			return nil
 		},
 	}

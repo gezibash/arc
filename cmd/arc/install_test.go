@@ -251,3 +251,23 @@ func TestAnnounceRefusesWithNoRelay(t *testing.T) {
 		t.Errorf("the refused announcement went out later: %d, %v", len(batch.Events), err)
 	}
 }
+
+// arc install --as refuses a name with a control or format character before
+// it asks any relay; a plain name goes on (#462).
+func TestInstallRefusesAControlOrFormatCharacterInTheName(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := arc(t, home, "keys", "gen"); err != nil {
+		t.Fatal(err)
+	}
+	provider := keys.Generate().Public.Hex()
+	refusal := "--as: a name has no control character and no format character"
+	for _, as := range []string{"j\narc: fake forged", "j\x1b[2J", "j\u202ex", "j\u200bx", "j\u0085x"} {
+		if err := arc(t, home, "install", provider, "journal", "--yes", "--as", as); err == nil || err.Error() != refusal {
+			t.Errorf("arc install --as %q gave %v, want %q", as, err, refusal)
+		}
+	}
+	if err := arc(t, home, "install", provider, "journal", "--yes", "--as", "café"); err == nil || err.Error() == refusal {
+		t.Errorf("arc install --as café gave %v, want it past the name check", err)
+	}
+}
