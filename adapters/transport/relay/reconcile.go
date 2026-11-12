@@ -57,16 +57,16 @@ func (r Relay) negentropy(ctx context.Context, filter nostr.Filter, local nostr.
 		s = r.kept.sessions
 	}
 	var conn *nostr.Relay
-	var done func(error)
+	var done func(error) error
 	if r.kept != nil {
 		conn, _, done, err = r.open(ctx)
 	} else if conn, err = r.connect(ctx, s); err == nil {
-		done = func(error) { _ = conn.Close() }
+		done = func(err error) error { _ = conn.Close(); return err }
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { done(err) }()
+	defer func() { err = done(err) }()
 	id, replies, remove := s.add(ctx)
 	defer remove()
 

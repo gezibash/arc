@@ -156,11 +156,13 @@ func closedAtOnce(err error) bool {
 	return closed || errors.Is(err, syscall.ECONNREFUSED) || hostClosed(err)
 }
 
-// ClosedError is a connect that the host took and closed or reset at once,
-// before the WebSocket handshake. The client reads EOF, a reset, a broken
-// pipe while it still writes its request, or, on Linux, an idle connection
-// that the server closed, as timing falls; each
-// says the same, so a caller tests for this one type (#444).
+// ClosedError is a connection that the host took and closed or reset at
+// once. Before the WebSocket handshake, the client reads EOF, a reset, a
+// broken pipe while it still writes its request, or, on Linux, an idle
+// connection that the server closed, as timing falls (#444). After the
+// handshake, and before any answer of the relay, the first call fails as
+// the library sees the close (#468). Each says the same, so a caller tests
+// for this one type.
 type ClosedError struct{ Err error }
 
 func (e *ClosedError) Error() string { return e.Err.Error() }
@@ -197,6 +199,30 @@ func (k *kept) isDown(url string) error {
 		}
 	}
 	return nil
+}
+
+// closedUnheard judges a call that failed on a connection on which the
+// relay never answered, when no deadline ended it: the host took the WebSocket upgrade, and then closed or reset
+// the connection (#468). It is a close at once, as one before the upgrade:
+// this process remembers it for quickFor, and the other processes of the
+// home never see it (#444). It returns the error as a ClosedError, or nil
+// for any other call.
+func (k *kept) closedUnheard(ctx context.Context, conn *nostr.Relay, err error) error {
+	// A deadline of any kind, also the inner one of a watch, is a silence,
+	// not a close.
+	if err == nil || answered(err) || ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNoAnswer) || k.heardOn(conn) {
+		return nil
+	}
+	closed := &ClosedError{Err: err}
+	k.mu.Lock()
+	k.down, k.downUntil = closed, time.Now().Add(quickFor)
+	if k.conn == conn {
+		k.conn = nil
+	}
+	k.because(conn, "the relay closed the connection before any answer")
+	k.mu.Unlock()
+	_ = conn.Close()
+	return closed
 }
 
 // silent judges a call on a connection that the relay took, and that gave
@@ -304,15 +330,16 @@ func (k *kept) endedBy(conn *nostr.Relay) (string, string) {
 
 // open returns the connection for one call. For a Relay from New, it is the
 // kept connection, and reused says whether an earlier call opened it. The
-// caller must call done when the call ends, with the error of the call.
-func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done func(error), err error) {
+// caller must call done when the call ends, with the error of the call, and
+// return the error that done gives.
+func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done func(error) error, err error) {
 	k := r.kept
 	if k == nil {
 		conn, err = r.connect(ctx, &sessions{})
 		if err != nil {
 			return nil, false, nil, err
 		}
-		return conn, false, func(error) { _ = conn.Close() }, nil
+		return conn, false, func(err error) error { _ = conn.Close(); return err }, nil
 	}
 
 	k.mu.Lock()
@@ -351,7 +378,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 	}
 	k.used = time.Now()
 	conn = k.conn
-	return conn, reused, func(err error) {
+	return conn, reused, func(err error) error {
 		// A relay that connected, and then gave no EOSE, OK or CLOSED
 		// within its own timeout, is down as one that did not connect: each
 		// call to it would wait the whole timeout again (#439). One that
@@ -360,8 +387,11 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 		if err == nil || answered(err) {
 			k.hear(conn)
 		}
+		if closed := k.closedUnheard(ctx, conn, err); closed != nil {
+			return closed
+		}
 		if k.silent(ctx, conn, err) {
-			return
+			return err
 		}
 		// An answer of the relay shows that the connection works. A caller
 		// that stopped says nothing about it. Any other failure, also a
@@ -370,6 +400,7 @@ func (r Relay) open(ctx context.Context) (conn *nostr.Relay, reused bool, done f
 		if err != nil && !answered(err) && !errors.Is(err, context.Canceled) {
 			_ = k.drop(conn, "a call on the connection failed: "+err.Error())
 		}
+		return err
 	}, nil
 }
 
