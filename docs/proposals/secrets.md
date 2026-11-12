@@ -253,20 +253,24 @@ A secret with `expiration` T:
   and then seals the record with the data root, as each secret is sealed
   (section 2.1). Two layers: the data root says who reads, the epoch says
   until when.
-- After T, each device that follows the rule holds no key of epoch(T). The
-  sealed value on each storage citizen, in each backup and in each old copy
+- A device keeps the key of epoch(T) until epoch(T) ends, because other
+  secrets of that epoch can expire later. The value can therefore be read
+  for up to one epoch after T. A citizen who needs the value gone at T
+  exactly uses a leased secret (section 2.6).
+- After epoch(T) ends, each device that follows the rule holds no key of
+  epoch(T). The sealed value on each storage citizen, in each backup and in each old copy
   of the store is then noise to anyone, with the device key, with the data
   roots, and with the seed.
 
 What a shred epoch gives:
 
-| Thief or holder | Before T | After T, once each device stepped past it |
+| Thief or holder | Before the end of epoch(T) | After epoch(T) ends, once each device stepped past it |
 | --- | --- | --- |
 | Steals a device later | Reads the secret | Cannot read it |
 | Holds a copy of a blob from a storage citizen | Needs a device | Cannot read it |
 | Holds the seed | Cannot read it: no wrap to the citizen key | Cannot read it |
 | A device that is hostile now | Reads the secret, and can keep the old key | Keeps what it kept |
-| A device that was offline past T | Still holds the old key | Deletes it at its next start |
+| A device that was offline past the end of epoch(T) | Still holds the old key | Deletes it at its next start |
 
 What a shred epoch costs:
 
