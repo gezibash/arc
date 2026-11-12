@@ -63,6 +63,8 @@ func (r Relay) sendKept(ctx context.Context, event nostr.Event) error {
 	}
 	if err = r.publish(ctx, conn, event); err == nil || refused(err) {
 		k.hear(conn)
+	} else if closed := k.closedUnheard(ctx, conn, err); closed != nil {
+		return r.named(closed)
 	} else if !k.silent(ctx, conn, err) {
 		_ = k.drop(conn, "a send failed: "+err.Error())
 	}

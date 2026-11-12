@@ -32,8 +32,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		probe.Limit = 1
 		if _, err := stored(ctx, conn, probe); errors.Is(err, errAuthRequired) {
 			if err := r.authenticate(ctx, conn); err != nil {
-				done(err)
-				return nil, fmt.Errorf("relay %s: %w", r.URL, err)
+				return nil, fmt.Errorf("relay %s: %w", r.URL, done(err))
 			}
 		}
 	}
@@ -43,8 +42,7 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 		MaxWaitForEOSE: realEOSE,
 	})
 	if err != nil {
-		done(err)
-		return nil, fmt.Errorf("relay %s: %w", r.URL, err)
+		return nil, fmt.Errorf("relay %s: %w", r.URL, done(err))
 	}
 
 	// A relay sends the end of stored events after it takes the
@@ -55,14 +53,13 @@ func (r Relay) Watch(ctx context.Context, filter nostr.Filter) (<-chan nostr.Eve
 	cancel()
 	if err != nil {
 		sub.Unsub()
-		done(err)
-		return nil, fmt.Errorf("relay %s: the relay did not take the subscription: %w", r.URL, err)
+		return nil, fmt.Errorf("relay %s: the relay did not take the subscription: %w", r.URL, done(err))
 	}
 
 	out := make(chan nostr.Event)
 	go func() {
 		defer close(out)
-		defer done(nil)
+		defer func() { _ = done(nil) }()
 		defer sub.Unsub()
 
 		for _, event := range pending {

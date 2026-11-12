@@ -196,7 +196,7 @@ func (r *syncRun) mail(t transport.Transport) {
 		return
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
+		fmt.Fprintf(command.ErrOrStderr(), "%s: mail: %s\n", terminal.EscapeLine(t.Name()), terminal.EscapeLine(err.Error()))
 		r.failed = true
 		return
 	}

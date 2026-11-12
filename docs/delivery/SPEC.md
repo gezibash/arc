@@ -430,7 +430,10 @@ connection that failed at once, refused, closed or reset, is remembered in
 this process only, for 5 seconds. The host closed or reset a connection at
 once when arc reads EOF, a reset, a broken pipe while it writes its request,
 or an idle connection that the server closed: which of them comes depends on
-timing. It is remembered so that the calls of one command do not dial
+timing. A host that takes the WebSocket upgrade, and then closes or resets
+the connection before the relay answers any call on it, closed it at once
+in the same way (#468): the first call on it fails, and arc reads that
+failure as such a close, whatever the library says about it. It is remembered so that the calls of one command do not dial
 the relay again. The marks that one process makes at once all land in the
 file. A process reads the marks once, and uses that look for 30 seconds: a
 command shorter than that skips what the home marked when it began, and a
@@ -475,7 +478,7 @@ still tries to connect, so a provider watches again as soon as its relay
 is back. A relay that gave no answer in time counts as unreached: a command
 that works with what the machine holds says so in one line (#396). An older arc asks the relays one at a time,
 and waits for each one up to its timeout. `TestASilentRelayStallsAPullOnlyForTheGrace`,
-`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestABrokenFileOfDownRelaysIsNoRecord`, `TestDownRelaysOfManyProcessesKeepAWholeFile`, `TestAClosedPortIsNotDown`, `TestAConnectionClosedAtOnceIsNotDown`, `TestEachFormOfACloseAtOnceCounts`, `TestABrokenPipeIsAClosedConnection`, `TestARelayThatClosesAtOnceGetsOneLineInEachSync`, `TestASyncReadsTheMarksOfTheHomeOnce`, `TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync`, `TestTheNoteOfAnUnwritableMarkFileReachesArcDM`, `TestAMarkFarAheadIsNoMark`, `TestTheMarksOfOneCommandAllLand`, `TestAFileThatCannotBeWrittenGivesANote`, `TestASkippedRelaySaysWhenArcTriesItAgain`, `TestARefusalReasonIsEscapedOnce`, `TestARelayThatStopsAnsweringInASyncGetsOneLine`, `TestASyncStopsAtARelayThatStopsAnswering`
+`TestARelayThatDidNotConnectFailsAtOnce`, `TestARefusalIsNotDown`, `TestARelayThatConnectsAndNeverAnswersIsDown`, `TestARelayThatIgnoresOneKindIsUp`, `TestABlackHoleHostIsTriedOnce`, `TestSyncWaitsForAMuteRelayOnce`, `TestSyncNamesABadRelayInOneLineInEachLayout`, `TestADMSendDialsEachMuteRelayOnce`, `TestPendingMessagesWaitForAMuteRelayOnce` and `TestOfflineJournalIsQuiet`, `TestABrokenFileOfDownRelaysIsNoRecord`, `TestDownRelaysOfManyProcessesKeepAWholeFile`, `TestAClosedPortIsNotDown`, `TestAConnectionClosedAtOnceIsNotDown`, `TestEachFormOfACloseAtOnceCounts`, `TestABrokenPipeIsAClosedConnection`, `TestARelayThatClosesAtOnceGetsOneLineInEachSync`, `TestASyncReadsTheMarksOfTheHomeOnce`, `TestAMarkOfTheHomeSkipsTheRelayForTheWholeSync`, `TestTheNoteOfAnUnwritableMarkFileReachesArcDM`, `TestAMarkFarAheadIsNoMark`, `TestTheMarksOfOneCommandAllLand`, `TestAFileThatCannotBeWrittenGivesANote`, `TestASkippedRelaySaysWhenArcTriesItAgain`, `TestARefusalReasonIsEscapedOnce`, `TestARelayThatStopsAnsweringInASyncGetsOneLine`, `TestASyncStopsAtARelayThatStopsAnswering`, `TestARelayThatClosesAfterTheUpgradeGivesOneLine`
 prove this.
 
 A citizen publishes two relay lists to its relays: NIP-65, kind 10002, and

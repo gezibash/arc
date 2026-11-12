@@ -81,8 +81,7 @@ func (r Relay) Fetch(ctx context.Context, filter nostr.Filter) (transport.Batch,
 	}
 	r.beforeRead(ctx, conn, filter)
 	batch, err := r.fetch(ctx, conn, filter)
-	done(err)
-	return batch, err
+	return batch, done(err)
 }
 
 // fetch reads the pages of a query on one connection.
@@ -190,9 +189,9 @@ func (r Relay) Exchange(ctx context.Context, event nostr.Event, answers nostr.Fi
 	taken := false
 	defer func() {
 		if taken {
-			done(nil)
+			_ = done(nil)
 		} else {
-			done(err)
+			_ = done(err)
 		}
 	}()
 
