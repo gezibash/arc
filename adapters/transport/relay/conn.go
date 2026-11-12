@@ -202,14 +202,15 @@ func (k *kept) isDown(url string) error {
 }
 
 // closedUnheard judges a call that failed on a connection on which the
-// relay never answered, when neither the caller nor the relay's own timeout
-// ended it: the host took the WebSocket upgrade, and then closed or reset
+// relay never answered, when no deadline ended it: the host took the WebSocket upgrade, and then closed or reset
 // the connection (#468). It is a close at once, as one before the upgrade:
 // this process remembers it for quickFor, and the other processes of the
 // home never see it (#444). It returns the error as a ClosedError, or nil
 // for any other call.
 func (k *kept) closedUnheard(ctx context.Context, conn *nostr.Relay, err error) error {
-	if err == nil || answered(err) || ctx.Err() != nil || errors.Is(err, context.Canceled) || k.heardOn(conn) {
+	// A deadline of any kind, also the inner one of a watch, is a silence,
+	// not a close.
+	if err == nil || answered(err) || ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNoAnswer) || k.heardOn(conn) {
 		return nil
 	}
 	closed := &ClosedError{Err: err}
