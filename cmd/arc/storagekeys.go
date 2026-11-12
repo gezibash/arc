@@ -256,10 +256,16 @@ func installStorage(command *cobra.Command, sess *citizen.Session, installs cata
 // character and no format character, such as a bidi mark, so that it shows
 // as itself in each line that names it (#441).
 func checkStorageName(as string) error {
-	if as == "" || len(as) > storage.MaxEntryName || strings.ContainsFunc(as, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
+	if as == "" || len(as) > storage.MaxEntryName || controlOrFormat(as) {
 		return fmt.Errorf("--as: a storage name has 1 to %d bytes, and no control character and no format character", storage.MaxEntryName)
 	}
 	return nil
+}
+
+// controlOrFormat says whether name holds a control character or a format
+// character, such as a bidi override or a zero-width space (#443, #462).
+func controlOrFormat(name string) bool {
+	return strings.ContainsFunc(name, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) })
 }
 
 // accountPending and accountAdmitted are the lines that arc keys storage add
